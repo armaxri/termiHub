@@ -1,5 +1,6 @@
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
+import { ConnectionEditor } from "./ConnectionEditor";
 import { FileBrowser } from "./FileBrowser";
 import "./Sidebar.css";
 
@@ -12,6 +13,7 @@ const VIEW_TITLES = {
 export function Sidebar() {
   const sidebarView = useAppStore((s) => s.sidebarView);
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
+  const editingConnectionId = useAppStore((s) => s.editingConnectionId);
 
   if (sidebarCollapsed) return null;
 
@@ -21,7 +23,11 @@ export function Sidebar() {
         <span className="sidebar__title">{VIEW_TITLES[sidebarView]}</span>
       </div>
       <div className="sidebar__content">
-        {sidebarView === "connections" && <ConnectionList />}
+        {sidebarView === "connections" && (
+          editingConnectionId
+            ? <ConnectionEditor />
+            : <ConnectionList />
+        )}
         {sidebarView === "files" && <FileBrowser />}
         {sidebarView === "settings" && (
           <div className="sidebar__section">Settings (coming soon)</div>
