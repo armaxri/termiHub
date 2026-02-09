@@ -1,0 +1,20 @@
+.terminal-container {
+  width: 100%;
+  height: 100%;
+  padding: var(--spacing-xs);
+  background-color: var(--terminal-bg);
+}
+
+.terminal-container--hidden {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.terminal-container .xterm {
+  height: 100%;
+}
+
+.terminal-container .xterm-viewport {
+  overflow-y: auto;
+}
