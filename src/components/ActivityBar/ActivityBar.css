@@ -6,7 +6,40 @@
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: space-between;
+}
+
+.activity-bar__top {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+}
+
+.activity-bar__item {
+  position: relative;
+  width: 100%;
+  height: var(--activity-bar-width);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   color: var(--activity-bar-inactive);
-  font-size: var(--font-size-sm);
-  padding-top: var(--spacing-sm);
+  transition: color var(--transition-fast);
+}
+
+.activity-bar__item:hover {
+  color: var(--activity-bar-active);
+}
+
+.activity-bar__item--active {
+  color: var(--activity-bar-active);
+}
+
+.activity-bar__indicator {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background-color: var(--activity-bar-indicator);
 }
