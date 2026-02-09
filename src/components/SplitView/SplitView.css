@@ -1,0 +1,37 @@
+.split-view {
+  width: 100%;
+  height: 100%;
+}
+
+.split-view__panel-content {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.split-view__terminal-area {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+.split-view__empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-disabled);
+  font-size: var(--font-size-md);
+}
+
+.split-view__resize-handle {
+  width: var(--resize-handle-width);
+  background-color: var(--resize-handle-color);
+  transition: background-color var(--transition-normal);
+}
+
+.split-view__resize-handle:hover,
+.split-view__resize-handle[data-resize-handle-active] {
+  background-color: var(--resize-handle-hover-color);
+}
