@@ -1,0 +1,12 @@
+.activity-bar {
+  width: var(--activity-bar-width);
+  min-width: var(--activity-bar-width);
+  height: 100%;
+  background-color: var(--activity-bar-bg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  color: var(--activity-bar-inactive);
+  font-size: var(--font-size-sm);
+  padding-top: var(--spacing-sm);
+}

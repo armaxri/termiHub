@@ -1,0 +1,11 @@
+.terminal-view {
+  flex: 1;
+  height: 100%;
+  background-color: var(--bg-primary);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  padding: var(--spacing-sm);
+}
