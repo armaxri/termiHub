@@ -1,4 +1,5 @@
 import { useCallback } from "react";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   ChevronRight,
   ChevronDown,
@@ -8,6 +9,9 @@ import {
   Cable,
   Globe,
   Plus,
+  Play,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionType } from "@/types/terminal";
@@ -30,6 +34,7 @@ interface TreeNodeProps {
   onToggle: (folderId: string) => void;
   onConnect: (connection: SavedConnection) => void;
   onEdit: (connectionId: string) => void;
+  onDelete: (connectionId: string) => void;
   depth: number;
 }
 
@@ -42,6 +47,7 @@ function TreeNode({
   onToggle,
   onConnect,
   onEdit,
+  onDelete,
   depth,
 }: TreeNodeProps) {
   const Chevron = folder.isExpanded ? ChevronDown : ChevronRight;
@@ -70,6 +76,7 @@ function TreeNode({
               onToggle={onToggle}
               onConnect={onConnect}
               onEdit={onEdit}
+              onDelete={onDelete}
               depth={depth + 1}
             />
           ))}
@@ -80,6 +87,7 @@ function TreeNode({
               depth={depth + 1}
               onConnect={onConnect}
               onEdit={onEdit}
+              onDelete={onDelete}
             />
           ))}
         </div>
@@ -93,23 +101,50 @@ interface ConnectionItemProps {
   depth: number;
   onConnect: (connection: SavedConnection) => void;
   onEdit: (connectionId: string) => void;
+  onDelete: (connectionId: string) => void;
 }
 
-function ConnectionItem({ connection, depth, onConnect, onEdit }: ConnectionItemProps) {
+function ConnectionItem({ connection, depth, onConnect, onEdit, onDelete }: ConnectionItemProps) {
   const Icon = TYPE_ICONS[connection.config.type];
 
   return (
-    <button
-      className="connection-tree__item"
-      style={{ paddingLeft: `${depth * 16 + 8}px` }}
-      onDoubleClick={() => onConnect(connection)}
-      onClick={() => onEdit(connection.id)}
-      title={`Double-click to connect: ${connection.name}`}
-    >
-      <Icon size={16} />
-      <span className="connection-tree__label">{connection.name}</span>
-      <span className="connection-tree__type">{connection.config.type}</span>
-    </button>
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger asChild>
+        <button
+          className="connection-tree__item"
+          style={{ paddingLeft: `${depth * 16 + 8}px` }}
+          onDoubleClick={() => onConnect(connection)}
+          title={`Double-click to connect: ${connection.name}`}
+        >
+          <Icon size={16} />
+          <span className="connection-tree__label">{connection.name}</span>
+          <span className="connection-tree__type">{connection.config.type}</span>
+        </button>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content className="context-menu__content" sideOffset={4}>
+          <DropdownMenu.Item
+            className="context-menu__item"
+            onSelect={() => onConnect(connection)}
+          >
+            <Play size={14} /> Connect
+          </DropdownMenu.Item>
+          <DropdownMenu.Item
+            className="context-menu__item"
+            onSelect={() => onEdit(connection.id)}
+          >
+            <Pencil size={14} /> Edit
+          </DropdownMenu.Item>
+          <DropdownMenu.Separator className="context-menu__separator" />
+          <DropdownMenu.Item
+            className="context-menu__item context-menu__item--danger"
+            onSelect={() => onDelete(connection.id)}
+          >
+            <Trash2 size={14} /> Delete
+          </DropdownMenu.Item>
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
   );
 }
 
@@ -119,6 +154,7 @@ export function ConnectionList() {
   const toggleFolder = useAppStore((s) => s.toggleFolder);
   const addTab = useAppStore((s) => s.addTab);
   const setEditingConnection = useAppStore((s) => s.setEditingConnection);
+  const deleteConnection = useAppStore((s) => s.deleteConnection);
 
   const handleConnect = useCallback(
     (connection: SavedConnection) => {
@@ -132,6 +168,13 @@ export function ConnectionList() {
       setEditingConnection(connectionId);
     },
     [setEditingConnection]
+  );
+
+  const handleDelete = useCallback(
+    (connectionId: string) => {
+      deleteConnection(connectionId);
+    },
+    [deleteConnection]
   );
 
   const handleNewConnection = useCallback(() => {
@@ -164,6 +207,7 @@ export function ConnectionList() {
             onToggle={toggleFolder}
             onConnect={handleConnect}
             onEdit={handleEdit}
+            onDelete={handleDelete}
             depth={0}
           />
         ))}
@@ -174,6 +218,7 @@ export function ConnectionList() {
             depth={0}
             onConnect={handleConnect}
             onEdit={handleEdit}
+            onDelete={handleDelete}
           />
         ))}
       </div>
