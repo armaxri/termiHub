@@ -44,6 +44,8 @@ interface AppState {
   setEditingConnection: (connectionId: string | null, folderId?: string | null) => void;
   addFolder: (folder: ConnectionFolder) => void;
   deleteFolder: (folderId: string) => void;
+  duplicateConnection: (connectionId: string) => void;
+  moveConnectionToFolder: (connectionId: string, folderId: string | null) => void;
 
   // File browser / SFTP
   fileEntries: FileEntry[];
@@ -308,6 +310,36 @@ export const useAppStore = create<AppState>((set) => {
       removeFolder(folderId).catch((err) =>
         console.error("Failed to persist folder deletion:", err)
       );
+    },
+
+    duplicateConnection: (connectionId) => {
+      const state = useAppStore.getState();
+      const original = state.connections.find((c) => c.id === connectionId);
+      if (!original) return;
+      const duplicate: SavedConnection = {
+        ...original,
+        id: `conn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        name: `Copy of ${original.name}`,
+      };
+      set((s) => ({ connections: [...s.connections, duplicate] }));
+      persistConnection(duplicate).catch((err) =>
+        console.error("Failed to persist duplicated connection:", err)
+      );
+    },
+
+    moveConnectionToFolder: (connectionId, folderId) => {
+      set((state) => {
+        const connections = state.connections.map((c) =>
+          c.id === connectionId ? { ...c, folderId } : c
+        );
+        const moved = connections.find((c) => c.id === connectionId);
+        if (moved) {
+          persistConnection(moved).catch((err) =>
+            console.error("Failed to persist connection move:", err)
+          );
+        }
+        return { connections };
+      });
     },
 
     // File browser / SFTP

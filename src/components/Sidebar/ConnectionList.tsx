@@ -1,5 +1,16 @@
 import { useState, useCallback } from "react";
-import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import * as ContextMenu from "@radix-ui/react-context-menu";
+import {
+  DndContext,
+  DragOverlay,
+  useDraggable,
+  useDroppable,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+  DragStartEvent,
+} from "@dnd-kit/core";
 import {
   ChevronRight,
   ChevronDown,
@@ -13,6 +24,7 @@ import {
   Play,
   Pencil,
   Trash2,
+  Copy,
   Download,
   Upload,
   Check,
@@ -100,6 +112,7 @@ interface TreeNodeProps {
   onConnect: (connection: SavedConnection) => void;
   onEdit: (connectionId: string) => void;
   onDelete: (connectionId: string) => void;
+  onDuplicate: (connectionId: string) => void;
   onDeleteFolder: (folderId: string) => void;
   onCreateSubfolder: (parentId: string, name: string) => void;
   onNewConnectionInFolder: (folderId: string) => void;
@@ -116,6 +129,7 @@ function TreeNode({
   onConnect,
   onEdit,
   onDelete,
+  onDuplicate,
   onDeleteFolder,
   onCreateSubfolder,
   onNewConnectionInFolder,
@@ -124,12 +138,17 @@ function TreeNode({
   const [creatingSubfolder, setCreatingSubfolder] = useState(false);
   const Chevron = folder.isExpanded ? ChevronDown : ChevronRight;
 
+  const { setNodeRef, isOver } = useDroppable({
+    id: folder.id,
+    data: { type: "folder" },
+  });
+
   return (
-    <div className="connection-tree__node">
-      <DropdownMenu.Root>
-        <DropdownMenu.Trigger asChild>
+    <div className="connection-tree__node" ref={setNodeRef}>
+      <ContextMenu.Root>
+        <ContextMenu.Trigger asChild>
           <button
-            className="connection-tree__folder"
+            className={`connection-tree__folder${isOver ? " connection-tree__folder--drop-over" : ""}`}
             onClick={() => onToggle(folder.id)}
             style={{ paddingLeft: `${depth * 16 + 8}px` }}
           >
@@ -137,31 +156,31 @@ function TreeNode({
             <Folder size={16} />
             <span className="connection-tree__label">{folder.name}</span>
           </button>
-        </DropdownMenu.Trigger>
-        <DropdownMenu.Portal>
-          <DropdownMenu.Content className="context-menu__content" sideOffset={4}>
-            <DropdownMenu.Item
+        </ContextMenu.Trigger>
+        <ContextMenu.Portal>
+          <ContextMenu.Content className="context-menu__content">
+            <ContextMenu.Item
               className="context-menu__item"
               onSelect={() => onNewConnectionInFolder(folder.id)}
             >
               <Plus size={14} /> New Connection
-            </DropdownMenu.Item>
-            <DropdownMenu.Item
+            </ContextMenu.Item>
+            <ContextMenu.Item
               className="context-menu__item"
               onSelect={() => setCreatingSubfolder(true)}
             >
               <FolderPlus size={14} /> New Subfolder
-            </DropdownMenu.Item>
-            <DropdownMenu.Separator className="context-menu__separator" />
-            <DropdownMenu.Item
+            </ContextMenu.Item>
+            <ContextMenu.Separator className="context-menu__separator" />
+            <ContextMenu.Item
               className="context-menu__item context-menu__item--danger"
               onSelect={() => onDeleteFolder(folder.id)}
             >
               <Trash2 size={14} /> Delete Folder
-            </DropdownMenu.Item>
-          </DropdownMenu.Content>
-        </DropdownMenu.Portal>
-      </DropdownMenu.Root>
+            </ContextMenu.Item>
+          </ContextMenu.Content>
+        </ContextMenu.Portal>
+      </ContextMenu.Root>
       {folder.isExpanded && (
         <div className="connection-tree__children">
           {creatingSubfolder && (
@@ -186,6 +205,7 @@ function TreeNode({
               onConnect={onConnect}
               onEdit={onEdit}
               onDelete={onDelete}
+              onDuplicate={onDuplicate}
               onDeleteFolder={onDeleteFolder}
               onCreateSubfolder={onCreateSubfolder}
               onNewConnectionInFolder={onNewConnectionInFolder}
@@ -200,6 +220,7 @@ function TreeNode({
               onConnect={onConnect}
               onEdit={onEdit}
               onDelete={onDelete}
+              onDuplicate={onDuplicate}
             />
           ))}
         </div>
@@ -214,54 +235,70 @@ interface ConnectionItemProps {
   onConnect: (connection: SavedConnection) => void;
   onEdit: (connectionId: string) => void;
   onDelete: (connectionId: string) => void;
+  onDuplicate: (connectionId: string) => void;
 }
 
-function ConnectionItem({ connection, depth, onConnect, onEdit, onDelete }: ConnectionItemProps) {
+function ConnectionItem({ connection, depth, onConnect, onEdit, onDelete, onDuplicate }: ConnectionItemProps) {
   const Icon = TYPE_ICONS[connection.config.type];
 
+  const { attributes, listeners, setNodeRef: setDragRef, isDragging } = useDraggable({
+    id: connection.id,
+    data: { type: "connection", connection },
+  });
+
   return (
-    <DropdownMenu.Root>
-      <DropdownMenu.Trigger asChild>
+    <ContextMenu.Root>
+      <ContextMenu.Trigger asChild>
         <button
-          className="connection-tree__item"
+          ref={setDragRef}
+          className={`connection-tree__item${isDragging ? " connection-tree__item--dragging" : ""}`}
           style={{ paddingLeft: `${depth * 16 + 8}px` }}
           onDoubleClick={() => onConnect(connection)}
           title={`Double-click to connect: ${connection.name}`}
+          {...attributes}
+          {...listeners}
         >
           <Icon size={16} />
           <span className="connection-tree__label">{connection.name}</span>
           <span className="connection-tree__type">{connection.config.type}</span>
         </button>
-      </DropdownMenu.Trigger>
-      <DropdownMenu.Portal>
-        <DropdownMenu.Content className="context-menu__content" sideOffset={4}>
-          <DropdownMenu.Item
+      </ContextMenu.Trigger>
+      <ContextMenu.Portal>
+        <ContextMenu.Content className="context-menu__content">
+          <ContextMenu.Item
             className="context-menu__item"
             onSelect={() => onConnect(connection)}
           >
             <Play size={14} /> Connect
-          </DropdownMenu.Item>
-          <DropdownMenu.Item
+          </ContextMenu.Item>
+          <ContextMenu.Item
             className="context-menu__item"
             onSelect={() => onEdit(connection.id)}
           >
             <Pencil size={14} /> Edit
-          </DropdownMenu.Item>
-          <DropdownMenu.Separator className="context-menu__separator" />
-          <DropdownMenu.Item
+          </ContextMenu.Item>
+          <ContextMenu.Item
+            className="context-menu__item"
+            onSelect={() => onDuplicate(connection.id)}
+          >
+            <Copy size={14} /> Duplicate
+          </ContextMenu.Item>
+          <ContextMenu.Separator className="context-menu__separator" />
+          <ContextMenu.Item
             className="context-menu__item context-menu__item--danger"
             onSelect={() => onDelete(connection.id)}
           >
             <Trash2 size={14} /> Delete
-          </DropdownMenu.Item>
-        </DropdownMenu.Content>
-      </DropdownMenu.Portal>
-    </DropdownMenu.Root>
+          </ContextMenu.Item>
+        </ContextMenu.Content>
+      </ContextMenu.Portal>
+    </ContextMenu.Root>
   );
 }
 
 export function ConnectionList() {
   const [creatingFolder, setCreatingFolder] = useState(false);
+  const [draggingConnection, setDraggingConnection] = useState<SavedConnection | null>(null);
   const folders = useAppStore((s) => s.folders);
   const connections = useAppStore((s) => s.connections);
   const toggleFolder = useAppStore((s) => s.toggleFolder);
@@ -271,6 +308,13 @@ export function ConnectionList() {
   const deleteFolder = useAppStore((s) => s.deleteFolder);
   const addFolder = useAppStore((s) => s.addFolder);
   const loadFromBackend = useAppStore((s) => s.loadFromBackend);
+  const duplicateConnection = useAppStore((s) => s.duplicateConnection);
+  const moveConnectionToFolder = useAppStore((s) => s.moveConnectionToFolder);
+
+  const pointerSensor = useSensor(PointerSensor, {
+    activationConstraint: { distance: 8 },
+  });
+  const sensors = useSensors(pointerSensor);
 
   const handleConnect = useCallback(
     (connection: SavedConnection) => {
@@ -291,6 +335,13 @@ export function ConnectionList() {
       deleteConnection(connectionId);
     },
     [deleteConnection]
+  );
+
+  const handleDuplicate = useCallback(
+    (connectionId: string) => {
+      duplicateConnection(connectionId);
+    },
+    [duplicateConnection]
   );
 
   const handleDeleteFolder = useCallback(
@@ -352,6 +403,29 @@ export function ConnectionList() {
     }
   }, [loadFromBackend]);
 
+  const handleDragStart = useCallback((event: DragStartEvent) => {
+    const conn = event.active.data.current?.connection as SavedConnection | undefined;
+    setDraggingConnection(conn ?? null);
+  }, []);
+
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      setDraggingConnection(null);
+      const { active, over } = event;
+      if (!over) return;
+
+      const connectionId = active.id as string;
+      const overId = over.id as string;
+
+      if (overId === "root") {
+        moveConnectionToFolder(connectionId, null);
+      } else if (over.data.current?.type === "folder") {
+        moveConnectionToFolder(connectionId, overId);
+      }
+    },
+    [moveConnectionToFolder]
+  );
+
   const rootFolders = folders.filter((f) => f.parentId === null);
   const rootConnections = connections.filter((c) => c.folderId === null);
 
@@ -387,46 +461,125 @@ export function ConnectionList() {
           <Plus size={16} />
         </button>
       </div>
-      <div className="connection-list__tree">
-        {creatingFolder && (
-          <InlineFolderInput
-            depth={0}
-            onConfirm={(name) => {
-              handleCreateFolder(null, name);
-              setCreatingFolder(false);
-            }}
-            onCancel={() => setCreatingFolder(false)}
-          />
-        )}
-        {rootFolders.map((folder) => (
-          <TreeNode
-            key={folder.id}
-            folder={folder}
-            connections={connections.filter((c) => c.folderId === folder.id)}
-            childFolders={folders.filter((f) => f.parentId === folder.id)}
-            allFolders={folders}
-            allConnections={connections}
-            onToggle={toggleFolder}
-            onConnect={handleConnect}
-            onEdit={handleEdit}
-            onDelete={handleDelete}
-            onDeleteFolder={handleDeleteFolder}
-            onCreateSubfolder={handleCreateFolder}
-            onNewConnectionInFolder={handleNewConnectionInFolder}
-            depth={0}
-          />
-        ))}
-        {rootConnections.map((conn) => (
-          <ConnectionItem
-            key={conn.id}
-            connection={conn}
-            depth={0}
-            onConnect={handleConnect}
-            onEdit={handleEdit}
-            onDelete={handleDelete}
-          />
-        ))}
-      </div>
+      <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+        <RootDropZone
+          isCreatingFolder={creatingFolder}
+          onCreateFolder={(name) => {
+            handleCreateFolder(null, name);
+            setCreatingFolder(false);
+          }}
+          onCancelCreateFolder={() => setCreatingFolder(false)}
+          rootFolders={rootFolders}
+          rootConnections={rootConnections}
+          folders={folders}
+          connections={connections}
+          onToggle={toggleFolder}
+          onConnect={handleConnect}
+          onEdit={handleEdit}
+          onDelete={handleDelete}
+          onDuplicate={handleDuplicate}
+          onDeleteFolder={handleDeleteFolder}
+          onCreateSubfolder={handleCreateFolder}
+          onNewConnectionInFolder={handleNewConnectionInFolder}
+        />
+        <DragOverlay>
+          {draggingConnection ? (
+            <div className="connection-tree__drag-overlay">
+              {(() => {
+                const DragIcon = TYPE_ICONS[draggingConnection.config.type];
+                return <DragIcon size={16} />;
+              })()}
+              <span>{draggingConnection.name}</span>
+            </div>
+          ) : null}
+        </DragOverlay>
+      </DndContext>
+    </div>
+  );
+}
+
+interface RootDropZoneProps {
+  isCreatingFolder: boolean;
+  onCreateFolder: (name: string) => void;
+  onCancelCreateFolder: () => void;
+  rootFolders: ConnectionFolder[];
+  rootConnections: SavedConnection[];
+  folders: ConnectionFolder[];
+  connections: SavedConnection[];
+  onToggle: (folderId: string) => void;
+  onConnect: (connection: SavedConnection) => void;
+  onEdit: (connectionId: string) => void;
+  onDelete: (connectionId: string) => void;
+  onDuplicate: (connectionId: string) => void;
+  onDeleteFolder: (folderId: string) => void;
+  onCreateSubfolder: (parentId: string, name: string) => void;
+  onNewConnectionInFolder: (folderId: string) => void;
+}
+
+function RootDropZone({
+  isCreatingFolder,
+  onCreateFolder,
+  onCancelCreateFolder,
+  rootFolders,
+  rootConnections,
+  folders,
+  connections,
+  onToggle,
+  onConnect,
+  onEdit,
+  onDelete,
+  onDuplicate,
+  onDeleteFolder,
+  onCreateSubfolder,
+  onNewConnectionInFolder,
+}: RootDropZoneProps) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: "root",
+    data: { type: "root" },
+  });
+
+  return (
+    <div
+      ref={setNodeRef}
+      className={`connection-list__tree${isOver ? " connection-tree__root-drop--over" : ""}`}
+    >
+      {isCreatingFolder && (
+        <InlineFolderInput
+          depth={0}
+          onConfirm={onCreateFolder}
+          onCancel={onCancelCreateFolder}
+        />
+      )}
+      {rootFolders.map((folder) => (
+        <TreeNode
+          key={folder.id}
+          folder={folder}
+          connections={connections.filter((c) => c.folderId === folder.id)}
+          childFolders={folders.filter((f) => f.parentId === folder.id)}
+          allFolders={folders}
+          allConnections={connections}
+          onToggle={onToggle}
+          onConnect={onConnect}
+          onEdit={onEdit}
+          onDelete={onDelete}
+          onDuplicate={onDuplicate}
+          onDeleteFolder={onDeleteFolder}
+          onCreateSubfolder={onCreateSubfolder}
+          onNewConnectionInFolder={onNewConnectionInFolder}
+          depth={0}
+        />
+      ))}
+      {rootConnections.map((conn) => (
+        <ConnectionItem
+          key={conn.id}
+          connection={conn}
+          depth={0}
+          onConnect={onConnect}
+          onEdit={onEdit}
+          onDelete={onDelete}
+          onDuplicate={onDuplicate}
+        />
+      ))}
     </div>
   );
 }
