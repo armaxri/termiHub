@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { TerminalTab, SplitPanel, ConnectionType } from "@/types/terminal";
+import { TerminalTab, SplitPanel, ConnectionType, ConnectionConfig } from "@/types/terminal";
 import { SavedConnection, ConnectionFolder, FileEntry } from "@/types/connection";
 import { MOCK_FOLDERS, MOCK_CONNECTIONS, MOCK_FILES } from "./mockData";
 
@@ -15,7 +15,7 @@ interface AppState {
   // Panels & Tabs
   panels: SplitPanel[];
   activePanelId: string | null;
-  addTab: (title: string, connectionType: ConnectionType, panelId?: string) => void;
+  addTab: (title: string, connectionType: ConnectionType, config?: ConnectionConfig, panelId?: string) => void;
   closeTab: (tabId: string, panelId: string) => void;
   setActiveTab: (tabId: string, panelId: string) => void;
   moveTab: (tabId: string, fromPanelId: string, toPanelId: string, newIndex: number) => void;
@@ -44,13 +44,14 @@ interface AppState {
 
 let tabCounter = 0;
 
-function createTab(title: string, connectionType: ConnectionType, panelId: string): TerminalTab {
+function createTab(title: string, connectionType: ConnectionType, config: ConnectionConfig, panelId: string): TerminalTab {
   tabCounter++;
   return {
     id: `tab-${tabCounter}`,
     sessionId: null,
     title,
     connectionType,
+    config,
     panelId,
     isActive: true,
   };
@@ -81,12 +82,13 @@ export const useAppStore = create<AppState>((set) => {
     panels: [initialPanel],
     activePanelId: initialPanel.id,
 
-    addTab: (title, connectionType, panelId) =>
+    addTab: (title, connectionType, config, panelId) =>
       set((state) => {
         const targetPanelId = panelId ?? state.activePanelId ?? state.panels[0]?.id;
         if (!targetPanelId) return state;
 
-        const newTab = createTab(title, connectionType, targetPanelId);
+        const defaultConfig: ConnectionConfig = config ?? { type: "local", config: { shellType: "zsh" } };
+        const newTab = createTab(title, connectionType, defaultConfig, targetPanelId);
         const panels = state.panels.map((panel) => {
           if (panel.id !== targetPanelId) return panel;
           const tabs = panel.tabs.map((t) => ({ ...t, isActive: false }));

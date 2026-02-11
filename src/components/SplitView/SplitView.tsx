@@ -29,6 +29,7 @@ export function SplitView() {
                 <Terminal
                   key={tab.id}
                   tabId={tab.id}
+                  config={tab.config}
                   isVisible={tab.id === panel.activeTabId}
                 />
               ))}

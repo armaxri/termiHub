@@ -1,10 +1,9 @@
 import { useCallback } from "react";
 import { useAppStore } from "@/store/appStore";
-import { ConnectionType } from "@/types/terminal";
+import { ConnectionType, ConnectionConfig } from "@/types/terminal";
 
 /**
  * Hook for terminal operations.
- * Phase 1: Uses mock local echo. Phase 2 will wire to Tauri backend.
  */
 export function useTerminal() {
   const addTab = useAppStore((s) => s.addTab);
@@ -12,8 +11,8 @@ export function useTerminal() {
   const setActiveTab = useAppStore((s) => s.setActiveTab);
 
   const openTerminal = useCallback(
-    (title: string, connectionType: ConnectionType, panelId?: string) => {
-      addTab(title, connectionType, panelId);
+    (title: string, connectionType: ConnectionType, config?: ConnectionConfig, panelId?: string) => {
+      addTab(title, connectionType, config, panelId);
     },
     [addTab]
   );
