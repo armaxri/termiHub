@@ -12,10 +12,13 @@ import {
   Play,
   Pencil,
   Trash2,
+  Download,
+  Upload,
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionType } from "@/types/terminal";
 import { SavedConnection, ConnectionFolder } from "@/types/connection";
+import { exportConnections, importConnections } from "@/services/storage";
 import "./ConnectionList.css";
 
 const TYPE_ICONS: Record<ConnectionType, typeof Terminal> = {
@@ -35,6 +38,7 @@ interface TreeNodeProps {
   onConnect: (connection: SavedConnection) => void;
   onEdit: (connectionId: string) => void;
   onDelete: (connectionId: string) => void;
+  onDeleteFolder: (folderId: string) => void;
   depth: number;
 }
 
@@ -48,21 +52,36 @@ function TreeNode({
   onConnect,
   onEdit,
   onDelete,
+  onDeleteFolder,
   depth,
 }: TreeNodeProps) {
   const Chevron = folder.isExpanded ? ChevronDown : ChevronRight;
 
   return (
     <div className="connection-tree__node">
-      <button
-        className="connection-tree__folder"
-        onClick={() => onToggle(folder.id)}
-        style={{ paddingLeft: `${depth * 16 + 8}px` }}
-      >
-        <Chevron size={16} className="connection-tree__chevron" />
-        <Folder size={16} />
-        <span className="connection-tree__label">{folder.name}</span>
-      </button>
+      <DropdownMenu.Root>
+        <DropdownMenu.Trigger asChild>
+          <button
+            className="connection-tree__folder"
+            onClick={() => onToggle(folder.id)}
+            style={{ paddingLeft: `${depth * 16 + 8}px` }}
+          >
+            <Chevron size={16} className="connection-tree__chevron" />
+            <Folder size={16} />
+            <span className="connection-tree__label">{folder.name}</span>
+          </button>
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Portal>
+          <DropdownMenu.Content className="context-menu__content" sideOffset={4}>
+            <DropdownMenu.Item
+              className="context-menu__item context-menu__item--danger"
+              onSelect={() => onDeleteFolder(folder.id)}
+            >
+              <Trash2 size={14} /> Delete Folder
+            </DropdownMenu.Item>
+          </DropdownMenu.Content>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>
       {folder.isExpanded && (
         <div className="connection-tree__children">
           {childFolders.map((child) => (
@@ -77,6 +96,7 @@ function TreeNode({
               onConnect={onConnect}
               onEdit={onEdit}
               onDelete={onDelete}
+              onDeleteFolder={onDeleteFolder}
               depth={depth + 1}
             />
           ))}
@@ -155,6 +175,8 @@ export function ConnectionList() {
   const addTab = useAppStore((s) => s.addTab);
   const setEditingConnection = useAppStore((s) => s.setEditingConnection);
   const deleteConnection = useAppStore((s) => s.deleteConnection);
+  const deleteFolder = useAppStore((s) => s.deleteFolder);
+  const loadFromBackend = useAppStore((s) => s.loadFromBackend);
 
   const handleConnect = useCallback(
     (connection: SavedConnection) => {
@@ -177,9 +199,49 @@ export function ConnectionList() {
     [deleteConnection]
   );
 
+  const handleDeleteFolder = useCallback(
+    (folderId: string) => {
+      deleteFolder(folderId);
+    },
+    [deleteFolder]
+  );
+
   const handleNewConnection = useCallback(() => {
     setEditingConnection("new");
   }, [setEditingConnection]);
+
+  const handleExport = useCallback(async () => {
+    try {
+      const json = await exportConnections();
+      const blob = new Blob([json], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "termihub-connections.json";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Failed to export connections:", err);
+    }
+  }, []);
+
+  const handleImport = useCallback(() => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json";
+    input.onchange = async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+      try {
+        const json = await file.text();
+        await importConnections(json);
+        await loadFromBackend();
+      } catch (err) {
+        console.error("Failed to import connections:", err);
+      }
+    };
+    input.click();
+  }, [loadFromBackend]);
 
   const rootFolders = folders.filter((f) => f.parentId === null);
   const rootConnections = connections.filter((c) => c.folderId === null);
@@ -187,6 +249,20 @@ export function ConnectionList() {
   return (
     <div className="connection-list">
       <div className="connection-list__header">
+        <button
+          className="connection-list__add-btn"
+          onClick={handleImport}
+          title="Import Connections"
+        >
+          <Upload size={16} />
+        </button>
+        <button
+          className="connection-list__add-btn"
+          onClick={handleExport}
+          title="Export Connections"
+        >
+          <Download size={16} />
+        </button>
         <button
           className="connection-list__add-btn"
           onClick={handleNewConnection}
@@ -208,6 +284,7 @@ export function ConnectionList() {
             onConnect={handleConnect}
             onEdit={handleEdit}
             onDelete={handleDelete}
+            onDeleteFolder={handleDeleteFolder}
             depth={0}
           />
         ))}

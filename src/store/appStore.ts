@@ -1,7 +1,14 @@
 import { create } from "zustand";
 import { TerminalTab, SplitPanel, ConnectionType, ConnectionConfig } from "@/types/terminal";
 import { SavedConnection, ConnectionFolder, FileEntry } from "@/types/connection";
-import { MOCK_FOLDERS, MOCK_CONNECTIONS, MOCK_FILES } from "./mockData";
+import {
+  loadConnections,
+  persistConnection,
+  removeConnection,
+  persistFolder,
+  removeFolder,
+} from "@/services/storage";
+import { MOCK_FILES } from "./mockData";
 
 export type SidebarView = "connections" | "files" | "settings";
 
@@ -28,12 +35,14 @@ interface AppState {
   folders: ConnectionFolder[];
   connections: SavedConnection[];
   editingConnectionId: string | null;
+  loadFromBackend: () => Promise<void>;
   toggleFolder: (folderId: string) => void;
   addConnection: (connection: SavedConnection) => void;
   updateConnection: (connection: SavedConnection) => void;
   deleteConnection: (connectionId: string) => void;
   setEditingConnection: (connectionId: string | null) => void;
   addFolder: (folder: ConnectionFolder) => void;
+  deleteFolder: (folderId: string) => void;
 
   // File browser
   fileEntries: FileEntry[];
@@ -196,38 +205,101 @@ export const useAppStore = create<AppState>((set) => {
 
     setActivePanel: (panelId) => set({ activePanelId: panelId }),
 
-    // Connections
-    folders: MOCK_FOLDERS,
-    connections: MOCK_CONNECTIONS,
+    // Connections — initialized empty, loaded from backend on mount
+    folders: [],
+    connections: [],
     editingConnectionId: null,
 
-    toggleFolder: (folderId) =>
-      set((state) => ({
-        folders: state.folders.map((f) =>
+    loadFromBackend: async () => {
+      try {
+        const { connections, folders } = await loadConnections();
+        set({ connections, folders });
+      } catch (err) {
+        console.error("Failed to load connections from backend:", err);
+      }
+    },
+
+    toggleFolder: (folderId) => {
+      set((state) => {
+        const folders = state.folders.map((f) =>
           f.id === folderId ? { ...f, isExpanded: !f.isExpanded } : f
-        ),
-      })),
+        );
+        // Persist the toggled folder
+        const toggled = folders.find((f) => f.id === folderId);
+        if (toggled) {
+          persistFolder(toggled).catch((err) =>
+            console.error("Failed to persist folder toggle:", err)
+          );
+        }
+        return { folders };
+      });
+    },
 
-    addConnection: (connection) =>
-      set((state) => ({ connections: [...state.connections, connection] })),
+    addConnection: (connection) => {
+      set((state) => ({ connections: [...state.connections, connection] }));
+      persistConnection(connection).catch((err) =>
+        console.error("Failed to persist new connection:", err)
+      );
+    },
 
-    updateConnection: (connection) =>
+    updateConnection: (connection) => {
       set((state) => ({
         connections: state.connections.map((c) =>
           c.id === connection.id ? connection : c
         ),
-      })),
+      }));
+      persistConnection(connection).catch((err) =>
+        console.error("Failed to persist connection update:", err)
+      );
+    },
 
-    deleteConnection: (connectionId) =>
+    deleteConnection: (connectionId) => {
       set((state) => ({
         connections: state.connections.filter((c) => c.id !== connectionId),
-      })),
+      }));
+      removeConnection(connectionId).catch((err) =>
+        console.error("Failed to persist connection deletion:", err)
+      );
+    },
 
     setEditingConnection: (connectionId) =>
       set({ editingConnectionId: connectionId }),
 
-    addFolder: (folder) =>
-      set((state) => ({ folders: [...state.folders, folder] })),
+    addFolder: (folder) => {
+      set((state) => ({ folders: [...state.folders, folder] }));
+      persistFolder(folder).catch((err) =>
+        console.error("Failed to persist new folder:", err)
+      );
+    },
+
+    deleteFolder: (folderId) => {
+      set((state) => {
+        // Move child connections to root
+        const connections = state.connections.map((c) =>
+          c.folderId === folderId ? { ...c, folderId: null } : c
+        );
+        // Reparent child folders
+        const deletedFolder = state.folders.find((f) => f.id === folderId);
+        const parentId = deletedFolder?.parentId ?? null;
+        const folders = state.folders
+          .map((f) => (f.parentId === folderId ? { ...f, parentId } : f))
+          .filter((f) => f.id !== folderId);
+
+        // Persist moved connections
+        connections
+          .filter((c) => c.folderId === null && state.connections.find((sc) => sc.id === c.id)?.folderId === folderId)
+          .forEach((c) => {
+            persistConnection(c).catch((err) =>
+              console.error("Failed to persist connection move:", err)
+            );
+          });
+
+        return { folders, connections };
+      });
+      removeFolder(folderId).catch((err) =>
+        console.error("Failed to persist folder deletion:", err)
+      );
+    },
 
     // File browser
     fileEntries: MOCK_FILES,

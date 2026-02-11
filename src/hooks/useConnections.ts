@@ -4,7 +4,6 @@ import { SavedConnection, ConnectionFolder } from "@/types/connection";
 
 /**
  * Hook for connection management operations.
- * Phase 1: Uses in-memory store. Phase 4 will add persistence.
  */
 export function useConnections() {
   const connections = useAppStore((s) => s.connections);
@@ -13,6 +12,7 @@ export function useConnections() {
   const updateConnection = useAppStore((s) => s.updateConnection);
   const deleteConnection = useAppStore((s) => s.deleteConnection);
   const addFolder = useAppStore((s) => s.addFolder);
+  const deleteFolder = useAppStore((s) => s.deleteFolder);
   const toggleFolder = useAppStore((s) => s.toggleFolder);
 
   const createConnection = useCallback(
@@ -42,6 +42,7 @@ export function useConnections() {
     updateConnection,
     deleteConnection,
     createFolder,
+    deleteFolder,
     toggleFolder,
   };
 }
