@@ -15,6 +15,7 @@ pub enum TerminalError {
     #[error("Failed to resize terminal: {0}")]
     ResizeFailed(String),
 
+    #[allow(dead_code)]
     #[error("Connection failed: {0}")]
     ConnectionFailed(String),
 

@@ -1,5 +1,6 @@
+use std::sync::mpsc;
+
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
 
 /// Trait for all terminal backends (PTY, serial, SSH, telnet).
 pub trait TerminalBackend: Send {
@@ -94,6 +95,7 @@ pub struct SerialConfig {
 }
 
 /// Channel sender type for output data from backends.
-pub type OutputSender = mpsc::UnboundedSender<Vec<u8>>;
-/// Channel receiver type for output data from backends.
-pub type OutputReceiver = mpsc::UnboundedReceiver<Vec<u8>>;
+pub type OutputSender = mpsc::Sender<Vec<u8>>;
+/// Channel receiver type for output data from backends (used in future phases).
+#[allow(dead_code)]
+pub type OutputReceiver = mpsc::Receiver<Vec<u8>>;

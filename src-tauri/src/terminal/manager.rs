@@ -1,8 +1,8 @@
 use std::collections::HashMap;
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
 use tauri::{AppHandle, Emitter};
-use tokio::sync::mpsc;
 use tracing::{error, info};
 
 use crate::terminal::backend::{
@@ -33,7 +33,7 @@ impl TerminalManager {
         app_handle: AppHandle,
     ) -> Result<String, TerminalError> {
         let session_id = uuid::Uuid::new_v4().to_string();
-        let (output_tx, output_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let (output_tx, output_rx) = mpsc::channel::<Vec<u8>>();
 
         let (backend, title) = match &config {
             ConnectionConfig::Local(cfg) => {
@@ -126,7 +126,8 @@ impl TerminalManager {
         Ok(())
     }
 
-    /// List all active sessions.
+    /// List all active sessions (used in future phases).
+    #[allow(dead_code)]
     pub fn list_sessions(&self) -> Vec<SessionInfo> {
         let sessions = self.sessions.lock().unwrap();
         sessions
@@ -139,17 +140,17 @@ impl TerminalManager {
             .collect()
     }
 
-    /// Spawn a tokio task that reads output from a backend and emits Tauri events.
+    /// Spawn a thread that reads output from a backend and emits Tauri events.
     fn spawn_output_reader(
         &self,
         session_id: String,
-        mut output_rx: mpsc::UnboundedReceiver<Vec<u8>>,
+        output_rx: mpsc::Receiver<Vec<u8>>,
         app_handle: AppHandle,
     ) {
         let sessions = self.sessions.clone();
 
-        tokio::spawn(async move {
-            while let Some(data) = output_rx.recv().await {
+        std::thread::spawn(move || {
+            while let Ok(data) = output_rx.recv() {
                 let event = TerminalOutputEvent {
                     session_id: session_id.clone(),
                     data,
