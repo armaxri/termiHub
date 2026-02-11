@@ -47,7 +47,7 @@ pub struct TerminalExitEvent {
 }
 
 /// Connection configuration matching the frontend TypeScript types.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "config")]
 pub enum ConnectionConfig {
     #[serde(rename = "local")]
@@ -60,13 +60,13 @@ pub enum ConnectionConfig {
     Serial(SerialConfig),
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalShellConfig {
     pub shell_type: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SshConfig {
     pub host: String,
@@ -77,13 +77,13 @@ pub struct SshConfig {
     pub key_path: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TelnetConfig {
     pub host: String,
     pub port: u16,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SerialConfig {
     pub port: String,

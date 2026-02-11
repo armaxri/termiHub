@@ -32,3 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Terminal output streaming via Tauri events
 - Process exit detection with "[Process exited]" indicator
 - Error display in terminal when connection fails
+- Connection persistence: saved connections and folders survive app restarts
+- Connection import/export as JSON files
+- Folder deletion with automatic reparenting of child connections and subfolders
+- Context menu on folders with delete option
