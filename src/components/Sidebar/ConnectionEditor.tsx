@@ -21,15 +21,21 @@ const TYPE_OPTIONS: { value: ConnectionType; label: string }[] = [
 export function ConnectionEditor() {
   const editingConnectionId = useAppStore((s) => s.editingConnectionId);
   const connections = useAppStore((s) => s.connections);
+  const folders = useAppStore((s) => s.folders);
   const addConnection = useAppStore((s) => s.addConnection);
   const updateConnection = useAppStore((s) => s.updateConnection);
   const setEditingConnection = useAppStore((s) => s.setEditingConnection);
+
+  const editingConnectionFolderId = useAppStore((s) => s.editingConnectionFolderId);
 
   const existingConnection = editingConnectionId !== "new"
     ? connections.find((c) => c.id === editingConnectionId)
     : undefined;
 
   const [name, setName] = useState(existingConnection?.name ?? "");
+  const [folderId, setFolderId] = useState<string | null>(
+    existingConnection?.folderId ?? editingConnectionFolderId ?? null
+  );
   const [connectionConfig, setConnectionConfig] = useState<ConnectionConfig>(
     existingConnection?.config ?? DEFAULT_CONFIGS.local
   );
@@ -42,17 +48,17 @@ export function ConnectionEditor() {
     if (!name.trim()) return;
 
     if (existingConnection) {
-      updateConnection({ ...existingConnection, name, config: connectionConfig });
+      updateConnection({ ...existingConnection, name, config: connectionConfig, folderId });
     } else {
       addConnection({
         id: `conn-${Date.now()}`,
         name,
         config: connectionConfig,
-        folderId: null,
+        folderId,
       });
     }
     setEditingConnection(null);
-  }, [name, connectionConfig, existingConnection, addConnection, updateConnection, setEditingConnection]);
+  }, [name, folderId, connectionConfig, existingConnection, addConnection, updateConnection, setEditingConnection]);
 
   const handleCancel = useCallback(() => {
     setEditingConnection(null);
@@ -75,6 +81,18 @@ export function ConnectionEditor() {
             placeholder="Connection name"
             autoFocus
           />
+        </label>
+        <label className="settings-form__field">
+          <span className="settings-form__label">Folder</span>
+          <select
+            value={folderId ?? ""}
+            onChange={(e) => setFolderId(e.target.value || null)}
+          >
+            <option value="">(Root)</option>
+            {folders.map((f) => (
+              <option key={f.id} value={f.id}>{f.name}</option>
+            ))}
+          </select>
         </label>
         <label className="settings-form__field">
           <span className="settings-form__label">Type</span>

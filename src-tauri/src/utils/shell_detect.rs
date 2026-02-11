@@ -45,8 +45,8 @@ pub fn detect_available_shells() -> Vec<String> {
 /// Resolve a shell name to the executable path.
 pub fn shell_to_command(shell: &str) -> (&str, Vec<&str>) {
     match shell {
-        "zsh" => ("zsh", vec![]),
-        "bash" => ("bash", vec![]),
+        "zsh" => ("zsh", vec!["--login"]),
+        "bash" => ("bash", vec!["--login"]),
         "sh" => ("sh", vec![]),
         "cmd" => ("cmd.exe", vec![]),
         "powershell" => ("powershell.exe", vec!["-NoLogo"]),

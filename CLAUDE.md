@@ -400,6 +400,7 @@ sequenceDiagram
    - Context menus
    - Better error messages
    - Loading states
+   - **TODO**: Filter shell type dropdown in ConnectionSettings to only show shells available on the current platform (use `listAvailableShells()` API which already exists in the backend). Currently `ConnectionSettings.tsx` hardcodes all 5 shell types regardless of OS.
 
 3. **Cross-Platform Testing**
    - Test on Windows, Linux, macOS

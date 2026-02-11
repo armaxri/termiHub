@@ -115,3 +115,41 @@
   background-color: var(--border-primary);
   margin: var(--spacing-xs) 0;
 }
+
+/* Inline folder editing */
+.connection-tree__folder--editing {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  height: 22px;
+  padding-right: var(--spacing-xs);
+}
+
+.connection-tree__inline-input {
+  flex: 1;
+  min-width: 0;
+  height: 18px;
+  padding: 0 4px;
+  border: 1px solid var(--accent-color);
+  border-radius: 2px;
+  background-color: var(--bg-input, var(--bg-secondary));
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  outline: none;
+}
+
+.connection-tree__inline-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 2px;
+  color: var(--text-secondary);
+}
+
+.connection-tree__inline-btn:hover {
+  color: var(--text-primary);
+  background-color: var(--bg-hover);
+}

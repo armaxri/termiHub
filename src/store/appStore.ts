@@ -35,12 +35,13 @@ interface AppState {
   folders: ConnectionFolder[];
   connections: SavedConnection[];
   editingConnectionId: string | null;
+  editingConnectionFolderId: string | null;
   loadFromBackend: () => Promise<void>;
   toggleFolder: (folderId: string) => void;
   addConnection: (connection: SavedConnection) => void;
   updateConnection: (connection: SavedConnection) => void;
   deleteConnection: (connectionId: string) => void;
-  setEditingConnection: (connectionId: string | null) => void;
+  setEditingConnection: (connectionId: string | null, folderId?: string | null) => void;
   addFolder: (folder: ConnectionFolder) => void;
   deleteFolder: (folderId: string) => void;
 
@@ -209,6 +210,7 @@ export const useAppStore = create<AppState>((set) => {
     folders: [],
     connections: [],
     editingConnectionId: null,
+    editingConnectionFolderId: null,
 
     loadFromBackend: async () => {
       try {
@@ -262,8 +264,8 @@ export const useAppStore = create<AppState>((set) => {
       );
     },
 
-    setEditingConnection: (connectionId) =>
-      set({ editingConnectionId: connectionId }),
+    setEditingConnection: (connectionId, folderId) =>
+      set({ editingConnectionId: connectionId, editingConnectionFolderId: folderId ?? null }),
 
     addFolder: (folder) => {
       set((state) => ({ folders: [...state.folders, folder] }));

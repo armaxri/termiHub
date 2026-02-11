@@ -36,6 +36,10 @@ impl LocalShell {
             command.arg(arg);
         }
 
+        // Ensure the PTY advertises proper terminal capabilities
+        command.env("TERM", "xterm-256color");
+        command.env("COLORTERM", "truecolor");
+
         let child = pty_pair
             .slave
             .spawn_command(command)
