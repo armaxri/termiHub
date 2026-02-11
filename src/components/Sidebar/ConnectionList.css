@@ -153,3 +153,32 @@
   color: var(--text-primary);
   background-color: var(--bg-hover);
 }
+
+/* Drag-and-drop feedback */
+.connection-tree__item--dragging {
+  opacity: 0.4;
+}
+
+.connection-tree__folder--drop-over {
+  background-color: var(--bg-hover);
+  outline: 1px dashed var(--accent-color);
+  outline-offset: -1px;
+}
+
+.connection-tree__root-drop--over {
+  background-color: color-mix(in srgb, var(--bg-hover) 50%, transparent);
+}
+
+.connection-tree__drag-overlay {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: 4px 8px;
+  background-color: var(--bg-dropdown);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  white-space: nowrap;
+}

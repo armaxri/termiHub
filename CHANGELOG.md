@@ -42,5 +42,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - File permissions display (rwx) for remote entries
 - Context menus on files (Download, Rename, Delete) and directories (Open, Rename, Delete)
 
+- Right-click context menus on connections (Connect, Edit, Duplicate, Delete) and folders (New Connection, New Subfolder, Delete)
+- Duplicate connection via context menu (creates "Copy of <name>" in the same folder)
+- Drag-and-drop connections between folders to reorganize them
+- Double-click a connection to connect directly
+
 ### Changed
+- Connection and folder context menus now open on right-click instead of left-click
 - Shell type dropdown in connection editor now only shows shells available on the current platform
