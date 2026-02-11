@@ -24,4 +24,5 @@ export interface FileEntry {
   isDirectory: boolean;
   size: number;
   modified: string;
+  permissions: string | null;
 }

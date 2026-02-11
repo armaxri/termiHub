@@ -36,3 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Connection import/export as JSON files
 - Folder deletion with automatic reparenting of child connections and subfolders
 - Context menu on folders with delete option
+- SSH file browser with SFTP: browse, upload, download, rename, and delete remote files
+- SFTP connection picker to connect to any saved SSH connection
+- Directory creation via the file browser toolbar
+- File permissions display (rwx) for remote entries
+- Context menus on files (Download, Rename, Delete) and directories (Open, Rename, Delete)

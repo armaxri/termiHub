@@ -3,8 +3,8 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import { SessionId, ConnectionConfig } from "@/types/terminal";
-import { SavedConnection, ConnectionFolder } from "@/types/connection";
+import { SessionId, ConnectionConfig, SshConfig } from "@/types/terminal";
+import { SavedConnection, ConnectionFolder, FileEntry } from "@/types/connection";
 
 // --- Terminal commands ---
 
@@ -78,4 +78,46 @@ export async function exportConnections(): Promise<string> {
 /** Import connections from a JSON string. Returns count imported. */
 export async function importConnections(json: string): Promise<number> {
   return await invoke<number>("import_connections", { json });
+}
+
+// --- SFTP commands ---
+
+/** Open a new SFTP session. Returns session ID. */
+export async function sftpOpen(config: SshConfig): Promise<string> {
+  return await invoke<string>("sftp_open", { config });
+}
+
+/** Close an SFTP session. */
+export async function sftpClose(sessionId: string): Promise<void> {
+  await invoke("sftp_close", { sessionId });
+}
+
+/** List directory contents via SFTP. */
+export async function sftpListDir(sessionId: string, path: string): Promise<FileEntry[]> {
+  return await invoke<FileEntry[]>("sftp_list_dir", { sessionId, path });
+}
+
+/** Download a remote file to a local path. Returns bytes transferred. */
+export async function sftpDownload(sessionId: string, remotePath: string, localPath: string): Promise<number> {
+  return await invoke<number>("sftp_download", { sessionId, remotePath, localPath });
+}
+
+/** Upload a local file to a remote path. Returns bytes transferred. */
+export async function sftpUpload(sessionId: string, localPath: string, remotePath: string): Promise<number> {
+  return await invoke<number>("sftp_upload", { sessionId, localPath, remotePath });
+}
+
+/** Create a directory on the remote host. */
+export async function sftpMkdir(sessionId: string, path: string): Promise<void> {
+  await invoke("sftp_mkdir", { sessionId, path });
+}
+
+/** Delete a file or directory on the remote host. */
+export async function sftpDelete(sessionId: string, path: string, isDirectory: boolean): Promise<void> {
+  await invoke("sftp_delete", { sessionId, path, isDirectory });
+}
+
+/** Rename a file or directory on the remote host. */
+export async function sftpRename(sessionId: string, oldPath: string, newPath: string): Promise<void> {
+  await invoke("sftp_rename", { sessionId, oldPath, newPath });
 }

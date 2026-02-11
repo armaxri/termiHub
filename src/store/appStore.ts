@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { TerminalTab, SplitPanel, ConnectionType, ConnectionConfig } from "@/types/terminal";
+import { TerminalTab, SplitPanel, ConnectionType, ConnectionConfig, SshConfig } from "@/types/terminal";
 import { SavedConnection, ConnectionFolder, FileEntry } from "@/types/connection";
 import {
   loadConnections,
@@ -8,7 +8,7 @@ import {
   persistFolder,
   removeFolder,
 } from "@/services/storage";
-import { MOCK_FILES } from "./mockData";
+import { sftpOpen, sftpClose, sftpListDir } from "@/services/api";
 
 export type SidebarView = "connections" | "files" | "settings";
 
@@ -45,11 +45,18 @@ interface AppState {
   addFolder: (folder: ConnectionFolder) => void;
   deleteFolder: (folderId: string) => void;
 
-  // File browser
+  // File browser / SFTP
   fileEntries: FileEntry[];
   currentPath: string;
+  sftpSessionId: string | null;
+  sftpLoading: boolean;
+  sftpError: string | null;
   setCurrentPath: (path: string) => void;
   setFileEntries: (entries: FileEntry[]) => void;
+  connectSftp: (config: SshConfig) => Promise<void>;
+  disconnectSftp: () => Promise<void>;
+  navigateSftp: (path: string) => Promise<void>;
+  refreshSftp: () => Promise<void>;
 }
 
 let tabCounter = 0;
@@ -303,11 +310,89 @@ export const useAppStore = create<AppState>((set) => {
       );
     },
 
-    // File browser
-    fileEntries: MOCK_FILES,
-    currentPath: "/home/pi",
+    // File browser / SFTP
+    fileEntries: [],
+    currentPath: "/",
+    sftpSessionId: null,
+    sftpLoading: false,
+    sftpError: null,
 
     setCurrentPath: (path) => set({ currentPath: path }),
     setFileEntries: (entries) => set({ fileEntries: entries }),
+
+    connectSftp: async (config: SshConfig) => {
+      set({ sftpLoading: true, sftpError: null });
+      try {
+        const sessionId = await sftpOpen(config);
+        const homePath = `/home/${config.username}`;
+        let entries: FileEntry[];
+        let activePath = homePath;
+        try {
+          entries = await sftpListDir(sessionId, homePath);
+        } catch {
+          // Fall back to root if home dir doesn't exist
+          activePath = "/";
+          entries = await sftpListDir(sessionId, "/");
+        }
+        set({
+          sftpSessionId: sessionId,
+          sftpLoading: false,
+          currentPath: activePath,
+          fileEntries: entries,
+        });
+      } catch (err) {
+        set({
+          sftpLoading: false,
+          sftpError: err instanceof Error ? err.message : String(err),
+        });
+      }
+    },
+
+    disconnectSftp: async () => {
+      const sessionId = useAppStore.getState().sftpSessionId;
+      if (sessionId) {
+        try {
+          await sftpClose(sessionId);
+        } catch {
+          // Ignore close errors
+        }
+      }
+      set({
+        sftpSessionId: null,
+        fileEntries: [],
+        currentPath: "/",
+        sftpError: null,
+      });
+    },
+
+    navigateSftp: async (path: string) => {
+      const sessionId = useAppStore.getState().sftpSessionId;
+      if (!sessionId) return;
+      set({ sftpLoading: true, sftpError: null });
+      try {
+        const entries = await sftpListDir(sessionId, path);
+        set({ fileEntries: entries, currentPath: path, sftpLoading: false });
+      } catch (err) {
+        set({
+          sftpLoading: false,
+          sftpError: err instanceof Error ? err.message : String(err),
+        });
+      }
+    },
+
+    refreshSftp: async () => {
+      const { sftpSessionId, currentPath } = useAppStore.getState();
+      if (!sftpSessionId) return;
+      set({ sftpLoading: true, sftpError: null });
+      try {
+        const entries = await sftpListDir(sftpSessionId, currentPath);
+        set({ fileEntries: entries, sftpLoading: false });
+      } catch (err) {
+        set({
+          sftpLoading: false,
+          sftpError: err instanceof Error ? err.message : String(err),
+        });
+      }
+    },
   };
 });

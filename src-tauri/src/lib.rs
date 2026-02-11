@@ -1,11 +1,13 @@
 mod commands;
 mod connection;
+mod files;
 mod terminal;
 mod utils;
 
 use tauri::Manager;
 
 use connection::manager::ConnectionManager;
+use files::sftp::SftpManager;
 use terminal::manager::TerminalManager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -17,6 +19,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(TerminalManager::new())
+        .manage(SftpManager::new())
         .setup(|app| {
             let connection_manager = ConnectionManager::new(app.handle())
                 .expect("Failed to initialize connection manager");
@@ -37,6 +40,14 @@ pub fn run() {
             commands::connection::delete_folder,
             commands::connection::export_connections,
             commands::connection::import_connections,
+            commands::files::sftp_open,
+            commands::files::sftp_close,
+            commands::files::sftp_list_dir,
+            commands::files::sftp_download,
+            commands::files::sftp_upload,
+            commands::files::sftp_mkdir,
+            commands::files::sftp_delete,
+            commands::files::sftp_rename,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,6 +1,4 @@
 use std::io::{Read, Write};
-use std::net::TcpStream;
-use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -8,6 +6,7 @@ use ssh2::Session;
 
 use crate::terminal::backend::{OutputSender, SshConfig, TerminalBackend};
 use crate::utils::errors::TerminalError;
+use crate::utils::ssh_auth::connect_and_authenticate;
 
 /// SSH connection backend.
 pub struct SshConnection {
@@ -19,41 +18,7 @@ pub struct SshConnection {
 impl SshConnection {
     /// Connect to an SSH server and open a shell channel.
     pub fn new(config: &SshConfig, output_tx: OutputSender) -> Result<Self, TerminalError> {
-        let addr = format!("{}:{}", config.host, config.port);
-        let tcp = TcpStream::connect(&addr)
-            .map_err(|e| TerminalError::SshError(format!("Connection failed: {}", e)))?;
-
-        let mut session = Session::new()
-            .map_err(|e| TerminalError::SshError(e.to_string()))?;
-
-        session.set_tcp_stream(tcp);
-        session
-            .handshake()
-            .map_err(|e| TerminalError::SshError(format!("Handshake failed: {}", e)))?;
-
-        // Authenticate
-        match config.auth_method.as_str() {
-            "key" => {
-                let key_path = config
-                    .key_path
-                    .as_deref()
-                    .unwrap_or("~/.ssh/id_rsa");
-                let expanded = shellexpand(key_path);
-                session
-                    .userauth_pubkey_file(&config.username, None, Path::new(&expanded), None)
-                    .map_err(|e| TerminalError::SshError(format!("Key auth failed: {}", e)))?;
-            }
-            _ => {
-                let password = config.password.as_deref().unwrap_or("");
-                session
-                    .userauth_password(&config.username, password)
-                    .map_err(|e| TerminalError::SshError(format!("Password auth failed: {}", e)))?;
-            }
-        }
-
-        if !session.authenticated() {
-            return Err(TerminalError::SshError("Authentication failed".to_string()));
-        }
+        let session = connect_and_authenticate(config)?;
 
         let mut channel = session
             .channel_session()
@@ -106,22 +71,6 @@ impl SshConnection {
             alive,
         })
     }
-}
-
-/// Expand ~ in paths to the home directory.
-fn shellexpand(path: &str) -> String {
-    if let Some(rest) = path.strip_prefix("~/") {
-        if let Some(home) = dirs_home() {
-            return format!("{}/{}", home, rest);
-        }
-    }
-    path.to_string()
-}
-
-fn dirs_home() -> Option<String> {
-    std::env::var("HOME")
-        .ok()
-        .or_else(|| std::env::var("USERPROFILE").ok())
 }
 
 impl TerminalBackend for SshConnection {

@@ -28,6 +28,9 @@ pub enum TerminalError {
     #[error("Telnet error: {0}")]
     TelnetError(String),
 
+    #[error("SFTP session not found: {0}")]
+    SftpSessionNotFound(String),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }
