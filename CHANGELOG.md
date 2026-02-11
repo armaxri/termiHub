@@ -41,3 +41,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Directory creation via the file browser toolbar
 - File permissions display (rwx) for remote entries
 - Context menus on files (Download, Rename, Delete) and directories (Open, Rename, Delete)
+
+### Changed
+- Shell type dropdown in connection editor now only shows shells available on the current platform

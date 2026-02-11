@@ -1,15 +1,18 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionType, ConnectionConfig, LocalShellConfig, SshConfig, TelnetConfig, SerialConfig } from "@/types/terminal";
 import { ConnectionSettings, SshSettings, SerialSettings, TelnetSettings } from "@/components/Settings";
+import { getDefaultShell } from "@/utils/shell-detection";
 import "./ConnectionEditor.css";
 
-const DEFAULT_CONFIGS: Record<ConnectionType, ConnectionConfig> = {
-  local: { type: "local", config: { shellType: "bash" } },
-  ssh: { type: "ssh", config: { host: "", port: 22, username: "", authMethod: "password" } },
-  telnet: { type: "telnet", config: { host: "", port: 23 } },
-  serial: { type: "serial", config: { port: "", baudRate: 115200, dataBits: 8, stopBits: 1, parity: "none", flowControl: "none" } },
-};
+function getDefaultConfigs(defaultShell: string): Record<ConnectionType, ConnectionConfig> {
+  return {
+    local: { type: "local", config: { shellType: defaultShell } as LocalShellConfig },
+    ssh: { type: "ssh", config: { host: "", port: 22, username: "", authMethod: "password" } },
+    telnet: { type: "telnet", config: { host: "", port: 23 } },
+    serial: { type: "serial", config: { port: "", baudRate: 115200, dataBits: 8, stopBits: 1, parity: "none", flowControl: "none" } },
+  };
+}
 
 const TYPE_OPTIONS: { value: ConnectionType; label: string }[] = [
   { value: "local", label: "Local Shell" },
@@ -32,17 +35,24 @@ export function ConnectionEditor() {
     ? connections.find((c) => c.id === editingConnectionId)
     : undefined;
 
+  const [defaultShell, setDefaultShell] = useState("bash");
+  useEffect(() => {
+    getDefaultShell().then(setDefaultShell);
+  }, []);
+
+  const defaultConfigs = getDefaultConfigs(defaultShell);
+
   const [name, setName] = useState(existingConnection?.name ?? "");
   const [folderId, setFolderId] = useState<string | null>(
     existingConnection?.folderId ?? editingConnectionFolderId ?? null
   );
   const [connectionConfig, setConnectionConfig] = useState<ConnectionConfig>(
-    existingConnection?.config ?? DEFAULT_CONFIGS.local
+    existingConnection?.config ?? defaultConfigs.local
   );
 
   const handleTypeChange = useCallback((type: ConnectionType) => {
-    setConnectionConfig(DEFAULT_CONFIGS[type]);
-  }, []);
+    setConnectionConfig(getDefaultConfigs(defaultShell)[type]);
+  }, [defaultShell]);
 
   const handleSave = useCallback(() => {
     if (!name.trim()) return;
