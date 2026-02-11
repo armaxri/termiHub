@@ -42,6 +42,7 @@ export interface TerminalTab {
   sessionId: SessionId | null;
   title: string;
   connectionType: ConnectionType;
+  config: ConnectionConfig;
   panelId: string;
   isActive: boolean;
 }

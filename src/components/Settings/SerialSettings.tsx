@@ -1,4 +1,6 @@
+import { useState, useEffect } from "react";
 import { SerialConfig } from "@/types/terminal";
+import { listSerialPorts } from "@/services/api";
 
 interface SerialSettingsProps {
   config: SerialConfig;
@@ -8,16 +10,34 @@ interface SerialSettingsProps {
 const BAUD_RATES = [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600];
 
 export function SerialSettings({ config, onChange }: SerialSettingsProps) {
+  const [ports, setPorts] = useState<string[]>([]);
+
+  useEffect(() => {
+    listSerialPorts().then(setPorts).catch(() => setPorts([]));
+  }, []);
+
   return (
     <div className="settings-form">
       <label className="settings-form__field">
         <span className="settings-form__label">Port</span>
-        <input
-          type="text"
-          value={config.port}
-          onChange={(e) => onChange({ ...config, port: e.target.value })}
-          placeholder="/dev/ttyUSB0"
-        />
+        {ports.length > 0 ? (
+          <select
+            value={config.port}
+            onChange={(e) => onChange({ ...config, port: e.target.value })}
+          >
+            <option value="">Select port...</option>
+            {ports.map((port) => (
+              <option key={port} value={port}>{port}</option>
+            ))}
+          </select>
+        ) : (
+          <input
+            type="text"
+            value={config.port}
+            onChange={(e) => onChange({ ...config, port: e.target.value })}
+            placeholder="/dev/ttyUSB0"
+          />
+        )}
       </label>
       <label className="settings-form__field">
         <span className="settings-form__label">Baud Rate</span>

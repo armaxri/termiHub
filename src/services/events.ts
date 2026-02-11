@@ -1,22 +1,35 @@
 /**
  * Tauri event listener setup.
- * Phase 1: Stub. Phase 2 will use @tauri-apps/api/event.
  */
 
-type UnlistenFn = () => void;
+import { listen, UnlistenFn } from "@tauri-apps/api/event";
+
+interface TerminalOutputPayload {
+  session_id: string;
+  data: number[];
+}
+
+interface TerminalExitPayload {
+  session_id: string;
+  exit_code: number | null;
+}
 
 /** Subscribe to terminal output events */
-export function onTerminalOutput(
-  _callback: (sessionId: string, data: Uint8Array) => void
-): UnlistenFn {
-  // Phase 2: return listen("terminal-output", callback);
-  return () => {};
+export async function onTerminalOutput(
+  callback: (sessionId: string, data: Uint8Array) => void
+): Promise<UnlistenFn> {
+  return await listen<TerminalOutputPayload>("terminal-output", (event) => {
+    const { session_id, data } = event.payload;
+    callback(session_id, new Uint8Array(data));
+  });
 }
 
 /** Subscribe to terminal exit events */
-export function onTerminalExit(
-  _callback: (sessionId: string, exitCode: number | null) => void
-): UnlistenFn {
-  // Phase 2: return listen("terminal-exit", callback);
-  return () => {};
+export async function onTerminalExit(
+  callback: (sessionId: string, exitCode: number | null) => void
+): Promise<UnlistenFn> {
+  return await listen<TerminalExitPayload>("terminal-exit", (event) => {
+    const { session_id, exit_code } = event.payload;
+    callback(session_id, exit_code);
+  });
 }

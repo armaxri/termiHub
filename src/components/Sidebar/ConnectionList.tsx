@@ -158,7 +158,7 @@ export function ConnectionList() {
 
   const handleConnect = useCallback(
     (connection: SavedConnection) => {
-      addTab(connection.name, connection.config.type);
+      addTab(connection.name, connection.config.type, connection.config);
     },
     [addTab]
   );

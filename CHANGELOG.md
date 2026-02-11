@@ -22,4 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keyboard shortcuts: Ctrl+Shift+` (new terminal), Ctrl+W (close tab), Ctrl+Tab / Ctrl+Shift+Tab (switch tabs)
 - Zustand-based state management for sidebar, panels, tabs, connections, and files
 - Type definitions for terminals, connections, and events
-- Hook and service stubs prepared for Tauri backend integration (Phase 2)
+- Real local shell terminals using PTY (zsh, bash, sh on Unix; PowerShell, cmd, Git Bash on Windows)
+- Serial port connections with configurable baud rate, data bits, stop bits, parity, and flow control
+- SSH connections with password and key-based authentication
+- Telnet connections with basic IAC protocol handling
+- Backend terminal management with session lifecycle, input/output streaming, and resize support
+- Auto-detection of available shells on the current platform
+- Auto-detection of available serial ports in the connection editor
+- Terminal output streaming via Tauri events
+- Process exit detection with "[Process exited]" indicator
+- Error display in terminal when connection fails
