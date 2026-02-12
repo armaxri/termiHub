@@ -245,7 +245,7 @@ export function Terminal({ tabId, config, isVisible }: TerminalProps) {
       try {
         if (horizontalScrollingRef.current) {
           // Only resize PTY when rows change (window/panel resize).
-          // Visual width is handled by the debounced onWriteParsed listener.
+          // Also recalculate visual width for new container dimensions.
           const dims = fitAddon.proposeDimensions();
           if (dims && dims.rows !== xterm.rows) {
             xterm.resize(HORIZONTAL_SCROLL_COLS, dims.rows);
@@ -308,24 +308,6 @@ export function Terminal({ tabId, config, isVisible }: TerminalProps) {
       } catch {
         // Ignore resize errors
       }
-
-      // Recalculate scroll width when new content arrives (debounced)
-      let timer: ReturnType<typeof setTimeout> | null = null;
-      const disposable = xterm.onWriteParsed(() => {
-        if (timer) clearTimeout(timer);
-        timer = setTimeout(() => {
-          try {
-            updateHorizontalScrollWidth(xterm, fitAddon, el);
-          } catch {
-            // Ignore
-          }
-        }, 100);
-      });
-
-      return () => {
-        disposable.dispose();
-        if (timer) clearTimeout(timer);
-      };
     } else {
       el.classList.remove("terminal-horizontal-scroll");
       try {

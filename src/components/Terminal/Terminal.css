@@ -27,6 +27,6 @@
   overflow-y: hidden;
 }
 
-.terminal-horizontal-scroll .xterm {
+.terminal-horizontal-scroll .xterm-screen {
   overflow: hidden;
 }
