@@ -47,8 +47,19 @@ export interface TerminalTab {
   isActive: boolean;
 }
 
-export interface SplitPanel {
+export interface LeafPanel {
+  type: 'leaf';
   id: string;
   tabs: TerminalTab[];
   activeTabId: string | null;
 }
+
+export interface SplitContainer {
+  type: 'split';
+  id: string;
+  direction: 'horizontal' | 'vertical';
+  children: PanelNode[];
+}
+
+export type PanelNode = LeafPanel | SplitContainer;
+export type DropEdge = 'left' | 'right' | 'top' | 'bottom' | 'center';

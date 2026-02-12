@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Cross-panel tab drag-and-drop: move tabs between terminal panels by dragging
+- Split-by-drop: drag a tab to the edge of a panel to create horizontal or vertical splits
+- Visual drag feedback with tab ghost overlay and highlighted drop zones
+- Nested split layout supporting both horizontal and vertical terminal arrangements
 - VS Code-inspired dark theme with three-column layout (Activity Bar, Sidebar, Terminal View)
 - Activity Bar with icon navigation for Connections, File Browser, and Settings views
 - Sidebar with collapsible panel and view switching
@@ -48,5 +52,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Double-click a connection to connect directly
 
 ### Changed
+- Panel layout refactored from flat array to recursive tree for flexible split arrangements
 - Connection and folder context menus now open on right-click instead of left-click
 - Shell type dropdown in connection editor now only shows shells available on the current platform

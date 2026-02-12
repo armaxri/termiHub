@@ -76,3 +76,13 @@
 .tab__close:hover {
   background-color: var(--bg-active);
 }
+
+.tab--drag-overlay {
+  background-color: var(--tab-active-bg);
+  color: var(--text-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  opacity: 0.9;
+  pointer-events: none;
+}

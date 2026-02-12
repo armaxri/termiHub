@@ -1,0 +1,64 @@
+.panel-drop-zone {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.panel-drop-zone__edge,
+.panel-drop-zone__center {
+  position: absolute;
+  pointer-events: auto;
+  border: 2px dashed transparent;
+  border-radius: var(--radius-sm);
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+/* Edge zones — 20% strips from each side */
+.panel-drop-zone__edge--left {
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 20%;
+}
+
+.panel-drop-zone__edge--right {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 20%;
+}
+
+.panel-drop-zone__edge--top {
+  top: 0;
+  left: 20%;
+  right: 20%;
+  height: 20%;
+}
+
+.panel-drop-zone__edge--bottom {
+  bottom: 0;
+  left: 20%;
+  right: 20%;
+  height: 20%;
+}
+
+/* Center zone — the remaining middle area */
+.panel-drop-zone__center {
+  top: 20%;
+  left: 20%;
+  right: 20%;
+  bottom: 20%;
+}
+
+/* Highlight when hovering over an edge zone */
+.panel-drop-zone__edge--active {
+  background-color: rgba(38, 132, 255, 0.15);
+  border-color: rgba(38, 132, 255, 0.5);
+}
+
+/* Highlight when hovering over center zone */
+.panel-drop-zone__center--active {
+  background-color: rgba(38, 132, 255, 0.08);
+  border-color: rgba(38, 132, 255, 0.3);
+}

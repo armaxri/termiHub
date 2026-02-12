@@ -7,6 +7,7 @@ import "./Terminal.css";
 import { ConnectionConfig } from "@/types/terminal";
 import { createTerminal, sendInput, resizeTerminal, closeTerminal } from "@/services/api";
 import { onTerminalOutput, onTerminalExit } from "@/services/events";
+import { useTerminalRegistry } from "./TerminalRegistry";
 
 interface TerminalProps {
   tabId: string;
@@ -14,12 +15,18 @@ interface TerminalProps {
   isVisible: boolean;
 }
 
+/**
+ * Manages an xterm.js instance and its PTY backend connection.
+ * Creates an imperative DOM element registered with the TerminalRegistry.
+ * Renders nothing — TerminalSlot handles display by adopting the DOM element.
+ */
 export function Terminal({ tabId, config, isVisible }: TerminalProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
+  const terminalElRef = useRef<HTMLDivElement | null>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
+  const { register, unregister, parkingRef } = useTerminalRegistry();
 
   const setupTerminal = useCallback(async (xterm: XTerm, fitAddon: FitAddon) => {
     try {
@@ -77,8 +84,19 @@ export function Terminal({ tabId, config, isVisible }: TerminalProps) {
     }
   }, [config]);
 
+  // Create the terminal element, xterm instance, and register
   useEffect(() => {
-    if (!containerRef.current) return;
+    // Create an imperative DOM element for xterm (not managed by React rendering)
+    const el = document.createElement("div");
+    el.style.width = "100%";
+    el.style.height = "100%";
+    terminalElRef.current = el;
+
+    // Park the element so xterm.open() has a DOM parent
+    parkingRef.current?.appendChild(el);
+
+    // Register with the portal registry
+    register(tabId, el);
 
     const xterm = new XTerm({
       theme: {
@@ -118,9 +136,9 @@ export function Terminal({ tabId, config, isVisible }: TerminalProps) {
     xterm.loadAddon(unicode11Addon);
     xterm.unicode.activeVersion = "11";
 
-    xterm.open(containerRef.current);
+    xterm.open(el);
 
-    // Initial fit
+    // Initial fit (may fail since element starts in parking)
     try {
       fitAddon.fit();
     } catch {
@@ -133,7 +151,7 @@ export function Terminal({ tabId, config, isVisible }: TerminalProps) {
     // Wire to backend
     setupTerminal(xterm, fitAddon);
 
-    // ResizeObserver for auto-fit
+    // ResizeObserver follows the element even when reparented
     const resizeObserver = new ResizeObserver(() => {
       try {
         fitAddon.fit();
@@ -141,19 +159,22 @@ export function Terminal({ tabId, config, isVisible }: TerminalProps) {
         // Ignore fit errors during transitions
       }
     });
-    resizeObserver.observe(containerRef.current);
+    resizeObserver.observe(el);
 
     return () => {
       resizeObserver.disconnect();
+      unregister(tabId);
       if (cleanupRef.current) {
         cleanupRef.current();
         cleanupRef.current = null;
       }
       xterm.dispose();
+      el.remove();
+      terminalElRef.current = null;
       xtermRef.current = null;
       fitAddonRef.current = null;
     };
-  }, [tabId, setupTerminal]);
+  }, [tabId, setupTerminal, register, unregister, parkingRef]);
 
   // Re-fit when visibility changes
   useEffect(() => {
@@ -166,10 +187,6 @@ export function Terminal({ tabId, config, isVisible }: TerminalProps) {
     }
   }, [isVisible]);
 
-  return (
-    <div
-      className={`terminal-container ${isVisible ? "" : "terminal-container--hidden"}`}
-      ref={containerRef}
-    />
-  );
+  // Terminal renders nothing — TerminalSlot handles display
+  return null;
 }

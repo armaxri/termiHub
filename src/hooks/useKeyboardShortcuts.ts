@@ -1,12 +1,13 @@
 import { useEffect } from "react";
 import { useAppStore } from "@/store/appStore";
+import { getAllLeaves } from "@/utils/panelTree";
 
 /**
  * Global keyboard shortcuts for the application.
  */
 export function useKeyboardShortcuts() {
   const addTab = useAppStore((s) => s.addTab);
-  const panels = useAppStore((s) => s.panels);
+  const rootPanel = useAppStore((s) => s.rootPanel);
   const activePanelId = useAppStore((s) => s.activePanelId);
   const closeTab = useAppStore((s) => s.closeTab);
   const setActiveTab = useAppStore((s) => s.setActiveTab);
@@ -14,6 +15,7 @@ export function useKeyboardShortcuts() {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const isMod = e.metaKey || e.ctrlKey;
+      const allLeaves = getAllLeaves(rootPanel);
 
       // Ctrl/Cmd+Shift+` — New terminal
       if (isMod && e.shiftKey && e.key === "`") {
@@ -25,7 +27,7 @@ export function useKeyboardShortcuts() {
       // Ctrl/Cmd+W — Close active tab
       if (isMod && e.key === "w") {
         e.preventDefault();
-        const panel = panels.find((p) => p.id === activePanelId);
+        const panel = allLeaves.find((p) => p.id === activePanelId);
         if (panel?.activeTabId) {
           closeTab(panel.activeTabId, panel.id);
         }
@@ -35,7 +37,7 @@ export function useKeyboardShortcuts() {
       // Ctrl+Tab — Next tab
       if (e.ctrlKey && e.key === "Tab" && !e.shiftKey) {
         e.preventDefault();
-        const panel = panels.find((p) => p.id === activePanelId);
+        const panel = allLeaves.find((p) => p.id === activePanelId);
         if (!panel || panel.tabs.length < 2) return;
         const currentIdx = panel.tabs.findIndex((t) => t.id === panel.activeTabId);
         const nextIdx = (currentIdx + 1) % panel.tabs.length;
@@ -46,7 +48,7 @@ export function useKeyboardShortcuts() {
       // Ctrl+Shift+Tab — Previous tab
       if (e.ctrlKey && e.key === "Tab" && e.shiftKey) {
         e.preventDefault();
-        const panel = panels.find((p) => p.id === activePanelId);
+        const panel = allLeaves.find((p) => p.id === activePanelId);
         if (!panel || panel.tabs.length < 2) return;
         const currentIdx = panel.tabs.findIndex((t) => t.id === panel.activeTabId);
         const prevIdx = (currentIdx - 1 + panel.tabs.length) % panel.tabs.length;
@@ -57,5 +59,5 @@ export function useKeyboardShortcuts() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [addTab, panels, activePanelId, closeTab, setActiveTab]);
+  }, [addTab, rootPanel, activePanelId, closeTab, setActiveTab]);
 }
