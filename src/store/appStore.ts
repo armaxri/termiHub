@@ -22,12 +22,37 @@ import {
 
 export type SidebarView = "connections" | "files";
 
+/**
+ * Strip password from an SSH connection config so it is never persisted.
+ */
+function stripSshPassword(connection: SavedConnection): SavedConnection {
+  if (connection.config.type === "ssh" && connection.config.config.password) {
+    return {
+      ...connection,
+      config: {
+        ...connection.config,
+        config: { ...connection.config.config, password: undefined },
+      },
+    };
+  }
+  return connection;
+}
+
 interface AppState {
   // Sidebar
   sidebarView: SidebarView;
   sidebarCollapsed: boolean;
   setSidebarView: (view: SidebarView) => void;
   toggleSidebar: () => void;
+
+  // Password prompt
+  passwordPromptOpen: boolean;
+  passwordPromptHost: string;
+  passwordPromptUsername: string;
+  passwordPromptResolve: ((password: string | null) => void) | null;
+  requestPassword: (host: string, username: string) => Promise<string | null>;
+  submitPassword: (password: string) => void;
+  dismissPasswordPrompt: () => void;
 
   // Panels & Tabs
   rootPanel: PanelNode;
@@ -129,6 +154,45 @@ export const useAppStore = create<AppState>((set, get) => {
           : false,
       })),
     toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
+
+    // Password prompt
+    passwordPromptOpen: false,
+    passwordPromptHost: "",
+    passwordPromptUsername: "",
+    passwordPromptResolve: null,
+
+    requestPassword: (host, username) => {
+      return new Promise<string | null>((resolve) => {
+        set({
+          passwordPromptOpen: true,
+          passwordPromptHost: host,
+          passwordPromptUsername: username,
+          passwordPromptResolve: resolve,
+        });
+      });
+    },
+
+    submitPassword: (password) => {
+      const { passwordPromptResolve } = get();
+      if (passwordPromptResolve) passwordPromptResolve(password);
+      set({
+        passwordPromptOpen: false,
+        passwordPromptHost: "",
+        passwordPromptUsername: "",
+        passwordPromptResolve: null,
+      });
+    },
+
+    dismissPasswordPrompt: () => {
+      const { passwordPromptResolve } = get();
+      if (passwordPromptResolve) passwordPromptResolve(null);
+      set({
+        passwordPromptOpen: false,
+        passwordPromptHost: "",
+        passwordPromptUsername: "",
+        passwordPromptResolve: null,
+      });
+    },
 
     // Panels & Tabs
     rootPanel: initialPanel,
@@ -396,7 +460,7 @@ export const useAppStore = create<AppState>((set, get) => {
 
     addConnection: (connection) => {
       set((state) => ({ connections: [...state.connections, connection] }));
-      persistConnection(connection).catch((err) =>
+      persistConnection(stripSshPassword(connection)).catch((err) =>
         console.error("Failed to persist new connection:", err)
       );
     },
@@ -407,7 +471,7 @@ export const useAppStore = create<AppState>((set, get) => {
           c.id === connection.id ? connection : c
         ),
       }));
-      persistConnection(connection).catch((err) =>
+      persistConnection(stripSshPassword(connection)).catch((err) =>
         console.error("Failed to persist connection update:", err)
       );
     },
@@ -470,7 +534,7 @@ export const useAppStore = create<AppState>((set, get) => {
         name: `Copy of ${original.name}`,
       };
       set((s) => ({ connections: [...s.connections, duplicate] }));
-      persistConnection(duplicate).catch((err) =>
+      persistConnection(stripSshPassword(duplicate)).catch((err) =>
         console.error("Failed to persist duplicated connection:", err)
       );
     },

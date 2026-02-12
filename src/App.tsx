@@ -3,6 +3,7 @@ import { ActivityBar } from "@/components/ActivityBar";
 import { Sidebar } from "@/components/Sidebar";
 import { StatusBar } from "@/components/StatusBar";
 import { TerminalView } from "@/components/Terminal";
+import { PasswordPrompt } from "@/components/PasswordPrompt";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useAppStore } from "@/store/appStore";
 import "./App.css";
@@ -23,6 +24,7 @@ function App() {
         <TerminalView />
       </div>
       <StatusBar />
+      <PasswordPrompt />
     </div>
   );
 }

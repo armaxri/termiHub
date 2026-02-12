@@ -142,11 +142,22 @@ function ConnectionPicker() {
 
   const sshConnections = connections.filter((c) => c.config.type === "ssh");
 
-  const handleConnect = useCallback(() => {
+  const requestPassword = useAppStore((s) => s.requestPassword);
+
+  const handleConnect = useCallback(async () => {
     const conn = sshConnections.find((c) => c.id === selectedId);
     if (!conn) return;
-    connectSftp(conn.config.config as SshConfig);
-  }, [selectedId, sshConnections, connectSftp]);
+
+    let sshConfig = conn.config.config as SshConfig;
+
+    if (sshConfig.authMethod === "password") {
+      const password = await requestPassword(sshConfig.host, sshConfig.username);
+      if (password === null) return;
+      sshConfig = { ...sshConfig, password };
+    }
+
+    connectSftp(sshConfig);
+  }, [selectedId, sshConnections, connectSftp, requestPassword]);
 
   return (
     <div className="file-browser__picker">
