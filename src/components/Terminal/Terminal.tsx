@@ -244,7 +244,13 @@ export function Terminal({ tabId, config, isVisible }: TerminalProps) {
     const resizeObserver = new ResizeObserver(() => {
       try {
         if (horizontalScrollingRef.current) {
-          applyHorizontalScrollResize(xterm, fitAddon, el);
+          // Only resize PTY when rows change (window/panel resize).
+          // Visual width is handled by the debounced onWriteParsed listener.
+          const dims = fitAddon.proposeDimensions();
+          if (dims && dims.rows !== xterm.rows) {
+            xterm.resize(HORIZONTAL_SCROLL_COLS, dims.rows);
+            updateHorizontalScrollWidth(xterm, fitAddon, el);
+          }
         } else {
           fitAddon.fit();
         }

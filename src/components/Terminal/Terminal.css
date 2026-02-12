@@ -19,9 +19,11 @@
   overflow-y: auto;
 }
 
-/* Horizontal scrolling: the outer wrapper scrolls, .xterm is made wider via JS */
+/* Horizontal scrolling: the outer wrapper scrolls, .xterm is made wider via JS.
+   Use 'scroll' (not 'auto') so the scrollbar is always present and never
+   toggles, which would change the content height and create a resize loop. */
 .terminal-horizontal-scroll {
-  overflow-x: auto;
+  overflow-x: scroll;
   overflow-y: hidden;
 }
 
