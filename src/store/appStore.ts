@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { TerminalTab, LeafPanel, PanelNode, ConnectionType, ConnectionConfig, SshConfig, DropEdge } from "@/types/terminal";
+import { TerminalTab, LeafPanel, PanelNode, ConnectionType, ConnectionConfig, SshConfig, DropEdge, TabContentType } from "@/types/terminal";
 import { SavedConnection, ConnectionFolder, FileEntry } from "@/types/connection";
 import {
   loadConnections,
@@ -20,7 +20,7 @@ import {
   edgeToSplit,
 } from "@/utils/panelTree";
 
-export type SidebarView = "connections" | "files" | "settings";
+export type SidebarView = "connections" | "files";
 
 interface AppState {
   // Sidebar
@@ -32,7 +32,8 @@ interface AppState {
   // Panels & Tabs
   rootPanel: PanelNode;
   activePanelId: string | null;
-  addTab: (title: string, connectionType: ConnectionType, config?: ConnectionConfig, panelId?: string) => void;
+  addTab: (title: string, connectionType: ConnectionType, config?: ConnectionConfig, panelId?: string, contentType?: TabContentType) => void;
+  openSettingsTab: () => void;
   closeTab: (tabId: string, panelId: string) => void;
   setActiveTab: (tabId: string, panelId: string) => void;
   moveTab: (tabId: string, fromPanelId: string, toPanelId: string, newIndex: number) => void;
@@ -75,13 +76,14 @@ interface AppState {
 
 let tabCounter = 0;
 
-function createTab(title: string, connectionType: ConnectionType, config: ConnectionConfig, panelId: string): TerminalTab {
+function createTab(title: string, connectionType: ConnectionType, config: ConnectionConfig, panelId: string, contentType: TabContentType = "terminal"): TerminalTab {
   tabCounter++;
   return {
     id: `tab-${tabCounter}`,
     sessionId: null,
     title,
     connectionType,
+    contentType,
     config,
     panelId,
     isActive: true,
@@ -134,14 +136,46 @@ export const useAppStore = create<AppState>((set, get) => {
 
     getAllPanels: () => getAllLeaves(get().rootPanel),
 
-    addTab: (title, connectionType, config, panelId) =>
+    addTab: (title, connectionType, config, panelId, contentType) =>
       set((state) => {
         const allLeaves = getAllLeaves(state.rootPanel);
         const targetPanelId = panelId ?? state.activePanelId ?? allLeaves[0]?.id;
         if (!targetPanelId) return state;
 
         const defaultConfig: ConnectionConfig = config ?? { type: "local", config: { shellType: "zsh" } };
-        const newTab = createTab(title, connectionType, defaultConfig, targetPanelId);
+        const newTab = createTab(title, connectionType, defaultConfig, targetPanelId, contentType);
+        const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
+          const tabs = leaf.tabs.map((t) => ({ ...t, isActive: false }));
+          tabs.push(newTab);
+          return { ...leaf, tabs, activeTabId: newTab.id };
+        });
+        return { rootPanel, activePanelId: targetPanelId };
+      }),
+
+    openSettingsTab: () =>
+      set((state) => {
+        const allLeaves = getAllLeaves(state.rootPanel);
+
+        // Look for an existing settings tab
+        for (const leaf of allLeaves) {
+          const existing = leaf.tabs.find((t) => t.contentType === "settings");
+          if (existing) {
+            // Activate the existing settings tab
+            const rootPanel = updateLeaf(state.rootPanel, leaf.id, (l) => ({
+              ...l,
+              tabs: l.tabs.map((t) => ({ ...t, isActive: t.id === existing.id })),
+              activeTabId: existing.id,
+            }));
+            return { rootPanel, activePanelId: leaf.id };
+          }
+        }
+
+        // No existing settings tab — create one in the active panel
+        const targetPanelId = state.activePanelId ?? allLeaves[0]?.id;
+        if (!targetPanelId) return state;
+
+        const dummyConfig: ConnectionConfig = { type: "local", config: { shellType: "zsh" } };
+        const newTab = createTab("Settings", "local", dummyConfig, targetPanelId, "settings");
         const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
           const tabs = leaf.tabs.map((t) => ({ ...t, isActive: false }));
           tabs.push(newTab);

@@ -1,6 +1,6 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { X, Terminal, Wifi, Cable, Globe } from "lucide-react";
+import { X, Terminal, Wifi, Cable, Globe, Settings as SettingsIcon } from "lucide-react";
 import { TerminalTab } from "@/types/terminal";
 import { ConnectionType } from "@/types/terminal";
 
@@ -33,7 +33,7 @@ export function Tab({ tab, onActivate, onClose }: TabProps) {
     opacity: isDragging ? 0.3 : 1,
   };
 
-  const Icon = TYPE_ICONS[tab.connectionType];
+  const Icon = tab.contentType === "settings" ? SettingsIcon : TYPE_ICONS[tab.connectionType];
 
   return (
     <div
