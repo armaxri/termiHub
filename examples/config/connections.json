@@ -5,7 +5,7 @@
       "id": "folder-docker-test",
       "name": "Docker Test Targets",
       "parentId": null,
-      "isExpanded": true
+      "isExpanded": false
     }
   ],
   "connections": [
