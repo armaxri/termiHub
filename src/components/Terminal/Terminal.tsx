@@ -8,6 +8,7 @@ import { ConnectionConfig } from "@/types/terminal";
 import { createTerminal, sendInput, resizeTerminal, closeTerminal } from "@/services/api";
 import { onTerminalOutput, onTerminalExit } from "@/services/events";
 import { useTerminalRegistry } from "./TerminalRegistry";
+import { useAppStore } from "@/store/appStore";
 
 interface TerminalProps {
   tabId: string;
@@ -135,6 +136,19 @@ export function Terminal({ tabId, config, isVisible }: TerminalProps) {
 
     xterm.open(el);
 
+    // Track CWD via OSC 7 escape sequences (sent by zsh/bash on macOS/Linux)
+    const osc7Disposable = xterm.parser.registerOscHandler(7, (data: string) => {
+      try {
+        const url = new URL(data);
+        if (url.protocol === "file:") {
+          useAppStore.getState().setTabCwd(tabId, decodeURIComponent(url.pathname));
+        }
+      } catch {
+        // Ignore malformed OSC 7 data
+      }
+      return true;
+    });
+
     // Register element and xterm instance with the portal registry
     register(tabId, el, xterm);
 
@@ -163,6 +177,7 @@ export function Terminal({ tabId, config, isVisible }: TerminalProps) {
 
     return () => {
       resizeObserver.disconnect();
+      osc7Disposable.dispose();
       unregister(tabId);
       if (cleanupRef.current) {
         cleanupRef.current();

@@ -280,3 +280,16 @@
 .file-browser__new-dir-input:focus {
   border-color: var(--text-accent);
 }
+
+/* Placeholder for unsupported connection types */
+.file-browser__placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-lg);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  text-align: center;
+}

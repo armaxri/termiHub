@@ -121,3 +121,25 @@ export async function sftpDelete(sessionId: string, path: string, isDirectory: b
 export async function sftpRename(sessionId: string, oldPath: string, newPath: string): Promise<void> {
   await invoke("sftp_rename", { sessionId, oldPath, newPath });
 }
+
+// --- Local filesystem commands ---
+
+/** List directory contents on the local filesystem. */
+export async function localListDir(path: string): Promise<FileEntry[]> {
+  return await invoke<FileEntry[]>("local_list_dir", { path });
+}
+
+/** Create a directory on the local filesystem. */
+export async function localMkdir(path: string): Promise<void> {
+  await invoke("local_mkdir", { path });
+}
+
+/** Delete a file or directory on the local filesystem. */
+export async function localDelete(path: string, isDirectory: boolean): Promise<void> {
+  await invoke("local_delete", { path, isDirectory });
+}
+
+/** Rename a file or directory on the local filesystem. */
+export async function localRename(oldPath: string, newPath: string): Promise<void> {
+  await invoke("local_rename", { oldPath, newPath });
+}

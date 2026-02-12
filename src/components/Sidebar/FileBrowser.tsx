@@ -15,9 +15,10 @@ import {
   Trash2,
   MoreHorizontal,
   FolderOpen,
+  MonitorOff,
 } from "lucide-react";
-import { useAppStore } from "@/store/appStore";
-import { useFileSystem } from "@/hooks/useFileSystem";
+import { useAppStore, getActiveTab } from "@/store/appStore";
+import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { FileEntry } from "@/types/connection";
 import { SshConfig } from "@/types/terminal";
 import "./FileBrowser.css";
@@ -30,11 +31,12 @@ function formatFileSize(bytes: number): string {
 
 interface FileRowProps {
   entry: FileEntry;
+  mode: "local" | "sftp" | "none";
   onNavigate: (entry: FileEntry) => void;
   onContextAction: (entry: FileEntry, action: string) => void;
 }
 
-function FileRow({ entry, onNavigate, onContextAction }: FileRowProps) {
+function FileRow({ entry, mode, onNavigate, onContextAction }: FileRowProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -93,7 +95,7 @@ function FileRow({ entry, onNavigate, onContextAction }: FileRowProps) {
                 Open
               </button>
             )}
-            {!entry.isDirectory && (
+            {!entry.isDirectory && mode === "sftp" && (
               <button
                 className="file-browser__context-item"
                 onClick={() => {
@@ -132,81 +134,97 @@ function FileRow({ entry, onNavigate, onContextAction }: FileRowProps) {
   );
 }
 
-/** Connection picker shown when no SFTP session is active. */
-function ConnectionPicker() {
-  const connections = useAppStore((s) => s.connections);
+/**
+ * Sync file browser mode and content based on the active terminal tab.
+ */
+function useFileBrowserSync() {
+  const tabCwds = useAppStore((s) => s.tabCwds);
+  const sidebarView = useAppStore((s) => s.sidebarView);
+  const setFileBrowserMode = useAppStore((s) => s.setFileBrowserMode);
+  const navigateLocal = useAppStore((s) => s.navigateLocal);
+  const navigateSftp = useAppStore((s) => s.navigateSftp);
   const connectSftp = useAppStore((s) => s.connectSftp);
-  const sftpLoading = useAppStore((s) => s.sftpLoading);
-  const sftpError = useAppStore((s) => s.sftpError);
-  const [selectedId, setSelectedId] = useState<string>("");
-
-  const sshConnections = connections.filter((c) => c.config.type === "ssh");
-
+  const disconnectSftp = useAppStore((s) => s.disconnectSftp);
+  const sftpSessionId = useAppStore((s) => s.sftpSessionId);
+  const sftpConnectedHost = useAppStore((s) => s.sftpConnectedHost);
   const requestPassword = useAppStore((s) => s.requestPassword);
+  const connections = useAppStore((s) => s.connections);
+  const fileBrowserMode = useAppStore((s) => s.fileBrowserMode);
 
-  const handleConnect = useCallback(async () => {
-    const conn = sshConnections.find((c) => c.id === selectedId);
-    if (!conn) return;
+  // Derive mode from active tab
+  const activeTab = useAppStore((s) => getActiveTab(s));
+  const activeTabId = activeTab?.id ?? null;
+  const activeTabConnectionType = activeTab?.connectionType ?? null;
+  const activeTabContentType = activeTab?.contentType ?? null;
 
-    let sshConfig = conn.config.config as SshConfig;
-
-    if (sshConfig.authMethod === "password") {
-      const password = await requestPassword(sshConfig.host, sshConfig.username);
-      if (password === null) return;
-      sshConfig = { ...sshConfig, password };
+  useEffect(() => {
+    if (!activeTab || activeTabContentType === "settings") {
+      setFileBrowserMode("none");
+      return;
     }
+    if (activeTabConnectionType === "local") {
+      setFileBrowserMode("local");
+    } else if (activeTabConnectionType === "ssh") {
+      setFileBrowserMode("sftp");
+    } else {
+      setFileBrowserMode("none");
+    }
+  }, [activeTabId, activeTabConnectionType, activeTabContentType, setFileBrowserMode]);
 
-    connectSftp(sshConfig);
-  }, [selectedId, sshConnections, connectSftp, requestPassword]);
+  // Auto-navigate on tab switch or CWD change
+  const cwd = activeTabId ? tabCwds[activeTabId] : undefined;
+  useEffect(() => {
+    if (sidebarView !== "files" || !cwd) return;
+    const currentMode = useAppStore.getState().fileBrowserMode;
+    if (currentMode === "local") {
+      navigateLocal(cwd);
+    } else if (currentMode === "sftp" && sftpSessionId) {
+      navigateSftp(cwd);
+    }
+  }, [activeTabId, cwd, sidebarView, navigateLocal, navigateSftp, sftpSessionId]);
 
-  return (
-    <div className="file-browser__picker">
-      <div className="file-browser__picker-label">Connect to SSH host to browse files</div>
-      {sshConnections.length === 0 ? (
-        <div className="file-browser__picker-empty">
-          No SSH connections saved. Create one in the Connections view.
-        </div>
-      ) : (
-        <>
-          <select
-            className="file-browser__picker-select"
-            value={selectedId}
-            onChange={(e) => setSelectedId(e.target.value)}
-          >
-            <option value="">Select connection...</option>
-            {sshConnections.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name} ({(c.config.config as SshConfig).username}@{(c.config.config as SshConfig).host})
-              </option>
-            ))}
-          </select>
-          <button
-            className="file-browser__picker-btn"
-            onClick={handleConnect}
-            disabled={!selectedId || sftpLoading}
-          >
-            {sftpLoading ? (
-              <>
-                <Loader2 size={14} className="file-browser__spinner" />
-                Connecting...
-              </>
-            ) : (
-              "Connect"
-            )}
-          </button>
-        </>
-      )}
-      {sftpError && (
-        <div className="file-browser__error">
-          <AlertCircle size={14} />
-          <span>{sftpError}</span>
-        </div>
-      )}
-    </div>
-  );
+  // Auto-connect SFTP for SSH tabs
+  useEffect(() => {
+    if (fileBrowserMode !== "sftp" || !activeTab) return;
+    if (activeTab.config.type !== "ssh") return;
+
+    const sshConfig = activeTab.config.config as SshConfig;
+    const hostKey = `${sshConfig.username}@${sshConfig.host}:${sshConfig.port}`;
+
+    // Already connected to the right host
+    if (sftpSessionId && sftpConnectedHost === hostKey) return;
+
+    // Need to connect (or reconnect to different host)
+    const doConnect = async () => {
+      if (sftpSessionId && sftpConnectedHost !== hostKey) {
+        await disconnectSftp();
+      }
+
+      let configToUse = sshConfig;
+      if (sshConfig.authMethod === "password" && !sshConfig.password) {
+        // Look for the saved connection to get any config details
+        const savedConn = connections.find((c) => {
+          if (c.config.type !== "ssh") return false;
+          const sc = c.config.config as SshConfig;
+          return sc.host === sshConfig.host && sc.port === sshConfig.port && sc.username === sshConfig.username;
+        });
+        const baseConfig = savedConn ? (savedConn.config.config as SshConfig) : sshConfig;
+
+        const password = await requestPassword(sshConfig.host, sshConfig.username);
+        if (password === null) return;
+        configToUse = { ...baseConfig, password };
+      }
+
+      connectSftp(configToUse);
+    };
+
+    doConnect();
+  }, [fileBrowserMode, activeTabId, activeTab, sftpSessionId, sftpConnectedHost, connections, connectSftp, disconnectSftp, requestPassword]);
 }
 
 export function FileBrowser() {
+  useFileBrowserSync();
+
   const {
     fileEntries,
     currentPath,
@@ -221,7 +239,8 @@ export function FileBrowser() {
     createDirectory,
     deleteEntry,
     renameEntry,
-  } = useFileSystem();
+    mode,
+  } = useFileBrowser();
 
   const disconnectSftp = useAppStore((s) => s.disconnectSftp);
   const [newDirName, setNewDirName] = useState<string | null>(null);
@@ -239,14 +258,14 @@ export function FileBrowser() {
     (entry: FileEntry, action: string) => {
       switch (action) {
         case "download":
-          downloadFile(entry.path, entry.name).catch((err) =>
+          downloadFile(entry.path, entry.name).catch((err: unknown) =>
             console.error("Download failed:", err)
           );
           break;
         case "rename": {
           const newName = window.prompt("New name:", entry.name);
           if (newName && newName !== entry.name) {
-            renameEntry(entry.path, newName).catch((err) =>
+            renameEntry(entry.path, newName).catch((err: unknown) =>
               console.error("Rename failed:", err)
             );
           }
@@ -257,7 +276,7 @@ export function FileBrowser() {
             `Delete ${entry.isDirectory ? "directory" : "file"} "${entry.name}"?`
           );
           if (ok) {
-            deleteEntry(entry.path, entry.isDirectory).catch((err) =>
+            deleteEntry(entry.path, entry.isDirectory).catch((err: unknown) =>
               console.error("Delete failed:", err)
             );
           }
@@ -270,17 +289,44 @@ export function FileBrowser() {
 
   const handleCreateDir = useCallback(() => {
     if (newDirName && newDirName.trim()) {
-      createDirectory(newDirName.trim()).catch((err) =>
+      createDirectory(newDirName.trim()).catch((err: unknown) =>
         console.error("Create directory failed:", err)
       );
       setNewDirName(null);
     }
   }, [newDirName, createDirectory]);
 
-  if (!isConnected) {
+  // "none" mode — show placeholder
+  if (mode === "none") {
     return (
       <div className="file-browser">
-        <ConnectionPicker />
+        <div className="file-browser__placeholder">
+          <MonitorOff size={32} />
+          <span>No filesystem available for this connection type</span>
+        </div>
+      </div>
+    );
+  }
+
+  // SFTP not yet connected — show loading/error state
+  if (mode === "sftp" && !isConnected) {
+    return (
+      <div className="file-browser">
+        <div className="file-browser__placeholder">
+          {isLoading ? (
+            <>
+              <Loader2 size={20} className="file-browser__spinner" />
+              <span>Connecting SFTP...</span>
+            </>
+          ) : error ? (
+            <>
+              <AlertCircle size={20} />
+              <span>{error}</span>
+            </>
+          ) : (
+            <span>Waiting for SFTP connection...</span>
+          )}
+        </div>
       </div>
     );
   }
@@ -308,9 +354,11 @@ export function FileBrowser() {
           <button className="file-browser__btn" onClick={refresh} title="Refresh">
             <RefreshCw size={14} className={isLoading ? "file-browser__spinner" : ""} />
           </button>
-          <button className="file-browser__btn" onClick={uploadFile} title="Upload File">
-            <Upload size={14} />
-          </button>
+          {mode === "sftp" && (
+            <button className="file-browser__btn" onClick={uploadFile} title="Upload File">
+              <Upload size={14} />
+            </button>
+          )}
           <button
             className="file-browser__btn"
             onClick={() => setNewDirName("")}
@@ -318,13 +366,15 @@ export function FileBrowser() {
           >
             <FolderPlus size={14} />
           </button>
-          <button
-            className="file-browser__btn"
-            onClick={disconnectSftp}
-            title="Disconnect"
-          >
-            <Unplug size={14} />
-          </button>
+          {mode === "sftp" && (
+            <button
+              className="file-browser__btn"
+              onClick={disconnectSftp}
+              title="Disconnect"
+            >
+              <Unplug size={14} />
+            </button>
+          )}
         </div>
       </div>
 
@@ -366,6 +416,7 @@ export function FileBrowser() {
             itemContent={(index) => (
               <FileRow
                 entry={sortedEntries[index]}
+                mode={mode}
                 onNavigate={handleNavigate}
                 onContextAction={handleContextAction}
               />
