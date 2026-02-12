@@ -25,17 +25,12 @@ import {
   Pencil,
   Trash2,
   Copy,
-  Download,
-  Upload,
   Check,
   X,
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionType } from "@/types/terminal";
 import { SavedConnection, ConnectionFolder } from "@/types/connection";
-import { exportConnections, importConnections } from "@/services/storage";
-import { save, open } from "@tauri-apps/plugin-dialog";
-import { writeTextFile, readTextFile } from "@tauri-apps/plugin-fs";
 import "./ConnectionList.css";
 
 const TYPE_ICONS: Record<ConnectionType, typeof Terminal> = {
@@ -307,7 +302,6 @@ export function ConnectionList() {
   const deleteConnection = useAppStore((s) => s.deleteConnection);
   const deleteFolder = useAppStore((s) => s.deleteFolder);
   const addFolder = useAppStore((s) => s.addFolder);
-  const loadFromBackend = useAppStore((s) => s.loadFromBackend);
   const duplicateConnection = useAppStore((s) => s.duplicateConnection);
   const moveConnectionToFolder = useAppStore((s) => s.moveConnectionToFolder);
 
@@ -374,35 +368,6 @@ export function ConnectionList() {
     [setEditingConnection]
   );
 
-  const handleExport = useCallback(async () => {
-    try {
-      const json = await exportConnections();
-      const filePath = await save({
-        defaultPath: "termihub-connections.json",
-        filters: [{ name: "JSON", extensions: ["json"] }],
-      });
-      if (!filePath) return;
-      await writeTextFile(filePath, json);
-    } catch (err) {
-      console.error("Failed to export connections:", err);
-    }
-  }, []);
-
-  const handleImport = useCallback(async () => {
-    try {
-      const filePath = await open({
-        multiple: false,
-        filters: [{ name: "JSON", extensions: ["json"] }],
-      });
-      if (!filePath) return;
-      const json = await readTextFile(filePath);
-      await importConnections(json);
-      await loadFromBackend();
-    } catch (err) {
-      console.error("Failed to import connections:", err);
-    }
-  }, [loadFromBackend]);
-
   const handleDragStart = useCallback((event: DragStartEvent) => {
     const conn = event.active.data.current?.connection as SavedConnection | undefined;
     setDraggingConnection(conn ?? null);
@@ -432,20 +397,6 @@ export function ConnectionList() {
   return (
     <div className="connection-list">
       <div className="connection-list__header">
-        <button
-          className="connection-list__add-btn"
-          onClick={handleImport}
-          title="Import Connections"
-        >
-          <Upload size={16} />
-        </button>
-        <button
-          className="connection-list__add-btn"
-          onClick={handleExport}
-          title="Export Connections"
-        >
-          <Download size={16} />
-        </button>
         <button
           className="connection-list__add-btn"
           onClick={() => setCreatingFolder(true)}
