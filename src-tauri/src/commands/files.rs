@@ -1,6 +1,7 @@
 use tauri::State;
 
-use crate::files::sftp::{FileEntry, SftpManager};
+use crate::files::FileEntry;
+use crate::files::sftp::SftpManager;
 use crate::terminal::backend::SshConfig;
 use crate::utils::errors::TerminalError;
 
@@ -97,4 +98,30 @@ pub fn sftp_rename(
     let session = manager.get_session(&session_id)?;
     let session = session.lock().unwrap();
     session.rename(&old_path, &new_path)
+}
+
+// --- Local filesystem commands ---
+
+/// List directory contents on the local filesystem.
+#[tauri::command]
+pub fn local_list_dir(path: String) -> Result<Vec<FileEntry>, TerminalError> {
+    crate::files::local::list_dir(&path)
+}
+
+/// Create a directory on the local filesystem.
+#[tauri::command]
+pub fn local_mkdir(path: String) -> Result<(), TerminalError> {
+    crate::files::local::mkdir(&path)
+}
+
+/// Delete a file or directory on the local filesystem.
+#[tauri::command]
+pub fn local_delete(path: String, is_directory: bool) -> Result<(), TerminalError> {
+    crate::files::local::delete(&path, is_directory)
+}
+
+/// Rename a file or directory on the local filesystem.
+#[tauri::command]
+pub fn local_rename(old_path: String, new_path: String) -> Result<(), TerminalError> {
+    crate::files::local::rename(&old_path, &new_path)
 }

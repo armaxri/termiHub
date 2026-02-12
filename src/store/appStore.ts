@@ -8,7 +8,7 @@ import {
   persistFolder,
   removeFolder,
 } from "@/services/storage";
-import { sftpOpen, sftpClose, sftpListDir } from "@/services/api";
+import { sftpOpen, sftpClose, sftpListDir, localListDir } from "@/services/api";
 import {
   createLeafPanel,
   findLeaf,
@@ -91,12 +91,29 @@ interface AppState {
   sftpSessionId: string | null;
   sftpLoading: boolean;
   sftpError: string | null;
+  sftpConnectedHost: string | null;
   setCurrentPath: (path: string) => void;
   setFileEntries: (entries: FileEntry[]) => void;
   connectSftp: (config: SshConfig) => Promise<void>;
   disconnectSftp: () => Promise<void>;
   navigateSftp: (path: string) => Promise<void>;
   refreshSftp: () => Promise<void>;
+
+  // Per-tab CWD tracking
+  tabCwds: Record<string, string>;
+  setTabCwd: (tabId: string, cwd: string) => void;
+
+  // Local file browser state
+  localFileEntries: FileEntry[];
+  localCurrentPath: string;
+  localFileLoading: boolean;
+  localFileError: string | null;
+  navigateLocal: (path: string) => Promise<void>;
+  refreshLocal: () => Promise<void>;
+
+  // File browser mode
+  fileBrowserMode: "local" | "sftp" | "none";
+  setFileBrowserMode: (mode: "local" | "sftp" | "none") => void;
 }
 
 let tabCounter = 0;
@@ -250,6 +267,9 @@ export const useAppStore = create<AppState>((set, get) => {
 
     closeTab: (tabId, panelId) =>
       set((state) => {
+        // Clean up CWD entry for the closed tab
+        const { [tabId]: _removed, ...remainingCwds } = state.tabCwds;
+
         let rootPanel = updateLeaf(state.rootPanel, panelId, (leaf) =>
           removeTabFromLeaf(leaf, tabId)
         );
@@ -264,10 +284,10 @@ export const useAppStore = create<AppState>((set, get) => {
           const activePanelId = state.activePanelId === panelId
             ? newLeaves[0]?.id ?? null
             : state.activePanelId;
-          return { rootPanel, activePanelId };
+          return { rootPanel, activePanelId, tabCwds: remainingCwds };
         }
 
-        return { rootPanel };
+        return { rootPanel, tabCwds: remainingCwds };
       }),
 
     setActiveTab: (tabId, panelId) =>
@@ -560,6 +580,7 @@ export const useAppStore = create<AppState>((set, get) => {
     sftpSessionId: null,
     sftpLoading: false,
     sftpError: null,
+    sftpConnectedHost: null,
 
     setCurrentPath: (path) => set({ currentPath: path }),
     setFileEntries: (entries) => set({ fileEntries: entries }),
@@ -583,6 +604,7 @@ export const useAppStore = create<AppState>((set, get) => {
           sftpLoading: false,
           currentPath: activePath,
           fileEntries: entries,
+          sftpConnectedHost: `${config.username}@${config.host}:${config.port}`,
         });
       } catch (err) {
         set({
@@ -606,6 +628,7 @@ export const useAppStore = create<AppState>((set, get) => {
         fileEntries: [],
         currentPath: "/",
         sftpError: null,
+        sftpConnectedHost: null,
       });
     },
 
@@ -638,5 +661,58 @@ export const useAppStore = create<AppState>((set, get) => {
         });
       }
     },
+
+    // Per-tab CWD tracking
+    tabCwds: {},
+    setTabCwd: (tabId, cwd) =>
+      set((state) => ({ tabCwds: { ...state.tabCwds, [tabId]: cwd } })),
+
+    // Local file browser state
+    localFileEntries: [],
+    localCurrentPath: "/",
+    localFileLoading: false,
+    localFileError: null,
+
+    navigateLocal: async (path: string) => {
+      set({ localFileLoading: true, localFileError: null });
+      try {
+        const entries = await localListDir(path);
+        set({ localFileEntries: entries, localCurrentPath: path, localFileLoading: false });
+      } catch (err) {
+        set({
+          localFileLoading: false,
+          localFileError: err instanceof Error ? err.message : String(err),
+        });
+      }
+    },
+
+    refreshLocal: async () => {
+      const { localCurrentPath } = useAppStore.getState();
+      set({ localFileLoading: true, localFileError: null });
+      try {
+        const entries = await localListDir(localCurrentPath);
+        set({ localFileEntries: entries, localFileLoading: false });
+      } catch (err) {
+        set({
+          localFileLoading: false,
+          localFileError: err instanceof Error ? err.message : String(err),
+        });
+      }
+    },
+
+    // File browser mode
+    fileBrowserMode: "none",
+    setFileBrowserMode: (mode) => set({ fileBrowserMode: mode }),
   };
 });
+
+/**
+ * Get the active tab from the current store state.
+ */
+export function getActiveTab(state: AppState): TerminalTab | null {
+  const { activePanelId, rootPanel } = state;
+  if (!activePanelId) return null;
+  const leaf = findLeaf(rootPanel, activePanelId);
+  if (!leaf || !leaf.activeTabId) return null;
+  return leaf.tabs.find((t) => t.id === leaf.activeTabId) ?? null;
+}

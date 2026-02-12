@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Sidebar file browser automatically shows the working directory of the active terminal tab
+- Local filesystem browsing with rename, delete, and create directory support
+- Auto-connect SFTP when switching to SSH terminal tabs
 - Ping host via right-click context menu on SSH and Telnet connections
 - Copy terminal content to clipboard via right-click context menu on tabs
 - Save terminal content to file via right-click context menu on tabs
