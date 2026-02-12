@@ -234,249 +234,26 @@ sequenceDiagram
 
 ---
 
-## Implementation Phases
+## Task Management
 
-### Phase 1: UI Foundation (Weeks 1-2)
+All work is tracked in **GitHub Issues**. Use `gh issue list` to see open tasks.
 
-**Goal**: Create the complete UI shell without backend functionality
+### Priority Labels
 
-#### Tasks:
-1. **Project Setup**
-   ```bash
-   npm create tauri-app@latest termihub
-   # Select: React + TypeScript
-   npm install dependencies (see package.json below)
-   ```
+Issues are prioritized by phase label (highest priority first):
 
-2. **Layout Components**
-   - Activity Bar (left sidebar with icons)
-   - Sidebar (connection list, file browser)
-   - Main Content Area with split view support
-   - Tab system with drag-and-drop
+1. **`phase-5-polish`** — Polish & Testing (UX improvements, performance, cross-platform testing)
+2. **`phase-6-remote-foundation`** — Remote Agent Foundation (protocol design, RemoteBackend, agent stub)
+3. **`phase-7-remote-agent`** — Remote Agent Implementation (SQLite persistence, serial proxy, systemd, UI integration)
+4. **`future`** — Post-v1 enhancements (X11 forwarding, credential encryption, plugins, cloud sync, etc.)
 
-3. **Terminal Component**
-   - Integrate xterm.js
-   - Mock data streaming for testing
-   - Resize handling
-   - Theme support
+### Workflow
 
-4. **Connection UI**
-   - Connection type selector
-   - Configuration forms for each type
-   - Tree view for connection organization
-   - Folder creation and management
-
-5. **File Browser UI**
-   - Tree view component
-   - Drag-and-drop zones
-   - Upload/download buttons (non-functional yet)
-
-**Deliverable**: Fully functional UI that looks and feels like the final product, but with mock data
-
-**Branch**: `feature/ui-foundation`
-
----
-
-### Phase 2: Local Terminal Backends (Weeks 3-4)
-
-**Goal**: Implement all local terminal types
-
-#### Tasks:
-
-1. **Backend Architecture Setup**
-   - Define `TerminalBackend` trait
-   - Implement `TerminalManager`
-   - Set up Tauri command handlers
-   - Implement event streaming
-
-2. **Local Shell Implementation**
-   - Auto-detect available shells (zsh, bash, cmd, PowerShell, Git Bash)
-   - Implement `LocalShell` backend using `portable-pty`
-   - Shell selection UI
-   - Platform-specific handling
-
-3. **Serial Port Implementation**
-   - Port enumeration
-   - `SerialConnection` backend with `serialport` crate
-   - Configuration UI (baud rate, parity, stop bits, flow control)
-   - Extensible config structure for future settings
-   - Active/inactive tab handling
-
-4. **Telnet Implementation**
-   - `TelnetConnection` backend
-   - Basic telnet protocol
-   - Configuration UI (host, port)
-
-5. **SSH Implementation (Basic)**
-   - `SshConnection` backend with `ssh2` crate
-   - Authentication (password, key-based)
-   - Configuration UI
-   - Connection status handling
-
-**Deliverable**: All local terminal types working, users can create and use connections
-
-**Branches**: 
-- `feature/backend-architecture`
-- `feature/local-shells`
-- `feature/serial-backend`
-- `feature/telnet-backend`
-- `feature/ssh-backend`
-
----
-
-### Phase 3: SSH File Browser (Week 5)
-
-**Goal**: SFTP file browser for SSH connections
-
-#### Tasks:
-
-1. **SFTP Integration**
-   - Add SFTP support to `SshConnection`
-   - File listing commands
-   - Upload/download commands
-
-2. **File Browser Component**
-   - Virtual scrolling for large directories
-   - Directory navigation
-   - File selection
-
-3. **Drag & Drop**
-   - Drop zone for uploads
-   - Drag files out for download
-   - Progress indicators
-
-4. **File Operations**
-   - Create directory
-   - Delete files/folders
-   - Rename operations
-   - Permission display
-
-**Deliverable**: Fully functional SSH file browser
-
-**Branch**: `feature/sftp-browser`
-
----
-
-### Phase 4: Connection Management & Persistence (Week 6)
-
-**Goal**: Save and organize connections
-
-#### Tasks:
-
-1. **Configuration Storage**
-   - Define config schema
-   - Implement local storage (JSON file in app data directory)
-   - Connection CRUD operations
-
-2. **Connection Organization**
-   - Folder hierarchy implementation
-   - Drag-and-drop reorganization
-   - Import/export connections
-
-3. **Credential Management (Stub)**
-   - Placeholder for encrypted credential storage
-   - Warning UI for unsaved credentials
-   - Preparation for future encryption
-
-**Deliverable**: Connections persist across app restarts, can be organized
-
-**Branch**: `feature/connection-persistence`
-
----
-
-### Phase 5: Polish & Testing (Week 7)
-
-**Goal**: Bug fixes, UX improvements, performance testing
-
-#### Tasks:
-
-1. **Performance Testing**
-   - Test with 40 simultaneous terminals
-   - Memory leak detection
-   - Optimize event streaming
-
-2. **UX Improvements**
-   - Keyboard shortcuts
-   - Context menus
-   - Better error messages
-   - Loading states
-   - ~~**TODO**: Filter shell type dropdown in ConnectionSettings to only show shells available on the current platform~~ (Done — `ConnectionSettings.tsx` now calls `detectAvailableShells()` on mount)
-
-3. **Cross-Platform Testing**
-   - Test on Windows, Linux, macOS
-   - Platform-specific bug fixes
-
-4. **Documentation**
-   - User guide
-   - Developer documentation
-   - Build instructions
-
-**Deliverable**: Production-ready Phase 1 application
-
-**Branch**: `feature/polish-and-testing`
-
----
-
-### Phase 6: Remote Agent Foundation (Weeks 8-9)
-
-**Goal**: Prepare for remote Raspberry Pi agent
-
-#### Tasks:
-
-1. **Protocol Design**
-   - Define session management protocol
-   - Message format (JSON over SSH)
-   - Session state schema
-
-2. **Backend Refactoring**
-   - Abstract `RemoteBackend` implementation
-   - Session reconnect logic
-   - Connection state management
-
-3. **Agent Stub**
-   - Basic Rust binary
-   - SSH server setup
-   - Session listing endpoint
-
-**Deliverable**: Architecture ready for remote sessions, basic agent running
-
-**Branch**: `feature/remote-foundation`
-
----
-
-### Phase 7: Remote Agent Implementation (Weeks 10-12)
-
-**Goal**: Full remote session support with persistence
-
-#### Tasks:
-
-1. **Session Persistence**
-   - SQLite integration
-   - Session state save/restore
-   - Output buffering
-
-2. **Serial Proxy**
-   - Remote serial port access
-   - 24/7 buffering
-   - Buffer replay on connect
-
-3. **Agent Management**
-   - systemd service setup
-   - Auto-start configuration
-   - Health monitoring
-
-4. **UI Integration**
-   - Remote connection type
-   - Session listing
-   - Reconnect handling
-   - Remote file browser
-
-**Deliverable**: Full remote agent with persistent sessions
-
-**Branches**:
-- `feature/agent-persistence`
-- `feature/serial-proxy`
-- `feature/remote-integration`
+- Pick the next task from the highest-priority label with open issues
+- Reference issue numbers in commits and PRs (`Closes #N` / `Fixes #N`)
+- Create new issues for work discovered during development
+- Label new issues appropriately upon creation
+- Use `gh issue list --label <label>` to filter by phase
 
 ---
 
@@ -985,42 +762,6 @@ Phase 1 does NOT implement credential encryption to avoid complexity. Future imp
 
 ---
 
-## Future Enhancements (Post-Phase 7)
-
-### X11 Forwarding
-- X server spawning for SSH connections
-- Window sharing from Linux hosts
-- Display forwarding configuration
-- Multi-display support
-
-### Credential Encryption
-- Platform keychain integration
-- Master password option
-- Import/export with encryption
-
-### Advanced Serial Features
-- Protocol analyzers
-- Data logging
-- Hex view mode
-- Custom baud rates
-
-### Session Sharing
-- Read-only session sharing
-- Multi-user collaboration
-- Session recording/playback
-
-### Plugin System
-- Custom terminal types
-- Custom parsers
-- Theme extensions
-
-### Cloud Sync
-- Connection sync across devices
-- Settings sync
-- Optional cloud storage for session logs
-
----
-
 ## Development Guidelines
 
 ### Before Starting Work
@@ -1100,48 +841,6 @@ sudo usermod -a -G dialout $USER
 
 ---
 
-## Changelog
-
-**Note**: This project follows [Keep a Changelog](https://keepachangelog.com/) format.
-
-**Important for Claude Code**: Always update CHANGELOG.md when making user-facing changes:
-- Add entries under `[Unreleased]` section
-- Use appropriate category: `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`
-- Write for end-users, not developers
-- Be concise but descriptive
-
-### [Unreleased]
-
-#### Added
-- Project architecture and documentation
-
-#### Changed
-
-#### Deprecated
-
-#### Removed
-
-#### Fixed
-
-#### Security
-
----
-
-### [0.1.0] - TBD
-
-#### Added
-- Phase 1: UI Foundation with activity bar, sidebar, and split view
-- Phase 2: Local terminal support (bash, zsh, cmd, PowerShell, Git Bash)
-- Phase 2: Serial port connection with configurable settings
-- Phase 2: SSH connection with authentication
-- Phase 2: Telnet connection support
-- Phase 3: SSH file browser with SFTP integration
-- Phase 4: Connection persistence and organization in folders
-- Drag-and-drop tab management
-- Terminal theme support
-
----
-
 ## License
 
 MIT License - See LICENSE file for details
@@ -1163,13 +862,14 @@ MIT License - See LICENSE file for details
 
 When working on this project:
 
-1. **Always** create a feature branch first
-2. **Read** the relevant architecture section before implementing
-3. **Follow** the coding standards exactly
-4. **Use** conventional commits
-5. **Update CHANGELOG.md** for every user-facing change (new features, bug fixes, breaking changes)
-6. **Test** on the target platform before committing
-7. **Ask** if architecture decisions need clarification
+1. **Check GitHub Issues** for the next task (`gh issue list --label phase-5-polish`)
+2. **Always** create a feature branch first
+3. **Read** the relevant architecture section before implementing
+4. **Follow** the coding standards exactly
+5. **Use** conventional commits, referencing issue numbers (`Closes #N`)
+6. **Update CHANGELOG.md** for every user-facing change (new features, bug fixes, breaking changes)
+7. **Test** on the target platform before committing
+8. **Ask** if architecture decisions need clarification
 
 For each new terminal backend:
 1. Implement the `TerminalBackend` trait
