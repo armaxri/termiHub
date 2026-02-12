@@ -15,11 +15,18 @@ pub struct ConnectionStorage {
 
 impl ConnectionStorage {
     /// Create a new storage instance, resolving the config directory.
+    ///
+    /// If `TERMIHUB_CONFIG_DIR` is set, it overrides the default Tauri config directory.
     pub fn new(app_handle: &AppHandle) -> Result<Self> {
-        let config_dir = app_handle
-            .path()
-            .app_config_dir()
-            .context("Failed to resolve app config directory")?;
+        let config_dir = match std::env::var("TERMIHUB_CONFIG_DIR") {
+            Ok(dir) => PathBuf::from(dir),
+            Err(_) => app_handle
+                .path()
+                .app_config_dir()
+                .context("Failed to resolve app config directory")?,
+        };
+
+        tracing::info!("Using config directory: {}", config_dir.display());
 
         fs::create_dir_all(&config_dir)
             .context("Failed to create config directory")?;
