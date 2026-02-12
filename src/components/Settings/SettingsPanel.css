@@ -1,0 +1,16 @@
+.settings-panel {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.settings-panel--hidden {
+  display: none;
+}
+
+.settings-panel__content {
+  color: var(--text-disabled);
+  font-size: var(--font-size-md);
+}

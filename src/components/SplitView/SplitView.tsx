@@ -15,6 +15,7 @@ import { PanelNode, LeafPanel, TerminalTab, ConnectionType, DropEdge } from "@/t
 import { getAllLeaves, findLeafByTab } from "@/utils/panelTree";
 import { useTerminalRegistry } from "@/components/Terminal/TerminalRegistry";
 import { TabBar } from "@/components/Terminal/TabBar";
+import { SettingsPanel } from "@/components/Settings";
 import { PanelDropZone } from "./PanelDropZone";
 import "./SplitView.css";
 
@@ -259,14 +260,6 @@ function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: boolean 
       ref={slotRef}
       className={`terminal-container ${isVisible ? "" : "terminal-container--hidden"}`}
     />
-  );
-}
-
-function SettingsPanel({ isVisible }: { isVisible: boolean }) {
-  return (
-    <div className={`settings-panel ${isVisible ? "" : "settings-panel--hidden"}`}>
-      <div className="settings-panel__content">No Setting Yet!</div>
-    </div>
   );
 }
 
