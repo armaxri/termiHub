@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Per-connection horizontal scrolling option with runtime toggle via tab context menu
 - Example directory with Docker-based SSH and Telnet test targets
 - Virtual serial port testing via socat
 - Support for `TERMIHUB_CONFIG_DIR` environment variable to override config directory

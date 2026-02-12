@@ -338,7 +338,7 @@ export function ConnectionList() {
         config = { ...config, config: { ...sshCfg, password } };
       }
 
-      addTab(connection.name, connection.config.type, config);
+      addTab(connection.name, connection.config.type, config, undefined, undefined, connection.terminalOptions);
     },
     [addTab, requestPassword]
   );

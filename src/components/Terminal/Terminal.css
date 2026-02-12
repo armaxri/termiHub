@@ -18,3 +18,13 @@
 .terminal-container .xterm-viewport {
   overflow-y: auto;
 }
+
+/* Horizontal scrolling: the outer wrapper scrolls, .xterm is made wider via JS */
+.terminal-horizontal-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.terminal-horizontal-scroll .xterm {
+  overflow: hidden;
+}

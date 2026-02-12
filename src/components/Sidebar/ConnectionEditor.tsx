@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { useAppStore } from "@/store/appStore";
-import { ConnectionType, ConnectionConfig, LocalShellConfig, SshConfig, TelnetConfig, SerialConfig } from "@/types/terminal";
+import { ConnectionType, ConnectionConfig, LocalShellConfig, SshConfig, TelnetConfig, SerialConfig, TerminalOptions } from "@/types/terminal";
 import { ConnectionSettings, SshSettings, SerialSettings, TelnetSettings } from "@/components/Settings";
 import { getDefaultShell } from "@/utils/shell-detection";
 import "./ConnectionEditor.css";
@@ -49,6 +49,9 @@ export function ConnectionEditor() {
   const [connectionConfig, setConnectionConfig] = useState<ConnectionConfig>(
     existingConnection?.config ?? defaultConfigs.local
   );
+  const [terminalOptions, setTerminalOptions] = useState<TerminalOptions>(
+    existingConnection?.terminalOptions ?? {}
+  );
 
   const handleTypeChange = useCallback((type: ConnectionType) => {
     setConnectionConfig(getDefaultConfigs(defaultShell)[type]);
@@ -57,18 +60,21 @@ export function ConnectionEditor() {
   const handleSave = useCallback(() => {
     if (!name.trim()) return;
 
+    const opts = terminalOptions.horizontalScrolling ? terminalOptions : undefined;
+
     if (existingConnection) {
-      updateConnection({ ...existingConnection, name, config: connectionConfig, folderId });
+      updateConnection({ ...existingConnection, name, config: connectionConfig, folderId, terminalOptions: opts });
     } else {
       addConnection({
         id: `conn-${Date.now()}`,
         name,
         config: connectionConfig,
         folderId,
+        terminalOptions: opts,
       });
     }
     setEditingConnection(null);
-  }, [name, folderId, connectionConfig, existingConnection, addConnection, updateConnection, setEditingConnection]);
+  }, [name, folderId, connectionConfig, terminalOptions, existingConnection, addConnection, updateConnection, setEditingConnection]);
 
   const handleCancel = useCallback(() => {
     setEditingConnection(null);
@@ -140,6 +146,15 @@ export function ConnectionEditor() {
             onChange={(config: TelnetConfig) => setConnectionConfig({ type: "telnet", config })}
           />
         )}
+
+        <label className="settings-form__field settings-form__field--checkbox">
+          <input
+            type="checkbox"
+            checked={terminalOptions.horizontalScrolling ?? false}
+            onChange={(e) => setTerminalOptions({ ...terminalOptions, horizontalScrolling: e.target.checked })}
+          />
+          <span className="settings-form__label">Enable horizontal scrolling</span>
+        </label>
 
         <div className="connection-editor__actions">
           <button className="connection-editor__btn connection-editor__btn--secondary" onClick={handleCancel}>

@@ -6,6 +6,10 @@ export type ConnectionType = "local" | "ssh" | "telnet" | "serial";
 
 export type TabContentType = "terminal" | "settings";
 
+export interface TerminalOptions {
+  horizontalScrolling?: boolean;
+}
+
 export interface LocalShellConfig {
   shellType: ShellType;
   initialCommand?: string;
