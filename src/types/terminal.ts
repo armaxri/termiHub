@@ -4,6 +4,8 @@ export type ShellType = "zsh" | "bash" | "cmd" | "powershell" | "gitbash";
 
 export type ConnectionType = "local" | "ssh" | "telnet" | "serial";
 
+export type TabContentType = "terminal" | "settings";
+
 export interface LocalShellConfig {
   shellType: ShellType;
 }
@@ -42,6 +44,7 @@ export interface TerminalTab {
   sessionId: SessionId | null;
   title: string;
   connectionType: ConnectionType;
+  contentType: TabContentType;
   config: ConnectionConfig;
   panelId: string;
   isActive: boolean;

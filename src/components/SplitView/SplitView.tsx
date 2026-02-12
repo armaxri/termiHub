@@ -9,7 +9,7 @@ import {
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
-import { Terminal as TerminalIcon, Wifi, Cable, Globe } from "lucide-react";
+import { Terminal as TerminalIcon, Wifi, Cable, Globe, Settings as SettingsIcon } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { PanelNode, LeafPanel, TerminalTab, ConnectionType, DropEdge } from "@/types/terminal";
 import { getAllLeaves, findLeafByTab } from "@/utils/panelTree";
@@ -195,13 +195,20 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
             No terminals open. Use the toolbar or double-click a connection.
           </div>
         )}
-        {panel.tabs.map((tab) => (
-          <TerminalSlot
-            key={tab.id}
-            tabId={tab.id}
-            isVisible={tab.id === panel.activeTabId}
-          />
-        ))}
+        {panel.tabs.map((tab) =>
+          tab.contentType === "settings" ? (
+            <SettingsPanel
+              key={tab.id}
+              isVisible={tab.id === panel.activeTabId}
+            />
+          ) : (
+            <TerminalSlot
+              key={tab.id}
+              tabId={tab.id}
+              isVisible={tab.id === panel.activeTabId}
+            />
+          )
+        )}
         {activeDragTab && (
           <PanelDropZone panelId={panel.id} hideEdges={hideEdges} />
         )}
@@ -255,8 +262,16 @@ function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: boolean 
   );
 }
 
+function SettingsPanel({ isVisible }: { isVisible: boolean }) {
+  return (
+    <div className={`settings-panel ${isVisible ? "" : "settings-panel--hidden"}`}>
+      <div className="settings-panel__content">No Setting Yet!</div>
+    </div>
+  );
+}
+
 function TabDragOverlay({ tab }: { tab: TerminalTab }) {
-  const Icon = TYPE_ICONS[tab.connectionType];
+  const Icon = tab.contentType === "settings" ? SettingsIcon : TYPE_ICONS[tab.connectionType];
   return (
     <div className="tab tab--drag-overlay">
       <Icon size={14} className="tab__icon" />

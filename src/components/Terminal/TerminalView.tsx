@@ -82,7 +82,9 @@ export function TerminalView() {
 function TerminalHost() {
   const rootPanel = useAppStore((s) => s.rootPanel);
   const allTabs: TerminalTab[] = useMemo(() => {
-    return getAllLeaves(rootPanel).flatMap((leaf) => leaf.tabs);
+    return getAllLeaves(rootPanel)
+      .flatMap((leaf) => leaf.tabs)
+      .filter((tab) => tab.contentType === "terminal");
   }, [rootPanel]);
 
   return (

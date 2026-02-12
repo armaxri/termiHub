@@ -8,14 +8,11 @@ const TOP_ITEMS: { view: SidebarView; icon: typeof Network; label: string }[] = 
   { view: "files", icon: FolderOpen, label: "File Browser" },
 ];
 
-const BOTTOM_ITEMS: { view: SidebarView; icon: typeof Network; label: string }[] = [
-  { view: "settings", icon: Settings, label: "Settings" },
-];
-
 export function ActivityBar() {
   const sidebarView = useAppStore((s) => s.sidebarView);
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
   const setSidebarView = useAppStore((s) => s.setSidebarView);
+  const openSettingsTab = useAppStore((s) => s.openSettingsTab);
 
   return (
     <div className="activity-bar">
@@ -31,15 +28,12 @@ export function ActivityBar() {
         ))}
       </div>
       <div className="activity-bar__bottom">
-        {BOTTOM_ITEMS.map((item) => (
-          <ActivityBarItem
-            key={item.view}
-            icon={item.icon}
-            label={item.label}
-            isActive={sidebarView === item.view && !sidebarCollapsed}
-            onClick={() => setSidebarView(item.view)}
-          />
-        ))}
+        <ActivityBarItem
+          icon={Settings}
+          label="Settings"
+          isActive={false}
+          onClick={openSettingsTab}
+        />
       </div>
     </div>
   );

@@ -7,7 +7,6 @@ import "./Sidebar.css";
 const VIEW_TITLES = {
   connections: "Connections",
   files: "File Browser",
-  settings: "Settings",
 } as const;
 
 export function Sidebar() {
@@ -29,9 +28,6 @@ export function Sidebar() {
             : <ConnectionList />
         )}
         {sidebarView === "files" && <FileBrowser />}
-        {sidebarView === "settings" && (
-          <div className="sidebar__section">Settings (coming soon)</div>
-        )}
       </div>
     </div>
   );
