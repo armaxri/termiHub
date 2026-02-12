@@ -30,7 +30,7 @@ import {
   Activity,
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { ConnectionType, ShellType } from "@/types/terminal";
+import { ConnectionType, ShellType, SshConfig } from "@/types/terminal";
 import { SavedConnection, ConnectionFolder } from "@/types/connection";
 import { listAvailableShells } from "@/services/api";
 import "./ConnectionList.css";
@@ -325,11 +325,22 @@ export function ConnectionList() {
   });
   const sensors = useSensors(pointerSensor);
 
+  const requestPassword = useAppStore((s) => s.requestPassword);
+
   const handleConnect = useCallback(
-    (connection: SavedConnection) => {
-      addTab(connection.name, connection.config.type, connection.config);
+    async (connection: SavedConnection) => {
+      let config = connection.config;
+
+      if (config.type === "ssh" && config.config.authMethod === "password") {
+        const sshCfg = config.config as SshConfig;
+        const password = await requestPassword(sshCfg.host, sshCfg.username);
+        if (password === null) return;
+        config = { ...config, config: { ...sshCfg, password } };
+      }
+
+      addTab(connection.name, connection.config.type, config);
     },
-    [addTab]
+    [addTab, requestPassword]
   );
 
   const handleEdit = useCallback(

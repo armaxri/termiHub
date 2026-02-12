@@ -45,14 +45,9 @@ export function SshSettings({ config, onChange }: SshSettingsProps) {
         </select>
       </label>
       {config.authMethod === "password" && (
-        <label className="settings-form__field">
-          <span className="settings-form__label">Password</span>
-          <input
-            type="password"
-            value={config.password ?? ""}
-            onChange={(e) => onChange({ ...config, password: e.target.value })}
-          />
-        </label>
+        <p className="settings-form__hint">
+          You will be prompted for a password each time you connect.
+        </p>
       )}
       {config.authMethod === "key" && (
         <label className="settings-form__field">

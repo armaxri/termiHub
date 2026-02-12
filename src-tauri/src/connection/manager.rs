@@ -5,6 +5,15 @@ use tauri::AppHandle;
 
 use super::config::{ConnectionFolder, ConnectionStore, SavedConnection};
 use super::storage::ConnectionStorage;
+use crate::terminal::backend::ConnectionConfig;
+
+/// Strip the password field from an SSH connection config.
+fn strip_ssh_password(mut connection: SavedConnection) -> SavedConnection {
+    if let ConnectionConfig::Ssh(ref mut ssh_cfg) = connection.config {
+        ssh_cfg.password = None;
+    }
+    connection
+}
 
 /// Manages saved connections and folders with file persistence.
 pub struct ConnectionManager {
@@ -14,9 +23,24 @@ pub struct ConnectionManager {
 
 impl ConnectionManager {
     /// Create a new connection manager, loading existing data from disk.
+    /// On first load, strips any stored SSH passwords (migration).
     pub fn new(app_handle: &AppHandle) -> Result<Self> {
         let storage = ConnectionStorage::new(app_handle)?;
-        let store = storage.load()?;
+        let mut store = storage.load()?;
+
+        // Migrate: strip any existing stored passwords
+        let mut needs_save = false;
+        for conn in &mut store.connections {
+            if let ConnectionConfig::Ssh(ref mut ssh_cfg) = conn.config {
+                if ssh_cfg.password.is_some() {
+                    ssh_cfg.password = None;
+                    needs_save = true;
+                }
+            }
+        }
+        if needs_save {
+            storage.save(&store).context("Failed to strip stored passwords on migration")?;
+        }
 
         Ok(Self {
             store: Mutex::new(store),
@@ -30,8 +54,9 @@ impl ConnectionManager {
         Ok(store.clone())
     }
 
-    /// Save (add or update) a connection.
+    /// Save (add or update) a connection. Passwords are stripped before persisting.
     pub fn save_connection(&self, connection: SavedConnection) -> Result<()> {
+        let connection = strip_ssh_password(connection);
         let mut store = self.store.lock().unwrap();
 
         if let Some(existing) = store.connections.iter_mut().find(|c| c.id == connection.id) {
@@ -91,10 +116,16 @@ impl ConnectionManager {
         self.storage.save(&store).context("Failed to persist after folder delete")
     }
 
-    /// Export all connections and folders as a JSON string.
+    /// Export all connections and folders as a JSON string. Passwords are stripped.
     pub fn export_json(&self) -> Result<String> {
         let store = self.store.lock().unwrap();
-        serde_json::to_string_pretty(&*store).context("Failed to serialize connections for export")
+        let mut export_store = store.clone();
+        export_store.connections = export_store
+            .connections
+            .into_iter()
+            .map(strip_ssh_password)
+            .collect();
+        serde_json::to_string_pretty(&export_store).context("Failed to serialize connections for export")
     }
 
     /// Import connections and folders from a JSON string.
@@ -113,10 +144,10 @@ impl ConnectionManager {
             }
         }
 
-        // Merge: add imported connections that don't already exist
+        // Merge: add imported connections that don't already exist (strip passwords)
         for conn in imported.connections {
             if !store.connections.iter().any(|c| c.id == conn.id) {
-                store.connections.push(conn);
+                store.connections.push(strip_ssh_password(conn));
             }
         }
 

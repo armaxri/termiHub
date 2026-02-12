@@ -57,9 +57,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Double-click a connection to connect directly
 
 ### Changed
+- SSH password authentication now prompts for password at each connection instead of storing it
 - Moved Import/Export connections from connection list toolbar to the Settings gear dropdown menu
 - Settings button now opens a Settings tab instead of a sidebar view
 - Moved settings button to the bottom of the activity bar, matching VS Code's layout
 - Panel layout refactored from flat array to recursive tree for flexible split arrangements
 - Connection and folder context menus now open on right-click instead of left-click
 - Shell type dropdown in connection editor now only shows shells available on the current platform
+
+### Security
+- Removed plaintext SSH password storage from connections file

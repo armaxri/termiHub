@@ -41,6 +41,14 @@
   font-size: var(--font-size-sm);
 }
 
+.settings-form__hint {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin: 0;
+  padding: var(--spacing-xs) 0;
+  font-style: italic;
+}
+
 .connection-editor__actions {
   display: flex;
   gap: var(--spacing-sm);
