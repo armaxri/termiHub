@@ -582,7 +582,7 @@ docs(readme): add build instructions for macOS
    - How to test
    - Screenshots (for UI changes)
 5. Review and address feedback
-6. Squash commits if messy (optional, prefer atomic commits)
+6. **Always merge with a merge commit** (`gh pr merge --merge`). Never squash or rebase — preserve full commit history.
 7. Merge when approved
 
 ---
