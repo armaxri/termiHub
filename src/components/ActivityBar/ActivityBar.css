@@ -16,6 +16,13 @@
   width: 100%;
 }
 
+.activity-bar__bottom {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+}
+
 .activity-bar__item {
   position: relative;
   width: 100%;
