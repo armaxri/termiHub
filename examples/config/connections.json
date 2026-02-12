@@ -1,0 +1,41 @@
+{
+  "version": "1",
+  "folders": [
+    {
+      "id": "folder-docker-test",
+      "name": "Docker Test Targets",
+      "parentId": null,
+      "isExpanded": false
+    }
+  ],
+  "connections": [
+    {
+      "id": "conn-docker-ssh",
+      "name": "Docker SSH (port 2222)",
+      "config": {
+        "type": "ssh",
+        "config": {
+          "host": "127.0.0.1",
+          "port": 2222,
+          "username": "testuser",
+          "authMethod": "password",
+          "password": null,
+          "keyPath": null
+        }
+      },
+      "folderId": "folder-docker-test"
+    },
+    {
+      "id": "conn-docker-telnet",
+      "name": "Docker Telnet (port 2323)",
+      "config": {
+        "type": "telnet",
+        "config": {
+          "host": "127.0.0.1",
+          "port": 2323
+        }
+      },
+      "folderId": "folder-docker-test"
+    }
+  ]
+}

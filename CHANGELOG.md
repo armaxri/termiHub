@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Example directory with Docker-based SSH and Telnet test targets
+- Virtual serial port testing via socat
+- Support for `TERMIHUB_CONFIG_DIR` environment variable to override config directory
 - Sidebar file browser automatically shows the working directory of the active terminal tab
 - Local filesystem browsing with rename, delete, and create directory support
 - Auto-connect SFTP when switching to SSH terminal tabs
