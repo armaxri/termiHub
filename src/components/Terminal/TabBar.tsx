@@ -16,7 +16,7 @@ interface TabBarProps {
 export function TabBar({ panelId, tabs }: TabBarProps) {
   const setActiveTab = useAppStore((s) => s.setActiveTab);
   const closeTab = useAppStore((s) => s.closeTab);
-  const { clearTerminal, saveTerminalToFile } = useTerminalRegistry();
+  const { clearTerminal, saveTerminalToFile, copyTerminalToClipboard } = useTerminalRegistry();
 
   return (
     <div className="tab-bar">
@@ -33,6 +33,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
               onClose={() => closeTab(tab.id, panelId)}
               onClear={() => clearTerminal(tab.id)}
               onSave={() => saveTerminalToFile(tab.id)}
+              onCopyToClipboard={() => copyTerminalToClipboard(tab.id)}
             />
           ))}
         </div>

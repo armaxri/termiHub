@@ -14,6 +14,8 @@ interface TerminalRegistryContextType {
   clearTerminal: (tabId: string) => void;
   /** Save terminal buffer content to a file via native save dialog. */
   saveTerminalToFile: (tabId: string) => Promise<void>;
+  /** Copy terminal buffer content to the clipboard. */
+  copyTerminalToClipboard: (tabId: string) => Promise<void>;
   /** Ref to the off-screen parking div for orphaned terminal elements. */
   parkingRef: React.RefObject<HTMLDivElement | null>;
 }
@@ -57,9 +59,9 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const saveTerminalToFile = useCallback(async (tabId: string) => {
+  const getTerminalContent = useCallback((tabId: string): string | undefined => {
     const xterm = xtermRegistryRef.current.get(tabId);
-    if (!xterm) return;
+    if (!xterm) return undefined;
 
     const buffer = xterm.buffer.active;
     const lines: string[] = [];
@@ -73,7 +75,12 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       lines.pop();
     }
 
-    const content = lines.join("\n") + "\n";
+    return lines.join("\n") + "\n";
+  }, []);
+
+  const saveTerminalToFile = useCallback(async (tabId: string) => {
+    const content = getTerminalContent(tabId);
+    if (!content) return;
 
     const filePath = await save({
       title: "Save terminal content",
@@ -82,11 +89,18 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     if (!filePath) return;
 
     await writeTextFile(filePath, content);
-  }, []);
+  }, [getTerminalContent]);
+
+  const copyTerminalToClipboard = useCallback(async (tabId: string) => {
+    const content = getTerminalContent(tabId);
+    if (!content) return;
+
+    await navigator.clipboard.writeText(content);
+  }, [getTerminalContent]);
 
   const ctx = useMemo(
-    () => ({ register, unregister, getElement, clearTerminal, saveTerminalToFile, parkingRef }),
-    [register, unregister, getElement, clearTerminal, saveTerminalToFile]
+    () => ({ register, unregister, getElement, clearTerminal, saveTerminalToFile, copyTerminalToClipboard, parkingRef }),
+    [register, unregister, getElement, clearTerminal, saveTerminalToFile, copyTerminalToClipboard]
   );
 
   return (
