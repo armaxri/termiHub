@@ -1,6 +1,7 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { X, Terminal, Wifi, Cable, Globe, Settings as SettingsIcon } from "lucide-react";
+import * as ContextMenu from "@radix-ui/react-context-menu";
+import { X, Terminal, Wifi, Cable, Globe, Settings as SettingsIcon, Eraser } from "lucide-react";
 import { TerminalTab } from "@/types/terminal";
 import { ConnectionType } from "@/types/terminal";
 
@@ -15,9 +16,10 @@ interface TabProps {
   tab: TerminalTab;
   onActivate: () => void;
   onClose: () => void;
+  onClear?: () => void;
 }
 
-export function Tab({ tab, onActivate, onClose }: TabProps) {
+export function Tab({ tab, onActivate, onClose, onClear }: TabProps) {
   const {
     attributes,
     listeners,
@@ -34,8 +36,9 @@ export function Tab({ tab, onActivate, onClose }: TabProps) {
   };
 
   const Icon = tab.contentType === "settings" ? SettingsIcon : TYPE_ICONS[tab.connectionType];
+  const isTerminalTab = tab.contentType !== "settings";
 
-  return (
+  const tabElement = (
     <div
       ref={setNodeRef}
       style={style}
@@ -57,5 +60,27 @@ export function Tab({ tab, onActivate, onClose }: TabProps) {
         <X size={14} />
       </button>
     </div>
+  );
+
+  if (!isTerminalTab) {
+    return tabElement;
+  }
+
+  return (
+    <ContextMenu.Root>
+      <ContextMenu.Trigger asChild>
+        {tabElement}
+      </ContextMenu.Trigger>
+      <ContextMenu.Portal>
+        <ContextMenu.Content className="context-menu__content">
+          <ContextMenu.Item
+            className="context-menu__item"
+            onSelect={() => onClear?.()}
+          >
+            <Eraser size={14} /> Clear Terminal
+          </ContextMenu.Item>
+        </ContextMenu.Content>
+      </ContextMenu.Portal>
+    </ContextMenu.Root>
   );
 }

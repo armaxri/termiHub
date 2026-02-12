@@ -95,9 +95,6 @@ export function Terminal({ tabId, config, isVisible }: TerminalProps) {
     // Park the element so xterm.open() has a DOM parent
     parkingRef.current?.appendChild(el);
 
-    // Register with the portal registry
-    register(tabId, el);
-
     const xterm = new XTerm({
       theme: {
         background: "#1e1e1e",
@@ -137,6 +134,9 @@ export function Terminal({ tabId, config, isVisible }: TerminalProps) {
     xterm.unicode.activeVersion = "11";
 
     xterm.open(el);
+
+    // Register element and xterm instance with the portal registry
+    register(tabId, el, xterm);
 
     // Initial fit (may fail since element starts in parking)
     try {
