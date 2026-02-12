@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Save terminal content to file via right-click context menu on tabs
 - Clear terminal content via right-click context menu on tabs
 - Status bar at the bottom of the application window
 - Cross-panel tab drag-and-drop: move tabs between terminal panels by dragging
