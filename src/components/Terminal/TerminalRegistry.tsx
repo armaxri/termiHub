@@ -1,5 +1,7 @@
 import { createContext, useContext, useRef, useCallback, useMemo, ReactNode } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
+import { save } from "@tauri-apps/plugin-dialog";
+import { writeTextFile } from "@tauri-apps/plugin-fs";
 
 interface TerminalRegistryContextType {
   /** Register a terminal's xterm container element and xterm instance. */
@@ -10,6 +12,8 @@ interface TerminalRegistryContextType {
   getElement: (tabId: string) => HTMLDivElement | undefined;
   /** Clear the terminal scrollback and screen for a tab. */
   clearTerminal: (tabId: string) => void;
+  /** Save terminal buffer content to a file via native save dialog. */
+  saveTerminalToFile: (tabId: string) => Promise<void>;
   /** Ref to the off-screen parking div for orphaned terminal elements. */
   parkingRef: React.RefObject<HTMLDivElement | null>;
 }
@@ -53,9 +57,36 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const saveTerminalToFile = useCallback(async (tabId: string) => {
+    const xterm = xtermRegistryRef.current.get(tabId);
+    if (!xterm) return;
+
+    const buffer = xterm.buffer.active;
+    const lines: string[] = [];
+    for (let i = 0; i < buffer.length; i++) {
+      const line = buffer.getLine(i);
+      lines.push(line ? line.translateToString() : "");
+    }
+
+    // Trim trailing empty lines
+    while (lines.length > 0 && lines[lines.length - 1].trim() === "") {
+      lines.pop();
+    }
+
+    const content = lines.join("\n") + "\n";
+
+    const filePath = await save({
+      title: "Save terminal content",
+      defaultPath: "terminal-output.txt",
+    });
+    if (!filePath) return;
+
+    await writeTextFile(filePath, content);
+  }, []);
+
   const ctx = useMemo(
-    () => ({ register, unregister, getElement, clearTerminal, parkingRef }),
-    [register, unregister, getElement, clearTerminal]
+    () => ({ register, unregister, getElement, clearTerminal, saveTerminalToFile, parkingRef }),
+    [register, unregister, getElement, clearTerminal, saveTerminalToFile]
   );
 
   return (
