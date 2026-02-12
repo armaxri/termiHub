@@ -35,6 +35,11 @@ impl TerminalManager {
         let session_id = uuid::Uuid::new_v4().to_string();
         let (output_tx, output_rx) = mpsc::channel::<Vec<u8>>();
 
+        let initial_command = match &config {
+            ConnectionConfig::Local(cfg) => cfg.initial_command.clone(),
+            _ => None,
+        };
+
         let (backend, title) = match &config {
             ConnectionConfig::Local(cfg) => {
                 let shell = LocalShell::new(&cfg.shell_type, output_tx)?;
@@ -93,6 +98,21 @@ impl TerminalManager {
 
         // Spawn output streaming task
         self.spawn_output_reader(session_id.clone(), output_rx, app_handle);
+
+        // Send initial command after a short delay to let the shell initialize
+        if let Some(cmd) = initial_command {
+            let sessions = self.sessions.clone();
+            let sid = session_id.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                if let Ok(sessions) = sessions.lock() {
+                    if let Some(session) = sessions.get(&sid) {
+                        let input = format!("{}\n", cmd);
+                        let _ = session.backend.write_input(input.as_bytes());
+                    }
+                }
+            });
+        }
 
         info!("Created terminal session: {}", session_id);
         Ok(session_id)

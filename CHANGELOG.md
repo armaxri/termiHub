@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Ping host via right-click context menu on SSH and Telnet connections
 - Copy terminal content to clipboard via right-click context menu on tabs
 - Save terminal content to file via right-click context menu on tabs
 - Clear terminal content via right-click context menu on tabs
