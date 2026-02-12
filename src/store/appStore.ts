@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { TerminalTab, SplitPanel, ConnectionType, ConnectionConfig, SshConfig } from "@/types/terminal";
+import { TerminalTab, LeafPanel, PanelNode, ConnectionType, ConnectionConfig, SshConfig, DropEdge } from "@/types/terminal";
 import { SavedConnection, ConnectionFolder, FileEntry } from "@/types/connection";
 import {
   loadConnections,
@@ -9,6 +9,16 @@ import {
   removeFolder,
 } from "@/services/storage";
 import { sftpOpen, sftpClose, sftpListDir } from "@/services/api";
+import {
+  createLeafPanel,
+  findLeaf,
+  getAllLeaves,
+  updateLeaf,
+  removeLeaf,
+  splitLeaf,
+  simplifyTree,
+  edgeToSplit,
+} from "@/utils/panelTree";
 
 export type SidebarView = "connections" | "files" | "settings";
 
@@ -20,16 +30,18 @@ interface AppState {
   toggleSidebar: () => void;
 
   // Panels & Tabs
-  panels: SplitPanel[];
+  rootPanel: PanelNode;
   activePanelId: string | null;
   addTab: (title: string, connectionType: ConnectionType, config?: ConnectionConfig, panelId?: string) => void;
   closeTab: (tabId: string, panelId: string) => void;
   setActiveTab: (tabId: string, panelId: string) => void;
   moveTab: (tabId: string, fromPanelId: string, toPanelId: string, newIndex: number) => void;
   reorderTabs: (panelId: string, oldIndex: number, newIndex: number) => void;
-  splitPanel: () => void;
+  splitPanel: (direction?: "horizontal" | "vertical") => void;
   removePanel: (panelId: string) => void;
   setActivePanel: (panelId: string) => void;
+  splitPanelWithTab: (tabId: string, fromPanelId: string, targetPanelId: string, edge: DropEdge) => void;
+  getAllPanels: () => LeafPanel[];
 
   // Connections
   folders: ConnectionFolder[];
@@ -76,13 +88,32 @@ function createTab(title: string, connectionType: ConnectionType, config: Connec
   };
 }
 
-function createPanel(): SplitPanel {
-  const id = `panel-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-  return { id, tabs: [], activeTabId: null };
+/**
+ * Remove a tab from a leaf panel, choosing a new active tab if needed.
+ * Returns the updated leaf (may have empty tabs).
+ */
+function removeTabFromLeaf(leaf: LeafPanel, tabId: string): LeafPanel {
+  const idx = leaf.tabs.findIndex((t) => t.id === tabId);
+  if (idx === -1) return leaf;
+
+  const tabs = leaf.tabs.filter((t) => t.id !== tabId);
+  let activeTabId = leaf.activeTabId;
+  if (activeTabId === tabId) {
+    const newIdx = Math.min(idx, tabs.length - 1);
+    activeTabId = tabs[newIdx]?.id ?? null;
+  }
+  if (activeTabId) {
+    return {
+      ...leaf,
+      tabs: tabs.map((t) => ({ ...t, isActive: t.id === activeTabId })),
+      activeTabId,
+    };
+  }
+  return { ...leaf, tabs, activeTabId: null };
 }
 
-export const useAppStore = create<AppState>((set) => {
-  const initialPanel = createPanel();
+export const useAppStore = create<AppState>((set, get) => {
+  const initialPanel = createLeafPanel();
 
   return {
     // Sidebar
@@ -98,122 +129,205 @@ export const useAppStore = create<AppState>((set) => {
     toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
 
     // Panels & Tabs
-    panels: [initialPanel],
+    rootPanel: initialPanel,
     activePanelId: initialPanel.id,
+
+    getAllPanels: () => getAllLeaves(get().rootPanel),
 
     addTab: (title, connectionType, config, panelId) =>
       set((state) => {
-        const targetPanelId = panelId ?? state.activePanelId ?? state.panels[0]?.id;
+        const allLeaves = getAllLeaves(state.rootPanel);
+        const targetPanelId = panelId ?? state.activePanelId ?? allLeaves[0]?.id;
         if (!targetPanelId) return state;
 
         const defaultConfig: ConnectionConfig = config ?? { type: "local", config: { shellType: "zsh" } };
         const newTab = createTab(title, connectionType, defaultConfig, targetPanelId);
-        const panels = state.panels.map((panel) => {
-          if (panel.id !== targetPanelId) return panel;
-          const tabs = panel.tabs.map((t) => ({ ...t, isActive: false }));
+        const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
+          const tabs = leaf.tabs.map((t) => ({ ...t, isActive: false }));
           tabs.push(newTab);
-          return { ...panel, tabs, activeTabId: newTab.id };
+          return { ...leaf, tabs, activeTabId: newTab.id };
         });
-        return { panels, activePanelId: targetPanelId };
+        return { rootPanel, activePanelId: targetPanelId };
       }),
 
     closeTab: (tabId, panelId) =>
       set((state) => {
-        const panels = state.panels.map((panel) => {
-          if (panel.id !== panelId) return panel;
-          const idx = panel.tabs.findIndex((t) => t.id === tabId);
-          if (idx === -1) return panel;
+        let rootPanel = updateLeaf(state.rootPanel, panelId, (leaf) =>
+          removeTabFromLeaf(leaf, tabId)
+        );
 
-          const tabs = panel.tabs.filter((t) => t.id !== tabId);
-          let activeTabId = panel.activeTabId;
-          if (activeTabId === tabId) {
-            const newIdx = Math.min(idx, tabs.length - 1);
-            activeTabId = tabs[newIdx]?.id ?? null;
-          }
-          if (activeTabId) {
-            return {
-              ...panel,
-              tabs: tabs.map((t) => ({ ...t, isActive: t.id === activeTabId })),
-              activeTabId,
-            };
-          }
-          return { ...panel, tabs, activeTabId: null };
-        });
-        return { panels };
+        // If leaf is now empty and not the sole leaf, remove it
+        const allLeaves = getAllLeaves(rootPanel);
+        const updatedLeaf = findLeaf(rootPanel, panelId);
+        if (updatedLeaf && updatedLeaf.tabs.length === 0 && allLeaves.length > 1) {
+          const removed = removeLeaf(rootPanel, panelId);
+          rootPanel = removed ? simplifyTree(removed) : rootPanel;
+          const newLeaves = getAllLeaves(rootPanel);
+          const activePanelId = state.activePanelId === panelId
+            ? newLeaves[0]?.id ?? null
+            : state.activePanelId;
+          return { rootPanel, activePanelId };
+        }
+
+        return { rootPanel };
       }),
 
     setActiveTab: (tabId, panelId) =>
       set((state) => ({
-        panels: state.panels.map((panel) => {
-          if (panel.id !== panelId) return panel;
-          return {
-            ...panel,
-            tabs: panel.tabs.map((t) => ({ ...t, isActive: t.id === tabId })),
-            activeTabId: tabId,
-          };
-        }),
+        rootPanel: updateLeaf(state.rootPanel, panelId, (leaf) => ({
+          ...leaf,
+          tabs: leaf.tabs.map((t) => ({ ...t, isActive: t.id === tabId })),
+          activeTabId: tabId,
+        })),
         activePanelId: panelId,
       })),
 
     moveTab: (tabId, fromPanelId, toPanelId, newIndex) =>
       set((state) => {
-        let movedTab: TerminalTab | null = null;
-        let panels = state.panels.map((panel) => {
-          if (panel.id !== fromPanelId) return panel;
-          const tab = panel.tabs.find((t) => t.id === tabId);
-          if (!tab) return panel;
-          movedTab = { ...tab, panelId: toPanelId };
-          const tabs = panel.tabs.filter((t) => t.id !== tabId);
-          const activeTabId = panel.activeTabId === tabId
-            ? (tabs[0]?.id ?? null)
-            : panel.activeTabId;
-          return { ...panel, tabs, activeTabId };
+        if (fromPanelId === toPanelId) return state;
+
+        // Find and remove tab from source
+        const sourceLeaf = findLeaf(state.rootPanel, fromPanelId);
+        if (!sourceLeaf) return state;
+        const tab = sourceLeaf.tabs.find((t) => t.id === tabId);
+        if (!tab) return state;
+
+        const movedTab: TerminalTab = { ...tab, panelId: toPanelId, isActive: true };
+
+        // Remove from source
+        let rootPanel = updateLeaf(state.rootPanel, fromPanelId, (leaf) =>
+          removeTabFromLeaf(leaf, tabId)
+        );
+
+        // Add to destination
+        rootPanel = updateLeaf(rootPanel, toPanelId, (leaf) => {
+          const tabs = [...leaf.tabs.map((t) => ({ ...t, isActive: false }))];
+          const idx = newIndex < 0 ? tabs.length : Math.min(newIndex, tabs.length);
+          tabs.splice(idx, 0, movedTab);
+          return { ...leaf, tabs, activeTabId: movedTab.id };
         });
-        if (!movedTab) return state;
-        panels = panels.map((panel) => {
-          if (panel.id !== toPanelId) return panel;
-          const tabs = [...panel.tabs];
-          tabs.splice(newIndex, 0, movedTab!);
-          return {
-            ...panel,
-            tabs: tabs.map((t) => ({ ...t, isActive: t.id === movedTab!.id })),
-            activeTabId: movedTab!.id,
-          };
-        });
-        return { panels, activePanelId: toPanelId };
+
+        // Clean up empty source panel
+        const updatedSource = findLeaf(rootPanel, fromPanelId);
+        const allLeaves = getAllLeaves(rootPanel);
+        if (updatedSource && updatedSource.tabs.length === 0 && allLeaves.length > 1) {
+          const removed = removeLeaf(rootPanel, fromPanelId);
+          rootPanel = removed ? simplifyTree(removed) : rootPanel;
+        }
+
+        return { rootPanel, activePanelId: toPanelId };
       }),
 
     reorderTabs: (panelId, oldIndex, newIndex) =>
       set((state) => ({
-        panels: state.panels.map((panel) => {
-          if (panel.id !== panelId) return panel;
-          const tabs = [...panel.tabs];
+        rootPanel: updateLeaf(state.rootPanel, panelId, (leaf) => {
+          const tabs = [...leaf.tabs];
           const [moved] = tabs.splice(oldIndex, 1);
           tabs.splice(newIndex, 0, moved);
-          return { ...panel, tabs };
+          return { ...leaf, tabs };
         }),
       })),
 
-    splitPanel: () =>
+    splitPanel: (direction) =>
       set((state) => {
-        const newPanel = createPanel();
-        return {
-          panels: [...state.panels, newPanel],
-          activePanelId: newPanel.id,
-        };
+        const dir = direction ?? "horizontal";
+        const targetId = state.activePanelId;
+        if (!targetId) return state;
+
+        const newLeaf = createLeafPanel();
+        let rootPanel = splitLeaf(state.rootPanel, targetId, newLeaf, dir, "after");
+        rootPanel = simplifyTree(rootPanel);
+        return { rootPanel, activePanelId: newLeaf.id };
       }),
 
     removePanel: (panelId) =>
       set((state) => {
-        if (state.panels.length <= 1) return state;
-        const panels = state.panels.filter((p) => p.id !== panelId);
+        const allLeaves = getAllLeaves(state.rootPanel);
+        if (allLeaves.length <= 1) return state;
+
+        const removed = removeLeaf(state.rootPanel, panelId);
+        if (!removed) return state;
+        const rootPanel = simplifyTree(removed);
+        const newLeaves = getAllLeaves(rootPanel);
         const activePanelId = state.activePanelId === panelId
-          ? panels[0]?.id ?? null
+          ? newLeaves[0]?.id ?? null
           : state.activePanelId;
-        return { panels, activePanelId };
+        return { rootPanel, activePanelId };
       }),
 
     setActivePanel: (panelId) => set({ activePanelId: panelId }),
+
+    splitPanelWithTab: (tabId, fromPanelId, targetPanelId, edge) =>
+      set((state) => {
+        const splitInfo = edgeToSplit(edge);
+
+        // Center drop: move tab to existing panel
+        if (!splitInfo) {
+          const sourceLeaf = findLeaf(state.rootPanel, fromPanelId);
+          if (!sourceLeaf) return state;
+          const tab = sourceLeaf.tabs.find((t) => t.id === tabId);
+          if (!tab) return state;
+
+          const movedTab: TerminalTab = { ...tab, panelId: targetPanelId, isActive: true };
+
+          let rootPanel = updateLeaf(state.rootPanel, fromPanelId, (leaf) =>
+            removeTabFromLeaf(leaf, tabId)
+          );
+          rootPanel = updateLeaf(rootPanel, targetPanelId, (leaf) => ({
+            ...leaf,
+            tabs: [...leaf.tabs.map((t) => ({ ...t, isActive: false })), movedTab],
+            activeTabId: movedTab.id,
+          }));
+
+          // Clean up empty source
+          const updatedSource = findLeaf(rootPanel, fromPanelId);
+          const allLeaves = getAllLeaves(rootPanel);
+          if (updatedSource && updatedSource.tabs.length === 0 && allLeaves.length > 1) {
+            const removed = removeLeaf(rootPanel, fromPanelId);
+            rootPanel = removed ? simplifyTree(removed) : rootPanel;
+          }
+
+          return { rootPanel, activePanelId: targetPanelId };
+        }
+
+        // Edge drop: create new panel via split
+        const sourceLeaf = findLeaf(state.rootPanel, fromPanelId);
+        if (!sourceLeaf) return state;
+        const tab = sourceLeaf.tabs.find((t) => t.id === tabId);
+        if (!tab) return state;
+
+        const newLeaf = createLeafPanel();
+        const movedTab: TerminalTab = { ...tab, panelId: newLeaf.id, isActive: true };
+        newLeaf.tabs = [movedTab];
+        newLeaf.activeTabId = movedTab.id;
+
+        // Remove tab from source
+        let rootPanel = updateLeaf(state.rootPanel, fromPanelId, (leaf) =>
+          removeTabFromLeaf(leaf, tabId)
+        );
+
+        // Clean up empty source before splitting (unless source IS the target)
+        if (fromPanelId !== targetPanelId) {
+          const updatedSource = findLeaf(rootPanel, fromPanelId);
+          const allLeaves = getAllLeaves(rootPanel);
+          if (updatedSource && updatedSource.tabs.length === 0 && allLeaves.length > 1) {
+            const removed = removeLeaf(rootPanel, fromPanelId);
+            rootPanel = removed ? simplifyTree(removed) : rootPanel;
+          }
+        }
+
+        // Split the target
+        rootPanel = splitLeaf(
+          rootPanel,
+          targetPanelId,
+          newLeaf,
+          splitInfo.direction,
+          splitInfo.position
+        );
+        rootPanel = simplifyTree(rootPanel);
+
+        return { rootPanel, activePanelId: newLeaf.id };
+      }),
 
     // Connections — initialized empty, loaded from backend on mount
     folders: [],

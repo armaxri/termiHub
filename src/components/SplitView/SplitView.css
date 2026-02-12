@@ -8,6 +8,7 @@
   flex-direction: column;
   height: 100%;
   overflow: hidden;
+  position: relative;
 }
 
 .split-view__terminal-area {

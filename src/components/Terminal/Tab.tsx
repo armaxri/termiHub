@@ -25,12 +25,12 @@ export function Tab({ tab, onActivate, onClose }: TabProps) {
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: tab.id });
+  } = useSortable({ id: tab.id, data: { panelId: tab.panelId, type: "tab" } });
 
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
-    opacity: isDragging ? 0.5 : 1,
+    opacity: isDragging ? 0.3 : 1,
   };
 
   const Icon = TYPE_ICONS[tab.connectionType];
