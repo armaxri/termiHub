@@ -27,10 +27,12 @@ import {
   Copy,
   Check,
   X,
+  Activity,
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { ConnectionType } from "@/types/terminal";
+import { ConnectionType, ShellType } from "@/types/terminal";
 import { SavedConnection, ConnectionFolder } from "@/types/connection";
+import { listAvailableShells } from "@/services/api";
 import "./ConnectionList.css";
 
 const TYPE_ICONS: Record<ConnectionType, typeof Terminal> = {
@@ -108,6 +110,7 @@ interface TreeNodeProps {
   onEdit: (connectionId: string) => void;
   onDelete: (connectionId: string) => void;
   onDuplicate: (connectionId: string) => void;
+  onPingHost: (connection: SavedConnection) => void;
   onDeleteFolder: (folderId: string) => void;
   onCreateSubfolder: (parentId: string, name: string) => void;
   onNewConnectionInFolder: (folderId: string) => void;
@@ -125,6 +128,7 @@ function TreeNode({
   onEdit,
   onDelete,
   onDuplicate,
+  onPingHost,
   onDeleteFolder,
   onCreateSubfolder,
   onNewConnectionInFolder,
@@ -201,6 +205,7 @@ function TreeNode({
               onEdit={onEdit}
               onDelete={onDelete}
               onDuplicate={onDuplicate}
+              onPingHost={onPingHost}
               onDeleteFolder={onDeleteFolder}
               onCreateSubfolder={onCreateSubfolder}
               onNewConnectionInFolder={onNewConnectionInFolder}
@@ -216,6 +221,7 @@ function TreeNode({
               onEdit={onEdit}
               onDelete={onDelete}
               onDuplicate={onDuplicate}
+              onPingHost={onPingHost}
             />
           ))}
         </div>
@@ -231,9 +237,10 @@ interface ConnectionItemProps {
   onEdit: (connectionId: string) => void;
   onDelete: (connectionId: string) => void;
   onDuplicate: (connectionId: string) => void;
+  onPingHost: (connection: SavedConnection) => void;
 }
 
-function ConnectionItem({ connection, depth, onConnect, onEdit, onDelete, onDuplicate }: ConnectionItemProps) {
+function ConnectionItem({ connection, depth, onConnect, onEdit, onDelete, onDuplicate, onPingHost }: ConnectionItemProps) {
   const Icon = TYPE_ICONS[connection.config.type];
 
   const { attributes, listeners, setNodeRef: setDragRef, isDragging } = useDraggable({
@@ -266,6 +273,14 @@ function ConnectionItem({ connection, depth, onConnect, onEdit, onDelete, onDupl
           >
             <Play size={14} /> Connect
           </ContextMenu.Item>
+          {(connection.config.type === "ssh" || connection.config.type === "telnet") && (
+            <ContextMenu.Item
+              className="context-menu__item"
+              onSelect={() => onPingHost(connection)}
+            >
+              <Activity size={14} /> Ping Host
+            </ContextMenu.Item>
+          )}
           <ContextMenu.Item
             className="context-menu__item"
             onSelect={() => onEdit(connection.id)}
@@ -368,6 +383,21 @@ export function ConnectionList() {
     [setEditingConnection]
   );
 
+  const handlePingHost = useCallback(
+    async (connection: SavedConnection) => {
+      const config = connection.config;
+      if (config.type !== "ssh" && config.type !== "telnet") return;
+      const host = config.config.host;
+      const shells = await listAvailableShells();
+      if (shells.length === 0) return;
+      addTab(`Ping ${host}`, "local", {
+        type: "local",
+        config: { shellType: shells[0] as ShellType, initialCommand: `ping ${host}` },
+      });
+    },
+    [addTab]
+  );
+
   const handleDragStart = useCallback((event: DragStartEvent) => {
     const conn = event.active.data.current?.connection as SavedConnection | undefined;
     setDraggingConnection(conn ?? null);
@@ -429,6 +459,7 @@ export function ConnectionList() {
           onEdit={handleEdit}
           onDelete={handleDelete}
           onDuplicate={handleDuplicate}
+          onPingHost={handlePingHost}
           onDeleteFolder={handleDeleteFolder}
           onCreateSubfolder={handleCreateFolder}
           onNewConnectionInFolder={handleNewConnectionInFolder}
@@ -462,6 +493,7 @@ interface RootDropZoneProps {
   onEdit: (connectionId: string) => void;
   onDelete: (connectionId: string) => void;
   onDuplicate: (connectionId: string) => void;
+  onPingHost: (connection: SavedConnection) => void;
   onDeleteFolder: (folderId: string) => void;
   onCreateSubfolder: (parentId: string, name: string) => void;
   onNewConnectionInFolder: (folderId: string) => void;
@@ -480,6 +512,7 @@ function RootDropZone({
   onEdit,
   onDelete,
   onDuplicate,
+  onPingHost,
   onDeleteFolder,
   onCreateSubfolder,
   onNewConnectionInFolder,
@@ -514,6 +547,7 @@ function RootDropZone({
           onEdit={onEdit}
           onDelete={onDelete}
           onDuplicate={onDuplicate}
+          onPingHost={onPingHost}
           onDeleteFolder={onDeleteFolder}
           onCreateSubfolder={onCreateSubfolder}
           onNewConnectionInFolder={onNewConnectionInFolder}
@@ -529,6 +563,7 @@ function RootDropZone({
           onEdit={onEdit}
           onDelete={onDelete}
           onDuplicate={onDuplicate}
+          onPingHost={onPingHost}
         />
       ))}
     </div>

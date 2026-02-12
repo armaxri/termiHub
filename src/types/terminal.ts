@@ -8,6 +8,7 @@ export type TabContentType = "terminal" | "settings";
 
 export interface LocalShellConfig {
   shellType: ShellType;
+  initialCommand?: string;
 }
 
 export interface SshConfig {
