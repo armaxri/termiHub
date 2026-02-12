@@ -1,7 +1,7 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import * as ContextMenu from "@radix-ui/react-context-menu";
-import { X, Terminal, Wifi, Cable, Globe, Settings as SettingsIcon, Eraser, FileDown } from "lucide-react";
+import { X, Terminal, Wifi, Cable, Globe, Settings as SettingsIcon, Eraser, FileDown, ClipboardCopy } from "lucide-react";
 import { TerminalTab } from "@/types/terminal";
 import { ConnectionType } from "@/types/terminal";
 
@@ -18,9 +18,10 @@ interface TabProps {
   onClose: () => void;
   onClear?: () => void;
   onSave?: () => void;
+  onCopyToClipboard?: () => void;
 }
 
-export function Tab({ tab, onActivate, onClose, onClear, onSave }: TabProps) {
+export function Tab({ tab, onActivate, onClose, onClear, onSave, onCopyToClipboard }: TabProps) {
   const {
     attributes,
     listeners,
@@ -79,6 +80,12 @@ export function Tab({ tab, onActivate, onClose, onClear, onSave }: TabProps) {
             onSelect={() => onSave?.()}
           >
             <FileDown size={14} /> Save to File
+          </ContextMenu.Item>
+          <ContextMenu.Item
+            className="context-menu__item"
+            onSelect={() => onCopyToClipboard?.()}
+          >
+            <ClipboardCopy size={14} /> Copy to Clipboard
           </ContextMenu.Item>
           <ContextMenu.Item
             className="context-menu__item"
