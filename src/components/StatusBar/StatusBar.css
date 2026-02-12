@@ -1,0 +1,31 @@
+.status-bar {
+  display: flex;
+  align-items: center;
+  height: var(--status-bar-height);
+  min-height: var(--status-bar-height);
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border-secondary);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  padding: 0 var(--spacing-sm);
+}
+
+.status-bar__section {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.status-bar__section--left {
+  flex: 1;
+  justify-content: flex-start;
+}
+
+.status-bar__section--center {
+  flex: 0 0 auto;
+}
+
+.status-bar__section--right {
+  flex: 1;
+  justify-content: flex-end;
+}

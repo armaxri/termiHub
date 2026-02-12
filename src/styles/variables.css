@@ -86,6 +86,9 @@
   --transition-fast: 100ms ease;
   --transition-normal: 200ms ease;
 
+  /* Status bar */
+  --status-bar-height: 22px;
+
   /* Resize handle */
   --resize-handle-width: 4px;
   --resize-handle-color: transparent;

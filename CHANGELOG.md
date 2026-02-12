@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Status bar at the bottom of the application window
 - Cross-panel tab drag-and-drop: move tabs between terminal panels by dragging
 - Split-by-drop: drag a tab to the edge of a panel to create horizontal or vertical splits
 - Visual drag feedback with tab ghost overlay and highlighted drop zones

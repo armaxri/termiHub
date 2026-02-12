@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { ActivityBar } from "@/components/ActivityBar";
 import { Sidebar } from "@/components/Sidebar";
+import { StatusBar } from "@/components/StatusBar";
 import { TerminalView } from "@/components/Terminal";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useAppStore } from "@/store/appStore";
@@ -16,9 +17,12 @@ function App() {
 
   return (
     <div className="app">
-      <ActivityBar />
-      <Sidebar />
-      <TerminalView />
+      <div className="app__main">
+        <ActivityBar />
+        <Sidebar />
+        <TerminalView />
+      </div>
+      <StatusBar />
     </div>
   );
 }
