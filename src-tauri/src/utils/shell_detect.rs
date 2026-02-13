@@ -54,3 +54,57 @@ pub fn shell_to_command(shell: &str) -> (&str, Vec<&str>) {
         _ => ("sh", vec![]),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shell_to_command_zsh() {
+        let (cmd, args) = shell_to_command("zsh");
+        assert_eq!(cmd, "zsh");
+        assert_eq!(args, vec!["--login"]);
+    }
+
+    #[test]
+    fn shell_to_command_bash() {
+        let (cmd, args) = shell_to_command("bash");
+        assert_eq!(cmd, "bash");
+        assert_eq!(args, vec!["--login"]);
+    }
+
+    #[test]
+    fn shell_to_command_sh() {
+        let (cmd, args) = shell_to_command("sh");
+        assert_eq!(cmd, "sh");
+        assert!(args.is_empty());
+    }
+
+    #[test]
+    fn shell_to_command_cmd() {
+        let (cmd, args) = shell_to_command("cmd");
+        assert_eq!(cmd, "cmd.exe");
+        assert!(args.is_empty());
+    }
+
+    #[test]
+    fn shell_to_command_powershell() {
+        let (cmd, args) = shell_to_command("powershell");
+        assert_eq!(cmd, "powershell.exe");
+        assert_eq!(args, vec!["-NoLogo"]);
+    }
+
+    #[test]
+    fn shell_to_command_gitbash() {
+        let (cmd, args) = shell_to_command("gitbash");
+        assert_eq!(cmd, "bash.exe");
+        assert_eq!(args, vec!["--login"]);
+    }
+
+    #[test]
+    fn shell_to_command_unknown_falls_back_to_sh() {
+        let (cmd, args) = shell_to_command("fish");
+        assert_eq!(cmd, "sh");
+        assert!(args.is_empty());
+    }
+}
