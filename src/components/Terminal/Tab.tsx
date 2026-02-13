@@ -1,7 +1,7 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import * as ContextMenu from "@radix-ui/react-context-menu";
-import { X, Terminal, Wifi, Cable, Globe, Settings as SettingsIcon, FileEdit, Eraser, FileDown, ClipboardCopy, ArrowRightLeft, Check } from "lucide-react";
+import { X, Terminal, Wifi, Cable, Globe, Settings as SettingsIcon, FileEdit, Eraser, FileDown, ClipboardCopy, ArrowRightLeft, Check, Palette } from "lucide-react";
 import { TerminalTab } from "@/types/terminal";
 import { ConnectionType } from "@/types/terminal";
 
@@ -22,9 +22,11 @@ interface TabProps {
   horizontalScrolling?: boolean;
   onToggleHorizontalScrolling?: () => void;
   isDirty?: boolean;
+  tabColor?: string;
+  onSetColor?: () => void;
 }
 
-export function Tab({ tab, onActivate, onClose, onClear, onSave, onCopyToClipboard, horizontalScrolling, onToggleHorizontalScrolling, isDirty }: TabProps) {
+export function Tab({ tab, onActivate, onClose, onClear, onSave, onCopyToClipboard, horizontalScrolling, onToggleHorizontalScrolling, isDirty, tabColor, onSetColor }: TabProps) {
   const {
     attributes,
     listeners,
@@ -38,6 +40,7 @@ export function Tab({ tab, onActivate, onClose, onClear, onSave, onCopyToClipboa
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.3 : 1,
+    ...(tabColor ? { borderLeft: `3px solid ${tabColor}` } : {}),
   };
 
   const Icon = tab.contentType === "settings" ? SettingsIcon
@@ -112,6 +115,13 @@ export function Tab({ tab, onActivate, onClose, onClear, onSave, onCopyToClipboa
             </ContextMenu.ItemIndicator>
             <ArrowRightLeft size={14} /> Horizontal Scrolling
           </ContextMenu.CheckboxItem>
+          <ContextMenu.Separator className="context-menu__separator" />
+          <ContextMenu.Item
+            className="context-menu__item"
+            onSelect={() => onSetColor?.()}
+          >
+            <Palette size={14} /> Set Color...
+          </ContextMenu.Item>
         </ContextMenu.Content>
       </ContextMenu.Portal>
     </ContextMenu.Root>

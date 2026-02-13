@@ -14,6 +14,7 @@ export interface EditorTabMeta {
 
 export interface TerminalOptions {
   horizontalScrolling?: boolean;
+  color?: string;
 }
 
 export interface LocalShellConfig {

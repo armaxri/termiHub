@@ -8,6 +8,8 @@ use crate::terminal::backend::ConnectionConfig;
 pub struct TerminalOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub horizontal_scrolling: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
 }
 
 /// A saved connection with a name and optional folder assignment.

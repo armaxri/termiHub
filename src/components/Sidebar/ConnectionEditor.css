@@ -91,3 +91,17 @@
   background-color: var(--bg-hover);
   color: var(--text-primary);
 }
+
+.connection-editor__color-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.connection-editor__color-preview {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+  border: 1px solid var(--border-primary);
+}
