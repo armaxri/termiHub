@@ -80,6 +80,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Key repeat not working on macOS (accent picker shown instead)
 
 ### Changed
+- Custom application icon replacing default Tauri placeholder
+- Proper README replacing Tauri template boilerplate
 - SSH password authentication now prompts for password at each connection instead of storing it
 - Moved Import/Export connections from connection list toolbar to the Settings gear dropdown menu
 - Settings button now opens a Settings tab instead of a sidebar view
