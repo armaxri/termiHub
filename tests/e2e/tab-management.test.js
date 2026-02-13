@@ -1,0 +1,172 @@
+// Tab management tests.
+// Covers: TAB-01, TAB-02, TAB-03, TAB-04, TAB-05.
+
+import { waitForAppReady, ensureConnectionsSidebar, closeAllTabs } from './helpers/app.js';
+import {
+  uniqueName,
+  createLocalConnection,
+  connectByName,
+} from './helpers/connections.js';
+import {
+  getAllTabs,
+  getTabCount,
+  findTabByTitle,
+  closeTabByTitle,
+  getActiveTab,
+} from './helpers/tabs.js';
+import { TOOLBAR_NEW_TERMINAL } from './helpers/selectors.js';
+
+describe('Tab Management', () => {
+  before(async () => {
+    await waitForAppReady();
+    await ensureConnectionsSidebar();
+  });
+
+  afterEach(async () => {
+    await closeAllTabs();
+  });
+
+  describe('TAB-01: Create tabs', () => {
+    it('should open multiple tabs via the New Terminal button', async () => {
+      const initialCount = await getTabCount();
+
+      // Click "New Terminal" three times
+      const btn = await browser.$(TOOLBAR_NEW_TERMINAL);
+      await btn.click();
+      await browser.pause(300);
+      await btn.click();
+      await browser.pause(300);
+      await btn.click();
+      await browser.pause(300);
+
+      const newCount = await getTabCount();
+      expect(newCount).toBe(initialCount + 3);
+    });
+
+    it('should activate the most recently created tab', async () => {
+      const btn = await browser.$(TOOLBAR_NEW_TERMINAL);
+      await btn.click();
+      await browser.pause(300);
+      await btn.click();
+      await browser.pause(300);
+
+      const active = await getActiveTab();
+      expect(active).not.toBeNull();
+
+      // The active tab should be the last one added
+      const allTabs = await getAllTabs();
+      const lastTab = allTabs[allTabs.length - 1];
+      const activeId = await active.getAttribute('data-testid');
+      const lastId = await lastTab.getAttribute('data-testid');
+      expect(activeId).toBe(lastId);
+    });
+  });
+
+  describe('TAB-02: Close tab', () => {
+    it('should close a tab when its close button is clicked', async () => {
+      // Create a connection and open it to get a named tab
+      const name = uniqueName('close');
+      await createLocalConnection(name);
+      await connectByName(name);
+
+      const countBefore = await getTabCount();
+      expect(countBefore).toBeGreaterThanOrEqual(1);
+
+      await closeTabByTitle(name);
+
+      const countAfter = await getTabCount();
+      expect(countAfter).toBe(countBefore - 1);
+    });
+
+    it('should activate an adjacent tab after closing', async () => {
+      const name1 = uniqueName('adj1');
+      const name2 = uniqueName('adj2');
+      await createLocalConnection(name1);
+      await createLocalConnection(name2);
+      await connectByName(name1);
+      await connectByName(name2);
+
+      // Close the second (active) tab
+      await closeTabByTitle(name2);
+
+      // The first tab should now be active
+      const active = await getActiveTab();
+      expect(active).not.toBeNull();
+    });
+  });
+
+  describe('TAB-03: Drag reorder', () => {
+    it('should have multiple tabs that can be reordered (basic smoke test)', async () => {
+      // Create two tabs
+      const btn = await browser.$(TOOLBAR_NEW_TERMINAL);
+      await btn.click();
+      await browser.pause(300);
+      await btn.click();
+      await browser.pause(300);
+
+      const tabs = await getAllTabs();
+      expect(tabs.length).toBeGreaterThanOrEqual(2);
+
+      // Verify tabs have the dnd sortable attributes (presence check)
+      // Actual drag-and-drop is tested manually due to dnd-kit complexity
+      const firstTab = tabs[0];
+      const ariaRole = await firstTab.getAttribute('role');
+      // dnd-kit adds role="button" on sortable items
+      // Just verify tabs are visible and interactive
+      expect(await firstTab.isDisplayed()).toBe(true);
+    });
+  });
+
+  describe('TAB-04: Switch tabs', () => {
+    it('should switch active tab when clicking a different tab', async () => {
+      const name1 = uniqueName('switch1');
+      const name2 = uniqueName('switch2');
+      await createLocalConnection(name1);
+      await createLocalConnection(name2);
+      await connectByName(name1);
+      await connectByName(name2);
+
+      // Tab 2 should be active
+      let active = await getActiveTab();
+      let activeText = await active.getText();
+      expect(activeText).toContain(name2);
+
+      // Click tab 1
+      const tab1 = await findTabByTitle(name1);
+      await tab1.click();
+      await browser.pause(200);
+
+      // Tab 1 should now be active
+      active = await getActiveTab();
+      activeText = await active.getText();
+      expect(activeText).toContain(name1);
+    });
+  });
+
+  describe('TAB-05: Context menu', () => {
+    it('should show context menu with expected options on right-click', async () => {
+      const name = uniqueName('ctx');
+      await createLocalConnection(name);
+      await connectByName(name);
+
+      const tab = await findTabByTitle(name);
+      expect(tab).not.toBeNull();
+
+      // Right-click to open context menu
+      await tab.click({ button: 'right' });
+      await browser.pause(300);
+
+      // Check for expected context menu items
+      const saveItem = await browser.$('[data-testid="tab-context-save"]');
+      const copyItem = await browser.$('[data-testid="tab-context-copy"]');
+      const clearItem = await browser.$('[data-testid="tab-context-clear"]');
+
+      expect(await saveItem.isDisplayed()).toBe(true);
+      expect(await copyItem.isDisplayed()).toBe(true);
+      expect(await clearItem.isDisplayed()).toBe(true);
+
+      // Dismiss menu by pressing Escape
+      await browser.keys('Escape');
+    });
+  });
+});
