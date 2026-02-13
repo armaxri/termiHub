@@ -102,6 +102,8 @@ export function Terminal({ tabId, config, isVisible }: TerminalProps) {
   const sessionIdRef = useRef<string | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
   const horizontalScrollingRef = useRef(false);
+  const lastInputTimeRef = useRef(0);
+  const contentDirtyRef = useRef(false);
   const { register, unregister, parkingRef } = useTerminalRegistry();
 
   const setupTerminal = useCallback(async (xterm: XTerm, fitAddon: FitAddon) => {
@@ -126,6 +128,7 @@ export function Terminal({ tabId, config, isVisible }: TerminalProps) {
 
       // Send user input to backend
       const onDataDisposable = xterm.onData((data) => {
+        lastInputTimeRef.current = Date.now();
         if (sessionIdRef.current) {
           sendInput(sessionIdRef.current, data);
         }
@@ -308,6 +311,34 @@ export function Terminal({ tabId, config, isVisible }: TerminalProps) {
       } catch {
         // Ignore resize errors
       }
+
+      // Mark content dirty when new output arrives
+      const writeParsedDisposable = xterm.onWriteParsed(() => {
+        contentDirtyRef.current = true;
+      });
+
+      // Periodically update scroll width when keyboard is idle
+      const KEYBOARD_IDLE_MS = 800;
+      const CHECK_INTERVAL_MS = 500;
+      const intervalId = setInterval(() => {
+        if (
+          contentDirtyRef.current &&
+          Date.now() - lastInputTimeRef.current >= KEYBOARD_IDLE_MS
+        ) {
+          contentDirtyRef.current = false;
+          try {
+            updateHorizontalScrollWidth(xterm, fitAddon, el);
+          } catch {
+            // Ignore errors during transitions
+          }
+        }
+      }, CHECK_INTERVAL_MS);
+
+      return () => {
+        writeParsedDisposable.dispose();
+        clearInterval(intervalId);
+        contentDirtyRef.current = false;
+      };
     } else {
       el.classList.remove("terminal-horizontal-scroll");
       try {
