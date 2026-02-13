@@ -84,3 +84,13 @@ fn get_permissions(metadata: &std::fs::Metadata) -> Option<String> {
 fn get_permissions(_metadata: &std::fs::Metadata) -> Option<String> {
     None
 }
+
+/// Read a file's contents as a UTF-8 string.
+pub fn read_file_content(path: &str) -> Result<String, TerminalError> {
+    std::fs::read_to_string(path).map_err(TerminalError::Io)
+}
+
+/// Write a string to a file, creating or overwriting it.
+pub fn write_file_content(path: &str, content: &str) -> Result<(), TerminalError> {
+    std::fs::write(path, content).map_err(TerminalError::Io)
+}

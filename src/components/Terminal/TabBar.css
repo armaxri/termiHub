@@ -77,6 +77,17 @@
   background-color: var(--bg-active);
 }
 
+.tab__dirty-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: var(--text-secondary);
+  margin-right: 4px;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+
 .tab--drag-overlay {
   background-color: var(--tab-active-bg);
   color: var(--text-primary);

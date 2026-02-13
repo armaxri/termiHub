@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { TerminalTab, LeafPanel, PanelNode, ConnectionType, ConnectionConfig, SshConfig, DropEdge, TabContentType, TerminalOptions } from "@/types/terminal";
+import { TerminalTab, LeafPanel, PanelNode, ConnectionType, ConnectionConfig, SshConfig, DropEdge, TabContentType, TerminalOptions, EditorTabMeta } from "@/types/terminal";
 import { SavedConnection, ConnectionFolder, FileEntry, ExternalConnectionSource, AppSettings } from "@/types/connection";
 import {
   loadConnections,
@@ -125,6 +125,9 @@ interface AppState {
   activePanelId: string | null;
   addTab: (title: string, connectionType: ConnectionType, config?: ConnectionConfig, panelId?: string, contentType?: TabContentType, terminalOptions?: TerminalOptions) => void;
   openSettingsTab: () => void;
+  openEditorTab: (filePath: string, isRemote: boolean, sftpSessionId?: string) => void;
+  editorDirtyTabs: Record<string, boolean>;
+  setEditorDirty: (tabId: string, dirty: boolean) => void;
   closeTab: (tabId: string, panelId: string) => void;
   setActiveTab: (tabId: string, panelId: string) => void;
   moveTab: (tabId: string, fromPanelId: string, toPanelId: string, newIndex: number) => void;
@@ -357,11 +360,54 @@ export const useAppStore = create<AppState>((set, get) => {
         return { rootPanel, activePanelId: targetPanelId };
       }),
 
+    openEditorTab: (filePath, isRemote, sftpSessionId) =>
+      set((state) => {
+        const allLeaves = getAllLeaves(state.rootPanel);
+
+        // Look for an existing editor tab for this file
+        for (const leaf of allLeaves) {
+          const existing = leaf.tabs.find(
+            (t) => t.contentType === "editor" && t.editorMeta?.filePath === filePath
+              && t.editorMeta?.isRemote === isRemote
+          );
+          if (existing) {
+            const rootPanel = updateLeaf(state.rootPanel, leaf.id, (l) => ({
+              ...l,
+              tabs: l.tabs.map((t) => ({ ...t, isActive: t.id === existing.id })),
+              activeTabId: existing.id,
+            }));
+            return { rootPanel, activePanelId: leaf.id };
+          }
+        }
+
+        // Create new editor tab in the active panel
+        const targetPanelId = state.activePanelId ?? allLeaves[0]?.id;
+        if (!targetPanelId) return state;
+
+        const fileName = filePath.split("/").pop() ?? filePath;
+        const dummyConfig: ConnectionConfig = { type: "local", config: { shellType: "zsh" } };
+        const editorMeta: EditorTabMeta = { filePath, isRemote, sftpSessionId };
+        const newTab = createTab(fileName, "local", dummyConfig, targetPanelId, "editor");
+        newTab.editorMeta = editorMeta;
+
+        const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
+          const tabs = leaf.tabs.map((t) => ({ ...t, isActive: false }));
+          tabs.push(newTab);
+          return { ...leaf, tabs, activeTabId: newTab.id };
+        });
+        return { rootPanel, activePanelId: targetPanelId };
+      }),
+
+    editorDirtyTabs: {},
+    setEditorDirty: (tabId, dirty) =>
+      set((state) => ({ editorDirtyTabs: { ...state.editorDirtyTabs, [tabId]: dirty } })),
+
     closeTab: (tabId, panelId) =>
       set((state) => {
         // Clean up per-tab state for the closed tab
         const { [tabId]: _removed, ...remainingCwds } = state.tabCwds;
         const { [tabId]: _removedHs, ...remainingHs } = state.tabHorizontalScrolling;
+        const { [tabId]: _removedDirty, ...remainingDirty } = state.editorDirtyTabs;
 
         let rootPanel = updateLeaf(state.rootPanel, panelId, (leaf) =>
           removeTabFromLeaf(leaf, tabId)
@@ -377,10 +423,10 @@ export const useAppStore = create<AppState>((set, get) => {
           const activePanelId = state.activePanelId === panelId
             ? newLeaves[0]?.id ?? null
             : state.activePanelId;
-          return { rootPanel, activePanelId, tabCwds: remainingCwds, tabHorizontalScrolling: remainingHs };
+          return { rootPanel, activePanelId, tabCwds: remainingCwds, tabHorizontalScrolling: remainingHs, editorDirtyTabs: remainingDirty };
         }
 
-        return { rootPanel, tabCwds: remainingCwds, tabHorizontalScrolling: remainingHs };
+        return { rootPanel, tabCwds: remainingCwds, tabHorizontalScrolling: remainingHs, editorDirtyTabs: remainingDirty };
       }),
 
     setActiveTab: (tabId, panelId) =>

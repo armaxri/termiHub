@@ -18,7 +18,15 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   const closeTab = useAppStore((s) => s.closeTab);
   const tabHorizontalScrolling = useAppStore((s) => s.tabHorizontalScrolling);
   const setTabHorizontalScrolling = useAppStore((s) => s.setTabHorizontalScrolling);
+  const editorDirtyTabs = useAppStore((s) => s.editorDirtyTabs);
   const { clearTerminal, saveTerminalToFile, copyTerminalToClipboard } = useTerminalRegistry();
+
+  const handleCloseTab = (tabId: string) => {
+    if (editorDirtyTabs[tabId]) {
+      if (!window.confirm("This file has unsaved changes. Close anyway?")) return;
+    }
+    closeTab(tabId, panelId);
+  };
 
   return (
     <div className="tab-bar">
@@ -32,12 +40,13 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
               key={tab.id}
               tab={tab}
               onActivate={() => setActiveTab(tab.id, panelId)}
-              onClose={() => closeTab(tab.id, panelId)}
+              onClose={() => handleCloseTab(tab.id)}
               onClear={() => clearTerminal(tab.id)}
               onSave={() => saveTerminalToFile(tab.id)}
               onCopyToClipboard={() => copyTerminalToClipboard(tab.id)}
               horizontalScrolling={tabHorizontalScrolling[tab.id] ?? false}
               onToggleHorizontalScrolling={() => setTabHorizontalScrolling(tab.id, !(tabHorizontalScrolling[tab.id] ?? false))}
+              isDirty={editorDirtyTabs[tab.id] ?? false}
             />
           ))}
         </div>
