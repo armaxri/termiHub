@@ -26,16 +26,18 @@ impl SshConnection {
         let alive = Arc::new(AtomicBool::new(true));
 
         // Start X11 forwarding if enabled (before opening the shell channel)
-        let (x11_forwarder, x11_display) = if config.enable_x11_forwarding {
+        let (x11_forwarder, x11_display, x11_cookie) = if config.enable_x11_forwarding {
             match X11Forwarder::start(config, alive.clone()) {
-                Ok((forwarder, display_num)) => (Some(forwarder), Some(display_num)),
+                Ok((forwarder, display_num, cookie)) => {
+                    (Some(forwarder), Some(display_num), cookie)
+                }
                 Err(e) => {
                     warn!("X11 forwarding setup failed, continuing without it: {}", e);
-                    (None, None)
+                    (None, None, None)
                 }
             }
         } else {
-            (None, None)
+            (None, None, None)
         };
 
         let mut channel = session
@@ -64,6 +66,14 @@ impl SshConnection {
             if !display_set_via_env {
                 let display_cmd = format!("export DISPLAY=localhost:{}.0\n", display_num);
                 let _ = channel.write_all(display_cmd.as_bytes());
+            }
+            // Inject xauth cookie so the remote can authenticate with the local X server
+            if let Some(ref cookie) = x11_cookie {
+                let xauth_cmd = format!(
+                    "xauth add localhost:{} MIT-MAGIC-COOKIE-1 {} 2>/dev/null\n",
+                    display_num, cookie
+                );
+                let _ = channel.write_all(xauth_cmd.as_bytes());
             }
         }
 

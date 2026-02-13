@@ -45,75 +45,140 @@ fn parse_display(display: &str) -> Option<(Option<String>, u32, u32)> {
     Some((host, display_num, screen_num))
 }
 
-/// Detect the local X server from the DISPLAY environment variable.
-pub fn detect_local_x_server() -> Option<LocalXServerInfo> {
-    let display = std::env::var("DISPLAY").ok()?;
-    if display.is_empty() {
-        return None;
-    }
-
-    let (host, display_number, _screen) = parse_display(&display)?;
-
+/// Build a `LocalXServerInfo` from a parsed DISPLAY value.
+fn info_from_parsed(host: Option<String>, display_number: u32) -> LocalXServerInfo {
     match host {
         None => {
             // Local display `:N` — try Unix socket first, fall back to TCP
             let socket_path = format!("/tmp/.X11-unix/X{}", display_number);
             if std::path::Path::new(&socket_path).exists() {
-                Some(LocalXServerInfo {
+                LocalXServerInfo {
                     display_number,
                     connection: LocalXConnection::UnixSocket(socket_path),
-                })
+                }
             } else {
-                Some(LocalXServerInfo {
+                LocalXServerInfo {
                     display_number,
-                    connection: LocalXConnection::Tcp("localhost".to_string(), 6000 + display_number as u16),
-                })
+                    connection: LocalXConnection::Tcp(
+                        "localhost".to_string(),
+                        6000 + display_number as u16,
+                    ),
+                }
             }
         }
         Some(ref h) if h.starts_with('/') => {
             // macOS XQuartz: /private/tmp/com.apple.launchd.xxx/org.xquartz:0
-            // The host_part is the Unix socket path
-            if std::path::Path::new(h).exists() || std::path::Path::new(&format!("{}:{}", h, display_number)).exists() {
-                Some(LocalXServerInfo {
+            if std::path::Path::new(h).exists()
+                || std::path::Path::new(&format!("{}:{}", h, display_number)).exists()
+            {
+                LocalXServerInfo {
                     display_number,
                     connection: LocalXConnection::UnixSocket(h.clone()),
-                })
+                }
             } else {
-                // Fall back to TCP even for XQuartz
-                Some(LocalXServerInfo {
+                LocalXServerInfo {
                     display_number,
-                    connection: LocalXConnection::Tcp("localhost".to_string(), 6000 + display_number as u16),
-                })
+                    connection: LocalXConnection::Tcp(
+                        "localhost".to_string(),
+                        6000 + display_number as u16,
+                    ),
+                }
             }
         }
         Some(ref h) if h == "localhost" || h == "127.0.0.1" || h == "::1" => {
-            // Explicit localhost — try Unix socket first, fall back to TCP
             let socket_path = format!("/tmp/.X11-unix/X{}", display_number);
             if std::path::Path::new(&socket_path).exists() {
-                Some(LocalXServerInfo {
+                LocalXServerInfo {
                     display_number,
                     connection: LocalXConnection::UnixSocket(socket_path),
-                })
+                }
             } else {
-                Some(LocalXServerInfo {
+                LocalXServerInfo {
                     display_number,
                     connection: LocalXConnection::Tcp(h.clone(), 6000 + display_number as u16),
-                })
+                }
             }
         }
         Some(h) => {
             // Remote host — TCP only
-            Some(LocalXServerInfo {
+            LocalXServerInfo {
                 display_number,
                 connection: LocalXConnection::Tcp(h, 6000 + display_number as u16),
-            })
+            }
         }
     }
+}
+
+/// Detect the local X server.
+///
+/// Checks the DISPLAY environment variable first, then falls back to
+/// scanning `/tmp/.X11-unix/` for live sockets (covers macOS XQuartz
+/// when DISPLAY is not propagated to the process environment).
+pub fn detect_local_x_server() -> Option<LocalXServerInfo> {
+    // Try DISPLAY env var first
+    if let Ok(display) = std::env::var("DISPLAY") {
+        if !display.is_empty() {
+            let (host, display_number, _screen) = parse_display(&display)?;
+            return Some(info_from_parsed(host, display_number));
+        }
+    }
+
+    // DISPLAY not set — scan for X11 sockets directly
+    detect_from_sockets()
+}
+
+/// Scan `/tmp/.X11-unix/` for X server sockets.
+fn detect_from_sockets() -> Option<LocalXServerInfo> {
+    let x11_dir = std::path::Path::new("/tmp/.X11-unix");
+    if !x11_dir.is_dir() {
+        return None;
+    }
+
+    let entries = std::fs::read_dir(x11_dir).ok()?;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if let Some(num_str) = name.strip_prefix('X') {
+            if let Ok(display_num) = num_str.parse::<u32>() {
+                let socket_path = format!("/tmp/.X11-unix/X{}", display_num);
+                return Some(LocalXServerInfo {
+                    display_number: display_num,
+                    connection: LocalXConnection::UnixSocket(socket_path),
+                });
+            }
+        }
+    }
+    None
 }
 
 /// Check if a local X server is likely running and reachable.
 pub fn is_x_server_likely_running() -> bool {
     detect_local_x_server().is_some()
+}
+
+/// Read the MIT-MAGIC-COOKIE-1 for the given local display number.
+///
+/// Runs `xauth list :N` and parses the hex cookie from the output.
+/// Returns `None` if xauth is not installed or no cookie is found.
+pub fn read_local_xauth_cookie(display_number: u32) -> Option<String> {
+    let output = std::process::Command::new("xauth")
+        .args(["list", &format!(":{}", display_number)])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Format: "hostname/unix:N  MIT-MAGIC-COOKIE-1  hexcookie"
+    for line in stdout.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 3 && parts[1] == "MIT-MAGIC-COOKIE-1" {
+            return Some(parts[2].to_string());
+        }
+    }
+    None
 }
 
 #[cfg(test)]

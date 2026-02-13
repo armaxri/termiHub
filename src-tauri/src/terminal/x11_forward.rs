@@ -14,7 +14,9 @@ use tracing::{debug, error, info, warn};
 use crate::terminal::backend::SshConfig;
 use crate::utils::errors::TerminalError;
 use crate::utils::ssh_auth::connect_and_authenticate;
-use crate::utils::x11_detect::{detect_local_x_server, LocalXConnection, LocalXServerInfo};
+use crate::utils::x11_detect::{
+    detect_local_x_server, read_local_xauth_cookie, LocalXConnection, LocalXServerInfo,
+};
 
 /// Manages X11 forwarding over an SSH tunnel.
 pub struct X11Forwarder {
@@ -25,14 +27,32 @@ pub struct X11Forwarder {
 impl X11Forwarder {
     /// Start X11 forwarding using a new SSH session.
     ///
-    /// Returns the forwarder and the remote display number that should
-    /// be set as DISPLAY on the remote host.
-    pub fn start(config: &SshConfig, alive: Arc<AtomicBool>) -> Result<(Self, u32), TerminalError> {
+    /// Returns `(forwarder, remote_display_number, xauth_cookie)`.
+    /// The xauth cookie is the local display's MIT-MAGIC-COOKIE-1 that
+    /// must be registered on the remote for authentication to work.
+    pub fn start(
+        config: &SshConfig,
+        alive: Arc<AtomicBool>,
+    ) -> Result<(Self, u32, Option<String>), TerminalError> {
         let local_x = detect_local_x_server().ok_or_else(|| {
-            TerminalError::SshError("No local X server detected. Set DISPLAY or start an X server (XQuartz on macOS).".to_string())
+            TerminalError::SshError(
+                "No local X server detected. Start an X server (XQuartz on macOS)."
+                    .to_string(),
+            )
         })?;
 
-        info!("X11 forwarding: detected local X server at display :{}", local_x.display_number);
+        info!(
+            "X11 forwarding: detected local X server at display :{}",
+            local_x.display_number
+        );
+
+        // Read the local xauth cookie before we move local_x
+        let xauth_cookie = read_local_xauth_cookie(local_x.display_number);
+        if xauth_cookie.is_some() {
+            info!("X11 forwarding: read local xauth cookie");
+        } else {
+            warn!("X11 forwarding: no xauth cookie found for display :{}", local_x.display_number);
+        }
 
         let session = connect_and_authenticate(config)?;
 
@@ -55,7 +75,9 @@ impl X11Forwarder {
             .spawn(move || {
                 listener_thread(&session, &mut listener, &alive_clone, &local_x);
             })
-            .map_err(|e| TerminalError::SshError(format!("Failed to spawn X11 listener: {}", e)))?;
+            .map_err(|e| {
+                TerminalError::SshError(format!("Failed to spawn X11 listener: {}", e))
+            })?;
 
         Ok((
             Self {
@@ -63,6 +85,7 @@ impl X11Forwarder {
                 listener_handle: Some(listener_handle),
             },
             display_number,
+            xauth_cookie,
         ))
     }
 }
