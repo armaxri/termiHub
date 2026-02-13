@@ -29,3 +29,23 @@
   flex: 1;
   justify-content: flex-end;
 }
+
+.status-bar__item {
+  padding: 0 6px;
+  white-space: nowrap;
+}
+
+.status-bar__item--interactive {
+  cursor: pointer;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+}
+
+.status-bar__item--interactive:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}

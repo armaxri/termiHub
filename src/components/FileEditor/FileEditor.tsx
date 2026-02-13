@@ -2,13 +2,29 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import Editor, { loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
 import { Save, Loader2, AlertCircle, Globe } from "lucide-react";
-import { EditorTabMeta } from "@/types/terminal";
+import { EditorTabMeta, EditorStatus } from "@/types/terminal";
 import { useAppStore } from "@/store/appStore";
 import { localReadFile, localWriteFile, sftpReadFileContent, sftpWriteFileContent } from "@/services/api";
 import "./FileEditor.css";
 
 // Use local monaco-editor package instead of CDN (important for Tauri/offline)
 loader.config({ monaco });
+
+/**
+ * Read current editor status from a Monaco editor instance.
+ */
+function readEditorStatus(editor: monaco.editor.IStandaloneCodeEditor): EditorStatus {
+  const pos = editor.getPosition();
+  const model = editor.getModel();
+  return {
+    line: pos?.lineNumber ?? 1,
+    column: pos?.column ?? 1,
+    language: model?.getLanguageId() ?? "plaintext",
+    eol: model?.getEOL() === "\r\n" ? "CRLF" : "LF",
+    tabSize: (model?.getOptions().tabSize ?? 4) as number,
+    encoding: "UTF-8",
+  };
+}
 
 interface FileEditorProps {
   tabId: string;
@@ -22,6 +38,8 @@ interface FileEditorProps {
  */
 export function FileEditor({ tabId, meta, isVisible }: FileEditorProps) {
   const setEditorDirty = useAppStore((s) => s.setEditorDirty);
+  const setEditorStatus = useAppStore((s) => s.setEditorStatus);
+  const setEditorActions = useAppStore((s) => s.setEditorActions);
 
   const [content, setContent] = useState<string | null>(null);
   const [savedContent, setSavedContent] = useState<string | null>(null);
@@ -30,6 +48,7 @@ export function FileEditor({ tabId, meta, isVisible }: FileEditorProps) {
   const [saving, setSaving] = useState(false);
 
   const saveRef = useRef<() => void>(() => {});
+  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
 
   const fileName = meta.filePath.split("/").pop() ?? meta.filePath;
 
@@ -93,15 +112,85 @@ export function FileEditor({ tabId, meta, isVisible }: FileEditorProps) {
 
   const handleEditorMount = useCallback(
     (editor: monaco.editor.IStandaloneCodeEditor) => {
+      editorRef.current = editor;
+
       editor.addAction({
         id: "termihub-save",
         label: "Save File",
         keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS],
         run: () => { saveRef.current(); },
       });
+
+      // Push initial status
+      setEditorStatus(readEditorStatus(editor));
+
+      // Update cursor position on change
+      editor.onDidChangeCursorPosition(() => {
+        setEditorStatus(readEditorStatus(editor));
+      });
+
+      // Register actions for status bar interactions
+      setEditorActions({
+        cycleTabSize: () => {
+          const model = editor.getModel();
+          if (!model) return;
+          const current = (model.getOptions().tabSize ?? 4) as number;
+          const next = current === 4 ? 2 : 4;
+          model.updateOptions({ tabSize: next });
+          setEditorStatus(readEditorStatus(editor));
+        },
+        toggleEol: () => {
+          const model = editor.getModel();
+          if (!model) return;
+          const current = model.getEOL();
+          const next = current === "\r\n"
+            ? monaco.editor.EndOfLineSequence.LF
+            : monaco.editor.EndOfLineSequence.CRLF;
+          model.setEOL(next);
+          setEditorStatus(readEditorStatus(editor));
+        },
+      });
     },
-    []
+    [setEditorStatus, setEditorActions]
   );
+
+  // Push/clear status when visibility changes
+  useEffect(() => {
+    if (isVisible && editorRef.current) {
+      setEditorStatus(readEditorStatus(editorRef.current));
+      setEditorActions({
+        cycleTabSize: () => {
+          const model = editorRef.current?.getModel();
+          if (!model) return;
+          const current = (model.getOptions().tabSize ?? 4) as number;
+          const next = current === 4 ? 2 : 4;
+          model.updateOptions({ tabSize: next });
+          if (editorRef.current) setEditorStatus(readEditorStatus(editorRef.current));
+        },
+        toggleEol: () => {
+          const model = editorRef.current?.getModel();
+          if (!model) return;
+          const current = model.getEOL();
+          const next = current === "\r\n"
+            ? monaco.editor.EndOfLineSequence.LF
+            : monaco.editor.EndOfLineSequence.CRLF;
+          model.setEOL(next);
+          if (editorRef.current) setEditorStatus(readEditorStatus(editorRef.current));
+        },
+      });
+    } else if (!isVisible) {
+      setEditorStatus(null);
+      setEditorActions(null);
+    }
+  }, [isVisible, setEditorStatus, setEditorActions]);
+
+  // Clear status on unmount
+  useEffect(() => {
+    return () => {
+      setEditorStatus(null);
+      setEditorActions(null);
+    };
+  }, [setEditorStatus, setEditorActions]);
 
   const isDirty = content !== null && savedContent !== null && content !== savedContent;
 

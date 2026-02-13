@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { TerminalTab, LeafPanel, PanelNode, ConnectionType, ConnectionConfig, SshConfig, DropEdge, TabContentType, TerminalOptions, EditorTabMeta } from "@/types/terminal";
+import { TerminalTab, LeafPanel, PanelNode, ConnectionType, ConnectionConfig, SshConfig, DropEdge, TabContentType, TerminalOptions, EditorTabMeta, EditorStatus, EditorActions } from "@/types/terminal";
 import { SavedConnection, ConnectionFolder, FileEntry, ExternalConnectionSource, AppSettings } from "@/types/connection";
 import {
   loadConnections,
@@ -204,6 +204,12 @@ interface AppState {
   // VS Code availability
   vscodeAvailable: boolean;
   checkVscodeAvailability: () => Promise<void>;
+
+  // Editor status bar
+  editorStatus: EditorStatus | null;
+  setEditorStatus: (status: EditorStatus | null) => void;
+  editorActions: EditorActions | null;
+  setEditorActions: (actions: EditorActions | null) => void;
 }
 
 let tabCounter = 0;
@@ -1042,6 +1048,12 @@ export const useAppStore = create<AppState>((set, get) => {
         console.error("Failed to check VS Code availability:", err);
       }
     },
+
+    // Editor status bar
+    editorStatus: null,
+    setEditorStatus: (status) => set({ editorStatus: status }),
+    editorActions: null,
+    setEditorActions: (actions) => set({ editorActions: actions }),
   };
 });
 
