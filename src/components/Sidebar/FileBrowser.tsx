@@ -185,9 +185,20 @@ function useFileBrowserSync() {
   const activeTabConnectionType = activeTab?.connectionType ?? null;
   const activeTabContentType = activeTab?.contentType ?? null;
 
+  const activeTabEditorMeta = activeTab?.editorMeta ?? null;
+
   useEffect(() => {
-    if (!activeTab || activeTabContentType === "settings" || activeTabContentType === "editor") {
+    if (!activeTab || activeTabContentType === "settings") {
       setFileBrowserMode("none");
+      return;
+    }
+    if (activeTabContentType === "editor") {
+      // Editor tabs: derive mode from file location
+      if (activeTabEditorMeta?.isRemote) {
+        setFileBrowserMode("sftp");
+      } else {
+        setFileBrowserMode("local");
+      }
       return;
     }
     if (activeTabConnectionType === "local") {
@@ -197,19 +208,32 @@ function useFileBrowserSync() {
     } else {
       setFileBrowserMode("none");
     }
-  }, [activeTabId, activeTabConnectionType, activeTabContentType, setFileBrowserMode]);
+  }, [activeTabId, activeTabConnectionType, activeTabContentType, activeTabEditorMeta, setFileBrowserMode]);
 
   // Auto-navigate on tab switch or CWD change
   const cwd = activeTabId ? tabCwds[activeTabId] : undefined;
   useEffect(() => {
-    if (sidebarView !== "files" || !cwd) return;
+    if (sidebarView !== "files") return;
+
+    // Editor tabs: navigate to the file's parent directory
+    if (activeTabContentType === "editor" && activeTabEditorMeta) {
+      const parentDir = activeTabEditorMeta.filePath.replace(/\/[^/]+$/, "") || "/";
+      if (activeTabEditorMeta.isRemote && sftpSessionId) {
+        navigateSftp(parentDir);
+      } else if (!activeTabEditorMeta.isRemote) {
+        navigateLocal(parentDir);
+      }
+      return;
+    }
+
+    if (!cwd) return;
     const currentMode = useAppStore.getState().fileBrowserMode;
     if (currentMode === "local") {
       navigateLocal(cwd);
     } else if (currentMode === "sftp" && sftpSessionId) {
       navigateSftp(cwd);
     }
-  }, [activeTabId, cwd, sidebarView, navigateLocal, navigateSftp, sftpSessionId]);
+  }, [activeTabId, cwd, sidebarView, activeTabContentType, activeTabEditorMeta, navigateLocal, navigateSftp, sftpSessionId]);
 
   // Auto-connect SFTP for SSH tabs
   useEffect(() => {
