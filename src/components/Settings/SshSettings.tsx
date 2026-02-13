@@ -38,7 +38,9 @@ export function SshSettings({ config, onChange }: SshSettingsProps) {
         <span className="settings-form__label">Auth Method</span>
         <select
           value={config.authMethod}
-          onChange={(e) => onChange({ ...config, authMethod: e.target.value as "password" | "key" })}
+          onChange={(e) =>
+            onChange({ ...config, authMethod: e.target.value as "password" | "key" })
+          }
         >
           <option value="password">Password</option>
           <option value="key">SSH Key</option>

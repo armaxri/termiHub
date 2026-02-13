@@ -36,4 +36,3 @@
 .split-view__resize-handle[data-resize-handle-active] {
   background-color: var(--resize-handle-hover-color);
 }
-

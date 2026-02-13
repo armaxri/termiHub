@@ -242,10 +242,23 @@ interface ConnectionItemProps {
   onPingHost: (connection: SavedConnection) => void;
 }
 
-function ConnectionItem({ connection, depth, onConnect, onEdit, onDelete, onDuplicate, onPingHost }: ConnectionItemProps) {
+function ConnectionItem({
+  connection,
+  depth,
+  onConnect,
+  onEdit,
+  onDelete,
+  onDuplicate,
+  onPingHost,
+}: ConnectionItemProps) {
   const Icon = TYPE_ICONS[connection.config.type];
 
-  const { attributes, listeners, setNodeRef: setDragRef, isDragging } = useDraggable({
+  const {
+    attributes,
+    listeners,
+    setNodeRef: setDragRef,
+    isDragging,
+  } = useDraggable({
     id: connection.id,
     data: { type: "connection", connection },
   });
@@ -269,10 +282,7 @@ function ConnectionItem({ connection, depth, onConnect, onEdit, onDelete, onDupl
       </ContextMenu.Trigger>
       <ContextMenu.Portal>
         <ContextMenu.Content className="context-menu__content">
-          <ContextMenu.Item
-            className="context-menu__item"
-            onSelect={() => onConnect(connection)}
-          >
+          <ContextMenu.Item className="context-menu__item" onSelect={() => onConnect(connection)}>
             <Play size={14} /> Connect
           </ContextMenu.Item>
           {(connection.config.type === "ssh" || connection.config.type === "telnet") && (
@@ -283,10 +293,7 @@ function ConnectionItem({ connection, depth, onConnect, onEdit, onDelete, onDupl
               <Activity size={14} /> Ping Host
             </ContextMenu.Item>
           )}
-          <ContextMenu.Item
-            className="context-menu__item"
-            onSelect={() => onEdit(connection.id)}
-          >
+          <ContextMenu.Item className="context-menu__item" onSelect={() => onEdit(connection.id)}>
             <Pencil size={14} /> Edit
           </ContextMenu.Item>
           <ContextMenu.Item
@@ -346,7 +353,14 @@ export function ConnectionList() {
         config = { ...config, config: { ...sshCfg, password } };
       }
 
-      addTab(connection.name, connection.config.type, config, undefined, undefined, connection.terminalOptions);
+      addTab(
+        connection.name,
+        connection.config.type,
+        config,
+        undefined,
+        undefined,
+        connection.terminalOptions
+      );
     },
     [addTab, requestPassword]
   );
@@ -462,7 +476,10 @@ export function ConnectionList() {
             <div className="connection-list__group-actions">
               <button
                 className="connection-list__add-btn"
-                onClick={() => { setLocalCollapsed(false); setCreatingFolder(true); }}
+                onClick={() => {
+                  setLocalCollapsed(false);
+                  setCreatingFolder(true);
+                }}
                 title="New Folder"
               >
                 <FolderPlus size={16} />
@@ -588,11 +605,7 @@ function RootDropZone({
       className={`connection-list__tree${isOver ? " connection-tree__root-drop--over" : ""}`}
     >
       {isCreatingFolder && (
-        <InlineFolderInput
-          depth={0}
-          onConfirm={onCreateFolder}
-          onCancel={onCancelCreateFolder}
-        />
+        <InlineFolderInput depth={0} onConfirm={onCreateFolder} onCancel={onCancelCreateFolder} />
       )}
       {rootFolders.map((folder) => (
         <TreeNode
@@ -689,10 +702,7 @@ function ExternalSourceSection({
   return (
     <div className="connection-list__group connection-list__group--external">
       <div className="connection-list__group-header">
-        <button
-          className="connection-list__group-toggle"
-          onClick={() => setCollapsed((v) => !v)}
-        >
+        <button className="connection-list__group-toggle" onClick={() => setCollapsed((v) => !v)}>
           <SectionChevron size={16} className="connection-tree__chevron" />
           <FolderGit2 size={16} />
           <span className="connection-list__group-title">{source.name}</span>
@@ -703,11 +713,7 @@ function ExternalSourceSection({
           )}
         </button>
         <div className="connection-list__group-actions">
-          <button
-            className="connection-list__add-btn"
-            onClick={handleNewFolder}
-            title="New Folder"
-          >
+          <button className="connection-list__add-btn" onClick={handleNewFolder} title="New Folder">
             <FolderPlus size={16} />
           </button>
           <button
@@ -915,10 +921,23 @@ interface ExternalConnectionItemProps {
   onPingHost: (connection: SavedConnection) => void;
 }
 
-function ExternalConnectionItem({ connection, depth, onConnect, onEdit, onDelete, onDuplicate, onPingHost }: ExternalConnectionItemProps) {
+function ExternalConnectionItem({
+  connection,
+  depth,
+  onConnect,
+  onEdit,
+  onDelete,
+  onDuplicate,
+  onPingHost,
+}: ExternalConnectionItemProps) {
   const Icon = TYPE_ICONS[connection.config.type];
 
-  const { attributes, listeners, setNodeRef: setDragRef, isDragging } = useDraggable({
+  const {
+    attributes,
+    listeners,
+    setNodeRef: setDragRef,
+    isDragging,
+  } = useDraggable({
     id: connection.id,
     data: { type: "connection", connection },
   });
@@ -942,10 +961,7 @@ function ExternalConnectionItem({ connection, depth, onConnect, onEdit, onDelete
       </ContextMenu.Trigger>
       <ContextMenu.Portal>
         <ContextMenu.Content className="context-menu__content">
-          <ContextMenu.Item
-            className="context-menu__item"
-            onSelect={() => onConnect(connection)}
-          >
+          <ContextMenu.Item className="context-menu__item" onSelect={() => onConnect(connection)}>
             <Play size={14} /> Connect
           </ContextMenu.Item>
           {(connection.config.type === "ssh" || connection.config.type === "telnet") && (
@@ -956,10 +972,7 @@ function ExternalConnectionItem({ connection, depth, onConnect, onEdit, onDelete
               <Activity size={14} /> Ping Host
             </ContextMenu.Item>
           )}
-          <ContextMenu.Item
-            className="context-menu__item"
-            onSelect={() => onEdit(connection.id)}
-          >
+          <ContextMenu.Item className="context-menu__item" onSelect={() => onEdit(connection.id)}>
             <Pencil size={14} /> Edit
           </ContextMenu.Item>
           <ContextMenu.Item

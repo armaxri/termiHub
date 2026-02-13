@@ -4,7 +4,13 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { SessionId, ConnectionConfig, SshConfig } from "@/types/terminal";
-import { SavedConnection, ConnectionFolder, FileEntry, ExternalConnectionSource, AppSettings } from "@/types/connection";
+import {
+  SavedConnection,
+  ConnectionFolder,
+  FileEntry,
+  ExternalConnectionSource,
+  AppSettings,
+} from "@/types/connection";
 
 // --- Terminal commands ---
 
@@ -19,7 +25,11 @@ export async function sendInput(sessionId: SessionId, data: string): Promise<voi
 }
 
 /** Resize a terminal session */
-export async function resizeTerminal(sessionId: SessionId, cols: number, rows: number): Promise<void> {
+export async function resizeTerminal(
+  sessionId: SessionId,
+  cols: number,
+  rows: number
+): Promise<void> {
   await invoke("resize_terminal", { sessionId, cols, rows });
 }
 
@@ -103,7 +113,7 @@ export async function saveExternalFile(
   filePath: string,
   name: string,
   folders: ConnectionFolder[],
-  connections: SavedConnection[],
+  connections: SavedConnection[]
 ): Promise<void> {
   await invoke("save_external_file", { filePath, name, folders, connections });
 }
@@ -131,12 +141,20 @@ export async function sftpListDir(sessionId: string, path: string): Promise<File
 }
 
 /** Download a remote file to a local path. Returns bytes transferred. */
-export async function sftpDownload(sessionId: string, remotePath: string, localPath: string): Promise<number> {
+export async function sftpDownload(
+  sessionId: string,
+  remotePath: string,
+  localPath: string
+): Promise<number> {
   return await invoke<number>("sftp_download", { sessionId, remotePath, localPath });
 }
 
 /** Upload a local file to a remote path. Returns bytes transferred. */
-export async function sftpUpload(sessionId: string, localPath: string, remotePath: string): Promise<number> {
+export async function sftpUpload(
+  sessionId: string,
+  localPath: string,
+  remotePath: string
+): Promise<number> {
   return await invoke<number>("sftp_upload", { sessionId, localPath, remotePath });
 }
 
@@ -146,12 +164,20 @@ export async function sftpMkdir(sessionId: string, path: string): Promise<void> 
 }
 
 /** Delete a file or directory on the remote host. */
-export async function sftpDelete(sessionId: string, path: string, isDirectory: boolean): Promise<void> {
+export async function sftpDelete(
+  sessionId: string,
+  path: string,
+  isDirectory: boolean
+): Promise<void> {
   await invoke("sftp_delete", { sessionId, path, isDirectory });
 }
 
 /** Rename a file or directory on the remote host. */
-export async function sftpRename(sessionId: string, oldPath: string, newPath: string): Promise<void> {
+export async function sftpRename(
+  sessionId: string,
+  oldPath: string,
+  newPath: string
+): Promise<void> {
   await invoke("sftp_rename", { sessionId, oldPath, newPath });
 }
 
@@ -193,7 +219,11 @@ export async function sftpReadFileContent(sessionId: string, remotePath: string)
 }
 
 /** Write a string to a remote file via SFTP. */
-export async function sftpWriteFileContent(sessionId: string, remotePath: string, content: string): Promise<void> {
+export async function sftpWriteFileContent(
+  sessionId: string,
+  remotePath: string,
+  content: string
+): Promise<void> {
   await invoke("sftp_write_file_content", { sessionId, remotePath, content });
 }
 

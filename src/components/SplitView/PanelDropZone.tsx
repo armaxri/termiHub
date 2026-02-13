@@ -14,10 +14,7 @@ const EDGES: DropEdge[] = ["left", "right", "top", "bottom"];
 export function PanelDropZone({ panelId, hideEdges }: PanelDropZoneProps) {
   return (
     <div className="panel-drop-zone">
-      {!hideEdges &&
-        EDGES.map((edge) => (
-          <EdgeZone key={edge} panelId={panelId} edge={edge} />
-        ))}
+      {!hideEdges && EDGES.map((edge) => <EdgeZone key={edge} panelId={panelId} edge={edge} />)}
       <CenterZone panelId={panelId} />
     </div>
   );
@@ -48,9 +45,7 @@ function CenterZone({ panelId }: { panelId: string }) {
   return (
     <div
       ref={setNodeRef}
-      className={`panel-drop-zone__center ${
-        isOver ? "panel-drop-zone__center--active" : ""
-      }`}
+      className={`panel-drop-zone__center ${isOver ? "panel-drop-zone__center--active" : ""}`}
     />
   );
 }

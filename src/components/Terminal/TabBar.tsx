@@ -1,8 +1,5 @@
 import { useState } from "react";
-import {
-  SortableContext,
-  horizontalListSortingStrategy,
-} from "@dnd-kit/sortable";
+import { SortableContext, horizontalListSortingStrategy } from "@dnd-kit/sortable";
 import { useAppStore } from "@/store/appStore";
 import { TerminalTab } from "@/types/terminal";
 import { useTerminalRegistry } from "./TerminalRegistry";
@@ -36,10 +33,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
 
   return (
     <div className="tab-bar">
-      <SortableContext
-        items={tabs.map((t) => t.id)}
-        strategy={horizontalListSortingStrategy}
-      >
+      <SortableContext items={tabs.map((t) => t.id)} strategy={horizontalListSortingStrategy}>
         <div className="tab-bar__tabs">
           {tabs.map((tab) => (
             <Tab
@@ -51,7 +45,9 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
               onSave={() => saveTerminalToFile(tab.id)}
               onCopyToClipboard={() => copyTerminalToClipboard(tab.id)}
               horizontalScrolling={tabHorizontalScrolling[tab.id] ?? false}
-              onToggleHorizontalScrolling={() => setTabHorizontalScrolling(tab.id, !(tabHorizontalScrolling[tab.id] ?? false))}
+              onToggleHorizontalScrolling={() =>
+                setTabHorizontalScrolling(tab.id, !(tabHorizontalScrolling[tab.id] ?? false))
+              }
               isDirty={editorDirtyTabs[tab.id] ?? false}
               tabColor={tabColors[tab.id]}
               onSetColor={() => setColorPickerTabId(tab.id)}
@@ -61,7 +57,9 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
       </SortableContext>
       <ColorPickerDialog
         open={colorPickerTabId !== null}
-        onOpenChange={(open) => { if (!open) setColorPickerTabId(null); }}
+        onOpenChange={(open) => {
+          if (!open) setColorPickerTabId(null);
+        }}
         currentColor={colorPickerTabId ? tabColors[colorPickerTabId] : undefined}
         onColorChange={(color) => {
           if (colorPickerTabId) setTabColor(colorPickerTabId, color);

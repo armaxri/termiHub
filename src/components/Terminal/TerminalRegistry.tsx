@@ -78,28 +78,42 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     return lines.join("\n") + "\n";
   }, []);
 
-  const saveTerminalToFile = useCallback(async (tabId: string) => {
-    const content = getTerminalContent(tabId);
-    if (!content) return;
+  const saveTerminalToFile = useCallback(
+    async (tabId: string) => {
+      const content = getTerminalContent(tabId);
+      if (!content) return;
 
-    const filePath = await save({
-      title: "Save terminal content",
-      defaultPath: "terminal-output.txt",
-    });
-    if (!filePath) return;
+      const filePath = await save({
+        title: "Save terminal content",
+        defaultPath: "terminal-output.txt",
+      });
+      if (!filePath) return;
 
-    await writeTextFile(filePath, content);
-  }, [getTerminalContent]);
+      await writeTextFile(filePath, content);
+    },
+    [getTerminalContent]
+  );
 
-  const copyTerminalToClipboard = useCallback(async (tabId: string) => {
-    const content = getTerminalContent(tabId);
-    if (!content) return;
+  const copyTerminalToClipboard = useCallback(
+    async (tabId: string) => {
+      const content = getTerminalContent(tabId);
+      if (!content) return;
 
-    await navigator.clipboard.writeText(content);
-  }, [getTerminalContent]);
+      await navigator.clipboard.writeText(content);
+    },
+    [getTerminalContent]
+  );
 
   const ctx = useMemo(
-    () => ({ register, unregister, getElement, clearTerminal, saveTerminalToFile, copyTerminalToClipboard, parkingRef }),
+    () => ({
+      register,
+      unregister,
+      getElement,
+      clearTerminal,
+      saveTerminalToFile,
+      copyTerminalToClipboard,
+      parkingRef,
+    }),
     [register, unregister, getElement, clearTerminal, saveTerminalToFile, copyTerminalToClipboard]
   );
 

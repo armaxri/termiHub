@@ -24,7 +24,12 @@ interface ColorPickerDialogProps {
 /**
  * Dialog for picking a tab color with preset swatches and a full color picker.
  */
-export function ColorPickerDialog({ open, onOpenChange, currentColor, onColorChange }: ColorPickerDialogProps) {
+export function ColorPickerDialog({
+  open,
+  onOpenChange,
+  currentColor,
+  onColorChange,
+}: ColorPickerDialogProps) {
   const [selectedColor, setSelectedColor] = useState(currentColor ?? "#3b82f6");
 
   // Reset when dialog opens
@@ -87,10 +92,7 @@ export function ColorPickerDialog({ open, onOpenChange, currentColor, onColorCha
             >
               Clear
             </button>
-            <button
-              className="color-picker__btn color-picker__btn--primary"
-              onClick={handleApply}
-            >
+            <button className="color-picker__btn color-picker__btn--primary" onClick={handleApply}>
               Apply
             </button>
           </div>

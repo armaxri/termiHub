@@ -32,7 +32,12 @@ export function PasswordPrompt() {
   );
 
   return (
-    <Dialog.Root open={open} onOpenChange={(v) => { if (!v) dismissPasswordPrompt(); }}>
+    <Dialog.Root
+      open={open}
+      onOpenChange={(v) => {
+        if (!v) dismissPasswordPrompt();
+      }}
+    >
       <Dialog.Portal>
         <Dialog.Overlay className="password-prompt__overlay" />
         <Dialog.Content className="password-prompt__content">

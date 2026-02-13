@@ -46,7 +46,14 @@ interface FileRowProps {
  * Shared menu items for file/directory actions.
  * Used by both the three-dots dropdown and the right-click context menu.
  */
-function FileMenuItems({ entry, mode, vscodeAvailable, onNavigate, onContextAction, onClose }: {
+function FileMenuItems({
+  entry,
+  mode,
+  vscodeAvailable,
+  onNavigate,
+  onContextAction,
+  onClose,
+}: {
   entry: FileEntry;
   mode: "local" | "sftp" | "none";
   vscodeAvailable: boolean;
@@ -57,29 +64,65 @@ function FileMenuItems({ entry, mode, vscodeAvailable, onNavigate, onContextActi
   return (
     <>
       {entry.isDirectory && (
-        <button className="file-browser__context-item" onClick={() => { onClose(); onNavigate(entry); }}>
+        <button
+          className="file-browser__context-item"
+          onClick={() => {
+            onClose();
+            onNavigate(entry);
+          }}
+        >
           <FolderOpen size={14} /> Open
         </button>
       )}
       {!entry.isDirectory && mode === "sftp" && (
-        <button className="file-browser__context-item" onClick={() => { onClose(); onContextAction(entry, "download"); }}>
+        <button
+          className="file-browser__context-item"
+          onClick={() => {
+            onClose();
+            onContextAction(entry, "download");
+          }}
+        >
           <Download size={14} /> Download
         </button>
       )}
       {!entry.isDirectory && (
-        <button className="file-browser__context-item" onClick={() => { onClose(); onContextAction(entry, "edit"); }}>
+        <button
+          className="file-browser__context-item"
+          onClick={() => {
+            onClose();
+            onContextAction(entry, "edit");
+          }}
+        >
           <FileEdit size={14} /> Edit
         </button>
       )}
       {!entry.isDirectory && vscodeAvailable && (
-        <button className="file-browser__context-item" onClick={() => { onClose(); onContextAction(entry, "vscode"); }}>
+        <button
+          className="file-browser__context-item"
+          onClick={() => {
+            onClose();
+            onContextAction(entry, "vscode");
+          }}
+        >
           <CodeXml size={14} /> Open in VS Code
         </button>
       )}
-      <button className="file-browser__context-item" onClick={() => { onClose(); onContextAction(entry, "rename"); }}>
+      <button
+        className="file-browser__context-item"
+        onClick={() => {
+          onClose();
+          onContextAction(entry, "rename");
+        }}
+      >
         <Pencil size={14} /> Rename
       </button>
-      <button className="file-browser__context-item file-browser__context-item--danger" onClick={() => { onClose(); onContextAction(entry, "delete"); }}>
+      <button
+        className="file-browser__context-item file-browser__context-item--danger"
+        onClick={() => {
+          onClose();
+          onContextAction(entry, "delete");
+        }}
+      >
         <Trash2 size={14} /> Delete
       </button>
     </>
@@ -157,25 +200,40 @@ function FileRow({ entry, mode, vscodeAvailable, onNavigate, onContextAction }: 
             </ContextMenu.Item>
           )}
           {!entry.isDirectory && mode === "sftp" && (
-            <ContextMenu.Item className="context-menu__item" onSelect={() => onContextAction(entry, "download")}>
+            <ContextMenu.Item
+              className="context-menu__item"
+              onSelect={() => onContextAction(entry, "download")}
+            >
               <Download size={14} /> Download
             </ContextMenu.Item>
           )}
           {!entry.isDirectory && (
-            <ContextMenu.Item className="context-menu__item" onSelect={() => onContextAction(entry, "edit")}>
+            <ContextMenu.Item
+              className="context-menu__item"
+              onSelect={() => onContextAction(entry, "edit")}
+            >
               <FileEdit size={14} /> Edit
             </ContextMenu.Item>
           )}
           {!entry.isDirectory && vscodeAvailable && (
-            <ContextMenu.Item className="context-menu__item" onSelect={() => onContextAction(entry, "vscode")}>
+            <ContextMenu.Item
+              className="context-menu__item"
+              onSelect={() => onContextAction(entry, "vscode")}
+            >
               <CodeXml size={14} /> Open in VS Code
             </ContextMenu.Item>
           )}
           <ContextMenu.Separator className="context-menu__separator" />
-          <ContextMenu.Item className="context-menu__item" onSelect={() => onContextAction(entry, "rename")}>
+          <ContextMenu.Item
+            className="context-menu__item"
+            onSelect={() => onContextAction(entry, "rename")}
+          >
             <Pencil size={14} /> Rename
           </ContextMenu.Item>
-          <ContextMenu.Item className="context-menu__item context-menu__item--danger" onSelect={() => onContextAction(entry, "delete")}>
+          <ContextMenu.Item
+            className="context-menu__item context-menu__item--danger"
+            onSelect={() => onContextAction(entry, "delete")}
+          >
             <Trash2 size={14} /> Delete
           </ContextMenu.Item>
         </ContextMenu.Content>
@@ -230,7 +288,13 @@ function useFileBrowserSync() {
     } else {
       setFileBrowserMode("none");
     }
-  }, [activeTabId, activeTabConnectionType, activeTabContentType, activeTabEditorMeta, setFileBrowserMode]);
+  }, [
+    activeTabId,
+    activeTabConnectionType,
+    activeTabContentType,
+    activeTabEditorMeta,
+    setFileBrowserMode,
+  ]);
 
   // Auto-navigate on tab switch or CWD change
   const cwd = activeTabId ? tabCwds[activeTabId] : undefined;
@@ -255,7 +319,16 @@ function useFileBrowserSync() {
     } else if (currentMode === "sftp" && sftpSessionId) {
       navigateSftp(cwd);
     }
-  }, [activeTabId, cwd, sidebarView, activeTabContentType, activeTabEditorMeta, navigateLocal, navigateSftp, sftpSessionId]);
+  }, [
+    activeTabId,
+    cwd,
+    sidebarView,
+    activeTabContentType,
+    activeTabEditorMeta,
+    navigateLocal,
+    navigateSftp,
+    sftpSessionId,
+  ]);
 
   // Auto-connect SFTP for SSH tabs
   useEffect(() => {
@@ -280,7 +353,11 @@ function useFileBrowserSync() {
         const savedConn = connections.find((c) => {
           if (c.config.type !== "ssh") return false;
           const sc = c.config.config as SshConfig;
-          return sc.host === sshConfig.host && sc.port === sshConfig.port && sc.username === sshConfig.username;
+          return (
+            sc.host === sshConfig.host &&
+            sc.port === sshConfig.port &&
+            sc.username === sshConfig.username
+          );
         });
         const baseConfig = savedConn ? (savedConn.config.config as SshConfig) : sshConfig;
 
@@ -293,7 +370,17 @@ function useFileBrowserSync() {
     };
 
     doConnect();
-  }, [fileBrowserMode, activeTabId, activeTab, sftpSessionId, sftpConnectedHost, connections, connectSftp, disconnectSftp, requestPassword]);
+  }, [
+    fileBrowserMode,
+    activeTabId,
+    activeTab,
+    sftpSessionId,
+    sftpConnectedHost,
+    connections,
+    connectSftp,
+    disconnectSftp,
+    requestPassword,
+  ]);
 }
 
 export function FileBrowser() {
@@ -352,11 +439,13 @@ export function FileBrowser() {
     (entry: FileEntry, action: string) => {
       switch (action) {
         case "edit":
-          useAppStore.getState().openEditorTab(
-            entry.path,
-            mode === "sftp",
-            mode === "sftp" ? sftpSessionId ?? undefined : undefined,
-          );
+          useAppStore
+            .getState()
+            .openEditorTab(
+              entry.path,
+              mode === "sftp",
+              mode === "sftp" ? (sftpSessionId ?? undefined) : undefined
+            );
           break;
         case "download":
           downloadFile(entry.path, entry.name).catch((err: unknown) =>
@@ -474,11 +563,7 @@ export function FileBrowser() {
               <Upload size={14} />
             </button>
           )}
-          <button
-            className="file-browser__btn"
-            onClick={() => setNewFileName("")}
-            title="New File"
-          >
+          <button className="file-browser__btn" onClick={() => setNewFileName("")} title="New File">
             <FilePlus size={14} />
           </button>
           <button
@@ -489,11 +574,7 @@ export function FileBrowser() {
             <FolderPlus size={14} />
           </button>
           {mode === "sftp" && (
-            <button
-              className="file-browser__btn"
-              onClick={disconnectSftp}
-              title="Disconnect"
-            >
+            <button className="file-browser__btn" onClick={disconnectSftp} title="Disconnect">
               <Unplug size={14} />
             </button>
           )}

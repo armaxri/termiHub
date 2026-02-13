@@ -37,7 +37,9 @@
   height: 22px;
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
-  transition: color var(--transition-fast), background-color var(--transition-fast);
+  transition:
+    color var(--transition-fast),
+    background-color var(--transition-fast);
 }
 
 .file-browser__btn:hover {
@@ -249,8 +251,12 @@
 
 /* Spinner animation */
 @keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .file-browser__spinner {

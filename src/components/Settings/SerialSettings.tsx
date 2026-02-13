@@ -13,7 +13,9 @@ export function SerialSettings({ config, onChange }: SerialSettingsProps) {
   const [ports, setPorts] = useState<string[]>([]);
 
   useEffect(() => {
-    listSerialPorts().then(setPorts).catch(() => setPorts([]));
+    listSerialPorts()
+      .then(setPorts)
+      .catch(() => setPorts([]));
   }, []);
 
   return (
@@ -27,7 +29,9 @@ export function SerialSettings({ config, onChange }: SerialSettingsProps) {
           >
             <option value="">Select port...</option>
             {ports.map((port) => (
-              <option key={port} value={port}>{port}</option>
+              <option key={port} value={port}>
+                {port}
+              </option>
             ))}
           </select>
         ) : (
@@ -46,7 +50,9 @@ export function SerialSettings({ config, onChange }: SerialSettingsProps) {
           onChange={(e) => onChange({ ...config, baudRate: parseInt(e.target.value) })}
         >
           {BAUD_RATES.map((rate) => (
-            <option key={rate} value={rate}>{rate}</option>
+            <option key={rate} value={rate}>
+              {rate}
+            </option>
           ))}
         </select>
       </label>
@@ -54,7 +60,9 @@ export function SerialSettings({ config, onChange }: SerialSettingsProps) {
         <span className="settings-form__label">Data Bits</span>
         <select
           value={config.dataBits}
-          onChange={(e) => onChange({ ...config, dataBits: parseInt(e.target.value) as 5 | 6 | 7 | 8 })}
+          onChange={(e) =>
+            onChange({ ...config, dataBits: parseInt(e.target.value) as 5 | 6 | 7 | 8 })
+          }
         >
           <option value={5}>5</option>
           <option value={6}>6</option>
@@ -76,7 +84,9 @@ export function SerialSettings({ config, onChange }: SerialSettingsProps) {
         <span className="settings-form__label">Parity</span>
         <select
           value={config.parity}
-          onChange={(e) => onChange({ ...config, parity: e.target.value as "none" | "odd" | "even" })}
+          onChange={(e) =>
+            onChange({ ...config, parity: e.target.value as "none" | "odd" | "even" })
+          }
         >
           <option value="none">None</option>
           <option value="odd">Odd</option>
@@ -87,7 +97,9 @@ export function SerialSettings({ config, onChange }: SerialSettingsProps) {
         <span className="settings-form__label">Flow Control</span>
         <select
           value={config.flowControl}
-          onChange={(e) => onChange({ ...config, flowControl: e.target.value as "none" | "hardware" | "software" })}
+          onChange={(e) =>
+            onChange({ ...config, flowControl: e.target.value as "none" | "hardware" | "software" })
+          }
         >
           <option value="none">None</option>
           <option value="hardware">Hardware (RTS/CTS)</option>
