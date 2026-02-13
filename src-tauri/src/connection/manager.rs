@@ -4,9 +4,7 @@ use std::sync::Mutex;
 use anyhow::{Context, Result};
 use tauri::AppHandle;
 
-use super::config::{
-    ConnectionFolder, ConnectionStore, ExternalConnectionStore, SavedConnection,
-};
+use super::config::{ConnectionFolder, ConnectionStore, ExternalConnectionStore, SavedConnection};
 use super::settings::{AppSettings, SettingsStorage};
 use super::storage::ConnectionStorage;
 use crate::terminal::backend::ConnectionConfig;
@@ -54,7 +52,9 @@ impl ConnectionManager {
             }
         }
         if needs_save {
-            storage.save(&store).context("Failed to strip stored passwords on migration")?;
+            storage
+                .save(&store)
+                .context("Failed to strip stored passwords on migration")?;
         }
 
         let settings_storage = SettingsStorage::new(app_handle)?;
@@ -85,14 +85,18 @@ impl ConnectionManager {
             store.connections.push(connection);
         }
 
-        self.storage.save(&store).context("Failed to persist connection")
+        self.storage
+            .save(&store)
+            .context("Failed to persist connection")
     }
 
     /// Delete a connection by ID.
     pub fn delete_connection(&self, id: &str) -> Result<()> {
         let mut store = self.store.lock().unwrap();
         store.connections.retain(|c| c.id != id);
-        self.storage.save(&store).context("Failed to persist after delete")
+        self.storage
+            .save(&store)
+            .context("Failed to persist after delete")
     }
 
     /// Save (add or update) a folder.
@@ -105,7 +109,9 @@ impl ConnectionManager {
             store.folders.push(folder);
         }
 
-        self.storage.save(&store).context("Failed to persist folder")
+        self.storage
+            .save(&store)
+            .context("Failed to persist folder")
     }
 
     /// Delete a folder by ID. Moves its connections to root (folder_id = None).
@@ -133,7 +139,9 @@ impl ConnectionManager {
         }
 
         store.folders.retain(|f| f.id != id);
-        self.storage.save(&store).context("Failed to persist after folder delete")
+        self.storage
+            .save(&store)
+            .context("Failed to persist after folder delete")
     }
 
     /// Export all connections and folders as a JSON string. Passwords are stripped.
@@ -145,7 +153,8 @@ impl ConnectionManager {
             .into_iter()
             .map(strip_ssh_password)
             .collect();
-        serde_json::to_string_pretty(&export_store).context("Failed to serialize connections for export")
+        serde_json::to_string_pretty(&export_store)
+            .context("Failed to serialize connections for export")
     }
 
     /// Import connections and folders from a JSON string.
@@ -171,7 +180,9 @@ impl ConnectionManager {
             }
         }
 
-        self.storage.save(&store).context("Failed to persist after import")?;
+        self.storage
+            .save(&store)
+            .context("Failed to persist after import")?;
         Ok(count)
     }
 
@@ -423,7 +434,10 @@ mod tests {
 
         // Should have synthetic root folder + our folder
         assert_eq!(source.folders.len(), 2);
-        let root = source.folders.iter().find(|f| f.id == format!("ext-root:{}", path_str));
+        let root = source
+            .folders
+            .iter()
+            .find(|f| f.id == format!("ext-root:{}", path_str));
         assert!(root.is_some(), "Should have synthetic root folder");
     }
 
@@ -453,6 +467,9 @@ mod tests {
 
         // Read raw JSON and verify password is not stored
         let raw = std::fs::read_to_string(path_str).unwrap();
-        assert!(!raw.contains("should_be_removed"), "Password should not be in saved file");
+        assert!(
+            !raw.contains("should_be_removed"),
+            "Password should not be in saved file"
+        );
     }
 }

@@ -65,7 +65,7 @@ pub struct ExternalConnectionStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::terminal::backend::{LocalShellConfig, SshConfig, TelnetConfig, SerialConfig};
+    use crate::terminal::backend::{LocalShellConfig, SerialConfig, SshConfig, TelnetConfig};
 
     #[test]
     fn saved_connection_local_serde_round_trip() {

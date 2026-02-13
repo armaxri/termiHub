@@ -1,7 +1,7 @@
 use std::path::Path;
 
-use super::FileEntry;
 use super::utils::chrono_from_epoch;
+use super::FileEntry;
 use crate::utils::errors::TerminalError;
 
 /// List directory contents, filtering out `.` and `..`.
@@ -74,8 +74,8 @@ pub fn rename(old_path: &str, new_path: &str) -> Result<(), TerminalError> {
 /// Get permission string from metadata (Unix only).
 #[cfg(unix)]
 fn get_permissions(metadata: &std::fs::Metadata) -> Option<String> {
-    use std::os::unix::fs::PermissionsExt;
     use super::utils::format_permissions;
+    use std::os::unix::fs::PermissionsExt;
     Some(format_permissions(metadata.permissions().mode()))
 }
 

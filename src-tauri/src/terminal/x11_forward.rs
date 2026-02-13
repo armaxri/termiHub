@@ -39,8 +39,7 @@ impl X11Forwarder {
     ) -> Result<(Self, u32, Option<String>), TerminalError> {
         let local_x = detect_local_x_server().ok_or_else(|| {
             TerminalError::SshError(
-                "No local X server detected. Start an X server (XQuartz on macOS)."
-                    .to_string(),
+                "No local X server detected. Start an X server (XQuartz on macOS).".to_string(),
             )
         })?;
 
@@ -243,7 +242,10 @@ fn event_loop(
         let _ = proxy.channel.send_eof();
         let _ = proxy.channel.close();
     }
-    debug!("X11 event loop finished ({} proxies cleaned up)", proxies.len());
+    debug!(
+        "X11 event loop finished ({} proxies cleaned up)",
+        proxies.len()
+    );
 }
 
 /// Write all bytes to a non-blocking local stream, retrying on WouldBlock.

@@ -56,15 +56,14 @@ pub fn save_connection(
     connection: SavedConnection,
     manager: State<'_, ConnectionManager>,
 ) -> Result<(), String> {
-    manager.save_connection(connection).map_err(|e| e.to_string())
+    manager
+        .save_connection(connection)
+        .map_err(|e| e.to_string())
 }
 
 /// Delete a connection by ID.
 #[tauri::command]
-pub fn delete_connection(
-    id: String,
-    manager: State<'_, ConnectionManager>,
-) -> Result<(), String> {
+pub fn delete_connection(id: String, manager: State<'_, ConnectionManager>) -> Result<(), String> {
     manager.delete_connection(&id).map_err(|e| e.to_string())
 }
 
@@ -79,18 +78,13 @@ pub fn save_folder(
 
 /// Delete a folder by ID.
 #[tauri::command]
-pub fn delete_folder(
-    id: String,
-    manager: State<'_, ConnectionManager>,
-) -> Result<(), String> {
+pub fn delete_folder(id: String, manager: State<'_, ConnectionManager>) -> Result<(), String> {
     manager.delete_folder(&id).map_err(|e| e.to_string())
 }
 
 /// Export all connections as a JSON string.
 #[tauri::command]
-pub fn export_connections(
-    manager: State<'_, ConnectionManager>,
-) -> Result<String, String> {
+pub fn export_connections(manager: State<'_, ConnectionManager>) -> Result<String, String> {
     manager.export_json().map_err(|e| e.to_string())
 }
 
@@ -105,9 +99,7 @@ pub fn import_connections(
 
 /// Get the current application settings.
 #[tauri::command]
-pub fn get_settings(
-    manager: State<'_, ConnectionManager>,
-) -> Result<AppSettings, String> {
+pub fn get_settings(manager: State<'_, ConnectionManager>) -> Result<AppSettings, String> {
     Ok(manager.get_settings())
 }
 
@@ -128,8 +120,7 @@ pub fn save_external_file(
     folders: Vec<ConnectionFolder>,
     connections: Vec<SavedConnection>,
 ) -> Result<(), String> {
-    manager::save_external_file(&file_path, &name, folders, connections)
-        .map_err(|e| e.to_string())
+    manager::save_external_file(&file_path, &name, folders, connections).map_err(|e| e.to_string())
 }
 
 /// Reload external connection files and return them.
