@@ -12,7 +12,7 @@ use super::storage::ConnectionStorage;
 use crate::terminal::backend::ConnectionConfig;
 
 /// Strip the password field from an SSH connection config.
-fn strip_ssh_password(mut connection: SavedConnection) -> SavedConnection {
+pub(crate) fn strip_ssh_password(mut connection: SavedConnection) -> SavedConnection {
     if let ConnectionConfig::Ssh(ref mut ssh_cfg) = connection.config {
         ssh_cfg.password = None;
     }
@@ -221,7 +221,7 @@ fn load_single_external_file(file_path: &str) -> ExternalSource {
 }
 
 /// Try to load and parse an external connection file, namespacing all IDs.
-fn try_load_external_file(file_path: &str) -> Result<ExternalSource> {
+pub(crate) fn try_load_external_file(file_path: &str) -> Result<ExternalSource> {
     let data = std::fs::read_to_string(file_path)
         .with_context(|| format!("Failed to read external file: {}", file_path))?;
 
@@ -295,10 +295,164 @@ pub fn save_external_file(
 }
 
 /// Extract a human-readable name from a file path.
-fn filename_from_path(path: &str) -> String {
+pub(crate) fn filename_from_path(path: &str) -> String {
     Path::new(path)
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("Unknown")
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::terminal::backend::{LocalShellConfig, SshConfig};
+
+    #[test]
+    fn strip_ssh_password_removes_password() {
+        let conn = SavedConnection {
+            id: "test".to_string(),
+            name: "SSH".to_string(),
+            config: ConnectionConfig::Ssh(SshConfig {
+                host: "host".to_string(),
+                port: 22,
+                username: "user".to_string(),
+                auth_method: "password".to_string(),
+                password: Some("secret".to_string()),
+                key_path: None,
+                enable_x11_forwarding: false,
+            }),
+            folder_id: None,
+            terminal_options: None,
+        };
+        let stripped = strip_ssh_password(conn);
+        if let ConnectionConfig::Ssh(ssh) = &stripped.config {
+            assert!(ssh.password.is_none());
+        } else {
+            panic!("Expected SSH config");
+        }
+    }
+
+    #[test]
+    fn strip_ssh_password_leaves_non_ssh_unchanged() {
+        let conn = SavedConnection {
+            id: "test".to_string(),
+            name: "Local".to_string(),
+            config: ConnectionConfig::Local(LocalShellConfig {
+                shell_type: "bash".to_string(),
+                initial_command: None,
+            }),
+            folder_id: None,
+            terminal_options: None,
+        };
+        let result = strip_ssh_password(conn.clone());
+        // Should be unchanged
+        if let ConnectionConfig::Local(local) = &result.config {
+            assert_eq!(local.shell_type, "bash");
+        } else {
+            panic!("Expected Local config");
+        }
+    }
+
+    #[test]
+    fn filename_from_path_with_extension() {
+        assert_eq!(filename_from_path("/path/to/file.json"), "file");
+    }
+
+    #[test]
+    fn filename_from_path_root_file() {
+        assert_eq!(filename_from_path("/file.json"), "file");
+    }
+
+    #[test]
+    fn filename_from_path_empty() {
+        assert_eq!(filename_from_path(""), "Unknown");
+    }
+
+    #[test]
+    fn filename_from_path_no_extension() {
+        assert_eq!(filename_from_path("/path/to/file"), "file");
+    }
+
+    #[test]
+    fn external_file_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("test_connections.json");
+        let path_str = file_path.to_str().unwrap();
+
+        let folders = vec![ConnectionFolder {
+            id: "folder-1".to_string(),
+            name: "My Folder".to_string(),
+            parent_id: None,
+            is_expanded: true,
+        }];
+
+        let connections = vec![SavedConnection {
+            id: "conn-1".to_string(),
+            name: "Test SSH".to_string(),
+            config: ConnectionConfig::Ssh(SshConfig {
+                host: "example.com".to_string(),
+                port: 22,
+                username: "admin".to_string(),
+                auth_method: "password".to_string(),
+                password: Some("secret".to_string()),
+                key_path: None,
+                enable_x11_forwarding: false,
+            }),
+            folder_id: Some("folder-1".to_string()),
+            terminal_options: None,
+        }];
+
+        // Save
+        save_external_file(path_str, "Test File", folders, connections).unwrap();
+
+        // Load
+        let source = try_load_external_file(path_str).unwrap();
+        assert_eq!(source.name, "Test File");
+        assert!(source.error.is_none());
+
+        // Connections should be namespaced and password-stripped
+        assert_eq!(source.connections.len(), 1);
+        let conn = &source.connections[0];
+        assert!(conn.id.starts_with(&format!("ext:{}::", path_str)));
+        if let ConnectionConfig::Ssh(ssh) = &conn.config {
+            assert!(ssh.password.is_none(), "Password should be stripped");
+        } else {
+            panic!("Expected SSH config");
+        }
+
+        // Should have synthetic root folder + our folder
+        assert_eq!(source.folders.len(), 2);
+        let root = source.folders.iter().find(|f| f.id == format!("ext-root:{}", path_str));
+        assert!(root.is_some(), "Should have synthetic root folder");
+    }
+
+    #[test]
+    fn external_file_password_stripped_on_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("pass_test.json");
+        let path_str = file_path.to_str().unwrap();
+
+        let connections = vec![SavedConnection {
+            id: "c1".to_string(),
+            name: "SSH".to_string(),
+            config: ConnectionConfig::Ssh(SshConfig {
+                host: "h".to_string(),
+                port: 22,
+                username: "u".to_string(),
+                auth_method: "password".to_string(),
+                password: Some("should_be_removed".to_string()),
+                key_path: None,
+                enable_x11_forwarding: false,
+            }),
+            folder_id: None,
+            terminal_options: None,
+        }];
+
+        save_external_file(path_str, "Test", Vec::new(), connections).unwrap();
+
+        // Read raw JSON and verify password is not stored
+        let raw = std::fs::read_to_string(path_str).unwrap();
+        assert!(!raw.contains("should_be_removed"), "Password should not be in saved file");
+    }
 }

@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Automated unit tests for Rust backend (~41 new tests) covering shell detection, file utilities, connection config serialization, external file management, and environment variable expansion
+- Automated unit tests for TypeScript frontend (~43 tests) covering formatters, panel tree operations, and Zustand store actions
+- Vitest test framework for frontend with jsdom environment and coverage support
+- Manual test plan document (`docs/manual-testing.md`) for features requiring hardware or live connections
 - User documentation: user guide, build instructions, serial setup, SSH configuration, and contributing guide
 - X11 forwarding for SSH connections: forward remote GUI applications to local X server
 - Environment variable placeholders in connection settings: use `${env:VAR}` syntax for shared configs

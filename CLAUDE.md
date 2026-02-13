@@ -736,15 +736,46 @@ Phase 1 does NOT implement credential encryption to avoid complexity. Future imp
 
 ## Testing Strategy
 
-### Frontend Testing
-- Component testing with React Testing Library
-- Integration tests for critical flows
-- Manual testing on all platforms
+### Running Automated Tests
 
-### Backend Testing
-- Unit tests for each backend implementation
-- Integration tests for Tauri commands
-- Manual testing with real serial ports, SSH servers
+**Rust backend:**
+```bash
+cd src-tauri && cargo test
+```
+
+**TypeScript frontend:**
+```bash
+pnpm test            # single run
+pnpm test:watch      # watch mode
+pnpm test:coverage   # with coverage report
+```
+
+### What's Covered by Automated Tests
+
+**Rust (~54 tests):**
+- `utils/shell_detect.rs` — `shell_to_command()` mapping for all shell types
+- `utils/expand.rs` — `${env:...}` placeholder expansion
+- `utils/x11_detect.rs` — X11 display string parsing
+- `files/utils.rs` — `format_permissions()`, `chrono_from_epoch()`
+- `files/local.rs` — filesystem operations (list, mkdir, delete, rename, read/write) via tempdir
+- `connection/config.rs` — serde round-trips for all `ConnectionConfig` variants, JSON shape verification
+- `connection/manager.rs` — `strip_ssh_password()`, `filename_from_path()`, external file save/load round-trip
+- `terminal/backend.rs` — serde round-trips for config types, `expand()` for all config variants
+
+**TypeScript (~43 tests):**
+- `utils/formatters.ts` — `formatBytes()`, `truncate()`, `formatRelativeTime()`
+- `utils/panelTree.ts` — all tree operations (create, find, update, remove, split, simplify, edgeToSplit)
+- `store/appStore.ts` — tab add/close/activate, split panel, move tab, connection CRUD, sidebar toggle
+
+### What's NOT Covered (and Why)
+
+- **Terminal rendering** — xterm.js renders to a `<canvas>`, not DOM elements, making it opaque to DOM-based test tools
+- **Real SSH/Serial/Telnet connections** — require live servers or hardware; tested manually
+- **Tauri IPC integration** — commands require a running Tauri app with an `AppHandle`; unit-testing would require refactoring production code to extract the `AppHandle` dependency
+- **E2E UI tests** — xterm.js canvas rendering + platform-specific WebDriver setup makes automated E2E impractical for this project size
+- **Cross-platform behavior** — platform-specific code paths (Windows shell detection, ConPTY) require running on each OS
+
+See [`docs/manual-testing.md`](docs/manual-testing.md) for the manual test plan covering these areas.
 
 ### Performance Testing
 - Load testing with 40 concurrent terminals

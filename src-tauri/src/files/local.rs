@@ -94,3 +94,86 @@ pub fn read_file_content(path: &str) -> Result<String, TerminalError> {
 pub fn write_file_content(path: &str, content: &str) -> Result<(), TerminalError> {
     std::fs::write(path, content).map_err(TerminalError::Io)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn list_dir_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let entries = list_dir(dir.path().to_str().unwrap()).unwrap();
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn list_dir_returns_files_with_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("hello.txt"), "world").unwrap();
+        std::fs::create_dir(dir.path().join("subdir")).unwrap();
+
+        let entries = list_dir(dir.path().to_str().unwrap()).unwrap();
+        assert_eq!(entries.len(), 2);
+
+        let file_entry = entries.iter().find(|e| e.name == "hello.txt").unwrap();
+        assert!(!file_entry.is_directory);
+        assert_eq!(file_entry.size, 5);
+
+        let dir_entry = entries.iter().find(|e| e.name == "subdir").unwrap();
+        assert!(dir_entry.is_directory);
+    }
+
+    #[test]
+    fn mkdir_creates_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let new_dir = dir.path().join("new_dir");
+        mkdir(new_dir.to_str().unwrap()).unwrap();
+        assert!(new_dir.is_dir());
+    }
+
+    #[test]
+    fn delete_removes_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("to_delete.txt");
+        std::fs::write(&file, "delete me").unwrap();
+        assert!(file.exists());
+
+        delete(file.to_str().unwrap(), false).unwrap();
+        assert!(!file.exists());
+    }
+
+    #[test]
+    fn delete_removes_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("to_delete_dir");
+        std::fs::create_dir(&sub).unwrap();
+        std::fs::write(sub.join("inner.txt"), "inner").unwrap();
+
+        delete(sub.to_str().unwrap(), true).unwrap();
+        assert!(!sub.exists());
+    }
+
+    #[test]
+    fn rename_moves_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("old.txt");
+        let new_path = dir.path().join("new.txt");
+        std::fs::write(&old, "content").unwrap();
+
+        rename(old.to_str().unwrap(), new_path.to_str().unwrap()).unwrap();
+        assert!(!old.exists());
+        assert!(new_path.exists());
+        assert_eq!(std::fs::read_to_string(&new_path).unwrap(), "content");
+    }
+
+    #[test]
+    fn read_write_file_content_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("roundtrip.txt");
+        let path = file.to_str().unwrap();
+
+        write_file_content(path, "Hello, World!").unwrap();
+        let content = read_file_content(path).unwrap();
+        assert_eq!(content, "Hello, World!");
+    }
+}

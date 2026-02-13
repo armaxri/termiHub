@@ -60,3 +60,34 @@ pub fn format_permissions(perm: u32) -> String {
     }
     s
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_permissions_755() {
+        assert_eq!(format_permissions(0o755), "rwxr-xr-x");
+    }
+
+    #[test]
+    fn format_permissions_644() {
+        assert_eq!(format_permissions(0o644), "rw-r--r--");
+    }
+
+    #[test]
+    fn format_permissions_000() {
+        assert_eq!(format_permissions(0o000), "---------");
+    }
+
+    #[test]
+    fn chrono_from_epoch_zero() {
+        assert_eq!(chrono_from_epoch(0), "1970-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn chrono_from_epoch_known_timestamp() {
+        // 2024-01-15 12:30:45 UTC = 1705321845
+        assert_eq!(chrono_from_epoch(1705321845), "2024-01-15T12:30:45Z");
+    }
+}
