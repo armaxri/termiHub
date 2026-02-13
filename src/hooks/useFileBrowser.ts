@@ -34,6 +34,7 @@ export function useFileBrowser() {
     createDirectory: async () => {},
     deleteEntry: async () => {},
     renameEntry: async () => {},
+    openInVscode: async () => {},
     mode: "none" as const,
   };
 }

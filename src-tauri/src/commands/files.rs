@@ -1,9 +1,11 @@
-use tauri::State;
+use serde::Serialize;
+use tauri::{Emitter, State};
 
 use crate::files::FileEntry;
 use crate::files::sftp::SftpManager;
 use crate::terminal::backend::SshConfig;
 use crate::utils::errors::TerminalError;
+use crate::utils::vscode;
 
 /// Open a new SFTP session. Returns the session ID.
 #[tauri::command]
@@ -124,4 +126,103 @@ pub fn local_delete(path: String, is_directory: bool) -> Result<(), TerminalErro
 #[tauri::command]
 pub fn local_rename(old_path: String, new_path: String) -> Result<(), TerminalError> {
     crate::files::local::rename(&old_path, &new_path)
+}
+
+// --- VS Code integration ---
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VscodeEditCompleteEvent {
+    remote_path: String,
+    success: bool,
+    error: Option<String>,
+}
+
+/// Check if VS Code CLI (`code`) is available on PATH.
+#[tauri::command]
+pub fn vscode_available() -> bool {
+    vscode::is_vscode_available()
+}
+
+/// Open a local file in VS Code (fire-and-forget).
+#[tauri::command]
+pub fn vscode_open_local(path: String) -> Result<(), TerminalError> {
+    vscode::open_in_vscode(&path).map_err(|e| TerminalError::EditorError(e.to_string()))
+}
+
+/// Open a remote file in VS Code: download, open with --wait, re-upload on close.
+#[tauri::command]
+pub fn vscode_open_remote(
+    session_id: String,
+    remote_path: String,
+    manager: State<'_, SftpManager>,
+    app_handle: tauri::AppHandle,
+) -> Result<(), TerminalError> {
+    // Get a clone of the session Arc before spawning the background thread
+    let session_arc = manager.get_session(&session_id)?;
+
+    // Extract the filename from the remote path
+    let filename = std::path::Path::new(&remote_path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "untitled".to_string());
+
+    // Create a temp directory for editing
+    let temp_dir = std::env::temp_dir().join("termihub-edit");
+    std::fs::create_dir_all(&temp_dir)
+        .map_err(|e| TerminalError::EditorError(format!("Failed to create temp dir: {}", e)))?;
+
+    let temp_path = temp_dir.join(format!(
+        "{}-{}",
+        uuid::Uuid::new_v4(),
+        filename
+    ));
+    let temp_path_str = temp_path.to_string_lossy().to_string();
+
+    // Download the remote file to temp
+    {
+        let session = session_arc.lock().unwrap();
+        session.read_file(&remote_path, &temp_path_str)?;
+    }
+
+    // Spawn a background thread to wait for VS Code to close
+    let remote_path_clone = remote_path.clone();
+    std::thread::spawn(move || {
+        let result = vscode::open_in_vscode_wait(&temp_path_str);
+
+        let event = match result {
+            Ok(()) => {
+                // Re-upload the edited file
+                let upload_result = {
+                    let session = session_arc.lock().unwrap();
+                    session.write_file(&temp_path_str, &remote_path_clone)
+                };
+                match upload_result {
+                    Ok(_) => VscodeEditCompleteEvent {
+                        remote_path: remote_path_clone,
+                        success: true,
+                        error: None,
+                    },
+                    Err(e) => VscodeEditCompleteEvent {
+                        remote_path: remote_path_clone,
+                        success: false,
+                        error: Some(format!("Upload failed: {}", e)),
+                    },
+                }
+            }
+            Err(e) => VscodeEditCompleteEvent {
+                remote_path: remote_path_clone,
+                success: false,
+                error: Some(format!("VS Code error: {}", e)),
+            },
+        };
+
+        // Clean up temp file (best-effort)
+        let _ = std::fs::remove_file(&temp_path);
+
+        // Emit event to frontend
+        let _ = app_handle.emit("vscode-edit-complete", event);
+    });
+
+    Ok(())
 }

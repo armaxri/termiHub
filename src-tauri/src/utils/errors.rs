@@ -28,6 +28,9 @@ pub enum TerminalError {
     #[error("Telnet error: {0}")]
     TelnetError(String),
 
+    #[error("Editor error: {0}")]
+    EditorError(String),
+
     #[error("SFTP session not found: {0}")]
     SftpSessionNotFound(String),
 
