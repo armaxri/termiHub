@@ -26,6 +26,7 @@ export function SerialSettings({ config, onChange }: SerialSettingsProps) {
           <select
             value={config.port}
             onChange={(e) => onChange({ ...config, port: e.target.value })}
+            data-testid="serial-settings-port-select"
           >
             <option value="">Select port...</option>
             {ports.map((port) => (
@@ -40,6 +41,7 @@ export function SerialSettings({ config, onChange }: SerialSettingsProps) {
             value={config.port}
             onChange={(e) => onChange({ ...config, port: e.target.value })}
             placeholder="/dev/ttyUSB0"
+            data-testid="serial-settings-port-input"
           />
         )}
       </label>
@@ -48,6 +50,7 @@ export function SerialSettings({ config, onChange }: SerialSettingsProps) {
         <select
           value={config.baudRate}
           onChange={(e) => onChange({ ...config, baudRate: parseInt(e.target.value) })}
+          data-testid="serial-settings-baud-rate-select"
         >
           {BAUD_RATES.map((rate) => (
             <option key={rate} value={rate}>
@@ -63,6 +66,7 @@ export function SerialSettings({ config, onChange }: SerialSettingsProps) {
           onChange={(e) =>
             onChange({ ...config, dataBits: parseInt(e.target.value) as 5 | 6 | 7 | 8 })
           }
+          data-testid="serial-settings-data-bits-select"
         >
           <option value={5}>5</option>
           <option value={6}>6</option>
@@ -75,6 +79,7 @@ export function SerialSettings({ config, onChange }: SerialSettingsProps) {
         <select
           value={config.stopBits}
           onChange={(e) => onChange({ ...config, stopBits: parseInt(e.target.value) as 1 | 2 })}
+          data-testid="serial-settings-stop-bits-select"
         >
           <option value={1}>1</option>
           <option value={2}>2</option>
@@ -87,6 +92,7 @@ export function SerialSettings({ config, onChange }: SerialSettingsProps) {
           onChange={(e) =>
             onChange({ ...config, parity: e.target.value as "none" | "odd" | "even" })
           }
+          data-testid="serial-settings-parity-select"
         >
           <option value="none">None</option>
           <option value="odd">Odd</option>
@@ -100,6 +106,7 @@ export function SerialSettings({ config, onChange }: SerialSettingsProps) {
           onChange={(e) =>
             onChange({ ...config, flowControl: e.target.value as "none" | "hardware" | "software" })
           }
+          data-testid="serial-settings-flow-control-select"
         >
           <option value="none">None</option>
           <option value="hardware">Hardware (RTS/CTS)</option>

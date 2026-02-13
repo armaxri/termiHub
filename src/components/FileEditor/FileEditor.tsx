@@ -246,6 +246,7 @@ export function FileEditor({ tabId, meta, isVisible }: FileEditorProps) {
           onClick={handleSave}
           disabled={!isDirty || saving}
           title="Save (Ctrl+S)"
+          data-testid="file-editor-save"
         >
           <Save size={14} />
           {saving ? "Saving..." : "Save"}

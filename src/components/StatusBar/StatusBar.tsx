@@ -24,6 +24,7 @@ export function StatusBar() {
               className="status-bar__item status-bar__item--interactive"
               onClick={() => editorActions?.cycleTabSize()}
               title="Toggle tab size"
+              data-testid="status-bar-tab-size"
             >
               Spaces: {editorStatus.tabSize}
             </button>
@@ -32,6 +33,7 @@ export function StatusBar() {
               className="status-bar__item status-bar__item--interactive"
               onClick={() => editorActions?.toggleEol()}
               title="Toggle line endings"
+              data-testid="status-bar-eol"
             >
               {editorStatus.eol}
             </button>

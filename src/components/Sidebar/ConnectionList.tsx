@@ -76,6 +76,7 @@ function InlineFolderInput({ depth, onConfirm, onCancel }: InlineFolderInputProp
         onBlur={onCancel}
         placeholder="Folder name"
         autoFocus
+        data-testid="inline-folder-name-input"
       />
       <button
         className="connection-tree__inline-btn"
@@ -84,6 +85,7 @@ function InlineFolderInput({ depth, onConfirm, onCancel }: InlineFolderInputProp
           if (name.trim()) onConfirm(name.trim());
         }}
         title="Confirm"
+        data-testid="inline-folder-confirm"
       >
         <Check size={14} />
       </button>
@@ -94,6 +96,7 @@ function InlineFolderInput({ depth, onConfirm, onCancel }: InlineFolderInputProp
           onCancel();
         }}
         title="Cancel"
+        data-testid="inline-folder-cancel"
       >
         <X size={14} />
       </button>
@@ -152,6 +155,7 @@ function TreeNode({
             className={`connection-tree__folder${isOver ? " connection-tree__folder--drop-over" : ""}`}
             onClick={() => onToggle(folder.id)}
             style={{ paddingLeft: `${depth * 16 + 8}px` }}
+            data-testid={`folder-toggle-${folder.id}`}
           >
             <Chevron size={16} className="connection-tree__chevron" />
             <Folder size={16} />
@@ -163,12 +167,14 @@ function TreeNode({
             <ContextMenu.Item
               className="context-menu__item"
               onSelect={() => onNewConnectionInFolder(folder.id)}
+              data-testid="context-folder-new-connection"
             >
               <Plus size={14} /> New Connection
             </ContextMenu.Item>
             <ContextMenu.Item
               className="context-menu__item"
               onSelect={() => setCreatingSubfolder(true)}
+              data-testid="context-folder-new-subfolder"
             >
               <FolderPlus size={14} /> New Subfolder
             </ContextMenu.Item>
@@ -176,6 +182,7 @@ function TreeNode({
             <ContextMenu.Item
               className="context-menu__item context-menu__item--danger"
               onSelect={() => onDeleteFolder(folder.id)}
+              data-testid="context-folder-delete"
             >
               <Trash2 size={14} /> Delete Folder
             </ContextMenu.Item>
@@ -272,6 +279,7 @@ function ConnectionItem({
           style={{ paddingLeft: `${depth * 16 + 8}px` }}
           onDoubleClick={() => onConnect(connection)}
           title={`Double-click to connect: ${connection.name}`}
+          data-testid={`connection-item-${connection.id}`}
           {...attributes}
           {...listeners}
         >
@@ -282,23 +290,25 @@ function ConnectionItem({
       </ContextMenu.Trigger>
       <ContextMenu.Portal>
         <ContextMenu.Content className="context-menu__content">
-          <ContextMenu.Item className="context-menu__item" onSelect={() => onConnect(connection)}>
+          <ContextMenu.Item className="context-menu__item" onSelect={() => onConnect(connection)} data-testid="context-connection-connect">
             <Play size={14} /> Connect
           </ContextMenu.Item>
           {(connection.config.type === "ssh" || connection.config.type === "telnet") && (
             <ContextMenu.Item
               className="context-menu__item"
               onSelect={() => onPingHost(connection)}
+              data-testid="context-connection-ping"
             >
               <Activity size={14} /> Ping Host
             </ContextMenu.Item>
           )}
-          <ContextMenu.Item className="context-menu__item" onSelect={() => onEdit(connection.id)}>
+          <ContextMenu.Item className="context-menu__item" onSelect={() => onEdit(connection.id)} data-testid="context-connection-edit">
             <Pencil size={14} /> Edit
           </ContextMenu.Item>
           <ContextMenu.Item
             className="context-menu__item"
             onSelect={() => onDuplicate(connection.id)}
+            data-testid="context-connection-duplicate"
           >
             <Copy size={14} /> Duplicate
           </ContextMenu.Item>
@@ -306,6 +316,7 @@ function ConnectionItem({
           <ContextMenu.Item
             className="context-menu__item context-menu__item--danger"
             onSelect={() => onDelete(connection.id)}
+            data-testid="context-connection-delete"
           >
             <Trash2 size={14} /> Delete
           </ContextMenu.Item>
@@ -469,6 +480,7 @@ export function ConnectionList() {
             <button
               className="connection-list__group-toggle"
               onClick={() => setLocalCollapsed((v) => !v)}
+              data-testid="connection-list-group-toggle"
             >
               <LocalChevron size={16} className="connection-tree__chevron" />
               <span className="connection-list__group-title">Connections</span>
@@ -481,6 +493,7 @@ export function ConnectionList() {
                   setCreatingFolder(true);
                 }}
                 title="New Folder"
+                data-testid="connection-list-new-folder"
               >
                 <FolderPlus size={16} />
               </button>
@@ -488,6 +501,7 @@ export function ConnectionList() {
                 className="connection-list__add-btn"
                 onClick={handleNewConnection}
                 title="New Connection"
+                data-testid="connection-list-new-connection"
               >
                 <Plus size={16} />
               </button>
@@ -702,7 +716,7 @@ function ExternalSourceSection({
   return (
     <div className="connection-list__group connection-list__group--external">
       <div className="connection-list__group-header">
-        <button className="connection-list__group-toggle" onClick={() => setCollapsed((v) => !v)}>
+        <button className="connection-list__group-toggle" onClick={() => setCollapsed((v) => !v)} data-testid={`external-source-toggle-${source.filePath}`}>
           <SectionChevron size={16} className="connection-tree__chevron" />
           <FolderGit2 size={16} />
           <span className="connection-list__group-title">{source.name}</span>
@@ -713,13 +727,14 @@ function ExternalSourceSection({
           )}
         </button>
         <div className="connection-list__group-actions">
-          <button className="connection-list__add-btn" onClick={handleNewFolder} title="New Folder">
+          <button className="connection-list__add-btn" onClick={handleNewFolder} title="New Folder" data-testid="external-source-new-folder">
             <FolderPlus size={16} />
           </button>
           <button
             className="connection-list__add-btn"
             onClick={handleNewConnection}
             title="New Connection"
+            data-testid="external-source-new-connection"
           >
             <Plus size={16} />
           </button>
@@ -830,6 +845,7 @@ function ExternalTreeNode({
             className={`connection-tree__folder connection-tree__folder--external${isOver ? " connection-tree__folder--drop-over" : ""}`}
             onClick={() => onToggle(folder.id)}
             style={{ paddingLeft: `${depth * 16 + 8}px` }}
+            data-testid={`external-folder-toggle-${folder.id}`}
           >
             <Chevron size={16} className="connection-tree__chevron" />
             <Folder size={16} />
@@ -841,12 +857,14 @@ function ExternalTreeNode({
             <ContextMenu.Item
               className="context-menu__item"
               onSelect={() => onNewConnectionInFolder(folder.id)}
+              data-testid="context-external-folder-new-connection"
             >
               <Plus size={14} /> New Connection
             </ContextMenu.Item>
             <ContextMenu.Item
               className="context-menu__item"
               onSelect={() => setCreatingSubfolder(true)}
+              data-testid="context-external-folder-new-subfolder"
             >
               <FolderPlus size={14} /> New Subfolder
             </ContextMenu.Item>
@@ -854,6 +872,7 @@ function ExternalTreeNode({
             <ContextMenu.Item
               className="context-menu__item context-menu__item--danger"
               onSelect={() => onDeleteFolder(folder.id)}
+              data-testid="context-external-folder-delete"
             >
               <Trash2 size={14} /> Delete Folder
             </ContextMenu.Item>
@@ -951,6 +970,7 @@ function ExternalConnectionItem({
           style={{ paddingLeft: `${depth * 16 + 8}px` }}
           onDoubleClick={() => onConnect(connection)}
           title={`Double-click to connect: ${connection.name}`}
+          data-testid={`external-connection-item-${connection.id}`}
           {...attributes}
           {...listeners}
         >
@@ -961,23 +981,25 @@ function ExternalConnectionItem({
       </ContextMenu.Trigger>
       <ContextMenu.Portal>
         <ContextMenu.Content className="context-menu__content">
-          <ContextMenu.Item className="context-menu__item" onSelect={() => onConnect(connection)}>
+          <ContextMenu.Item className="context-menu__item" onSelect={() => onConnect(connection)} data-testid="context-external-connection-connect">
             <Play size={14} /> Connect
           </ContextMenu.Item>
           {(connection.config.type === "ssh" || connection.config.type === "telnet") && (
             <ContextMenu.Item
               className="context-menu__item"
               onSelect={() => onPingHost(connection)}
+              data-testid="context-external-connection-ping"
             >
               <Activity size={14} /> Ping Host
             </ContextMenu.Item>
           )}
-          <ContextMenu.Item className="context-menu__item" onSelect={() => onEdit(connection.id)}>
+          <ContextMenu.Item className="context-menu__item" onSelect={() => onEdit(connection.id)} data-testid="context-external-connection-edit">
             <Pencil size={14} /> Edit
           </ContextMenu.Item>
           <ContextMenu.Item
             className="context-menu__item"
             onSelect={() => onDuplicate(connection.id)}
+            data-testid="context-external-connection-duplicate"
           >
             <Copy size={14} /> Duplicate
           </ContextMenu.Item>
@@ -985,6 +1007,7 @@ function ExternalConnectionItem({
           <ContextMenu.Item
             className="context-menu__item context-menu__item--danger"
             onSelect={() => onDelete(connection.id)}
+            data-testid="context-external-connection-delete"
           >
             <Trash2 size={14} /> Delete
           </ContextMenu.Item>

@@ -53,17 +53,20 @@ export function PasswordPrompt() {
             onKeyDown={handleKeyDown}
             placeholder="Password"
             autoFocus
+            data-testid="password-prompt-input"
           />
           <div className="password-prompt__actions">
             <button
               className="password-prompt__btn password-prompt__btn--secondary"
               onClick={dismissPasswordPrompt}
+              data-testid="password-prompt-cancel"
             >
               Cancel
             </button>
             <button
               className="password-prompt__btn password-prompt__btn--primary"
               onClick={handleSubmit}
+              data-testid="password-prompt-connect"
             >
               Connect
             </button>
