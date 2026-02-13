@@ -2,6 +2,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::terminal::backend::ConnectionConfig;
 
+/// Per-connection terminal display options.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalOptions {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub horizontal_scrolling: Option<bool>,
+}
+
 /// A saved connection with a name and optional folder assignment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -10,6 +18,8 @@ pub struct SavedConnection {
     pub name: String,
     pub config: ConnectionConfig,
     pub folder_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_options: Option<TerminalOptions>,
 }
 
 /// A folder for organizing connections.

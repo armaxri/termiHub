@@ -116,6 +116,12 @@
   margin: var(--spacing-xs) 0;
 }
 
+.context-menu__indicator {
+  display: inline-flex;
+  align-items: center;
+  width: 14px;
+}
+
 /* Inline folder editing */
 .connection-tree__folder--editing {
   display: flex;

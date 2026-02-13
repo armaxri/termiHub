@@ -41,6 +41,17 @@
   font-size: var(--font-size-sm);
 }
 
+.settings-form__field--checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.settings-form__field--checkbox input[type="checkbox"] {
+  width: auto;
+  height: auto;
+}
+
 .settings-form__hint {
   font-size: 11px;
   color: var(--text-secondary);

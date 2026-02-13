@@ -1,10 +1,11 @@
-import { ConnectionConfig } from "./terminal";
+import { ConnectionConfig, TerminalOptions } from "./terminal";
 
 export interface SavedConnection {
   id: string;
   name: string;
   config: ConnectionConfig;
   folderId: string | null;
+  terminalOptions?: TerminalOptions;
 }
 
 export interface ConnectionFolder {

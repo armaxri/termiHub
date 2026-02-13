@@ -16,6 +16,8 @@ interface TabBarProps {
 export function TabBar({ panelId, tabs }: TabBarProps) {
   const setActiveTab = useAppStore((s) => s.setActiveTab);
   const closeTab = useAppStore((s) => s.closeTab);
+  const tabHorizontalScrolling = useAppStore((s) => s.tabHorizontalScrolling);
+  const setTabHorizontalScrolling = useAppStore((s) => s.setTabHorizontalScrolling);
   const { clearTerminal, saveTerminalToFile, copyTerminalToClipboard } = useTerminalRegistry();
 
   return (
@@ -34,6 +36,8 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
               onClear={() => clearTerminal(tab.id)}
               onSave={() => saveTerminalToFile(tab.id)}
               onCopyToClipboard={() => copyTerminalToClipboard(tab.id)}
+              horizontalScrolling={tabHorizontalScrolling[tab.id] ?? false}
+              onToggleHorizontalScrolling={() => setTabHorizontalScrolling(tab.id, !(tabHorizontalScrolling[tab.id] ?? false))}
             />
           ))}
         </div>

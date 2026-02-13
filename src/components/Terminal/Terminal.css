@@ -18,3 +18,15 @@
 .terminal-container .xterm-viewport {
   overflow-y: auto;
 }
+
+/* Horizontal scrolling: the outer wrapper scrolls, .xterm is made wider via JS.
+   Use 'scroll' (not 'auto') so the scrollbar is always present and never
+   toggles, which would change the content height and create a resize loop. */
+.terminal-horizontal-scroll {
+  overflow-x: scroll;
+  overflow-y: hidden;
+}
+
+.terminal-horizontal-scroll .xterm-screen {
+  overflow: hidden;
+}

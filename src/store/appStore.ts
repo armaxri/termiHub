@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { TerminalTab, LeafPanel, PanelNode, ConnectionType, ConnectionConfig, SshConfig, DropEdge, TabContentType } from "@/types/terminal";
+import { TerminalTab, LeafPanel, PanelNode, ConnectionType, ConnectionConfig, SshConfig, DropEdge, TabContentType, TerminalOptions } from "@/types/terminal";
 import { SavedConnection, ConnectionFolder, FileEntry } from "@/types/connection";
 import {
   loadConnections,
@@ -57,7 +57,7 @@ interface AppState {
   // Panels & Tabs
   rootPanel: PanelNode;
   activePanelId: string | null;
-  addTab: (title: string, connectionType: ConnectionType, config?: ConnectionConfig, panelId?: string, contentType?: TabContentType) => void;
+  addTab: (title: string, connectionType: ConnectionType, config?: ConnectionConfig, panelId?: string, contentType?: TabContentType, terminalOptions?: TerminalOptions) => void;
   openSettingsTab: () => void;
   closeTab: (tabId: string, panelId: string) => void;
   setActiveTab: (tabId: string, panelId: string) => void;
@@ -102,6 +102,10 @@ interface AppState {
   // Per-tab CWD tracking
   tabCwds: Record<string, string>;
   setTabCwd: (tabId: string, cwd: string) => void;
+
+  // Per-tab horizontal scrolling
+  tabHorizontalScrolling: Record<string, boolean>;
+  setTabHorizontalScrolling: (tabId: string, enabled: boolean) => void;
 
   // Local file browser state
   localFileEntries: FileEntry[];
@@ -217,7 +221,7 @@ export const useAppStore = create<AppState>((set, get) => {
 
     getAllPanels: () => getAllLeaves(get().rootPanel),
 
-    addTab: (title, connectionType, config, panelId, contentType) =>
+    addTab: (title, connectionType, config, panelId, contentType, terminalOptions) =>
       set((state) => {
         const allLeaves = getAllLeaves(state.rootPanel);
         const targetPanelId = panelId ?? state.activePanelId ?? allLeaves[0]?.id;
@@ -230,7 +234,12 @@ export const useAppStore = create<AppState>((set, get) => {
           tabs.push(newTab);
           return { ...leaf, tabs, activeTabId: newTab.id };
         });
-        return { rootPanel, activePanelId: targetPanelId };
+        const hsEnabled = terminalOptions?.horizontalScrolling ?? false;
+        return {
+          rootPanel,
+          activePanelId: targetPanelId,
+          tabHorizontalScrolling: { ...state.tabHorizontalScrolling, [newTab.id]: hsEnabled },
+        };
       }),
 
     openSettingsTab: () =>
@@ -267,8 +276,9 @@ export const useAppStore = create<AppState>((set, get) => {
 
     closeTab: (tabId, panelId) =>
       set((state) => {
-        // Clean up CWD entry for the closed tab
+        // Clean up per-tab state for the closed tab
         const { [tabId]: _removed, ...remainingCwds } = state.tabCwds;
+        const { [tabId]: _removedHs, ...remainingHs } = state.tabHorizontalScrolling;
 
         let rootPanel = updateLeaf(state.rootPanel, panelId, (leaf) =>
           removeTabFromLeaf(leaf, tabId)
@@ -284,10 +294,10 @@ export const useAppStore = create<AppState>((set, get) => {
           const activePanelId = state.activePanelId === panelId
             ? newLeaves[0]?.id ?? null
             : state.activePanelId;
-          return { rootPanel, activePanelId, tabCwds: remainingCwds };
+          return { rootPanel, activePanelId, tabCwds: remainingCwds, tabHorizontalScrolling: remainingHs };
         }
 
-        return { rootPanel, tabCwds: remainingCwds };
+        return { rootPanel, tabCwds: remainingCwds, tabHorizontalScrolling: remainingHs };
       }),
 
     setActiveTab: (tabId, panelId) =>
@@ -666,6 +676,11 @@ export const useAppStore = create<AppState>((set, get) => {
     tabCwds: {},
     setTabCwd: (tabId, cwd) =>
       set((state) => ({ tabCwds: { ...state.tabCwds, [tabId]: cwd } })),
+
+    // Per-tab horizontal scrolling
+    tabHorizontalScrolling: {},
+    setTabHorizontalScrolling: (tabId, enabled) =>
+      set((state) => ({ tabHorizontalScrolling: { ...state.tabHorizontalScrolling, [tabId]: enabled } })),
 
     // Local file browser state
     localFileEntries: [],

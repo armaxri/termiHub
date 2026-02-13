@@ -1,7 +1,7 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import * as ContextMenu from "@radix-ui/react-context-menu";
-import { X, Terminal, Wifi, Cable, Globe, Settings as SettingsIcon, Eraser, FileDown, ClipboardCopy } from "lucide-react";
+import { X, Terminal, Wifi, Cable, Globe, Settings as SettingsIcon, Eraser, FileDown, ClipboardCopy, ArrowRightLeft, Check } from "lucide-react";
 import { TerminalTab } from "@/types/terminal";
 import { ConnectionType } from "@/types/terminal";
 
@@ -19,9 +19,11 @@ interface TabProps {
   onClear?: () => void;
   onSave?: () => void;
   onCopyToClipboard?: () => void;
+  horizontalScrolling?: boolean;
+  onToggleHorizontalScrolling?: () => void;
 }
 
-export function Tab({ tab, onActivate, onClose, onClear, onSave, onCopyToClipboard }: TabProps) {
+export function Tab({ tab, onActivate, onClose, onClear, onSave, onCopyToClipboard, horizontalScrolling, onToggleHorizontalScrolling }: TabProps) {
   const {
     attributes,
     listeners,
@@ -93,6 +95,17 @@ export function Tab({ tab, onActivate, onClose, onClear, onSave, onCopyToClipboa
           >
             <Eraser size={14} /> Clear Terminal
           </ContextMenu.Item>
+          <ContextMenu.Separator className="context-menu__separator" />
+          <ContextMenu.CheckboxItem
+            className="context-menu__item"
+            checked={horizontalScrolling}
+            onSelect={() => onToggleHorizontalScrolling?.()}
+          >
+            <ContextMenu.ItemIndicator className="context-menu__indicator">
+              <Check size={14} />
+            </ContextMenu.ItemIndicator>
+            <ArrowRightLeft size={14} /> Horizontal Scrolling
+          </ContextMenu.CheckboxItem>
         </ContextMenu.Content>
       </ContextMenu.Portal>
     </ContextMenu.Root>

@@ -10,6 +10,80 @@ import { onTerminalOutput, onTerminalExit } from "@/services/events";
 import { useTerminalRegistry } from "./TerminalRegistry";
 import { useAppStore } from "@/store/appStore";
 
+const HORIZONTAL_SCROLL_COLS = 500;
+
+/**
+ * Scan the terminal buffer and return the rightmost occupied cell index.
+ * Efficiently skips lines shorter than the current maximum.
+ */
+function getMaxLineCells(xterm: XTerm): number {
+  const buffer = xterm.buffer.active;
+  let maxCells = 0;
+  for (let i = 0; i < buffer.length; i++) {
+    const line = buffer.getLine(i);
+    if (!line) continue;
+    for (let x = line.length - 1; x >= maxCells; x--) {
+      const cell = line.getCell(x);
+      if (cell && cell.getChars() !== "") {
+        maxCells = x + 1;
+        break;
+      }
+    }
+  }
+  return maxCells;
+}
+
+/**
+ * Set the visual scroll width based on the actual buffer content.
+ * Width is at least the viewport width (fittedCols) so the scrollbar
+ * only appears when content is actually wider.
+ */
+function updateHorizontalScrollWidth(xterm: XTerm, fitAddon: FitAddon, container: HTMLElement) {
+  const dims = fitAddon.proposeDimensions();
+  if (!dims || dims.cols <= 0) return;
+
+  const cellWidth = container.clientWidth / dims.cols;
+  const contentCols = getMaxLineCells(xterm);
+  const effectiveCols = Math.max(contentCols, dims.cols);
+  const targetWidth = Math.ceil(effectiveCols * cellWidth);
+
+  const xtermEl = xterm.element;
+  if (xtermEl) {
+    xtermEl.style.width = targetWidth + "px";
+    const screen = xtermEl.querySelector(".xterm-screen") as HTMLElement | null;
+    if (screen) {
+      screen.style.width = targetWidth + "px";
+    }
+  }
+}
+
+/**
+ * Resize the PTY to a wide column count (prevents wrapping) and set
+ * the visual scroll width to match the actual content.
+ */
+function applyHorizontalScrollResize(xterm: XTerm, fitAddon: FitAddon, container: HTMLElement) {
+  const dims = fitAddon.proposeDimensions();
+  if (!dims || dims.cols <= 0) return;
+
+  xterm.resize(HORIZONTAL_SCROLL_COLS, dims.rows);
+  updateHorizontalScrollWidth(xterm, fitAddon, container);
+}
+
+/**
+ * Remove horizontal scrolling layout and restore normal fit.
+ */
+function removeHorizontalScrollResize(xterm: XTerm, fitAddon: FitAddon) {
+  const xtermEl = xterm.element;
+  if (xtermEl) {
+    xtermEl.style.width = "";
+    const screen = xtermEl.querySelector(".xterm-screen") as HTMLElement | null;
+    if (screen) {
+      screen.style.width = "";
+    }
+  }
+  fitAddon.fit();
+}
+
 interface TerminalProps {
   tabId: string;
   config: ConnectionConfig;
@@ -27,6 +101,7 @@ export function Terminal({ tabId, config, isVisible }: TerminalProps) {
   const fitAddonRef = useRef<FitAddon | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
+  const horizontalScrollingRef = useRef(false);
   const { register, unregister, parkingRef } = useTerminalRegistry();
 
   const setupTerminal = useCallback(async (xterm: XTerm, fitAddon: FitAddon) => {
@@ -168,7 +243,17 @@ export function Terminal({ tabId, config, isVisible }: TerminalProps) {
     // ResizeObserver follows the element even when reparented
     const resizeObserver = new ResizeObserver(() => {
       try {
-        fitAddon.fit();
+        if (horizontalScrollingRef.current) {
+          // Only resize PTY when rows change (window/panel resize).
+          // Also recalculate visual width for new container dimensions.
+          const dims = fitAddon.proposeDimensions();
+          if (dims && dims.rows !== xterm.rows) {
+            xterm.resize(HORIZONTAL_SCROLL_COLS, dims.rows);
+            updateHorizontalScrollWidth(xterm, fitAddon, el);
+          }
+        } else {
+          fitAddon.fit();
+        }
       } catch {
         // Ignore fit errors during transitions
       }
@@ -193,14 +278,45 @@ export function Terminal({ tabId, config, isVisible }: TerminalProps) {
 
   // Re-fit when visibility changes
   useEffect(() => {
-    if (isVisible && fitAddonRef.current) {
+    if (isVisible && fitAddonRef.current && xtermRef.current && terminalElRef.current) {
       try {
-        fitAddonRef.current.fit();
+        if (horizontalScrollingRef.current) {
+          applyHorizontalScrollResize(xtermRef.current, fitAddonRef.current, terminalElRef.current);
+        } else {
+          fitAddonRef.current.fit();
+        }
       } catch {
         // Ignore
       }
     }
   }, [isVisible]);
+
+  // React to horizontal scrolling state changes
+  const horizontalScrolling = useAppStore((s) => s.tabHorizontalScrolling[tabId] ?? false);
+
+  useEffect(() => {
+    horizontalScrollingRef.current = horizontalScrolling;
+    const el = terminalElRef.current;
+    const xterm = xtermRef.current;
+    const fitAddon = fitAddonRef.current;
+    if (!el || !xterm || !fitAddon) return;
+
+    if (horizontalScrolling) {
+      el.classList.add("terminal-horizontal-scroll");
+      try {
+        applyHorizontalScrollResize(xterm, fitAddon, el);
+      } catch {
+        // Ignore resize errors
+      }
+    } else {
+      el.classList.remove("terminal-horizontal-scroll");
+      try {
+        removeHorizontalScrollResize(xterm, fitAddon);
+      } catch {
+        // Ignore fit errors
+      }
+    }
+  }, [horizontalScrolling, tabId]);
 
   // Terminal renders nothing — TerminalSlot handles display
   return null;
