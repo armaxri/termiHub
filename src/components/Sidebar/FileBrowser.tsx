@@ -18,6 +18,7 @@ import {
   MonitorOff,
   CodeXml,
   FileEdit,
+  FilePlus,
 } from "lucide-react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
@@ -289,6 +290,7 @@ export function FileBrowser() {
     downloadFile,
     uploadFile,
     createDirectory,
+    createFile,
     deleteEntry,
     renameEntry,
     openInVscode,
@@ -298,6 +300,7 @@ export function FileBrowser() {
   const disconnectSftp = useAppStore((s) => s.disconnectSftp);
   const vscodeAvailable = useAppStore((s) => s.vscodeAvailable);
   const [newDirName, setNewDirName] = useState<string | null>(null);
+  const [newFileName, setNewFileName] = useState<string | null>(null);
 
   // Listen for VS Code edit-complete events (remote file re-upload)
   useEffect(() => {
@@ -378,6 +381,15 @@ export function FileBrowser() {
     }
   }, [newDirName, createDirectory]);
 
+  const handleCreateFile = useCallback(() => {
+    if (newFileName && newFileName.trim()) {
+      createFile(newFileName.trim()).catch((err: unknown) =>
+        console.error("Create file failed:", err)
+      );
+      setNewFileName(null);
+    }
+  }, [newFileName, createFile]);
+
   // "none" mode — show placeholder
   if (mode === "none") {
     return (
@@ -443,6 +455,13 @@ export function FileBrowser() {
           )}
           <button
             className="file-browser__btn"
+            onClick={() => setNewFileName("")}
+            title="New File"
+          >
+            <FilePlus size={14} />
+          </button>
+          <button
+            className="file-browser__btn"
             onClick={() => setNewDirName("")}
             title="New Folder"
           >
@@ -464,6 +483,25 @@ export function FileBrowser() {
         <div className="file-browser__error">
           <AlertCircle size={14} />
           <span>{error}</span>
+        </div>
+      )}
+
+      {newFileName !== null && (
+        <div className="file-browser__new-dir">
+          <input
+            className="file-browser__new-dir-input"
+            placeholder="File name"
+            value={newFileName}
+            onChange={(e) => setNewFileName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleCreateFile();
+              if (e.key === "Escape") setNewFileName(null);
+            }}
+            autoFocus
+          />
+          <button className="file-browser__btn" onClick={handleCreateFile} title="Create">
+            <FilePlus size={14} />
+          </button>
         </div>
       )}
 
