@@ -71,6 +71,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Double-click a connection to connect directly
 
 ### Fixed
+- New terminal tabs now start in the user's home directory instead of the system root
 - File browser now stays visible when editing a file, showing the parent directory
 - Horizontal scroll width now updates dynamically as terminal output arrives
 - Key repeat not working on macOS (accent picker shown instead)
