@@ -49,8 +49,7 @@ impl SettingsStorage {
                 .context("Failed to resolve app config directory")?,
         };
 
-        fs::create_dir_all(&config_dir)
-            .context("Failed to create config directory")?;
+        fs::create_dir_all(&config_dir).context("Failed to create config directory")?;
 
         Ok(Self {
             file_path: config_dir.join(FILE_NAME),
@@ -63,22 +62,20 @@ impl SettingsStorage {
             return Ok(AppSettings::default());
         }
 
-        let data = fs::read_to_string(&self.file_path)
-            .context("Failed to read settings file")?;
+        let data = fs::read_to_string(&self.file_path).context("Failed to read settings file")?;
 
-        let settings: AppSettings = serde_json::from_str(&data)
-            .context("Failed to parse settings file")?;
+        let settings: AppSettings =
+            serde_json::from_str(&data).context("Failed to parse settings file")?;
 
         Ok(settings)
     }
 
     /// Save settings to disk (pretty-printed JSON).
     pub fn save(&self, settings: &AppSettings) -> Result<()> {
-        let data = serde_json::to_string_pretty(settings)
-            .context("Failed to serialize settings")?;
+        let data =
+            serde_json::to_string_pretty(settings).context("Failed to serialize settings")?;
 
-        fs::write(&self.file_path, data)
-            .context("Failed to write settings file")?;
+        fs::write(&self.file_path, data).context("Failed to write settings file")?;
 
         Ok(())
     }

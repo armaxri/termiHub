@@ -28,8 +28,7 @@ impl ConnectionStorage {
 
         tracing::info!("Using config directory: {}", config_dir.display());
 
-        fs::create_dir_all(&config_dir)
-            .context("Failed to create config directory")?;
+        fs::create_dir_all(&config_dir).context("Failed to create config directory")?;
 
         Ok(Self {
             file_path: config_dir.join(FILE_NAME),
@@ -42,22 +41,21 @@ impl ConnectionStorage {
             return Ok(ConnectionStore::default());
         }
 
-        let data = fs::read_to_string(&self.file_path)
-            .context("Failed to read connections file")?;
+        let data =
+            fs::read_to_string(&self.file_path).context("Failed to read connections file")?;
 
-        let store: ConnectionStore = serde_json::from_str(&data)
-            .context("Failed to parse connections file")?;
+        let store: ConnectionStore =
+            serde_json::from_str(&data).context("Failed to parse connections file")?;
 
         Ok(store)
     }
 
     /// Save the connection store to disk (pretty-printed JSON).
     pub fn save(&self, store: &ConnectionStore) -> Result<()> {
-        let data = serde_json::to_string_pretty(store)
-            .context("Failed to serialize connections")?;
+        let data =
+            serde_json::to_string_pretty(store).context("Failed to serialize connections")?;
 
-        fs::write(&self.file_path, data)
-            .context("Failed to write connections file")?;
+        fs::write(&self.file_path, data).context("Failed to write connections file")?;
 
         Ok(())
     }

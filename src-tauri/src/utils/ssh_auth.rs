@@ -14,8 +14,7 @@ pub fn connect_and_authenticate(config: &SshConfig) -> Result<Session, TerminalE
     let tcp = TcpStream::connect(&addr)
         .map_err(|e| TerminalError::SshError(format!("Connection failed: {}", e)))?;
 
-    let mut session =
-        Session::new().map_err(|e| TerminalError::SshError(e.to_string()))?;
+    let mut session = Session::new().map_err(|e| TerminalError::SshError(e.to_string()))?;
 
     session.set_tcp_stream(tcp);
     session
@@ -35,16 +34,12 @@ pub fn connect_and_authenticate(config: &SshConfig) -> Result<Session, TerminalE
             let password = config.password.as_deref().unwrap_or("");
             session
                 .userauth_password(&config.username, password)
-                .map_err(|e| {
-                    TerminalError::SshError(format!("Password auth failed: {}", e))
-                })?;
+                .map_err(|e| TerminalError::SshError(format!("Password auth failed: {}", e)))?;
         }
     }
 
     if !session.authenticated() {
-        return Err(TerminalError::SshError(
-            "Authentication failed".to_string(),
-        ));
+        return Err(TerminalError::SshError("Authentication failed".to_string()));
     }
 
     Ok(session)

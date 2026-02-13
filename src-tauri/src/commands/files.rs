@@ -1,8 +1,8 @@
 use serde::Serialize;
 use tauri::{Emitter, State};
 
-use crate::files::FileEntry;
 use crate::files::sftp::SftpManager;
+use crate::files::FileEntry;
 use crate::terminal::backend::SshConfig;
 use crate::utils::errors::TerminalError;
 use crate::utils::vscode;
@@ -209,11 +209,7 @@ pub fn vscode_open_remote(
     std::fs::create_dir_all(&temp_dir)
         .map_err(|e| TerminalError::EditorError(format!("Failed to create temp dir: {}", e)))?;
 
-    let temp_path = temp_dir.join(format!(
-        "{}-{}",
-        uuid::Uuid::new_v4(),
-        filename
-    ));
+    let temp_path = temp_dir.join(format!("{}-{}", uuid::Uuid::new_v4(), filename));
     let temp_path_str = temp_path.to_string_lossy().to_string();
 
     // Download the remote file to temp

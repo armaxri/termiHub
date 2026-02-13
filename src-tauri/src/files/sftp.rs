@@ -4,8 +4,8 @@ use std::sync::{Arc, Mutex};
 
 use ssh2::{Session, Sftp};
 
-use super::FileEntry;
 use super::utils::{chrono_from_epoch, format_permissions};
+use super::FileEntry;
 use crate::terminal::backend::SshConfig;
 use crate::utils::errors::TerminalError;
 use crate::utils::ssh_auth::connect_and_authenticate;
@@ -57,12 +57,7 @@ impl SftpSession {
 
             let is_directory = stat.is_dir();
             let size = stat.size.unwrap_or(0);
-            let modified = stat
-                .mtime
-                .map(|t| {
-                    chrono_from_epoch(t)
-                })
-                .unwrap_or_default();
+            let modified = stat.mtime.map(|t| chrono_from_epoch(t)).unwrap_or_default();
             let permissions = stat.perm.map(format_permissions);
 
             result.push(FileEntry {
@@ -79,11 +74,7 @@ impl SftpSession {
     }
 
     /// Download a remote file to a local path. Returns bytes written.
-    pub fn read_file(
-        &self,
-        remote_path: &str,
-        local_path: &str,
-    ) -> Result<u64, TerminalError> {
+    pub fn read_file(&self, remote_path: &str, local_path: &str) -> Result<u64, TerminalError> {
         let remote = std::path::Path::new(remote_path);
         let mut remote_file = self
             .sftp
@@ -112,11 +103,7 @@ impl SftpSession {
     }
 
     /// Upload a local file to a remote path. Returns bytes written.
-    pub fn write_file(
-        &self,
-        local_path: &str,
-        remote_path: &str,
-    ) -> Result<u64, TerminalError> {
+    pub fn write_file(&self, local_path: &str, remote_path: &str) -> Result<u64, TerminalError> {
         let remote = std::path::Path::new(remote_path);
         let mut remote_file = self
             .sftp
@@ -241,10 +228,7 @@ impl SftpManager {
     }
 
     /// Get a session Arc for use outside the manager lock.
-    pub fn get_session(
-        &self,
-        id: &str,
-    ) -> Result<Arc<Mutex<SftpSession>>, TerminalError> {
+    pub fn get_session(&self, id: &str) -> Result<Arc<Mutex<SftpSession>>, TerminalError> {
         let sessions = self.sessions.lock().unwrap();
         sessions
             .get(id)
