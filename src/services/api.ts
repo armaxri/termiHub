@@ -4,7 +4,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { SessionId, ConnectionConfig, SshConfig } from "@/types/terminal";
-import { SavedConnection, ConnectionFolder, FileEntry } from "@/types/connection";
+import { SavedConnection, ConnectionFolder, FileEntry, ExternalConnectionSource, AppSettings } from "@/types/connection";
 
 // --- Terminal commands ---
 
@@ -43,6 +43,7 @@ export async function listAvailableShells(): Promise<string[]> {
 interface ConnectionData {
   connections: SavedConnection[];
   folders: ConnectionFolder[];
+  externalSources: ExternalConnectionSource[];
 }
 
 /** Load all saved connections and folders from disk */
@@ -78,6 +79,33 @@ export async function exportConnections(): Promise<string> {
 /** Import connections from a JSON string. Returns count imported. */
 export async function importConnections(json: string): Promise<number> {
   return await invoke<number>("import_connections", { json });
+}
+
+// --- Settings commands ---
+
+/** Get the current application settings */
+export async function getSettings(): Promise<AppSettings> {
+  return await invoke<AppSettings>("get_settings");
+}
+
+/** Update and persist application settings */
+export async function saveSettings(settings: AppSettings): Promise<void> {
+  await invoke("save_settings", { settings });
+}
+
+/** Save an external connection file to disk */
+export async function saveExternalFile(
+  filePath: string,
+  name: string,
+  folders: ConnectionFolder[],
+  connections: SavedConnection[],
+): Promise<void> {
+  await invoke("save_external_file", { filePath, name, folders, connections });
+}
+
+/** Reload external connection files */
+export async function reloadExternalConnections(): Promise<ExternalConnectionSource[]> {
+  return await invoke<ExternalConnectionSource[]>("reload_external_connections");
 }
 
 // --- SFTP commands ---

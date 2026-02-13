@@ -4,10 +4,56 @@
   height: 100%;
 }
 
-.connection-list__header {
+/* Collapsible group sections */
+.connection-list__group {
   display: flex;
-  justify-content: flex-end;
-  padding: 0 var(--spacing-sm) var(--spacing-xs);
+  flex-direction: column;
+}
+
+.connection-list__group--external {
+  border-top: 1px solid var(--border-primary);
+}
+
+.connection-list__group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  min-height: 28px;
+}
+
+.connection-list__group-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  padding: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.connection-list__group-toggle:hover {
+  color: var(--text-primary);
+}
+
+.connection-list__group-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connection-list__group-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
 }
 
 .connection-list__add-btn {
@@ -173,6 +219,17 @@
 
 .connection-tree__root-drop--over {
   background-color: color-mix(in srgb, var(--bg-hover) 50%, transparent);
+}
+
+/* External sources */
+.connection-tree__folder--external {
+  color: var(--text-secondary);
+}
+
+.connection-tree__source-error {
+  flex-shrink: 0;
+  display: flex;
+  color: var(--color-warning, #e8a317);
 }
 
 .connection-tree__drag-overlay {
