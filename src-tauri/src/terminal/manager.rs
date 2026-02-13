@@ -32,6 +32,7 @@ impl TerminalManager {
         config: ConnectionConfig,
         app_handle: AppHandle,
     ) -> Result<String, TerminalError> {
+        let config = config.expand();
         let session_id = uuid::Uuid::new_v4().to_string();
         let (output_tx, output_rx) = mpsc::channel::<Vec<u8>>();
 

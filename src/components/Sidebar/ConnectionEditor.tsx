@@ -193,6 +193,10 @@ export function ConnectionEditor() {
           />
         )}
 
+        <p className="settings-form__hint">
+          Use {"${env:VAR}"} for environment variables, e.g. {"${env:USER}"}
+        </p>
+
         <label className="settings-form__field settings-form__field--checkbox">
           <input
             type="checkbox"
