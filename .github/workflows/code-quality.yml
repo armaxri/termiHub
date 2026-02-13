@@ -189,8 +189,8 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install commitlint
-        run: pnpm add -g @commitlint/cli @commitlint/config-conventional
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
       - name: Validate PR commits
         run: pnpm exec commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.sha }} --verbose
