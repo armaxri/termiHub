@@ -290,7 +290,11 @@ function ConnectionItem({
       </ContextMenu.Trigger>
       <ContextMenu.Portal>
         <ContextMenu.Content className="context-menu__content">
-          <ContextMenu.Item className="context-menu__item" onSelect={() => onConnect(connection)} data-testid="context-connection-connect">
+          <ContextMenu.Item
+            className="context-menu__item"
+            onSelect={() => onConnect(connection)}
+            data-testid="context-connection-connect"
+          >
             <Play size={14} /> Connect
           </ContextMenu.Item>
           {(connection.config.type === "ssh" || connection.config.type === "telnet") && (
@@ -302,7 +306,11 @@ function ConnectionItem({
               <Activity size={14} /> Ping Host
             </ContextMenu.Item>
           )}
-          <ContextMenu.Item className="context-menu__item" onSelect={() => onEdit(connection.id)} data-testid="context-connection-edit">
+          <ContextMenu.Item
+            className="context-menu__item"
+            onSelect={() => onEdit(connection.id)}
+            data-testid="context-connection-edit"
+          >
             <Pencil size={14} /> Edit
           </ContextMenu.Item>
           <ContextMenu.Item
@@ -716,7 +724,11 @@ function ExternalSourceSection({
   return (
     <div className="connection-list__group connection-list__group--external">
       <div className="connection-list__group-header">
-        <button className="connection-list__group-toggle" onClick={() => setCollapsed((v) => !v)} data-testid={`external-source-toggle-${source.filePath}`}>
+        <button
+          className="connection-list__group-toggle"
+          onClick={() => setCollapsed((v) => !v)}
+          data-testid={`external-source-toggle-${source.filePath}`}
+        >
           <SectionChevron size={16} className="connection-tree__chevron" />
           <FolderGit2 size={16} />
           <span className="connection-list__group-title">{source.name}</span>
@@ -727,7 +739,12 @@ function ExternalSourceSection({
           )}
         </button>
         <div className="connection-list__group-actions">
-          <button className="connection-list__add-btn" onClick={handleNewFolder} title="New Folder" data-testid="external-source-new-folder">
+          <button
+            className="connection-list__add-btn"
+            onClick={handleNewFolder}
+            title="New Folder"
+            data-testid="external-source-new-folder"
+          >
             <FolderPlus size={16} />
           </button>
           <button
@@ -981,7 +998,11 @@ function ExternalConnectionItem({
       </ContextMenu.Trigger>
       <ContextMenu.Portal>
         <ContextMenu.Content className="context-menu__content">
-          <ContextMenu.Item className="context-menu__item" onSelect={() => onConnect(connection)} data-testid="context-external-connection-connect">
+          <ContextMenu.Item
+            className="context-menu__item"
+            onSelect={() => onConnect(connection)}
+            data-testid="context-external-connection-connect"
+          >
             <Play size={14} /> Connect
           </ContextMenu.Item>
           {(connection.config.type === "ssh" || connection.config.type === "telnet") && (
@@ -993,7 +1014,11 @@ function ExternalConnectionItem({
               <Activity size={14} /> Ping Host
             </ContextMenu.Item>
           )}
-          <ContextMenu.Item className="context-menu__item" onSelect={() => onEdit(connection.id)} data-testid="context-external-connection-edit">
+          <ContextMenu.Item
+            className="context-menu__item"
+            onSelect={() => onEdit(connection.id)}
+            data-testid="context-external-connection-edit"
+          >
             <Pencil size={14} /> Edit
           </ContextMenu.Item>
           <ContextMenu.Item

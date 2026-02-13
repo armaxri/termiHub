@@ -30,13 +30,7 @@ describe("shell-detection", () => {
     });
 
     it("returns all shell types when backend reports them", async () => {
-      mockedListAvailableShells.mockResolvedValue([
-        "zsh",
-        "bash",
-        "cmd",
-        "powershell",
-        "gitbash",
-      ]);
+      mockedListAvailableShells.mockResolvedValue(["zsh", "bash", "cmd", "powershell", "gitbash"]);
 
       const result = await detectAvailableShells();
       expect(result).toHaveLength(5);

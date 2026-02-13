@@ -221,7 +221,16 @@ describe("appStore — connections, folders, and special tabs", () => {
     it("copies the connection config", () => {
       const conn = makeConnection({
         id: "c-1",
-        config: { type: "ssh", config: { host: "pi.local", port: 22, username: "pi", authMethod: "key", keyPath: "/home/.ssh/id_rsa" } },
+        config: {
+          type: "ssh",
+          config: {
+            host: "pi.local",
+            port: 22,
+            username: "pi",
+            authMethod: "key",
+            keyPath: "/home/.ssh/id_rsa",
+          },
+        },
       });
       useAppStore.setState({ connections: [conn] });
 
@@ -377,9 +386,7 @@ describe("appStore — connections, folders, and special tabs", () => {
 
       const state = useAppStore.getState();
       const allLeaves = getAllLeaves(state.rootPanel);
-      const editorTabs = allLeaves.flatMap((l) =>
-        l.tabs.filter((t) => t.contentType === "editor")
-      );
+      const editorTabs = allLeaves.flatMap((l) => l.tabs.filter((t) => t.contentType === "editor"));
       expect(editorTabs).toHaveLength(1);
     });
 

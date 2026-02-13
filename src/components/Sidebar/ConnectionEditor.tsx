@@ -211,7 +211,11 @@ export function ConnectionEditor() {
         </label>
         <label className="settings-form__field">
           <span className="settings-form__label">Folder</span>
-          <select value={folderId ?? ""} onChange={(e) => setFolderId(e.target.value || null)} data-testid="connection-editor-folder-select">
+          <select
+            value={folderId ?? ""}
+            onChange={(e) => setFolderId(e.target.value || null)}
+            data-testid="connection-editor-folder-select"
+          >
             <option value="">(Root)</option>
             {availableFolders.map((f) => (
               <option key={f.id} value={f.id}>
