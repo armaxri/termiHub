@@ -21,6 +21,13 @@ pub fn run() {
         .manage(TerminalManager::new())
         .manage(SftpManager::new())
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            {
+                use objc2_foundation::{NSString, NSUserDefaults};
+                let defaults = NSUserDefaults::standardUserDefaults();
+                defaults.setBool_forKey(false, &NSString::from_str("ApplePressAndHoldEnabled"));
+            }
+
             let connection_manager = ConnectionManager::new(app.handle())
                 .expect("Failed to initialize connection manager");
             app.manage(connection_manager);
