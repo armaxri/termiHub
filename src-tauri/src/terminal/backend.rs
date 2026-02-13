@@ -2,6 +2,8 @@ use std::sync::mpsc;
 
 use serde::{Deserialize, Serialize};
 
+use crate::utils::expand::expand_env_placeholders;
+
 /// Trait for all terminal backends (PTY, serial, SSH, telnet).
 pub trait TerminalBackend: Send {
     /// Write user input to the terminal.
@@ -94,6 +96,49 @@ pub struct SerialConfig {
     pub stop_bits: u8,
     pub parity: String,
     pub flow_control: String,
+}
+
+impl ConnectionConfig {
+    /// Return a copy with all `${env:...}` placeholders expanded.
+    pub fn expand(self) -> Self {
+        match self {
+            Self::Local(cfg) => Self::Local(cfg.expand()),
+            Self::Ssh(cfg) => Self::Ssh(cfg.expand()),
+            Self::Telnet(cfg) => Self::Telnet(cfg.expand()),
+            Self::Serial(cfg) => Self::Serial(cfg.expand()),
+        }
+    }
+}
+
+impl LocalShellConfig {
+    pub fn expand(mut self) -> Self {
+        self.initial_command = self.initial_command.map(|s| expand_env_placeholders(&s));
+        self
+    }
+}
+
+impl SshConfig {
+    pub fn expand(mut self) -> Self {
+        self.host = expand_env_placeholders(&self.host);
+        self.username = expand_env_placeholders(&self.username);
+        self.key_path = self.key_path.map(|s| expand_env_placeholders(&s));
+        self.password = self.password.map(|s| expand_env_placeholders(&s));
+        self
+    }
+}
+
+impl TelnetConfig {
+    pub fn expand(mut self) -> Self {
+        self.host = expand_env_placeholders(&self.host);
+        self
+    }
+}
+
+impl SerialConfig {
+    pub fn expand(mut self) -> Self {
+        self.port = expand_env_placeholders(&self.port);
+        self
+    }
 }
 
 /// Channel sender type for output data from backends.

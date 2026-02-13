@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Environment variable placeholders in connection settings: use `${env:VAR}` syntax for shared configs
 - Status bar shows cursor position, language, line ending, tab size, and encoding for the built-in editor
 - Double-click a file in the file browser to open it in the built-in editor
 - Right-click context menu on files and directories in the file browser
