@@ -60,8 +60,11 @@
   <!-- Terminal prompt symbol (>) -->
   <path d="M 158 264 L 203 294 L 158 324" stroke="#60a5fa" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
   
-  <!-- Terminal cursor -->
-  <rect x="218" y="284" width="12" height="28" rx="2" fill="#60a5fa">
+  <!-- Terminal command text "cd " -->
+  <text x="218" y="315" font-family="monospace" font-size="72" font-weight="bold" fill="#60a5fa" stroke="#60a5fa" stroke-width="2" paint-order="stroke">cd</text>
+  
+  <!-- Terminal cursor (horizontal underscore style) -->
+  <rect x="330" y="320" width="45" height="8" rx="2" fill="#60a5fa">
     <animate attributeName="opacity" values="1;0;1" dur="1.5s" repeatCount="indefinite"/>
   </rect>
   
