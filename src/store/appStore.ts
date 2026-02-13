@@ -189,6 +189,10 @@ interface AppState {
   tabHorizontalScrolling: Record<string, boolean>;
   setTabHorizontalScrolling: (tabId: string, enabled: boolean) => void;
 
+  // Per-tab color
+  tabColors: Record<string, string>;
+  setTabColor: (tabId: string, color: string | null) => void;
+
   // Local file browser state
   localFileEntries: FileEntry[];
   localCurrentPath: string;
@@ -327,10 +331,12 @@ export const useAppStore = create<AppState>((set, get) => {
           return { ...leaf, tabs, activeTabId: newTab.id };
         });
         const hsEnabled = terminalOptions?.horizontalScrolling ?? false;
+        const tabColor = terminalOptions?.color;
         return {
           rootPanel,
           activePanelId: targetPanelId,
           tabHorizontalScrolling: { ...state.tabHorizontalScrolling, [newTab.id]: hsEnabled },
+          ...(tabColor ? { tabColors: { ...state.tabColors, [newTab.id]: tabColor } } : {}),
         };
       }),
 
@@ -414,6 +420,7 @@ export const useAppStore = create<AppState>((set, get) => {
         const { [tabId]: _removed, ...remainingCwds } = state.tabCwds;
         const { [tabId]: _removedHs, ...remainingHs } = state.tabHorizontalScrolling;
         const { [tabId]: _removedDirty, ...remainingDirty } = state.editorDirtyTabs;
+        const { [tabId]: _removedColor, ...remainingColors } = state.tabColors;
 
         let rootPanel = updateLeaf(state.rootPanel, panelId, (leaf) =>
           removeTabFromLeaf(leaf, tabId)
@@ -429,10 +436,10 @@ export const useAppStore = create<AppState>((set, get) => {
           const activePanelId = state.activePanelId === panelId
             ? newLeaves[0]?.id ?? null
             : state.activePanelId;
-          return { rootPanel, activePanelId, tabCwds: remainingCwds, tabHorizontalScrolling: remainingHs, editorDirtyTabs: remainingDirty };
+          return { rootPanel, activePanelId, tabCwds: remainingCwds, tabHorizontalScrolling: remainingHs, editorDirtyTabs: remainingDirty, tabColors: remainingColors };
         }
 
-        return { rootPanel, tabCwds: remainingCwds, tabHorizontalScrolling: remainingHs, editorDirtyTabs: remainingDirty };
+        return { rootPanel, tabCwds: remainingCwds, tabHorizontalScrolling: remainingHs, editorDirtyTabs: remainingDirty, tabColors: remainingColors };
       }),
 
     setActiveTab: (tabId, panelId) =>
@@ -1000,6 +1007,17 @@ export const useAppStore = create<AppState>((set, get) => {
     tabHorizontalScrolling: {},
     setTabHorizontalScrolling: (tabId, enabled) =>
       set((state) => ({ tabHorizontalScrolling: { ...state.tabHorizontalScrolling, [tabId]: enabled } })),
+
+    // Per-tab color
+    tabColors: {},
+    setTabColor: (tabId, color) =>
+      set((state) => {
+        if (color === null) {
+          const { [tabId]: _removed, ...remaining } = state.tabColors;
+          return { tabColors: remaining };
+        }
+        return { tabColors: { ...state.tabColors, [tabId]: color } };
+      }),
 
     // Local file browser state
     localFileEntries: [],

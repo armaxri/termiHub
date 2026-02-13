@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from "react";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionType, ConnectionConfig, LocalShellConfig, SshConfig, TelnetConfig, SerialConfig, TerminalOptions } from "@/types/terminal";
 import { ConnectionSettings, SshSettings, SerialSettings, TelnetSettings } from "@/components/Settings";
+import { ColorPickerDialog } from "@/components/Terminal/ColorPickerDialog";
 import { getDefaultShell } from "@/utils/shell-detection";
 import "./ConnectionEditor.css";
 
@@ -83,6 +84,7 @@ export function ConnectionEditor() {
   const [terminalOptions, setTerminalOptions] = useState<TerminalOptions>(
     existingConnection?.terminalOptions ?? {}
   );
+  const [colorPickerOpen, setColorPickerOpen] = useState(false);
 
   const handleTypeChange = useCallback((type: ConnectionType) => {
     setConnectionConfig(getDefaultConfigs(defaultShell)[type]);
@@ -91,7 +93,7 @@ export function ConnectionEditor() {
   const handleSave = useCallback(() => {
     if (!name.trim()) return;
 
-    const opts = terminalOptions.horizontalScrolling ? terminalOptions : undefined;
+    const opts = (terminalOptions.horizontalScrolling || terminalOptions.color) ? terminalOptions : undefined;
 
     if (extFilePath) {
       // Saving to an external source
@@ -205,6 +207,40 @@ export function ConnectionEditor() {
           />
           <span className="settings-form__label">Enable horizontal scrolling</span>
         </label>
+
+        <div className="settings-form__field">
+          <span className="settings-form__label">Tab Color</span>
+          <div className="connection-editor__color-row">
+            {terminalOptions.color && (
+              <div
+                className="connection-editor__color-preview"
+                style={{ backgroundColor: terminalOptions.color }}
+              />
+            )}
+            <button
+              className="connection-editor__btn connection-editor__btn--secondary"
+              type="button"
+              onClick={() => setColorPickerOpen(true)}
+            >
+              {terminalOptions.color ? "Change" : "Set Color"}
+            </button>
+            {terminalOptions.color && (
+              <button
+                className="connection-editor__btn connection-editor__btn--secondary"
+                type="button"
+                onClick={() => setTerminalOptions({ ...terminalOptions, color: undefined })}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        </div>
+        <ColorPickerDialog
+          open={colorPickerOpen}
+          onOpenChange={setColorPickerOpen}
+          currentColor={terminalOptions.color}
+          onColorChange={(color) => setTerminalOptions({ ...terminalOptions, color: color ?? undefined })}
+        />
 
         <div className="connection-editor__actions">
           <button className="connection-editor__btn connection-editor__btn--secondary" onClick={handleCancel}>

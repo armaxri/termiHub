@@ -234,6 +234,7 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
 function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: boolean }) {
   const slotRef = useRef<HTMLDivElement>(null);
   const { getElement, parkingRef } = useTerminalRegistry();
+  const tabColor = useAppStore((s) => s.tabColors[tabId]);
 
   useEffect(() => {
     const slotEl = slotRef.current;
@@ -267,6 +268,7 @@ function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: boolean 
     <div
       ref={slotRef}
       className={`terminal-container ${isVisible ? "" : "terminal-container--hidden"}`}
+      style={tabColor ? { border: `2px solid ${tabColor}` } : undefined}
     />
   );
 }

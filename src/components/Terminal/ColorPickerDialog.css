@@ -1,0 +1,110 @@
+.color-picker__overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 1000;
+}
+
+.color-picker__content {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1001;
+  width: 280px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.color-picker__title {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.color-picker__presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+}
+
+.color-picker__swatch {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+  transition: border-color var(--transition-fast);
+}
+
+.color-picker__swatch:hover {
+  border-color: var(--text-secondary);
+}
+
+.color-picker__swatch--active {
+  border-color: var(--text-primary);
+}
+
+.color-picker__picker {
+  width: 100% !important;
+  height: 150px !important;
+}
+
+.color-picker__hex-input {
+  width: 100%;
+  height: 30px;
+  font-size: var(--font-size-sm);
+  font-family: monospace;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--spacing-sm);
+  outline: none;
+  box-sizing: border-box;
+}
+
+.color-picker__hex-input:focus {
+  border-color: var(--focus-border);
+}
+
+.color-picker__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-sm);
+}
+
+.color-picker__btn {
+  padding: var(--spacing-xs) var(--spacing-md);
+  font-size: var(--font-size-sm);
+  border-radius: var(--radius-sm);
+  border: none;
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
+}
+
+.color-picker__btn--primary {
+  background-color: var(--accent-color);
+  color: #ffffff;
+}
+
+.color-picker__btn--primary:hover {
+  background-color: var(--accent-hover);
+}
+
+.color-picker__btn--secondary {
+  background-color: transparent;
+  color: var(--text-secondary);
+}
+
+.color-picker__btn--secondary:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
