@@ -1,5 +1,6 @@
 import { useCallback, useState, useRef, useEffect } from "react";
 import { Virtuoso } from "react-virtuoso";
+import * as ContextMenu from "@radix-ui/react-context-menu";
 import {
   Folder,
   File,
@@ -41,6 +42,50 @@ interface FileRowProps {
   onContextAction: (entry: FileEntry, action: string) => void;
 }
 
+/**
+ * Shared menu items for file/directory actions.
+ * Used by both the three-dots dropdown and the right-click context menu.
+ */
+function FileMenuItems({ entry, mode, vscodeAvailable, onNavigate, onContextAction, onClose }: {
+  entry: FileEntry;
+  mode: "local" | "sftp" | "none";
+  vscodeAvailable: boolean;
+  onNavigate: (entry: FileEntry) => void;
+  onContextAction: (entry: FileEntry, action: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <>
+      {entry.isDirectory && (
+        <button className="file-browser__context-item" onClick={() => { onClose(); onNavigate(entry); }}>
+          <FolderOpen size={14} /> Open
+        </button>
+      )}
+      {!entry.isDirectory && mode === "sftp" && (
+        <button className="file-browser__context-item" onClick={() => { onClose(); onContextAction(entry, "download"); }}>
+          <Download size={14} /> Download
+        </button>
+      )}
+      {!entry.isDirectory && (
+        <button className="file-browser__context-item" onClick={() => { onClose(); onContextAction(entry, "edit"); }}>
+          <FileEdit size={14} /> Edit
+        </button>
+      )}
+      {!entry.isDirectory && vscodeAvailable && (
+        <button className="file-browser__context-item" onClick={() => { onClose(); onContextAction(entry, "vscode"); }}>
+          <CodeXml size={14} /> Open in VS Code
+        </button>
+      )}
+      <button className="file-browser__context-item" onClick={() => { onClose(); onContextAction(entry, "rename"); }}>
+        <Pencil size={14} /> Rename
+      </button>
+      <button className="file-browser__context-item file-browser__context-item--danger" onClick={() => { onClose(); onContextAction(entry, "delete"); }}>
+        <Trash2 size={14} /> Delete
+      </button>
+    </>
+  );
+}
+
 function FileRow({ entry, mode, vscodeAvailable, onNavigate, onContextAction }: FileRowProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -56,110 +101,80 @@ function FileRow({ entry, mode, vscodeAvailable, onNavigate, onContextAction }: 
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [menuOpen]);
 
+  const menuItemProps = { entry, mode, vscodeAvailable, onNavigate, onContextAction };
+
   return (
-    <div className="file-browser__row-wrapper">
-      <button
-        className="file-browser__row"
-        onDoubleClick={() => entry.isDirectory && onNavigate(entry)}
-      >
-        {entry.isDirectory ? (
-          <Folder size={16} className="file-browser__icon file-browser__icon--folder" />
-        ) : (
-          <File size={16} className="file-browser__icon" />
-        )}
-        <span className="file-browser__name">{entry.name}</span>
-        {!entry.isDirectory && (
-          <span className="file-browser__size">{formatFileSize(entry.size)}</span>
-        )}
-        {entry.permissions && (
-          <span className="file-browser__permissions">{entry.permissions}</span>
-        )}
-      </button>
-      <div className="file-browser__row-menu" ref={menuRef}>
-        <button
-          className="file-browser__btn file-browser__btn--menu"
-          onClick={(e) => {
-            e.stopPropagation();
-            setMenuOpen(!menuOpen);
-          }}
-          title="Actions"
-        >
-          <MoreHorizontal size={14} />
-        </button>
-        {menuOpen && (
-          <div className="file-browser__context-menu">
-            {entry.isDirectory && (
-              <button
-                className="file-browser__context-item"
-                onClick={() => {
-                  setMenuOpen(false);
-                  onNavigate(entry);
-                }}
-              >
-                <FolderOpen size={14} />
-                Open
-              </button>
+    <ContextMenu.Root>
+      <ContextMenu.Trigger asChild>
+        <div className="file-browser__row-wrapper">
+          <button
+            className="file-browser__row"
+            onDoubleClick={() => entry.isDirectory && onNavigate(entry)}
+          >
+            {entry.isDirectory ? (
+              <Folder size={16} className="file-browser__icon file-browser__icon--folder" />
+            ) : (
+              <File size={16} className="file-browser__icon" />
             )}
-            {!entry.isDirectory && mode === "sftp" && (
-              <button
-                className="file-browser__context-item"
-                onClick={() => {
-                  setMenuOpen(false);
-                  onContextAction(entry, "download");
-                }}
-              >
-                <Download size={14} />
-                Download
-              </button>
-            )}
+            <span className="file-browser__name">{entry.name}</span>
             {!entry.isDirectory && (
-              <button
-                className="file-browser__context-item"
-                onClick={() => {
-                  setMenuOpen(false);
-                  onContextAction(entry, "edit");
-                }}
-              >
-                <FileEdit size={14} />
-                Edit
-              </button>
+              <span className="file-browser__size">{formatFileSize(entry.size)}</span>
             )}
-            {!entry.isDirectory && vscodeAvailable && (
-              <button
-                className="file-browser__context-item"
-                onClick={() => {
-                  setMenuOpen(false);
-                  onContextAction(entry, "vscode");
-                }}
-              >
-                <CodeXml size={14} />
-                Open in VS Code
-              </button>
+            {entry.permissions && (
+              <span className="file-browser__permissions">{entry.permissions}</span>
             )}
+          </button>
+          <div className="file-browser__row-menu" ref={menuRef}>
             <button
-              className="file-browser__context-item"
-              onClick={() => {
-                setMenuOpen(false);
-                onContextAction(entry, "rename");
+              className="file-browser__btn file-browser__btn--menu"
+              onClick={(e) => {
+                e.stopPropagation();
+                setMenuOpen(!menuOpen);
               }}
+              title="Actions"
             >
-              <Pencil size={14} />
-              Rename
+              <MoreHorizontal size={14} />
             </button>
-            <button
-              className="file-browser__context-item file-browser__context-item--danger"
-              onClick={() => {
-                setMenuOpen(false);
-                onContextAction(entry, "delete");
-              }}
-            >
-              <Trash2 size={14} />
-              Delete
-            </button>
+            {menuOpen && (
+              <div className="file-browser__context-menu">
+                <FileMenuItems {...menuItemProps} onClose={() => setMenuOpen(false)} />
+              </div>
+            )}
           </div>
-        )}
-      </div>
-    </div>
+        </div>
+      </ContextMenu.Trigger>
+      <ContextMenu.Portal>
+        <ContextMenu.Content className="context-menu__content">
+          {entry.isDirectory && (
+            <ContextMenu.Item className="context-menu__item" onSelect={() => onNavigate(entry)}>
+              <FolderOpen size={14} /> Open
+            </ContextMenu.Item>
+          )}
+          {!entry.isDirectory && mode === "sftp" && (
+            <ContextMenu.Item className="context-menu__item" onSelect={() => onContextAction(entry, "download")}>
+              <Download size={14} /> Download
+            </ContextMenu.Item>
+          )}
+          {!entry.isDirectory && (
+            <ContextMenu.Item className="context-menu__item" onSelect={() => onContextAction(entry, "edit")}>
+              <FileEdit size={14} /> Edit
+            </ContextMenu.Item>
+          )}
+          {!entry.isDirectory && vscodeAvailable && (
+            <ContextMenu.Item className="context-menu__item" onSelect={() => onContextAction(entry, "vscode")}>
+              <CodeXml size={14} /> Open in VS Code
+            </ContextMenu.Item>
+          )}
+          <ContextMenu.Separator className="context-menu__separator" />
+          <ContextMenu.Item className="context-menu__item" onSelect={() => onContextAction(entry, "rename")}>
+            <Pencil size={14} /> Rename
+          </ContextMenu.Item>
+          <ContextMenu.Item className="context-menu__item context-menu__item--danger" onSelect={() => onContextAction(entry, "delete")}>
+            <Trash2 size={14} /> Delete
+          </ContextMenu.Item>
+        </ContextMenu.Content>
+      </ContextMenu.Portal>
+    </ContextMenu.Root>
   );
 }
 
