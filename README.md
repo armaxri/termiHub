@@ -22,31 +22,15 @@ TermiHub provides a VS Code-like interface for managing multiple terminal connec
 - **Built-in editor** — Edit local and remote files with syntax highlighting
 - **Cross-platform** — Windows, Linux, and macOS
 
-## Quick Start
-
-### Prerequisites
-
-- [Node.js](https://nodejs.org/) (v18+)
-- [pnpm](https://pnpm.io/)
-- [Rust](https://www.rust-lang.org/tools/install)
-- [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)
-
-### Development
-
-```bash
-pnpm install
-pnpm tauri dev
-```
-
-### Build
-
-```bash
-pnpm tauri build
-```
-
 ## Documentation
 
-See [CLAUDE.md](CLAUDE.md) for full architecture documentation, coding standards, and contribution guidelines.
+- **[User Guide](docs/user-guide.md)** — Interface overview, connections, tabs, splits, keyboard shortcuts, file browser, editor
+- **[Building](docs/building.md)** — Platform-specific build and development instructions
+- **[Serial Setup](docs/serial-setup.md)** — Serial port configuration per platform
+- **[SSH Configuration](docs/ssh-configuration.md)** — SSH keys, X11 forwarding, SFTP
+- **[Contributing](docs/contributing.md)** — Development workflow, coding standards, architecture
+
+For the full internal architecture documentation, see [CLAUDE.md](CLAUDE.md).
 
 ## License
 

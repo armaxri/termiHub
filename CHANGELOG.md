@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- User documentation: user guide, build instructions, serial setup, SSH configuration, and contributing guide
 - X11 forwarding for SSH connections: forward remote GUI applications to local X server
 - Environment variable placeholders in connection settings: use `${env:VAR}` syntax for shared configs
 - Tab coloring: assign colors to terminal tabs from the connection editor or via right-click context menu
