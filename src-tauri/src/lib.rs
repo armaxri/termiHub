@@ -40,6 +40,7 @@ pub fn run() {
             commands::terminal::close_terminal,
             commands::terminal::list_available_shells,
             commands::terminal::list_serial_ports,
+            commands::terminal::check_x11_available,
             commands::connection::load_connections_and_folders,
             commands::connection::save_connection,
             commands::connection::delete_connection,

@@ -60,6 +60,17 @@ export function SshSettings({ config, onChange }: SshSettingsProps) {
           />
         </label>
       )}
+      <label className="settings-form__field settings-form__field--checkbox">
+        <input
+          type="checkbox"
+          checked={config.enableX11Forwarding ?? false}
+          onChange={(e) => onChange({ ...config, enableX11Forwarding: e.target.checked })}
+        />
+        <span className="settings-form__label">Enable X11 Forwarding</span>
+      </label>
+      <p className="settings-form__hint">
+        Forwards remote GUI applications to your local X server (requires XQuartz on macOS).
+      </p>
     </div>
   );
 }

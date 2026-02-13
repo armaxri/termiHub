@@ -1,19 +1,25 @@
-FROM alpine:3.19
+FROM ubuntu:22.04
 
-RUN apk add --no-cache \
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
     openssh-server \
-    busybox-extras \
-    && mkdir /var/run/sshd \
-    && ssh-keygen -A
+    telnetd \
+    xauth \
+    x11-apps \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir /run/sshd
 
 # Create test user
-RUN adduser -D -s /bin/sh testuser \
+RUN useradd -m -s /bin/bash testuser \
     && echo "testuser:testpass" | chpasswd
 
-# Configure sshd: enable password auth, disable root login
+# Configure sshd: enable password auth, disable root login, enable X11 forwarding
 RUN sed -i 's/#PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config \
     && sed -i 's/#PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config \
-    && sed -i 's/#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+    && sed -i 's/#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config \
+    && sed -i 's/#X11Forwarding.*/X11Forwarding yes/' /etc/ssh/sshd_config \
+    && sed -i 's/#X11UseLocalhost.*/X11UseLocalhost yes/' /etc/ssh/sshd_config
 
 EXPOSE 22 23
 

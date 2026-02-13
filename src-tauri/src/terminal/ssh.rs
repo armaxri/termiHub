@@ -3,8 +3,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use ssh2::Session;
+use tracing::warn;
 
 use crate::terminal::backend::{OutputSender, SshConfig, TerminalBackend};
+use crate::terminal::x11_forward::X11Forwarder;
 use crate::utils::errors::TerminalError;
 use crate::utils::ssh_auth::connect_and_authenticate;
 
@@ -13,6 +15,7 @@ pub struct SshConnection {
     session: Arc<Session>,
     channel: Arc<Mutex<ssh2::Channel>>,
     alive: Arc<AtomicBool>,
+    _x11_forwarder: Option<X11Forwarder>,
 }
 
 impl SshConnection {
@@ -20,9 +23,33 @@ impl SshConnection {
     pub fn new(config: &SshConfig, output_tx: OutputSender) -> Result<Self, TerminalError> {
         let session = connect_and_authenticate(config)?;
 
+        let alive = Arc::new(AtomicBool::new(true));
+
+        // Start X11 forwarding if enabled (before opening the shell channel)
+        let (x11_forwarder, x11_display) = if config.enable_x11_forwarding {
+            match X11Forwarder::start(config, alive.clone()) {
+                Ok((forwarder, display_num)) => (Some(forwarder), Some(display_num)),
+                Err(e) => {
+                    warn!("X11 forwarding setup failed, continuing without it: {}", e);
+                    (None, None)
+                }
+            }
+        } else {
+            (None, None)
+        };
+
         let mut channel = session
             .channel_session()
             .map_err(|e| TerminalError::SshError(e.to_string()))?;
+
+        // Try to set DISPLAY via setenv before PTY/shell
+        let mut display_set_via_env = false;
+        if let Some(display_num) = x11_display {
+            let display_val = format!("localhost:{}.0", display_num);
+            if channel.setenv("DISPLAY", &display_val).is_ok() {
+                display_set_via_env = true;
+            }
+        }
 
         channel
             .request_pty("xterm-256color", None, Some((80, 24, 0, 0)))
@@ -32,10 +59,17 @@ impl SshConnection {
             .shell()
             .map_err(|e| TerminalError::SshError(e.to_string()))?;
 
+        // If setenv failed (most servers reject it), inject export DISPLAY after shell starts
+        if let Some(display_num) = x11_display {
+            if !display_set_via_env {
+                let display_cmd = format!("export DISPLAY=localhost:{}.0\n", display_num);
+                let _ = channel.write_all(display_cmd.as_bytes());
+            }
+        }
+
         // Set non-blocking for reading
         session.set_blocking(false);
 
-        let alive = Arc::new(AtomicBool::new(true));
         let channel = Arc::new(Mutex::new(channel));
         let session = Arc::new(session);
 
@@ -69,6 +103,7 @@ impl SshConnection {
             session,
             channel,
             alive,
+            _x11_forwarder: x11_forwarder,
         })
     }
 }

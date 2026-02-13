@@ -5,7 +5,7 @@
       "id": "folder-docker-test",
       "name": "Docker Test Targets",
       "parentId": null,
-      "isExpanded": false
+      "isExpanded": true
     }
   ],
   "connections": [
@@ -20,7 +20,25 @@
           "username": "testuser",
           "authMethod": "password",
           "password": null,
-          "keyPath": null
+          "keyPath": null,
+          "enableX11Forwarding": false
+        }
+      },
+      "folderId": "folder-docker-test"
+    },
+    {
+      "id": "conn-docker-ssh-x11",
+      "name": "Docker SSH + X11 (port 2222)",
+      "config": {
+        "type": "ssh",
+        "config": {
+          "host": "127.0.0.1",
+          "port": 2222,
+          "username": "testuser",
+          "authMethod": "password",
+          "password": null,
+          "keyPath": null,
+          "enableX11Forwarding": true
         }
       },
       "folderId": "folder-docker-test"

@@ -79,6 +79,8 @@ pub struct SshConfig {
     pub auth_method: String,
     pub password: Option<String>,
     pub key_path: Option<String>,
+    #[serde(default)]
+    pub enable_x11_forwarding: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

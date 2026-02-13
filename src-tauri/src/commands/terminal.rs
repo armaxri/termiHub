@@ -57,3 +57,9 @@ pub fn list_available_shells() -> Vec<String> {
 pub fn list_serial_ports() -> Vec<String> {
     serial::list_serial_ports()
 }
+
+/// Check if a local X server is available for X11 forwarding.
+#[tauri::command]
+pub fn check_x11_available() -> bool {
+    crate::utils::x11_detect::is_x_server_likely_running()
+}
