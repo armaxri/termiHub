@@ -4099,6 +4099,7 @@ name = "termihub"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "objc2-foundation",
  "portable-pty",
  "serde",
  "serde_json",

@@ -63,6 +63,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Drag-and-drop connections between folders to reorganize them
 - Double-click a connection to connect directly
 
+### Fixed
+- Key repeat not working on macOS (accent picker shown instead)
+
 ### Changed
 - SSH password authentication now prompts for password at each connection instead of storing it
 - Moved Import/Export connections from connection list toolbar to the Settings gear dropdown menu
