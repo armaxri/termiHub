@@ -3,6 +3,9 @@
 //! Uses a dedicated SSH session (same pattern as SFTP) with
 //! `channel_forward_listen()` to accept X11 connections on the remote
 //! host and proxy them to the local X server.
+//!
+//! All SSH channel I/O runs on a single thread because libssh2
+//! sessions are not thread-safe.
 
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -51,7 +54,10 @@ impl X11Forwarder {
         if xauth_cookie.is_some() {
             info!("X11 forwarding: read local xauth cookie");
         } else {
-            warn!("X11 forwarding: no xauth cookie found for display :{}", local_x.display_number);
+            warn!(
+                "X11 forwarding: no xauth cookie found for display :{}",
+                local_x.display_number
+            );
         }
 
         let session = connect_and_authenticate(config)?;
@@ -71,12 +77,12 @@ impl X11Forwarder {
 
         let alive_clone = alive.clone();
         let listener_handle = std::thread::Builder::new()
-            .name("x11-listener".to_string())
+            .name("x11-event-loop".to_string())
             .spawn(move || {
-                listener_thread(&session, &mut listener, &alive_clone, &local_x);
+                event_loop(&session, &mut listener, &alive_clone, &local_x);
             })
             .map_err(|e| {
-                TerminalError::SshError(format!("Failed to spawn X11 listener: {}", e))
+                TerminalError::SshError(format!("Failed to spawn X11 event loop: {}", e))
             })?;
 
         Ok((
@@ -100,31 +106,118 @@ impl Drop for X11Forwarder {
     }
 }
 
-/// Accept incoming X11 channels and spawn proxy threads for each.
-fn listener_thread(
+/// An active proxy connection between an SSH channel and a local X stream.
+struct ActiveProxy {
+    channel: ssh2::Channel,
+    local_stream: LocalStream,
+}
+
+impl ActiveProxy {
+    /// Create a new proxy by connecting to the local X server.
+    fn new(channel: ssh2::Channel, local_x: &LocalXServerInfo) -> Option<Self> {
+        let local_stream = match &local_x.connection {
+            LocalXConnection::UnixSocket(path) => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::net::UnixStream;
+                    match UnixStream::connect(path) {
+                        Ok(s) => {
+                            let _ = s.set_nonblocking(true);
+                            LocalStream::Unix(s)
+                        }
+                        Err(e) => {
+                            error!(
+                                "X11 proxy: failed to connect to Unix socket {}: {}",
+                                path, e
+                            );
+                            return None;
+                        }
+                    }
+                }
+                #[cfg(not(unix))]
+                {
+                    error!(
+                        "X11 proxy: Unix sockets not supported on this platform, path: {}",
+                        path
+                    );
+                    return None;
+                }
+            }
+            LocalXConnection::Tcp(host, port) => {
+                match std::net::TcpStream::connect((host.as_str(), *port)) {
+                    Ok(s) => {
+                        let _ = s.set_nonblocking(true);
+                        LocalStream::Tcp(s)
+                    }
+                    Err(e) => {
+                        error!("X11 proxy: failed to connect to {}:{}: {}", host, port, e);
+                        return None;
+                    }
+                }
+            }
+        };
+
+        Some(Self {
+            channel,
+            local_stream,
+        })
+    }
+
+    /// Pump data in both directions. Returns `true` if the proxy is still alive.
+    fn pump(&mut self) -> bool {
+        let mut buf = [0u8; 16384];
+
+        // channel → local X server
+        match self.channel.read(&mut buf) {
+            Ok(0) => return false,
+            Ok(n) => {
+                if write_all_nonblocking(&self.local_stream, &buf[..n]).is_err() {
+                    return false;
+                }
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(_) => return false,
+        }
+
+        // local X server → channel
+        match self.local_stream.read(&mut buf) {
+            Ok(0) => return false,
+            Ok(n) => {
+                if write_all_retry(&mut self.channel, &buf[..n]).is_err() {
+                    return false;
+                }
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(_) => return false,
+        }
+
+        true
+    }
+}
+
+/// Single-threaded event loop: accept new channels and pump all proxies.
+///
+/// All SSH operations happen on this one thread because libssh2 sessions
+/// are not thread-safe.
+fn event_loop(
     _session: &ssh2::Session,
     listener: &mut ssh2::Listener,
     alive: &Arc<AtomicBool>,
     local_x: &LocalXServerInfo,
 ) {
+    let mut proxies: Vec<ActiveProxy> = Vec::new();
+
     while alive.load(Ordering::SeqCst) {
+        // Accept new connections
         match listener.accept() {
             Ok(channel) => {
                 debug!("X11 forwarding: accepted new channel");
-                let local_x = local_x.clone();
-                let alive = alive.clone();
-                if let Err(e) = std::thread::Builder::new()
-                    .name("x11-proxy".to_string())
-                    .spawn(move || {
-                        proxy_x11(channel, &local_x, &alive);
-                    })
-                {
-                    error!("Failed to spawn X11 proxy thread: {}", e);
+                if let Some(proxy) = ActiveProxy::new(channel, local_x) {
+                    proxies.push(proxy);
                 }
             }
             Err(ref e) if e.code() == ssh2::ErrorCode::Session(-37) => {
                 // EAGAIN / WouldBlock — no pending connections
-                std::thread::sleep(Duration::from_millis(100));
             }
             Err(e) => {
                 if alive.load(Ordering::SeqCst) {
@@ -133,95 +226,64 @@ fn listener_thread(
                 break;
             }
         }
-    }
-}
 
-/// Bidirectional proxy between an SSH channel and the local X server.
-fn proxy_x11(
-    mut channel: ssh2::Channel,
-    local_x: &LocalXServerInfo,
-    alive: &Arc<AtomicBool>,
-) {
-    let local_stream = match &local_x.connection {
-        LocalXConnection::UnixSocket(path) => {
-            #[cfg(unix)]
-            {
-                use std::os::unix::net::UnixStream;
-                match UnixStream::connect(path) {
-                    Ok(s) => {
-                        let _ = s.set_nonblocking(true);
-                        LocalStream::Unix(s)
-                    }
-                    Err(e) => {
-                        error!("X11 proxy: failed to connect to Unix socket {}: {}", path, e);
-                        return;
-                    }
-                }
-            }
-            #[cfg(not(unix))]
-            {
-                error!("X11 proxy: Unix sockets not supported on this platform, socket path: {}", path);
-                return;
-            }
-        }
-        LocalXConnection::Tcp(host, port) => {
-            match std::net::TcpStream::connect((host.as_str(), *port)) {
-                Ok(s) => {
-                    let _ = s.set_nonblocking(true);
-                    LocalStream::Tcp(s)
-                }
-                Err(e) => {
-                    error!("X11 proxy: failed to connect to {}:{}: {}", host, port, e);
-                    return;
-                }
-            }
-        }
-    };
+        // Pump all active proxies, removing dead ones
+        proxies.retain_mut(|proxy| proxy.pump());
 
-    let mut buf_ch = [0u8; 16384];
-    let mut buf_local = [0u8; 16384];
-
-    loop {
-        if !alive.load(Ordering::SeqCst) {
-            break;
-        }
-
-        let mut did_work = false;
-
-        // channel → local
-        match channel.read(&mut buf_ch) {
-            Ok(0) => break,
-            Ok(n) => {
-                if local_stream.write_all(&buf_ch[..n]).is_err() {
-                    break;
-                }
-                did_work = true;
-            }
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
-            Err(_) => break,
-        }
-
-        // local → channel
-        match local_stream.read(&mut buf_local) {
-            Ok(0) => break,
-            Ok(n) => {
-                if channel.write_all(&buf_local[..n]).is_err() {
-                    break;
-                }
-                did_work = true;
-            }
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
-            Err(_) => break,
-        }
-
-        if !did_work {
+        // Sleep briefly to avoid busy-spinning
+        if proxies.is_empty() {
+            std::thread::sleep(Duration::from_millis(50));
+        } else {
             std::thread::sleep(Duration::from_millis(1));
         }
     }
 
-    let _ = channel.send_eof();
-    let _ = channel.close();
-    debug!("X11 proxy thread finished");
+    // Clean up channels
+    for proxy in &mut proxies {
+        let _ = proxy.channel.send_eof();
+        let _ = proxy.channel.close();
+    }
+    debug!("X11 event loop finished ({} proxies cleaned up)", proxies.len());
+}
+
+/// Write all bytes to a non-blocking local stream, retrying on WouldBlock.
+fn write_all_nonblocking(stream: &LocalStream, mut buf: &[u8]) -> std::io::Result<()> {
+    while !buf.is_empty() {
+        match stream.write(buf) {
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WriteZero,
+                    "write returned 0",
+                ))
+            }
+            Ok(n) => buf = &buf[n..],
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_micros(100));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+}
+
+/// Write all bytes to an SSH channel, retrying on WouldBlock.
+fn write_all_retry(channel: &mut ssh2::Channel, mut buf: &[u8]) -> std::io::Result<()> {
+    while !buf.is_empty() {
+        match channel.write(buf) {
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WriteZero,
+                    "write returned 0",
+                ))
+            }
+            Ok(n) => buf = &buf[n..],
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_micros(100));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
 }
 
 /// Wrapper around either a Unix or TCP stream for the local X connection.
@@ -240,11 +302,11 @@ impl LocalStream {
         }
     }
 
-    fn write_all(&self, buf: &[u8]) -> std::io::Result<()> {
+    fn write(&self, buf: &[u8]) -> std::io::Result<usize> {
         match self {
             #[cfg(unix)]
-            Self::Unix(s) => (&*s).write_all(buf),
-            Self::Tcp(s) => (&*s).write_all(buf),
+            Self::Unix(s) => (&*s).write(buf),
+            Self::Tcp(s) => (&*s).write(buf),
         }
     }
 }
