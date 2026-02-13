@@ -16,6 +16,7 @@ import {
   ChevronDown,
   Folder,
   FolderPlus,
+  FolderGit2,
   Terminal,
   Wifi,
   Cable,
@@ -28,10 +29,11 @@ import {
   Check,
   X,
   Activity,
+  AlertTriangle,
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionType, ShellType, SshConfig } from "@/types/terminal";
-import { SavedConnection, ConnectionFolder } from "@/types/connection";
+import { SavedConnection, ConnectionFolder, ExternalConnectionSource } from "@/types/connection";
 import { listAvailableShells } from "@/services/api";
 import "./ConnectionList.css";
 
@@ -311,6 +313,7 @@ export function ConnectionList() {
   const [draggingConnection, setDraggingConnection] = useState<SavedConnection | null>(null);
   const folders = useAppStore((s) => s.folders);
   const connections = useAppStore((s) => s.connections);
+  const externalSources = useAppStore((s) => s.externalSources);
   const toggleFolder = useAppStore((s) => s.toggleFolder);
   const addTab = useAppStore((s) => s.addTab);
   const setEditingConnection = useAppStore((s) => s.setEditingConnection);
@@ -319,6 +322,11 @@ export function ConnectionList() {
   const addFolder = useAppStore((s) => s.addFolder);
   const duplicateConnection = useAppStore((s) => s.duplicateConnection);
   const moveConnectionToFolder = useAppStore((s) => s.moveConnectionToFolder);
+  const deleteExternalConnection = useAppStore((s) => s.deleteExternalConnection);
+  const duplicateExternalConnection = useAppStore((s) => s.duplicateExternalConnection);
+  const addExternalFolder = useAppStore((s) => s.addExternalFolder);
+  const deleteExternalFolder = useAppStore((s) => s.deleteExternalFolder);
+  const moveConnectionToExternalFolder = useAppStore((s) => s.moveConnectionToExternalFolder);
 
   const pointerSensor = useSensor(PointerSensor, {
     activationConstraint: { distance: 8 },
@@ -427,54 +435,95 @@ export function ConnectionList() {
         moveConnectionToFolder(connectionId, null);
       } else if (over.data.current?.type === "folder") {
         moveConnectionToFolder(connectionId, overId);
+      } else if (over.data.current?.type === "external-folder") {
+        moveConnectionToExternalFolder(connectionId, overId);
       }
     },
-    [moveConnectionToFolder]
+    [moveConnectionToFolder, moveConnectionToExternalFolder]
   );
 
+  const [localCollapsed, setLocalCollapsed] = useState(false);
   const rootFolders = folders.filter((f) => f.parentId === null);
   const rootConnections = connections.filter((c) => c.folderId === null);
+  const LocalChevron = localCollapsed ? ChevronRight : ChevronDown;
 
   return (
     <div className="connection-list">
-      <div className="connection-list__header">
-        <button
-          className="connection-list__add-btn"
-          onClick={() => setCreatingFolder(true)}
-          title="New Folder"
-        >
-          <FolderPlus size={16} />
-        </button>
-        <button
-          className="connection-list__add-btn"
-          onClick={handleNewConnection}
-          title="New Connection"
-        >
-          <Plus size={16} />
-        </button>
-      </div>
       <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-        <RootDropZone
-          isCreatingFolder={creatingFolder}
-          onCreateFolder={(name) => {
-            handleCreateFolder(null, name);
-            setCreatingFolder(false);
-          }}
-          onCancelCreateFolder={() => setCreatingFolder(false)}
-          rootFolders={rootFolders}
-          rootConnections={rootConnections}
-          folders={folders}
-          connections={connections}
-          onToggle={toggleFolder}
-          onConnect={handleConnect}
-          onEdit={handleEdit}
-          onDelete={handleDelete}
-          onDuplicate={handleDuplicate}
-          onPingHost={handlePingHost}
-          onDeleteFolder={handleDeleteFolder}
-          onCreateSubfolder={handleCreateFolder}
-          onNewConnectionInFolder={handleNewConnectionInFolder}
-        />
+        <div className="connection-list__group">
+          <div className="connection-list__group-header">
+            <button
+              className="connection-list__group-toggle"
+              onClick={() => setLocalCollapsed((v) => !v)}
+            >
+              <LocalChevron size={16} className="connection-tree__chevron" />
+              <span className="connection-list__group-title">Connections</span>
+            </button>
+            <div className="connection-list__group-actions">
+              <button
+                className="connection-list__add-btn"
+                onClick={() => { setLocalCollapsed(false); setCreatingFolder(true); }}
+                title="New Folder"
+              >
+                <FolderPlus size={16} />
+              </button>
+              <button
+                className="connection-list__add-btn"
+                onClick={handleNewConnection}
+                title="New Connection"
+              >
+                <Plus size={16} />
+              </button>
+            </div>
+          </div>
+          {!localCollapsed && (
+            <RootDropZone
+              isCreatingFolder={creatingFolder}
+              onCreateFolder={(name) => {
+                handleCreateFolder(null, name);
+                setCreatingFolder(false);
+              }}
+              onCancelCreateFolder={() => setCreatingFolder(false)}
+              rootFolders={rootFolders}
+              rootConnections={rootConnections}
+              folders={folders}
+              connections={connections}
+              onToggle={toggleFolder}
+              onConnect={handleConnect}
+              onEdit={handleEdit}
+              onDelete={handleDelete}
+              onDuplicate={handleDuplicate}
+              onPingHost={handlePingHost}
+              onDeleteFolder={handleDeleteFolder}
+              onCreateSubfolder={handleCreateFolder}
+              onNewConnectionInFolder={handleNewConnectionInFolder}
+            />
+          )}
+        </div>
+        {externalSources.map((source) => (
+          <ExternalSourceSection
+            key={source.filePath}
+            source={source}
+            onConnect={handleConnect}
+            onEdit={handleEdit}
+            onDelete={(connId) => deleteExternalConnection(source.filePath, connId)}
+            onDuplicate={(connId) => duplicateExternalConnection(source.filePath, connId)}
+            onPingHost={handlePingHost}
+            onDeleteFolder={(folderId) => deleteExternalFolder(source.filePath, folderId)}
+            onCreateSubfolder={(parentId, name) => {
+              const prefix = `ext:${source.filePath}::`;
+              addExternalFolder(source.filePath, {
+                id: `${prefix}folder-${Date.now()}`,
+                name,
+                parentId,
+                isExpanded: true,
+              });
+            }}
+            onNewConnectionInFolder={(folderId) => {
+              setEditingConnection("new", folderId);
+            }}
+          />
+        ))}
         <DragOverlay>
           {draggingConnection ? (
             <div className="connection-tree__drag-overlay">
@@ -578,5 +627,356 @@ function RootDropZone({
         />
       ))}
     </div>
+  );
+}
+
+// --- External source components ---
+
+interface ExternalSourceSectionProps {
+  source: ExternalConnectionSource;
+  onConnect: (connection: SavedConnection) => void;
+  onEdit: (connectionId: string) => void;
+  onDelete: (connectionId: string) => void;
+  onDuplicate: (connectionId: string) => void;
+  onPingHost: (connection: SavedConnection) => void;
+  onDeleteFolder: (folderId: string) => void;
+  onCreateSubfolder: (parentId: string, name: string) => void;
+  onNewConnectionInFolder: (folderId: string) => void;
+}
+
+function ExternalSourceSection({
+  source,
+  onConnect,
+  onEdit,
+  onDelete,
+  onDuplicate,
+  onPingHost,
+  onDeleteFolder,
+  onCreateSubfolder,
+  onNewConnectionInFolder,
+}: ExternalSourceSectionProps) {
+  const [collapsed, setCollapsed] = useState(false);
+  const [creatingFolder, setCreatingFolder] = useState(false);
+  const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>(() => {
+    const initial: Record<string, boolean> = {};
+    for (const folder of source.folders) {
+      initial[folder.id] = folder.isExpanded;
+    }
+    return initial;
+  });
+
+  const toggleExtFolder = useCallback((folderId: string) => {
+    setExpandedFolders((prev) => ({ ...prev, [folderId]: !prev[folderId] }));
+  }, []);
+
+  const rootId = `ext-root:${source.filePath}`;
+  // Subfolders directly under root
+  const childFolders = source.folders.filter((f) => f.parentId === rootId);
+  // Connections directly under root
+  const rootConnections = source.connections.filter((c) => c.folderId === rootId);
+  const SectionChevron = collapsed ? ChevronRight : ChevronDown;
+
+  const handleNewConnection = useCallback(() => {
+    setCollapsed(false);
+    onNewConnectionInFolder(rootId);
+  }, [onNewConnectionInFolder, rootId]);
+
+  const handleNewFolder = useCallback(() => {
+    setCollapsed(false);
+    setCreatingFolder(true);
+  }, []);
+
+  return (
+    <div className="connection-list__group connection-list__group--external">
+      <div className="connection-list__group-header">
+        <button
+          className="connection-list__group-toggle"
+          onClick={() => setCollapsed((v) => !v)}
+        >
+          <SectionChevron size={16} className="connection-tree__chevron" />
+          <FolderGit2 size={16} />
+          <span className="connection-list__group-title">{source.name}</span>
+          {source.error && (
+            <span className="connection-tree__source-error" title={source.error}>
+              <AlertTriangle size={14} />
+            </span>
+          )}
+        </button>
+        <div className="connection-list__group-actions">
+          <button
+            className="connection-list__add-btn"
+            onClick={handleNewFolder}
+            title="New Folder"
+          >
+            <FolderPlus size={16} />
+          </button>
+          <button
+            className="connection-list__add-btn"
+            onClick={handleNewConnection}
+            title="New Connection"
+          >
+            <Plus size={16} />
+          </button>
+        </div>
+      </div>
+      {!collapsed && (
+        <div className="connection-list__tree">
+          {creatingFolder && (
+            <InlineFolderInput
+              depth={0}
+              onConfirm={(name) => {
+                onCreateSubfolder(rootId, name);
+                setCreatingFolder(false);
+              }}
+              onCancel={() => setCreatingFolder(false)}
+            />
+          )}
+          {childFolders.map((child) => (
+            <ExternalTreeNode
+              key={child.id}
+              folder={child}
+              connections={source.connections.filter((c) => c.folderId === child.id)}
+              childFolders={source.folders.filter((f) => f.parentId === child.id)}
+              allFolders={source.folders}
+              allConnections={source.connections}
+              expandedFolders={expandedFolders}
+              onToggle={toggleExtFolder}
+              onConnect={onConnect}
+              onEdit={onEdit}
+              onDelete={onDelete}
+              onDuplicate={onDuplicate}
+              onPingHost={onPingHost}
+              onDeleteFolder={onDeleteFolder}
+              onCreateSubfolder={onCreateSubfolder}
+              onNewConnectionInFolder={onNewConnectionInFolder}
+              depth={0}
+            />
+          ))}
+          {rootConnections.map((conn) => (
+            <ExternalConnectionItem
+              key={conn.id}
+              connection={conn}
+              depth={0}
+              onConnect={onConnect}
+              onEdit={onEdit}
+              onDelete={onDelete}
+              onDuplicate={onDuplicate}
+              onPingHost={onPingHost}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface ExternalTreeNodeProps {
+  folder: ConnectionFolder;
+  connections: SavedConnection[];
+  childFolders: ConnectionFolder[];
+  allFolders: ConnectionFolder[];
+  allConnections: SavedConnection[];
+  expandedFolders: Record<string, boolean>;
+  onToggle: (folderId: string) => void;
+  onConnect: (connection: SavedConnection) => void;
+  onEdit: (connectionId: string) => void;
+  onDelete: (connectionId: string) => void;
+  onDuplicate: (connectionId: string) => void;
+  onPingHost: (connection: SavedConnection) => void;
+  onDeleteFolder: (folderId: string) => void;
+  onCreateSubfolder: (parentId: string, name: string) => void;
+  onNewConnectionInFolder: (folderId: string) => void;
+  depth: number;
+}
+
+function ExternalTreeNode({
+  folder,
+  connections,
+  childFolders,
+  allFolders,
+  allConnections,
+  expandedFolders,
+  onToggle,
+  onConnect,
+  onEdit,
+  onDelete,
+  onDuplicate,
+  onPingHost,
+  onDeleteFolder,
+  onCreateSubfolder,
+  onNewConnectionInFolder,
+  depth,
+}: ExternalTreeNodeProps) {
+  const [creatingSubfolder, setCreatingSubfolder] = useState(false);
+  const isExpanded = expandedFolders[folder.id] ?? folder.isExpanded;
+  const Chevron = isExpanded ? ChevronDown : ChevronRight;
+
+  const { setNodeRef, isOver } = useDroppable({
+    id: folder.id,
+    data: { type: "external-folder" },
+  });
+
+  return (
+    <div className="connection-tree__node" ref={setNodeRef}>
+      <ContextMenu.Root>
+        <ContextMenu.Trigger asChild>
+          <button
+            className={`connection-tree__folder connection-tree__folder--external${isOver ? " connection-tree__folder--drop-over" : ""}`}
+            onClick={() => onToggle(folder.id)}
+            style={{ paddingLeft: `${depth * 16 + 8}px` }}
+          >
+            <Chevron size={16} className="connection-tree__chevron" />
+            <Folder size={16} />
+            <span className="connection-tree__label">{folder.name}</span>
+          </button>
+        </ContextMenu.Trigger>
+        <ContextMenu.Portal>
+          <ContextMenu.Content className="context-menu__content">
+            <ContextMenu.Item
+              className="context-menu__item"
+              onSelect={() => onNewConnectionInFolder(folder.id)}
+            >
+              <Plus size={14} /> New Connection
+            </ContextMenu.Item>
+            <ContextMenu.Item
+              className="context-menu__item"
+              onSelect={() => setCreatingSubfolder(true)}
+            >
+              <FolderPlus size={14} /> New Subfolder
+            </ContextMenu.Item>
+            <ContextMenu.Separator className="context-menu__separator" />
+            <ContextMenu.Item
+              className="context-menu__item context-menu__item--danger"
+              onSelect={() => onDeleteFolder(folder.id)}
+            >
+              <Trash2 size={14} /> Delete Folder
+            </ContextMenu.Item>
+          </ContextMenu.Content>
+        </ContextMenu.Portal>
+      </ContextMenu.Root>
+      {isExpanded && (
+        <div className="connection-tree__children">
+          {creatingSubfolder && (
+            <InlineFolderInput
+              depth={depth + 1}
+              onConfirm={(name) => {
+                onCreateSubfolder(folder.id, name);
+                setCreatingSubfolder(false);
+              }}
+              onCancel={() => setCreatingSubfolder(false)}
+            />
+          )}
+          {childFolders.map((child) => (
+            <ExternalTreeNode
+              key={child.id}
+              folder={child}
+              connections={allConnections.filter((c) => c.folderId === child.id)}
+              childFolders={allFolders.filter((f) => f.parentId === child.id)}
+              allFolders={allFolders}
+              allConnections={allConnections}
+              expandedFolders={expandedFolders}
+              onToggle={onToggle}
+              onConnect={onConnect}
+              onEdit={onEdit}
+              onDelete={onDelete}
+              onDuplicate={onDuplicate}
+              onPingHost={onPingHost}
+              onDeleteFolder={onDeleteFolder}
+              onCreateSubfolder={onCreateSubfolder}
+              onNewConnectionInFolder={onNewConnectionInFolder}
+              depth={depth + 1}
+            />
+          ))}
+          {connections.map((conn) => (
+            <ExternalConnectionItem
+              key={conn.id}
+              connection={conn}
+              depth={depth + 1}
+              onConnect={onConnect}
+              onEdit={onEdit}
+              onDelete={onDelete}
+              onDuplicate={onDuplicate}
+              onPingHost={onPingHost}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface ExternalConnectionItemProps {
+  connection: SavedConnection;
+  depth: number;
+  onConnect: (connection: SavedConnection) => void;
+  onEdit: (connectionId: string) => void;
+  onDelete: (connectionId: string) => void;
+  onDuplicate: (connectionId: string) => void;
+  onPingHost: (connection: SavedConnection) => void;
+}
+
+function ExternalConnectionItem({ connection, depth, onConnect, onEdit, onDelete, onDuplicate, onPingHost }: ExternalConnectionItemProps) {
+  const Icon = TYPE_ICONS[connection.config.type];
+
+  const { attributes, listeners, setNodeRef: setDragRef, isDragging } = useDraggable({
+    id: connection.id,
+    data: { type: "connection", connection },
+  });
+
+  return (
+    <ContextMenu.Root>
+      <ContextMenu.Trigger asChild>
+        <button
+          ref={setDragRef}
+          className={`connection-tree__item connection-tree__item--external${isDragging ? " connection-tree__item--dragging" : ""}`}
+          style={{ paddingLeft: `${depth * 16 + 8}px` }}
+          onDoubleClick={() => onConnect(connection)}
+          title={`Double-click to connect: ${connection.name}`}
+          {...attributes}
+          {...listeners}
+        >
+          <Icon size={16} />
+          <span className="connection-tree__label">{connection.name}</span>
+          <span className="connection-tree__type">{connection.config.type}</span>
+        </button>
+      </ContextMenu.Trigger>
+      <ContextMenu.Portal>
+        <ContextMenu.Content className="context-menu__content">
+          <ContextMenu.Item
+            className="context-menu__item"
+            onSelect={() => onConnect(connection)}
+          >
+            <Play size={14} /> Connect
+          </ContextMenu.Item>
+          {(connection.config.type === "ssh" || connection.config.type === "telnet") && (
+            <ContextMenu.Item
+              className="context-menu__item"
+              onSelect={() => onPingHost(connection)}
+            >
+              <Activity size={14} /> Ping Host
+            </ContextMenu.Item>
+          )}
+          <ContextMenu.Item
+            className="context-menu__item"
+            onSelect={() => onEdit(connection.id)}
+          >
+            <Pencil size={14} /> Edit
+          </ContextMenu.Item>
+          <ContextMenu.Item
+            className="context-menu__item"
+            onSelect={() => onDuplicate(connection.id)}
+          >
+            <Copy size={14} /> Duplicate
+          </ContextMenu.Item>
+          <ContextMenu.Separator className="context-menu__separator" />
+          <ContextMenu.Item
+            className="context-menu__item context-menu__item--danger"
+            onSelect={() => onDelete(connection.id)}
+          >
+            <Trash2 size={14} /> Delete
+          </ContextMenu.Item>
+        </ContextMenu.Content>
+      </ContextMenu.Portal>
+    </ContextMenu.Root>
   );
 }

@@ -2,7 +2,7 @@
  * Connection persistence via Tauri backend.
  */
 
-import { SavedConnection, ConnectionFolder } from "@/types/connection";
+import { SavedConnection, ConnectionFolder, ExternalConnectionSource } from "@/types/connection";
 import {
   loadConnectionsAndFolders,
   saveConnection,
@@ -11,12 +11,17 @@ import {
   deleteFolderFromBackend,
   exportConnections,
   importConnections,
+  getSettings,
+  saveSettings,
+  saveExternalFile,
+  reloadExternalConnections,
 } from "./api";
 
-/** Load all saved connections and folders from the backend */
+/** Load all saved connections, folders, and external sources from the backend */
 export async function loadConnections(): Promise<{
   connections: SavedConnection[];
   folders: ConnectionFolder[];
+  externalSources: ExternalConnectionSource[];
 }> {
   return await loadConnectionsAndFolders();
 }
@@ -46,3 +51,15 @@ export { exportConnections };
 
 /** Import connections from JSON */
 export { importConnections };
+
+/** Get application settings */
+export { getSettings };
+
+/** Save application settings */
+export { saveSettings };
+
+/** Save an external connection file to disk */
+export { saveExternalFile };
+
+/** Reload external connection files */
+export { reloadExternalConnections };

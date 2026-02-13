@@ -49,3 +49,13 @@ impl Default for ConnectionStore {
         }
     }
 }
+
+/// Schema for external connection files. Same as `ConnectionStore` but with an optional `name`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExternalConnectionStore {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    pub version: String,
+    pub folders: Vec<ConnectionFolder>,
+    pub connections: Vec<SavedConnection>,
+}

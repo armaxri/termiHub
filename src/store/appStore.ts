@@ -1,12 +1,16 @@
 import { create } from "zustand";
 import { TerminalTab, LeafPanel, PanelNode, ConnectionType, ConnectionConfig, SshConfig, DropEdge, TabContentType, TerminalOptions } from "@/types/terminal";
-import { SavedConnection, ConnectionFolder, FileEntry } from "@/types/connection";
+import { SavedConnection, ConnectionFolder, FileEntry, ExternalConnectionSource, AppSettings } from "@/types/connection";
 import {
   loadConnections,
   persistConnection,
   removeConnection,
   persistFolder,
   removeFolder,
+  getSettings,
+  saveSettings as persistSettings,
+  saveExternalFile,
+  reloadExternalConnections as reloadExternalSources,
 } from "@/services/storage";
 import { sftpOpen, sftpClose, sftpListDir, localListDir } from "@/services/api";
 import {
@@ -36,6 +40,68 @@ function stripSshPassword(connection: SavedConnection): SavedConnection {
     };
   }
   return connection;
+}
+
+/**
+ * Return the external source file path that a namespaced ID belongs to, or null.
+ */
+function externalFilePathFromId(id: string): string | null {
+  // IDs look like "ext:<filePath>::<originalId>" or "ext-root:<filePath>"
+  if (id.startsWith("ext:")) {
+    const rest = id.slice(4); // after "ext:"
+    const sep = rest.indexOf("::");
+    return sep >= 0 ? rest.slice(0, sep) : null;
+  }
+  if (id.startsWith("ext-root:")) {
+    return id.slice(9);
+  }
+  return null;
+}
+
+/**
+ * Strip namespace prefix from an external source so it can be persisted.
+ */
+function stripNamespace(source: ExternalConnectionSource): {
+  name: string;
+  folders: ConnectionFolder[];
+  connections: SavedConnection[];
+} {
+  const prefix = `ext:${source.filePath}::`;
+  const rootId = `ext-root:${source.filePath}`;
+
+  const folders = source.folders
+    .filter((f) => f.id !== rootId) // drop synthetic root
+    .map((f) => ({
+      ...f,
+      id: f.id.startsWith(prefix) ? f.id.slice(prefix.length) : f.id,
+      parentId:
+        f.parentId === rootId
+          ? null
+          : f.parentId?.startsWith(prefix)
+            ? f.parentId.slice(prefix.length)
+            : f.parentId,
+    }));
+
+  const connections = source.connections.map((c) => ({
+    ...c,
+    id: c.id.startsWith(prefix) ? c.id.slice(prefix.length) : c.id,
+    folderId:
+      c.folderId === rootId
+        ? null
+        : c.folderId?.startsWith(prefix)
+          ? c.folderId.slice(prefix.length)
+          : c.folderId,
+  }));
+
+  return { name: source.name, folders, connections };
+}
+
+/**
+ * Persist an in-memory external source back to its file.
+ */
+async function persistExternalSource(source: ExternalConnectionSource): Promise<void> {
+  const { name, folders, connections } = stripNamespace(source);
+  await saveExternalFile(source.filePath, name, folders, connections);
 }
 
 interface AppState {
@@ -72,9 +138,13 @@ interface AppState {
   // Connections
   folders: ConnectionFolder[];
   connections: SavedConnection[];
+  externalSources: ExternalConnectionSource[];
+  settings: AppSettings;
   editingConnectionId: string | null;
   editingConnectionFolderId: string | null;
   loadFromBackend: () => Promise<void>;
+  updateSettings: (settings: AppSettings) => Promise<void>;
+  reloadExternalConnections: () => Promise<void>;
   toggleFolder: (folderId: string) => void;
   addConnection: (connection: SavedConnection) => void;
   updateConnection: (connection: SavedConnection) => void;
@@ -84,6 +154,15 @@ interface AppState {
   deleteFolder: (folderId: string) => void;
   duplicateConnection: (connectionId: string) => void;
   moveConnectionToFolder: (connectionId: string, folderId: string | null) => void;
+
+  // External source mutations
+  addExternalConnection: (filePath: string, connection: SavedConnection) => void;
+  updateExternalConnection: (filePath: string, connection: SavedConnection) => void;
+  deleteExternalConnection: (filePath: string, connectionId: string) => void;
+  duplicateExternalConnection: (filePath: string, connectionId: string) => void;
+  addExternalFolder: (filePath: string, folder: ConnectionFolder) => void;
+  deleteExternalFolder: (filePath: string, folderId: string) => void;
+  moveConnectionToExternalFolder: (connectionId: string, folderId: string) => void;
 
   // File browser / SFTP
   fileEntries: FileEntry[];
@@ -460,15 +539,36 @@ export const useAppStore = create<AppState>((set, get) => {
     // Connections — initialized empty, loaded from backend on mount
     folders: [],
     connections: [],
+    externalSources: [],
+    settings: { version: "1", externalConnectionFiles: [] },
     editingConnectionId: null,
     editingConnectionFolderId: null,
 
     loadFromBackend: async () => {
       try {
-        const { connections, folders } = await loadConnections();
-        set({ connections, folders });
+        const { connections, folders, externalSources } = await loadConnections();
+        const settings = await getSettings();
+        set({ connections, folders, externalSources, settings });
       } catch (err) {
         console.error("Failed to load connections from backend:", err);
+      }
+    },
+
+    updateSettings: async (newSettings) => {
+      try {
+        await persistSettings(newSettings);
+        set({ settings: newSettings });
+      } catch (err) {
+        console.error("Failed to save settings:", err);
+      }
+    },
+
+    reloadExternalConnections: async () => {
+      try {
+        const sources = await reloadExternalSources();
+        set({ externalSources: sources });
+      } catch (err) {
+        console.error("Failed to reload external connections:", err);
       }
     },
 
@@ -581,6 +681,167 @@ export const useAppStore = create<AppState>((set, get) => {
           );
         }
         return { connections };
+      });
+    },
+
+    // External source mutations
+    addExternalConnection: (filePath, connection) => {
+      set((state) => {
+        const externalSources = state.externalSources.map((s) => {
+          if (s.filePath !== filePath) return s;
+          return { ...s, connections: [...s.connections, connection] };
+        });
+        const source = externalSources.find((s) => s.filePath === filePath);
+        if (source) persistExternalSource(source).catch((err) => console.error("Failed to persist external connection:", err));
+        return { externalSources };
+      });
+    },
+
+    updateExternalConnection: (filePath, connection) => {
+      set((state) => {
+        const externalSources = state.externalSources.map((s) => {
+          if (s.filePath !== filePath) return s;
+          return { ...s, connections: s.connections.map((c) => (c.id === connection.id ? connection : c)) };
+        });
+        const source = externalSources.find((s) => s.filePath === filePath);
+        if (source) persistExternalSource(source).catch((err) => console.error("Failed to persist external connection update:", err));
+        return { externalSources };
+      });
+    },
+
+    deleteExternalConnection: (filePath, connectionId) => {
+      set((state) => {
+        const externalSources = state.externalSources.map((s) => {
+          if (s.filePath !== filePath) return s;
+          return { ...s, connections: s.connections.filter((c) => c.id !== connectionId) };
+        });
+        const source = externalSources.find((s) => s.filePath === filePath);
+        if (source) persistExternalSource(source).catch((err) => console.error("Failed to persist external connection delete:", err));
+        return { externalSources };
+      });
+    },
+
+    duplicateExternalConnection: (filePath, connectionId) => {
+      const state = useAppStore.getState();
+      const source = state.externalSources.find((s) => s.filePath === filePath);
+      if (!source) return;
+      const original = source.connections.find((c) => c.id === connectionId);
+      if (!original) return;
+      const prefix = `ext:${filePath}::`;
+      const rawId = `conn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      const duplicate: SavedConnection = {
+        ...original,
+        id: `${prefix}${rawId}`,
+        name: `Copy of ${original.name}`,
+      };
+      const newSource = { ...source, connections: [...source.connections, duplicate] };
+      set((s) => ({
+        externalSources: s.externalSources.map((es) => (es.filePath === filePath ? newSource : es)),
+      }));
+      persistExternalSource(newSource).catch((err) => console.error("Failed to persist external duplicate:", err));
+    },
+
+    addExternalFolder: (filePath, folder) => {
+      set((state) => {
+        const externalSources = state.externalSources.map((s) => {
+          if (s.filePath !== filePath) return s;
+          return { ...s, folders: [...s.folders, folder] };
+        });
+        const source = externalSources.find((s) => s.filePath === filePath);
+        if (source) persistExternalSource(source).catch((err) => console.error("Failed to persist external folder:", err));
+        return { externalSources };
+      });
+    },
+
+    deleteExternalFolder: (filePath, folderId) => {
+      set((state) => {
+        const externalSources = state.externalSources.map((s) => {
+          if (s.filePath !== filePath) return s;
+          const rootId = `ext-root:${filePath}`;
+          const deletedFolder = s.folders.find((f) => f.id === folderId);
+          const parentId = deletedFolder?.parentId ?? rootId;
+          const folders = s.folders
+            .map((f) => (f.parentId === folderId ? { ...f, parentId } : f))
+            .filter((f) => f.id !== folderId);
+          const connections = s.connections.map((c) =>
+            c.folderId === folderId ? { ...c, folderId: parentId } : c
+          );
+          return { ...s, folders, connections };
+        });
+        const source = externalSources.find((s) => s.filePath === filePath);
+        if (source) persistExternalSource(source).catch((err) => console.error("Failed to persist external folder delete:", err));
+        return { externalSources };
+      });
+    },
+
+    moveConnectionToExternalFolder: (connectionId, folderId) => {
+      const filePath = externalFilePathFromId(folderId);
+      if (!filePath) return;
+
+      set((state) => {
+        // Check if connection is from user-owned connections
+        const userConn = state.connections.find((c) => c.id === connectionId);
+        if (userConn) {
+          // Move user connection into external source
+          const prefix = `ext:${filePath}::`;
+          const extConn: SavedConnection = {
+            ...userConn,
+            id: `${prefix}${userConn.id}`,
+            folderId,
+          };
+          const connections = state.connections.filter((c) => c.id !== connectionId);
+          const externalSources = state.externalSources.map((s) => {
+            if (s.filePath !== filePath) return s;
+            return { ...s, connections: [...s.connections, extConn] };
+          });
+          // Persist both sides
+          removeConnection(connectionId).catch((err) => console.error("Failed to remove user connection:", err));
+          const source = externalSources.find((s) => s.filePath === filePath);
+          if (source) persistExternalSource(source).catch((err) => console.error("Failed to persist external move:", err));
+          return { connections, externalSources };
+        }
+
+        // Connection is already external — move within/between external sources
+        const sourceFilePath = externalFilePathFromId(connectionId);
+        if (!sourceFilePath) return state;
+
+        let movedConn: SavedConnection | null = null;
+        let externalSources = state.externalSources.map((s) => {
+          if (s.filePath !== sourceFilePath) return s;
+          const conn = s.connections.find((c) => c.id === connectionId);
+          if (conn) movedConn = { ...conn };
+          return { ...s, connections: s.connections.filter((c) => c.id !== connectionId) };
+        });
+
+        if (!movedConn) return state;
+
+        if (sourceFilePath === filePath) {
+          // Same file — just update folderId
+          (movedConn as SavedConnection).folderId = folderId;
+          externalSources = externalSources.map((s) => {
+            if (s.filePath !== filePath) return s;
+            return { ...s, connections: [...s.connections, movedConn!] };
+          });
+        } else {
+          // Different file — re-namespace
+          const oldPrefix = `ext:${sourceFilePath}::`;
+          const newPrefix = `ext:${filePath}::`;
+          let rawId = (movedConn as SavedConnection).id;
+          if (rawId.startsWith(oldPrefix)) rawId = rawId.slice(oldPrefix.length);
+          (movedConn as SavedConnection).id = `${newPrefix}${rawId}`;
+          (movedConn as SavedConnection).folderId = folderId;
+          externalSources = externalSources.map((s) => {
+            if (s.filePath !== filePath) return s;
+            return { ...s, connections: [...s.connections, movedConn!] };
+          });
+        }
+
+        // Persist affected sources
+        for (const fp of [sourceFilePath, filePath]) {
+          const source = externalSources.find((s) => s.filePath === fp);
+          if (source) persistExternalSource(source).catch((err) => console.error("Failed to persist external move:", err));
+        }
+        return { externalSources };
       });
     },
 

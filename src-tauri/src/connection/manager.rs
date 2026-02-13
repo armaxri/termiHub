@@ -1,9 +1,13 @@
+use std::path::Path;
 use std::sync::Mutex;
 
 use anyhow::{Context, Result};
 use tauri::AppHandle;
 
-use super::config::{ConnectionFolder, ConnectionStore, SavedConnection};
+use super::config::{
+    ConnectionFolder, ConnectionStore, ExternalConnectionStore, SavedConnection,
+};
+use super::settings::{AppSettings, SettingsStorage};
 use super::storage::ConnectionStorage;
 use crate::terminal::backend::ConnectionConfig;
 
@@ -15,10 +19,21 @@ fn strip_ssh_password(mut connection: SavedConnection) -> SavedConnection {
     connection
 }
 
+/// Result of loading a single external connection file.
+pub struct ExternalSource {
+    pub file_path: String,
+    pub name: String,
+    pub folders: Vec<ConnectionFolder>,
+    pub connections: Vec<SavedConnection>,
+    pub error: Option<String>,
+}
+
 /// Manages saved connections and folders with file persistence.
 pub struct ConnectionManager {
     store: Mutex<ConnectionStore>,
     storage: ConnectionStorage,
+    settings: Mutex<AppSettings>,
+    settings_storage: SettingsStorage,
 }
 
 impl ConnectionManager {
@@ -42,9 +57,14 @@ impl ConnectionManager {
             storage.save(&store).context("Failed to strip stored passwords on migration")?;
         }
 
+        let settings_storage = SettingsStorage::new(app_handle)?;
+        let settings = settings_storage.load()?;
+
         Ok(Self {
             store: Mutex::new(store),
             storage,
+            settings: Mutex::new(settings),
+            settings_storage,
         })
     }
 
@@ -154,4 +174,131 @@ impl ConnectionManager {
         self.storage.save(&store).context("Failed to persist after import")?;
         Ok(count)
     }
+
+    /// Get the current application settings.
+    pub fn get_settings(&self) -> AppSettings {
+        self.settings.lock().unwrap().clone()
+    }
+
+    /// Update and persist application settings.
+    pub fn save_settings(&self, new_settings: AppSettings) -> Result<()> {
+        self.settings_storage
+            .save(&new_settings)
+            .context("Failed to persist settings")?;
+        *self.settings.lock().unwrap() = new_settings;
+        Ok(())
+    }
+
+    /// Load all enabled external connection files and return them as sources.
+    pub fn load_external_sources(&self) -> Vec<ExternalSource> {
+        let settings = self.settings.lock().unwrap().clone();
+        let mut sources = Vec::new();
+
+        for file_cfg in &settings.external_connection_files {
+            if !file_cfg.enabled {
+                continue;
+            }
+
+            sources.push(load_single_external_file(&file_cfg.path));
+        }
+
+        sources
+    }
+}
+
+/// Load and namespace a single external connection file.
+fn load_single_external_file(file_path: &str) -> ExternalSource {
+    match try_load_external_file(file_path) {
+        Ok(source) => source,
+        Err(err) => ExternalSource {
+            file_path: file_path.to_string(),
+            name: filename_from_path(file_path),
+            folders: Vec::new(),
+            connections: Vec::new(),
+            error: Some(err.to_string()),
+        },
+    }
+}
+
+/// Try to load and parse an external connection file, namespacing all IDs.
+fn try_load_external_file(file_path: &str) -> Result<ExternalSource> {
+    let data = std::fs::read_to_string(file_path)
+        .with_context(|| format!("Failed to read external file: {}", file_path))?;
+
+    let ext_store: ExternalConnectionStore = serde_json::from_str(&data)
+        .with_context(|| format!("Failed to parse external file: {}", file_path))?;
+
+    let prefix = format!("ext:{}::", file_path);
+    let root_id = format!("ext-root:{}", file_path);
+    let display_name = ext_store
+        .name
+        .clone()
+        .unwrap_or_else(|| filename_from_path(file_path));
+
+    // Create synthetic root folder
+    let mut folders = vec![ConnectionFolder {
+        id: root_id.clone(),
+        name: display_name.clone(),
+        parent_id: None,
+        is_expanded: true,
+    }];
+
+    // Namespace and remap folders
+    for mut folder in ext_store.folders {
+        let original_id = folder.id.clone();
+        folder.id = format!("{}{}", prefix, original_id);
+        folder.parent_id = Some(match folder.parent_id {
+            Some(pid) => format!("{}{}", prefix, pid),
+            None => root_id.clone(),
+        });
+        folders.push(folder);
+    }
+
+    // Namespace and remap connections, stripping SSH passwords
+    let mut connections = Vec::new();
+    for mut conn in ext_store.connections {
+        conn.id = format!("{}{}", prefix, conn.id);
+        conn.folder_id = Some(match conn.folder_id {
+            Some(fid) => format!("{}{}", prefix, fid),
+            None => root_id.clone(),
+        });
+        connections.push(strip_ssh_password(conn));
+    }
+
+    Ok(ExternalSource {
+        file_path: file_path.to_string(),
+        name: display_name,
+        folders,
+        connections,
+        error: None,
+    })
+}
+
+/// Write an `ExternalConnectionStore` to a given file path.
+pub fn save_external_file(
+    file_path: &str,
+    name: &str,
+    folders: Vec<ConnectionFolder>,
+    connections: Vec<SavedConnection>,
+) -> Result<()> {
+    let store = ExternalConnectionStore {
+        name: Some(name.to_string()),
+        version: "1".to_string(),
+        folders,
+        connections: connections.into_iter().map(strip_ssh_password).collect(),
+    };
+    let data = serde_json::to_string_pretty(&store)
+        .context("Failed to serialize external connection file")?;
+    std::fs::write(file_path, data)
+        .with_context(|| format!("Failed to write external file: {}", file_path))?;
+    Ok(())
+}
+
+/// Extract a human-readable name from a file path.
+fn filename_from_path(path: &str) -> String {
+    Path::new(path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("Unknown")
+        .to_string()
 }

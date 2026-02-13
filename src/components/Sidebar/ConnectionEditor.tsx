@@ -21,19 +21,50 @@ const TYPE_OPTIONS: { value: ConnectionType; label: string }[] = [
   { value: "telnet", label: "Telnet" },
 ];
 
+/**
+ * Determine the external file path from a namespaced ID.
+ */
+function externalFilePathFromId(id: string): string | null {
+  if (id.startsWith("ext:")) {
+    const rest = id.slice(4);
+    const sep = rest.indexOf("::");
+    return sep >= 0 ? rest.slice(0, sep) : null;
+  }
+  if (id.startsWith("ext-root:")) {
+    return id.slice(9);
+  }
+  return null;
+}
+
 export function ConnectionEditor() {
   const editingConnectionId = useAppStore((s) => s.editingConnectionId);
   const connections = useAppStore((s) => s.connections);
   const folders = useAppStore((s) => s.folders);
+  const externalSources = useAppStore((s) => s.externalSources);
   const addConnection = useAppStore((s) => s.addConnection);
   const updateConnection = useAppStore((s) => s.updateConnection);
+  const addExternalConnection = useAppStore((s) => s.addExternalConnection);
+  const updateExternalConnection = useAppStore((s) => s.updateExternalConnection);
   const setEditingConnection = useAppStore((s) => s.setEditingConnection);
 
   const editingConnectionFolderId = useAppStore((s) => s.editingConnectionFolderId);
 
+  // Determine if editing belongs to an external source
+  const extFilePath = editingConnectionId && editingConnectionId !== "new"
+    ? externalFilePathFromId(editingConnectionId)
+    : (editingConnectionFolderId ? externalFilePathFromId(editingConnectionFolderId) : null);
+
+  const extSource = extFilePath
+    ? externalSources.find((s) => s.filePath === extFilePath)
+    : null;
+
   const existingConnection = editingConnectionId !== "new"
-    ? connections.find((c) => c.id === editingConnectionId)
+    ? (extSource
+        ? extSource.connections.find((c) => c.id === editingConnectionId)
+        : connections.find((c) => c.id === editingConnectionId))
     : undefined;
+
+  const availableFolders = extSource ? extSource.folders : folders;
 
   const [defaultShell, setDefaultShell] = useState("bash");
   useEffect(() => {
@@ -62,7 +93,22 @@ export function ConnectionEditor() {
 
     const opts = terminalOptions.horizontalScrolling ? terminalOptions : undefined;
 
-    if (existingConnection) {
+    if (extFilePath) {
+      // Saving to an external source
+      const prefix = `ext:${extFilePath}::`;
+      if (existingConnection) {
+        updateExternalConnection(extFilePath, { ...existingConnection, name, config: connectionConfig, folderId, terminalOptions: opts });
+      } else {
+        const rawId = `conn-${Date.now()}`;
+        addExternalConnection(extFilePath, {
+          id: `${prefix}${rawId}`,
+          name,
+          config: connectionConfig,
+          folderId,
+          terminalOptions: opts,
+        });
+      }
+    } else if (existingConnection) {
       updateConnection({ ...existingConnection, name, config: connectionConfig, folderId, terminalOptions: opts });
     } else {
       addConnection({
@@ -74,7 +120,7 @@ export function ConnectionEditor() {
       });
     }
     setEditingConnection(null);
-  }, [name, folderId, connectionConfig, terminalOptions, existingConnection, addConnection, updateConnection, setEditingConnection]);
+  }, [name, folderId, connectionConfig, terminalOptions, existingConnection, extFilePath, addConnection, updateConnection, addExternalConnection, updateExternalConnection, setEditingConnection]);
 
   const handleCancel = useCallback(() => {
     setEditingConnection(null);
@@ -105,7 +151,7 @@ export function ConnectionEditor() {
             onChange={(e) => setFolderId(e.target.value || null)}
           >
             <option value="">(Root)</option>
-            {folders.map((f) => (
+            {availableFolders.map((f) => (
               <option key={f.id} value={f.id}>{f.name}</option>
             ))}
           </select>
