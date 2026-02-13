@@ -40,6 +40,16 @@ impl LocalShell {
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
 
+        // Start in user's home directory (falls back to process CWD if unavailable)
+        #[cfg(unix)]
+        if let Ok(home) = std::env::var("HOME") {
+            command.cwd(home);
+        }
+        #[cfg(windows)]
+        if let Ok(home) = std::env::var("USERPROFILE") {
+            command.cwd(home);
+        }
+
         let child = pty_pair
             .slave
             .spawn_command(command)
