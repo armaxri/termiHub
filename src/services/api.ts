@@ -38,6 +38,11 @@ export async function listAvailableShells(): Promise<string[]> {
   return await invoke<string[]>("list_available_shells");
 }
 
+/** Check if a local X server is available for X11 forwarding */
+export async function checkX11Available(): Promise<boolean> {
+  return await invoke<boolean>("check_x11_available");
+}
+
 // --- Connection persistence commands ---
 
 interface ConnectionData {

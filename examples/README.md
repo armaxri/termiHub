@@ -32,12 +32,23 @@ When you're done, stop the test containers:
 
 The example config (`config/connections.json`) includes pre-configured connections:
 
-| Connection | Type | Host | Port | Credentials |
-|-----------|------|------|------|-------------|
-| Docker SSH | SSH | 127.0.0.1 | 2222 | `testuser` / `testpass` |
-| Docker Telnet | Telnet | 127.0.0.1 | 2323 | `testuser` / `testpass` |
+| Connection | Type | Host | Port | Credentials | Notes |
+|-----------|------|------|------|-------------|-------|
+| Docker SSH | SSH | 127.0.0.1 | 2222 | `testuser` / `testpass` | |
+| Docker SSH + X11 | SSH | 127.0.0.1 | 2222 | `testuser` / `testpass` | X11 forwarding enabled |
+| Docker Telnet | Telnet | 127.0.0.1 | 2323 | `testuser` / `testpass` | |
 
 SSH connections prompt for the password at connect time.
+
+### X11 Forwarding Testing
+
+The Docker container includes `xclock` and `xeyes` for testing X11 forwarding. To test:
+
+1. **macOS**: Install and start [XQuartz](https://www.xquartz.org/). After installing, log out and back in so `DISPLAY` is set.
+2. **Linux**: Your X server should already be running.
+3. Connect using the "Docker SSH + X11" connection.
+4. Run `xclock` or `xeyes` in the terminal — the window should appear on your local display.
+5. Verify with `echo $DISPLAY` — it should show something like `localhost:N.0`.
 
 ## Serial Port Testing
 
@@ -63,7 +74,7 @@ examples/
 ├── config/
 │   └── connections.json               # Pre-configured test connections
 ├── docker/
-│   ├── Dockerfile                     # Alpine + SSH + Telnet
+│   ├── Dockerfile                     # Ubuntu + SSH + Telnet + X11
 │   ├── docker-compose.yml             # Port mappings (2222, 2323)
 │   └── entrypoint.sh                  # Starts sshd + telnetd
 ├── scripts/

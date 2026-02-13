@@ -29,6 +29,7 @@ export interface SshConfig {
   authMethod: "password" | "key";
   password?: string;
   keyPath?: string;
+  enableX11Forwarding?: boolean;
 }
 
 export interface TelnetConfig {

@@ -9,7 +9,7 @@ import "./ConnectionEditor.css";
 function getDefaultConfigs(defaultShell: string): Record<ConnectionType, ConnectionConfig> {
   return {
     local: { type: "local", config: { shellType: defaultShell } as LocalShellConfig },
-    ssh: { type: "ssh", config: { host: "", port: 22, username: "", authMethod: "password" } },
+    ssh: { type: "ssh", config: { host: "", port: 22, username: "", authMethod: "password", enableX11Forwarding: false } },
     telnet: { type: "telnet", config: { host: "", port: 23 } },
     serial: { type: "serial", config: { port: "", baudRate: 115200, dataBits: 8, stopBits: 1, parity: "none", flowControl: "none" } },
   };
