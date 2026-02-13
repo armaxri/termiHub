@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Testing strategy document (`docs/testing.md`) covering unit, integration, E2E, and visual regression testing
+- E2E test scaffolding with WebdriverIO and Tauri service (`wdio.conf.js`, `tests/e2e/`)
+- VS Code workspace settings (`.vscode/settings.json`) with Vitest, ESLint, Prettier, and rust-analyzer configuration
+- VS Code extension recommendations for Vitest, Test Explorer, ESLint, and Prettier
 - LICENSE file with full MIT License text
 - "Built With" section in README with links to all major dependencies
 - GitHub Actions CI/CD workflows (code quality, build, release)
