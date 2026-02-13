@@ -65,21 +65,21 @@ export interface TerminalTab {
 }
 
 export interface LeafPanel {
-  type: 'leaf';
+  type: "leaf";
   id: string;
   tabs: TerminalTab[];
   activeTabId: string | null;
 }
 
 export interface SplitContainer {
-  type: 'split';
+  type: "split";
   id: string;
-  direction: 'horizontal' | 'vertical';
+  direction: "horizontal" | "vertical";
   children: PanelNode[];
 }
 
 export type PanelNode = LeafPanel | SplitContainer;
-export type DropEdge = 'left' | 'right' | 'top' | 'bottom' | 'center';
+export type DropEdge = "left" | "right" | "top" | "bottom" | "center";
 
 export interface EditorStatus {
   line: number;

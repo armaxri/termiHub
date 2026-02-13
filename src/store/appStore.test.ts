@@ -2,7 +2,9 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 // Mock service modules before importing the store
 vi.mock("@/services/storage", () => ({
-  loadConnections: vi.fn(() => Promise.resolve({ connections: [], folders: [], externalSources: [] })),
+  loadConnections: vi.fn(() =>
+    Promise.resolve({ connections: [], folders: [], externalSources: [] })
+  ),
   persistConnection: vi.fn(() => Promise.resolve()),
   removeConnection: vi.fn(() => Promise.resolve()),
   persistFolder: vi.fn(() => Promise.resolve()),
@@ -33,7 +35,7 @@ describe("appStore", () => {
 
   describe("addTab", () => {
     it("adds a tab to the active panel", () => {
-      const { addTab, rootPanel, activePanelId } = useAppStore.getState();
+      const { addTab, activePanelId } = useAppStore.getState();
       addTab("Test Shell", "local", { type: "local", config: { shellType: "zsh" } });
 
       const state = useAppStore.getState();
@@ -70,7 +72,10 @@ describe("appStore", () => {
       useAppStore.getState().closeTab(tabToClose, stateAfterAdd.activePanelId!);
 
       const stateAfterClose = useAppStore.getState();
-      const updatedLeaf = findLeaf(stateAfterClose.rootPanel, stateAfterClose.activePanelId!) as LeafPanel;
+      const updatedLeaf = findLeaf(
+        stateAfterClose.rootPanel,
+        stateAfterClose.activePanelId!
+      ) as LeafPanel;
       expect(updatedLeaf.tabs).toHaveLength(1);
       expect(updatedLeaf.tabs[0].title).toBe("Tab 2");
     });

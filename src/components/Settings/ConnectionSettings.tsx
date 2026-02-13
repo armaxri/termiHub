@@ -23,9 +23,7 @@ export function ConnectionSettings({ config, onChange }: ConnectionSettingsProps
   }, []);
 
   // While loading, show at least the currently selected shell
-  const options = availableShells.length > 0
-    ? availableShells
-    : [config.shellType];
+  const options = availableShells.length > 0 ? availableShells : [config.shellType];
 
   return (
     <div className="settings-form">
@@ -36,7 +34,9 @@ export function ConnectionSettings({ config, onChange }: ConnectionSettingsProps
           onChange={(e) => onChange({ ...config, shellType: e.target.value as ShellType })}
         >
           {options.map((shell) => (
-            <option key={shell} value={shell}>{SHELL_LABELS[shell] ?? shell}</option>
+            <option key={shell} value={shell}>
+              {SHELL_LABELS[shell] ?? shell}
+            </option>
           ))}
         </select>
       </label>

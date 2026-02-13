@@ -45,7 +45,9 @@
   height: 28px;
   border-radius: var(--radius-md);
   color: var(--text-secondary);
-  transition: color var(--transition-fast), background-color var(--transition-fast);
+  transition:
+    color var(--transition-fast),
+    background-color var(--transition-fast);
 }
 
 .terminal-view__toolbar-btn:hover {

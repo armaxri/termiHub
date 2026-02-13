@@ -827,6 +827,39 @@ See [`docs/manual-testing.md`](docs/manual-testing.md) for the manual test plan 
 
 ---
 
+## CI/CD
+
+### GitHub Actions Workflows
+
+Three workflows run automatically in `.github/workflows/`:
+
+| Workflow | Trigger | What it does |
+|----------|---------|-------------|
+| **Code Quality** | Push/PR to `main` | Rust fmt + clippy + audit, ESLint, Prettier, TypeScript type check, tests on all 3 OSes, security audit, commit lint (PR only) |
+| **Build** | Push/PR to `main` | Builds Tauri app for macOS (x64 + ARM64), Windows (x64), Linux (x64 + ARM64) |
+| **Release** | Tag `v*.*.*` | Creates GitHub Release, builds and uploads platform installers |
+
+### Running Quality Checks Locally
+
+```bash
+# Frontend
+pnpm run lint            # ESLint
+pnpm run format:check    # Prettier (use format to auto-fix)
+pnpm test                # Vitest
+
+# Rust
+cd src-tauri
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test
+```
+
+### Release Process
+
+See [`docs/releasing.md`](docs/releasing.md) for the full release checklist, version bump locations, and post-release verification steps.
+
+---
+
 ## Troubleshooting Common Issues
 
 ### Serial Port Access Denied (Linux)

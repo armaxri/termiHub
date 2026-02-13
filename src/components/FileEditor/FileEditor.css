@@ -62,7 +62,9 @@
   border-radius: var(--radius-md);
   background: transparent;
   cursor: pointer;
-  transition: color var(--transition-fast), background-color var(--transition-fast);
+  transition:
+    color var(--transition-fast),
+    background-color var(--transition-fast);
 }
 
 .file-editor__save-btn:hover:not(:disabled) {
@@ -97,8 +99,12 @@
 }
 
 @keyframes file-editor-spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .file-editor__spinner {

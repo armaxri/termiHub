@@ -1,0 +1,154 @@
+name: Build
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    name: Build on ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'macos-latest'
+            os: macos-latest
+            rust_target: 'x86_64-apple-darwin'
+            artifact_name: 'TermiHub-macOS-x64'
+          - platform: 'macos-latest-arm'
+            os: macos-latest
+            rust_target: 'aarch64-apple-darwin'
+            artifact_name: 'TermiHub-macOS-arm64'
+          - platform: 'ubuntu-latest'
+            os: ubuntu-latest
+            rust_target: 'x86_64-unknown-linux-gnu'
+            artifact_name: 'TermiHub-Linux-x64'
+          - platform: 'ubuntu-latest-arm64'
+            os: ubuntu-latest
+            rust_target: 'aarch64-unknown-linux-gnu'
+            artifact_name: 'TermiHub-Linux-arm64'
+          - platform: 'windows-latest'
+            os: windows-latest
+            rust_target: 'x86_64-pc-windows-msvc'
+            artifact_name: 'TermiHub-Windows-x64'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: ${{ matrix.platform }}
+
+      - name: Install system dependencies (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            libssl-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Install ARM64 cross-compilation tools (Ubuntu ARM64)
+        if: matrix.rust_target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+          # Add ARM64 architecture for cross-compilation dependencies
+          sudo dpkg --add-architecture arm64
+          sudo bash -c 'cat > /etc/apt/sources.list.d/arm64.list <<EOF
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ $(lsb_release -sc) main restricted universe multiverse
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ $(lsb_release -sc)-updates main restricted universe multiverse
+          EOF'
+
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev:arm64 \
+            libssl-dev:arm64 \
+            libgtk-3-dev:arm64 \
+            libayatana-appindicator3-dev:arm64 \
+            librsvg2-dev:arm64
+
+          # Set environment variables for cross-compilation
+          echo "PKG_CONFIG_SYSROOT_DIR=/usr/aarch64-linux-gnu" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig" >> $GITHUB_ENV
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build frontend
+        run: pnpm run build
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Don't create release, just build
+          tagName: ''
+          releaseName: ''
+          releaseBody: ''
+          releaseDraft: false
+          prerelease: false
+          args: --target ${{ matrix.rust_target }}
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: |
+            src-tauri/target/${{ matrix.rust_target }}/release/bundle/**/*
+          if-no-files-found: error
+          retention-days: 7
+
+  # Build size report (for main branch only)
+  build-size-report:
+    name: Build Size Report
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    needs: build
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Calculate sizes
+        run: |
+          echo "# Build Size Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Platform | Size |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|------|" >> $GITHUB_STEP_SUMMARY
+
+          for dir in TermiHub-*; do
+            if [ -d "$dir" ]; then
+              size=$(du -sh "$dir" | cut -f1)
+              echo "| $dir | $size |" >> $GITHUB_STEP_SUMMARY
+            fi
+          done

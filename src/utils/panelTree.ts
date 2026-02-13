@@ -97,8 +97,7 @@ export function splitLeaf(
 ): PanelNode {
   if (root.type === "leaf") {
     if (root.id !== targetId) return root;
-    const children =
-      position === "before" ? [newLeaf, root] : [root, newLeaf];
+    const children = position === "before" ? [newLeaf, root] : [root, newLeaf];
     return {
       type: "split",
       id: generatePanelId(),
@@ -108,9 +107,7 @@ export function splitLeaf(
   }
 
   // Check if target is a direct child and directions match — insert as sibling
-  const targetIndex = root.children.findIndex(
-    (c) => c.type === "leaf" && c.id === targetId
-  );
+  const targetIndex = root.children.findIndex((c) => c.type === "leaf" && c.id === targetId);
   if (targetIndex !== -1 && root.direction === direction) {
     const insertIdx = position === "before" ? targetIndex : targetIndex + 1;
     const newChildren = [...root.children];

@@ -11,7 +11,9 @@
   pointer-events: auto;
   border: 2px dashed transparent;
   border-radius: var(--radius-sm);
-  transition: background-color 150ms ease, border-color 150ms ease;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease;
 }
 
 /* Edge zones — 20% strips from each side */

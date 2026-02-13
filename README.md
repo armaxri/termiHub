@@ -8,6 +8,12 @@
 A modern, cross-platform terminal hub for embedded development workflows.
 </p>
 
+<p align="center">
+  <a href="https://github.com/armaxri/termiHub/actions/workflows/code-quality.yml"><img src="https://github.com/armaxri/termiHub/actions/workflows/code-quality.yml/badge.svg" alt="Code Quality"></a>
+  <a href="https://github.com/armaxri/termiHub/actions/workflows/build.yml"><img src="https://github.com/armaxri/termiHub/actions/workflows/build.yml/badge.svg" alt="Build"></a>
+  <a href="https://github.com/armaxri/termiHub/actions/workflows/release.yml"><img src="https://github.com/armaxri/termiHub/actions/workflows/release.yml/badge.svg" alt="Release"></a>
+</p>
+
 ---
 
 TermiHub provides a VS Code-like interface for managing multiple terminal connections with support for split views, drag-and-drop tabs, and organized connection management. Built with Tauri, React, and Rust.
@@ -29,6 +35,8 @@ TermiHub provides a VS Code-like interface for managing multiple terminal connec
 - **[Serial Setup](docs/serial-setup.md)** — Serial port configuration per platform
 - **[SSH Configuration](docs/ssh-configuration.md)** — SSH keys, X11 forwarding, SFTP
 - **[Contributing](docs/contributing.md)** — Development workflow, coding standards, architecture
+- **[Raspberry Pi](docs/raspberry-pi.md)** — ARM64 deployment and remote agent setup
+- **[Releasing](docs/releasing.md)** — Release process and version management
 
 For the full internal architecture documentation, see [CLAUDE.md](CLAUDE.md).
 

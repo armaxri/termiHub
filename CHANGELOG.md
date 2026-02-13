@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- GitHub Actions CI/CD workflows (code quality, build, release)
+- ESLint, Prettier, and commitlint configuration for code quality enforcement
+- Raspberry Pi deployment guide (`docs/raspberry-pi.md`)
+- Release process documentation (`docs/releasing.md`)
 - Automated unit tests for Rust backend (~41 new tests) covering shell detection, file utilities, connection config serialization, external file management, and environment variable expansion
 - Automated unit tests for TypeScript frontend (~43 tests) covering formatters, panel tree operations, and Zustand store actions
 - Vitest test framework for frontend with jsdom environment and coverage support

@@ -11,7 +11,12 @@ export function useTerminal() {
   const setActiveTab = useAppStore((s) => s.setActiveTab);
 
   const openTerminal = useCallback(
-    (title: string, connectionType: ConnectionType, config?: ConnectionConfig, panelId?: string) => {
+    (
+      title: string,
+      connectionType: ConnectionType,
+      config?: ConnectionConfig,
+      panelId?: string
+    ) => {
       addTab(title, connectionType, config, panelId);
     },
     [addTab]

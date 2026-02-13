@@ -22,11 +22,8 @@ export function Sidebar() {
         <span className="sidebar__title">{VIEW_TITLES[sidebarView]}</span>
       </div>
       <div className="sidebar__content">
-        {sidebarView === "connections" && (
-          editingConnectionId
-            ? <ConnectionEditor />
-            : <ConnectionList />
-        )}
+        {sidebarView === "connections" &&
+          (editingConnectionId ? <ConnectionEditor /> : <ConnectionList />)}
         {sidebarView === "files" && <FileBrowser />}
       </div>
     </div>

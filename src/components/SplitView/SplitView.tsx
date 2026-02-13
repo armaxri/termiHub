@@ -9,7 +9,14 @@ import {
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
-import { Terminal as TerminalIcon, Wifi, Cable, Globe, Settings as SettingsIcon, FileEdit } from "lucide-react";
+import {
+  Terminal as TerminalIcon,
+  Wifi,
+  Cable,
+  Globe,
+  Settings as SettingsIcon,
+  FileEdit,
+} from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { PanelNode, LeafPanel, TerminalTab, ConnectionType, DropEdge } from "@/types/terminal";
 import { getAllLeaves, findLeafByTab } from "@/utils/panelTree";
@@ -36,9 +43,7 @@ export function SplitView() {
 
   const [activeDragTab, setActiveDragTab] = useState<TerminalTab | null>(null);
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
-  );
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
   const handleDragStart = useCallback(
     (event: DragStartEvent) => {
@@ -107,11 +112,7 @@ export function SplitView() {
   );
 
   return (
-    <DndContext
-      sensors={sensors}
-      onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
-    >
+    <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
       <PanelNodeRenderer
         node={rootPanel}
         setActivePanel={setActivePanel}
@@ -133,11 +134,7 @@ interface PanelNodeRendererProps {
 function PanelNodeRenderer({ node, setActivePanel, activeDragTab }: PanelNodeRendererProps) {
   if (node.type === "leaf") {
     return (
-      <LeafPanelView
-        panel={node}
-        setActivePanel={setActivePanel}
-        activeDragTab={activeDragTab}
-      />
+      <LeafPanelView panel={node} setActivePanel={setActivePanel} activeDragTab={activeDragTab} />
     );
   }
 
@@ -161,12 +158,8 @@ function PanelNodeRenderer({ node, setActivePanel, activeDragTab }: PanelNodeRen
 function SplitChild({ index, children }: { index: number; children: React.ReactNode }) {
   return (
     <>
-      {index > 0 && (
-        <Separator className="split-view__resize-handle" />
-      )}
-      <Panel minSize={10}>
-        {children}
-      </Panel>
+      {index > 0 && <Separator className="split-view__resize-handle" />}
+      <Panel minSize={10}>{children}</Panel>
     </>
   );
 }
@@ -181,15 +174,10 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
   // Determine if edge drop zones should be hidden:
   // Hide edges on source panel if it has only 1 tab (dragging it out would leave it empty)
   const hideEdges =
-    activeDragTab !== null &&
-    activeDragTab.panelId === panel.id &&
-    panel.tabs.length <= 1;
+    activeDragTab !== null && activeDragTab.panelId === panel.id && panel.tabs.length <= 1;
 
   return (
-    <div
-      className="split-view__panel-content"
-      onClick={() => setActivePanel(panel.id)}
-    >
+    <div className="split-view__panel-content" onClick={() => setActivePanel(panel.id)}>
       <TabBar panelId={panel.id} tabs={panel.tabs} />
       <div className="split-view__terminal-area">
         {panel.tabs.length === 0 && (
@@ -199,10 +187,7 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
         )}
         {panel.tabs.map((tab) =>
           tab.contentType === "settings" ? (
-            <SettingsPanel
-              key={tab.id}
-              isVisible={tab.id === panel.activeTabId}
-            />
+            <SettingsPanel key={tab.id} isVisible={tab.id === panel.activeTabId} />
           ) : tab.contentType === "editor" && tab.editorMeta ? (
             <FileEditor
               key={tab.id}
@@ -211,16 +196,10 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
               isVisible={tab.id === panel.activeTabId}
             />
           ) : (
-            <TerminalSlot
-              key={tab.id}
-              tabId={tab.id}
-              isVisible={tab.id === panel.activeTabId}
-            />
+            <TerminalSlot key={tab.id} tabId={tab.id} isVisible={tab.id === panel.activeTabId} />
           )
         )}
-        {activeDragTab && (
-          <PanelDropZone panelId={panel.id} hideEdges={hideEdges} />
-        )}
+        {activeDragTab && <PanelDropZone panelId={panel.id} hideEdges={hideEdges} />}
       </div>
     </div>
   );
@@ -274,9 +253,12 @@ function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: boolean 
 }
 
 function TabDragOverlay({ tab }: { tab: TerminalTab }) {
-  const Icon = tab.contentType === "settings" ? SettingsIcon
-    : tab.contentType === "editor" ? FileEdit
-    : TYPE_ICONS[tab.connectionType];
+  const Icon =
+    tab.contentType === "settings"
+      ? SettingsIcon
+      : tab.contentType === "editor"
+        ? FileEdit
+        : TYPE_ICONS[tab.connectionType];
   return (
     <div className="tab tab--drag-overlay">
       <Icon size={14} className="tab__icon" />

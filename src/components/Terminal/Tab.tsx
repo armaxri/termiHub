@@ -1,7 +1,21 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import * as ContextMenu from "@radix-ui/react-context-menu";
-import { X, Terminal, Wifi, Cable, Globe, Settings as SettingsIcon, FileEdit, Eraser, FileDown, ClipboardCopy, ArrowRightLeft, Check, Palette } from "lucide-react";
+import {
+  X,
+  Terminal,
+  Wifi,
+  Cable,
+  Globe,
+  Settings as SettingsIcon,
+  FileEdit,
+  Eraser,
+  FileDown,
+  ClipboardCopy,
+  ArrowRightLeft,
+  Check,
+  Palette,
+} from "lucide-react";
 import { TerminalTab } from "@/types/terminal";
 import { ConnectionType } from "@/types/terminal";
 
@@ -26,15 +40,23 @@ interface TabProps {
   onSetColor?: () => void;
 }
 
-export function Tab({ tab, onActivate, onClose, onClear, onSave, onCopyToClipboard, horizontalScrolling, onToggleHorizontalScrolling, isDirty, tabColor, onSetColor }: TabProps) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: tab.id, data: { panelId: tab.panelId, type: "tab" } });
+export function Tab({
+  tab,
+  onActivate,
+  onClose,
+  onClear,
+  onSave,
+  onCopyToClipboard,
+  horizontalScrolling,
+  onToggleHorizontalScrolling,
+  isDirty,
+  tabColor,
+  onSetColor,
+}: TabProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: tab.id,
+    data: { panelId: tab.panelId, type: "tab" },
+  });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -43,9 +65,12 @@ export function Tab({ tab, onActivate, onClose, onClear, onSave, onCopyToClipboa
     ...(tabColor ? { borderLeft: `3px solid ${tabColor}` } : {}),
   };
 
-  const Icon = tab.contentType === "settings" ? SettingsIcon
-    : tab.contentType === "editor" ? FileEdit
-    : TYPE_ICONS[tab.connectionType];
+  const Icon =
+    tab.contentType === "settings"
+      ? SettingsIcon
+      : tab.contentType === "editor"
+        ? FileEdit
+        : TYPE_ICONS[tab.connectionType];
   const isTerminalTab = tab.contentType === "terminal";
 
   const tabElement = (
@@ -81,27 +106,16 @@ export function Tab({ tab, onActivate, onClose, onClear, onSave, onCopyToClipboa
 
   return (
     <ContextMenu.Root>
-      <ContextMenu.Trigger asChild>
-        {tabElement}
-      </ContextMenu.Trigger>
+      <ContextMenu.Trigger asChild>{tabElement}</ContextMenu.Trigger>
       <ContextMenu.Portal>
         <ContextMenu.Content className="context-menu__content">
-          <ContextMenu.Item
-            className="context-menu__item"
-            onSelect={() => onSave?.()}
-          >
+          <ContextMenu.Item className="context-menu__item" onSelect={() => onSave?.()}>
             <FileDown size={14} /> Save to File
           </ContextMenu.Item>
-          <ContextMenu.Item
-            className="context-menu__item"
-            onSelect={() => onCopyToClipboard?.()}
-          >
+          <ContextMenu.Item className="context-menu__item" onSelect={() => onCopyToClipboard?.()}>
             <ClipboardCopy size={14} /> Copy to Clipboard
           </ContextMenu.Item>
-          <ContextMenu.Item
-            className="context-menu__item"
-            onSelect={() => onClear?.()}
-          >
+          <ContextMenu.Item className="context-menu__item" onSelect={() => onClear?.()}>
             <Eraser size={14} /> Clear Terminal
           </ContextMenu.Item>
           <ContextMenu.Separator className="context-menu__separator" />
@@ -116,10 +130,7 @@ export function Tab({ tab, onActivate, onClose, onClear, onSave, onCopyToClipboa
             <ArrowRightLeft size={14} /> Horizontal Scrolling
           </ContextMenu.CheckboxItem>
           <ContextMenu.Separator className="context-menu__separator" />
-          <ContextMenu.Item
-            className="context-menu__item"
-            onSelect={() => onSetColor?.()}
-          >
+          <ContextMenu.Item className="context-menu__item" onSelect={() => onSetColor?.()}>
             <Palette size={14} /> Set Color...
           </ContextMenu.Item>
         </ContextMenu.Content>

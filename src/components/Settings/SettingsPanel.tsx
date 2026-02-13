@@ -144,8 +144,8 @@ export function SettingsPanel({ isVisible }: SettingsPanelProps) {
             </div>
           </div>
           <p className="settings-panel__description">
-            Load shared connection configs from external JSON files (e.g. from a git repo).
-            External connections appear read-only in the connection list.
+            Load shared connection configs from external JSON files (e.g. from a git repo). External
+            connections appear read-only in the connection list.
           </p>
           {showCreatePrompt && (
             <div className="settings-panel__create-prompt">
@@ -169,18 +169,13 @@ export function SettingsPanel({ isVisible }: SettingsPanelProps) {
               >
                 Save
               </button>
-              <button
-                className="settings-panel__btn"
-                onClick={() => setShowCreatePrompt(false)}
-              >
+              <button className="settings-panel__btn" onClick={() => setShowCreatePrompt(false)}>
                 Cancel
               </button>
             </div>
           )}
           {settings.externalConnectionFiles.length === 0 ? (
-            <div className="settings-panel__empty">
-              No external connection files configured.
-            </div>
+            <div className="settings-panel__empty">No external connection files configured.</div>
           ) : (
             <ul className="settings-panel__file-list">
               {settings.externalConnectionFiles.map((file) => (
@@ -200,10 +195,7 @@ export function SettingsPanel({ isVisible }: SettingsPanelProps) {
                     {file.path}
                   </span>
                   {errorsByPath[file.path] && (
-                    <span
-                      className="settings-panel__file-error"
-                      title={errorsByPath[file.path]}
-                    >
+                    <span className="settings-panel__file-error" title={errorsByPath[file.path]}>
                       <AlertTriangle size={14} />
                     </span>
                   )}

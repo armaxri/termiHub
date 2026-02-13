@@ -106,62 +106,65 @@ export function Terminal({ tabId, config, isVisible }: TerminalProps) {
   const contentDirtyRef = useRef(false);
   const { register, unregister, parkingRef } = useTerminalRegistry();
 
-  const setupTerminal = useCallback(async (xterm: XTerm, fitAddon: FitAddon) => {
-    try {
-      const sessionId = await createTerminal(config);
-      sessionIdRef.current = sessionId;
-
-      // Subscribe to output events
-      const unlistenOutput = await onTerminalOutput((sid, data) => {
-        if (sid === sessionId) {
-          xterm.write(data);
-        }
-      });
-
-      // Subscribe to exit events
-      const unlistenExit = await onTerminalExit((sid, _exitCode) => {
-        if (sid === sessionId) {
-          xterm.writeln("\r\n\x1b[90m[Process exited]\x1b[0m");
-          sessionIdRef.current = null;
-        }
-      });
-
-      // Send user input to backend
-      const onDataDisposable = xterm.onData((data) => {
-        lastInputTimeRef.current = Date.now();
-        if (sessionIdRef.current) {
-          sendInput(sessionIdRef.current, data);
-        }
-      });
-
-      // Send resize events after fit
-      const onResizeDisposable = xterm.onResize(({ cols, rows }) => {
-        if (sessionIdRef.current) {
-          resizeTerminal(sessionIdRef.current, cols, rows);
-        }
-      });
-
-      // Initial resize after connection
+  const setupTerminal = useCallback(
+    async (xterm: XTerm, fitAddon: FitAddon) => {
       try {
-        fitAddon.fit();
-      } catch {
-        // Container might not have dimensions yet
-      }
+        const sessionId = await createTerminal(config);
+        sessionIdRef.current = sessionId;
 
-      cleanupRef.current = () => {
-        unlistenOutput();
-        unlistenExit();
-        onDataDisposable.dispose();
-        onResizeDisposable.dispose();
-        if (sessionIdRef.current) {
-          closeTerminal(sessionIdRef.current);
-          sessionIdRef.current = null;
+        // Subscribe to output events
+        const unlistenOutput = await onTerminalOutput((sid, data) => {
+          if (sid === sessionId) {
+            xterm.write(data);
+          }
+        });
+
+        // Subscribe to exit events
+        const unlistenExit = await onTerminalExit((sid, _exitCode) => {
+          if (sid === sessionId) {
+            xterm.writeln("\r\n\x1b[90m[Process exited]\x1b[0m");
+            sessionIdRef.current = null;
+          }
+        });
+
+        // Send user input to backend
+        const onDataDisposable = xterm.onData((data) => {
+          lastInputTimeRef.current = Date.now();
+          if (sessionIdRef.current) {
+            sendInput(sessionIdRef.current, data);
+          }
+        });
+
+        // Send resize events after fit
+        const onResizeDisposable = xterm.onResize(({ cols, rows }) => {
+          if (sessionIdRef.current) {
+            resizeTerminal(sessionIdRef.current, cols, rows);
+          }
+        });
+
+        // Initial resize after connection
+        try {
+          fitAddon.fit();
+        } catch {
+          // Container might not have dimensions yet
         }
-      };
-    } catch (err) {
-      xterm.writeln(`\x1b[31mFailed to create terminal: ${err}\x1b[0m`);
-    }
-  }, [config]);
+
+        cleanupRef.current = () => {
+          unlistenOutput();
+          unlistenExit();
+          onDataDisposable.dispose();
+          onResizeDisposable.dispose();
+          if (sessionIdRef.current) {
+            closeTerminal(sessionIdRef.current);
+            sessionIdRef.current = null;
+          }
+        };
+      } catch (err) {
+        xterm.writeln(`\x1b[31mFailed to create terminal: ${err}\x1b[0m`);
+      }
+    },
+    [config]
+  );
 
   // Create the terminal element, xterm instance, and register
   useEffect(() => {
@@ -197,7 +200,8 @@ export function Terminal({ tabId, config, isVisible }: TerminalProps) {
         brightCyan: "#29b8db",
         brightWhite: "#e5e5e5",
       },
-      fontFamily: "'MesloLGS Nerd Font Mono', 'MesloLGS NF', 'CaskaydiaCove Nerd Font', 'FiraCode Nerd Font', 'Hack Nerd Font', 'Cascadia Code', 'Fira Code', Menlo, Monaco, 'Courier New', monospace",
+      fontFamily:
+        "'MesloLGS Nerd Font Mono', 'MesloLGS NF', 'CaskaydiaCove Nerd Font', 'FiraCode Nerd Font', 'Hack Nerd Font', 'Cascadia Code', 'Fira Code', Menlo, Monaco, 'Courier New', monospace",
       fontSize: 14,
       lineHeight: 1.2,
       cursorBlink: true,
@@ -321,10 +325,7 @@ export function Terminal({ tabId, config, isVisible }: TerminalProps) {
       const KEYBOARD_IDLE_MS = 800;
       const CHECK_INTERVAL_MS = 500;
       const intervalId = setInterval(() => {
-        if (
-          contentDirtyRef.current &&
-          Date.now() - lastInputTimeRef.current >= KEYBOARD_IDLE_MS
-        ) {
+        if (contentDirtyRef.current && Date.now() - lastInputTimeRef.current >= KEYBOARD_IDLE_MS) {
           contentDirtyRef.current = false;
           try {
             updateHorizontalScrollWidth(xterm, fitAddon, el);

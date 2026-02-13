@@ -86,8 +86,12 @@ export function useLocalFileSystem() {
     navigateTo,
     navigateUp,
     refresh,
-    downloadFile: async () => { /* no-op: files are already local */ },
-    uploadFile: async () => { /* no-op: files are already local */ },
+    downloadFile: async () => {
+      /* no-op: files are already local */
+    },
+    uploadFile: async () => {
+      /* no-op: files are already local */
+    },
     createDirectory,
     createFile,
     deleteEntry,

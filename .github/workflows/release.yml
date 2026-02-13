@@ -1,0 +1,250 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'  # Triggers on version tags like v0.1.0, v1.2.3, etc.
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      version: ${{ steps.get_version.outputs.version }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Get all history for changelog
+
+      - name: Get version from tag
+        id: get_version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Extract changelog for this version from CHANGELOG.md
+          VERSION=${{ steps.get_version.outputs.version }}
+
+          # Get content between version headers
+          CHANGELOG=$(awk "/## \[${VERSION}\]/,/## \[/" CHANGELOG.md | sed '$d' | tail -n +2)
+
+          # If changelog is empty, generate from commits
+          if [ -z "$CHANGELOG" ]; then
+            echo "No changelog entry found, generating from commits..."
+            CHANGELOG=$(git log $(git describe --tags --abbrev=0 HEAD^)..HEAD --pretty=format:"- %s (%h)" --no-merges)
+          fi
+
+          # Save to file (multiline support)
+          echo "$CHANGELOG" > release_notes.md
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ steps.get_version.outputs.version }}
+          release_name: TermiHub v${{ steps.get_version.outputs.version }}
+          body_path: release_notes.md
+          draft: false
+          prerelease: false
+
+  build-and-upload:
+    name: Build and Upload - ${{ matrix.platform }}
+    needs: create-release
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS Intel
+          - platform: 'macos-x64'
+            os: macos-latest
+            rust_target: 'x86_64-apple-darwin'
+            file_ext: '.dmg'
+            bundle_path: 'dmg'
+
+          # macOS Apple Silicon
+          - platform: 'macos-arm64'
+            os: macos-latest
+            rust_target: 'aarch64-apple-darwin'
+            file_ext: '.dmg'
+            bundle_path: 'dmg'
+
+          # Windows
+          - platform: 'windows-x64'
+            os: windows-latest
+            rust_target: 'x86_64-pc-windows-msvc'
+            file_ext: '.msi'
+            bundle_path: 'msi'
+
+          # Linux x64
+          - platform: 'linux-x64'
+            os: ubuntu-latest
+            rust_target: 'x86_64-unknown-linux-gnu'
+            file_ext: '.AppImage'
+            bundle_path: 'appimage'
+
+          # Linux ARM64 (Raspberry Pi)
+          - platform: 'linux-arm64'
+            os: ubuntu-latest
+            rust_target: 'aarch64-unknown-linux-gnu'
+            file_ext: '.AppImage'
+            bundle_path: 'appimage'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: release-${{ matrix.platform }}
+
+      - name: Install system dependencies (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            libssl-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Install ARM64 cross-compilation tools (Linux ARM64)
+        if: matrix.rust_target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+          # Add ARM64 architecture
+          sudo dpkg --add-architecture arm64
+          sudo bash -c 'cat > /etc/apt/sources.list.d/arm64.list <<EOF
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ $(lsb_release -sc) main restricted universe multiverse
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ $(lsb_release -sc)-updates main restricted universe multiverse
+          EOF'
+
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev:arm64 \
+            libssl-dev:arm64 \
+            libgtk-3-dev:arm64 \
+            libayatana-appindicator3-dev:arm64 \
+            librsvg2-dev:arm64
+
+          # Cross-compilation environment
+          echo "PKG_CONFIG_SYSROOT_DIR=/usr/aarch64-linux-gnu" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig" >> $GITHUB_ENV
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Tauri app for release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          releaseId: ${{ needs.create-release.outputs.release_id }}
+          tagName: v${{ needs.create-release.outputs.version }}
+          args: --target ${{ matrix.rust_target }}
+
+      - name: Find and rename release artifact
+        id: find_artifact
+        shell: bash
+        run: |
+          # Find the built installer/bundle
+          ARTIFACT=$(find src-tauri/target/${{ matrix.rust_target }}/release/bundle/${{ matrix.bundle_path }} -name "*${{ matrix.file_ext }}" | head -n 1)
+
+          if [ -z "$ARTIFACT" ]; then
+            echo "Error: No artifact found!"
+            exit 1
+          fi
+
+          # Rename to include platform
+          FILENAME="TermiHub-${{ needs.create-release.outputs.version }}-${{ matrix.platform }}${{ matrix.file_ext }}"
+          mv "$ARTIFACT" "$FILENAME"
+
+          echo "artifact_path=$FILENAME" >> $GITHUB_OUTPUT
+          echo "artifact_name=$FILENAME" >> $GITHUB_OUTPUT
+
+      - name: Upload release asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: ${{ steps.find_artifact.outputs.artifact_path }}
+          asset_name: ${{ steps.find_artifact.outputs.artifact_name }}
+          asset_content_type: application/octet-stream
+
+      # Also upload .deb for Linux
+      - name: Upload .deb (Linux only)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          DEB_FILE=$(find src-tauri/target/${{ matrix.rust_target }}/release/bundle/deb -name "*.deb" | head -n 1)
+          if [ -n "$DEB_FILE" ]; then
+            DEB_FILENAME="TermiHub-${{ needs.create-release.outputs.version }}-${{ matrix.platform }}.deb"
+            mv "$DEB_FILE" "$DEB_FILENAME"
+
+            gh release upload v${{ needs.create-release.outputs.version }} "$DEB_FILENAME"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Update latest release tag
+  update-latest:
+    name: Update Latest Tag
+    needs: [create-release, build-and-upload]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Update latest tag
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git tag -f latest
+          git push origin latest --force
+
+  # Notify on Discord/Slack (optional)
+  notify:
+    name: Notify Release
+    needs: [create-release, build-and-upload]
+    runs-on: ubuntu-latest
+    if: success()
+
+    steps:
+      - name: Send notification
+        run: |
+          echo "Release v${{ needs.create-release.outputs.version }} published successfully!"
+          # Add Discord/Slack webhook here if desired
+          # curl -X POST -H 'Content-type: application/json' \
+          #   --data '{"text":"TermiHub v${{ needs.create-release.outputs.version }} released!"}' \
+          #   ${{ secrets.SLACK_WEBHOOK_URL }}

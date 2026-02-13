@@ -4,7 +4,12 @@ import * as monaco from "monaco-editor";
 import { Save, Loader2, AlertCircle, Globe } from "lucide-react";
 import { EditorTabMeta, EditorStatus } from "@/types/terminal";
 import { useAppStore } from "@/store/appStore";
-import { localReadFile, localWriteFile, sftpReadFileContent, sftpWriteFileContent } from "@/services/api";
+import {
+  localReadFile,
+  localWriteFile,
+  sftpReadFileContent,
+  sftpWriteFileContent,
+} from "@/services/api";
 import "./FileEditor.css";
 
 // Use local monaco-editor package instead of CDN (important for Tauri/offline)
@@ -80,7 +85,9 @@ export function FileEditor({ tabId, meta, isVisible }: FileEditorProps) {
     };
 
     loadContent();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [meta.filePath, meta.isRemote, meta.sftpSessionId]);
 
   // Track dirty state
@@ -118,7 +125,9 @@ export function FileEditor({ tabId, meta, isVisible }: FileEditorProps) {
         id: "termihub-save",
         label: "Save File",
         keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS],
-        run: () => { saveRef.current(); },
+        run: () => {
+          saveRef.current();
+        },
       });
 
       // Push initial status
@@ -143,9 +152,10 @@ export function FileEditor({ tabId, meta, isVisible }: FileEditorProps) {
           const model = editor.getModel();
           if (!model) return;
           const current = model.getEOL();
-          const next = current === "\r\n"
-            ? monaco.editor.EndOfLineSequence.LF
-            : monaco.editor.EndOfLineSequence.CRLF;
+          const next =
+            current === "\r\n"
+              ? monaco.editor.EndOfLineSequence.LF
+              : monaco.editor.EndOfLineSequence.CRLF;
           model.setEOL(next);
           setEditorStatus(readEditorStatus(editor));
         },
@@ -171,9 +181,10 @@ export function FileEditor({ tabId, meta, isVisible }: FileEditorProps) {
           const model = editorRef.current?.getModel();
           if (!model) return;
           const current = model.getEOL();
-          const next = current === "\r\n"
-            ? monaco.editor.EndOfLineSequence.LF
-            : monaco.editor.EndOfLineSequence.CRLF;
+          const next =
+            current === "\r\n"
+              ? monaco.editor.EndOfLineSequence.LF
+              : monaco.editor.EndOfLineSequence.CRLF;
           model.setEOL(next);
           if (editorRef.current) setEditorStatus(readEditorStatus(editorRef.current));
         },

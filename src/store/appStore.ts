@@ -1,6 +1,25 @@
 import { create } from "zustand";
-import { TerminalTab, LeafPanel, PanelNode, ConnectionType, ConnectionConfig, SshConfig, DropEdge, TabContentType, TerminalOptions, EditorTabMeta, EditorStatus, EditorActions } from "@/types/terminal";
-import { SavedConnection, ConnectionFolder, FileEntry, ExternalConnectionSource, AppSettings } from "@/types/connection";
+import {
+  TerminalTab,
+  LeafPanel,
+  PanelNode,
+  ConnectionType,
+  ConnectionConfig,
+  SshConfig,
+  DropEdge,
+  TabContentType,
+  TerminalOptions,
+  EditorTabMeta,
+  EditorStatus,
+  EditorActions,
+} from "@/types/terminal";
+import {
+  SavedConnection,
+  ConnectionFolder,
+  FileEntry,
+  ExternalConnectionSource,
+  AppSettings,
+} from "@/types/connection";
 import {
   loadConnections,
   persistConnection,
@@ -12,7 +31,13 @@ import {
   saveExternalFile,
   reloadExternalConnections as reloadExternalSources,
 } from "@/services/storage";
-import { sftpOpen, sftpClose, sftpListDir, localListDir, vscodeAvailable as checkVscode } from "@/services/api";
+import {
+  sftpOpen,
+  sftpClose,
+  sftpListDir,
+  localListDir,
+  vscodeAvailable as checkVscode,
+} from "@/services/api";
 import {
   createLeafPanel,
   findLeaf,
@@ -123,7 +148,14 @@ interface AppState {
   // Panels & Tabs
   rootPanel: PanelNode;
   activePanelId: string | null;
-  addTab: (title: string, connectionType: ConnectionType, config?: ConnectionConfig, panelId?: string, contentType?: TabContentType, terminalOptions?: TerminalOptions) => void;
+  addTab: (
+    title: string,
+    connectionType: ConnectionType,
+    config?: ConnectionConfig,
+    panelId?: string,
+    contentType?: TabContentType,
+    terminalOptions?: TerminalOptions
+  ) => void;
   openSettingsTab: () => void;
   openEditorTab: (filePath: string, isRemote: boolean, sftpSessionId?: string) => void;
   editorDirtyTabs: Record<string, boolean>;
@@ -135,7 +167,12 @@ interface AppState {
   splitPanel: (direction?: "horizontal" | "vertical") => void;
   removePanel: (panelId: string) => void;
   setActivePanel: (panelId: string) => void;
-  splitPanelWithTab: (tabId: string, fromPanelId: string, targetPanelId: string, edge: DropEdge) => void;
+  splitPanelWithTab: (
+    tabId: string,
+    fromPanelId: string,
+    targetPanelId: string,
+    edge: DropEdge
+  ) => void;
   getAllPanels: () => LeafPanel[];
 
   // Connections
@@ -218,7 +255,13 @@ interface AppState {
 
 let tabCounter = 0;
 
-function createTab(title: string, connectionType: ConnectionType, config: ConnectionConfig, panelId: string, contentType: TabContentType = "terminal"): TerminalTab {
+function createTab(
+  title: string,
+  connectionType: ConnectionType,
+  config: ConnectionConfig,
+  panelId: string,
+  contentType: TabContentType = "terminal"
+): TerminalTab {
   tabCounter++;
   return {
     id: `tab-${tabCounter}`,
@@ -266,9 +309,7 @@ export const useAppStore = create<AppState>((set, get) => {
     setSidebarView: (view) =>
       set((state) => ({
         sidebarView: view,
-        sidebarCollapsed: state.sidebarView === view && !state.sidebarCollapsed
-          ? true
-          : false,
+        sidebarCollapsed: state.sidebarView === view && !state.sidebarCollapsed ? true : false,
       })),
     toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
 
@@ -323,7 +364,10 @@ export const useAppStore = create<AppState>((set, get) => {
         const targetPanelId = panelId ?? state.activePanelId ?? allLeaves[0]?.id;
         if (!targetPanelId) return state;
 
-        const defaultConfig: ConnectionConfig = config ?? { type: "local", config: { shellType: "zsh" } };
+        const defaultConfig: ConnectionConfig = config ?? {
+          type: "local",
+          config: { shellType: "zsh" },
+        };
         const newTab = createTab(title, connectionType, defaultConfig, targetPanelId, contentType);
         const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
           const tabs = leaf.tabs.map((t) => ({ ...t, isActive: false }));
@@ -379,8 +423,10 @@ export const useAppStore = create<AppState>((set, get) => {
         // Look for an existing editor tab for this file
         for (const leaf of allLeaves) {
           const existing = leaf.tabs.find(
-            (t) => t.contentType === "editor" && t.editorMeta?.filePath === filePath
-              && t.editorMeta?.isRemote === isRemote
+            (t) =>
+              t.contentType === "editor" &&
+              t.editorMeta?.filePath === filePath &&
+              t.editorMeta?.isRemote === isRemote
           );
           if (existing) {
             const rootPanel = updateLeaf(state.rootPanel, leaf.id, (l) => ({
@@ -433,13 +479,25 @@ export const useAppStore = create<AppState>((set, get) => {
           const removed = removeLeaf(rootPanel, panelId);
           rootPanel = removed ? simplifyTree(removed) : rootPanel;
           const newLeaves = getAllLeaves(rootPanel);
-          const activePanelId = state.activePanelId === panelId
-            ? newLeaves[0]?.id ?? null
-            : state.activePanelId;
-          return { rootPanel, activePanelId, tabCwds: remainingCwds, tabHorizontalScrolling: remainingHs, editorDirtyTabs: remainingDirty, tabColors: remainingColors };
+          const activePanelId =
+            state.activePanelId === panelId ? (newLeaves[0]?.id ?? null) : state.activePanelId;
+          return {
+            rootPanel,
+            activePanelId,
+            tabCwds: remainingCwds,
+            tabHorizontalScrolling: remainingHs,
+            editorDirtyTabs: remainingDirty,
+            tabColors: remainingColors,
+          };
         }
 
-        return { rootPanel, tabCwds: remainingCwds, tabHorizontalScrolling: remainingHs, editorDirtyTabs: remainingDirty, tabColors: remainingColors };
+        return {
+          rootPanel,
+          tabCwds: remainingCwds,
+          tabHorizontalScrolling: remainingHs,
+          editorDirtyTabs: remainingDirty,
+          tabColors: remainingColors,
+        };
       }),
 
     setActiveTab: (tabId, panelId) =>
@@ -519,9 +577,8 @@ export const useAppStore = create<AppState>((set, get) => {
         if (!removed) return state;
         const rootPanel = simplifyTree(removed);
         const newLeaves = getAllLeaves(rootPanel);
-        const activePanelId = state.activePanelId === panelId
-          ? newLeaves[0]?.id ?? null
-          : state.activePanelId;
+        const activePanelId =
+          state.activePanelId === panelId ? (newLeaves[0]?.id ?? null) : state.activePanelId;
         return { rootPanel, activePanelId };
       }),
 
@@ -662,9 +719,7 @@ export const useAppStore = create<AppState>((set, get) => {
 
     updateConnection: (connection) => {
       set((state) => ({
-        connections: state.connections.map((c) =>
-          c.id === connection.id ? connection : c
-        ),
+        connections: state.connections.map((c) => (c.id === connection.id ? connection : c)),
       }));
       persistConnection(stripSshPassword(connection)).catch((err) =>
         console.error("Failed to persist connection update:", err)
@@ -685,9 +740,7 @@ export const useAppStore = create<AppState>((set, get) => {
 
     addFolder: (folder) => {
       set((state) => ({ folders: [...state.folders, folder] }));
-      persistFolder(folder).catch((err) =>
-        console.error("Failed to persist new folder:", err)
-      );
+      persistFolder(folder).catch((err) => console.error("Failed to persist new folder:", err));
     },
 
     deleteFolder: (folderId) => {
@@ -705,7 +758,11 @@ export const useAppStore = create<AppState>((set, get) => {
 
         // Persist moved connections
         connections
-          .filter((c) => c.folderId === null && state.connections.find((sc) => sc.id === c.id)?.folderId === folderId)
+          .filter(
+            (c) =>
+              c.folderId === null &&
+              state.connections.find((sc) => sc.id === c.id)?.folderId === folderId
+          )
           .forEach((c) => {
             persistConnection(c).catch((err) =>
               console.error("Failed to persist connection move:", err)
@@ -757,7 +814,10 @@ export const useAppStore = create<AppState>((set, get) => {
           return { ...s, connections: [...s.connections, connection] };
         });
         const source = externalSources.find((s) => s.filePath === filePath);
-        if (source) persistExternalSource(source).catch((err) => console.error("Failed to persist external connection:", err));
+        if (source)
+          persistExternalSource(source).catch((err) =>
+            console.error("Failed to persist external connection:", err)
+          );
         return { externalSources };
       });
     },
@@ -766,10 +826,16 @@ export const useAppStore = create<AppState>((set, get) => {
       set((state) => {
         const externalSources = state.externalSources.map((s) => {
           if (s.filePath !== filePath) return s;
-          return { ...s, connections: s.connections.map((c) => (c.id === connection.id ? connection : c)) };
+          return {
+            ...s,
+            connections: s.connections.map((c) => (c.id === connection.id ? connection : c)),
+          };
         });
         const source = externalSources.find((s) => s.filePath === filePath);
-        if (source) persistExternalSource(source).catch((err) => console.error("Failed to persist external connection update:", err));
+        if (source)
+          persistExternalSource(source).catch((err) =>
+            console.error("Failed to persist external connection update:", err)
+          );
         return { externalSources };
       });
     },
@@ -781,7 +847,10 @@ export const useAppStore = create<AppState>((set, get) => {
           return { ...s, connections: s.connections.filter((c) => c.id !== connectionId) };
         });
         const source = externalSources.find((s) => s.filePath === filePath);
-        if (source) persistExternalSource(source).catch((err) => console.error("Failed to persist external connection delete:", err));
+        if (source)
+          persistExternalSource(source).catch((err) =>
+            console.error("Failed to persist external connection delete:", err)
+          );
         return { externalSources };
       });
     },
@@ -803,7 +872,9 @@ export const useAppStore = create<AppState>((set, get) => {
       set((s) => ({
         externalSources: s.externalSources.map((es) => (es.filePath === filePath ? newSource : es)),
       }));
-      persistExternalSource(newSource).catch((err) => console.error("Failed to persist external duplicate:", err));
+      persistExternalSource(newSource).catch((err) =>
+        console.error("Failed to persist external duplicate:", err)
+      );
     },
 
     addExternalFolder: (filePath, folder) => {
@@ -813,7 +884,10 @@ export const useAppStore = create<AppState>((set, get) => {
           return { ...s, folders: [...s.folders, folder] };
         });
         const source = externalSources.find((s) => s.filePath === filePath);
-        if (source) persistExternalSource(source).catch((err) => console.error("Failed to persist external folder:", err));
+        if (source)
+          persistExternalSource(source).catch((err) =>
+            console.error("Failed to persist external folder:", err)
+          );
         return { externalSources };
       });
     },
@@ -834,7 +908,10 @@ export const useAppStore = create<AppState>((set, get) => {
           return { ...s, folders, connections };
         });
         const source = externalSources.find((s) => s.filePath === filePath);
-        if (source) persistExternalSource(source).catch((err) => console.error("Failed to persist external folder delete:", err));
+        if (source)
+          persistExternalSource(source).catch((err) =>
+            console.error("Failed to persist external folder delete:", err)
+          );
         return { externalSources };
       });
     },
@@ -860,9 +937,14 @@ export const useAppStore = create<AppState>((set, get) => {
             return { ...s, connections: [...s.connections, extConn] };
           });
           // Persist both sides
-          removeConnection(connectionId).catch((err) => console.error("Failed to remove user connection:", err));
+          removeConnection(connectionId).catch((err) =>
+            console.error("Failed to remove user connection:", err)
+          );
           const source = externalSources.find((s) => s.filePath === filePath);
-          if (source) persistExternalSource(source).catch((err) => console.error("Failed to persist external move:", err));
+          if (source)
+            persistExternalSource(source).catch((err) =>
+              console.error("Failed to persist external move:", err)
+            );
           return { connections, externalSources };
         }
 
@@ -904,7 +986,10 @@ export const useAppStore = create<AppState>((set, get) => {
         // Persist affected sources
         for (const fp of [sourceFilePath, filePath]) {
           const source = externalSources.find((s) => s.filePath === fp);
-          if (source) persistExternalSource(source).catch((err) => console.error("Failed to persist external move:", err));
+          if (source)
+            persistExternalSource(source).catch((err) =>
+              console.error("Failed to persist external move:", err)
+            );
         }
         return { externalSources };
       });
@@ -1000,13 +1085,14 @@ export const useAppStore = create<AppState>((set, get) => {
 
     // Per-tab CWD tracking
     tabCwds: {},
-    setTabCwd: (tabId, cwd) =>
-      set((state) => ({ tabCwds: { ...state.tabCwds, [tabId]: cwd } })),
+    setTabCwd: (tabId, cwd) => set((state) => ({ tabCwds: { ...state.tabCwds, [tabId]: cwd } })),
 
     // Per-tab horizontal scrolling
     tabHorizontalScrolling: {},
     setTabHorizontalScrolling: (tabId, enabled) =>
-      set((state) => ({ tabHorizontalScrolling: { ...state.tabHorizontalScrolling, [tabId]: enabled } })),
+      set((state) => ({
+        tabHorizontalScrolling: { ...state.tabHorizontalScrolling, [tabId]: enabled },
+      })),
 
     // Per-tab color
     tabColors: {},
