@@ -168,6 +168,41 @@ impl SftpSession {
             .map_err(|e| TerminalError::SshError(format!("rmdir failed: {}", e)))
     }
 
+    /// Read a remote file's contents as a UTF-8 string.
+    pub fn read_file_content(&self, remote_path: &str) -> Result<String, TerminalError> {
+        let remote = std::path::Path::new(remote_path);
+        let mut remote_file = self
+            .sftp
+            .open(remote)
+            .map_err(|e| TerminalError::SshError(format!("open remote file failed: {}", e)))?;
+
+        let mut content = String::new();
+        remote_file
+            .read_to_string(&mut content)
+            .map_err(|e| TerminalError::SshError(format!("read failed: {}", e)))?;
+
+        Ok(content)
+    }
+
+    /// Write a string to a remote file, creating or overwriting it.
+    pub fn write_file_content(
+        &self,
+        remote_path: &str,
+        content: &str,
+    ) -> Result<(), TerminalError> {
+        let remote = std::path::Path::new(remote_path);
+        let mut remote_file = self
+            .sftp
+            .create(remote)
+            .map_err(|e| TerminalError::SshError(format!("create remote file failed: {}", e)))?;
+
+        remote_file
+            .write_all(content.as_bytes())
+            .map_err(|e| TerminalError::SshError(format!("write failed: {}", e)))?;
+
+        Ok(())
+    }
+
     /// Rename a file or directory on the remote host.
     pub fn rename(&self, old_path: &str, new_path: &str) -> Result<(), TerminalError> {
         let old = std::path::Path::new(old_path);

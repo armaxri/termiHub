@@ -172,6 +172,26 @@ export async function localRename(oldPath: string, newPath: string): Promise<voi
   await invoke("local_rename", { oldPath, newPath });
 }
 
+/** Read a local file's contents as a UTF-8 string. */
+export async function localReadFile(path: string): Promise<string> {
+  return await invoke<string>("local_read_file", { path });
+}
+
+/** Write a string to a local file. */
+export async function localWriteFile(path: string, content: string): Promise<void> {
+  await invoke("local_write_file", { path, content });
+}
+
+/** Read a remote file's contents as a UTF-8 string via SFTP. */
+export async function sftpReadFileContent(sessionId: string, remotePath: string): Promise<string> {
+  return await invoke<string>("sftp_read_file_content", { sessionId, remotePath });
+}
+
+/** Write a string to a remote file via SFTP. */
+export async function sftpWriteFileContent(sessionId: string, remotePath: string, content: string): Promise<void> {
+  await invoke("sftp_write_file_content", { sessionId, remotePath, content });
+}
+
 // --- VS Code integration ---
 
 /** Check if VS Code CLI (`code`) is available on PATH. */

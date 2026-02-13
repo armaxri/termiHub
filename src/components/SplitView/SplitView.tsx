@@ -9,13 +9,14 @@ import {
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
-import { Terminal as TerminalIcon, Wifi, Cable, Globe, Settings as SettingsIcon } from "lucide-react";
+import { Terminal as TerminalIcon, Wifi, Cable, Globe, Settings as SettingsIcon, FileEdit } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { PanelNode, LeafPanel, TerminalTab, ConnectionType, DropEdge } from "@/types/terminal";
 import { getAllLeaves, findLeafByTab } from "@/utils/panelTree";
 import { useTerminalRegistry } from "@/components/Terminal/TerminalRegistry";
 import { TabBar } from "@/components/Terminal/TabBar";
 import { SettingsPanel } from "@/components/Settings";
+import { FileEditor } from "@/components/FileEditor";
 import { PanelDropZone } from "./PanelDropZone";
 import "./SplitView.css";
 
@@ -202,6 +203,13 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
               key={tab.id}
               isVisible={tab.id === panel.activeTabId}
             />
+          ) : tab.contentType === "editor" && tab.editorMeta ? (
+            <FileEditor
+              key={tab.id}
+              tabId={tab.id}
+              meta={tab.editorMeta}
+              isVisible={tab.id === panel.activeTabId}
+            />
           ) : (
             <TerminalSlot
               key={tab.id}
@@ -264,7 +272,9 @@ function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: boolean 
 }
 
 function TabDragOverlay({ tab }: { tab: TerminalTab }) {
-  const Icon = tab.contentType === "settings" ? SettingsIcon : TYPE_ICONS[tab.connectionType];
+  const Icon = tab.contentType === "settings" ? SettingsIcon
+    : tab.contentType === "editor" ? FileEdit
+    : TYPE_ICONS[tab.connectionType];
   return (
     <div className="tab tab--drag-overlay">
       <Icon size={14} className="tab__icon" />

@@ -1,7 +1,7 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import * as ContextMenu from "@radix-ui/react-context-menu";
-import { X, Terminal, Wifi, Cable, Globe, Settings as SettingsIcon, Eraser, FileDown, ClipboardCopy, ArrowRightLeft, Check } from "lucide-react";
+import { X, Terminal, Wifi, Cable, Globe, Settings as SettingsIcon, FileEdit, Eraser, FileDown, ClipboardCopy, ArrowRightLeft, Check } from "lucide-react";
 import { TerminalTab } from "@/types/terminal";
 import { ConnectionType } from "@/types/terminal";
 
@@ -21,9 +21,10 @@ interface TabProps {
   onCopyToClipboard?: () => void;
   horizontalScrolling?: boolean;
   onToggleHorizontalScrolling?: () => void;
+  isDirty?: boolean;
 }
 
-export function Tab({ tab, onActivate, onClose, onClear, onSave, onCopyToClipboard, horizontalScrolling, onToggleHorizontalScrolling }: TabProps) {
+export function Tab({ tab, onActivate, onClose, onClear, onSave, onCopyToClipboard, horizontalScrolling, onToggleHorizontalScrolling, isDirty }: TabProps) {
   const {
     attributes,
     listeners,
@@ -39,8 +40,10 @@ export function Tab({ tab, onActivate, onClose, onClear, onSave, onCopyToClipboa
     opacity: isDragging ? 0.3 : 1,
   };
 
-  const Icon = tab.contentType === "settings" ? SettingsIcon : TYPE_ICONS[tab.connectionType];
-  const isTerminalTab = tab.contentType !== "settings";
+  const Icon = tab.contentType === "settings" ? SettingsIcon
+    : tab.contentType === "editor" ? FileEdit
+    : TYPE_ICONS[tab.connectionType];
+  const isTerminalTab = tab.contentType === "terminal";
 
   const tabElement = (
     <div
@@ -52,7 +55,10 @@ export function Tab({ tab, onActivate, onClose, onClear, onSave, onCopyToClipboa
       {...listeners}
     >
       <Icon size={14} className="tab__icon" />
-      <span className="tab__title">{tab.title}</span>
+      <span className="tab__title">
+        {isDirty && <span className="tab__dirty-dot" />}
+        {tab.title}
+      </span>
       <button
         className="tab__close"
         onClick={(e) => {

@@ -128,6 +128,43 @@ pub fn local_rename(old_path: String, new_path: String) -> Result<(), TerminalEr
     crate::files::local::rename(&old_path, &new_path)
 }
 
+/// Read a local file's contents as a UTF-8 string.
+#[tauri::command]
+pub fn local_read_file(path: String) -> Result<String, TerminalError> {
+    crate::files::local::read_file_content(&path)
+}
+
+/// Write a string to a local file.
+#[tauri::command]
+pub fn local_write_file(path: String, content: String) -> Result<(), TerminalError> {
+    crate::files::local::write_file_content(&path, &content)
+}
+
+/// Read a remote file's contents as a UTF-8 string via SFTP.
+#[tauri::command]
+pub fn sftp_read_file_content(
+    session_id: String,
+    remote_path: String,
+    manager: State<'_, SftpManager>,
+) -> Result<String, TerminalError> {
+    let session = manager.get_session(&session_id)?;
+    let session = session.lock().unwrap();
+    session.read_file_content(&remote_path)
+}
+
+/// Write a string to a remote file via SFTP.
+#[tauri::command]
+pub fn sftp_write_file_content(
+    session_id: String,
+    remote_path: String,
+    content: String,
+    manager: State<'_, SftpManager>,
+) -> Result<(), TerminalError> {
+    let session = manager.get_session(&session_id)?;
+    let session = session.lock().unwrap();
+    session.write_file_content(&remote_path, &content)
+}
+
 // --- VS Code integration ---
 
 #[derive(Clone, Serialize)]

@@ -17,6 +17,7 @@ import {
   FolderOpen,
   MonitorOff,
   CodeXml,
+  FileEdit,
 } from "lucide-react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
@@ -110,6 +111,18 @@ function FileRow({ entry, mode, vscodeAvailable, onNavigate, onContextAction }: 
                 Download
               </button>
             )}
+            {!entry.isDirectory && (
+              <button
+                className="file-browser__context-item"
+                onClick={() => {
+                  setMenuOpen(false);
+                  onContextAction(entry, "edit");
+                }}
+              >
+                <FileEdit size={14} />
+                Edit
+              </button>
+            )}
             {!entry.isDirectory && vscodeAvailable && (
               <button
                 className="file-browser__context-item"
@@ -173,7 +186,7 @@ function useFileBrowserSync() {
   const activeTabContentType = activeTab?.contentType ?? null;
 
   useEffect(() => {
-    if (!activeTab || activeTabContentType === "settings") {
+    if (!activeTab || activeTabContentType === "settings" || activeTabContentType === "editor") {
       setFileBrowserMode("none");
       return;
     }
@@ -285,9 +298,18 @@ export function FileBrowser() {
     [navigateTo]
   );
 
+  const sftpSessionId = useAppStore((s) => s.sftpSessionId);
+
   const handleContextAction = useCallback(
     (entry: FileEntry, action: string) => {
       switch (action) {
+        case "edit":
+          useAppStore.getState().openEditorTab(
+            entry.path,
+            mode === "sftp",
+            mode === "sftp" ? sftpSessionId ?? undefined : undefined,
+          );
+          break;
         case "download":
           downloadFile(entry.path, entry.name).catch((err: unknown) =>
             console.error("Download failed:", err)
@@ -320,7 +342,7 @@ export function FileBrowser() {
         }
       }
     },
-    [downloadFile, openInVscode, renameEntry, deleteEntry]
+    [mode, sftpSessionId, downloadFile, openInVscode, renameEntry, deleteEntry]
   );
 
   const handleCreateDir = useCallback(() => {
