@@ -7,6 +7,7 @@ import {
   sftpMkdir,
   sftpDelete,
   sftpRename,
+  sftpWriteFileContent,
   vscodeOpenRemote,
 } from "@/services/api";
 
@@ -69,6 +70,16 @@ export function useFileSystem() {
     [sftpSessionId, currentPath, refreshSftp]
   );
 
+  const createFile = useCallback(
+    async (name: string) => {
+      if (!sftpSessionId) return;
+      const filePath = currentPath === "/" ? `/${name}` : `${currentPath}/${name}`;
+      await sftpWriteFileContent(sftpSessionId, filePath, "");
+      refreshSftp();
+    },
+    [sftpSessionId, currentPath, refreshSftp]
+  );
+
   const deleteEntry = useCallback(
     async (path: string, isDirectory: boolean) => {
       if (!sftpSessionId) return;
@@ -109,6 +120,7 @@ export function useFileSystem() {
     downloadFile,
     uploadFile,
     createDirectory,
+    createFile,
     deleteEntry,
     renameEntry,
     openInVscode,

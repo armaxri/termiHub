@@ -32,6 +32,7 @@ export function useFileBrowser() {
     downloadFile: async () => {},
     uploadFile: async () => {},
     createDirectory: async () => {},
+    createFile: async () => {},
     deleteEntry: async () => {},
     renameEntry: async () => {},
     openInVscode: async () => {},

@@ -4,6 +4,7 @@ import {
   localMkdir,
   localDelete,
   localRename,
+  localWriteFile,
   vscodeOpenLocal,
 } from "@/services/api";
 
@@ -45,6 +46,15 @@ export function useLocalFileSystem() {
     [currentPath, refreshLocal]
   );
 
+  const createFile = useCallback(
+    async (name: string) => {
+      const filePath = currentPath === "/" ? `/${name}` : `${currentPath}/${name}`;
+      await localWriteFile(filePath, "");
+      refreshLocal();
+    },
+    [currentPath, refreshLocal]
+  );
+
   const deleteEntry = useCallback(
     async (path: string, isDirectory: boolean) => {
       await localDelete(path, isDirectory);
@@ -79,6 +89,7 @@ export function useLocalFileSystem() {
     downloadFile: async () => { /* no-op: files are already local */ },
     uploadFile: async () => { /* no-op: files are already local */ },
     createDirectory,
+    createFile,
     deleteEntry,
     renameEntry,
     openInVscode,
