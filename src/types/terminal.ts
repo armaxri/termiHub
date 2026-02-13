@@ -78,3 +78,17 @@ export interface SplitContainer {
 
 export type PanelNode = LeafPanel | SplitContainer;
 export type DropEdge = 'left' | 'right' | 'top' | 'bottom' | 'center';
+
+export interface EditorStatus {
+  line: number;
+  column: number;
+  language: string;
+  eol: "LF" | "CRLF";
+  tabSize: number;
+  encoding: string;
+}
+
+export interface EditorActions {
+  cycleTabSize: () => void;
+  toggleEol: () => void;
+}
