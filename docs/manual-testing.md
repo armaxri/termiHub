@@ -2,6 +2,8 @@
 
 This document describes manual test procedures for features that cannot be effectively automated. Run these tests before releases and after major changes.
 
+For automated testing (unit, integration, E2E), see [Testing Strategy](testing.md).
+
 ## Test Environment Setup
 
 - Build the app with `pnpm tauri dev` (development) or `pnpm tauri build` (release)
