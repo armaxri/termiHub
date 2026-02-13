@@ -15,6 +15,7 @@ export function TelnetSettings({ config, onChange }: TelnetSettingsProps) {
           value={config.host}
           onChange={(e) => onChange({ ...config, host: e.target.value })}
           placeholder="192.168.1.200"
+          data-testid="telnet-settings-host-input"
         />
       </label>
       <label className="settings-form__field">
@@ -23,6 +24,7 @@ export function TelnetSettings({ config, onChange }: TelnetSettingsProps) {
           type="number"
           value={config.port}
           onChange={(e) => onChange({ ...config, port: parseInt(e.target.value) || 23 })}
+          data-testid="telnet-settings-port-input"
         />
       </label>
     </div>

@@ -273,10 +273,17 @@ Update the connection type dropdown in `src/components/Sidebar/ConnectionEditor.
 
 ## Testing
 
+For the full testing strategy — including unit, integration, E2E, and visual regression testing — see [Testing Strategy](testing.md).
+
 ### Running Tests
 
 ```bash
-# Rust tests
+# Frontend unit tests (Vitest)
+pnpm test              # single run
+pnpm test:watch        # watch mode
+pnpm test:coverage     # with coverage report
+
+# Rust backend tests
 cd src-tauri && cargo test
 
 # TypeScript type checking
@@ -284,6 +291,9 @@ pnpm build
 
 # Rust linting
 cd src-tauri && cargo clippy
+
+# E2E tests (requires built app — see docs/testing.md for setup)
+pnpm test:e2e
 ```
 
 ### Test Environment
@@ -304,7 +314,7 @@ See [examples/README.md](../examples/README.md) for details on:
 
 ### Manual Testing
 
-For UI changes, test the following:
+See [Manual Test Plan](manual-testing.md) for the full checklist. For UI changes, test at minimum:
 - Create, edit, duplicate, and delete connections
 - Connect to each terminal type
 - Drag-and-drop tabs between panels

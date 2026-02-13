@@ -79,6 +79,7 @@ export function Tab({
       style={style}
       className={`tab ${tab.isActive ? "tab--active" : ""}`}
       onClick={onActivate}
+      data-testid={`tab-${tab.id}`}
       {...attributes}
       {...listeners}
     >
@@ -94,6 +95,7 @@ export function Tab({
           onClose();
         }}
         title="Close"
+        data-testid={`tab-close-${tab.id}`}
       >
         <X size={14} />
       </button>
@@ -109,13 +111,13 @@ export function Tab({
       <ContextMenu.Trigger asChild>{tabElement}</ContextMenu.Trigger>
       <ContextMenu.Portal>
         <ContextMenu.Content className="context-menu__content">
-          <ContextMenu.Item className="context-menu__item" onSelect={() => onSave?.()}>
+          <ContextMenu.Item className="context-menu__item" onSelect={() => onSave?.()} data-testid="tab-context-save">
             <FileDown size={14} /> Save to File
           </ContextMenu.Item>
-          <ContextMenu.Item className="context-menu__item" onSelect={() => onCopyToClipboard?.()}>
+          <ContextMenu.Item className="context-menu__item" onSelect={() => onCopyToClipboard?.()} data-testid="tab-context-copy">
             <ClipboardCopy size={14} /> Copy to Clipboard
           </ContextMenu.Item>
-          <ContextMenu.Item className="context-menu__item" onSelect={() => onClear?.()}>
+          <ContextMenu.Item className="context-menu__item" onSelect={() => onClear?.()} data-testid="tab-context-clear">
             <Eraser size={14} /> Clear Terminal
           </ContextMenu.Item>
           <ContextMenu.Separator className="context-menu__separator" />
@@ -123,6 +125,7 @@ export function Tab({
             className="context-menu__item"
             checked={horizontalScrolling}
             onSelect={() => onToggleHorizontalScrolling?.()}
+            data-testid="tab-context-horizontal-scroll"
           >
             <ContextMenu.ItemIndicator className="context-menu__indicator">
               <Check size={14} />
@@ -130,7 +133,7 @@ export function Tab({
             <ArrowRightLeft size={14} /> Horizontal Scrolling
           </ContextMenu.CheckboxItem>
           <ContextMenu.Separator className="context-menu__separator" />
-          <ContextMenu.Item className="context-menu__item" onSelect={() => onSetColor?.()}>
+          <ContextMenu.Item className="context-menu__item" onSelect={() => onSetColor?.()} data-testid="tab-context-set-color">
             <Palette size={14} /> Set Color...
           </ContextMenu.Item>
         </ContextMenu.Content>

@@ -32,6 +32,7 @@ export function ConnectionSettings({ config, onChange }: ConnectionSettingsProps
         <select
           value={config.shellType}
           onChange={(e) => onChange({ ...config, shellType: e.target.value as ShellType })}
+          data-testid="connection-settings-shell-select"
         >
           {options.map((shell) => (
             <option key={shell} value={shell}>

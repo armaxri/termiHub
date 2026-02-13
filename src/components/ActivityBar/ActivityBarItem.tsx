@@ -14,6 +14,7 @@ export function ActivityBarItem({ icon: Icon, label, isActive, onClick }: Activi
       onClick={onClick}
       title={label}
       aria-label={label}
+      data-testid={`activity-bar-${label.toLowerCase().replace(/\s+/g, "-")}`}
     >
       <Icon size={24} strokeWidth={1.5} />
       {isActive && <div className="activity-bar__indicator" />}

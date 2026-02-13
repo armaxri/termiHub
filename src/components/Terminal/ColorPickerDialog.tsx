@@ -64,6 +64,7 @@ export function ColorPickerDialog({
                 style={{ backgroundColor: color }}
                 onClick={() => setSelectedColor(color)}
                 title={color}
+                data-testid={`color-picker-swatch-${color.replace("#", "")}`}
               />
             ))}
           </div>
@@ -83,16 +84,18 @@ export function ColorPickerDialog({
               if (/^#[0-9a-fA-F]{0,6}$/.test(v)) setSelectedColor(v);
             }}
             maxLength={7}
+            data-testid="color-picker-hex-input"
           />
 
           <div className="color-picker__actions">
             <button
               className="color-picker__btn color-picker__btn--secondary"
               onClick={handleClear}
+              data-testid="color-picker-clear"
             >
               Clear
             </button>
-            <button className="color-picker__btn color-picker__btn--primary" onClick={handleApply}>
+            <button className="color-picker__btn color-picker__btn--primary" onClick={handleApply} data-testid="color-picker-apply">
               Apply
             </button>
           </div>

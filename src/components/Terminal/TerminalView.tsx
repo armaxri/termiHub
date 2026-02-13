@@ -43,6 +43,7 @@ export function TerminalView() {
               className="terminal-view__toolbar-btn"
               onClick={handleNewTerminal}
               title="New Terminal"
+              data-testid="terminal-view-new-terminal"
             >
               <Plus size={16} />
             </button>
@@ -50,6 +51,7 @@ export function TerminalView() {
               className="terminal-view__toolbar-btn"
               onClick={handleSplit}
               title="Split Terminal"
+              data-testid="terminal-view-split"
             >
               <Columns2 size={16} />
             </button>
@@ -58,6 +60,7 @@ export function TerminalView() {
                 className="terminal-view__toolbar-btn"
                 onClick={handleClosePanel}
                 title="Close Panel"
+                data-testid="terminal-view-close-panel"
               >
                 <X size={16} />
               </button>

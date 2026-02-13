@@ -18,7 +18,7 @@ export default tseslint.config(
     },
   },
   {
-    ignores: ["dist/", "src-tauri/", "coverage/", "files-4/"],
+    ignores: ["dist/", "src-tauri/", "coverage/"],
   },
   {
     files: ["src/**/*.{ts,tsx}"],

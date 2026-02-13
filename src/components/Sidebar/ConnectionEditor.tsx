@@ -206,11 +206,12 @@ export function ConnectionEditor() {
             onChange={(e) => setName(e.target.value)}
             placeholder="Connection name"
             autoFocus
+            data-testid="connection-editor-name-input"
           />
         </label>
         <label className="settings-form__field">
           <span className="settings-form__label">Folder</span>
-          <select value={folderId ?? ""} onChange={(e) => setFolderId(e.target.value || null)}>
+          <select value={folderId ?? ""} onChange={(e) => setFolderId(e.target.value || null)} data-testid="connection-editor-folder-select">
             <option value="">(Root)</option>
             {availableFolders.map((f) => (
               <option key={f.id} value={f.id}>
@@ -224,6 +225,7 @@ export function ConnectionEditor() {
           <select
             value={connectionConfig.type}
             onChange={(e) => handleTypeChange(e.target.value as ConnectionType)}
+            data-testid="connection-editor-type-select"
           >
             {TYPE_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>
@@ -269,6 +271,7 @@ export function ConnectionEditor() {
             onChange={(e) =>
               setTerminalOptions({ ...terminalOptions, horizontalScrolling: e.target.checked })
             }
+            data-testid="connection-editor-horizontal-scroll"
           />
           <span className="settings-form__label">Enable horizontal scrolling</span>
         </label>
@@ -286,6 +289,7 @@ export function ConnectionEditor() {
               className="connection-editor__btn connection-editor__btn--secondary"
               type="button"
               onClick={() => setColorPickerOpen(true)}
+              data-testid="connection-editor-color-picker"
             >
               {terminalOptions.color ? "Change" : "Set Color"}
             </button>
@@ -294,6 +298,7 @@ export function ConnectionEditor() {
                 className="connection-editor__btn connection-editor__btn--secondary"
                 type="button"
                 onClick={() => setTerminalOptions({ ...terminalOptions, color: undefined })}
+                data-testid="connection-editor-clear-color"
               >
                 Clear
               </button>
@@ -313,12 +318,14 @@ export function ConnectionEditor() {
           <button
             className="connection-editor__btn connection-editor__btn--secondary"
             onClick={handleCancel}
+            data-testid="connection-editor-cancel"
           >
             Cancel
           </button>
           <button
             className="connection-editor__btn connection-editor__btn--primary"
             onClick={handleSave}
+            data-testid="connection-editor-save"
           >
             Save
           </button>

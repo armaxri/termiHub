@@ -15,6 +15,7 @@ export function SshSettings({ config, onChange }: SshSettingsProps) {
           value={config.host}
           onChange={(e) => onChange({ ...config, host: e.target.value })}
           placeholder="192.168.1.100"
+          data-testid="ssh-settings-host-input"
         />
       </label>
       <label className="settings-form__field">
@@ -23,6 +24,7 @@ export function SshSettings({ config, onChange }: SshSettingsProps) {
           type="number"
           value={config.port}
           onChange={(e) => onChange({ ...config, port: parseInt(e.target.value) || 22 })}
+          data-testid="ssh-settings-port-input"
         />
       </label>
       <label className="settings-form__field">
@@ -32,6 +34,7 @@ export function SshSettings({ config, onChange }: SshSettingsProps) {
           value={config.username}
           onChange={(e) => onChange({ ...config, username: e.target.value })}
           placeholder="user"
+          data-testid="ssh-settings-username-input"
         />
       </label>
       <label className="settings-form__field">
@@ -41,6 +44,7 @@ export function SshSettings({ config, onChange }: SshSettingsProps) {
           onChange={(e) =>
             onChange({ ...config, authMethod: e.target.value as "password" | "key" })
           }
+          data-testid="ssh-settings-auth-method-select"
         >
           <option value="password">Password</option>
           <option value="key">SSH Key</option>
@@ -59,6 +63,7 @@ export function SshSettings({ config, onChange }: SshSettingsProps) {
             value={config.keyPath ?? ""}
             onChange={(e) => onChange({ ...config, keyPath: e.target.value })}
             placeholder="~/.ssh/id_rsa"
+            data-testid="ssh-settings-key-path-input"
           />
         </label>
       )}
@@ -67,6 +72,7 @@ export function SshSettings({ config, onChange }: SshSettingsProps) {
           type="checkbox"
           checked={config.enableX11Forwarding ?? false}
           onChange={(e) => onChange({ ...config, enableX11Forwarding: e.target.checked })}
+          data-testid="ssh-settings-x11-checkbox"
         />
         <span className="settings-form__label">Enable X11 Forwarding</span>
       </label>

@@ -70,6 +70,7 @@ function FileMenuItems({
             onClose();
             onNavigate(entry);
           }}
+          data-testid="file-menu-open"
         >
           <FolderOpen size={14} /> Open
         </button>
@@ -81,6 +82,7 @@ function FileMenuItems({
             onClose();
             onContextAction(entry, "download");
           }}
+          data-testid="file-menu-download"
         >
           <Download size={14} /> Download
         </button>
@@ -92,6 +94,7 @@ function FileMenuItems({
             onClose();
             onContextAction(entry, "edit");
           }}
+          data-testid="file-menu-edit"
         >
           <FileEdit size={14} /> Edit
         </button>
@@ -103,6 +106,7 @@ function FileMenuItems({
             onClose();
             onContextAction(entry, "vscode");
           }}
+          data-testid="file-menu-vscode"
         >
           <CodeXml size={14} /> Open in VS Code
         </button>
@@ -113,6 +117,7 @@ function FileMenuItems({
           onClose();
           onContextAction(entry, "rename");
         }}
+        data-testid="file-menu-rename"
       >
         <Pencil size={14} /> Rename
       </button>
@@ -122,6 +127,7 @@ function FileMenuItems({
           onClose();
           onContextAction(entry, "delete");
         }}
+        data-testid="file-menu-delete"
       >
         <Trash2 size={14} /> Delete
       </button>
@@ -152,6 +158,7 @@ function FileRow({ entry, mode, vscodeAvailable, onNavigate, onContextAction }: 
         <div className="file-browser__row-wrapper">
           <button
             className="file-browser__row"
+            data-testid={`file-row-${entry.name}`}
             onDoubleClick={() => {
               if (entry.isDirectory) {
                 onNavigate(entry);
@@ -181,6 +188,7 @@ function FileRow({ entry, mode, vscodeAvailable, onNavigate, onContextAction }: 
                 setMenuOpen(!menuOpen);
               }}
               title="Actions"
+              data-testid={`file-row-menu-${entry.name}`}
             >
               <MoreHorizontal size={14} />
             </button>
@@ -195,7 +203,7 @@ function FileRow({ entry, mode, vscodeAvailable, onNavigate, onContextAction }: 
       <ContextMenu.Portal>
         <ContextMenu.Content className="context-menu__content">
           {entry.isDirectory && (
-            <ContextMenu.Item className="context-menu__item" onSelect={() => onNavigate(entry)}>
+            <ContextMenu.Item className="context-menu__item" onSelect={() => onNavigate(entry)} data-testid="context-file-open">
               <FolderOpen size={14} /> Open
             </ContextMenu.Item>
           )}
@@ -203,6 +211,7 @@ function FileRow({ entry, mode, vscodeAvailable, onNavigate, onContextAction }: 
             <ContextMenu.Item
               className="context-menu__item"
               onSelect={() => onContextAction(entry, "download")}
+              data-testid="context-file-download"
             >
               <Download size={14} /> Download
             </ContextMenu.Item>
@@ -211,6 +220,7 @@ function FileRow({ entry, mode, vscodeAvailable, onNavigate, onContextAction }: 
             <ContextMenu.Item
               className="context-menu__item"
               onSelect={() => onContextAction(entry, "edit")}
+              data-testid="context-file-edit"
             >
               <FileEdit size={14} /> Edit
             </ContextMenu.Item>
@@ -219,6 +229,7 @@ function FileRow({ entry, mode, vscodeAvailable, onNavigate, onContextAction }: 
             <ContextMenu.Item
               className="context-menu__item"
               onSelect={() => onContextAction(entry, "vscode")}
+              data-testid="context-file-vscode"
             >
               <CodeXml size={14} /> Open in VS Code
             </ContextMenu.Item>
@@ -227,12 +238,14 @@ function FileRow({ entry, mode, vscodeAvailable, onNavigate, onContextAction }: 
           <ContextMenu.Item
             className="context-menu__item"
             onSelect={() => onContextAction(entry, "rename")}
+            data-testid="context-file-rename"
           >
             <Pencil size={14} /> Rename
           </ContextMenu.Item>
           <ContextMenu.Item
             className="context-menu__item context-menu__item--danger"
             onSelect={() => onContextAction(entry, "delete")}
+            data-testid="context-file-delete"
           >
             <Trash2 size={14} /> Delete
           </ContextMenu.Item>
@@ -552,29 +565,31 @@ export function FileBrowser() {
             onClick={navigateUp}
             disabled={currentPath === "/"}
             title="Go Up"
+            data-testid="file-browser-up"
           >
             <ArrowUp size={14} />
           </button>
-          <button className="file-browser__btn" onClick={refresh} title="Refresh">
+          <button className="file-browser__btn" onClick={refresh} title="Refresh" data-testid="file-browser-refresh">
             <RefreshCw size={14} className={isLoading ? "file-browser__spinner" : ""} />
           </button>
           {mode === "sftp" && (
-            <button className="file-browser__btn" onClick={uploadFile} title="Upload File">
+            <button className="file-browser__btn" onClick={uploadFile} title="Upload File" data-testid="file-browser-upload">
               <Upload size={14} />
             </button>
           )}
-          <button className="file-browser__btn" onClick={() => setNewFileName("")} title="New File">
+          <button className="file-browser__btn" onClick={() => setNewFileName("")} title="New File" data-testid="file-browser-new-file">
             <FilePlus size={14} />
           </button>
           <button
             className="file-browser__btn"
             onClick={() => setNewDirName("")}
             title="New Folder"
+            data-testid="file-browser-new-folder"
           >
             <FolderPlus size={14} />
           </button>
           {mode === "sftp" && (
-            <button className="file-browser__btn" onClick={disconnectSftp} title="Disconnect">
+            <button className="file-browser__btn" onClick={disconnectSftp} title="Disconnect" data-testid="file-browser-disconnect">
               <Unplug size={14} />
             </button>
           )}
@@ -600,8 +615,9 @@ export function FileBrowser() {
               if (e.key === "Escape") setNewFileName(null);
             }}
             autoFocus
+            data-testid="file-browser-new-file-input"
           />
-          <button className="file-browser__btn" onClick={handleCreateFile} title="Create">
+          <button className="file-browser__btn" onClick={handleCreateFile} title="Create" data-testid="file-browser-new-file-confirm">
             <FilePlus size={14} />
           </button>
         </div>
@@ -619,8 +635,9 @@ export function FileBrowser() {
               if (e.key === "Escape") setNewDirName(null);
             }}
             autoFocus
+            data-testid="file-browser-new-folder-input"
           />
-          <button className="file-browser__btn" onClick={handleCreateDir} title="Create">
+          <button className="file-browser__btn" onClick={handleCreateDir} title="Create" data-testid="file-browser-new-folder-confirm">
             <FolderPlus size={14} />
           </button>
         </div>

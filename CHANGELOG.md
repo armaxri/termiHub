@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- E2E test suite with WebdriverIO and tauri-driver (~30 tests across 8 files) covering connection forms, CRUD operations, tab management, split views, local shell spawn, file browser, settings, and tab coloring
+- E2E test helpers for selectors, app lifecycle, connection management, tab operations, and sidebar navigation
+- Infrastructure test stubs for SSH, serial, and telnet connections (requires live servers)
+- E2E test scripts: `test:e2e`, `test:e2e:ui`, `test:e2e:local`, `test:e2e:infra`
+- Testing strategy document (`docs/testing.md`) covering unit, integration, E2E, and visual regression testing
+- E2E test scaffolding with WebdriverIO and Tauri service (`wdio.conf.js`, `tests/e2e/`)
+- VS Code workspace settings (`.vscode/settings.json`) with Vitest, ESLint, Prettier, and rust-analyzer configuration
+- VS Code extension recommendations for Vitest, Test Explorer, ESLint, and Prettier
+- `data-testid` attributes on all interactive UI elements for E2E test automation
+- Vitest unit tests for API service wrappers (~37 tests), event listeners (~8 tests), shell detection (~7 tests), and additional store operations (~31 tests covering folders, duplicate/move connections, settings tab, editor tab)
 - LICENSE file with full MIT License text
 - "Built With" section in README with links to all major dependencies
 - GitHub Actions CI/CD workflows (code quality, build, release)

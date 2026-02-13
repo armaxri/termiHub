@@ -1,0 +1,54 @@
+{
+  // Vitest extension configuration
+  "vitest.configSearchPatternExclude": [
+    "**/node_modules/**"
+  ],
+
+  // ESLint configuration
+  "eslint.workingDirectories": ["."],
+
+  // Prettier as default formatter for frontend files
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "[typescript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[typescriptreact]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[javascript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[json]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[css]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+
+  // Rust analyzer configuration
+  "rust-analyzer.check.command": "clippy",
+  "[rust]": {
+    "editor.defaultFormatter": "rust-lang.rust-analyzer"
+  },
+
+  // File associations
+  "files.associations": {
+    "*.css": "css"
+  },
+
+  // Exclude build artifacts from search
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/dist": true,
+    "**/target": true,
+    "**/coverage": true,
+    "**/test-results": true
+  },
+
+  // Exclude build artifacts from file watcher
+  "files.watcherExclude": {
+    "**/target/**": true,
+    "**/node_modules/**": true,
+    "**/dist/**": true
+  }
+}
