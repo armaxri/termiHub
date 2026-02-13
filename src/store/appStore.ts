@@ -12,7 +12,7 @@ import {
   saveExternalFile,
   reloadExternalConnections as reloadExternalSources,
 } from "@/services/storage";
-import { sftpOpen, sftpClose, sftpListDir, localListDir } from "@/services/api";
+import { sftpOpen, sftpClose, sftpListDir, localListDir, vscodeAvailable as checkVscode } from "@/services/api";
 import {
   createLeafPanel,
   findLeaf,
@@ -197,6 +197,10 @@ interface AppState {
   // File browser mode
   fileBrowserMode: "local" | "sftp" | "none";
   setFileBrowserMode: (mode: "local" | "sftp" | "none") => void;
+
+  // VS Code availability
+  vscodeAvailable: boolean;
+  checkVscodeAvailability: () => Promise<void>;
 }
 
 let tabCounter = 0;
@@ -552,6 +556,8 @@ export const useAppStore = create<AppState>((set, get) => {
       } catch (err) {
         console.error("Failed to load connections from backend:", err);
       }
+      // Check VS Code availability in the background
+      get().checkVscodeAvailability();
     },
 
     updateSettings: async (newSettings) => {
@@ -979,6 +985,17 @@ export const useAppStore = create<AppState>((set, get) => {
     // File browser mode
     fileBrowserMode: "none",
     setFileBrowserMode: (mode) => set({ fileBrowserMode: mode }),
+
+    // VS Code availability
+    vscodeAvailable: false,
+    checkVscodeAvailability: async () => {
+      try {
+        const available = await checkVscode();
+        set({ vscodeAvailable: available });
+      } catch (err) {
+        console.error("Failed to check VS Code availability:", err);
+      }
+    },
   };
 });
 

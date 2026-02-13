@@ -33,3 +33,18 @@ export async function onTerminalExit(
     callback(session_id, exit_code);
   });
 }
+
+interface VscodeEditCompletePayload {
+  remotePath: string;
+  success: boolean;
+  error: string | null;
+}
+
+/** Subscribe to VS Code edit-complete events (remote file re-upload). */
+export async function onVscodeEditComplete(
+  callback: (remotePath: string, success: boolean, error: string | null) => void
+): Promise<UnlistenFn> {
+  return await listen<VscodeEditCompletePayload>("vscode-edit-complete", (event) => {
+    callback(event.payload.remotePath, event.payload.success, event.payload.error);
+  });
+}

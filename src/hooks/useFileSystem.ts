@@ -7,6 +7,7 @@ import {
   sftpMkdir,
   sftpDelete,
   sftpRename,
+  vscodeOpenRemote,
 } from "@/services/api";
 
 /**
@@ -88,6 +89,14 @@ export function useFileSystem() {
     [sftpSessionId, refreshSftp]
   );
 
+  const openInVscode = useCallback(
+    async (remotePath: string) => {
+      if (!sftpSessionId) return;
+      await vscodeOpenRemote(sftpSessionId, remotePath);
+    },
+    [sftpSessionId]
+  );
+
   return {
     fileEntries,
     currentPath,
@@ -102,5 +111,6 @@ export function useFileSystem() {
     createDirectory,
     deleteEntry,
     renameEntry,
+    openInVscode,
   };
 }

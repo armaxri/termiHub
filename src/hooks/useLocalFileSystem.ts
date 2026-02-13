@@ -4,6 +4,7 @@ import {
   localMkdir,
   localDelete,
   localRename,
+  vscodeOpenLocal,
 } from "@/services/api";
 
 /**
@@ -62,6 +63,10 @@ export function useLocalFileSystem() {
     [refreshLocal]
   );
 
+  const openInVscode = useCallback(async (path: string) => {
+    await vscodeOpenLocal(path);
+  }, []);
+
   return {
     fileEntries,
     currentPath,
@@ -76,5 +81,6 @@ export function useLocalFileSystem() {
     createDirectory,
     deleteEntry,
     renameEntry,
+    openInVscode,
   };
 }

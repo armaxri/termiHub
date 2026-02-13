@@ -16,9 +16,11 @@ import {
   MoreHorizontal,
   FolderOpen,
   MonitorOff,
+  CodeXml,
 } from "lucide-react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
+import { onVscodeEditComplete } from "@/services/events";
 import { FileEntry } from "@/types/connection";
 import { SshConfig } from "@/types/terminal";
 import "./FileBrowser.css";
@@ -32,11 +34,12 @@ function formatFileSize(bytes: number): string {
 interface FileRowProps {
   entry: FileEntry;
   mode: "local" | "sftp" | "none";
+  vscodeAvailable: boolean;
   onNavigate: (entry: FileEntry) => void;
   onContextAction: (entry: FileEntry, action: string) => void;
 }
 
-function FileRow({ entry, mode, onNavigate, onContextAction }: FileRowProps) {
+function FileRow({ entry, mode, vscodeAvailable, onNavigate, onContextAction }: FileRowProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -105,6 +108,18 @@ function FileRow({ entry, mode, onNavigate, onContextAction }: FileRowProps) {
               >
                 <Download size={14} />
                 Download
+              </button>
+            )}
+            {!entry.isDirectory && vscodeAvailable && (
+              <button
+                className="file-browser__context-item"
+                onClick={() => {
+                  setMenuOpen(false);
+                  onContextAction(entry, "vscode");
+                }}
+              >
+                <CodeXml size={14} />
+                Open in VS Code
               </button>
             )}
             <button
@@ -239,11 +254,27 @@ export function FileBrowser() {
     createDirectory,
     deleteEntry,
     renameEntry,
+    openInVscode,
     mode,
   } = useFileBrowser();
 
   const disconnectSftp = useAppStore((s) => s.disconnectSftp);
+  const vscodeAvailable = useAppStore((s) => s.vscodeAvailable);
   const [newDirName, setNewDirName] = useState<string | null>(null);
+
+  // Listen for VS Code edit-complete events (remote file re-upload)
+  useEffect(() => {
+    const unlisten = onVscodeEditComplete((remotePath, success, err) => {
+      if (success) {
+        refresh();
+      } else {
+        console.error(`VS Code edit failed for ${remotePath}:`, err);
+      }
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [refresh]);
 
   const handleNavigate = useCallback(
     (entry: FileEntry) => {
@@ -260,6 +291,11 @@ export function FileBrowser() {
         case "download":
           downloadFile(entry.path, entry.name).catch((err: unknown) =>
             console.error("Download failed:", err)
+          );
+          break;
+        case "vscode":
+          openInVscode(entry.path).catch((err: unknown) =>
+            console.error("Open in VS Code failed:", err)
           );
           break;
         case "rename": {
@@ -284,7 +320,7 @@ export function FileBrowser() {
         }
       }
     },
-    [downloadFile, renameEntry, deleteEntry]
+    [downloadFile, openInVscode, renameEntry, deleteEntry]
   );
 
   const handleCreateDir = useCallback(() => {
@@ -417,6 +453,7 @@ export function FileBrowser() {
               <FileRow
                 entry={sortedEntries[index]}
                 mode={mode}
+                vscodeAvailable={vscodeAvailable}
                 onNavigate={handleNavigate}
                 onContextAction={handleContextAction}
               />

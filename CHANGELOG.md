@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Open in VS Code: edit local and remote files directly from the file browser
 - External connection files: load shared connection configs from JSON files via Settings
 - Per-connection horizontal scrolling option with runtime toggle via tab context menu
 - Example directory with Docker-based SSH and Telnet test targets

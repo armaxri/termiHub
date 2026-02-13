@@ -63,6 +63,9 @@ pub fn run() {
             commands::files::local_mkdir,
             commands::files::local_delete,
             commands::files::local_rename,
+            commands::files::vscode_available,
+            commands::files::vscode_open_local,
+            commands::files::vscode_open_remote,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

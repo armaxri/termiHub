@@ -171,3 +171,20 @@ export async function localDelete(path: string, isDirectory: boolean): Promise<v
 export async function localRename(oldPath: string, newPath: string): Promise<void> {
   await invoke("local_rename", { oldPath, newPath });
 }
+
+// --- VS Code integration ---
+
+/** Check if VS Code CLI (`code`) is available on PATH. */
+export async function vscodeAvailable(): Promise<boolean> {
+  return await invoke<boolean>("vscode_available");
+}
+
+/** Open a local file in VS Code (fire-and-forget). */
+export async function vscodeOpenLocal(path: string): Promise<void> {
+  await invoke("vscode_open_local", { path });
+}
+
+/** Open a remote file in VS Code: download, edit, re-upload. */
+export async function vscodeOpenRemote(sessionId: string, remotePath: string): Promise<void> {
+  await invoke("vscode_open_remote", { sessionId, remotePath });
+}
