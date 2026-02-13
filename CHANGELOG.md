@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- LICENSE file with full MIT License text
+- "Built With" section in README with links to all major dependencies
 - GitHub Actions CI/CD workflows (code quality, build, release)
 - ESLint, Prettier, and commitlint configuration for code quality enforcement
 - Raspberry Pi deployment guide (`docs/raspberry-pi.md`)
