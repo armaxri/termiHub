@@ -1,77 +1,126 @@
-// wdio.conf.js
+// wdio.conf.js — WebdriverIO config for Tauri E2E tests.
+//
+// Prerequisites:
+//   1. Build the app: pnpm tauri build
+//   2. Install tauri-driver: cargo install tauri-driver
+//
+// Usage:
+//   pnpm test:e2e          — run UI + local tests
+//   pnpm test:e2e:ui       — connection forms, CRUD, tabs, splits, settings (no backend needed)
+//   pnpm test:e2e:local    — local shell + local file browser
+//   pnpm test:e2e:infra    — SSH, serial, telnet (requires live servers)
+
+import { spawn } from 'node:child_process';
+import { setTimeout as sleep } from 'node:timers/promises';
+
+let tauriDriver;
+
+function appBinaryPath() {
+  if (process.platform === 'win32') {
+    return './src-tauri/target/release/termihub.exe';
+  }
+  if (process.platform === 'darwin') {
+    return './src-tauri/target/release/bundle/macos/TermiHub.app/Contents/MacOS/TermiHub';
+  }
+  return './src-tauri/target/release/termihub';
+}
+
 export const config = {
-  // Test runner
   runner: 'local',
 
-  // Tauri application path
+  // Default specs: UI + local tests (excludes infrastructure/)
   specs: [
-    './tests/e2e/**/*.test.js'
+    './tests/e2e/*.test.js',
   ],
 
   exclude: [],
 
-  // Maximum instances to run in parallel
-  maxInstances: 1, // Tauri apps should run one at a time
+  // Named suites for selective runs
+  suites: {
+    ui: [
+      './tests/e2e/connection-forms.test.js',
+      './tests/e2e/connection-crud.test.js',
+      './tests/e2e/tab-management.test.js',
+      './tests/e2e/split-views.test.js',
+      './tests/e2e/settings.test.js',
+    ],
+    local: [
+      './tests/e2e/local-shell.test.js',
+      './tests/e2e/file-browser-local.test.js',
+    ],
+    infra: [
+      './tests/e2e/infrastructure/*.test.js',
+    ],
+  },
+
+  maxInstances: 1,
 
   capabilities: [{
     maxInstances: 1,
-    browserName: 'tauri',
+    browserName: 'chrome',
+    'goog:chromeOptions': {
+      // Tell WebDriver to connect to the tauri-driver WebDriver proxy
+      debuggerAddress: '127.0.0.1:4444',
+    },
     'tauri:options': {
-      application: process.platform === 'win32'
-        ? './src-tauri/target/release/termihub.exe'
-        : process.platform === 'darwin'
-          ? './src-tauri/target/release/bundle/macos/TermiHub.app/Contents/MacOS/TermiHub'
-          : './src-tauri/target/release/termihub',
+      application: appBinaryPath(),
     },
   }],
 
-  // Test framework
   framework: 'mocha',
   mochaOpts: {
-    timeout: 60000, // 60 seconds for Tauri app startup
+    timeout: 60000,
   },
 
-  // Reporters
-  reporters: [
-    'spec',
-    ['html', {
-      outputDir: './test-results/e2e',
-      filename: 'report.html',
-    }],
-  ],
+  reporters: ['spec'],
 
-  // Services
-  services: [
-    ['tauri', {
-      // Binary path (optional, auto-detected)
-      // applicationPath: './src-tauri/target/release/termihub'
-    }],
-  ],
+  services: [],
 
-  // Hooks
-  beforeSession: function (config, capabilities, specs) {
-    // Build Tauri app before tests
-    require('child_process').execSync('npm run tauri build', {
-      stdio: 'inherit',
+  // --- Hooks ---
+
+  onPrepare() {
+    // Start tauri-driver before all workers
+    tauriDriver = spawn('tauri-driver', [], {
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
+
+    tauriDriver.stderr.on('data', (data) => {
+      const msg = data.toString();
+      if (msg.includes('error') || msg.includes('Error')) {
+        console.error('[tauri-driver]', msg.trim());
+      }
+    });
+
+    // Give tauri-driver time to start listening
+    return sleep(500);
   },
 
-  before: async function (capabilities, specs) {
-    // Wait for app to be ready
-    await browser.pause(2000);
+  before: async function () {
+    // Wait for the Tauri app to fully render
+    await browser.pause(3000);
   },
 
-  afterTest: async function (test, context, { error, result, duration, passed, retries }) {
-    // Take screenshot on failure
+  afterTest: async function (test, _context, { passed }) {
     if (!passed) {
       const timestamp = new Date().toISOString().replace(/:/g, '-');
-      const filename = `./test-results/screenshots/${test.title}-${timestamp}.png`;
-      await browser.saveScreenshot(filename);
+      const safeName = test.title.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
+      const filename = `./test-results/screenshots/${safeName}-${timestamp}.png`;
+      try {
+        await browser.saveScreenshot(filename);
+      } catch {
+        // Screenshot may fail if the app crashed — ignore
+      }
     }
   },
 
-  // Logging
-  logLevel: 'info',
+  onComplete() {
+    if (tauriDriver) {
+      tauriDriver.kill();
+      tauriDriver = null;
+    }
+  },
+
+  logLevel: 'warn',
   bail: 0,
   baseUrl: '',
   waitforTimeout: 10000,
