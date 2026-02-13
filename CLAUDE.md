@@ -802,9 +802,13 @@ See [`docs/manual-testing.md`](docs/manual-testing.md) for the manual test plan 
 4. Plan your approach (comment in issue/PR)
 
 ### During Development
-1. Commit frequently with clear messages
-2. Keep commits atomic (one logical change)
-3. Test as you go
+1. **Commit early and often** — don't batch all changes into one giant commit at the end of a task. Each logical step should be its own commit on the feature branch:
+   - A refactor is one commit, then the new feature built on top is the next commit
+   - Config file changes are one commit, source code changes are another
+   - Formatting/lint fixes are a separate commit from functional changes
+   - Documentation updates can be their own commit or grouped with the related change
+2. Keep commits atomic (one logical change per commit)
+3. Test as you go — verify that each commit leaves the project in a working state
 4. Update documentation alongside code
 5. **Update CHANGELOG.md** for user-facing changes
 
@@ -930,10 +934,11 @@ When working on this project:
 2. **Always** create a feature branch first
 3. **Read** the relevant architecture section before implementing
 4. **Follow** the coding standards exactly
-5. **Use** conventional commits, referencing issue numbers (`Closes #N`)
-6. **Update CHANGELOG.md** for every user-facing change (new features, bug fixes, breaking changes)
-7. **Test** on the target platform before committing
-8. **Ask** if architecture decisions need clarification
+5. **Commit after each logical step** — don't save all commits for the end. Refactors, new features, formatting fixes, config changes, and documentation updates should each be separate commits. This makes the PR history easy to review and bisect.
+6. **Use** conventional commits, referencing issue numbers (`Closes #N` in the final commit)
+7. **Update CHANGELOG.md** for every user-facing change (new features, bug fixes, breaking changes)
+8. **Test** on the target platform before committing
+9. **Ask** if architecture decisions need clarification
 
 For each new terminal backend:
 1. Implement the `TerminalBackend` trait
