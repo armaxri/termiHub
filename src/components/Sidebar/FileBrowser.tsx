@@ -109,7 +109,13 @@ function FileRow({ entry, mode, vscodeAvailable, onNavigate, onContextAction }: 
         <div className="file-browser__row-wrapper">
           <button
             className="file-browser__row"
-            onDoubleClick={() => entry.isDirectory && onNavigate(entry)}
+            onDoubleClick={() => {
+              if (entry.isDirectory) {
+                onNavigate(entry);
+              } else {
+                onContextAction(entry, "edit");
+              }
+            }}
           >
             {entry.isDirectory ? (
               <Folder size={16} className="file-browser__icon file-browser__icon--folder" />

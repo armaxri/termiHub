@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Double-click a file in the file browser to open it in the built-in editor
 - Right-click context menu on files and directories in the file browser
 - New File button in the file browser toolbar to create empty files (local and remote)
 - Built-in file editor: edit local and remote files directly in the app with syntax highlighting, search/replace, and Ctrl+S saving
