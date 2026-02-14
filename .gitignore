@@ -20,8 +20,13 @@ test-results
 !.vscode/settings.json
 .idea
 .DS_Store
+.claude
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+
+# Lock files from other package managers (we use pnpm)
+package-lock.json
+yarn.lock
