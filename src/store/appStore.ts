@@ -37,7 +37,11 @@ import {
   sftpListDir,
   localListDir,
   vscodeAvailable as checkVscode,
+  monitoringOpen,
+  monitoringClose,
+  monitoringFetchStats,
 } from "@/services/api";
+import { SystemStats } from "@/types/monitoring";
 import {
   createLeafPanel,
   findLeaf,
@@ -49,7 +53,7 @@ import {
   edgeToSplit,
 } from "@/utils/panelTree";
 
-export type SidebarView = "connections" | "files";
+export type SidebarView = "connections" | "files" | "monitoring";
 
 /**
  * Strip password from an SSH connection config so it is never persisted.
@@ -251,6 +255,16 @@ interface AppState {
   setEditorStatus: (status: EditorStatus | null) => void;
   editorActions: EditorActions | null;
   setEditorActions: (actions: EditorActions | null) => void;
+
+  // Monitoring
+  monitoringSessionId: string | null;
+  monitoringHost: string | null;
+  monitoringStats: SystemStats | null;
+  monitoringLoading: boolean;
+  monitoringError: string | null;
+  connectMonitoring: (config: SshConfig) => Promise<void>;
+  disconnectMonitoring: () => Promise<void>;
+  refreshMonitoring: () => Promise<void>;
 }
 
 let tabCounter = 0;
@@ -1158,6 +1172,64 @@ export const useAppStore = create<AppState>((set, get) => {
     setEditorStatus: (status) => set({ editorStatus: status }),
     editorActions: null,
     setEditorActions: (actions) => set({ editorActions: actions }),
+
+    // Monitoring
+    monitoringSessionId: null,
+    monitoringHost: null,
+    monitoringStats: null,
+    monitoringLoading: false,
+    monitoringError: null,
+
+    connectMonitoring: async (config: SshConfig) => {
+      set({ monitoringLoading: true, monitoringError: null });
+      try {
+        const sessionId = await monitoringOpen(config);
+        const stats = await monitoringFetchStats(sessionId);
+        set({
+          monitoringSessionId: sessionId,
+          monitoringHost: `${config.username}@${config.host}:${config.port}`,
+          monitoringStats: stats,
+          monitoringLoading: false,
+        });
+      } catch (err) {
+        set({
+          monitoringLoading: false,
+          monitoringError: err instanceof Error ? err.message : String(err),
+        });
+      }
+    },
+
+    disconnectMonitoring: async () => {
+      const sessionId = useAppStore.getState().monitoringSessionId;
+      if (sessionId) {
+        try {
+          await monitoringClose(sessionId);
+        } catch {
+          // Ignore close errors
+        }
+      }
+      set({
+        monitoringSessionId: null,
+        monitoringHost: null,
+        monitoringStats: null,
+        monitoringError: null,
+      });
+    },
+
+    refreshMonitoring: async () => {
+      const { monitoringSessionId } = useAppStore.getState();
+      if (!monitoringSessionId) return;
+      set({ monitoringLoading: true, monitoringError: null });
+      try {
+        const stats = await monitoringFetchStats(monitoringSessionId);
+        set({ monitoringStats: stats, monitoringLoading: false });
+      } catch (err) {
+        set({
+          monitoringLoading: false,
+          monitoringError: err instanceof Error ? err.message : String(err),
+        });
+      }
+    },
   };
 });
 

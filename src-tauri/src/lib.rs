@@ -1,6 +1,7 @@
 mod commands;
 mod connection;
 mod files;
+mod monitoring;
 mod terminal;
 mod utils;
 
@@ -8,6 +9,7 @@ use tauri::Manager;
 
 use connection::manager::ConnectionManager;
 use files::sftp::SftpManager;
+use monitoring::MonitoringManager;
 use terminal::manager::TerminalManager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -20,6 +22,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .manage(TerminalManager::new())
         .manage(SftpManager::new())
+        .manage(MonitoringManager::new())
         .setup(|app| {
             #[cfg(target_os = "macos")]
             {
@@ -71,6 +74,9 @@ pub fn run() {
             commands::files::vscode_available,
             commands::files::vscode_open_local,
             commands::files::vscode_open_remote,
+            commands::monitoring::monitoring_open,
+            commands::monitoring::monitoring_close,
+            commands::monitoring::monitoring_fetch_stats,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
