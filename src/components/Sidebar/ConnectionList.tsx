@@ -21,6 +21,7 @@ import {
   Wifi,
   Cable,
   Globe,
+  Server,
   Plus,
   Play,
   Pencil,
@@ -32,7 +33,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { ConnectionType, ShellType, SshConfig } from "@/types/terminal";
+import { ConnectionType, ShellType, SshConfig, RemoteConfig } from "@/types/terminal";
 import { SavedConnection, ConnectionFolder, ExternalConnectionSource } from "@/types/connection";
 import { listAvailableShells } from "@/services/api";
 import "./ConnectionList.css";
@@ -42,6 +43,7 @@ const TYPE_ICONS: Record<ConnectionType, typeof Terminal> = {
   ssh: Wifi,
   serial: Cable,
   telnet: Globe,
+  remote: Server,
 };
 
 interface InlineFolderInputProps {
@@ -297,7 +299,9 @@ function ConnectionItem({
           >
             <Play size={14} /> Connect
           </ContextMenu.Item>
-          {(connection.config.type === "ssh" || connection.config.type === "telnet") && (
+          {(connection.config.type === "ssh" ||
+            connection.config.type === "telnet" ||
+            connection.config.type === "remote") && (
             <ContextMenu.Item
               className="context-menu__item"
               onSelect={() => onPingHost(connection)}
@@ -372,6 +376,13 @@ export function ConnectionList() {
         config = { ...config, config: { ...sshCfg, password } };
       }
 
+      if (config.type === "remote" && config.config.authMethod === "password") {
+        const remoteCfg = config.config as RemoteConfig;
+        const password = await requestPassword(remoteCfg.host, remoteCfg.username);
+        if (password === null) return;
+        config = { ...config, config: { ...remoteCfg, password } };
+      }
+
       addTab(
         connection.name,
         connection.config.type,
@@ -438,7 +449,7 @@ export function ConnectionList() {
   const handlePingHost = useCallback(
     async (connection: SavedConnection) => {
       const config = connection.config;
-      if (config.type !== "ssh" && config.type !== "telnet") return;
+      if (config.type !== "ssh" && config.type !== "telnet" && config.type !== "remote") return;
       const host = config.config.host;
       const shells = await listAvailableShells();
       if (shells.length === 0) return;
@@ -1005,7 +1016,9 @@ function ExternalConnectionItem({
           >
             <Play size={14} /> Connect
           </ContextMenu.Item>
-          {(connection.config.type === "ssh" || connection.config.type === "telnet") && (
+          {(connection.config.type === "ssh" ||
+            connection.config.type === "telnet" ||
+            connection.config.type === "remote") && (
             <ContextMenu.Item
               className="context-menu__item"
               onSelect={() => onPingHost(connection)}

@@ -14,6 +14,7 @@ import {
   Wifi,
   Cable,
   Globe,
+  Server,
   Settings as SettingsIcon,
   FileEdit,
 } from "lucide-react";
@@ -32,6 +33,7 @@ const TYPE_ICONS: Record<ConnectionType, typeof TerminalIcon> = {
   ssh: Wifi,
   serial: Cable,
   telnet: Globe,
+  remote: Server,
 };
 
 export function SplitView() {

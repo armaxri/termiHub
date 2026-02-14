@@ -2,7 +2,7 @@ export type SessionId = string;
 
 export type ShellType = "zsh" | "bash" | "cmd" | "powershell" | "gitbash";
 
-export type ConnectionType = "local" | "ssh" | "telnet" | "serial";
+export type ConnectionType = "local" | "ssh" | "telnet" | "serial" | "remote";
 
 export type TabContentType = "terminal" | "settings" | "editor";
 
@@ -46,11 +46,30 @@ export interface SerialConfig {
   flowControl: "none" | "hardware" | "software";
 }
 
+export interface RemoteConfig {
+  host: string;
+  port: number;
+  username: string;
+  authMethod: "password" | "key";
+  password?: string;
+  keyPath?: string;
+  sessionType: "shell" | "serial";
+  shell?: string;
+  serialPort?: string;
+  baudRate?: number;
+  dataBits?: 5 | 6 | 7 | 8;
+  stopBits?: 1 | 2;
+  parity?: "none" | "odd" | "even";
+  flowControl?: "none" | "hardware" | "software";
+  title?: string;
+}
+
 export type ConnectionConfig =
   | { type: "local"; config: LocalShellConfig }
   | { type: "ssh"; config: SshConfig }
   | { type: "telnet"; config: TelnetConfig }
-  | { type: "serial"; config: SerialConfig };
+  | { type: "serial"; config: SerialConfig }
+  | { type: "remote"; config: RemoteConfig };
 
 export interface TerminalTab {
   id: string;

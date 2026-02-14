@@ -34,6 +34,20 @@ export async function onTerminalExit(
   });
 }
 
+interface RemoteStateChangePayload {
+  session_id: string;
+  state: string;
+}
+
+/** Subscribe to remote connection state change events */
+export async function onRemoteStateChange(
+  callback: (sessionId: string, state: string) => void
+): Promise<UnlistenFn> {
+  return await listen<RemoteStateChangePayload>("remote-state-change", (event) => {
+    callback(event.payload.session_id, event.payload.state);
+  });
+}
+
 interface VscodeEditCompletePayload {
   remotePath: string;
   success: boolean;

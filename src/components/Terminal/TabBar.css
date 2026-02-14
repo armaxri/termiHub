@@ -92,6 +92,39 @@
   vertical-align: middle;
 }
 
+.tab__state-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background-color: var(--text-secondary);
+}
+
+.tab__state-dot--connected {
+  background-color: #0dbc79;
+}
+
+.tab__state-dot--reconnecting,
+.tab__state-dot--connecting {
+  background-color: #e5e510;
+  animation: pulse-dot 1.2s ease-in-out infinite;
+}
+
+.tab__state-dot--disconnected {
+  background-color: #cd3131;
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
 .tab--drag-overlay {
   background-color: var(--tab-active-bg);
   color: var(--text-primary);

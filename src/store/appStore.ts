@@ -56,10 +56,19 @@ import {
 export type SidebarView = "connections" | "files" | "monitoring";
 
 /**
- * Strip password from an SSH connection config so it is never persisted.
+ * Strip password from SSH and Remote connection configs so it is never persisted.
  */
-function stripSshPassword(connection: SavedConnection): SavedConnection {
+function stripPassword(connection: SavedConnection): SavedConnection {
   if (connection.config.type === "ssh" && connection.config.config.password) {
+    return {
+      ...connection,
+      config: {
+        ...connection.config,
+        config: { ...connection.config.config, password: undefined },
+      },
+    };
+  }
+  if (connection.config.type === "remote" && connection.config.config.password) {
     return {
       ...connection,
       config: {
@@ -233,6 +242,10 @@ interface AppState {
   // Per-tab color
   tabColors: Record<string, string>;
   setTabColor: (tabId: string, color: string | null) => void;
+
+  // Remote connection states
+  remoteStates: Record<string, string>;
+  setRemoteState: (sessionId: string, state: string) => void;
 
   // Local file browser state
   localFileEntries: FileEntry[];
@@ -726,7 +739,7 @@ export const useAppStore = create<AppState>((set, get) => {
 
     addConnection: (connection) => {
       set((state) => ({ connections: [...state.connections, connection] }));
-      persistConnection(stripSshPassword(connection)).catch((err) =>
+      persistConnection(stripPassword(connection)).catch((err) =>
         console.error("Failed to persist new connection:", err)
       );
     },
@@ -735,7 +748,7 @@ export const useAppStore = create<AppState>((set, get) => {
       set((state) => ({
         connections: state.connections.map((c) => (c.id === connection.id ? connection : c)),
       }));
-      persistConnection(stripSshPassword(connection)).catch((err) =>
+      persistConnection(stripPassword(connection)).catch((err) =>
         console.error("Failed to persist connection update:", err)
       );
     },
@@ -800,7 +813,7 @@ export const useAppStore = create<AppState>((set, get) => {
         name: `Copy of ${original.name}`,
       };
       set((s) => ({ connections: [...s.connections, duplicate] }));
-      persistConnection(stripSshPassword(duplicate)).catch((err) =>
+      persistConnection(stripPassword(duplicate)).catch((err) =>
         console.error("Failed to persist duplicated connection:", err)
       );
     },
@@ -1118,6 +1131,11 @@ export const useAppStore = create<AppState>((set, get) => {
         }
         return { tabColors: { ...state.tabColors, [tabId]: color } };
       }),
+
+    // Remote connection states
+    remoteStates: {},
+    setRemoteState: (sessionId, state) =>
+      set((s) => ({ remoteStates: { ...s.remoteStates, [sessionId]: state } })),
 
     // Local file browser state
     localFileEntries: [],

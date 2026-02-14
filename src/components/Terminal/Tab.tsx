@@ -7,6 +7,7 @@ import {
   Wifi,
   Cable,
   Globe,
+  Server,
   Settings as SettingsIcon,
   FileEdit,
   Eraser,
@@ -24,6 +25,7 @@ const TYPE_ICONS: Record<ConnectionType, typeof Terminal> = {
   ssh: Wifi,
   serial: Cable,
   telnet: Globe,
+  remote: Server,
 };
 
 interface TabProps {
@@ -38,6 +40,7 @@ interface TabProps {
   isDirty?: boolean;
   tabColor?: string;
   onSetColor?: () => void;
+  remoteState?: string;
 }
 
 export function Tab({
@@ -52,6 +55,7 @@ export function Tab({
   isDirty,
   tabColor,
   onSetColor,
+  remoteState,
 }: TabProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: tab.id,
@@ -84,6 +88,12 @@ export function Tab({
       {...listeners}
     >
       <Icon size={14} className="tab__icon" />
+      {remoteState && (
+        <span
+          className={`tab__state-dot tab__state-dot--${remoteState}`}
+          title={remoteState}
+        />
+      )}
       <span className="tab__title">
         {isDirty && <span className="tab__dirty-dot" />}
         {tab.title}

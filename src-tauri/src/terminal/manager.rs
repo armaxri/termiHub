@@ -9,6 +9,7 @@ use crate::terminal::backend::{
     ConnectionConfig, SessionInfo, TerminalExitEvent, TerminalOutputEvent, TerminalSession,
 };
 use crate::terminal::local_shell::LocalShell;
+use crate::terminal::remote::RemoteBackend;
 use crate::terminal::serial::SerialConnection;
 use crate::terminal::ssh::SshConnection;
 use crate::terminal::telnet::TelnetConnection;
@@ -74,6 +75,22 @@ impl TerminalManager {
                     title,
                 )
             }
+            ConnectionConfig::Remote(cfg) => {
+                let conn = RemoteBackend::new(
+                    cfg,
+                    output_tx,
+                    app_handle.clone(),
+                    session_id.clone(),
+                )?;
+                let title = cfg
+                    .title
+                    .clone()
+                    .unwrap_or_else(|| format!("Remote: {}@{}", cfg.username, cfg.host));
+                (
+                    Box::new(conn) as Box<dyn crate::terminal::backend::TerminalBackend>,
+                    title,
+                )
+            }
         };
 
         let connection_type = match &config {
@@ -81,6 +98,7 @@ impl TerminalManager {
             ConnectionConfig::Serial(_) => "serial",
             ConnectionConfig::Ssh(_) => "ssh",
             ConnectionConfig::Telnet(_) => "telnet",
+            ConnectionConfig::Remote(_) => "remote",
         };
 
         let info = SessionInfo {
