@@ -4,13 +4,16 @@ use std::time::Instant;
 use serde_json::{json, Value};
 use tracing::{debug, warn};
 
+use base64::Engine;
+
 use crate::protocol::errors;
 use crate::protocol::messages::{JsonRpcErrorResponse, JsonRpcRequest, JsonRpcResponse};
 use crate::protocol::methods::{
-    Capabilities, HealthCheckResult, InitializeParams, InitializeResult, SessionCloseParams,
-    SessionCreateParams, SessionCreateResult, SessionListEntry, SessionListResult,
+    Capabilities, HealthCheckResult, InitializeParams, InitializeResult, SessionAttachParams,
+    SessionCloseParams, SessionCreateParams, SessionCreateResult, SessionDetachParams,
+    SessionInputParams, SessionListEntry, SessionListResult,
 };
-use crate::session::manager::{SessionManager, MAX_SESSIONS};
+use crate::session::manager::{SessionCreateError, SessionManager, MAX_SESSIONS};
 use crate::session::types::SessionType;
 
 /// The agent's protocol version.
@@ -74,6 +77,10 @@ impl Dispatcher {
             "session.create" => self.handle_session_create(request).await,
             "session.list" => self.handle_session_list(request).await,
             "session.close" => self.handle_session_close(request).await,
+            "session.attach" => self.handle_session_attach(request).await,
+            "session.detach" => self.handle_session_detach(request).await,
+            "session.input" => self.handle_session_input(request).await,
+            "session.resize" => self.handle_session_resize(request).await,
             "health.check" => self.handle_health_check(request).await,
             _ => {
                 warn!("Unknown method: {}", method);
@@ -161,27 +168,41 @@ impl Dispatcher {
             .title
             .unwrap_or_else(|| format!("{} session", session_type.as_str()));
 
-        let info = match self
+        let snapshot = match self
             .session_manager
             .create(session_type, title, params.config)
             .await
         {
-            Some(info) => info,
-            None => {
+            Ok(snapshot) => snapshot,
+            Err(SessionCreateError::LimitReached) => {
                 return DispatchResult::Error(JsonRpcErrorResponse::new(
                     id,
                     errors::SESSION_LIMIT_REACHED,
                     format!("Session limit reached (max {MAX_SESSIONS})"),
                 ));
             }
+            Err(SessionCreateError::InvalidConfig(msg)) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_CONFIGURATION,
+                    msg,
+                ));
+            }
+            Err(SessionCreateError::BackendFailed(msg)) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::SESSION_CREATION_FAILED,
+                    msg,
+                ));
+            }
         };
 
         let result = SessionCreateResult {
-            session_id: info.id,
-            title: info.title,
-            session_type: info.session_type.as_str().to_string(),
-            status: info.status.as_str().to_string(),
-            created_at: info.created_at.to_rfc3339(),
+            session_id: snapshot.id,
+            title: snapshot.title,
+            session_type: snapshot.session_type.as_str().to_string(),
+            status: snapshot.status.as_str().to_string(),
+            created_at: snapshot.created_at.to_rfc3339(),
         };
 
         DispatchResult::Success(JsonRpcResponse::new(
@@ -253,6 +274,96 @@ impl Dispatcher {
             serde_json::to_value(result).unwrap(),
         ))
     }
+
+    async fn handle_session_attach(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+
+        let params: SessionAttachParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid session.attach params: {e}"),
+                ));
+            }
+        };
+
+        match self.session_manager.attach(&params.session_id).await {
+            Ok(()) => DispatchResult::Success(JsonRpcResponse::new(id, json!({}))),
+            Err(msg) => DispatchResult::Error(
+                JsonRpcErrorResponse::new(id, errors::SESSION_NOT_FOUND, msg)
+                    .with_data(json!({"session_id": params.session_id})),
+            ),
+        }
+    }
+
+    async fn handle_session_detach(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+
+        let params: SessionDetachParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid session.detach params: {e}"),
+                ));
+            }
+        };
+
+        match self.session_manager.detach(&params.session_id).await {
+            Ok(()) => DispatchResult::Success(JsonRpcResponse::new(id, json!({}))),
+            Err(msg) => DispatchResult::Error(
+                JsonRpcErrorResponse::new(id, errors::SESSION_NOT_FOUND, msg)
+                    .with_data(json!({"session_id": params.session_id})),
+            ),
+        }
+    }
+
+    async fn handle_session_input(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+
+        let params: SessionInputParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid session.input params: {e}"),
+                ));
+            }
+        };
+
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let data = match b64.decode(&params.data) {
+            Ok(d) => d,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid base64 data: {e}"),
+                ));
+            }
+        };
+
+        match self
+            .session_manager
+            .write_input(&params.session_id, &data)
+            .await
+        {
+            Ok(()) => DispatchResult::Success(JsonRpcResponse::new(id, json!({}))),
+            Err(msg) => DispatchResult::Error(
+                JsonRpcErrorResponse::new(id, errors::SESSION_NOT_FOUND, msg)
+                    .with_data(json!({"session_id": params.session_id})),
+            ),
+        }
+    }
+
+    async fn handle_session_resize(&self, request: JsonRpcRequest) -> DispatchResult {
+        // No-op for serial sessions; returns success for all session types.
+        DispatchResult::Success(JsonRpcResponse::new(request.id, json!({})))
+    }
 }
 
 #[cfg(test)]
@@ -261,7 +372,8 @@ mod tests {
     use serde_json::json;
 
     fn make_dispatcher() -> Dispatcher {
-        Dispatcher::new(Arc::new(SessionManager::new()))
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        Dispatcher::new(Arc::new(SessionManager::new(tx)))
     }
 
     fn make_request(method: &str, params: Value, id: u64) -> JsonRpcRequest {
@@ -378,7 +490,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn session_create_serial() {
+    async fn session_create_serial_fails_without_port() {
+        // Serial creation now actually opens the port, so it fails in CI
         let mut d = make_dispatcher();
         init_dispatcher(&mut d).await;
 
@@ -392,9 +505,11 @@ mod tests {
         );
         let result = d.dispatch(req).await;
         let json = result.to_json();
-        assert_eq!(json["result"]["type"], "serial");
-        // Default title
-        assert_eq!(json["result"]["title"], "serial session");
+        // Should get SESSION_CREATION_FAILED because the port doesn't exist
+        assert_eq!(
+            json["error"]["code"],
+            crate::protocol::errors::SESSION_CREATION_FAILED
+        );
     }
 
     #[tokio::test]
@@ -515,6 +630,75 @@ mod tests {
         assert_eq!(json["error"]["code"], errors::METHOD_NOT_FOUND);
     }
 
+    // ── Session attach/detach/input tests ──────────────────────────
+
+    #[tokio::test]
+    async fn session_attach_not_found() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request("session.attach", json!({"session_id": "nonexistent"}), 2);
+        let result = d.dispatch(req).await;
+        let json = result.to_json();
+        assert_eq!(json["error"]["code"], errors::SESSION_NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn session_detach_not_found() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request("session.detach", json!({"session_id": "nonexistent"}), 2);
+        let result = d.dispatch(req).await;
+        let json = result.to_json();
+        assert_eq!(json["error"]["code"], errors::SESSION_NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn session_input_not_found() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request(
+            "session.input",
+            json!({"session_id": "nonexistent", "data": "aGVsbG8="}),
+            2,
+        );
+        let result = d.dispatch(req).await;
+        let json = result.to_json();
+        assert_eq!(json["error"]["code"], errors::SESSION_NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn session_input_invalid_base64() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request(
+            "session.input",
+            json!({"session_id": "any", "data": "!!!not-base64!!!"}),
+            2,
+        );
+        let result = d.dispatch(req).await;
+        let json = result.to_json();
+        assert_eq!(json["error"]["code"], errors::INVALID_PARAMS);
+    }
+
+    #[tokio::test]
+    async fn session_resize_returns_success() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request(
+            "session.resize",
+            json!({"session_id": "any", "cols": 120, "rows": 40}),
+            2,
+        );
+        let result = d.dispatch(req).await;
+        let json = result.to_json();
+        assert!(json.get("result").is_some());
+    }
+
     // ── Full protocol flow integration test ─────────────────────────
 
     #[tokio::test]
@@ -540,25 +724,59 @@ mod tests {
         let session_id = result["result"]["session_id"].as_str().unwrap().to_string();
         assert_eq!(result["result"]["status"], "running");
 
-        // 3. Health check shows 1 active session
-        let req = make_request("health.check", json!({}), 3);
-        let result = d.dispatch(req).await.to_json();
-        assert_eq!(result["result"]["active_sessions"], 1);
-
-        // 4. List shows the session
-        let req = make_request("session.list", json!({}), 4);
-        let result = d.dispatch(req).await.to_json();
-        let sessions = result["result"]["sessions"].as_array().unwrap();
-        assert_eq!(sessions.len(), 1);
-        assert_eq!(sessions[0]["session_id"], session_id);
-
-        // 5. Close session
-        let req = make_request("session.close", json!({"session_id": session_id}), 5);
+        // 3. Attach to the session
+        let req = make_request("session.attach", json!({"session_id": session_id}), 3);
         let result = d.dispatch(req).await.to_json();
         assert!(result.get("result").is_some());
 
-        // 6. Health check shows 0 active sessions
-        let req = make_request("health.check", json!({}), 6);
+        // 4. Send input (no-op for shell stub, but protocol should succeed)
+        let req = make_request(
+            "session.input",
+            json!({"session_id": session_id, "data": "aGVsbG8="}),
+            4,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert!(result.get("result").is_some());
+
+        // 5. Resize (no-op for serial/stub)
+        let req = make_request(
+            "session.resize",
+            json!({"session_id": session_id, "cols": 120, "rows": 40}),
+            5,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert!(result.get("result").is_some());
+
+        // 6. List shows attached
+        let req = make_request("session.list", json!({}), 6);
+        let result = d.dispatch(req).await.to_json();
+        let sessions = result["result"]["sessions"].as_array().unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert!(sessions[0]["attached"].as_bool().unwrap());
+
+        // 7. Detach
+        let req = make_request("session.detach", json!({"session_id": session_id}), 7);
+        let result = d.dispatch(req).await.to_json();
+        assert!(result.get("result").is_some());
+
+        // 8. List shows detached
+        let req = make_request("session.list", json!({}), 8);
+        let result = d.dispatch(req).await.to_json();
+        let sessions = result["result"]["sessions"].as_array().unwrap();
+        assert!(!sessions[0]["attached"].as_bool().unwrap());
+
+        // 9. Health check shows 1 active session
+        let req = make_request("health.check", json!({}), 9);
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["result"]["active_sessions"], 1);
+
+        // 10. Close session
+        let req = make_request("session.close", json!({"session_id": session_id}), 10);
+        let result = d.dispatch(req).await.to_json();
+        assert!(result.get("result").is_some());
+
+        // 11. Health check shows 0 active sessions
+        let req = make_request("health.check", json!({}), 11);
         let result = d.dispatch(req).await.to_json();
         assert_eq!(result["result"]["active_sessions"], 0);
     }

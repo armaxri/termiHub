@@ -5,19 +5,26 @@ use tracing::{debug, info, warn};
 
 use crate::handler::dispatch::Dispatcher;
 use crate::protocol::errors;
-use crate::protocol::messages::{JsonRpcErrorResponse, JsonRpcRequest};
+use crate::protocol::messages::{JsonRpcErrorResponse, JsonRpcNotification, JsonRpcRequest};
 use crate::session::manager::SessionManager;
 
 /// Maximum message size: 1 MiB as defined by the protocol spec.
 const MAX_LINE_SIZE: usize = 1_048_576;
 
+/// Sender half for backend tasks to emit notifications.
+pub type NotificationSender = tokio::sync::mpsc::UnboundedSender<JsonRpcNotification>;
+
 /// Run the NDJSON stdio transport loop.
 ///
 /// Reads JSON-RPC messages from stdin (one per line) and writes
-/// responses to stdout. Logs go to stderr.
+/// responses to stdout. Backend notifications are interleaved via
+/// a `tokio::select!` loop. Logs go to stderr.
 pub async fn run_stdio_loop() -> anyhow::Result<()> {
-    let session_manager = Arc::new(SessionManager::new());
-    let mut dispatcher = Dispatcher::new(session_manager);
+    let (notification_tx, mut notification_rx) =
+        tokio::sync::mpsc::unbounded_channel::<JsonRpcNotification>();
+
+    let session_manager = Arc::new(SessionManager::new(notification_tx));
+    let mut dispatcher = Dispatcher::new(session_manager.clone());
 
     let stdin = tokio::io::stdin();
     let mut stdout = tokio::io::stdout();
@@ -29,65 +36,75 @@ pub async fn run_stdio_loop() -> anyhow::Result<()> {
     loop {
         line.clear();
 
-        let bytes_read = reader.read_line(&mut line).await?;
-        if bytes_read == 0 {
-            // EOF — desktop closed the channel
-            info!("Stdin closed, shutting down");
-            break;
-        }
+        tokio::select! {
+            // Branch 1: incoming request from stdin
+            result = reader.read_line(&mut line) => {
+                let bytes_read = result?;
+                if bytes_read == 0 {
+                    info!("Stdin closed, shutting down");
+                    break;
+                }
 
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
 
-        // Check message size limit
-        if trimmed.len() > MAX_LINE_SIZE {
-            warn!("Message exceeds 1 MiB limit ({} bytes)", trimmed.len());
-            let err = JsonRpcErrorResponse::new(
-                serde_json::Value::Null,
-                errors::PARSE_ERROR,
-                "Message exceeds 1 MiB size limit",
-            );
-            write_response(&mut stdout, &serde_json::to_value(&err)?).await?;
-            continue;
-        }
+                if trimmed.len() > MAX_LINE_SIZE {
+                    warn!("Message exceeds 1 MiB limit ({} bytes)", trimmed.len());
+                    let err = JsonRpcErrorResponse::new(
+                        serde_json::Value::Null,
+                        errors::PARSE_ERROR,
+                        "Message exceeds 1 MiB size limit",
+                    );
+                    write_response(&mut stdout, &serde_json::to_value(&err)?).await?;
+                    continue;
+                }
 
-        debug!("Received: {}", trimmed);
+                debug!("Received: {}", trimmed);
 
-        // Parse JSON
-        let request: JsonRpcRequest = match serde_json::from_str(trimmed) {
-            Ok(r) => r,
-            Err(e) => {
-                warn!("Failed to parse JSON-RPC request: {e}");
-                let err = JsonRpcErrorResponse::new(
-                    serde_json::Value::Null,
-                    errors::PARSE_ERROR,
-                    format!("Parse error: {e}"),
-                );
-                write_response(&mut stdout, &serde_json::to_value(&err)?).await?;
-                continue;
+                let request: JsonRpcRequest = match serde_json::from_str(trimmed) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        warn!("Failed to parse JSON-RPC request: {e}");
+                        let err = JsonRpcErrorResponse::new(
+                            serde_json::Value::Null,
+                            errors::PARSE_ERROR,
+                            format!("Parse error: {e}"),
+                        );
+                        write_response(&mut stdout, &serde_json::to_value(&err)?).await?;
+                        continue;
+                    }
+                };
+
+                if request.jsonrpc != "2.0" {
+                    let err = JsonRpcErrorResponse::new(
+                        request.id,
+                        errors::INVALID_REQUEST,
+                        "Invalid JSON-RPC version (must be \"2.0\")",
+                    );
+                    write_response(&mut stdout, &serde_json::to_value(&err)?).await?;
+                    continue;
+                }
+
+                let result = dispatcher.dispatch(request).await;
+                let response_json = result.to_json();
+                debug!("Sending: {}", response_json);
+                write_response(&mut stdout, &response_json).await?;
             }
-        };
 
-        // Validate jsonrpc field
-        if request.jsonrpc != "2.0" {
-            let err = JsonRpcErrorResponse::new(
-                request.id,
-                errors::INVALID_REQUEST,
-                "Invalid JSON-RPC version (must be \"2.0\")",
-            );
-            write_response(&mut stdout, &serde_json::to_value(&err)?).await?;
-            continue;
+            // Branch 2: notification from a backend
+            Some(notification) = notification_rx.recv() => {
+                let json = serde_json::to_value(&notification)?;
+                debug!("Sending notification: {}", json);
+                write_response(&mut stdout, &json).await?;
+            }
         }
-
-        // Dispatch and respond
-        let result = dispatcher.dispatch(request).await;
-        let response_json = result.to_json();
-
-        debug!("Sending: {}", response_json);
-        write_response(&mut stdout, &response_json).await?;
     }
+
+    // Graceful shutdown: close all sessions
+    info!("Shutting down — closing all sessions");
+    session_manager.close_all().await;
 
     Ok(())
 }

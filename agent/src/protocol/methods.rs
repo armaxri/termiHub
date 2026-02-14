@@ -1,5 +1,5 @@
-// Some fields/types are deserialized from the protocol but not read by
-// the stub; they will be used in phase 7 when real backends are added.
+// Fields deserialized from the protocol but not read by agent code
+// are kept for protocol completeness and forward compatibility.
 #![allow(dead_code)]
 
 use std::collections::HashMap;
@@ -73,6 +73,38 @@ pub struct SessionListEntry {
 #[derive(Debug, Clone, Deserialize)]
 pub struct SessionCloseParams {
     pub session_id: String,
+}
+
+// ── session.attach ─────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SessionAttachParams {
+    pub session_id: String,
+}
+
+// ── session.detach ─────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SessionDetachParams {
+    pub session_id: String,
+}
+
+// ── session.input ──────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SessionInputParams {
+    pub session_id: String,
+    /// Base64-encoded data.
+    pub data: String,
+}
+
+// ── session.resize ─────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SessionResizeParams {
+    pub session_id: String,
+    pub cols: u16,
+    pub rows: u16,
 }
 
 // ── health.check ────────────────────────────────────────────────────
@@ -285,5 +317,36 @@ mod tests {
         assert_eq!(cfg.stop_bits, 1);
         assert_eq!(cfg.parity, "none");
         assert_eq!(cfg.flow_control, "none");
+    }
+
+    #[test]
+    fn session_attach_params_serde() {
+        let json = json!({"session_id": "abc-123"});
+        let params: SessionAttachParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.session_id, "abc-123");
+    }
+
+    #[test]
+    fn session_detach_params_serde() {
+        let json = json!({"session_id": "abc-123"});
+        let params: SessionDetachParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.session_id, "abc-123");
+    }
+
+    #[test]
+    fn session_input_params_serde() {
+        let json = json!({"session_id": "abc-123", "data": "aGVsbG8="});
+        let params: SessionInputParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.session_id, "abc-123");
+        assert_eq!(params.data, "aGVsbG8=");
+    }
+
+    #[test]
+    fn session_resize_params_serde() {
+        let json = json!({"session_id": "abc-123", "cols": 120, "rows": 40});
+        let params: SessionResizeParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.session_id, "abc-123");
+        assert_eq!(params.cols, 120);
+        assert_eq!(params.rows, 40);
     }
 }
