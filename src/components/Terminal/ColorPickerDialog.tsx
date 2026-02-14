@@ -95,7 +95,11 @@ export function ColorPickerDialog({
             >
               Clear
             </button>
-            <button className="color-picker__btn color-picker__btn--primary" onClick={handleApply} data-testid="color-picker-apply">
+            <button
+              className="color-picker__btn color-picker__btn--primary"
+              onClick={handleApply}
+              data-testid="color-picker-apply"
+            >
               Apply
             </button>
           </div>

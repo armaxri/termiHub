@@ -91,11 +91,14 @@ jobs:
             bundle_path: 'appimage'
 
           # Linux ARM64 (Raspberry Pi)
+          # AppImage can't be cross-compiled (linuxdeploy is x86_64-only),
+          # so we build .deb and .rpm only for ARM64.
           - platform: 'linux-arm64'
             os: ubuntu-latest
             rust_target: 'aarch64-unknown-linux-gnu'
-            file_ext: '.AppImage'
-            bundle_path: 'appimage'
+            file_ext: '.deb'
+            bundle_path: 'deb'
+            extra_args: '--bundles deb,rpm'
 
     steps:
       - name: Checkout code
@@ -134,6 +137,7 @@ jobs:
             libgtk-3-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
+            libudev-dev \
             patchelf
 
       - name: Install ARM64 cross-compilation tools (Linux ARM64)
@@ -143,18 +147,34 @@ jobs:
 
           # Add ARM64 architecture
           sudo dpkg --add-architecture arm64
-          sudo bash -c 'cat > /etc/apt/sources.list.d/arm64.list <<EOF
+
+          # Pin existing sources to amd64 only so apt doesn't try to fetch
+          # arm64 packages from mirrors that only serve amd64.
+          # Ubuntu 24.04+ uses deb822 .sources format instead of .list format.
+          sudo sed -i 's/^deb \(http\|mirror\)/deb [arch=amd64] \1/' /etc/apt/sources.list 2>/dev/null || true
+          sudo sed -i 's/^deb \(http\|mirror\)/deb [arch=amd64] \1/' /etc/apt/sources.list.d/*.list 2>/dev/null || true
+          # Handle deb822 format (.sources files): add Architectures: amd64
+          for f in /etc/apt/sources.list.d/*.sources; do
+            [ -f "$f" ] && sudo sed -i '/^Types:/a Architectures: amd64' "$f" 2>/dev/null || true
+          done
+
+          # Add arm64 sources from ports.ubuntu.com
+          sudo bash -c 'cat > /etc/apt/sources.list.d/arm64-ports.list <<EOF
           deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ $(lsb_release -sc) main restricted universe multiverse
           deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ $(lsb_release -sc)-updates main restricted universe multiverse
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ $(lsb_release -sc)-security main restricted universe multiverse
           EOF'
 
           sudo apt-get update
-          sudo apt-get install -y \
+          # Use -o to allow overwriting shared arch-independent files (e.g. GIR files)
+          # that conflict between amd64 and arm64 dev packages.
+          sudo apt-get install -y -o Dpkg::Options::="--force-overwrite" \
             libwebkit2gtk-4.1-dev:arm64 \
             libssl-dev:arm64 \
             libgtk-3-dev:arm64 \
             libayatana-appindicator3-dev:arm64 \
-            librsvg2-dev:arm64
+            librsvg2-dev:arm64 \
+            libudev-dev:arm64
 
           # Cross-compilation environment
           echo "PKG_CONFIG_SYSROOT_DIR=/usr/aarch64-linux-gnu" >> $GITHUB_ENV
@@ -171,7 +191,7 @@ jobs:
         with:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           tagName: v${{ needs.create-release.outputs.version }}
-          args: --target ${{ matrix.rust_target }}
+          args: --target ${{ matrix.rust_target }} ${{ matrix.extra_args }}
 
       - name: Find and rename release artifact
         id: find_artifact
@@ -202,9 +222,9 @@ jobs:
           asset_name: ${{ steps.find_artifact.outputs.artifact_name }}
           asset_content_type: application/octet-stream
 
-      # Also upload .deb for Linux
+      # Also upload .deb for Linux (skip ARM64 where .deb is already the primary artifact)
       - name: Upload .deb (Linux only)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-latest' && matrix.file_ext != '.deb'
         run: |
           DEB_FILE=$(find src-tauri/target/${{ matrix.rust_target }}/release/bundle/deb -name "*.deb" | head -n 1)
           if [ -n "$DEB_FILE" ]; then

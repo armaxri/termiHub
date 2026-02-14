@@ -65,7 +65,12 @@ export function ActivityBar() {
       <div className="activity-bar__bottom">
         <DropdownMenu.Root>
           <DropdownMenu.Trigger asChild>
-            <button className="activity-bar__item" title="Settings" aria-label="Settings" data-testid="activity-bar-settings">
+            <button
+              className="activity-bar__item"
+              title="Settings"
+              aria-label="Settings"
+              data-testid="activity-bar-settings"
+            >
               <Settings size={24} strokeWidth={1.5} />
             </button>
           </DropdownMenu.Trigger>
@@ -76,16 +81,28 @@ export function ActivityBar() {
               align="end"
               sideOffset={4}
             >
-              <DropdownMenu.Item className="settings-menu__item" onSelect={openSettingsTab} data-testid="settings-menu-open">
+              <DropdownMenu.Item
+                className="settings-menu__item"
+                onSelect={openSettingsTab}
+                data-testid="settings-menu-open"
+              >
                 <Settings size={14} />
                 Settings
               </DropdownMenu.Item>
               <DropdownMenu.Separator className="settings-menu__separator" />
-              <DropdownMenu.Item className="settings-menu__item" onSelect={handleImport} data-testid="settings-menu-import">
+              <DropdownMenu.Item
+                className="settings-menu__item"
+                onSelect={handleImport}
+                data-testid="settings-menu-import"
+              >
                 <Upload size={14} />
                 Import Connections
               </DropdownMenu.Item>
-              <DropdownMenu.Item className="settings-menu__item" onSelect={handleExport} data-testid="settings-menu-export">
+              <DropdownMenu.Item
+                className="settings-menu__item"
+                onSelect={handleExport}
+                data-testid="settings-menu-export"
+              >
                 <Download size={14} />
                 Export Connections
               </DropdownMenu.Item>

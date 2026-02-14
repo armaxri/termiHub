@@ -111,13 +111,25 @@ export function Tab({
       <ContextMenu.Trigger asChild>{tabElement}</ContextMenu.Trigger>
       <ContextMenu.Portal>
         <ContextMenu.Content className="context-menu__content">
-          <ContextMenu.Item className="context-menu__item" onSelect={() => onSave?.()} data-testid="tab-context-save">
+          <ContextMenu.Item
+            className="context-menu__item"
+            onSelect={() => onSave?.()}
+            data-testid="tab-context-save"
+          >
             <FileDown size={14} /> Save to File
           </ContextMenu.Item>
-          <ContextMenu.Item className="context-menu__item" onSelect={() => onCopyToClipboard?.()} data-testid="tab-context-copy">
+          <ContextMenu.Item
+            className="context-menu__item"
+            onSelect={() => onCopyToClipboard?.()}
+            data-testid="tab-context-copy"
+          >
             <ClipboardCopy size={14} /> Copy to Clipboard
           </ContextMenu.Item>
-          <ContextMenu.Item className="context-menu__item" onSelect={() => onClear?.()} data-testid="tab-context-clear">
+          <ContextMenu.Item
+            className="context-menu__item"
+            onSelect={() => onClear?.()}
+            data-testid="tab-context-clear"
+          >
             <Eraser size={14} /> Clear Terminal
           </ContextMenu.Item>
           <ContextMenu.Separator className="context-menu__separator" />
@@ -133,7 +145,11 @@ export function Tab({
             <ArrowRightLeft size={14} /> Horizontal Scrolling
           </ContextMenu.CheckboxItem>
           <ContextMenu.Separator className="context-menu__separator" />
-          <ContextMenu.Item className="context-menu__item" onSelect={() => onSetColor?.()} data-testid="tab-context-set-color">
+          <ContextMenu.Item
+            className="context-menu__item"
+            onSelect={() => onSetColor?.()}
+            data-testid="tab-context-set-color"
+          >
             <Palette size={14} /> Set Color...
           </ContextMenu.Item>
         </ContextMenu.Content>

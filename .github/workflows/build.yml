@@ -31,6 +31,8 @@ jobs:
             os: ubuntu-latest
             rust_target: 'aarch64-unknown-linux-gnu'
             artifact_name: 'TermiHub-Linux-arm64'
+            # AppImage can't be cross-compiled (linuxdeploy is x86_64-only)
+            extra_args: '--bundles deb,rpm'
           - platform: 'windows-latest'
             os: windows-latest
             rust_target: 'x86_64-pc-windows-msvc'
@@ -73,6 +75,7 @@ jobs:
             libgtk-3-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
+            libudev-dev \
             patchelf
 
       - name: Install ARM64 cross-compilation tools (Ubuntu ARM64)
@@ -82,18 +85,34 @@ jobs:
 
           # Add ARM64 architecture for cross-compilation dependencies
           sudo dpkg --add-architecture arm64
-          sudo bash -c 'cat > /etc/apt/sources.list.d/arm64.list <<EOF
+
+          # Pin existing sources to amd64 only so apt doesn't try to fetch
+          # arm64 packages from mirrors that only serve amd64.
+          # Ubuntu 24.04+ uses deb822 .sources format instead of .list format.
+          sudo sed -i 's/^deb \(http\|mirror\)/deb [arch=amd64] \1/' /etc/apt/sources.list 2>/dev/null || true
+          sudo sed -i 's/^deb \(http\|mirror\)/deb [arch=amd64] \1/' /etc/apt/sources.list.d/*.list 2>/dev/null || true
+          # Handle deb822 format (.sources files): add Architectures: amd64
+          for f in /etc/apt/sources.list.d/*.sources; do
+            [ -f "$f" ] && sudo sed -i '/^Types:/a Architectures: amd64' "$f" 2>/dev/null || true
+          done
+
+          # Add arm64 sources from ports.ubuntu.com
+          sudo bash -c 'cat > /etc/apt/sources.list.d/arm64-ports.list <<EOF
           deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ $(lsb_release -sc) main restricted universe multiverse
           deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ $(lsb_release -sc)-updates main restricted universe multiverse
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ $(lsb_release -sc)-security main restricted universe multiverse
           EOF'
 
           sudo apt-get update
-          sudo apt-get install -y \
+          # Use -o to allow overwriting shared arch-independent files (e.g. GIR files)
+          # that conflict between amd64 and arm64 dev packages.
+          sudo apt-get install -y -o Dpkg::Options::="--force-overwrite" \
             libwebkit2gtk-4.1-dev:arm64 \
             libssl-dev:arm64 \
             libgtk-3-dev:arm64 \
             libayatana-appindicator3-dev:arm64 \
-            librsvg2-dev:arm64
+            librsvg2-dev:arm64 \
+            libudev-dev:arm64
 
           # Set environment variables for cross-compilation
           echo "PKG_CONFIG_SYSROOT_DIR=/usr/aarch64-linux-gnu" >> $GITHUB_ENV
@@ -117,7 +136,7 @@ jobs:
           releaseBody: ''
           releaseDraft: false
           prerelease: false
-          args: --target ${{ matrix.rust_target }}
+          args: --target ${{ matrix.rust_target }} ${{ matrix.extra_args }}
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
