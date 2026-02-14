@@ -6,7 +6,7 @@ import "@xterm/xterm/css/xterm.css";
 import "./Terminal.css";
 import { ConnectionConfig } from "@/types/terminal";
 import { createTerminal, sendInput, resizeTerminal, closeTerminal } from "@/services/api";
-import { onTerminalOutput, onTerminalExit } from "@/services/events";
+import { terminalDispatcher } from "@/services/events";
 import { useTerminalRegistry } from "./TerminalRegistry";
 import { useAppStore } from "@/store/appStore";
 
@@ -112,19 +112,15 @@ export function Terminal({ tabId, config, isVisible }: TerminalProps) {
         const sessionId = await createTerminal(config);
         sessionIdRef.current = sessionId;
 
-        // Subscribe to output events
-        const unlistenOutput = await onTerminalOutput((sid, data) => {
-          if (sid === sessionId) {
-            xterm.write(data);
-          }
+        // Subscribe to output events via singleton dispatcher (O(1) routing)
+        const unsubOutput = terminalDispatcher.subscribeOutput(sessionId, (data) => {
+          xterm.write(data);
         });
 
-        // Subscribe to exit events
-        const unlistenExit = await onTerminalExit((sid, _exitCode) => {
-          if (sid === sessionId) {
-            xterm.writeln("\r\n\x1b[90m[Process exited]\x1b[0m");
-            sessionIdRef.current = null;
-          }
+        // Subscribe to exit events via singleton dispatcher
+        const unsubExit = terminalDispatcher.subscribeExit(sessionId, () => {
+          xterm.writeln("\r\n\x1b[90m[Process exited]\x1b[0m");
+          sessionIdRef.current = null;
         });
 
         // Send user input to backend
@@ -150,8 +146,8 @@ export function Terminal({ tabId, config, isVisible }: TerminalProps) {
         }
 
         cleanupRef.current = () => {
-          unlistenOutput();
-          unlistenExit();
+          unsubOutput();
+          unsubExit();
           onDataDisposable.dispose();
           onResizeDisposable.dispose();
           if (sessionIdRef.current) {

@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { Plus, Columns2, X } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { TerminalTab } from "@/types/terminal";
@@ -6,9 +6,17 @@ import { getAllLeaves } from "@/utils/panelTree";
 import { TerminalPortalProvider } from "./TerminalRegistry";
 import { Terminal } from "./Terminal";
 import { SplitView } from "@/components/SplitView";
+import { terminalDispatcher } from "@/services/events";
 import "./TerminalView.css";
 
 export function TerminalView() {
+  // Initialize the singleton event dispatcher on mount, destroy on unmount
+  useEffect(() => {
+    terminalDispatcher.init();
+    return () => {
+      terminalDispatcher.destroy();
+    };
+  }, []);
   const addTab = useAppStore((s) => s.addTab);
   const splitPanel = useAppStore((s) => s.splitPanel);
   const rootPanel = useAppStore((s) => s.rootPanel);
