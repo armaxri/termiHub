@@ -2,6 +2,7 @@ import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
 import { ConnectionEditor } from "./ConnectionEditor";
 import { FileBrowser } from "./FileBrowser";
+import { MonitoringPanel } from "./MonitoringPanel";
 import "./Sidebar.css";
 
 const VIEW_TITLES: Record<string, string> = {
@@ -26,6 +27,7 @@ export function Sidebar() {
         {sidebarView === "connections" &&
           (editingConnectionId ? <ConnectionEditor /> : <ConnectionList />)}
         {sidebarView === "files" && <FileBrowser />}
+        {sidebarView === "monitoring" && <MonitoringPanel />}
       </div>
     </div>
   );
