@@ -232,12 +232,8 @@ impl Dispatcher {
             DispatchResult::Success(JsonRpcResponse::new(id, json!({})))
         } else {
             DispatchResult::Error(
-                JsonRpcErrorResponse::new(
-                    id,
-                    errors::SESSION_NOT_FOUND,
-                    "Session not found",
-                )
-                .with_data(json!({"session_id": params.session_id})),
+                JsonRpcErrorResponse::new(id, errors::SESSION_NOT_FOUND, "Session not found")
+                    .with_data(json!({"session_id": params.session_id})),
             )
         }
     }
@@ -340,12 +336,18 @@ mod tests {
     async fn methods_require_initialization() {
         let mut d = make_dispatcher();
 
-        for method in &["session.create", "session.list", "session.close", "health.check"] {
+        for method in &[
+            "session.create",
+            "session.list",
+            "session.close",
+            "health.check",
+        ] {
             let req = make_request(method, json!({}), 1);
             let result = d.dispatch(req).await;
             let json = result.to_json();
             assert_eq!(
-                json["error"]["code"], errors::NOT_INITIALIZED,
+                json["error"]["code"],
+                errors::NOT_INITIALIZED,
                 "{method} should require initialization"
             );
         }
@@ -478,11 +480,7 @@ mod tests {
         let mut d = make_dispatcher();
         init_dispatcher(&mut d).await;
 
-        let req = make_request(
-            "session.close",
-            json!({"session_id": "nonexistent"}),
-            2,
-        );
+        let req = make_request("session.close", json!({"session_id": "nonexistent"}), 2);
         let result = d.dispatch(req).await;
         let json = result.to_json();
         assert_eq!(json["error"]["code"], errors::SESSION_NOT_FOUND);

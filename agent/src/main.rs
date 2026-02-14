@@ -39,8 +39,7 @@ async fn main() -> anyhow::Result<()> {
             // Configure tracing to stderr so it doesn't interfere with the protocol on stdout
             tracing_subscriber::fmt()
                 .with_env_filter(
-                    EnvFilter::try_from_default_env()
-                        .unwrap_or_else(|_| EnvFilter::new("info")),
+                    EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
                 )
                 .with_writer(std::io::stderr)
                 .init();

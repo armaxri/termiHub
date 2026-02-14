@@ -1,3 +1,7 @@
+// Notification type is not used in the stub but will be needed for
+// session.output, session.exit, and session.error notifications in phase 7.
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

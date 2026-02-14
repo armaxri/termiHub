@@ -1,3 +1,7 @@
+// Some fields/types are deserialized from the protocol but not read by
+// the stub; they will be used in phase 7 when real backends are added.
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};

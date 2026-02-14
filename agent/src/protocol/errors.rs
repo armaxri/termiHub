@@ -1,4 +1,7 @@
-/// Standard JSON-RPC 2.0 error codes.
+//! Standard and application JSON-RPC 2.0 error codes.
+
+// Some codes are not yet used in the stub but will be needed in phase 7.
+#![allow(dead_code)]
 
 /// Invalid JSON was received by the server.
 pub const PARSE_ERROR: i64 = -32700;
@@ -15,7 +18,7 @@ pub const INVALID_PARAMS: i64 = -32602;
 /// Internal JSON-RPC error.
 pub const INTERNAL_ERROR: i64 = -32603;
 
-/// Application error codes (TermiHub-specific).
+// Application error codes (TermiHub-specific).
 
 /// No session with the given ID.
 pub const SESSION_NOT_FOUND: i64 = -32001;

@@ -1,3 +1,7 @@
+// The Exited variant and config field are not used in the stub but
+// will be needed in phase 7 when real PTY/serial backends are added.
+#![allow(dead_code)]
+
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 

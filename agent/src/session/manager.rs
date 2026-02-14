@@ -147,11 +147,7 @@ mod tests {
         // Create MAX_SESSIONS sessions
         for i in 0..MAX_SESSIONS {
             let result = mgr
-                .create(
-                    SessionType::Shell,
-                    format!("session-{i}"),
-                    json!({}),
-                )
+                .create(SessionType::Shell, format!("session-{i}"), json!({}))
                 .await;
             assert!(result.is_some(), "Session {i} should succeed");
         }
