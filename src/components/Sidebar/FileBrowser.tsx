@@ -203,7 +203,11 @@ function FileRow({ entry, mode, vscodeAvailable, onNavigate, onContextAction }: 
       <ContextMenu.Portal>
         <ContextMenu.Content className="context-menu__content">
           {entry.isDirectory && (
-            <ContextMenu.Item className="context-menu__item" onSelect={() => onNavigate(entry)} data-testid="context-file-open">
+            <ContextMenu.Item
+              className="context-menu__item"
+              onSelect={() => onNavigate(entry)}
+              data-testid="context-file-open"
+            >
               <FolderOpen size={14} /> Open
             </ContextMenu.Item>
           )}
@@ -569,15 +573,30 @@ export function FileBrowser() {
           >
             <ArrowUp size={14} />
           </button>
-          <button className="file-browser__btn" onClick={refresh} title="Refresh" data-testid="file-browser-refresh">
+          <button
+            className="file-browser__btn"
+            onClick={refresh}
+            title="Refresh"
+            data-testid="file-browser-refresh"
+          >
             <RefreshCw size={14} className={isLoading ? "file-browser__spinner" : ""} />
           </button>
           {mode === "sftp" && (
-            <button className="file-browser__btn" onClick={uploadFile} title="Upload File" data-testid="file-browser-upload">
+            <button
+              className="file-browser__btn"
+              onClick={uploadFile}
+              title="Upload File"
+              data-testid="file-browser-upload"
+            >
               <Upload size={14} />
             </button>
           )}
-          <button className="file-browser__btn" onClick={() => setNewFileName("")} title="New File" data-testid="file-browser-new-file">
+          <button
+            className="file-browser__btn"
+            onClick={() => setNewFileName("")}
+            title="New File"
+            data-testid="file-browser-new-file"
+          >
             <FilePlus size={14} />
           </button>
           <button
@@ -589,7 +608,12 @@ export function FileBrowser() {
             <FolderPlus size={14} />
           </button>
           {mode === "sftp" && (
-            <button className="file-browser__btn" onClick={disconnectSftp} title="Disconnect" data-testid="file-browser-disconnect">
+            <button
+              className="file-browser__btn"
+              onClick={disconnectSftp}
+              title="Disconnect"
+              data-testid="file-browser-disconnect"
+            >
               <Unplug size={14} />
             </button>
           )}
@@ -617,7 +641,12 @@ export function FileBrowser() {
             autoFocus
             data-testid="file-browser-new-file-input"
           />
-          <button className="file-browser__btn" onClick={handleCreateFile} title="Create" data-testid="file-browser-new-file-confirm">
+          <button
+            className="file-browser__btn"
+            onClick={handleCreateFile}
+            title="Create"
+            data-testid="file-browser-new-file-confirm"
+          >
             <FilePlus size={14} />
           </button>
         </div>
@@ -637,7 +666,12 @@ export function FileBrowser() {
             autoFocus
             data-testid="file-browser-new-folder-input"
           />
-          <button className="file-browser__btn" onClick={handleCreateDir} title="Create" data-testid="file-browser-new-folder-confirm">
+          <button
+            className="file-browser__btn"
+            onClick={handleCreateDir}
+            title="Create"
+            data-testid="file-browser-new-folder-confirm"
+          >
             <FolderPlus size={14} />
           </button>
         </div>

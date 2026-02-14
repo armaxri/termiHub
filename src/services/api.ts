@@ -4,6 +4,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { SessionId, ConnectionConfig, SshConfig } from "@/types/terminal";
+import { SystemStats } from "@/types/monitoring";
 import {
   SavedConnection,
   ConnectionFolder,
@@ -242,4 +243,21 @@ export async function vscodeOpenLocal(path: string): Promise<void> {
 /** Open a remote file in VS Code: download, edit, re-upload. */
 export async function vscodeOpenRemote(sessionId: string, remotePath: string): Promise<void> {
   await invoke("vscode_open_remote", { sessionId, remotePath });
+}
+
+// --- Monitoring commands ---
+
+/** Open a new monitoring session. Returns session ID. */
+export async function monitoringOpen(config: SshConfig): Promise<string> {
+  return await invoke<string>("monitoring_open", { config });
+}
+
+/** Close a monitoring session. */
+export async function monitoringClose(sessionId: string): Promise<void> {
+  await invoke("monitoring_close", { sessionId });
+}
+
+/** Fetch system stats from a monitoring session. */
+export async function monitoringFetchStats(sessionId: string): Promise<SystemStats> {
+  return await invoke<SystemStats>("monitoring_fetch_stats", { sessionId });
 }

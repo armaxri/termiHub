@@ -230,7 +230,9 @@ describe("api service", () => {
     });
 
     it("reloadExternalConnections returns sources", async () => {
-      const sources = [{ filePath: "/test", name: "Test", folders: [], connections: [], error: null }];
+      const sources = [
+        { filePath: "/test", name: "Test", folders: [], connections: [], error: null },
+      ];
       mockedInvoke.mockResolvedValue(sources);
 
       const result = await reloadExternalConnections();
@@ -243,7 +245,12 @@ describe("api service", () => {
   describe("SFTP commands", () => {
     it("sftpOpen invokes with SSH config", async () => {
       mockedInvoke.mockResolvedValue("sftp-session-1");
-      const config = { host: "pi.local", port: 22, username: "pi", authMethod: "password" as const };
+      const config = {
+        host: "pi.local",
+        port: 22,
+        username: "pi",
+        authMethod: "password" as const,
+      };
 
       const result = await sftpOpen(config);
 
@@ -260,12 +267,24 @@ describe("api service", () => {
     });
 
     it("sftpListDir invokes with session ID and path", async () => {
-      const entries = [{ name: "file.txt", path: "/home/file.txt", isDirectory: false, size: 100, modified: "2024-01-01", permissions: "rw-r--r--" }];
+      const entries = [
+        {
+          name: "file.txt",
+          path: "/home/file.txt",
+          isDirectory: false,
+          size: 100,
+          modified: "2024-01-01",
+          permissions: "rw-r--r--",
+        },
+      ];
       mockedInvoke.mockResolvedValue(entries);
 
       const result = await sftpListDir("sftp-1", "/home");
 
-      expect(mockedInvoke).toHaveBeenCalledWith("sftp_list_dir", { sessionId: "sftp-1", path: "/home" });
+      expect(mockedInvoke).toHaveBeenCalledWith("sftp_list_dir", {
+        sessionId: "sftp-1",
+        path: "/home",
+      });
       expect(result).toEqual(entries);
     });
 
@@ -357,7 +376,16 @@ describe("api service", () => {
 
   describe("local filesystem commands", () => {
     it("localListDir invokes with path", async () => {
-      const entries = [{ name: "file.txt", path: "/home/file.txt", isDirectory: false, size: 50, modified: "2024-01-01", permissions: null }];
+      const entries = [
+        {
+          name: "file.txt",
+          path: "/home/file.txt",
+          isDirectory: false,
+          size: 50,
+          modified: "2024-01-01",
+          permissions: null,
+        },
+      ];
       mockedInvoke.mockResolvedValue(entries);
 
       const result = await localListDir("/home");

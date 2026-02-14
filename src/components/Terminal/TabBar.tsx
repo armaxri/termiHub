@@ -20,6 +20,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   const tabColors = useAppStore((s) => s.tabColors);
   const setTabColor = useAppStore((s) => s.setTabColor);
   const editorDirtyTabs = useAppStore((s) => s.editorDirtyTabs);
+  const remoteStates = useAppStore((s) => s.remoteStates);
   const { clearTerminal, saveTerminalToFile, copyTerminalToClipboard } = useTerminalRegistry();
 
   const [colorPickerTabId, setColorPickerTabId] = useState<string | null>(null);
@@ -51,6 +52,9 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
               isDirty={editorDirtyTabs[tab.id] ?? false}
               tabColor={tabColors[tab.id]}
               onSetColor={() => setColorPickerTabId(tab.id)}
+              remoteState={
+                tab.connectionType === "remote" ? remoteStates[tab.id] : undefined
+              }
             />
           ))}
         </div>

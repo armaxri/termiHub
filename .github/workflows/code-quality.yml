@@ -31,7 +31,8 @@ jobs:
             libssl-dev \
             libgtk-3-dev \
             libayatana-appindicator3-dev \
-            librsvg2-dev
+            librsvg2-dev \
+            libudev-dev
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -127,7 +128,8 @@ jobs:
             libssl-dev \
             libgtk-3-dev \
             libayatana-appindicator3-dev \
-            librsvg2-dev
+            librsvg2-dev \
+            libudev-dev
 
       - name: Run Rust tests
         run: |
@@ -187,8 +189,8 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install commitlint
-        run: pnpm add -g @commitlint/cli @commitlint/config-conventional
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
       - name: Validate PR commits
         run: pnpm exec commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.sha }} --verbose

@@ -7,6 +7,7 @@ import {
   SshConfig,
   TelnetConfig,
   SerialConfig,
+  RemoteConfig,
   TerminalOptions,
 } from "@/types/terminal";
 import {
@@ -14,6 +15,7 @@ import {
   SshSettings,
   SerialSettings,
   TelnetSettings,
+  RemoteSettings,
 } from "@/components/Settings";
 import { ColorPickerDialog } from "@/components/Terminal/ColorPickerDialog";
 import { getDefaultShell } from "@/utils/shell-detection";
@@ -44,6 +46,16 @@ function getDefaultConfigs(defaultShell: string): Record<ConnectionType, Connect
         flowControl: "none",
       },
     },
+    remote: {
+      type: "remote",
+      config: {
+        host: "",
+        port: 22,
+        username: "",
+        authMethod: "password",
+        sessionType: "shell",
+      } as RemoteConfig,
+    },
   };
 }
 
@@ -52,6 +64,7 @@ const TYPE_OPTIONS: { value: ConnectionType; label: string }[] = [
   { value: "ssh", label: "SSH" },
   { value: "serial", label: "Serial" },
   { value: "telnet", label: "Telnet" },
+  { value: "remote", label: "Remote Agent" },
 ];
 
 /**
@@ -211,7 +224,11 @@ export function ConnectionEditor() {
         </label>
         <label className="settings-form__field">
           <span className="settings-form__label">Folder</span>
-          <select value={folderId ?? ""} onChange={(e) => setFolderId(e.target.value || null)} data-testid="connection-editor-folder-select">
+          <select
+            value={folderId ?? ""}
+            onChange={(e) => setFolderId(e.target.value || null)}
+            data-testid="connection-editor-folder-select"
+          >
             <option value="">(Root)</option>
             {availableFolders.map((f) => (
               <option key={f.id} value={f.id}>
@@ -257,6 +274,12 @@ export function ConnectionEditor() {
           <TelnetSettings
             config={connectionConfig.config}
             onChange={(config: TelnetConfig) => setConnectionConfig({ type: "telnet", config })}
+          />
+        )}
+        {connectionConfig.type === "remote" && (
+          <RemoteSettings
+            config={connectionConfig.config}
+            onChange={(config: RemoteConfig) => setConnectionConfig({ type: "remote", config })}
           />
         )}
 
