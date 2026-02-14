@@ -88,9 +88,18 @@ fn parse_stats(output: &str) -> Result<SystemStats, TerminalError> {
     // Line 1: /proc/loadavg — "0.15 0.10 0.05 1/234 5678"
     let load_parts: Vec<&str> = lines[1].split_whitespace().collect();
     let load_average = [
-        load_parts.first().and_then(|s| s.parse().ok()).unwrap_or(0.0),
-        load_parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0.0),
-        load_parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0.0),
+        load_parts
+            .first()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0.0),
+        load_parts
+            .get(1)
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0.0),
+        load_parts
+            .get(2)
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0.0),
     ];
 
     // Lines 2+: /proc/meminfo — find MemTotal and MemAvailable
@@ -160,10 +169,7 @@ fn parse_stats(output: &str) -> Result<SystemStats, TerminalError> {
             disk_total_kb = parts[1].parse().unwrap_or(0);
             disk_used_kb = parts[2].parse().unwrap_or(0);
             // parts[4] is like "42%"
-            disk_used_percent = parts[4]
-                .trim_end_matches('%')
-                .parse()
-                .unwrap_or(0.0);
+            disk_used_percent = parts[4].trim_end_matches('%').parse().unwrap_or(0.0);
             break;
         }
     }
@@ -230,10 +236,7 @@ impl MonitoringManager {
     }
 
     /// Get a session Arc for use outside the manager lock.
-    pub fn get_session(
-        &self,
-        id: &str,
-    ) -> Result<Arc<Mutex<MonitoringSession>>, TerminalError> {
+    pub fn get_session(&self, id: &str) -> Result<Arc<Mutex<MonitoringSession>>, TerminalError> {
         let sessions = self.sessions.lock().unwrap();
         sessions
             .get(id)
