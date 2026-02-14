@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Remote agent stub binary (`termihub-agent`) for Raspberry Pi with JSON-RPC 2.0 protocol over stdio, supporting initialize handshake, session create/list/close, and health check
+- CI workflow for agent crate with formatting, linting, tests, and ARM64 cross-compilation
 - Remote session management protocol specification (`docs/remote-protocol.md`) for desktop-to-agent communication over SSH
 - SSH remote monitoring panel for viewing system stats (CPU, memory, disk, uptime, load average, OS info) of connected SSH hosts with auto-refresh
 - E2E test suite with WebdriverIO and tauri-driver (~30 tests across 8 files) covering connection forms, CRUD operations, tab management, split views, local shell spawn, file browser, settings, and tab coloring
