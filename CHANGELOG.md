@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
+- Serial port proxy support in the remote agent: serial ports connected to the Raspberry Pi are now accessible from the desktop app over SSH
+- 24/7 serial data buffering with 1 MiB ring buffer: data is captured continuously and replayed when a client attaches
+- Serial port disconnection detection and automatic reconnection in the remote agent
+- Agent-side `session.attach`, `session.detach`, `session.input`, and `session.resize` protocol handlers
 - E2E performance stress test for 40 concurrent terminals with creation throughput, UI responsiveness, and cleanup timing measurements (`pnpm test:e2e:perf`)
 - Remote Agent connection type: connect to `termihub-agent` on Raspberry Pi for persistent shell and serial sessions that survive desktop disconnects
 - Auto-reconnect for remote connections with exponential backoff and visual state indicators on tabs
