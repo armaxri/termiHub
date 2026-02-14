@@ -15,6 +15,7 @@ import {
   SshSettings,
   SerialSettings,
   TelnetSettings,
+  RemoteSettings,
 } from "@/components/Settings";
 import { ColorPickerDialog } from "@/components/Terminal/ColorPickerDialog";
 import { getDefaultShell } from "@/utils/shell-detection";
@@ -63,6 +64,7 @@ const TYPE_OPTIONS: { value: ConnectionType; label: string }[] = [
   { value: "ssh", label: "SSH" },
   { value: "serial", label: "Serial" },
   { value: "telnet", label: "Telnet" },
+  { value: "remote", label: "Remote Agent" },
 ];
 
 /**
@@ -272,6 +274,12 @@ export function ConnectionEditor() {
           <TelnetSettings
             config={connectionConfig.config}
             onChange={(config: TelnetConfig) => setConnectionConfig({ type: "telnet", config })}
+          />
+        )}
+        {connectionConfig.type === "remote" && (
+          <RemoteSettings
+            config={connectionConfig.config}
+            onChange={(config: RemoteConfig) => setConnectionConfig({ type: "remote", config })}
           />
         )}
 
