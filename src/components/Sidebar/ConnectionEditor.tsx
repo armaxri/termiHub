@@ -7,6 +7,7 @@ import {
   SshConfig,
   TelnetConfig,
   SerialConfig,
+  RemoteConfig,
   TerminalOptions,
 } from "@/types/terminal";
 import {
@@ -43,6 +44,16 @@ function getDefaultConfigs(defaultShell: string): Record<ConnectionType, Connect
         parity: "none",
         flowControl: "none",
       },
+    },
+    remote: {
+      type: "remote",
+      config: {
+        host: "",
+        port: 22,
+        username: "",
+        authMethod: "password",
+        sessionType: "shell",
+      } as RemoteConfig,
     },
   };
 }

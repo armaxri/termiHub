@@ -21,6 +21,7 @@ import {
   Wifi,
   Cable,
   Globe,
+  Server,
   Plus,
   Play,
   Pencil,
@@ -42,6 +43,7 @@ const TYPE_ICONS: Record<ConnectionType, typeof Terminal> = {
   ssh: Wifi,
   serial: Cable,
   telnet: Globe,
+  remote: Server,
 };
 
 interface InlineFolderInputProps {

@@ -7,6 +7,7 @@ import {
   Wifi,
   Cable,
   Globe,
+  Server,
   Settings as SettingsIcon,
   FileEdit,
   Eraser,
@@ -24,6 +25,7 @@ const TYPE_ICONS: Record<ConnectionType, typeof Terminal> = {
   ssh: Wifi,
   serial: Cable,
   telnet: Globe,
+  remote: Server,
 };
 
 interface TabProps {
