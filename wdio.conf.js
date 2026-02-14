@@ -51,6 +51,9 @@ export const config = {
     infra: [
       './tests/e2e/infrastructure/*.test.js',
     ],
+    perf: [
+      './tests/e2e/performance-stress.test.js',
+    ],
   },
 
   maxInstances: 1,
