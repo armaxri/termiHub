@@ -284,7 +284,20 @@ fn build_create_params(config: &RemoteConfig) -> Value {
     }
 }
 
+/// Emit a remote state change event.
+fn emit_state(app_handle: &AppHandle, local_session_id: &str, state: &str) {
+    let _ = app_handle.emit(
+        "remote-state-change",
+        RemoteStateChangeEvent {
+            session_id: local_session_id.to_string(),
+            state: state.to_string(),
+        },
+    );
+}
+
 /// Main I/O thread loop — owns the SSH Session + Channel.
+/// When the connection drops (and `close()` was not called), attempts
+/// to reconnect with exponential backoff before giving up.
 #[allow(clippy::too_many_arguments)]
 fn io_thread(
     _session: Session,
@@ -293,123 +306,313 @@ fn io_thread(
     output_tx: OutputSender,
     alive: Arc<AtomicBool>,
     closed: Arc<AtomicBool>,
-    _app_handle: AppHandle,
-    _local_session_id: String,
+    app_handle: AppHandle,
+    local_session_id: String,
     remote_session_id: String,
-    _config: RemoteConfig,
+    config: RemoteConfig,
     mut request_id: u64,
 ) {
     let b64 = base64::engine::general_purpose::STANDARD;
     let mut line_buf = String::new();
     let mut read_buf = [0u8; 4096];
 
-    loop {
-        // Check if we've been asked to close
-        if closed.load(Ordering::SeqCst) {
+    'outer: loop {
+        // Inner read loop — runs until the connection breaks or is closed
+        let connection_broken = loop {
+            // Check if we've been asked to close
+            if closed.load(Ordering::SeqCst) {
+                break 'outer;
+            }
+
+            // 1. Process all pending write commands (non-blocking)
+            while let Ok(cmd) = write_rx.try_recv() {
+                match cmd {
+                    WriteCommand::Input(data) => {
+                        request_id += 1;
+                        let encoded = b64.encode(&data);
+                        let _ = jsonrpc::write_request(
+                            &mut channel,
+                            request_id,
+                            "session.input",
+                            serde_json::json!({
+                                "session_id": remote_session_id,
+                                "data": encoded,
+                            }),
+                        );
+                    }
+                    WriteCommand::Resize { cols, rows } => {
+                        request_id += 1;
+                        let _ = jsonrpc::write_request(
+                            &mut channel,
+                            request_id,
+                            "session.resize",
+                            serde_json::json!({
+                                "session_id": remote_session_id,
+                                "cols": cols,
+                                "rows": rows,
+                            }),
+                        );
+                    }
+                    WriteCommand::Close => {
+                        request_id += 1;
+                        let _ = jsonrpc::write_request(
+                            &mut channel,
+                            request_id,
+                            "session.close",
+                            serde_json::json!({ "session_id": remote_session_id }),
+                        );
+                        alive.store(false, Ordering::SeqCst);
+                        return;
+                    }
+                }
+            }
+
+            // 2. Non-blocking read from SSH channel
+            match channel.read(&mut read_buf) {
+                Ok(0) => {
+                    // EOF — connection lost
+                    break true;
+                }
+                Ok(n) => {
+                    let chunk = String::from_utf8_lossy(&read_buf[..n]).to_string();
+                    line_buf.push_str(&chunk);
+
+                    // Extract complete NDJSON lines
+                    while let Some(newline_pos) = line_buf.find('\n') {
+                        let line: String = line_buf.drain(..=newline_pos).collect();
+                        let line = line.trim();
+                        if line.is_empty() {
+                            continue;
+                        }
+
+                        match jsonrpc::parse_message(line) {
+                            Ok(jsonrpc::JsonRpcMessage::Notification { method, params }) => {
+                                handle_notification(
+                                    &method,
+                                    &params,
+                                    &remote_session_id,
+                                    &output_tx,
+                                    &alive,
+                                    &b64,
+                                );
+                                // If session exited, don't reconnect
+                                if !alive.load(Ordering::SeqCst) {
+                                    break 'outer;
+                                }
+                            }
+                            Ok(jsonrpc::JsonRpcMessage::Response { .. }) => {
+                                // Responses to fire-and-forget requests — ignore
+                            }
+                            Ok(jsonrpc::JsonRpcMessage::Error { message, .. }) => {
+                                warn!("Remote agent error response: {}", message);
+                            }
+                            Err(e) => {
+                                warn!("Failed to parse agent message: {}", e);
+                            }
+                        }
+                    }
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    // No data available — sleep briefly to avoid busy-waiting
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(e) => {
+                    error!("SSH channel read error: {}", e);
+                    break true;
+                }
+            }
+        };
+
+        // If we broke out due to user close, don't reconnect
+        if !connection_broken || closed.load(Ordering::SeqCst) {
             break;
         }
 
-        // 1. Process all pending write commands (non-blocking)
-        while let Ok(cmd) = write_rx.try_recv() {
-            match cmd {
-                WriteCommand::Input(data) => {
-                    request_id += 1;
-                    let encoded = b64.encode(&data);
-                    let _ = jsonrpc::write_request(
-                        &mut channel,
-                        request_id,
-                        "session.input",
-                        serde_json::json!({
-                            "session_id": remote_session_id,
-                            "data": encoded,
-                        }),
-                    );
+        // --- Reconnect logic ---
+        emit_state(&app_handle, &local_session_id, "disconnected");
+        info!(
+            "Connection lost for remote session {}, attempting reconnect",
+            remote_session_id
+        );
+
+        const MAX_RETRIES: u32 = 10;
+        const MAX_BACKOFF_SECS: u64 = 30;
+        let mut reconnected = false;
+
+        for attempt in 0..MAX_RETRIES {
+            if closed.load(Ordering::SeqCst) {
+                break 'outer;
+            }
+
+            let backoff = std::cmp::min(1u64 << attempt, MAX_BACKOFF_SECS);
+            info!("Reconnect attempt {} (backoff {}s)", attempt + 1, backoff);
+            emit_state(&app_handle, &local_session_id, "reconnecting");
+
+            std::thread::sleep(std::time::Duration::from_secs(backoff));
+
+            if closed.load(Ordering::SeqCst) {
+                break 'outer;
+            }
+
+            match reconnect_to_agent(&config, &remote_session_id, &mut request_id) {
+                Ok((_new_session, new_channel)) => {
+                    channel = new_channel;
+                    line_buf.clear();
+                    emit_state(&app_handle, &local_session_id, "connected");
+                    info!("Reconnected to remote session {}", remote_session_id);
+                    reconnected = true;
+                    break;
                 }
-                WriteCommand::Resize { cols, rows } => {
-                    request_id += 1;
-                    let _ = jsonrpc::write_request(
-                        &mut channel,
-                        request_id,
-                        "session.resize",
-                        serde_json::json!({
-                            "session_id": remote_session_id,
-                            "cols": cols,
-                            "rows": rows,
-                        }),
+                Err(ReconnectError::SessionGone) => {
+                    info!(
+                        "Remote session {} no longer exists on agent",
+                        remote_session_id
                     );
+                    break;
                 }
-                WriteCommand::Close => {
-                    request_id += 1;
-                    let _ = jsonrpc::write_request(
-                        &mut channel,
-                        request_id,
-                        "session.close",
-                        serde_json::json!({ "session_id": remote_session_id }),
-                    );
-                    alive.store(false, Ordering::SeqCst);
-                    return;
+                Err(ReconnectError::ConnectionFailed(e)) => {
+                    warn!("Reconnect attempt {} failed: {}", attempt + 1, e);
                 }
             }
         }
 
-        // 2. Non-blocking read from SSH channel
-        match channel.read(&mut read_buf) {
-            Ok(0) => {
-                // EOF — channel closed
-                break;
-            }
-            Ok(n) => {
-                let chunk =
-                    String::from_utf8_lossy(&read_buf[..n]).to_string();
-                line_buf.push_str(&chunk);
-
-                // Extract complete NDJSON lines
-                while let Some(newline_pos) = line_buf.find('\n') {
-                    let line: String = line_buf.drain(..=newline_pos).collect();
-                    let line = line.trim();
-                    if line.is_empty() {
-                        continue;
-                    }
-
-                    match jsonrpc::parse_message(line) {
-                        Ok(jsonrpc::JsonRpcMessage::Notification { method, params }) => {
-                            handle_notification(
-                                &method,
-                                &params,
-                                &remote_session_id,
-                                &output_tx,
-                                &alive,
-                                &b64,
-                            );
-                        }
-                        Ok(jsonrpc::JsonRpcMessage::Response { .. }) => {
-                            // Responses to fire-and-forget requests — ignore
-                        }
-                        Ok(jsonrpc::JsonRpcMessage::Error {
-                            message, ..
-                        }) => {
-                            warn!("Remote agent error response: {}", message);
-                        }
-                        Err(e) => {
-                            warn!("Failed to parse agent message: {}", e);
-                        }
-                    }
-                }
-            }
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                // No data available — sleep briefly to avoid busy-waiting
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
-            Err(e) => {
-                error!("SSH channel read error: {}", e);
-                break;
-            }
+        if !reconnected {
+            break;
         }
     }
 
-    // Connection lost or EOF
+    // Final cleanup
     alive.store(false, Ordering::SeqCst);
-    info!("Remote I/O thread exiting for session {}", remote_session_id);
+    info!(
+        "Remote I/O thread exiting for session {}",
+        remote_session_id
+    );
+}
+
+/// Errors that can occur during reconnection.
+enum ReconnectError {
+    /// The remote session no longer exists on the agent.
+    SessionGone,
+    /// A transient connection failure (SSH, handshake, etc.).
+    ConnectionFailed(String),
+}
+
+/// Attempt to reconnect to the agent and re-attach to the existing session.
+///
+/// Performs: SSH connect → exec agent → initialize → session.list (check
+/// our session exists) → session.attach.
+fn reconnect_to_agent(
+    config: &RemoteConfig,
+    remote_session_id: &str,
+    request_id: &mut u64,
+) -> Result<(Session, ssh2::Channel), ReconnectError> {
+    let ssh_config = config.to_ssh_config();
+
+    let session = connect_and_authenticate(&ssh_config)
+        .map_err(|e| ReconnectError::ConnectionFailed(e.to_string()))?;
+
+    let mut channel = session
+        .channel_session()
+        .map_err(|e| ReconnectError::ConnectionFailed(format!("Channel open: {}", e)))?;
+    channel
+        .exec("termihub-agent --stdio")
+        .map_err(|e| ReconnectError::ConnectionFailed(format!("Exec: {}", e)))?;
+
+    // initialize
+    *request_id += 1;
+    jsonrpc::write_request(
+        &mut channel,
+        *request_id,
+        "initialize",
+        serde_json::json!({
+            "protocol_version": "0.1.0",
+            "client": "termihub-desktop",
+            "client_version": "0.1.0"
+        }),
+    )
+    .map_err(|e| ReconnectError::ConnectionFailed(format!("Write initialize: {}", e)))?;
+
+    let resp = jsonrpc::read_line_blocking(&mut channel)
+        .map_err(|e| ReconnectError::ConnectionFailed(format!("Read initialize: {}", e)))?;
+    match jsonrpc::parse_message(&resp) {
+        Ok(jsonrpc::JsonRpcMessage::Response { .. }) => {}
+        Ok(jsonrpc::JsonRpcMessage::Error { message, .. }) => {
+            return Err(ReconnectError::ConnectionFailed(format!(
+                "Initialize rejected: {}",
+                message
+            )));
+        }
+        _ => {
+            return Err(ReconnectError::ConnectionFailed(
+                "Bad initialize response".to_string(),
+            ));
+        }
+    }
+
+    // session.list — check if our session still exists
+    *request_id += 1;
+    jsonrpc::write_request(
+        &mut channel,
+        *request_id,
+        "session.list",
+        serde_json::json!({}),
+    )
+    .map_err(|e| ReconnectError::ConnectionFailed(format!("Write session.list: {}", e)))?;
+
+    let resp = jsonrpc::read_line_blocking(&mut channel)
+        .map_err(|e| ReconnectError::ConnectionFailed(format!("Read session.list: {}", e)))?;
+    let sessions = match jsonrpc::parse_message(&resp) {
+        Ok(jsonrpc::JsonRpcMessage::Response { result, .. }) => result,
+        _ => {
+            return Err(ReconnectError::ConnectionFailed(
+                "Bad session.list response".to_string(),
+            ));
+        }
+    };
+
+    let session_exists = sessions["sessions"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .any(|s| s["session_id"].as_str() == Some(remote_session_id))
+        })
+        .unwrap_or(false);
+
+    if !session_exists {
+        return Err(ReconnectError::SessionGone);
+    }
+
+    // session.attach
+    *request_id += 1;
+    jsonrpc::write_request(
+        &mut channel,
+        *request_id,
+        "session.attach",
+        serde_json::json!({ "session_id": remote_session_id }),
+    )
+    .map_err(|e| ReconnectError::ConnectionFailed(format!("Write session.attach: {}", e)))?;
+
+    let resp = jsonrpc::read_line_blocking(&mut channel)
+        .map_err(|e| ReconnectError::ConnectionFailed(format!("Read session.attach: {}", e)))?;
+    match jsonrpc::parse_message(&resp) {
+        Ok(jsonrpc::JsonRpcMessage::Response { .. }) => {}
+        Ok(jsonrpc::JsonRpcMessage::Error { message, .. }) => {
+            return Err(ReconnectError::ConnectionFailed(format!(
+                "session.attach failed: {}",
+                message
+            )));
+        }
+        _ => {
+            return Err(ReconnectError::ConnectionFailed(
+                "Bad session.attach response".to_string(),
+            ));
+        }
+    }
+
+    // Set non-blocking for the I/O loop
+    session.set_blocking(false);
+
+    Ok((session, channel))
 }
 
 /// Handle an incoming JSON-RPC notification from the agent.
