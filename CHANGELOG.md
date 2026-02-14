@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- E2E performance stress test for 40 concurrent terminals with creation throughput, UI responsiveness, and cleanup timing measurements (`pnpm test:e2e:perf`)
 - Remote Agent connection type: connect to `termihub-agent` on Raspberry Pi for persistent shell and serial sessions that survive desktop disconnects
 - Auto-reconnect for remote connections with exponential backoff and visual state indicators on tabs
 - Remote Agent settings form with SSH connection fields, session type selector (shell/serial), and conditional serial port configuration
