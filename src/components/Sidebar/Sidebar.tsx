@@ -4,10 +4,11 @@ import { ConnectionEditor } from "./ConnectionEditor";
 import { FileBrowser } from "./FileBrowser";
 import "./Sidebar.css";
 
-const VIEW_TITLES = {
+const VIEW_TITLES: Record<string, string> = {
   connections: "Connections",
   files: "File Browser",
-} as const;
+  monitoring: "Monitoring",
+};
 
 export function Sidebar() {
   const sidebarView = useAppStore((s) => s.sidebarView);
