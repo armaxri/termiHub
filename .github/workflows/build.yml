@@ -31,6 +31,8 @@ jobs:
             os: ubuntu-latest
             rust_target: 'aarch64-unknown-linux-gnu'
             artifact_name: 'TermiHub-Linux-arm64'
+            # AppImage can't be cross-compiled (linuxdeploy is x86_64-only)
+            extra_args: '--bundles deb,rpm'
           - platform: 'windows-latest'
             os: windows-latest
             rust_target: 'x86_64-pc-windows-msvc'
@@ -134,7 +136,7 @@ jobs:
           releaseBody: ''
           releaseDraft: false
           prerelease: false
-          args: --target ${{ matrix.rust_target }}
+          args: --target ${{ matrix.rust_target }} ${{ matrix.extra_args }}
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4

@@ -91,11 +91,14 @@ jobs:
             bundle_path: 'appimage'
 
           # Linux ARM64 (Raspberry Pi)
+          # AppImage can't be cross-compiled (linuxdeploy is x86_64-only),
+          # so we build .deb and .rpm only for ARM64.
           - platform: 'linux-arm64'
             os: ubuntu-latest
             rust_target: 'aarch64-unknown-linux-gnu'
-            file_ext: '.AppImage'
-            bundle_path: 'appimage'
+            file_ext: '.deb'
+            bundle_path: 'deb'
+            extra_args: '--bundles deb,rpm'
 
     steps:
       - name: Checkout code
@@ -188,7 +191,7 @@ jobs:
         with:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           tagName: v${{ needs.create-release.outputs.version }}
-          args: --target ${{ matrix.rust_target }}
+          args: --target ${{ matrix.rust_target }} ${{ matrix.extra_args }}
 
       - name: Find and rename release artifact
         id: find_artifact
@@ -219,9 +222,9 @@ jobs:
           asset_name: ${{ steps.find_artifact.outputs.artifact_name }}
           asset_content_type: application/octet-stream
 
-      # Also upload .deb for Linux
+      # Also upload .deb for Linux (skip ARM64 where .deb is already the primary artifact)
       - name: Upload .deb (Linux only)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-latest' && matrix.file_ext != '.deb'
         run: |
           DEB_FILE=$(find src-tauri/target/${{ matrix.rust_target }}/release/bundle/deb -name "*.deb" | head -n 1)
           if [ -n "$DEB_FILE" ]; then
