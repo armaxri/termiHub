@@ -57,7 +57,7 @@ impl SftpSession {
 
             let is_directory = stat.is_dir();
             let size = stat.size.unwrap_or(0);
-            let modified = stat.mtime.map(|t| chrono_from_epoch(t)).unwrap_or_default();
+            let modified = stat.mtime.map(chrono_from_epoch).unwrap_or_default();
             let permissions = stat.perm.map(format_permissions);
 
             result.push(FileEntry {

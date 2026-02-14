@@ -51,10 +51,10 @@ impl TelnetConnection {
                     Ok(n) => {
                         // Basic telnet IAC filtering
                         let filtered = filter_telnet_commands(&buf[..n], &mut reader);
-                        if !filtered.is_empty() {
-                            if output_tx.send(filtered).is_err() {
-                                break;
-                            }
+                        if !filtered.is_empty()
+                            && output_tx.send(filtered).is_err()
+                        {
+                            break;
                         }
                     }
                     Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
@@ -115,7 +115,10 @@ fn filter_telnet_commands(data: &[u8], stream: &mut TcpStream) -> Vec<u8> {
 
 impl TerminalBackend for TelnetConnection {
     fn write_input(&self, data: &[u8]) -> Result<(), TerminalError> {
-        let mut stream = self.stream.lock().unwrap();
+        let mut stream = self
+            .stream
+            .lock()
+            .map_err(|e| TerminalError::WriteFailed(format!("Failed to lock stream: {}", e)))?;
         stream
             .write_all(data)
             .map_err(|e| TerminalError::WriteFailed(e.to_string()))?;
@@ -132,8 +135,9 @@ impl TerminalBackend for TelnetConnection {
 
     fn close(&self) -> Result<(), TerminalError> {
         self.alive.store(false, Ordering::SeqCst);
-        let stream = self.stream.lock().unwrap();
-        let _ = stream.shutdown(std::net::Shutdown::Both);
+        if let Ok(stream) = self.stream.lock() {
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+        }
         Ok(())
     }
 

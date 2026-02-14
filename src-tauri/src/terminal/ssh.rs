@@ -90,7 +90,10 @@ impl SshConnection {
             let mut buf = [0u8; 4096];
             while alive_clone.load(Ordering::SeqCst) {
                 let result = {
-                    let mut ch = channel_clone.lock().unwrap();
+                    let mut ch = match channel_clone.lock() {
+                        Ok(ch) => ch,
+                        Err(_) => break,
+                    };
                     ch.read(&mut buf)
                 };
                 match result {
@@ -123,7 +126,9 @@ impl TerminalBackend for SshConnection {
         // Need blocking for writes
         self.session.set_blocking(true);
         let result = {
-            let mut channel = self.channel.lock().unwrap();
+            let mut channel = self.channel.lock().map_err(|e| {
+                TerminalError::WriteFailed(format!("Failed to lock channel: {}", e))
+            })?;
             channel.write_all(data)
         };
         self.session.set_blocking(false);
@@ -133,7 +138,9 @@ impl TerminalBackend for SshConnection {
     fn resize(&self, cols: u16, rows: u16) -> Result<(), TerminalError> {
         self.session.set_blocking(true);
         let result = {
-            let mut channel = self.channel.lock().unwrap();
+            let mut channel = self.channel.lock().map_err(|e| {
+                TerminalError::ResizeFailed(format!("Failed to lock channel: {}", e))
+            })?;
             channel.request_pty_size(cols as u32, rows as u32, None, None)
         };
         self.session.set_blocking(false);
@@ -143,9 +150,10 @@ impl TerminalBackend for SshConnection {
     fn close(&self) -> Result<(), TerminalError> {
         self.alive.store(false, Ordering::SeqCst);
         self.session.set_blocking(true);
-        let mut channel = self.channel.lock().unwrap();
-        let _ = channel.send_eof();
-        let _ = channel.close();
+        if let Ok(mut channel) = self.channel.lock() {
+            let _ = channel.send_eof();
+            let _ = channel.close();
+        }
         Ok(())
     }
 

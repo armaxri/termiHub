@@ -143,9 +143,13 @@ impl SerialConfig {
     }
 }
 
-/// Channel sender type for output data from backends.
-pub type OutputSender = mpsc::Sender<Vec<u8>>;
-/// Channel receiver type for output data from backends (used in future phases).
+/// Bounded channel capacity for output data from backends.
+/// Provides backpressure to prevent a fast-producing terminal from flooding memory.
+pub const OUTPUT_CHANNEL_CAPACITY: usize = 64;
+
+/// Channel sender type for output data from backends (bounded, blocking when full).
+pub type OutputSender = mpsc::SyncSender<Vec<u8>>;
+/// Channel receiver type for output data from backends.
 #[allow(dead_code)]
 pub type OutputReceiver = mpsc::Receiver<Vec<u8>>;
 

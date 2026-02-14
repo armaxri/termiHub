@@ -99,7 +99,10 @@ impl LocalShell {
 
 impl TerminalBackend for LocalShell {
     fn write_input(&self, data: &[u8]) -> Result<(), TerminalError> {
-        let mut writer = self.writer.lock().unwrap();
+        let mut writer = self
+            .writer
+            .lock()
+            .map_err(|e| TerminalError::WriteFailed(format!("Failed to lock writer: {}", e)))?;
         writer
             .write_all(data)
             .map_err(|e| TerminalError::WriteFailed(e.to_string()))?;
@@ -110,7 +113,10 @@ impl TerminalBackend for LocalShell {
     }
 
     fn resize(&self, cols: u16, rows: u16) -> Result<(), TerminalError> {
-        let master = self.master.lock().unwrap();
+        let master = self
+            .master
+            .lock()
+            .map_err(|e| TerminalError::ResizeFailed(format!("Failed to lock master: {}", e)))?;
         master
             .resize(PtySize {
                 rows,
@@ -124,8 +130,9 @@ impl TerminalBackend for LocalShell {
 
     fn close(&self) -> Result<(), TerminalError> {
         self.alive.store(false, Ordering::SeqCst);
-        let mut child = self.child.lock().unwrap();
-        let _ = child.kill();
+        if let Ok(mut child) = self.child.lock() {
+            let _ = child.kill();
+        }
         Ok(())
     }
 
