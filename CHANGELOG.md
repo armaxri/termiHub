@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Remote Agent connection type: connect to `termihub-agent` on Raspberry Pi for persistent shell and serial sessions that survive desktop disconnects
+- Auto-reconnect for remote connections with exponential backoff and visual state indicators on tabs
+- Remote Agent settings form with SSH connection fields, session type selector (shell/serial), and conditional serial port configuration
 - Remote agent stub binary (`termihub-agent`) for Raspberry Pi with JSON-RPC 2.0 protocol over stdio, supporting initialize handshake, session create/list/close, and health check
 - CI workflow for agent crate with formatting, linting, tests, and ARM64 cross-compilation
 - Remote session management protocol specification (`docs/remote-protocol.md`) for desktop-to-agent communication over SSH
