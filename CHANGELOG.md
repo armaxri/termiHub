@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Performance test suite (`pnpm test:e2e:perf`) validating 40 concurrent terminals, UI responsiveness, memory usage, and cleanup
+- Performance profiling guide (`docs/performance.md`) with Chrome DevTools instructions, baseline metrics, and memory leak detection checklist
+- Session limit of 50 concurrent terminals with clear error when exceeded
+
+### Changed
+- Terminal output events now use a singleton dispatcher with O(1) Map-based routing instead of per-terminal global listeners (O(N) fan-out)
+- Terminal output writes are batched via `requestAnimationFrame` to reduce rendering overhead
+- Backend output channels now use bounded `sync_channel(64)` with backpressure instead of unbounded channels
+- Backend output reader coalesces pending chunks (up to 32 KB) into a single Tauri event to reduce IPC overhead
+- All mutex `.unwrap()` calls in terminal backends replaced with proper error propagation
 - E2E test suite with WebdriverIO and tauri-driver (~30 tests across 8 files) covering connection forms, CRUD operations, tab management, split views, local shell spawn, file browser, settings, and tab coloring
 - E2E test helpers for selectors, app lifecycle, connection management, tab operations, and sidebar navigation
 - Infrastructure test stubs for SSH, serial, and telnet connections (requires live servers)
