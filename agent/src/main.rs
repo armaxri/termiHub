@@ -1,6 +1,7 @@
 mod handler;
 mod io;
 mod protocol;
+mod serial;
 mod session;
 
 use tracing::info;
