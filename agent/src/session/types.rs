@@ -1,9 +1,7 @@
-// The Exited variant and config field are not used in the stub but
-// will be needed in phase 7 when real PTY/serial backends are added.
-#![allow(dead_code)]
-
 use chrono::{DateTime, Utc};
 use serde::Serialize;
+
+use crate::serial::backend::SerialBackend;
 
 /// The type of session running on the agent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -49,7 +47,9 @@ impl SessionStatus {
 }
 
 /// Internal session model tracking a single terminal session.
-#[derive(Debug, Clone)]
+///
+/// Not `Clone` because `SerialBackend` contains a thread handle and
+/// mutex-protected serial port. Use `snapshot()` for read-only copies.
 pub struct SessionInfo {
     pub id: String,
     pub title: String,
@@ -59,6 +59,35 @@ pub struct SessionInfo {
     pub created_at: DateTime<Utc>,
     pub last_activity: DateTime<Utc>,
     pub attached: bool,
+    /// Handle to the serial backend, if this is a serial session.
+    pub serial_backend: Option<SerialBackend>,
+}
+
+/// Read-only snapshot of session state, returned from list/create.
+#[derive(Debug, Clone)]
+pub struct SessionSnapshot {
+    pub id: String,
+    pub title: String,
+    pub session_type: SessionType,
+    pub status: SessionStatus,
+    pub created_at: DateTime<Utc>,
+    pub last_activity: DateTime<Utc>,
+    pub attached: bool,
+}
+
+impl SessionInfo {
+    /// Create a read-only snapshot of this session's state.
+    pub fn snapshot(&self) -> SessionSnapshot {
+        SessionSnapshot {
+            id: self.id.clone(),
+            title: self.title.clone(),
+            session_type: self.session_type.clone(),
+            status: self.status.clone(),
+            created_at: self.created_at,
+            last_activity: self.last_activity,
+            attached: self.attached,
+        }
+    }
 }
 
 #[cfg(test)]

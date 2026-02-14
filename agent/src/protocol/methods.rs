@@ -1,7 +1,3 @@
-// Some fields/types are deserialized from the protocol but not read by
-// the stub; they will be used in phase 7 when real backends are added.
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
@@ -73,6 +69,38 @@ pub struct SessionListEntry {
 #[derive(Debug, Clone, Deserialize)]
 pub struct SessionCloseParams {
     pub session_id: String,
+}
+
+// ── session.attach ─────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SessionAttachParams {
+    pub session_id: String,
+}
+
+// ── session.detach ─────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SessionDetachParams {
+    pub session_id: String,
+}
+
+// ── session.input ──────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SessionInputParams {
+    pub session_id: String,
+    /// Base64-encoded data.
+    pub data: String,
+}
+
+// ── session.resize ─────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SessionResizeParams {
+    pub session_id: String,
+    pub cols: u16,
+    pub rows: u16,
 }
 
 // ── health.check ────────────────────────────────────────────────────
