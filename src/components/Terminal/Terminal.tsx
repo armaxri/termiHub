@@ -6,7 +6,7 @@ import "@xterm/xterm/css/xterm.css";
 import "./Terminal.css";
 import { ConnectionConfig } from "@/types/terminal";
 import { createTerminal, sendInput, resizeTerminal, closeTerminal } from "@/services/api";
-import { onTerminalOutput, onTerminalExit } from "@/services/events";
+import { onTerminalOutput, onTerminalExit, onRemoteStateChange } from "@/services/events";
 import { useTerminalRegistry } from "./TerminalRegistry";
 import { useAppStore } from "@/store/appStore";
 
@@ -127,6 +127,19 @@ export function Terminal({ tabId, config, isVisible }: TerminalProps) {
           }
         });
 
+        // Subscribe to remote state change events (for remote connections)
+        const unlistenRemoteState = await onRemoteStateChange((sid, state) => {
+          if (sid === sessionId) {
+            useAppStore.getState().setRemoteState(tabId, state);
+            if (state === "disconnected") {
+              xterm.writeln("\r\n\x1b[33m[Connection lost, reconnecting...]\x1b[0m");
+            } else if (state === "connected" && sessionIdRef.current) {
+              // Only show "Reconnected" after an initial disconnect (not on first connect)
+              xterm.writeln("\r\n\x1b[32m[Reconnected]\x1b[0m");
+            }
+          }
+        });
+
         // Send user input to backend
         const onDataDisposable = xterm.onData((data) => {
           lastInputTimeRef.current = Date.now();
@@ -152,6 +165,7 @@ export function Terminal({ tabId, config, isVisible }: TerminalProps) {
         cleanupRef.current = () => {
           unlistenOutput();
           unlistenExit();
+          unlistenRemoteState();
           onDataDisposable.dispose();
           onResizeDisposable.dispose();
           if (sessionIdRef.current) {
