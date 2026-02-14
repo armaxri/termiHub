@@ -261,7 +261,8 @@ mod tests {
     use serde_json::json;
 
     fn make_dispatcher() -> Dispatcher {
-        Dispatcher::new(Arc::new(SessionManager::new()))
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        Dispatcher::new(Arc::new(SessionManager::new(tx)))
     }
 
     fn make_request(method: &str, params: Value, id: u64) -> JsonRpcRequest {

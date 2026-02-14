@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use chrono::Utc;
 use tokio::sync::Mutex;
 
+use crate::io::stdio::NotificationSender;
 use crate::session::types::{SessionInfo, SessionStatus, SessionType};
 
 /// Maximum number of concurrent sessions the agent supports.
@@ -14,13 +15,20 @@ pub const MAX_SESSIONS: u32 = 20;
 /// so it can be shared across async tasks.
 pub struct SessionManager {
     sessions: Mutex<HashMap<String, SessionInfo>>,
+    notification_tx: NotificationSender,
 }
 
 impl SessionManager {
-    pub fn new() -> Self {
+    pub fn new(notification_tx: NotificationSender) -> Self {
         Self {
             sessions: Mutex::new(HashMap::new()),
+            notification_tx,
         }
+    }
+
+    /// Get a clone of the notification sender for backends.
+    pub fn notification_sender(&self) -> NotificationSender {
+        self.notification_tx.clone()
     }
 
     /// Create a new session and return its info.
@@ -68,6 +76,12 @@ impl SessionManager {
         sessions.remove(session_id).is_some()
     }
 
+    /// Close all sessions. Called during agent shutdown.
+    pub async fn close_all(&self) {
+        let mut sessions = self.sessions.lock().await;
+        sessions.clear();
+    }
+
     /// Return the number of sessions with status `Running`.
     pub async fn active_count(&self) -> u32 {
         let sessions = self.sessions.lock().await;
@@ -83,9 +97,14 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    fn test_notification_tx() -> NotificationSender {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        tx
+    }
+
     #[tokio::test]
     async fn create_and_list() {
-        let mgr = SessionManager::new();
+        let mgr = SessionManager::new(test_notification_tx());
         let info = mgr
             .create(
                 SessionType::Shell,
@@ -107,7 +126,7 @@ mod tests {
 
     #[tokio::test]
     async fn close_existing_session() {
-        let mgr = SessionManager::new();
+        let mgr = SessionManager::new(test_notification_tx());
         let info = mgr
             .create(
                 SessionType::Serial,
@@ -123,13 +142,13 @@ mod tests {
 
     #[tokio::test]
     async fn close_nonexistent_returns_false() {
-        let mgr = SessionManager::new();
+        let mgr = SessionManager::new(test_notification_tx());
         assert!(!mgr.close("nonexistent-id").await);
     }
 
     #[tokio::test]
     async fn active_count() {
-        let mgr = SessionManager::new();
+        let mgr = SessionManager::new(test_notification_tx());
         assert_eq!(mgr.active_count().await, 0);
 
         mgr.create(SessionType::Shell, "s1".to_string(), json!({}))
@@ -142,7 +161,7 @@ mod tests {
 
     #[tokio::test]
     async fn session_limit_enforced() {
-        let mgr = SessionManager::new();
+        let mgr = SessionManager::new(test_notification_tx());
 
         // Create MAX_SESSIONS sessions
         for i in 0..MAX_SESSIONS {
@@ -161,7 +180,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_sets_timestamps() {
-        let mgr = SessionManager::new();
+        let mgr = SessionManager::new(test_notification_tx());
         let before = Utc::now();
         let info = mgr
             .create(SessionType::Shell, "ts-test".to_string(), json!({}))
@@ -175,7 +194,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_generates_unique_ids() {
-        let mgr = SessionManager::new();
+        let mgr = SessionManager::new(test_notification_tx());
         let a = mgr
             .create(SessionType::Shell, "a".to_string(), json!({}))
             .await
