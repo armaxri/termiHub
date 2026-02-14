@@ -314,4 +314,35 @@ mod tests {
         assert_eq!(cfg.parity, "none");
         assert_eq!(cfg.flow_control, "none");
     }
+
+    #[test]
+    fn session_attach_params_serde() {
+        let json = json!({"session_id": "abc-123"});
+        let params: SessionAttachParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.session_id, "abc-123");
+    }
+
+    #[test]
+    fn session_detach_params_serde() {
+        let json = json!({"session_id": "abc-123"});
+        let params: SessionDetachParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.session_id, "abc-123");
+    }
+
+    #[test]
+    fn session_input_params_serde() {
+        let json = json!({"session_id": "abc-123", "data": "aGVsbG8="});
+        let params: SessionInputParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.session_id, "abc-123");
+        assert_eq!(params.data, "aGVsbG8=");
+    }
+
+    #[test]
+    fn session_resize_params_serde() {
+        let json = json!({"session_id": "abc-123", "cols": 120, "rows": 40});
+        let params: SessionResizeParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.session_id, "abc-123");
+        assert_eq!(params.cols, 120);
+        assert_eq!(params.rows, 40);
+    }
 }

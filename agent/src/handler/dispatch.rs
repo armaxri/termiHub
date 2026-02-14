@@ -630,6 +630,75 @@ mod tests {
         assert_eq!(json["error"]["code"], errors::METHOD_NOT_FOUND);
     }
 
+    // ── Session attach/detach/input tests ──────────────────────────
+
+    #[tokio::test]
+    async fn session_attach_not_found() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request("session.attach", json!({"session_id": "nonexistent"}), 2);
+        let result = d.dispatch(req).await;
+        let json = result.to_json();
+        assert_eq!(json["error"]["code"], errors::SESSION_NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn session_detach_not_found() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request("session.detach", json!({"session_id": "nonexistent"}), 2);
+        let result = d.dispatch(req).await;
+        let json = result.to_json();
+        assert_eq!(json["error"]["code"], errors::SESSION_NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn session_input_not_found() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request(
+            "session.input",
+            json!({"session_id": "nonexistent", "data": "aGVsbG8="}),
+            2,
+        );
+        let result = d.dispatch(req).await;
+        let json = result.to_json();
+        assert_eq!(json["error"]["code"], errors::SESSION_NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn session_input_invalid_base64() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request(
+            "session.input",
+            json!({"session_id": "any", "data": "!!!not-base64!!!"}),
+            2,
+        );
+        let result = d.dispatch(req).await;
+        let json = result.to_json();
+        assert_eq!(json["error"]["code"], errors::INVALID_PARAMS);
+    }
+
+    #[tokio::test]
+    async fn session_resize_returns_success() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request(
+            "session.resize",
+            json!({"session_id": "any", "cols": 120, "rows": 40}),
+            2,
+        );
+        let result = d.dispatch(req).await;
+        let json = result.to_json();
+        assert!(json.get("result").is_some());
+    }
+
     // ── Full protocol flow integration test ─────────────────────────
 
     #[tokio::test]
@@ -655,25 +724,67 @@ mod tests {
         let session_id = result["result"]["session_id"].as_str().unwrap().to_string();
         assert_eq!(result["result"]["status"], "running");
 
-        // 3. Health check shows 1 active session
-        let req = make_request("health.check", json!({}), 3);
-        let result = d.dispatch(req).await.to_json();
-        assert_eq!(result["result"]["active_sessions"], 1);
-
-        // 4. List shows the session
-        let req = make_request("session.list", json!({}), 4);
-        let result = d.dispatch(req).await.to_json();
-        let sessions = result["result"]["sessions"].as_array().unwrap();
-        assert_eq!(sessions.len(), 1);
-        assert_eq!(sessions[0]["session_id"], session_id);
-
-        // 5. Close session
-        let req = make_request("session.close", json!({"session_id": session_id}), 5);
+        // 3. Attach to the session
+        let req = make_request(
+            "session.attach",
+            json!({"session_id": session_id}),
+            3,
+        );
         let result = d.dispatch(req).await.to_json();
         assert!(result.get("result").is_some());
 
-        // 6. Health check shows 0 active sessions
-        let req = make_request("health.check", json!({}), 6);
+        // 4. Send input (no-op for shell stub, but protocol should succeed)
+        let req = make_request(
+            "session.input",
+            json!({"session_id": session_id, "data": "aGVsbG8="}),
+            4,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert!(result.get("result").is_some());
+
+        // 5. Resize (no-op for serial/stub)
+        let req = make_request(
+            "session.resize",
+            json!({"session_id": session_id, "cols": 120, "rows": 40}),
+            5,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert!(result.get("result").is_some());
+
+        // 6. List shows attached
+        let req = make_request("session.list", json!({}), 6);
+        let result = d.dispatch(req).await.to_json();
+        let sessions = result["result"]["sessions"].as_array().unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert!(sessions[0]["attached"].as_bool().unwrap());
+
+        // 7. Detach
+        let req = make_request(
+            "session.detach",
+            json!({"session_id": session_id}),
+            7,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert!(result.get("result").is_some());
+
+        // 8. List shows detached
+        let req = make_request("session.list", json!({}), 8);
+        let result = d.dispatch(req).await.to_json();
+        let sessions = result["result"]["sessions"].as_array().unwrap();
+        assert!(!sessions[0]["attached"].as_bool().unwrap());
+
+        // 9. Health check shows 1 active session
+        let req = make_request("health.check", json!({}), 9);
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["result"]["active_sessions"], 1);
+
+        // 10. Close session
+        let req = make_request("session.close", json!({"session_id": session_id}), 10);
+        let result = d.dispatch(req).await.to_json();
+        assert!(result.get("result").is_some());
+
+        // 11. Health check shows 0 active sessions
+        let req = make_request("health.check", json!({}), 11);
         let result = d.dispatch(req).await.to_json();
         assert_eq!(result["result"]["active_sessions"], 0);
     }
