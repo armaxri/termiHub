@@ -145,8 +145,17 @@ jobs:
           # Add ARM64 architecture
           sudo dpkg --add-architecture arm64
 
-          # Pin existing sources to amd64 only, then add arm64 from ports
-          sudo sed -i 's/^deb \(http\|mirror\)/deb [arch=amd64] \1/' /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null || true
+          # Pin existing sources to amd64 only so apt doesn't try to fetch
+          # arm64 packages from mirrors that only serve amd64.
+          # Ubuntu 24.04+ uses deb822 .sources format instead of .list format.
+          sudo sed -i 's/^deb \(http\|mirror\)/deb [arch=amd64] \1/' /etc/apt/sources.list 2>/dev/null || true
+          sudo sed -i 's/^deb \(http\|mirror\)/deb [arch=amd64] \1/' /etc/apt/sources.list.d/*.list 2>/dev/null || true
+          # Handle deb822 format (.sources files): add Architectures: amd64
+          for f in /etc/apt/sources.list.d/*.sources; do
+            [ -f "$f" ] && sudo sed -i '/^Types:/a Architectures: amd64' "$f" 2>/dev/null || true
+          done
+
+          # Add arm64 sources from ports.ubuntu.com
           sudo bash -c 'cat > /etc/apt/sources.list.d/arm64-ports.list <<EOF
           deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ $(lsb_release -sc) main restricted universe multiverse
           deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ $(lsb_release -sc)-updates main restricted universe multiverse
