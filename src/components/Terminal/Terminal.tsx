@@ -112,9 +112,37 @@ export function Terminal({ tabId, config, isVisible }: TerminalProps) {
         const sessionId = await createTerminal(config);
         sessionIdRef.current = sessionId;
 
+        // Output batching: buffer chunks and flush in a single RAF callback
+        const outputBuffer: Uint8Array[] = [];
+        let rafId: number | null = null;
+
+        const flushOutput = () => {
+          rafId = null;
+          if (outputBuffer.length === 0) return;
+
+          if (outputBuffer.length === 1) {
+            xterm.write(outputBuffer[0]);
+          } else {
+            // Concatenate all buffered chunks into one write
+            let totalLen = 0;
+            for (const chunk of outputBuffer) totalLen += chunk.length;
+            const merged = new Uint8Array(totalLen);
+            let offset = 0;
+            for (const chunk of outputBuffer) {
+              merged.set(chunk, offset);
+              offset += chunk.length;
+            }
+            xterm.write(merged);
+          }
+          outputBuffer.length = 0;
+        };
+
         // Subscribe to output events via singleton dispatcher (O(1) routing)
         const unsubOutput = terminalDispatcher.subscribeOutput(sessionId, (data) => {
-          xterm.write(data);
+          outputBuffer.push(data);
+          if (rafId === null) {
+            rafId = requestAnimationFrame(flushOutput);
+          }
         });
 
         // Subscribe to exit events via singleton dispatcher
@@ -148,6 +176,12 @@ export function Terminal({ tabId, config, isVisible }: TerminalProps) {
         cleanupRef.current = () => {
           unsubOutput();
           unsubExit();
+          // Cancel pending RAF and flush remaining buffered output
+          if (rafId !== null) {
+            cancelAnimationFrame(rafId);
+            rafId = null;
+          }
+          flushOutput();
           onDataDisposable.dispose();
           onResizeDisposable.dispose();
           if (sessionIdRef.current) {
