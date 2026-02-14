@@ -344,4 +344,123 @@ mod tests {
 
         std::env::remove_var("TERMIHUB_TEST_SERIAL_PORT");
     }
+
+    #[test]
+    fn connection_config_remote_serde_round_trip() {
+        let config = ConnectionConfig::Remote(RemoteConfig {
+            host: "pi.local".to_string(),
+            port: 22,
+            username: "pi".to_string(),
+            auth_method: "key".to_string(),
+            password: None,
+            key_path: Some("/home/user/.ssh/id_rsa".to_string()),
+            session_type: "shell".to_string(),
+            shell: Some("/bin/bash".to_string()),
+            serial_port: None,
+            baud_rate: None,
+            data_bits: None,
+            stop_bits: None,
+            parity: None,
+            flow_control: None,
+            title: Some("Build session".to_string()),
+        });
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: ConnectionConfig = serde_json::from_str(&json).unwrap();
+        if let ConnectionConfig::Remote(remote) = deserialized {
+            assert_eq!(remote.host, "pi.local");
+            assert_eq!(remote.port, 22);
+            assert_eq!(remote.username, "pi");
+            assert_eq!(remote.session_type, "shell");
+            assert_eq!(remote.shell, Some("/bin/bash".to_string()));
+            assert_eq!(remote.title, Some("Build session".to_string()));
+        } else {
+            panic!("Expected Remote config");
+        }
+    }
+
+    #[test]
+    fn connection_config_remote_serial_serde_round_trip() {
+        let config = ConnectionConfig::Remote(RemoteConfig {
+            host: "pi.local".to_string(),
+            port: 22,
+            username: "pi".to_string(),
+            auth_method: "password".to_string(),
+            password: None,
+            key_path: None,
+            session_type: "serial".to_string(),
+            shell: None,
+            serial_port: Some("/dev/ttyUSB0".to_string()),
+            baud_rate: Some(115200),
+            data_bits: Some(8),
+            stop_bits: Some(1),
+            parity: Some("none".to_string()),
+            flow_control: Some("none".to_string()),
+            title: None,
+        });
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: ConnectionConfig = serde_json::from_str(&json).unwrap();
+        if let ConnectionConfig::Remote(remote) = deserialized {
+            assert_eq!(remote.session_type, "serial");
+            assert_eq!(remote.serial_port, Some("/dev/ttyUSB0".to_string()));
+            assert_eq!(remote.baud_rate, Some(115200));
+        } else {
+            panic!("Expected Remote config");
+        }
+    }
+
+    #[test]
+    fn remote_config_expand_replaces_placeholders() {
+        std::env::set_var("TERMIHUB_TEST_REMOTE_HOST", "10.0.0.50");
+        std::env::set_var("TERMIHUB_TEST_REMOTE_USER", "admin");
+
+        let config = RemoteConfig {
+            host: "${env:TERMIHUB_TEST_REMOTE_HOST}".to_string(),
+            port: 22,
+            username: "${env:TERMIHUB_TEST_REMOTE_USER}".to_string(),
+            auth_method: "key".to_string(),
+            password: None,
+            key_path: Some("${env:HOME}/.ssh/id_rsa".to_string()),
+            session_type: "shell".to_string(),
+            shell: Some("${env:SHELL}".to_string()),
+            serial_port: None,
+            baud_rate: None,
+            data_bits: None,
+            stop_bits: None,
+            parity: None,
+            flow_control: None,
+            title: None,
+        };
+        let expanded = config.expand();
+        assert_eq!(expanded.host, "10.0.0.50");
+        assert_eq!(expanded.username, "admin");
+
+        std::env::remove_var("TERMIHUB_TEST_REMOTE_HOST");
+        std::env::remove_var("TERMIHUB_TEST_REMOTE_USER");
+    }
+
+    #[test]
+    fn remote_config_json_shape_matches_frontend() {
+        let config = ConnectionConfig::Remote(RemoteConfig {
+            host: "host".to_string(),
+            port: 22,
+            username: "user".to_string(),
+            auth_method: "password".to_string(),
+            password: None,
+            key_path: None,
+            session_type: "shell".to_string(),
+            shell: None,
+            serial_port: None,
+            baud_rate: None,
+            data_bits: None,
+            stop_bits: None,
+            parity: None,
+            flow_control: None,
+            title: None,
+        });
+        let json = serde_json::to_string(&config).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["type"], "remote");
+        assert_eq!(v["config"]["sessionType"], "shell");
+        assert_eq!(v["config"]["authMethod"], "password");
+    }
 }

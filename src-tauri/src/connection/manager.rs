@@ -332,7 +332,7 @@ pub(crate) fn filename_from_path(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::terminal::backend::{LocalShellConfig, SshConfig};
+    use crate::terminal::backend::{LocalShellConfig, RemoteConfig, SshConfig};
 
     #[test]
     fn strip_ssh_password_removes_password() {
@@ -377,6 +377,39 @@ mod tests {
             assert_eq!(local.shell_type, "bash");
         } else {
             panic!("Expected Local config");
+        }
+    }
+
+    #[test]
+    fn strip_ssh_password_strips_remote_password() {
+        let conn = SavedConnection {
+            id: "test".to_string(),
+            name: "Remote Pi".to_string(),
+            config: ConnectionConfig::Remote(RemoteConfig {
+                host: "pi.local".to_string(),
+                port: 22,
+                username: "pi".to_string(),
+                auth_method: "password".to_string(),
+                password: Some("secret".to_string()),
+                key_path: None,
+                session_type: "shell".to_string(),
+                shell: None,
+                serial_port: None,
+                baud_rate: None,
+                data_bits: None,
+                stop_bits: None,
+                parity: None,
+                flow_control: None,
+                title: None,
+            }),
+            folder_id: None,
+            terminal_options: None,
+        };
+        let stripped = strip_ssh_password(conn);
+        if let ConnectionConfig::Remote(remote) = &stripped.config {
+            assert!(remote.password.is_none());
+        } else {
+            panic!("Expected Remote config");
         }
     }
 
