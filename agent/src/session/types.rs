@@ -34,6 +34,7 @@ impl SessionType {
 #[serde(rename_all = "lowercase")]
 pub enum SessionStatus {
     Running,
+    #[allow(dead_code)]
     Exited,
 }
 
@@ -55,6 +56,7 @@ pub struct SessionInfo {
     pub title: String,
     pub session_type: SessionType,
     pub status: SessionStatus,
+    #[allow(dead_code)]
     pub config: serde_json::Value,
     pub created_at: DateTime<Utc>,
     pub last_activity: DateTime<Utc>,

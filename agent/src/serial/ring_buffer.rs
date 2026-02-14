@@ -59,11 +59,13 @@ impl RingBuffer {
     }
 
     /// Return true if no data is buffered.
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.total_written == 0
     }
 
     /// Clear all buffered data.
+    #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.write_pos = 0;
         self.total_written = 0;
@@ -156,11 +158,11 @@ mod tests {
         rb.write(b"AAAA"); // fill
         rb.write(b"BBBB"); // overwrite all
         rb.write(b"CC"); // partial overwrite
-        // Buffer should contain: BBCC -> wait, let's trace:
-        // After "AAAA": data=[A,A,A,A], write_pos=0, total=4
-        // After "BBBB": data=[B,B,B,B], write_pos=0, total=8
-        // After "CC":   data=[C,C,B,B], write_pos=2, total=10
-        // read_all: total>capacity, so: data[2..] + data[..2] = [B,B,C,C]
+                         // Buffer should contain: BBCC -> wait, let's trace:
+                         // After "AAAA": data=[A,A,A,A], write_pos=0, total=4
+                         // After "BBBB": data=[B,B,B,B], write_pos=0, total=8
+                         // After "CC":   data=[C,C,B,B], write_pos=2, total=10
+                         // read_all: total>capacity, so: data[2..] + data[..2] = [B,B,C,C]
         assert_eq!(rb.read_all(), b"BBCC");
     }
 }

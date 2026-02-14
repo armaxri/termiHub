@@ -84,6 +84,7 @@ pub struct SerialBackend {
     /// Whether a client is currently attached.
     attached: Arc<AtomicBool>,
     /// Whether the serial port is alive (connected).
+    #[allow(dead_code)]
     alive: Arc<AtomicBool>,
     /// Whether a close has been requested.
     closed: Arc<AtomicBool>,
@@ -188,11 +189,13 @@ impl SerialBackend {
     }
 
     /// Whether the serial port is alive (connected).
+    #[allow(dead_code)]
     pub fn is_alive(&self) -> bool {
         self.alive.load(Ordering::SeqCst)
     }
 
     /// Whether a client is attached.
+    #[allow(dead_code)]
     pub fn is_attached(&self) -> bool {
         self.attached.load(Ordering::SeqCst)
     }
@@ -258,10 +261,7 @@ fn reader_thread(mut ctx: ReaderContext) {
                 continue;
             }
             Err(e) => {
-                warn!(
-                    "Serial port {} read error: {}",
-                    ctx.settings.port, e
-                );
+                warn!("Serial port {} read error: {}", ctx.settings.port, e);
                 ctx.alive.store(false, Ordering::SeqCst);
 
                 // Notify attached client

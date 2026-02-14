@@ -725,11 +725,7 @@ mod tests {
         assert_eq!(result["result"]["status"], "running");
 
         // 3. Attach to the session
-        let req = make_request(
-            "session.attach",
-            json!({"session_id": session_id}),
-            3,
-        );
+        let req = make_request("session.attach", json!({"session_id": session_id}), 3);
         let result = d.dispatch(req).await.to_json();
         assert!(result.get("result").is_some());
 
@@ -759,11 +755,7 @@ mod tests {
         assert!(sessions[0]["attached"].as_bool().unwrap());
 
         // 7. Detach
-        let req = make_request(
-            "session.detach",
-            json!({"session_id": session_id}),
-            7,
-        );
+        let req = make_request("session.detach", json!({"session_id": session_id}), 7);
         let result = d.dispatch(req).await.to_json();
         assert!(result.get("result").is_some());
 

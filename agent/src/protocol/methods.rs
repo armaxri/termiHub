@@ -1,3 +1,7 @@
+// Fields deserialized from the protocol but not read by agent code
+// are kept for protocol completeness and forward compatibility.
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};

@@ -72,12 +72,9 @@ impl SessionManager {
         let serial_backend = if session_type == SessionType::Serial {
             let serial_config: SerialSessionConfig = serde_json::from_value(config.clone())
                 .map_err(|e| SessionCreateError::InvalidConfig(e.to_string()))?;
-            let backend = SerialBackend::new(
-                id.clone(),
-                &serial_config,
-                self.notification_tx.clone(),
-            )
-            .map_err(|e| SessionCreateError::BackendFailed(e.to_string()))?;
+            let backend =
+                SerialBackend::new(id.clone(), &serial_config, self.notification_tx.clone())
+                    .map_err(|e| SessionCreateError::BackendFailed(e.to_string()))?;
             Some(backend)
         } else {
             None
