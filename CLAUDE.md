@@ -236,24 +236,18 @@ sequenceDiagram
 
 ## Task Management
 
-All work is tracked in **GitHub Issues**. Use `gh issue list` to see open tasks.
+All work is tracked in **GitHub Issues**. Use `gh issue list --label Ready2Implement` to see tasks ready for implementation.
 
-### Priority Labels
+### Issue Selection
 
-Issues are prioritized by phase label (highest priority first):
-
-1. **`phase-5-polish`** — Polish & Testing (UX improvements, performance, cross-platform testing)
-2. **`phase-6-remote-foundation`** — Remote Agent Foundation (protocol design, RemoteBackend, agent stub)
-3. **`phase-7-remote-agent`** — Remote Agent Implementation (SQLite persistence, serial proxy, systemd, UI integration)
-4. **`future`** — Post-v1 enhancements (X11 forwarding, credential encryption, plugins, cloud sync, etc.)
+Only issues labeled **`Ready2Implement`** should be picked up for work. Among those, use your best judgement to pick the most impactful or logical next task.
 
 ### Workflow
 
-- Pick the next task from the highest-priority label with open issues
+- Pick the next task from issues labeled `Ready2Implement` (`gh issue list --label Ready2Implement`)
 - Reference issue numbers in commits and PRs (`Closes #N` / `Fixes #N`)
 - Create new issues for work discovered during development
 - Label new issues appropriately upon creation
-- Use `gh issue list --label <label>` to filter by phase
 
 ---
 
@@ -949,7 +943,7 @@ MIT License - See LICENSE file for details
 
 When working on this project:
 
-1. **Check GitHub Issues** for the next task (`gh issue list --label phase-5-polish`)
+1. **Check GitHub Issues** for the next task (`gh issue list --label Ready2Implement`)
 2. **Always** create a feature branch first
 3. **Read** the relevant architecture section before implementing
 4. **Follow** the coding standards exactly
