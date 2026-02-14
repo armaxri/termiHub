@@ -9,6 +9,10 @@
 //! `write_input()` and `resize()` send commands through an `mpsc` channel
 //! to avoid blocking-mode toggling and `!Send`/`!Sync` issues with ssh2.
 
+// Remote backend is implemented but not yet wired into TerminalManager's
+// main code path — suppress dead_code warnings until full integration.
+#![allow(dead_code)]
+
 use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};

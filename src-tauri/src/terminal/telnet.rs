@@ -51,9 +51,7 @@ impl TelnetConnection {
                     Ok(n) => {
                         // Basic telnet IAC filtering
                         let filtered = filter_telnet_commands(&buf[..n], &mut reader);
-                        if !filtered.is_empty()
-                            && output_tx.send(filtered).is_err()
-                        {
+                        if !filtered.is_empty() && output_tx.send(filtered).is_err() {
                             break;
                         }
                     }
