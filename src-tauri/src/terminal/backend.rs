@@ -60,6 +60,8 @@ pub enum ConnectionConfig {
     Telnet(TelnetConfig),
     #[serde(rename = "serial")]
     Serial(SerialConfig),
+    #[serde(rename = "remote")]
+    Remote(RemoteConfig),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,6 +102,44 @@ pub struct SerialConfig {
     pub flow_control: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteConfig {
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub auth_method: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_path: Option<String>,
+    /// "shell" or "serial"
+    pub session_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shell: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub serial_port: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub baud_rate: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_bits: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_bits: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flow_control: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
+/// Event emitted when a remote connection's state changes.
+#[derive(Debug, Clone, Serialize)]
+pub struct RemoteStateChangeEvent {
+    pub session_id: String,
+    pub state: String,
+}
+
 impl ConnectionConfig {
     /// Return a copy with all `${env:...}` placeholders expanded.
     pub fn expand(self) -> Self {
@@ -108,6 +148,7 @@ impl ConnectionConfig {
             Self::Ssh(cfg) => Self::Ssh(cfg.expand()),
             Self::Telnet(cfg) => Self::Telnet(cfg.expand()),
             Self::Serial(cfg) => Self::Serial(cfg.expand()),
+            Self::Remote(cfg) => Self::Remote(cfg.expand()),
         }
     }
 }
@@ -140,6 +181,31 @@ impl SerialConfig {
     pub fn expand(mut self) -> Self {
         self.port = expand_env_placeholders(&self.port);
         self
+    }
+}
+
+impl RemoteConfig {
+    pub fn expand(mut self) -> Self {
+        self.host = expand_env_placeholders(&self.host);
+        self.username = expand_env_placeholders(&self.username);
+        self.key_path = self.key_path.map(|s| expand_env_placeholders(&s));
+        self.password = self.password.map(|s| expand_env_placeholders(&s));
+        self.shell = self.shell.map(|s| expand_env_placeholders(&s));
+        self.serial_port = self.serial_port.map(|s| expand_env_placeholders(&s));
+        self
+    }
+
+    /// Build an `SshConfig` from this remote config for SSH connection reuse.
+    pub fn to_ssh_config(&self) -> SshConfig {
+        SshConfig {
+            host: self.host.clone(),
+            port: self.port,
+            username: self.username.clone(),
+            auth_method: self.auth_method.clone(),
+            password: self.password.clone(),
+            key_path: self.key_path.clone(),
+            enable_x11_forwarding: false,
+        }
     }
 }
 

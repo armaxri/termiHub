@@ -31,6 +31,9 @@ pub enum TerminalError {
     #[error("Editor error: {0}")]
     EditorError(String),
 
+    #[error("Remote agent error: {0}")]
+    RemoteError(String),
+
     #[error("SFTP session not found: {0}")]
     SftpSessionNotFound(String),
 

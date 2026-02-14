@@ -74,6 +74,11 @@ impl TerminalManager {
                     title,
                 )
             }
+            ConnectionConfig::Remote(_cfg) => {
+                return Err(TerminalError::RemoteError(
+                    "Remote backend not yet implemented".to_string(),
+                ));
+            }
         };
 
         let connection_type = match &config {
@@ -81,6 +86,7 @@ impl TerminalManager {
             ConnectionConfig::Serial(_) => "serial",
             ConnectionConfig::Ssh(_) => "ssh",
             ConnectionConfig::Telnet(_) => "telnet",
+            ConnectionConfig::Remote(_) => "remote",
         };
 
         let info = SessionInfo {

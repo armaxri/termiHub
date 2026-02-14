@@ -9,10 +9,16 @@ use super::settings::{AppSettings, SettingsStorage};
 use super::storage::ConnectionStorage;
 use crate::terminal::backend::ConnectionConfig;
 
-/// Strip the password field from an SSH connection config.
+/// Strip the password field from SSH and Remote connection configs.
 pub(crate) fn strip_ssh_password(mut connection: SavedConnection) -> SavedConnection {
-    if let ConnectionConfig::Ssh(ref mut ssh_cfg) = connection.config {
-        ssh_cfg.password = None;
+    match connection.config {
+        ConnectionConfig::Ssh(ref mut ssh_cfg) => {
+            ssh_cfg.password = None;
+        }
+        ConnectionConfig::Remote(ref mut remote_cfg) => {
+            remote_cfg.password = None;
+        }
+        _ => {}
     }
     connection
 }
@@ -44,11 +50,20 @@ impl ConnectionManager {
         // Migrate: strip any existing stored passwords
         let mut needs_save = false;
         for conn in &mut store.connections {
-            if let ConnectionConfig::Ssh(ref mut ssh_cfg) = conn.config {
-                if ssh_cfg.password.is_some() {
-                    ssh_cfg.password = None;
-                    needs_save = true;
+            match conn.config {
+                ConnectionConfig::Ssh(ref mut ssh_cfg) => {
+                    if ssh_cfg.password.is_some() {
+                        ssh_cfg.password = None;
+                        needs_save = true;
+                    }
                 }
+                ConnectionConfig::Remote(ref mut remote_cfg) => {
+                    if remote_cfg.password.is_some() {
+                        remote_cfg.password = None;
+                        needs_save = true;
+                    }
+                }
+                _ => {}
             }
         }
         if needs_save {
