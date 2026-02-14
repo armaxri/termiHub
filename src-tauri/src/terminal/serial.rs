@@ -82,7 +82,10 @@ impl SerialConnection {
 
 impl TerminalBackend for SerialConnection {
     fn write_input(&self, data: &[u8]) -> Result<(), TerminalError> {
-        let mut port = self.port.lock().unwrap();
+        let mut port = self
+            .port
+            .lock()
+            .map_err(|e| TerminalError::WriteFailed(format!("Failed to lock port: {}", e)))?;
         port.write_all(data)
             .map_err(|e| TerminalError::WriteFailed(e.to_string()))?;
         port.flush()

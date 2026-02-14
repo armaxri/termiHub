@@ -6,7 +6,7 @@ import "@xterm/xterm/css/xterm.css";
 import "./Terminal.css";
 import { ConnectionConfig } from "@/types/terminal";
 import { createTerminal, sendInput, resizeTerminal, closeTerminal } from "@/services/api";
-import { onTerminalOutput, onTerminalExit, onRemoteStateChange } from "@/services/events";
+import { terminalDispatcher } from "@/services/events";
 import { useTerminalRegistry } from "./TerminalRegistry";
 import { useAppStore } from "@/store/appStore";
 
@@ -112,32 +112,43 @@ export function Terminal({ tabId, config, isVisible }: TerminalProps) {
         const sessionId = await createTerminal(config);
         sessionIdRef.current = sessionId;
 
-        // Subscribe to output events
-        const unlistenOutput = await onTerminalOutput((sid, data) => {
-          if (sid === sessionId) {
-            xterm.write(data);
-          }
-        });
+        // Output batching: buffer chunks and flush in a single RAF callback
+        const outputBuffer: Uint8Array[] = [];
+        let rafId: number | null = null;
 
-        // Subscribe to exit events
-        const unlistenExit = await onTerminalExit((sid, _exitCode) => {
-          if (sid === sessionId) {
-            xterm.writeln("\r\n\x1b[90m[Process exited]\x1b[0m");
-            sessionIdRef.current = null;
-          }
-        });
+        const flushOutput = () => {
+          rafId = null;
+          if (outputBuffer.length === 0) return;
 
-        // Subscribe to remote state change events (for remote connections)
-        const unlistenRemoteState = await onRemoteStateChange((sid, state) => {
-          if (sid === sessionId) {
-            useAppStore.getState().setRemoteState(tabId, state);
-            if (state === "disconnected") {
-              xterm.writeln("\r\n\x1b[33m[Connection lost, reconnecting...]\x1b[0m");
-            } else if (state === "connected" && sessionIdRef.current) {
-              // Only show "Reconnected" after an initial disconnect (not on first connect)
-              xterm.writeln("\r\n\x1b[32m[Reconnected]\x1b[0m");
+          if (outputBuffer.length === 1) {
+            xterm.write(outputBuffer[0]);
+          } else {
+            // Concatenate all buffered chunks into one write
+            let totalLen = 0;
+            for (const chunk of outputBuffer) totalLen += chunk.length;
+            const merged = new Uint8Array(totalLen);
+            let offset = 0;
+            for (const chunk of outputBuffer) {
+              merged.set(chunk, offset);
+              offset += chunk.length;
             }
+            xterm.write(merged);
           }
+          outputBuffer.length = 0;
+        };
+
+        // Subscribe to output events via singleton dispatcher (O(1) routing)
+        const unsubOutput = terminalDispatcher.subscribeOutput(sessionId, (data) => {
+          outputBuffer.push(data);
+          if (rafId === null) {
+            rafId = requestAnimationFrame(flushOutput);
+          }
+        });
+
+        // Subscribe to exit events via singleton dispatcher
+        const unsubExit = terminalDispatcher.subscribeExit(sessionId, () => {
+          xterm.writeln("\r\n\x1b[90m[Process exited]\x1b[0m");
+          sessionIdRef.current = null;
         });
 
         // Send user input to backend
@@ -163,9 +174,14 @@ export function Terminal({ tabId, config, isVisible }: TerminalProps) {
         }
 
         cleanupRef.current = () => {
-          unlistenOutput();
-          unlistenExit();
-          unlistenRemoteState();
+          unsubOutput();
+          unsubExit();
+          // Cancel pending RAF and flush remaining buffered output
+          if (rafId !== null) {
+            cancelAnimationFrame(rafId);
+            rafId = null;
+          }
+          flushOutput();
           onDataDisposable.dispose();
           onResizeDisposable.dispose();
           if (sessionIdRef.current) {

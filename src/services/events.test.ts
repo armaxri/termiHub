@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { listen } from "@tauri-apps/api/event";
-import { onTerminalOutput, onTerminalExit, onVscodeEditComplete } from "./events";
+import {
+  onTerminalOutput,
+  onTerminalExit,
+  onVscodeEditComplete,
+  TerminalOutputDispatcher,
+} from "./events";
 
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(),
@@ -137,6 +142,153 @@ describe("events service", () => {
       });
 
       expect(callback).toHaveBeenCalledWith("/remote/file.txt", false, "Upload failed");
+    });
+  });
+
+  describe("TerminalOutputDispatcher", () => {
+    let dispatcher: TerminalOutputDispatcher;
+
+    beforeEach(() => {
+      dispatcher = new TerminalOutputDispatcher();
+    });
+
+    it("init registers two global listeners", async () => {
+      mockedListen.mockResolvedValue(vi.fn());
+
+      await dispatcher.init();
+
+      expect(mockedListen).toHaveBeenCalledTimes(2);
+      expect(mockedListen).toHaveBeenCalledWith("terminal-output", expect.any(Function));
+      expect(mockedListen).toHaveBeenCalledWith("terminal-exit", expect.any(Function));
+    });
+
+    it("init is idempotent — second call does nothing", async () => {
+      mockedListen.mockResolvedValue(vi.fn());
+
+      await dispatcher.init();
+      await dispatcher.init();
+
+      expect(mockedListen).toHaveBeenCalledTimes(2);
+    });
+
+    it("routes output events to the correct session callback", async () => {
+      const handlers: Record<string, (event: unknown) => void> = {};
+      mockedListen.mockImplementation((eventName, handler) => {
+        handlers[eventName as string] = handler as (event: unknown) => void;
+        return Promise.resolve(vi.fn());
+      });
+
+      await dispatcher.init();
+
+      const cb1 = vi.fn();
+      const cb2 = vi.fn();
+      dispatcher.subscribeOutput("sess-1", cb1);
+      dispatcher.subscribeOutput("sess-2", cb2);
+
+      // Emit event for sess-1
+      handlers["terminal-output"]({
+        payload: { session_id: "sess-1", data: [65, 66] },
+      });
+
+      expect(cb1).toHaveBeenCalledTimes(1);
+      expect(cb1).toHaveBeenCalledWith(expect.any(Uint8Array));
+      expect(Array.from(cb1.mock.calls[0][0] as Uint8Array)).toEqual([65, 66]);
+      expect(cb2).not.toHaveBeenCalled();
+    });
+
+    it("routes exit events to the correct session callback", async () => {
+      const handlers: Record<string, (event: unknown) => void> = {};
+      mockedListen.mockImplementation((eventName, handler) => {
+        handlers[eventName as string] = handler as (event: unknown) => void;
+        return Promise.resolve(vi.fn());
+      });
+
+      await dispatcher.init();
+
+      const cb = vi.fn();
+      dispatcher.subscribeExit("sess-1", cb);
+
+      handlers["terminal-exit"]({
+        payload: { session_id: "sess-1", exit_code: 0 },
+      });
+
+      expect(cb).toHaveBeenCalledWith(0);
+    });
+
+    it("unsubscribe stops delivery", async () => {
+      const handlers: Record<string, (event: unknown) => void> = {};
+      mockedListen.mockImplementation((eventName, handler) => {
+        handlers[eventName as string] = handler as (event: unknown) => void;
+        return Promise.resolve(vi.fn());
+      });
+
+      await dispatcher.init();
+
+      const cb = vi.fn();
+      const unsub = dispatcher.subscribeOutput("sess-1", cb);
+
+      // First event should be delivered
+      handlers["terminal-output"]({
+        payload: { session_id: "sess-1", data: [1] },
+      });
+      expect(cb).toHaveBeenCalledTimes(1);
+
+      // After unsubscribe, no delivery
+      unsub();
+      handlers["terminal-output"]({
+        payload: { session_id: "sess-1", data: [2] },
+      });
+      expect(cb).toHaveBeenCalledTimes(1);
+    });
+
+    it("ignores events for unknown sessions", async () => {
+      const handlers: Record<string, (event: unknown) => void> = {};
+      mockedListen.mockImplementation((eventName, handler) => {
+        handlers[eventName as string] = handler as (event: unknown) => void;
+        return Promise.resolve(vi.fn());
+      });
+
+      await dispatcher.init();
+
+      // No callback registered for "sess-unknown"
+      // Should not throw
+      handlers["terminal-output"]({
+        payload: { session_id: "sess-unknown", data: [1] },
+      });
+    });
+
+    it("destroy calls unlisten and clears callbacks", async () => {
+      const unlistenOutput = vi.fn();
+      const unlistenExit = vi.fn();
+      let callCount = 0;
+      mockedListen.mockImplementation(() => {
+        callCount++;
+        return Promise.resolve(callCount === 1 ? unlistenOutput : unlistenExit);
+      });
+
+      await dispatcher.init();
+
+      const cb = vi.fn();
+      dispatcher.subscribeOutput("sess-1", cb);
+
+      dispatcher.destroy();
+
+      expect(unlistenOutput).toHaveBeenCalled();
+      expect(unlistenExit).toHaveBeenCalled();
+    });
+
+    it("can be re-initialized after destroy", async () => {
+      mockedListen.mockResolvedValue(vi.fn());
+
+      await dispatcher.init();
+      dispatcher.destroy();
+
+      vi.clearAllMocks();
+      mockedListen.mockResolvedValue(vi.fn());
+
+      await dispatcher.init();
+
+      expect(mockedListen).toHaveBeenCalledTimes(2);
     });
   });
 });

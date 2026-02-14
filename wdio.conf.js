@@ -52,7 +52,7 @@ export const config = {
       './tests/e2e/infrastructure/*.test.js',
     ],
     perf: [
-      './tests/e2e/performance-stress.test.js',
+      './tests/e2e/performance.test.js',
     ],
   },
 

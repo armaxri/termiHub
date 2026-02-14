@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Serial port disconnection detection and automatic reconnection in the remote agent
 - Agent-side `session.attach`, `session.detach`, `session.input`, and `session.resize` protocol handlers
 - E2E performance stress test for 40 concurrent terminals with creation throughput, UI responsiveness, and cleanup timing measurements (`pnpm test:e2e:perf`)
+- Performance profiling guide (`docs/performance.md`) with Chrome DevTools instructions, baseline metrics, and memory leak detection checklist
+- Session limit of 50 concurrent terminals with clear error when exceeded
 - Remote Agent connection type: connect to `termihub-agent` on Raspberry Pi for persistent shell and serial sessions that survive desktop disconnects
 - Auto-reconnect for remote connections with exponential backoff and visual state indicators on tabs
 - Remote Agent settings form with SSH connection fields, session type selector (shell/serial), and conditional serial port configuration
@@ -114,6 +116,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Key repeat not working on macOS (accent picker shown instead)
 
 ### Changed
+- Terminal output events now use a singleton dispatcher with O(1) Map-based routing instead of per-terminal global listeners (O(N) fan-out)
+- Terminal output writes are batched via `requestAnimationFrame` to reduce rendering overhead
+- Backend output channels now use bounded `sync_channel(64)` with backpressure instead of unbounded channels
+- Backend output reader coalesces pending chunks (up to 32 KB) into a single Tauri event to reduce IPC overhead
+- All mutex `.unwrap()` calls in terminal backends replaced with proper error propagation
 - Development guidelines updated to encourage smaller, more frequent commits per logical step
 - Custom application icon replacing default Tauri placeholder
 - Proper README replacing Tauri template boilerplate

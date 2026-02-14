@@ -7,13 +7,19 @@ use tracing::{error, info};
 
 use crate::terminal::backend::{
     ConnectionConfig, SessionInfo, TerminalExitEvent, TerminalOutputEvent, TerminalSession,
+    OUTPUT_CHANNEL_CAPACITY,
 };
 use crate::terminal::local_shell::LocalShell;
-use crate::terminal::remote::RemoteBackend;
 use crate::terminal::serial::SerialConnection;
 use crate::terminal::ssh::SshConnection;
 use crate::terminal::telnet::TelnetConnection;
 use crate::utils::errors::TerminalError;
+
+/// Maximum number of concurrent terminal sessions.
+const MAX_SESSIONS: usize = 50;
+
+/// Maximum coalesced output size per emit (32 KB).
+const MAX_COALESCE_BYTES: usize = 32 * 1024;
 
 /// Manages all active terminal sessions.
 pub struct TerminalManager {
@@ -33,9 +39,22 @@ impl TerminalManager {
         config: ConnectionConfig,
         app_handle: AppHandle,
     ) -> Result<String, TerminalError> {
+        // Enforce session limit
+        {
+            let sessions = self.sessions.lock().map_err(|e| {
+                TerminalError::SpawnFailed(format!("Failed to lock sessions: {}", e))
+            })?;
+            if sessions.len() >= MAX_SESSIONS {
+                return Err(TerminalError::SpawnFailed(format!(
+                    "Maximum number of sessions ({}) reached",
+                    MAX_SESSIONS
+                )));
+            }
+        }
+
         let config = config.expand();
         let session_id = uuid::Uuid::new_v4().to_string();
-        let (output_tx, output_rx) = mpsc::channel::<Vec<u8>>();
+        let (output_tx, output_rx) = mpsc::sync_channel::<Vec<u8>>(OUTPUT_CHANNEL_CAPACITY);
 
         let initial_command = match &config {
             ConnectionConfig::Local(cfg) => cfg.initial_command.clone(),
@@ -75,22 +94,6 @@ impl TerminalManager {
                     title,
                 )
             }
-            ConnectionConfig::Remote(cfg) => {
-                let conn = RemoteBackend::new(
-                    cfg,
-                    output_tx,
-                    app_handle.clone(),
-                    session_id.clone(),
-                )?;
-                let title = cfg
-                    .title
-                    .clone()
-                    .unwrap_or_else(|| format!("Remote: {}@{}", cfg.username, cfg.host));
-                (
-                    Box::new(conn) as Box<dyn crate::terminal::backend::TerminalBackend>,
-                    title,
-                )
-            }
         };
 
         let connection_type = match &config {
@@ -98,7 +101,6 @@ impl TerminalManager {
             ConnectionConfig::Serial(_) => "serial",
             ConnectionConfig::Ssh(_) => "ssh",
             ConnectionConfig::Telnet(_) => "telnet",
-            ConnectionConfig::Remote(_) => "remote",
         };
 
         let info = SessionInfo {
@@ -112,7 +114,7 @@ impl TerminalManager {
 
         self.sessions
             .lock()
-            .unwrap()
+            .map_err(|e| TerminalError::SpawnFailed(format!("Failed to lock sessions: {}", e)))?
             .insert(session_id.clone(), session);
 
         // Spawn output streaming task
@@ -139,7 +141,9 @@ impl TerminalManager {
 
     /// Send input data to a terminal session.
     pub fn send_input(&self, session_id: &str, data: &[u8]) -> Result<(), TerminalError> {
-        let sessions = self.sessions.lock().unwrap();
+        let sessions = self.sessions.lock().map_err(|e| {
+            TerminalError::WriteFailed(format!("Failed to lock sessions: {}", e))
+        })?;
         let session = sessions
             .get(session_id)
             .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
@@ -148,7 +152,9 @@ impl TerminalManager {
 
     /// Resize a terminal session.
     pub fn resize(&self, session_id: &str, cols: u16, rows: u16) -> Result<(), TerminalError> {
-        let sessions = self.sessions.lock().unwrap();
+        let sessions = self.sessions.lock().map_err(|e| {
+            TerminalError::ResizeFailed(format!("Failed to lock sessions: {}", e))
+        })?;
         let session = sessions
             .get(session_id)
             .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
@@ -157,7 +163,9 @@ impl TerminalManager {
 
     /// Close a terminal session.
     pub fn close_session(&self, session_id: &str) -> Result<(), TerminalError> {
-        let mut sessions = self.sessions.lock().unwrap();
+        let mut sessions = self.sessions.lock().map_err(|e| {
+            TerminalError::WriteFailed(format!("Failed to lock sessions: {}", e))
+        })?;
         if let Some(session) = sessions.remove(session_id) {
             let _ = session.backend.close();
             info!("Closed terminal session: {}", session_id);
@@ -168,7 +176,10 @@ impl TerminalManager {
     /// List all active sessions (used in future phases).
     #[allow(dead_code)]
     pub fn list_sessions(&self) -> Vec<SessionInfo> {
-        let sessions = self.sessions.lock().unwrap();
+        let sessions = match self.sessions.lock() {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
         sessions
             .values()
             .map(|s| {
@@ -180,6 +191,8 @@ impl TerminalManager {
     }
 
     /// Spawn a thread that reads output from a backend and emits Tauri events.
+    /// Coalesces pending output chunks into a single event (up to MAX_COALESCE_BYTES)
+    /// to reduce IPC overhead.
     fn spawn_output_reader(
         &self,
         session_id: String,
@@ -189,10 +202,19 @@ impl TerminalManager {
         let sessions = self.sessions.clone();
 
         std::thread::spawn(move || {
-            while let Ok(data) = output_rx.recv() {
+            while let Ok(first_chunk) = output_rx.recv() {
+                // Coalesce: drain any additional pending chunks up to MAX_COALESCE_BYTES
+                let mut coalesced = first_chunk;
+                while coalesced.len() < MAX_COALESCE_BYTES {
+                    match output_rx.try_recv() {
+                        Ok(chunk) => coalesced.extend_from_slice(&chunk),
+                        Err(_) => break,
+                    }
+                }
+
                 let event = TerminalOutputEvent {
                     session_id: session_id.clone(),
-                    data,
+                    data: coalesced,
                 };
                 if let Err(e) = app_handle.emit("terminal-output", &event) {
                     error!("Failed to emit terminal-output event: {}", e);

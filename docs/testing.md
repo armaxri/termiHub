@@ -505,27 +505,20 @@ Install the recommended VS Code extensions (already configured in `.vscode/exten
 
 ## Performance Testing
 
-For performance-critical parts (40 simultaneous terminals):
+TermiHub includes an automated E2E performance test suite that validates 40 concurrent terminals:
 
-```javascript
-describe('Performance Tests', () => {
-  it('should handle 40 terminal tabs', async () => {
-    const startTime = Date.now();
-
-    // Create 40 terminals
-    for (let i = 0; i < 40; i++) {
-      await browser.$('[data-testid="new-terminal-btn"]').click();
-    }
-
-    const loadTime = Date.now() - startTime;
-    expect(loadTime).toBeLessThan(5000); // Should load in <5s
-
-    // Check memory usage (if needed)
-    const memory = await browser.execute(() => performance.memory.usedJSHeapSize);
-    expect(memory).toBeLessThan(500 * 1024 * 1024); // <500MB
-  });
-});
+```bash
+# Run the performance test suite (requires built app + tauri-driver)
+pnpm test:e2e:perf
 ```
+
+The suite (`tests/e2e/performance.test.js`) covers:
+- **PERF-01**: Create 40 terminals via toolbar, verify tab count
+- **PERF-02**: UI responsiveness with 40 terminals open (41st creation <5s)
+- **PERF-03**: JS heap memory stays under 500 MB
+- **PERF-04**: Cleanup after closing all terminals
+
+For detailed profiling instructions, baseline metrics, and memory leak detection, see the [Performance Profiling Guide](performance.md).
 
 ## Accessibility Testing
 
@@ -551,6 +544,7 @@ it('should have no accessibility violations', async () => {
 ## Related Documentation
 
 - [Manual Test Plan](manual-testing.md) — Manual test procedures for features that cannot be effectively automated
+- [Performance Profiling Guide](performance.md) — How to profile with DevTools, baseline metrics, memory leak detection
 - [Contributing](contributing.md) — Development workflow and coding standards
 - [Building](building.md) — Build and development setup instructions
 
