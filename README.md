@@ -28,6 +28,20 @@ TermiHub provides a VS Code-like interface for managing multiple terminal connec
 - **Built-in editor** — Edit local and remote files with syntax highlighting
 - **Cross-platform** — Windows, Linux, and macOS
 
+## Documentation
+
+- **[User Guide](docs/user-guide.md)** — Interface overview, connections, tabs, splits, keyboard shortcuts, file browser, editor
+- **[Building](docs/building.md)** — Platform-specific build and development instructions
+- **[Scripts](scripts/README.md)** — Helper scripts for setup, dev, build, test, format, and quality checks
+- **[Serial Setup](docs/serial-setup.md)** — Serial port configuration per platform
+- **[SSH Configuration](docs/ssh-configuration.md)** — SSH keys, X11 forwarding, SFTP
+- **[Testing Strategy](docs/testing.md)** — Automated testing layers (unit, integration, E2E)
+- **[Manual Testing](docs/manual-testing.md)** — Manual test plan for hardware-dependent features
+- **[Contributing](docs/contributing.md)** — Development workflow, coding standards, architecture
+- **[Architecture](docs/architecture.md)** — Full arc42 architecture documentation
+- **[Raspberry Pi](docs/raspberry-pi.md)** — ARM64 deployment and remote agent setup
+- **[Releasing](docs/releasing.md)** — Release process and version management
+
 ## Built With
 
 - [Tauri 2](https://tauri.app/) — Desktop application framework
@@ -37,20 +51,6 @@ TermiHub provides a VS Code-like interface for managing multiple terminal connec
 - [Monaco Editor](https://microsoft.github.io/monaco-editor/) — Code editor component
 - [dnd kit](https://dndkit.com/) — Drag and drop
 - [react-resizable-panels](https://github.com/bvaughn/react-resizable-panels) — Split view layout
-
-## Documentation
-
-- **[User Guide](docs/user-guide.md)** — Interface overview, connections, tabs, splits, keyboard shortcuts, file browser, editor
-- **[Building](docs/building.md)** — Platform-specific build and development instructions
-- **[Serial Setup](docs/serial-setup.md)** — Serial port configuration per platform
-- **[SSH Configuration](docs/ssh-configuration.md)** — SSH keys, X11 forwarding, SFTP
-- **[Testing Strategy](docs/testing.md)** — Automated testing layers (unit, integration, E2E)
-- **[Manual Testing](docs/manual-testing.md)** — Manual test plan for hardware-dependent features
-- **[Contributing](docs/contributing.md)** — Development workflow, coding standards, architecture
-- **[Raspberry Pi](docs/raspberry-pi.md)** — ARM64 deployment and remote agent setup
-- **[Releasing](docs/releasing.md)** — Release process and version management
-
-For the full internal architecture documentation, see [Architecture Documentation](docs/architecture.md).
 
 ## License
 
