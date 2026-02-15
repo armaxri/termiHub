@@ -11,25 +11,29 @@ import { terminalDispatcher } from "@/services/events";
 import "./TerminalView.css";
 
 export function TerminalView() {
-  // Initialize the singleton event dispatcher on mount, destroy on unmount
+  // Initialize the singleton event dispatcher once.
+  // No cleanup — the dispatcher is a module-level singleton that persists for
+  // the app's lifetime. Per-session subscriptions handle individual terminal
+  // lifecycle. Avoiding destroy() here prevents an async race condition under
+  // React StrictMode where duplicate Tauri listeners cause doubled output.
   useEffect(() => {
     terminalDispatcher.init();
+  }, []);
 
-    let unlistenRemoteState: (() => void) | null = null;
+  // Update global remote-connection state in the store (drives tab state dots).
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
     listen<{ session_id: string; state: string }>("remote-state-change", (event) => {
       const { session_id, state } = event.payload;
       useAppStore.getState().setRemoteState(session_id, state);
-    }).then((unlisten) => {
-      unlistenRemoteState = unlisten;
+    }).then((fn) => {
+      unlisten = fn;
     });
-
     return () => {
-      terminalDispatcher.destroy();
-      if (unlistenRemoteState) {
-        unlistenRemoteState();
-      }
+      if (unlisten) unlisten();
     };
   }, []);
+
   const addTab = useAppStore((s) => s.addTab);
   const splitPanel = useAppStore((s) => s.splitPanel);
   const rootPanel = useAppStore((s) => s.rootPanel);

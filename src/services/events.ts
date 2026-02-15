@@ -53,13 +53,22 @@ export class TerminalOutputDispatcher {
   private unlistenExit: UnlistenFn | null = null;
   private unlistenRemoteState: UnlistenFn | null = null;
   private initialized = false;
+  private initGeneration = 0;
 
-  /** Register global Tauri event listeners. Call once when TerminalView mounts. */
+  /**
+   * Register global Tauri event listeners. Call once when TerminalView mounts.
+   *
+   * Uses a generation counter to handle the async race condition caused by
+   * React StrictMode's mount → unmount → remount cycle: if destroy() is called
+   * while the async listen() calls are still pending, the resolved listeners
+   * are immediately unregistered instead of leaking as duplicates.
+   */
   async init(): Promise<void> {
     if (this.initialized) return;
     this.initialized = true;
+    const gen = this.initGeneration;
 
-    this.unlistenOutput = await listen<TerminalOutputPayload>("terminal-output", (event) => {
+    const unlistenOutput = await listen<TerminalOutputPayload>("terminal-output", (event) => {
       const { session_id, data } = event.payload;
       const cb = this.outputCallbacks.get(session_id);
       if (cb) {
@@ -67,7 +76,13 @@ export class TerminalOutputDispatcher {
       }
     });
 
-    this.unlistenExit = await listen<TerminalExitPayload>("terminal-exit", (event) => {
+    if (gen !== this.initGeneration) {
+      unlistenOutput();
+      return;
+    }
+    this.unlistenOutput = unlistenOutput;
+
+    const unlistenExit = await listen<TerminalExitPayload>("terminal-exit", (event) => {
       const { session_id, exit_code } = event.payload;
       const cb = this.exitCallbacks.get(session_id);
       if (cb) {
@@ -75,7 +90,15 @@ export class TerminalOutputDispatcher {
       }
     });
 
-    this.unlistenRemoteState = await listen<RemoteStateChangePayload>(
+    if (gen !== this.initGeneration) {
+      unlistenExit();
+      this.unlistenOutput();
+      this.unlistenOutput = null;
+      return;
+    }
+    this.unlistenExit = unlistenExit;
+
+    const unlistenRemoteState = await listen<RemoteStateChangePayload>(
       "remote-state-change",
       (event) => {
         const { session_id, state } = event.payload;
@@ -85,6 +108,16 @@ export class TerminalOutputDispatcher {
         }
       }
     );
+
+    if (gen !== this.initGeneration) {
+      unlistenRemoteState();
+      this.unlistenOutput();
+      this.unlistenOutput = null;
+      this.unlistenExit();
+      this.unlistenExit = null;
+      return;
+    }
+    this.unlistenRemoteState = unlistenRemoteState;
   }
 
   /** Subscribe to output events for a specific session. Returns an unsubscribe function. */
@@ -111,8 +144,9 @@ export class TerminalOutputDispatcher {
     };
   }
 
-  /** Tear down global listeners and clear all callbacks. Call when TerminalView unmounts. */
+  /** Tear down global listeners and clear all callbacks. */
   destroy(): void {
+    this.initGeneration++;
     if (this.unlistenOutput) {
       this.unlistenOutput();
       this.unlistenOutput = null;
