@@ -3,6 +3,9 @@
 //! Messages are exchanged as newline-delimited JSON (NDJSON) lines over
 //! an SSH exec channel running `termihub-agent --stdio`.
 
+// Used by remote.rs which is not yet wired into the main code path.
+#![allow(dead_code)]
+
 use std::io::{Read, Write};
 
 use serde::Serialize;
@@ -43,16 +46,11 @@ pub fn parse_message(line: &str) -> Result<JsonRpcMessage, String> {
     let obj = v.as_object().ok_or("Expected JSON object")?;
 
     if let Some(id_val) = obj.get("id") {
-        let id = id_val
-            .as_u64()
-            .ok_or("Expected numeric id")?;
+        let id = id_val.as_u64().ok_or("Expected numeric id")?;
 
         if let Some(error) = obj.get("error") {
             let error_obj = error.as_object().ok_or("Expected error object")?;
-            let code = error_obj
-                .get("code")
-                .and_then(|c| c.as_i64())
-                .unwrap_or(-1);
+            let code = error_obj.get("code").and_then(|c| c.as_i64()).unwrap_or(-1);
             let message = error_obj
                 .get("message")
                 .and_then(|m| m.as_str())
@@ -171,8 +169,7 @@ mod tests {
 
     #[test]
     fn parse_notification() {
-        let line =
-            r#"{"jsonrpc":"2.0","method":"session.output","params":{"sessionId":"abc","data":"aGVsbG8="}}"#;
+        let line = r#"{"jsonrpc":"2.0","method":"session.output","params":{"sessionId":"abc","data":"aGVsbG8="}}"#;
         match parse_message(line).unwrap() {
             JsonRpcMessage::Notification { method, params } => {
                 assert_eq!(method, "session.output");

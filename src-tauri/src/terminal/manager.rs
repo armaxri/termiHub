@@ -94,6 +94,11 @@ impl TerminalManager {
                     title,
                 )
             }
+            ConnectionConfig::Remote(_cfg) => {
+                return Err(TerminalError::RemoteError(
+                    "Remote backend not yet implemented".to_string(),
+                ));
+            }
         };
 
         let connection_type = match &config {
@@ -101,6 +106,7 @@ impl TerminalManager {
             ConnectionConfig::Serial(_) => "serial",
             ConnectionConfig::Ssh(_) => "ssh",
             ConnectionConfig::Telnet(_) => "telnet",
+            ConnectionConfig::Remote(_) => "remote",
         };
 
         let info = SessionInfo {
@@ -141,9 +147,10 @@ impl TerminalManager {
 
     /// Send input data to a terminal session.
     pub fn send_input(&self, session_id: &str, data: &[u8]) -> Result<(), TerminalError> {
-        let sessions = self.sessions.lock().map_err(|e| {
-            TerminalError::WriteFailed(format!("Failed to lock sessions: {}", e))
-        })?;
+        let sessions = self
+            .sessions
+            .lock()
+            .map_err(|e| TerminalError::WriteFailed(format!("Failed to lock sessions: {}", e)))?;
         let session = sessions
             .get(session_id)
             .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
@@ -152,9 +159,10 @@ impl TerminalManager {
 
     /// Resize a terminal session.
     pub fn resize(&self, session_id: &str, cols: u16, rows: u16) -> Result<(), TerminalError> {
-        let sessions = self.sessions.lock().map_err(|e| {
-            TerminalError::ResizeFailed(format!("Failed to lock sessions: {}", e))
-        })?;
+        let sessions = self
+            .sessions
+            .lock()
+            .map_err(|e| TerminalError::ResizeFailed(format!("Failed to lock sessions: {}", e)))?;
         let session = sessions
             .get(session_id)
             .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
@@ -163,9 +171,10 @@ impl TerminalManager {
 
     /// Close a terminal session.
     pub fn close_session(&self, session_id: &str) -> Result<(), TerminalError> {
-        let mut sessions = self.sessions.lock().map_err(|e| {
-            TerminalError::WriteFailed(format!("Failed to lock sessions: {}", e))
-        })?;
+        let mut sessions = self
+            .sessions
+            .lock()
+            .map_err(|e| TerminalError::WriteFailed(format!("Failed to lock sessions: {}", e)))?;
         if let Some(session) = sessions.remove(session_id) {
             let _ = session.backend.close();
             info!("Closed terminal session: {}", session_id);
