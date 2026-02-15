@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- "Save & Connect" button in the connection editor to save and immediately open a terminal session
 - Serial port proxy support in the remote agent: serial ports connected to the Raspberry Pi are now accessible from the desktop app over SSH
 - 24/7 serial data buffering with 1 MiB ring buffer: data is captured continuously and replayed when a client attaches
 - Serial port disconnection detection and automatic reconnection in the remote agent
