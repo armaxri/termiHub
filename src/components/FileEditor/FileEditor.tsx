@@ -21,12 +21,14 @@ loader.config({ monaco });
 function readEditorStatus(editor: monaco.editor.IStandaloneCodeEditor): EditorStatus {
   const pos = editor.getPosition();
   const model = editor.getModel();
+  const options = model?.getOptions();
   return {
     line: pos?.lineNumber ?? 1,
     column: pos?.column ?? 1,
     language: model?.getLanguageId() ?? "plaintext",
     eol: model?.getEOL() === "\r\n" ? "CRLF" : "LF",
-    tabSize: (model?.getOptions().tabSize ?? 4) as number,
+    tabSize: (options?.tabSize ?? 4) as number,
+    insertSpaces: (options?.insertSpaces ?? true) as boolean,
     encoding: "UTF-8",
   };
 }
@@ -140,12 +142,10 @@ export function FileEditor({ tabId, meta, isVisible }: FileEditorProps) {
 
       // Register actions for status bar interactions
       setEditorActions({
-        cycleTabSize: () => {
+        setIndent: (tabSize: number, insertSpaces: boolean) => {
           const model = editor.getModel();
           if (!model) return;
-          const current = (model.getOptions().tabSize ?? 4) as number;
-          const next = current === 4 ? 2 : 4;
-          model.updateOptions({ tabSize: next });
+          model.updateOptions({ tabSize, insertSpaces });
           setEditorStatus(readEditorStatus(editor));
         },
         toggleEol: () => {
@@ -169,12 +169,10 @@ export function FileEditor({ tabId, meta, isVisible }: FileEditorProps) {
     if (isVisible && editorRef.current) {
       setEditorStatus(readEditorStatus(editorRef.current));
       setEditorActions({
-        cycleTabSize: () => {
+        setIndent: (tabSize: number, insertSpaces: boolean) => {
           const model = editorRef.current?.getModel();
           if (!model) return;
-          const current = (model.getOptions().tabSize ?? 4) as number;
-          const next = current === 4 ? 2 : 4;
-          model.updateOptions({ tabSize: next });
+          model.updateOptions({ tabSize, insertSpaces });
           if (editorRef.current) setEditorStatus(readEditorStatus(editorRef.current));
         },
         toggleEol: () => {
