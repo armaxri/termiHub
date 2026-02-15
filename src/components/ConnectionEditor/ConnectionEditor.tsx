@@ -11,6 +11,7 @@ import {
   TerminalOptions,
   ConnectionEditorMeta,
 } from "@/types/terminal";
+import { SavedConnection } from "@/types/connection";
 import {
   ConnectionSettings,
   SshSettings,
@@ -99,6 +100,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const addExternalConnection = useAppStore((s) => s.addExternalConnection);
   const updateExternalConnection = useAppStore((s) => s.updateExternalConnection);
   const closeTab = useAppStore((s) => s.closeTab);
+  const addTab = useAppStore((s) => s.addTab);
+  const requestPassword = useAppStore((s) => s.requestPassword);
   const rootPanel = useAppStore((s) => s.rootPanel);
 
   const editingConnectionId = meta.connectionId;
@@ -156,51 +159,57 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     }
   }, [rootPanel, tabId, closeTab]);
 
-  const handleSave = useCallback(() => {
-    if (!name.trim()) return;
+  /** Save the connection and return the saved entry (or null if name is empty). */
+  const saveConnection = useCallback((): SavedConnection | null => {
+    if (!name.trim()) return null;
 
     const opts =
       terminalOptions.horizontalScrolling || terminalOptions.color ? terminalOptions : undefined;
 
     if (extFilePath) {
-      // Saving to an external source
       const prefix = `ext:${extFilePath}::`;
       if (existingConnection) {
-        updateExternalConnection(extFilePath, {
+        const saved: SavedConnection = {
           ...existingConnection,
           name,
           config: connectionConfig,
           folderId,
           terminalOptions: opts,
-        });
+        };
+        updateExternalConnection(extFilePath, saved);
+        return saved;
       } else {
-        const rawId = `conn-${Date.now()}`;
-        addExternalConnection(extFilePath, {
-          id: `${prefix}${rawId}`,
+        const saved: SavedConnection = {
+          id: `${prefix}conn-${Date.now()}`,
           name,
           config: connectionConfig,
           folderId,
           terminalOptions: opts,
-        });
+        };
+        addExternalConnection(extFilePath, saved);
+        return saved;
       }
     } else if (existingConnection) {
-      updateConnection({
+      const saved: SavedConnection = {
         ...existingConnection,
         name,
         config: connectionConfig,
         folderId,
         terminalOptions: opts,
-      });
+      };
+      updateConnection(saved);
+      return saved;
     } else {
-      addConnection({
+      const saved: SavedConnection = {
         id: `conn-${Date.now()}`,
         name,
         config: connectionConfig,
         folderId,
         terminalOptions: opts,
-      });
+      };
+      addConnection(saved);
+      return saved;
     }
-    closeThisTab();
   }, [
     name,
     folderId,
@@ -212,8 +221,37 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     updateConnection,
     addExternalConnection,
     updateExternalConnection,
-    closeThisTab,
   ]);
+
+  const handleSave = useCallback(() => {
+    if (saveConnection()) {
+      closeThisTab();
+    }
+  }, [saveConnection, closeThisTab]);
+
+  const handleSaveAndConnect = useCallback(async () => {
+    const saved = saveConnection();
+    if (!saved) return;
+
+    let config = saved.config;
+
+    if (config.type === "ssh" && config.config.authMethod === "password") {
+      const sshCfg = config.config as SshConfig;
+      const password = await requestPassword(sshCfg.host, sshCfg.username);
+      if (password === null) return;
+      config = { ...config, config: { ...sshCfg, password } };
+    }
+
+    if (config.type === "remote" && config.config.authMethod === "password") {
+      const remoteCfg = config.config as RemoteConfig;
+      const password = await requestPassword(remoteCfg.host, remoteCfg.username);
+      if (password === null) return;
+      config = { ...config, config: { ...remoteCfg, password } };
+    }
+
+    addTab(saved.name, saved.config.type, config, undefined, undefined, saved.terminalOptions);
+    closeThisTab();
+  }, [saveConnection, requestPassword, addTab, closeThisTab]);
 
   const handleCancel = useCallback(() => {
     closeThisTab();
@@ -358,6 +396,13 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
             data-testid="connection-editor-cancel"
           >
             Cancel
+          </button>
+          <button
+            className="connection-editor__btn connection-editor__btn--primary"
+            onClick={handleSaveAndConnect}
+            data-testid="connection-editor-save-connect"
+          >
+            Save &amp; Connect
           </button>
           <button
             className="connection-editor__btn connection-editor__btn--primary"
