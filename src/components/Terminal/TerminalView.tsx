@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from "react";
 import { Plus, Columns2, X } from "lucide-react";
+import { listen } from "@tauri-apps/api/event";
 import { useAppStore } from "@/store/appStore";
 import { TerminalTab } from "@/types/terminal";
 import { getAllLeaves } from "@/utils/panelTree";
@@ -13,8 +14,20 @@ export function TerminalView() {
   // Initialize the singleton event dispatcher on mount, destroy on unmount
   useEffect(() => {
     terminalDispatcher.init();
+
+    let unlistenRemoteState: (() => void) | null = null;
+    listen<{ session_id: string; state: string }>("remote-state-change", (event) => {
+      const { session_id, state } = event.payload;
+      useAppStore.getState().setRemoteState(session_id, state);
+    }).then((unlisten) => {
+      unlistenRemoteState = unlisten;
+    });
+
     return () => {
       terminalDispatcher.destroy();
+      if (unlistenRemoteState) {
+        unlistenRemoteState();
+      }
     };
   }, []);
   const addTab = useAppStore((s) => s.addTab);

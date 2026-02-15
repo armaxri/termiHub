@@ -14,6 +14,11 @@ interface TerminalExitPayload {
   exit_code: number | null;
 }
 
+interface RemoteStateChangePayload {
+  session_id: string;
+  state: string;
+}
+
 /** Subscribe to terminal output events */
 export async function onTerminalOutput(
   callback: (sessionId: string, data: Uint8Array) => void
@@ -43,8 +48,10 @@ export async function onTerminalExit(
 export class TerminalOutputDispatcher {
   private outputCallbacks = new Map<string, (data: Uint8Array) => void>();
   private exitCallbacks = new Map<string, (exitCode: number | null) => void>();
+  private remoteStateCallbacks = new Map<string, (state: string) => void>();
   private unlistenOutput: UnlistenFn | null = null;
   private unlistenExit: UnlistenFn | null = null;
+  private unlistenRemoteState: UnlistenFn | null = null;
   private initialized = false;
 
   /** Register global Tauri event listeners. Call once when TerminalView mounts. */
@@ -67,6 +74,17 @@ export class TerminalOutputDispatcher {
         cb(exit_code);
       }
     });
+
+    this.unlistenRemoteState = await listen<RemoteStateChangePayload>(
+      "remote-state-change",
+      (event) => {
+        const { session_id, state } = event.payload;
+        const cb = this.remoteStateCallbacks.get(session_id);
+        if (cb) {
+          cb(state);
+        }
+      }
+    );
   }
 
   /** Subscribe to output events for a specific session. Returns an unsubscribe function. */
@@ -85,6 +103,14 @@ export class TerminalOutputDispatcher {
     };
   }
 
+  /** Subscribe to remote state change events for a specific session. Returns an unsubscribe function. */
+  subscribeRemoteState(sessionId: string, callback: (state: string) => void): () => void {
+    this.remoteStateCallbacks.set(sessionId, callback);
+    return () => {
+      this.remoteStateCallbacks.delete(sessionId);
+    };
+  }
+
   /** Tear down global listeners and clear all callbacks. Call when TerminalView unmounts. */
   destroy(): void {
     if (this.unlistenOutput) {
@@ -95,8 +121,13 @@ export class TerminalOutputDispatcher {
       this.unlistenExit();
       this.unlistenExit = null;
     }
+    if (this.unlistenRemoteState) {
+      this.unlistenRemoteState();
+      this.unlistenRemoteState = null;
+    }
     this.outputCallbacks.clear();
     this.exitCallbacks.clear();
+    this.remoteStateCallbacks.clear();
     this.initialized = false;
   }
 }
