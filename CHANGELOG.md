@@ -110,12 +110,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Double-click a connection to connect directly
 
 ### Fixed
+
 - New terminal tabs now start in the user's home directory instead of the system root
 - File browser now stays visible when editing a file, showing the parent directory
 - Horizontal scroll width now updates dynamically as terminal output arrives
 - Key repeat not working on macOS (accent picker shown instead)
 
 ### Changed
+
+- Connection editor now opens as a tab in the main panel area instead of the sidebar, providing more space for settings forms
 - Remote Agent connections are now functional — connect to `termihub-agent` running on remote hosts with auto-reconnect and visual status indicators
 - Terminal output events now use a singleton dispatcher with O(1) Map-based routing instead of per-terminal global listeners (O(N) fan-out)
 - Terminal output writes are batched via `requestAnimationFrame` to reduce rendering overhead
@@ -134,4 +137,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Shell type dropdown in connection editor now only shows shells available on the current platform
 
 ### Security
+
 - Removed plaintext SSH password storage from connections file
