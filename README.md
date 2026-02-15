@@ -50,7 +50,7 @@ TermiHub provides a VS Code-like interface for managing multiple terminal connec
 - **[Raspberry Pi](docs/raspberry-pi.md)** — ARM64 deployment and remote agent setup
 - **[Releasing](docs/releasing.md)** — Release process and version management
 
-For the full internal architecture documentation, see [CLAUDE.md](CLAUDE.md).
+For the full internal architecture documentation, see [Architecture Documentation](docs/architecture.md).
 
 ## License
 

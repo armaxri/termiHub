@@ -75,7 +75,7 @@ termihub/
 └── package.json
 ```
 
-For the full architecture documentation, including class diagrams and data flow sequences, see [CLAUDE.md](../CLAUDE.md).
+For the full architecture documentation, including class diagrams and data flow sequences, see [Architecture Documentation](architecture.md).
 
 ---
 
@@ -224,7 +224,7 @@ Fixes #34
 - Clear, descriptive naming
 - Single Responsibility Principle
 
-See [CLAUDE.md](../CLAUDE.md) for detailed code examples and patterns.
+See [Architecture Documentation](architecture.md) for detailed diagrams and patterns.
 
 ---
 
