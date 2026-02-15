@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import Editor, { loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
 import { Save, Loader2, AlertCircle, Globe } from "lucide-react";
-import { EditorTabMeta, EditorStatus } from "@/types/terminal";
+import { EditorTabMeta, EditorStatus, LanguageInfo } from "@/types/terminal";
 import { useAppStore } from "@/store/appStore";
 import {
   localReadFile,
@@ -15,6 +15,22 @@ import "./FileEditor.css";
 // Use local monaco-editor package instead of CDN (important for Tauri/offline)
 loader.config({ monaco });
 
+/** Cached list of Monaco languages (populated on first call). */
+let cachedLanguages: LanguageInfo[] | null = null;
+
+function getAvailableLanguages(): LanguageInfo[] {
+  if (!cachedLanguages) {
+    cachedLanguages = monaco.languages
+      .getLanguages()
+      .map((lang) => ({
+        id: lang.id,
+        name: lang.aliases?.[0] ?? lang.id,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+  return cachedLanguages;
+}
+
 /**
  * Read current editor status from a Monaco editor instance.
  */
@@ -26,6 +42,7 @@ function readEditorStatus(editor: monaco.editor.IStandaloneCodeEditor): EditorSt
     line: pos?.lineNumber ?? 1,
     column: pos?.column ?? 1,
     language: model?.getLanguageId() ?? "plaintext",
+    availableLanguages: getAvailableLanguages(),
     eol: model?.getEOL() === "\r\n" ? "CRLF" : "LF",
     tabSize: (options?.tabSize ?? 4) as number,
     insertSpaces: (options?.insertSpaces ?? true) as boolean,
@@ -159,6 +176,12 @@ export function FileEditor({ tabId, meta, isVisible }: FileEditorProps) {
           model.setEOL(next);
           setEditorStatus(readEditorStatus(editor));
         },
+        setLanguage: (languageId: string) => {
+          const model = editor.getModel();
+          if (!model) return;
+          monaco.editor.setModelLanguage(model, languageId);
+          setEditorStatus(readEditorStatus(editor));
+        },
       });
     },
     [setEditorStatus, setEditorActions]
@@ -184,6 +207,12 @@ export function FileEditor({ tabId, meta, isVisible }: FileEditorProps) {
               ? monaco.editor.EndOfLineSequence.LF
               : monaco.editor.EndOfLineSequence.CRLF;
           model.setEOL(next);
+          if (editorRef.current) setEditorStatus(readEditorStatus(editorRef.current));
+        },
+        setLanguage: (languageId: string) => {
+          const model = editorRef.current?.getModel();
+          if (!model) return;
+          monaco.editor.setModelLanguage(model, languageId);
           if (editorRef.current) setEditorStatus(readEditorStatus(editorRef.current));
         },
       });

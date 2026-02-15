@@ -1,3 +1,4 @@
+import { useState, useMemo } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { useAppStore } from "@/store/appStore";
 import "./StatusBar.css";
@@ -85,10 +86,97 @@ export function StatusBar() {
             >
               {editorStatus.eol}
             </button>
-            <span className="status-bar__item">{editorStatus.language}</span>
+            <LanguageSelector
+              currentLanguage={editorStatus.language}
+              languages={editorStatus.availableLanguages}
+              onSelect={(id) => editorActions?.setLanguage(id)}
+            />
           </>
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * Language selector dropdown with search filtering.
+ */
+function LanguageSelector({
+  currentLanguage,
+  languages,
+  onSelect,
+}: {
+  currentLanguage: string;
+  languages: { id: string; name: string }[];
+  onSelect: (languageId: string) => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [open, setOpen] = useState(false);
+
+  const displayName = languages.find((l) => l.id === currentLanguage)?.name ?? currentLanguage;
+
+  const filtered = useMemo(() => {
+    if (!search) return languages;
+    const lower = search.toLowerCase();
+    return languages.filter(
+      (l) => l.name.toLowerCase().includes(lower) || l.id.toLowerCase().includes(lower)
+    );
+  }, [languages, search]);
+
+  return (
+    <DropdownMenu.Root
+      open={open}
+      onOpenChange={(isOpen) => {
+        setOpen(isOpen);
+        if (!isOpen) setSearch("");
+      }}
+    >
+      <DropdownMenu.Trigger asChild>
+        <button
+          className="status-bar__item status-bar__item--interactive"
+          title="Select language mode"
+          data-testid="status-bar-language"
+        >
+          {displayName}
+        </button>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content
+          className="lang-menu__content"
+          side="top"
+          align="end"
+          sideOffset={4}
+          onCloseAutoFocus={(e) => e.preventDefault()}
+        >
+          <div className="lang-menu__search-wrapper">
+            <input
+              className="lang-menu__search"
+              placeholder="Search languages..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => e.stopPropagation()}
+              autoFocus
+              data-testid="lang-menu-search"
+            />
+          </div>
+          <div className="lang-menu__list">
+            {filtered.map((lang) => (
+              <DropdownMenu.Item
+                key={lang.id}
+                className="lang-menu__item"
+                onSelect={() => onSelect(lang.id)}
+                data-testid={`lang-${lang.id}`}
+              >
+                {lang.name}
+                {lang.id !== lang.name.toLowerCase() && (
+                  <span className="lang-menu__item-id">{lang.id}</span>
+                )}
+              </DropdownMenu.Item>
+            ))}
+            {filtered.length === 0 && <div className="lang-menu__empty">No matching languages</div>}
+          </div>
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
   );
 }
