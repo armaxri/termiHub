@@ -10,6 +10,7 @@ use crate::terminal::backend::{
     OUTPUT_CHANNEL_CAPACITY,
 };
 use crate::terminal::local_shell::LocalShell;
+use crate::terminal::remote::RemoteBackend;
 use crate::terminal::serial::SerialConnection;
 use crate::terminal::ssh::SshConnection;
 use crate::terminal::telnet::TelnetConnection;
@@ -94,10 +95,17 @@ impl TerminalManager {
                     title,
                 )
             }
-            ConnectionConfig::Remote(_cfg) => {
-                return Err(TerminalError::RemoteError(
-                    "Remote backend not yet implemented".to_string(),
-                ));
+            ConnectionConfig::Remote(cfg) => {
+                let conn =
+                    RemoteBackend::new(cfg, output_tx, app_handle.clone(), session_id.clone())?;
+                let title = cfg
+                    .title
+                    .clone()
+                    .unwrap_or_else(|| format!("Remote: {}@{}", cfg.username, cfg.host));
+                (
+                    Box::new(conn) as Box<dyn crate::terminal::backend::TerminalBackend>,
+                    title,
+                )
             }
         };
 
