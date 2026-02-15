@@ -106,16 +106,24 @@ export interface SplitContainer {
 export type PanelNode = LeafPanel | SplitContainer;
 export type DropEdge = "left" | "right" | "top" | "bottom" | "center";
 
+export interface LanguageInfo {
+  id: string;
+  name: string;
+}
+
 export interface EditorStatus {
   line: number;
   column: number;
   language: string;
+  availableLanguages: LanguageInfo[];
   eol: "LF" | "CRLF";
   tabSize: number;
+  insertSpaces: boolean;
   encoding: string;
 }
 
 export interface EditorActions {
-  cycleTabSize: () => void;
+  setIndent: (tabSize: number, insertSpaces: boolean) => void;
   toggleEol: () => void;
+  setLanguage: (languageId: string) => void;
 }

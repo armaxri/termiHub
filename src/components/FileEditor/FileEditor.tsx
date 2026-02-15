@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import Editor, { loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
 import { Save, Loader2, AlertCircle, Globe } from "lucide-react";
-import { EditorTabMeta, EditorStatus } from "@/types/terminal";
+import { EditorTabMeta, EditorStatus, LanguageInfo } from "@/types/terminal";
 import { useAppStore } from "@/store/appStore";
 import {
   localReadFile,
@@ -15,18 +15,37 @@ import "./FileEditor.css";
 // Use local monaco-editor package instead of CDN (important for Tauri/offline)
 loader.config({ monaco });
 
+/** Cached list of Monaco languages (populated on first call). */
+let cachedLanguages: LanguageInfo[] | null = null;
+
+function getAvailableLanguages(): LanguageInfo[] {
+  if (!cachedLanguages) {
+    cachedLanguages = monaco.languages
+      .getLanguages()
+      .map((lang) => ({
+        id: lang.id,
+        name: lang.aliases?.[0] ?? lang.id,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+  return cachedLanguages;
+}
+
 /**
  * Read current editor status from a Monaco editor instance.
  */
 function readEditorStatus(editor: monaco.editor.IStandaloneCodeEditor): EditorStatus {
   const pos = editor.getPosition();
   const model = editor.getModel();
+  const options = model?.getOptions();
   return {
     line: pos?.lineNumber ?? 1,
     column: pos?.column ?? 1,
     language: model?.getLanguageId() ?? "plaintext",
+    availableLanguages: getAvailableLanguages(),
     eol: model?.getEOL() === "\r\n" ? "CRLF" : "LF",
-    tabSize: (model?.getOptions().tabSize ?? 4) as number,
+    tabSize: (options?.tabSize ?? 4) as number,
+    insertSpaces: (options?.insertSpaces ?? true) as boolean,
     encoding: "UTF-8",
   };
 }
@@ -140,12 +159,10 @@ export function FileEditor({ tabId, meta, isVisible }: FileEditorProps) {
 
       // Register actions for status bar interactions
       setEditorActions({
-        cycleTabSize: () => {
+        setIndent: (tabSize: number, insertSpaces: boolean) => {
           const model = editor.getModel();
           if (!model) return;
-          const current = (model.getOptions().tabSize ?? 4) as number;
-          const next = current === 4 ? 2 : 4;
-          model.updateOptions({ tabSize: next });
+          model.updateOptions({ tabSize, insertSpaces });
           setEditorStatus(readEditorStatus(editor));
         },
         toggleEol: () => {
@@ -157,6 +174,12 @@ export function FileEditor({ tabId, meta, isVisible }: FileEditorProps) {
               ? monaco.editor.EndOfLineSequence.LF
               : monaco.editor.EndOfLineSequence.CRLF;
           model.setEOL(next);
+          setEditorStatus(readEditorStatus(editor));
+        },
+        setLanguage: (languageId: string) => {
+          const model = editor.getModel();
+          if (!model) return;
+          monaco.editor.setModelLanguage(model, languageId);
           setEditorStatus(readEditorStatus(editor));
         },
       });
@@ -169,12 +192,10 @@ export function FileEditor({ tabId, meta, isVisible }: FileEditorProps) {
     if (isVisible && editorRef.current) {
       setEditorStatus(readEditorStatus(editorRef.current));
       setEditorActions({
-        cycleTabSize: () => {
+        setIndent: (tabSize: number, insertSpaces: boolean) => {
           const model = editorRef.current?.getModel();
           if (!model) return;
-          const current = (model.getOptions().tabSize ?? 4) as number;
-          const next = current === 4 ? 2 : 4;
-          model.updateOptions({ tabSize: next });
+          model.updateOptions({ tabSize, insertSpaces });
           if (editorRef.current) setEditorStatus(readEditorStatus(editorRef.current));
         },
         toggleEol: () => {
@@ -186,6 +207,12 @@ export function FileEditor({ tabId, meta, isVisible }: FileEditorProps) {
               ? monaco.editor.EndOfLineSequence.LF
               : monaco.editor.EndOfLineSequence.CRLF;
           model.setEOL(next);
+          if (editorRef.current) setEditorStatus(readEditorStatus(editorRef.current));
+        },
+        setLanguage: (languageId: string) => {
+          const model = editorRef.current?.getModel();
+          if (!model) return;
+          monaco.editor.setModelLanguage(model, languageId);
           if (editorRef.current) setEditorStatus(readEditorStatus(editorRef.current));
         },
       });
