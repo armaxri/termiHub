@@ -61,6 +61,14 @@ examples/                     # Docker test environment (SSH, Telnet, virtual se
 - `tokio` for async, channels for communication
 - Naming: `PascalCase` types/traits, `snake_case` functions/modules, `UPPER_SNAKE_CASE` constants
 
+### Testing
+- Every bug fix and feature should include verification that the change works correctly, in order of preference:
+  1. **Unit tests** (preferred) — fast, isolated, verify specific behavior
+  2. **System/integration tests** — when unit tests aren't feasible (e.g., hardware, full app lifecycle)
+  3. **Documented manual test steps** — last resort for things that can't be automated (e.g., visual rendering, platform-specific hardware)
+- No change should ship without at least one of the above
+- For bug fixes, add a regression test that would fail without the fix (when possible)
+
 ### General
 - Max ~500 lines per file, ~50 lines per function
 - Single Responsibility Principle

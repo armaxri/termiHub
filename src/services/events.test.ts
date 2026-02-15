@@ -314,5 +314,137 @@ describe("events service", () => {
 
       expect(mockedListen).toHaveBeenCalledTimes(3);
     });
+
+    it("handles StrictMode race: destroy during pending init cleans up leaked listeners", async () => {
+      // Simulate React StrictMode: mount → unmount → remount.
+      // The first init()'s listen() promises are still pending when destroy() runs,
+      // so unlistenOutput/Exit/RemoteState are null and destroy() can't clean them.
+      // Without the generation counter fix, the pending listeners would leak as
+      // duplicates alongside the second init()'s listeners.
+
+      const unlisten1 = vi.fn();
+      const unlisten2 = vi.fn();
+      const unlisten3 = vi.fn();
+      const unlisten4 = vi.fn();
+      const unlisten5 = vi.fn();
+      const unlisten6 = vi.fn();
+
+      // First init: create deferred promises so listeners stay pending
+      let resolve1!: (value: () => void) => void;
+      let resolve2!: (value: () => void) => void;
+      let resolve3!: (value: () => void) => void;
+      const deferred1 = new Promise<() => void>((r) => (resolve1 = r));
+      const deferred2 = new Promise<() => void>((r) => (resolve2 = r));
+      const deferred3 = new Promise<() => void>((r) => (resolve3 = r));
+
+      let callCount = 0;
+      mockedListen.mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) return deferred1;
+        if (callCount === 2) return deferred2;
+        if (callCount === 3) return deferred3;
+        // Second init: resolve immediately
+        if (callCount === 4) return Promise.resolve(unlisten4);
+        if (callCount === 5) return Promise.resolve(unlisten5);
+        return Promise.resolve(unlisten6);
+      });
+
+      // Mount: start init (listeners pending)
+      const initPromise1 = dispatcher.init();
+
+      // Unmount: destroy while listeners are still pending
+      dispatcher.destroy();
+
+      // Remount: second init
+      const initPromise2 = dispatcher.init();
+
+      // Now resolve the first init's pending listeners
+      resolve1(unlisten1);
+      resolve2(unlisten2);
+      resolve3(unlisten3);
+
+      await initPromise1;
+      await initPromise2;
+
+      // The first init's listeners should have been cleaned up by the generation check
+      expect(unlisten1).toHaveBeenCalled();
+
+      // The second init's listeners should NOT have been cleaned up
+      expect(unlisten4).not.toHaveBeenCalled();
+      expect(unlisten5).not.toHaveBeenCalled();
+      expect(unlisten6).not.toHaveBeenCalled();
+    });
+
+    it("delivers output exactly once after StrictMode init-destroy-init cycle", async () => {
+      // Regression test for issue #100 (doubled terminal text on macOS).
+      // After a StrictMode mount → unmount → remount cycle, each output event
+      // must invoke the session callback exactly once, not twice.
+
+      // Simulate Tauri's event system: each listen() returns an unlisten fn.
+      // When unlisten is called, the handler is deregistered. We track this
+      // so we only fire handlers that are still active.
+      interface Listener {
+        handler: (event: unknown) => void;
+        active: boolean;
+      }
+      const outputListeners: Listener[] = [];
+      let resolveFirst!: (value: () => void) => void;
+
+      let callCount = 0;
+      mockedListen.mockImplementation((eventName, handler) => {
+        callCount++;
+
+        const listener: Listener = {
+          handler: handler as (event: unknown) => void,
+          active: true,
+        };
+        if (eventName === "terminal-output") {
+          outputListeners.push(listener);
+        }
+
+        const unlisten = () => {
+          listener.active = false;
+        };
+
+        // First init's first listen() call: return a deferred promise so init
+        // suspends mid-flight (the remaining two listen() calls never run).
+        if (callCount === 1) {
+          return new Promise<() => void>((r) => {
+            resolveFirst = r;
+          });
+        }
+
+        // All other listen() calls: resolve immediately
+        return Promise.resolve(unlisten);
+      });
+
+      // Simulate StrictMode lifecycle
+      const initPromise1 = dispatcher.init(); // mount — suspends at first await
+      dispatcher.destroy(); // unmount — initGeneration++
+      const initPromise2 = dispatcher.init(); // remount — new listeners
+
+      // Resolve the first init's pending listen() promise
+      resolveFirst(() => {
+        outputListeners[0].active = false;
+      });
+
+      await initPromise1;
+      await initPromise2;
+
+      // Subscribe a callback for a session
+      const outputCb = vi.fn();
+      dispatcher.subscribeOutput("sess-1", outputCb);
+
+      // Fire terminal-output through all ACTIVE handlers only (simulates Tauri
+      // delivering events only to registered listeners). Without the fix, two
+      // handlers would remain active and the callback would fire twice.
+      const event = { payload: { session_id: "sess-1", data: [65] } };
+      for (const l of outputListeners) {
+        if (l.active) l.handler(event);
+      }
+
+      // The callback must have been called exactly once — not doubled
+      expect(outputCb).toHaveBeenCalledTimes(1);
+    });
   });
 });
