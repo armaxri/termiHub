@@ -52,9 +52,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
               isDirty={editorDirtyTabs[tab.id] ?? false}
               tabColor={tabColors[tab.id]}
               onSetColor={() => setColorPickerTabId(tab.id)}
-              remoteState={
-                tab.connectionType === "remote" ? remoteStates[tab.id] : undefined
-              }
+              remoteState={tab.connectionType === "remote" ? remoteStates[tab.id] : undefined}
             />
           ))}
         </div>
