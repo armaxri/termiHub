@@ -4,7 +4,7 @@ use std::fmt;
 use chrono::Utc;
 use tokio::sync::Mutex;
 
-use crate::io::stdio::NotificationSender;
+use crate::io::transport::NotificationSender;
 use crate::protocol::methods::SerialSessionConfig;
 use crate::serial::backend::SerialBackend;
 use crate::session::types::{SessionInfo, SessionSnapshot, SessionStatus, SessionType};
@@ -116,6 +116,22 @@ impl SessionManager {
             true
         } else {
             false
+        }
+    }
+
+    /// Detach all sessions without closing them.
+    ///
+    /// Called when a TCP client disconnects so sessions remain alive
+    /// for the next client to re-attach.
+    pub async fn detach_all(&self) {
+        let mut sessions = self.sessions.lock().await;
+        for info in sessions.values_mut() {
+            if info.attached {
+                info.attached = false;
+                if let Some(ref backend) = info.serial_backend {
+                    backend.detach();
+                }
+            }
         }
     }
 
