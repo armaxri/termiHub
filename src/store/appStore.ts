@@ -10,6 +10,7 @@ import {
   TabContentType,
   TerminalOptions,
   EditorTabMeta,
+  ConnectionEditorMeta,
   EditorStatus,
   EditorActions,
 } from "@/types/terminal";
@@ -171,6 +172,7 @@ interface AppState {
   ) => void;
   openSettingsTab: () => void;
   openEditorTab: (filePath: string, isRemote: boolean, sftpSessionId?: string) => void;
+  openConnectionEditorTab: (connectionId: string, folderId?: string | null) => void;
   editorDirtyTabs: Record<string, boolean>;
   setEditorDirty: (tabId: string, dirty: boolean) => void;
   closeTab: (tabId: string, panelId: string) => void;
@@ -193,8 +195,6 @@ interface AppState {
   connections: SavedConnection[];
   externalSources: ExternalConnectionSource[];
   settings: AppSettings;
-  editingConnectionId: string | null;
-  editingConnectionFolderId: string | null;
   loadFromBackend: () => Promise<void>;
   updateSettings: (settings: AppSettings) => Promise<void>;
   reloadExternalConnections: () => Promise<void>;
@@ -202,7 +202,6 @@ interface AppState {
   addConnection: (connection: SavedConnection) => void;
   updateConnection: (connection: SavedConnection) => void;
   deleteConnection: (connectionId: string) => void;
-  setEditingConnection: (connectionId: string | null, folderId?: string | null) => void;
   addFolder: (folder: ConnectionFolder) => void;
   deleteFolder: (folderId: string) => void;
   duplicateConnection: (connectionId: string) => void;
@@ -483,6 +482,58 @@ export const useAppStore = create<AppState>((set, get) => {
         return { rootPanel, activePanelId: targetPanelId };
       }),
 
+    openConnectionEditorTab: (connectionId, folderId) =>
+      set((state) => {
+        const allLeaves = getAllLeaves(state.rootPanel);
+
+        // Look for an existing connection-editor tab for this connection
+        for (const leaf of allLeaves) {
+          const existing = leaf.tabs.find(
+            (t) =>
+              t.contentType === "connection-editor" &&
+              t.connectionEditorMeta?.connectionId === connectionId
+          );
+          if (existing) {
+            const rootPanel = updateLeaf(state.rootPanel, leaf.id, (l) => ({
+              ...l,
+              tabs: l.tabs.map((t) => ({ ...t, isActive: t.id === existing.id })),
+              activeTabId: existing.id,
+            }));
+            return { rootPanel, activePanelId: leaf.id };
+          }
+        }
+
+        // Create new connection-editor tab in the active panel
+        const targetPanelId = state.activePanelId ?? allLeaves[0]?.id;
+        if (!targetPanelId) return state;
+
+        // Determine tab title
+        let title = "New Connection";
+        if (connectionId !== "new") {
+          const conn =
+            state.connections.find((c) => c.id === connectionId) ??
+            state.externalSources.flatMap((s) => s.connections).find((c) => c.id === connectionId);
+          if (conn) {
+            title = `Edit: ${conn.name}`;
+          }
+        }
+
+        const dummyConfig: ConnectionConfig = { type: "local", config: { shellType: "zsh" } };
+        const meta: ConnectionEditorMeta = {
+          connectionId,
+          folderId: folderId ?? null,
+        };
+        const newTab = createTab(title, "local", dummyConfig, targetPanelId, "connection-editor");
+        newTab.connectionEditorMeta = meta;
+
+        const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
+          const tabs = leaf.tabs.map((t) => ({ ...t, isActive: false }));
+          tabs.push(newTab);
+          return { ...leaf, tabs, activeTabId: newTab.id };
+        });
+        return { rootPanel, activePanelId: targetPanelId };
+      }),
+
     editorDirtyTabs: {},
     setEditorDirty: (tabId, dirty) =>
       set((state) => ({ editorDirtyTabs: { ...state.editorDirtyTabs, [tabId]: dirty } })),
@@ -688,9 +739,6 @@ export const useAppStore = create<AppState>((set, get) => {
     connections: [],
     externalSources: [],
     settings: { version: "1", externalConnectionFiles: [] },
-    editingConnectionId: null,
-    editingConnectionFolderId: null,
-
     loadFromBackend: async () => {
       try {
         const { connections, folders, externalSources } = await loadConnections();
@@ -761,9 +809,6 @@ export const useAppStore = create<AppState>((set, get) => {
         console.error("Failed to persist connection deletion:", err)
       );
     },
-
-    setEditingConnection: (connectionId, folderId) =>
-      set({ editingConnectionId: connectionId, editingConnectionFolderId: folderId ?? null }),
 
     addFolder: (folder) => {
       set((state) => ({ folders: [...state.folders, folder] }));
