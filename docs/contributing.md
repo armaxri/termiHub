@@ -66,16 +66,19 @@ termihub/
 │   │   ├── terminal/     # Terminal backends and manager
 │   │   ├── connection/   # Connection config, CRUD, persistence
 │   │   ├── files/        # File browser and SFTP
+│   │   ├── monitoring/   # SSH remote system monitoring
 │   │   ├── commands/     # Tauri IPC command handlers
 │   │   └── events/       # Event emitters
 │   ├── Cargo.toml
 │   └── tauri.conf.json
+├── agent/                # Raspberry Pi remote agent
+├── scripts/              # Dev helper scripts (.sh + .cmd)
 ├── examples/             # Docker test environment, virtual serial
 ├── docs/                 # User and developer documentation
 └── package.json
 ```
 
-For the full architecture documentation, including class diagrams and data flow sequences, see [CLAUDE.md](../CLAUDE.md).
+For the full architecture documentation, including class diagrams and data flow sequences, see [Architecture Documentation](architecture.md).
 
 ---
 
@@ -224,7 +227,7 @@ Fixes #34
 - Clear, descriptive naming
 - Single Responsibility Principle
 
-See [CLAUDE.md](../CLAUDE.md) for detailed code examples and patterns.
+See [Architecture Documentation](architecture.md) for detailed diagrams and patterns.
 
 ---
 
@@ -277,6 +280,15 @@ For the full testing strategy — including unit, integration, E2E, and visual r
 
 ### Running Tests
 
+The quickest way to run all tests is via the helper scripts:
+
+```bash
+./scripts/test.sh      # Run all unit tests (frontend + backend + agent)
+./scripts/check.sh     # Read-only quality checks mirroring CI
+```
+
+Individual commands if you only need one tool:
+
 ```bash
 # Frontend unit tests (Vitest)
 pnpm test              # single run
@@ -285,6 +297,9 @@ pnpm test:coverage     # with coverage report
 
 # Rust backend tests
 cd src-tauri && cargo test
+
+# Agent tests
+cd agent && cargo test
 
 # TypeScript type checking
 pnpm build
@@ -339,9 +354,17 @@ Update `CHANGELOG.md` for every user-facing change following [Keep a Changelog](
 
 ## Code Review Checklist
 
-Before submitting a PR:
+Before submitting a PR, run the quality scripts:
 
-- [ ] Code compiles without warnings (`cargo clippy`, `pnpm build`)
+```bash
+./scripts/format.sh    # Auto-fix formatting (Prettier + cargo fmt)
+./scripts/test.sh      # Run all unit tests
+./scripts/check.sh     # Read-only quality checks mirroring CI
+```
+
+Then verify:
+
+- [ ] All scripts pass without errors
 - [ ] No `.unwrap()` calls in Rust production code
 - [ ] No `any` types in TypeScript
 - [ ] Commit messages follow Conventional Commits
