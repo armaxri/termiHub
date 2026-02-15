@@ -12,6 +12,7 @@ All work is tracked in **GitHub Issues**. Only pick up issues labeled **`Ready2I
 gh issue list --label Ready2Implement
 ```
 
+- **Always confirm before implementing**: when picking up an issue, first show the user the issue title and description and ask for confirmation before starting any implementation work
 - Reference issue numbers in commits and PRs (`Closes #N` / `Fixes #N`)
 - Create new issues for work discovered during development and label them appropriately
 
