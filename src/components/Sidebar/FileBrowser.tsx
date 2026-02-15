@@ -24,6 +24,7 @@ import {
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { onVscodeEditComplete } from "@/services/events";
+import { getHomeDir } from "@/services/api";
 import { FileEntry } from "@/types/connection";
 import { SshConfig } from "@/types/terminal";
 import "./FileBrowser.css";
@@ -346,6 +347,23 @@ function useFileBrowserSync() {
     navigateSftp,
     sftpSessionId,
   ]);
+
+  // Auto-navigate when entering local mode with no entries loaded yet.
+  // Shells that don't send OSC 7 (e.g., bash) leave cwd undefined,
+  // so we fall back to the user's home directory.
+  useEffect(() => {
+    if (fileBrowserMode !== "local") return;
+    const { localFileEntries } = useAppStore.getState();
+    if (localFileEntries.length > 0) return; // Already loaded
+
+    if (cwd) {
+      navigateLocal(cwd);
+    } else {
+      getHomeDir()
+        .then((home) => navigateLocal(home))
+        .catch(() => navigateLocal("/"));
+    }
+  }, [fileBrowserMode, navigateLocal, cwd]);
 
   // Auto-connect SFTP for SSH tabs
   useEffect(() => {

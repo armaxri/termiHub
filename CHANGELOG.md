@@ -111,6 +111,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Terminal text appearing doubled on macOS (e.g., "llss" instead of "ls") caused by duplicate Tauri event listeners under React StrictMode
+- Local file explorer now loads the user's home directory on first open instead of showing an empty root
 - New terminal tabs now start in the user's home directory instead of the system root
 - File browser now stays visible when editing a file, showing the parent directory
 - Horizontal scroll width now updates dynamically as terminal output arrives
