@@ -116,6 +116,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Key repeat not working on macOS (accent picker shown instead)
 
 ### Changed
+- Remote Agent connections are now functional — connect to `termihub-agent` running on remote hosts with auto-reconnect and visual status indicators
 - Terminal output events now use a singleton dispatcher with O(1) Map-based routing instead of per-terminal global listeners (O(N) fan-out)
 - Terminal output writes are batched via `requestAnimationFrame` to reduce rendering overhead
 - Backend output channels now use bounded `sync_channel(64)` with backpressure instead of unbounded channels

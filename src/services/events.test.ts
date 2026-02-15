@@ -152,14 +152,15 @@ describe("events service", () => {
       dispatcher = new TerminalOutputDispatcher();
     });
 
-    it("init registers two global listeners", async () => {
+    it("init registers three global listeners", async () => {
       mockedListen.mockResolvedValue(vi.fn());
 
       await dispatcher.init();
 
-      expect(mockedListen).toHaveBeenCalledTimes(2);
+      expect(mockedListen).toHaveBeenCalledTimes(3);
       expect(mockedListen).toHaveBeenCalledWith("terminal-output", expect.any(Function));
       expect(mockedListen).toHaveBeenCalledWith("terminal-exit", expect.any(Function));
+      expect(mockedListen).toHaveBeenCalledWith("remote-state-change", expect.any(Function));
     });
 
     it("init is idempotent — second call does nothing", async () => {
@@ -168,7 +169,7 @@ describe("events service", () => {
       await dispatcher.init();
       await dispatcher.init();
 
-      expect(mockedListen).toHaveBeenCalledTimes(2);
+      expect(mockedListen).toHaveBeenCalledTimes(3);
     });
 
     it("routes output events to the correct session callback", async () => {
@@ -213,6 +214,25 @@ describe("events service", () => {
       });
 
       expect(cb).toHaveBeenCalledWith(0);
+    });
+
+    it("routes remote state events to the correct session callback", async () => {
+      const handlers: Record<string, (event: unknown) => void> = {};
+      mockedListen.mockImplementation((eventName, handler) => {
+        handlers[eventName as string] = handler as (event: unknown) => void;
+        return Promise.resolve(vi.fn());
+      });
+
+      await dispatcher.init();
+
+      const cb = vi.fn();
+      dispatcher.subscribeRemoteState("sess-1", cb);
+
+      handlers["remote-state-change"]({
+        payload: { session_id: "sess-1", state: "connected" },
+      });
+
+      expect(cb).toHaveBeenCalledWith("connected");
     });
 
     it("unsubscribe stops delivery", async () => {
@@ -260,10 +280,13 @@ describe("events service", () => {
     it("destroy calls unlisten and clears callbacks", async () => {
       const unlistenOutput = vi.fn();
       const unlistenExit = vi.fn();
+      const unlistenRemoteState = vi.fn();
       let callCount = 0;
       mockedListen.mockImplementation(() => {
         callCount++;
-        return Promise.resolve(callCount === 1 ? unlistenOutput : unlistenExit);
+        if (callCount === 1) return Promise.resolve(unlistenOutput);
+        if (callCount === 2) return Promise.resolve(unlistenExit);
+        return Promise.resolve(unlistenRemoteState);
       });
 
       await dispatcher.init();
@@ -275,6 +298,7 @@ describe("events service", () => {
 
       expect(unlistenOutput).toHaveBeenCalled();
       expect(unlistenExit).toHaveBeenCalled();
+      expect(unlistenRemoteState).toHaveBeenCalled();
     });
 
     it("can be re-initialized after destroy", async () => {
@@ -288,7 +312,7 @@ describe("events service", () => {
 
       await dispatcher.init();
 
-      expect(mockedListen).toHaveBeenCalledTimes(2);
+      expect(mockedListen).toHaveBeenCalledTimes(3);
     });
   });
 });
