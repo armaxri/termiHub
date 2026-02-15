@@ -78,6 +78,7 @@ examples/                     # Docker test environment (SSH, Telnet, virtual se
 
 ## Git Workflow
 
+- **Always start from fresh `origin/main`**: before creating a feature branch, run `git fetch origin && git checkout origin/main` to branch from the latest remote state — never branch from a stale local `main`
 - **Branch from `main`**: `feature/<description>` or `bugfix/<description>`
 - **Never commit directly to `main`**
 - **Conventional Commits**: `type(scope): subject` — types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `chore`
@@ -88,6 +89,7 @@ examples/                     # Docker test environment (SSH, Telnet, virtual se
   - Config changes separate from source changes
   - Formatting/lint fixes separate from functional changes
 - **Update CHANGELOG.md** for every user-facing change (Keep a Changelog format, under `[Unreleased]`)
+- **Rebase/merge `origin/main` before creating a PR**: before pushing the final branch and opening a PR, always `git fetch origin && git merge origin/main` into the feature branch, resolve any conflicts, and re-run tests/checks to ensure the branch is up to date and clean
 
 ---
 
