@@ -346,7 +346,7 @@ export function ConnectionList() {
   const externalSources = useAppStore((s) => s.externalSources);
   const toggleFolder = useAppStore((s) => s.toggleFolder);
   const addTab = useAppStore((s) => s.addTab);
-  const setEditingConnection = useAppStore((s) => s.setEditingConnection);
+  const openConnectionEditorTab = useAppStore((s) => s.openConnectionEditorTab);
   const deleteConnection = useAppStore((s) => s.deleteConnection);
   const deleteFolder = useAppStore((s) => s.deleteFolder);
   const addFolder = useAppStore((s) => s.addFolder);
@@ -397,9 +397,9 @@ export function ConnectionList() {
 
   const handleEdit = useCallback(
     (connectionId: string) => {
-      setEditingConnection(connectionId);
+      openConnectionEditorTab(connectionId);
     },
-    [setEditingConnection]
+    [openConnectionEditorTab]
   );
 
   const handleDelete = useCallback(
@@ -436,14 +436,14 @@ export function ConnectionList() {
   );
 
   const handleNewConnection = useCallback(() => {
-    setEditingConnection("new");
-  }, [setEditingConnection]);
+    openConnectionEditorTab("new");
+  }, [openConnectionEditorTab]);
 
   const handleNewConnectionInFolder = useCallback(
     (folderId: string) => {
-      setEditingConnection("new", folderId);
+      openConnectionEditorTab("new", folderId);
     },
-    [setEditingConnection]
+    [openConnectionEditorTab]
   );
 
   const handlePingHost = useCallback(
@@ -570,7 +570,7 @@ export function ConnectionList() {
               });
             }}
             onNewConnectionInFolder={(folderId) => {
-              setEditingConnection("new", folderId);
+              openConnectionEditorTab("new", folderId);
             }}
           />
         ))}

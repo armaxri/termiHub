@@ -4,12 +4,17 @@ export type ShellType = "zsh" | "bash" | "cmd" | "powershell" | "gitbash";
 
 export type ConnectionType = "local" | "ssh" | "telnet" | "serial" | "remote";
 
-export type TabContentType = "terminal" | "settings" | "editor";
+export type TabContentType = "terminal" | "settings" | "editor" | "connection-editor";
 
 export interface EditorTabMeta {
   filePath: string;
   isRemote: boolean;
   sftpSessionId?: string;
+}
+
+export interface ConnectionEditorMeta {
+  connectionId: string;
+  folderId: string | null;
 }
 
 export interface TerminalOptions {
@@ -81,6 +86,7 @@ export interface TerminalTab {
   panelId: string;
   isActive: boolean;
   editorMeta?: EditorTabMeta;
+  connectionEditorMeta?: ConnectionEditorMeta;
 }
 
 export interface LeafPanel {

@@ -10,6 +10,7 @@ import {
   Server,
   Settings as SettingsIcon,
   FileEdit,
+  SquarePen,
   Eraser,
   FileDown,
   ClipboardCopy,
@@ -74,7 +75,9 @@ export function Tab({
       ? SettingsIcon
       : tab.contentType === "editor"
         ? FileEdit
-        : TYPE_ICONS[tab.connectionType];
+        : tab.contentType === "connection-editor"
+          ? SquarePen
+          : TYPE_ICONS[tab.connectionType];
   const isTerminalTab = tab.contentType === "terminal";
 
   const tabElement = (

@@ -9,6 +9,7 @@ import {
   SerialConfig,
   RemoteConfig,
   TerminalOptions,
+  ConnectionEditorMeta,
 } from "@/types/terminal";
 import {
   ConnectionSettings,
@@ -19,6 +20,7 @@ import {
 } from "@/components/Settings";
 import { ColorPickerDialog } from "@/components/Terminal/ColorPickerDialog";
 import { getDefaultShell } from "@/utils/shell-detection";
+import { findLeafByTab } from "@/utils/panelTree";
 import "./ConnectionEditor.css";
 
 function getDefaultConfigs(defaultShell: string): Record<ConnectionType, ConnectionConfig> {
@@ -82,8 +84,13 @@ function externalFilePathFromId(id: string): string | null {
   return null;
 }
 
-export function ConnectionEditor() {
-  const editingConnectionId = useAppStore((s) => s.editingConnectionId);
+interface ConnectionEditorProps {
+  tabId: string;
+  meta: ConnectionEditorMeta;
+  isVisible: boolean;
+}
+
+export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorProps) {
   const connections = useAppStore((s) => s.connections);
   const folders = useAppStore((s) => s.folders);
   const externalSources = useAppStore((s) => s.externalSources);
@@ -91,9 +98,11 @@ export function ConnectionEditor() {
   const updateConnection = useAppStore((s) => s.updateConnection);
   const addExternalConnection = useAppStore((s) => s.addExternalConnection);
   const updateExternalConnection = useAppStore((s) => s.updateExternalConnection);
-  const setEditingConnection = useAppStore((s) => s.setEditingConnection);
+  const closeTab = useAppStore((s) => s.closeTab);
+  const rootPanel = useAppStore((s) => s.rootPanel);
 
-  const editingConnectionFolderId = useAppStore((s) => s.editingConnectionFolderId);
+  const editingConnectionId = meta.connectionId;
+  const editingConnectionFolderId = meta.folderId;
 
   // Determine if editing belongs to an external source
   const extFilePath =
@@ -140,6 +149,13 @@ export function ConnectionEditor() {
     [defaultShell]
   );
 
+  const closeThisTab = useCallback(() => {
+    const leaf = findLeafByTab(rootPanel, tabId);
+    if (leaf) {
+      closeTab(tabId, leaf.id);
+    }
+  }, [rootPanel, tabId, closeTab]);
+
   const handleSave = useCallback(() => {
     if (!name.trim()) return;
 
@@ -184,7 +200,7 @@ export function ConnectionEditor() {
         terminalOptions: opts,
       });
     }
-    setEditingConnection(null);
+    closeThisTab();
   }, [
     name,
     folderId,
@@ -196,17 +212,15 @@ export function ConnectionEditor() {
     updateConnection,
     addExternalConnection,
     updateExternalConnection,
-    setEditingConnection,
+    closeThisTab,
   ]);
 
   const handleCancel = useCallback(() => {
-    setEditingConnection(null);
-  }, [setEditingConnection]);
-
-  if (!editingConnectionId) return null;
+    closeThisTab();
+  }, [closeThisTab]);
 
   return (
-    <div className="connection-editor">
+    <div className="connection-editor" style={{ display: isVisible ? undefined : "none" }}>
       <div className="connection-editor__header">
         {existingConnection ? "Edit Connection" : "New Connection"}
       </div>

@@ -17,6 +17,7 @@ import {
   Server,
   Settings as SettingsIcon,
   FileEdit,
+  SquarePen,
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { PanelNode, LeafPanel, TerminalTab, ConnectionType, DropEdge } from "@/types/terminal";
@@ -25,6 +26,7 @@ import { useTerminalRegistry } from "@/components/Terminal/TerminalRegistry";
 import { TabBar } from "@/components/Terminal/TabBar";
 import { SettingsPanel } from "@/components/Settings";
 import { FileEditor } from "@/components/FileEditor";
+import { ConnectionEditor } from "@/components/ConnectionEditor/ConnectionEditor";
 import { PanelDropZone } from "./PanelDropZone";
 import "./SplitView.css";
 
@@ -197,6 +199,13 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
               meta={tab.editorMeta}
               isVisible={tab.id === panel.activeTabId}
             />
+          ) : tab.contentType === "connection-editor" && tab.connectionEditorMeta ? (
+            <ConnectionEditor
+              key={tab.id}
+              tabId={tab.id}
+              meta={tab.connectionEditorMeta}
+              isVisible={tab.id === panel.activeTabId}
+            />
           ) : (
             <TerminalSlot key={tab.id} tabId={tab.id} isVisible={tab.id === panel.activeTabId} />
           )
@@ -260,7 +269,9 @@ function TabDragOverlay({ tab }: { tab: TerminalTab }) {
       ? SettingsIcon
       : tab.contentType === "editor"
         ? FileEdit
-        : TYPE_ICONS[tab.connectionType];
+        : tab.contentType === "connection-editor"
+          ? SquarePen
+          : TYPE_ICONS[tab.connectionType];
   return (
     <div className="tab tab--drag-overlay">
       <Icon size={14} className="tab__icon" />

@@ -294,30 +294,62 @@ describe("appStore — connections, folders, and special tabs", () => {
     });
   });
 
-  describe("setEditingConnection", () => {
-    it("sets editing connection ID", () => {
-      useAppStore.getState().setEditingConnection("c-1");
+  describe("openConnectionEditorTab", () => {
+    it("creates a connection-editor tab for new connection", () => {
+      useAppStore.getState().openConnectionEditorTab("new");
 
       const state = useAppStore.getState();
-      expect(state.editingConnectionId).toBe("c-1");
-      expect(state.editingConnectionFolderId).toBeNull();
+      const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
+      expect(leaf.tabs).toHaveLength(1);
+      expect(leaf.tabs[0].contentType).toBe("connection-editor");
+      expect(leaf.tabs[0].title).toBe("New Connection");
+      expect(leaf.tabs[0].connectionEditorMeta?.connectionId).toBe("new");
+      expect(leaf.tabs[0].connectionEditorMeta?.folderId).toBeNull();
     });
 
-    it("sets editing connection with folder ID", () => {
-      useAppStore.getState().setEditingConnection("c-1", "f-1");
+    it("creates a connection-editor tab with folder ID", () => {
+      useAppStore.getState().openConnectionEditorTab("new", "f-1");
 
       const state = useAppStore.getState();
-      expect(state.editingConnectionId).toBe("c-1");
-      expect(state.editingConnectionFolderId).toBe("f-1");
+      const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
+      expect(leaf.tabs[0].connectionEditorMeta?.folderId).toBe("f-1");
     });
 
-    it("clears editing state with null", () => {
-      useAppStore.getState().setEditingConnection("c-1", "f-1");
-      useAppStore.getState().setEditingConnection(null);
+    it("creates a tab titled 'Edit: <name>' for existing connections", () => {
+      const conn = makeConnection({ id: "c-1", name: "My SSH" });
+      useAppStore.setState({ connections: [conn] });
+
+      useAppStore.getState().openConnectionEditorTab("c-1");
 
       const state = useAppStore.getState();
-      expect(state.editingConnectionId).toBeNull();
-      expect(state.editingConnectionFolderId).toBeNull();
+      const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
+      expect(leaf.tabs[0].title).toBe("Edit: My SSH");
+      expect(leaf.tabs[0].connectionEditorMeta?.connectionId).toBe("c-1");
+    });
+
+    it("reuses existing connection-editor tab for same connection", () => {
+      useAppStore.getState().openConnectionEditorTab("new");
+      useAppStore.getState().addTab("Shell", "local");
+      useAppStore.getState().openConnectionEditorTab("new");
+
+      const state = useAppStore.getState();
+      const allLeaves = getAllLeaves(state.rootPanel);
+      const editorTabs = allLeaves.flatMap((l) =>
+        l.tabs.filter((t) => t.contentType === "connection-editor")
+      );
+      expect(editorTabs).toHaveLength(1);
+    });
+
+    it("creates separate tabs for different connections", () => {
+      const conn = makeConnection({ id: "c-1", name: "Conn 1" });
+      useAppStore.setState({ connections: [conn] });
+
+      useAppStore.getState().openConnectionEditorTab("new");
+      useAppStore.getState().openConnectionEditorTab("c-1");
+
+      const state = useAppStore.getState();
+      const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
+      expect(leaf.tabs).toHaveLength(2);
     });
   });
 
