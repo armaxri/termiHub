@@ -1,5 +1,8 @@
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { useAppStore } from "@/store/appStore";
 import "./StatusBar.css";
+
+const INDENT_SIZES = [1, 2, 4, 8] as const;
 
 /**
  * Status bar displayed at the bottom of the application window.
@@ -9,6 +12,12 @@ import "./StatusBar.css";
 export function StatusBar() {
   const editorStatus = useAppStore((s) => s.editorStatus);
   const editorActions = useAppStore((s) => s.editorActions);
+
+  const indentLabel = editorStatus
+    ? editorStatus.insertSpaces
+      ? `Spaces: ${editorStatus.tabSize}`
+      : `Tab Size: ${editorStatus.tabSize}`
+    : "";
 
   return (
     <div className="status-bar">
@@ -20,14 +29,53 @@ export function StatusBar() {
             <span className="status-bar__item">
               Ln {editorStatus.line}, Col {editorStatus.column}
             </span>
-            <button
-              className="status-bar__item status-bar__item--interactive"
-              onClick={() => editorActions?.cycleTabSize()}
-              title="Toggle tab size"
-              data-testid="status-bar-tab-size"
-            >
-              Spaces: {editorStatus.tabSize}
-            </button>
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger asChild>
+                <button
+                  className="status-bar__item status-bar__item--interactive"
+                  title="Select indentation"
+                  data-testid="status-bar-tab-size"
+                >
+                  {indentLabel}
+                </button>
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content
+                  className="indent-menu__content"
+                  side="top"
+                  align="start"
+                  sideOffset={4}
+                >
+                  <DropdownMenu.Label className="indent-menu__label">
+                    Indent Using Spaces
+                  </DropdownMenu.Label>
+                  {INDENT_SIZES.map((size) => (
+                    <DropdownMenu.Item
+                      key={`spaces-${size}`}
+                      className="indent-menu__item"
+                      onSelect={() => editorActions?.setIndent(size, true)}
+                      data-testid={`indent-spaces-${size}`}
+                    >
+                      {size} {size === 1 ? "Space" : "Spaces"}
+                    </DropdownMenu.Item>
+                  ))}
+                  <DropdownMenu.Separator className="indent-menu__separator" />
+                  <DropdownMenu.Label className="indent-menu__label">
+                    Indent Using Tabs
+                  </DropdownMenu.Label>
+                  {INDENT_SIZES.map((size) => (
+                    <DropdownMenu.Item
+                      key={`tabs-${size}`}
+                      className="indent-menu__item"
+                      onSelect={() => editorActions?.setIndent(size, false)}
+                      data-testid={`indent-tabs-${size}`}
+                    >
+                      Tab Size: {size}
+                    </DropdownMenu.Item>
+                  ))}
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
             <span className="status-bar__item">{editorStatus.encoding}</span>
             <button
               className="status-bar__item status-bar__item--interactive"

@@ -49,3 +49,43 @@
   background-color: var(--bg-hover);
   color: var(--text-primary);
 }
+
+/* Indent selection dropdown */
+.indent-menu__content {
+  min-width: 160px;
+  background-color: var(--bg-dropdown);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-xs) 0;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  z-index: 100;
+}
+
+.indent-menu__label {
+  padding: var(--spacing-xs) var(--spacing-md);
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  user-select: none;
+}
+
+.indent-menu__item {
+  display: flex;
+  align-items: center;
+  padding: var(--spacing-xs) var(--spacing-md);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  cursor: pointer;
+  outline: none;
+}
+
+.indent-menu__item:hover,
+.indent-menu__item[data-highlighted] {
+  background-color: var(--accent-color);
+  color: #ffffff;
+}
+
+.indent-menu__separator {
+  height: 1px;
+  background-color: var(--border-primary);
+  margin: var(--spacing-xs) 0;
+}

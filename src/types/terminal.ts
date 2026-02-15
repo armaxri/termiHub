@@ -112,10 +112,11 @@ export interface EditorStatus {
   language: string;
   eol: "LF" | "CRLF";
   tabSize: number;
+  insertSpaces: boolean;
   encoding: string;
 }
 
 export interface EditorActions {
-  cycleTabSize: () => void;
+  setIndent: (tabSize: number, insertSpaces: boolean) => void;
   toggleEol: () => void;
 }
