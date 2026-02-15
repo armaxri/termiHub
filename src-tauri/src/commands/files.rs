@@ -104,6 +104,12 @@ pub fn sftp_rename(
 
 // --- Local filesystem commands ---
 
+/// Return the current user's home directory path.
+#[tauri::command]
+pub fn get_home_dir() -> Result<String, TerminalError> {
+    crate::files::local::home_dir()
+}
+
 /// List directory contents on the local filesystem.
 #[tauri::command]
 pub fn local_list_dir(path: String) -> Result<Vec<FileEntry>, TerminalError> {
