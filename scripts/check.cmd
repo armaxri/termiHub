@@ -5,6 +5,13 @@ REM Mirrors the CI Code Quality checks locally without modifying files.
 
 cd /d "%~dp0\.."
 
+if not exist node_modules (
+    echo node_modules missing, running pnpm install...
+    call pnpm install
+    if errorlevel 1 exit /b 1
+    echo.
+)
+
 set FAILED=0
 
 echo === Frontend: Prettier ===
