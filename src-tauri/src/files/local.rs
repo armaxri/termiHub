@@ -85,6 +85,13 @@ fn get_permissions(_metadata: &std::fs::Metadata) -> Option<String> {
     None
 }
 
+/// Return the current user's home directory.
+pub fn home_dir() -> Result<String, TerminalError> {
+    std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|e| TerminalError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, e)))
+}
+
 /// Read a file's contents as a UTF-8 string.
 pub fn read_file_content(path: &str) -> Result<String, TerminalError> {
     std::fs::read_to_string(path).map_err(TerminalError::Io)
@@ -164,6 +171,13 @@ mod tests {
         assert!(!old.exists());
         assert!(new_path.exists());
         assert_eq!(std::fs::read_to_string(&new_path).unwrap(), "content");
+    }
+
+    #[test]
+    fn home_dir_returns_non_empty_absolute_path() {
+        let home = home_dir().unwrap();
+        assert!(!home.is_empty());
+        assert!(std::path::Path::new(&home).is_absolute());
     }
 
     #[test]

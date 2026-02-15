@@ -184,6 +184,11 @@ export async function sftpRename(
 
 // --- Local filesystem commands ---
 
+/** Return the current user's home directory path. */
+export async function getHomeDir(): Promise<string> {
+  return await invoke<string>("get_home_dir");
+}
+
 /** List directory contents on the local filesystem. */
 export async function localListDir(path: string): Promise<FileEntry[]> {
   return await invoke<FileEntry[]>("local_list_dir", { path });

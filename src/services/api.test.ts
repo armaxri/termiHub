@@ -35,6 +35,7 @@ import {
   sftpMkdir,
   sftpDelete,
   sftpRename,
+  getHomeDir,
   localListDir,
   localMkdir,
   localDelete,
@@ -375,6 +376,15 @@ describe("api service", () => {
   });
 
   describe("local filesystem commands", () => {
+    it("getHomeDir returns home directory path", async () => {
+      mockedInvoke.mockResolvedValue("/Users/testuser");
+
+      const result = await getHomeDir();
+
+      expect(mockedInvoke).toHaveBeenCalledWith("get_home_dir");
+      expect(result).toBe("/Users/testuser");
+    });
+
     it("localListDir invokes with path", async () => {
       const entries = [
         {
