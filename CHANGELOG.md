@@ -120,6 +120,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Editor language mode can now be changed via a searchable dropdown in the status bar
 - Editor indent selector now supports tabs and configurable sizes (1, 2, 4, 8) via a dropdown menu in the status bar
 - Connection editor now opens as a tab in the main panel area instead of the sidebar, providing more space for settings forms
 - Remote Agent connections are now functional — connect to `termihub-agent` running on remote hosts with auto-reconnect and visual status indicators
