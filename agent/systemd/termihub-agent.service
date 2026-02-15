@@ -1,0 +1,26 @@
+[Unit]
+Description=TermiHub Remote Agent
+Documentation=https://github.com/armaxri/termiHub
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+ExecStart=/usr/local/bin/termihub-agent --listen 127.0.0.1:7685
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=termihub-agent
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+
+# Allow serial port access
+SupplementaryGroups=dialout
+
+[Install]
+WantedBy=multi-user.target
