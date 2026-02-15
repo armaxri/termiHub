@@ -54,7 +54,7 @@ import {
   edgeToSplit,
 } from "@/utils/panelTree";
 
-export type SidebarView = "connections" | "files" | "monitoring";
+export type SidebarView = "connections" | "files";
 
 /**
  * Strip password from SSH and Remote connection configs so it is never persisted.

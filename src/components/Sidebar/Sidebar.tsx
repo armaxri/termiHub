@@ -1,13 +1,11 @@
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
 import { FileBrowser } from "./FileBrowser";
-import { MonitoringPanel } from "./MonitoringPanel";
 import "./Sidebar.css";
 
 const VIEW_TITLES: Record<string, string> = {
   connections: "Connections",
   files: "File Browser",
-  monitoring: "Monitoring",
 };
 
 export function Sidebar() {
@@ -24,7 +22,6 @@ export function Sidebar() {
       <div className="sidebar__content">
         {sidebarView === "connections" && <ConnectionList />}
         {sidebarView === "files" && <FileBrowser />}
-        {sidebarView === "monitoring" && <MonitoringPanel />}
       </div>
     </div>
   );
