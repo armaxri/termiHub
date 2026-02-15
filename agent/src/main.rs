@@ -4,16 +4,21 @@ mod protocol;
 mod serial;
 mod session;
 
+use tokio_util::sync::CancellationToken;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+const DEFAULT_LISTEN_ADDR: &str = "127.0.0.1:7685";
 
 fn print_usage() {
-    eprintln!("Usage: termihub-agent --stdio");
+    eprintln!("Usage: termihub-agent <MODE>");
+    eprintln!();
+    eprintln!("Modes:");
+    eprintln!("  --stdio              Run in stdio mode (NDJSON over stdin/stdout)");
+    eprintln!("  --listen [addr]      Run in TCP listener mode (default: {DEFAULT_LISTEN_ADDR})");
     eprintln!();
     eprintln!("Options:");
-    eprintln!("  --stdio     Run in stdio mode (NDJSON over stdin/stdout)");
     eprintln!("  --version   Print version and exit");
     eprintln!("  --help      Print this help message");
 }
@@ -38,15 +43,25 @@ async fn main() -> anyhow::Result<()> {
         }
         "--stdio" => {
             // Configure tracing to stderr so it doesn't interfere with the protocol on stdout
-            tracing_subscriber::fmt()
-                .with_env_filter(
-                    EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-                )
-                .with_writer(std::io::stderr)
-                .init();
+            init_tracing();
 
+            let shutdown = setup_shutdown_signal();
             info!("termihub-agent {} starting in stdio mode", VERSION);
-            io::stdio::run_stdio_loop().await
+            io::stdio::run_stdio_loop(shutdown).await
+        }
+        "--listen" => {
+            init_tracing();
+
+            let addr = args
+                .get(2)
+                .map(|s| s.as_str())
+                .unwrap_or(DEFAULT_LISTEN_ADDR);
+            let shutdown = setup_shutdown_signal();
+            info!(
+                "termihub-agent {} starting in TCP listener mode on {}",
+                VERSION, addr
+            );
+            io::tcp::run_tcp_listener(addr, shutdown).await
         }
         other => {
             eprintln!("Unknown option: {}", other);
@@ -54,4 +69,53 @@ async fn main() -> anyhow::Result<()> {
             std::process::exit(1);
         }
     }
+}
+
+/// Initialize the tracing subscriber with stderr output.
+fn init_tracing() {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
+        .with_writer(std::io::stderr)
+        .init();
+}
+
+/// Set up signal handlers for graceful shutdown.
+///
+/// Listens for SIGTERM and SIGINT (Ctrl+C) and triggers the
+/// returned `CancellationToken` when either is received.
+fn setup_shutdown_signal() -> CancellationToken {
+    let token = CancellationToken::new();
+    let token_clone = token.clone();
+
+    tokio::spawn(async move {
+        let ctrl_c = tokio::signal::ctrl_c();
+
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{signal, SignalKind};
+            let mut sigterm =
+                signal(SignalKind::terminate()).expect("Failed to register SIGTERM handler");
+
+            tokio::select! {
+                _ = ctrl_c => {
+                    info!("Received SIGINT (Ctrl+C), initiating shutdown");
+                }
+                _ = sigterm.recv() => {
+                    info!("Received SIGTERM, initiating shutdown");
+                }
+            }
+        }
+
+        #[cfg(not(unix))]
+        {
+            let _ = ctrl_c.await;
+            info!("Received Ctrl+C, initiating shutdown");
+        }
+
+        token_clone.cancel();
+    });
+
+    token
 }
