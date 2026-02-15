@@ -89,10 +89,7 @@ export function Tab({
     >
       <Icon size={14} className="tab__icon" />
       {remoteState && (
-        <span
-          className={`tab__state-dot tab__state-dot--${remoteState}`}
-          title={remoteState}
-        />
+        <span className={`tab__state-dot tab__state-dot--${remoteState}`} title={remoteState} />
       )}
       <span className="tab__title">
         {isDirty && <span className="tab__dirty-dot" />}
