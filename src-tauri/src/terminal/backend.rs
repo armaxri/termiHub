@@ -134,7 +134,6 @@ pub struct RemoteConfig {
 }
 
 /// Event emitted when a remote connection's state changes.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize)]
 pub struct RemoteStateChangeEvent {
     pub session_id: String,

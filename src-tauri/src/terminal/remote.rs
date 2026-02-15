@@ -9,10 +9,6 @@
 //! `write_input()` and `resize()` send commands through an `mpsc` channel
 //! to avoid blocking-mode toggling and `!Send`/`!Sync` issues with ssh2.
 
-// Remote backend is implemented but not yet wired into TerminalManager's
-// main code path — suppress dead_code warnings until full integration.
-#![allow(dead_code)]
-
 use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
@@ -220,20 +216,29 @@ impl RemoteBackend {
 
 impl TerminalBackend for RemoteBackend {
     fn write_input(&self, data: &[u8]) -> Result<(), TerminalError> {
-        let tx = self.write_tx.lock().unwrap();
+        let tx = self
+            .write_tx
+            .lock()
+            .map_err(|e| TerminalError::WriteFailed(format!("Lock failed: {}", e)))?;
         tx.send(WriteCommand::Input(data.to_vec()))
             .map_err(|_| TerminalError::WriteFailed("Remote I/O thread gone".to_string()))
     }
 
     fn resize(&self, cols: u16, rows: u16) -> Result<(), TerminalError> {
-        let tx = self.write_tx.lock().unwrap();
+        let tx = self
+            .write_tx
+            .lock()
+            .map_err(|e| TerminalError::ResizeFailed(format!("Lock failed: {}", e)))?;
         tx.send(WriteCommand::Resize { cols, rows })
             .map_err(|_| TerminalError::ResizeFailed("Remote I/O thread gone".to_string()))
     }
 
     fn close(&self) -> Result<(), TerminalError> {
         self.closed.store(true, Ordering::SeqCst);
-        let tx = self.write_tx.lock().unwrap();
+        let tx = self
+            .write_tx
+            .lock()
+            .map_err(|e| TerminalError::WriteFailed(format!("Lock failed: {}", e)))?;
         let _ = tx.send(WriteCommand::Close);
         self.alive.store(false, Ordering::SeqCst);
         Ok(())
