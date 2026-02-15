@@ -374,5 +374,77 @@ describe("events service", () => {
       expect(unlisten5).not.toHaveBeenCalled();
       expect(unlisten6).not.toHaveBeenCalled();
     });
+
+    it("delivers output exactly once after StrictMode init-destroy-init cycle", async () => {
+      // Regression test for issue #100 (doubled terminal text on macOS).
+      // After a StrictMode mount → unmount → remount cycle, each output event
+      // must invoke the session callback exactly once, not twice.
+
+      // Simulate Tauri's event system: each listen() returns an unlisten fn.
+      // When unlisten is called, the handler is deregistered. We track this
+      // so we only fire handlers that are still active.
+      interface Listener {
+        handler: (event: unknown) => void;
+        active: boolean;
+      }
+      const outputListeners: Listener[] = [];
+      let resolveFirst!: (value: () => void) => void;
+
+      let callCount = 0;
+      mockedListen.mockImplementation((eventName, handler) => {
+        callCount++;
+
+        const listener: Listener = {
+          handler: handler as (event: unknown) => void,
+          active: true,
+        };
+        if (eventName === "terminal-output") {
+          outputListeners.push(listener);
+        }
+
+        const unlisten = () => {
+          listener.active = false;
+        };
+
+        // First init's first listen() call: return a deferred promise so init
+        // suspends mid-flight (the remaining two listen() calls never run).
+        if (callCount === 1) {
+          return new Promise<() => void>((r) => {
+            resolveFirst = r;
+          });
+        }
+
+        // All other listen() calls: resolve immediately
+        return Promise.resolve(unlisten);
+      });
+
+      // Simulate StrictMode lifecycle
+      const initPromise1 = dispatcher.init(); // mount — suspends at first await
+      dispatcher.destroy(); // unmount — initGeneration++
+      const initPromise2 = dispatcher.init(); // remount — new listeners
+
+      // Resolve the first init's pending listen() promise
+      resolveFirst(() => {
+        outputListeners[0].active = false;
+      });
+
+      await initPromise1;
+      await initPromise2;
+
+      // Subscribe a callback for a session
+      const outputCb = vi.fn();
+      dispatcher.subscribeOutput("sess-1", outputCb);
+
+      // Fire terminal-output through all ACTIVE handlers only (simulates Tauri
+      // delivering events only to registered listeners). Without the fix, two
+      // handlers would remain active and the callback would fire twice.
+      const event = { payload: { session_id: "sess-1", data: [65] } };
+      for (const l of outputListeners) {
+        if (l.active) l.handler(event);
+      }
+
+      // The callback must have been called exactly once — not doubled
+      expect(outputCb).toHaveBeenCalledTimes(1);
+    });
   });
 });
