@@ -1,4 +1,5 @@
 import { useAppStore } from "@/store/appStore";
+import { StatusBarMonitoring } from "./StatusBarMonitoring";
 import "./StatusBar.css";
 
 /**
@@ -12,7 +13,9 @@ export function StatusBar() {
 
   return (
     <div className="status-bar">
-      <div className="status-bar__section status-bar__section--left" />
+      <div className="status-bar__section status-bar__section--left">
+        <StatusBarMonitoring />
+      </div>
       <div className="status-bar__section status-bar__section--center" />
       <div className="status-bar__section status-bar__section--right">
         {editorStatus && (
