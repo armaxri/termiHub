@@ -20,7 +20,8 @@ test-results
 !.vscode/settings.json
 .idea
 .DS_Store
-.claude
+.claude/*
+!.claude/CLAUDE.md
 *.suo
 *.ntvs*
 *.njsproj
