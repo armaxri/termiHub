@@ -286,6 +286,7 @@ graph LR
 | **Terminal** | `src-tauri/src/terminal/` | Backend trait, manager, all terminal implementations |
 | **Connection** | `src-tauri/src/connection/` | Config types, CRUD operations, file persistence |
 | **Files** | `src-tauri/src/files/` | Local and SFTP file browsing, upload/download |
+| **Monitoring** | `src-tauri/src/monitoring/` | SSH remote system monitoring (CPU, memory, disk, uptime) |
 | **Commands** | `src-tauri/src/commands/` | Tauri IPC command handlers |
 | **Events** | `src-tauri/src/events/` | Event emitters for terminal output streaming |
 | **Utils** | `src-tauri/src/utils/` | Shell detection, env expansion, error helpers |
@@ -499,9 +500,14 @@ Three GitHub Actions workflows handle the build and release pipeline. See `.gith
 |----------|---------|---------|
 | **Code Quality** | Push/PR to `main` | Linting, formatting, type checking, tests (all 3 OSes) |
 | **Build** | Push/PR to `main` | Build Tauri app for all platforms |
+| **Agent** | Push/PR to `main` | Agent crate formatting, linting, tests, ARM64 cross-compilation |
 | **Release** | Tag `v*.*.*` | Create GitHub Release with platform installers |
 
 See [Releasing](releasing.md) for the full release process.
+
+### Development Scripts
+
+The `scripts/` directory provides cross-platform helper scripts (`.sh` + `.cmd` variants) for common tasks: setup, dev server, build, test, format, quality checks, and clean. These mirror the CI checks locally. See [scripts/README.md](../scripts/README.md) for the full list.
 
 ### Future: Raspberry Pi Agent
 

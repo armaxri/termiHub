@@ -4,21 +4,25 @@ This document describes how to create a new TermiHub release.
 
 ## Pre-Release Checklist
 
-Before creating a release, verify the following:
+Before creating a release, run the quality scripts and verify:
 
-- [ ] All tests pass: `cd src-tauri && cargo test` and `pnpm test`
-- [ ] Linting passes: `pnpm run lint` and `cd src-tauri && cargo clippy --all-targets --all-features -- -D warnings`
-- [ ] Formatting passes: `pnpm run format:check` and `cd src-tauri && cargo fmt --all -- --check`
+```bash
+./scripts/test.sh      # All unit tests (frontend + backend + agent)
+./scripts/check.sh     # Formatting, linting, clippy (mirrors CI)
+```
+
+- [ ] All scripts pass without errors
 - [ ] `CHANGELOG.md` has been updated with all user-facing changes
 - [ ] No known release-blocking issues remain
 
 ## Version Bump
 
-Update the version number in all three locations:
+Update the version number in all four locations:
 
 1. **`package.json`** — `"version": "X.Y.Z"`
 2. **`src-tauri/Cargo.toml`** — `version = "X.Y.Z"`
 3. **`src-tauri/tauri.conf.json`** — `"version": "X.Y.Z"`
+4. **`agent/Cargo.toml`** — `version = "X.Y.Z"`
 
 Use [Semantic Versioning](https://semver.org/):
 - **MAJOR** (X): Breaking changes

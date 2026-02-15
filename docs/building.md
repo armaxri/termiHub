@@ -181,9 +181,27 @@ pnpm tauri build
 
 ## Development Workflow
 
+### Using Helper Scripts
+
+The `scripts/` directory has cross-platform helpers (`.sh` + `.cmd`) for all common tasks:
+
+```bash
+./scripts/setup.sh     # First-time setup: install deps + initial build
+./scripts/dev.sh       # Start dev mode with hot-reload
+./scripts/build.sh     # Build for production
+./scripts/test.sh      # Run all unit tests (frontend + backend + agent)
+./scripts/check.sh     # Pre-push quality checks (mirrors CI)
+./scripts/format.sh    # Auto-fix formatting (Prettier + cargo fmt)
+./scripts/clean.sh     # Remove all build artifacts
+```
+
+See [scripts/README.md](../scripts/README.md) for the full list. On Windows, use the `.cmd` variants (e.g., `scripts\dev.cmd`).
+
 ### Dev Server with Hot Reload
 
 ```bash
+./scripts/dev.sh
+# or directly:
 pnpm tauri dev
 ```
 
@@ -240,16 +258,19 @@ termihub/
 │   │   ├── terminal/     # Terminal backends (local, SSH, serial, telnet)
 │   │   ├── connection/   # Connection config and persistence
 │   │   ├── files/        # File browser and SFTP
+│   │   ├── monitoring/   # SSH remote system monitoring
 │   │   ├── commands/     # Tauri IPC commands
 │   │   └── events/       # Event emitters
 │   ├── Cargo.toml
 │   └── tauri.conf.json
+├── agent/                # Raspberry Pi remote agent
+├── scripts/              # Dev helper scripts (.sh + .cmd)
 ├── examples/             # Test environment (Docker, virtual serial)
 ├── docs/                 # Documentation (this directory)
 └── package.json
 ```
 
-See [CLAUDE.md](../CLAUDE.md) for the complete architecture documentation.
+See [Architecture Documentation](architecture.md) for the complete architecture documentation.
 
 ---
 

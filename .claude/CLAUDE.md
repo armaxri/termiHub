@@ -31,13 +31,15 @@ src-tauri/src/                # Rust backend
   terminal/                   # backend.rs (trait), manager.rs, local_shell.rs, serial.rs, ssh.rs, telnet.rs
   connection/                 # config.rs, manager.rs, storage.rs
   files/                      # sftp.rs, local.rs, browser.rs, utils.rs
+  monitoring/                 # SSH remote system monitoring (CPU, memory, disk, etc.)
   commands/                   # Tauri IPC command handlers
   events/                     # Event emitters
   utils/                      # shell_detect.rs, expand.rs, errors.rs
-agent/                        # Future: Raspberry Pi remote agent
+agent/                        # Raspberry Pi remote agent (JSON-RPC over SSH)
+scripts/                      # Dev helper scripts (.sh + .cmd variants)
 docs/                         # All documentation
 tests/e2e/                    # WebdriverIO E2E tests
-examples/                     # Docker test environment
+examples/                     # Docker test environment (SSH, Telnet, virtual serial)
 ```
 
 ---
@@ -81,23 +83,51 @@ examples/                     # Docker test environment
 
 ---
 
-## Development Commands
+## Development Scripts
+
+All scripts live in `scripts/` with `.sh` (Unix/macOS) and `.cmd` (Windows) variants. They can be run from anywhere in the repo. See [scripts/README.md](../scripts/README.md) for details.
+
+| Script | Purpose |
+|--------|---------|
+| `./scripts/setup.sh` | Install all dependencies and do an initial build |
+| `./scripts/dev.sh` | Start the app in dev mode with hot-reload |
+| `./scripts/build.sh` | Build for production (creates platform installer) |
+| `./scripts/test.sh` | Run all unit tests (frontend + backend + agent) |
+| `./scripts/check.sh` | Read-only quality checks mirroring CI (formatting, linting, clippy) |
+| `./scripts/format.sh` | Auto-fix all formatting issues (Prettier + cargo fmt) |
+| `./scripts/clean.sh` | Remove all build artifacts for a fresh start |
+
+### Before Creating a PR
+
+Always run these before pushing:
+
+```bash
+./scripts/format.sh    # Auto-fix formatting (Prettier + cargo fmt)
+./scripts/test.sh      # Run all unit tests (frontend + backend + agent)
+./scripts/check.sh     # Read-only quality checks mirroring CI
+```
+
+### Individual Commands (when you need just one tool)
 
 ```bash
 # Frontend
 pnpm run lint            # ESLint
-pnpm run format:check    # Prettier (format to auto-fix)
+pnpm run format:check    # Prettier check (format to auto-fix)
 pnpm test                # Vitest single run
 pnpm test:watch          # Vitest watch mode
 pnpm test:coverage       # Vitest with coverage
 pnpm build               # TypeScript check + Vite build
 pnpm test:e2e            # WebdriverIO E2E (requires built app)
 
-# Rust
-cd src-tauri
-cargo fmt --all -- --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test
+# Rust backend
+cd src-tauri && cargo fmt --all -- --check
+cd src-tauri && cargo clippy --all-targets --all-features -- -D warnings
+cd src-tauri && cargo test
+
+# Agent
+cd agent && cargo fmt --check
+cd agent && cargo clippy --all-targets --all-features -- -D warnings
+cd agent && cargo test
 
 # Dev server
 pnpm tauri dev
@@ -113,7 +143,7 @@ pnpm tauri dev
 4. Add config types in `connection/config.rs` (Rust) and `src/types/terminal.ts` (TypeScript)
 5. Create settings UI in `src/components/Settings/`
 6. Add to connection type selector in `ConnectionEditor.tsx`
-7. Test on target platform, run `cargo clippy` and `pnpm build`
+7. Test on target platform, run `./scripts/check.sh`
 
 ---
 
@@ -123,5 +153,8 @@ pnpm tauri dev
 - [Contributing](../docs/contributing.md) — Development workflow and coding standards
 - [Testing Strategy](../docs/testing.md) — Automated and manual testing approach
 - [Manual Testing](../docs/manual-testing.md) — Hardware-dependent test plan
+- [Performance](../docs/performance.md) — Profiling guide and baseline metrics
 - [Building](../docs/building.md) — Platform-specific build instructions
 - [Releasing](../docs/releasing.md) — Release process and version management
+- [Remote Protocol](../docs/remote-protocol.md) — Desktop-to-agent JSON-RPC specification
+- [Scripts](../scripts/README.md) — Development helper scripts
