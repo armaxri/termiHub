@@ -42,14 +42,20 @@ export function SshSettings({ config, onChange }: SshSettingsProps) {
         <select
           value={config.authMethod}
           onChange={(e) =>
-            onChange({ ...config, authMethod: e.target.value as "password" | "key" })
+            onChange({ ...config, authMethod: e.target.value as "password" | "key" | "agent" })
           }
           data-testid="ssh-settings-auth-method-select"
         >
-          <option value="password">Password</option>
+          <option value="agent">SSH Agent</option>
           <option value="key">SSH Key</option>
+          <option value="password">Password</option>
         </select>
       </label>
+      {config.authMethod === "agent" && (
+        <p className="settings-form__hint">
+          Uses keys from your running SSH agent (ssh-agent or Pageant).
+        </p>
+      )}
       {config.authMethod === "password" && (
         <p className="settings-form__hint">
           You will be prompted for a password each time you connect.

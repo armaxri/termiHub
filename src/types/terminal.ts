@@ -31,7 +31,7 @@ export interface SshConfig {
   host: string;
   port: number;
   username: string;
-  authMethod: "password" | "key";
+  authMethod: "password" | "key" | "agent";
   password?: string;
   keyPath?: string;
   enableX11Forwarding?: boolean;
@@ -55,7 +55,7 @@ export interface RemoteConfig {
   host: string;
   port: number;
   username: string;
-  authMethod: "password" | "key";
+  authMethod: "password" | "key" | "agent";
   password?: string;
   keyPath?: string;
   sessionType: "shell" | "serial";

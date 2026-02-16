@@ -23,6 +23,11 @@ pub fn connect_and_authenticate(config: &SshConfig) -> Result<Session, TerminalE
 
     // Authenticate
     match config.auth_method.as_str() {
+        "agent" => {
+            session
+                .userauth_agent(&config.username)
+                .map_err(|e| TerminalError::SshError(format!("Agent auth failed: {}", e)))?;
+        }
         "key" => {
             let key_path = config.key_path.as_deref().unwrap_or("~/.ssh/id_rsa");
             let expanded = shellexpand(key_path);
