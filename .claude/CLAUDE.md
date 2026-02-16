@@ -82,6 +82,8 @@ examples/                     # Docker test environment (SSH, Telnet, virtual se
 - **Always start from fresh `origin/main`**: before creating a feature branch, run `git fetch origin && git checkout origin/main` to branch from the latest remote state — never branch from a stale local `main`
 - **Branch from `main`**: `feature/<description>` or `bugfix/<description>`
 - **Never commit directly to `main`**
+- **Never push directly to `main`**: all changes must be submitted via pull request — no exceptions, even for documentation-only changes
+- **Every change requires a PR**: create a feature or bugfix branch, push it to `origin`, and open a pull request. Direct pushes to `main` are prohibited.
 - **Conventional Commits**: `type(scope): subject` — types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `chore`
 - **Scopes**: `terminal`, `ssh`, `serial`, `ui`, `backend`, `sftp`, `config`
 - **Always merge with a merge commit** (`gh pr merge --merge`) — never squash or rebase
