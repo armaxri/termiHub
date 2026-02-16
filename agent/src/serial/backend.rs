@@ -6,7 +6,7 @@ use std::time::Duration;
 use base64::Engine;
 use tracing::{debug, info, warn};
 
-use crate::io::stdio::NotificationSender;
+use crate::io::transport::NotificationSender;
 use crate::protocol::messages::JsonRpcNotification;
 use crate::protocol::methods::SerialSessionConfig;
 use crate::serial::ring_buffer::{RingBuffer, DEFAULT_BUFFER_CAPACITY};

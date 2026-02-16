@@ -62,47 +62,64 @@ sudo apt-get install -y \
 
 ### Running as the Remote Agent
 
-For the embedded development use case (TermiHub running on Raspberry Pi as remote agent):
+For the embedded development use case (Raspberry Pi as a persistent remote agent):
 
-1. **Install TermiHub** using one of the methods above
-
-2. **Configure systemd service** (for 24/7 operation):
+1. **Build the agent** (on the Pi or cross-compile):
 
 ```bash
-# Create service file
-sudo nano /etc/systemd/system/termihub-agent.service
+cd agent
+cargo build --release
 ```
 
-```ini
-[Unit]
-Description=TermiHub Remote Agent
-After=network.target
-
-[Service]
-Type=simple
-User=pi
-WorkingDirectory=/home/pi
-ExecStart=/usr/bin/termihub-agent  # Adjust path if needed
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
-
-3. **Enable and start service**:
+2. **Install using the provided script**:
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable termihub-agent
+cd agent
+sudo ./install.sh
+```
+
+This copies the binary to `/usr/local/bin/`, installs the systemd service, and enables it.
+
+3. **Start the service**:
+
+```bash
 sudo systemctl start termihub-agent
 ```
 
-4. **Check status**:
+4. **Check status and logs**:
 
 ```bash
 sudo systemctl status termihub-agent
+journalctl -u termihub-agent -f
 ```
+
+#### Agent Modes
+
+The agent supports two modes:
+
+- **`--listen [addr]`** — TCP listener mode (default: `127.0.0.1:7685`). Used for systemd service. Sessions persist across client reconnects.
+- **`--stdio`** — Stdio mode (NDJSON over stdin/stdout). Used when launched over SSH exec channels.
+
+The systemd service uses `--listen` mode by default. To change the listen address, edit `/etc/systemd/system/termihub-agent.service`:
+
+```bash
+sudo systemctl edit termihub-agent
+# Override ExecStart to change the address
+```
+
+#### Connecting from the Desktop
+
+When the agent runs with `--listen`, connect from TermiHub desktop via:
+
+- **SSH port forward**: `ssh -L 7685:127.0.0.1:7685 pi@raspberrypi` then connect to `localhost:7685`
+- **Direct LAN**: Start with `--listen 0.0.0.0:7685` and connect to the Pi's IP address
+
+#### Security Notes
+
+The TCP listener does not implement authentication or encryption. Always use one of:
+
+- Bind to `127.0.0.1` (default) and tunnel via SSH
+- Run on a trusted local network only
 
 ### Serial Port Access
 
