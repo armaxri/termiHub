@@ -129,9 +129,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const defaultConfigs = getDefaultConfigs(defaultShell);
 
   const [name, setName] = useState(existingConnection?.name ?? "");
-  const [folderId, setFolderId] = useState<string | null>(
-    existingConnection?.folderId ?? editingConnectionFolderId ?? null
-  );
+  const folderId = existingConnection?.folderId ?? editingConnectionFolderId ?? null;
   const [connectionConfig, setConnectionConfig] = useState<ConnectionConfig>(
     existingConnection?.config ?? defaultConfigs.local
   );
@@ -207,11 +205,11 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     }
   }, [
     name,
-    folderId,
     connectionConfig,
     terminalOptions,
     existingConnection,
     extFilePath,
+    folderId,
     addConnection,
     updateConnection,
     addExternalConnection,
