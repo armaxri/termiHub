@@ -79,20 +79,21 @@ examples/                     # Docker test environment (SSH, Telnet, virtual se
 
 ## Git Workflow
 
-- **Always start from fresh `origin/main`**: before creating a feature branch, run `git fetch origin && git checkout origin/main` to branch from the latest remote state — never branch from a stale local `main`
+- **Always pull `origin/main` before starting new work**: run `git fetch origin && git checkout origin/main` before creating a feature branch — never branch from a stale local `main`
 - **Branch from `main`**: `feature/<description>` or `bugfix/<description>`
 - **Never commit directly to `main`**
 - **Never push directly to `main`**: all changes must be submitted via pull request — no exceptions, even for documentation-only changes
 - **Every change requires a PR**: create a feature or bugfix branch, push it to `origin`, and open a pull request. Direct pushes to `main` are prohibited.
 - **Conventional Commits**: `type(scope): subject` — types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `chore`
 - **Scopes**: `terminal`, `ssh`, `serial`, `ui`, `backend`, `sftp`, `config`
-- **Always merge with a merge commit** (`gh pr merge --merge`) — never squash or rebase
-- **Commit early and often** — each logical step gets its own commit:
+- **Always merge with a merge commit** (`gh pr merge --merge`) — never squash or rebase, never rebase branches
+- **Commit early and often** — commit as soon as a single logical topic is complete (a single topic = a single commit). Do not batch multiple topics into one commit. Each logical step gets its own commit:
   - Refactors separate from new features
   - Config changes separate from source changes
   - Formatting/lint fixes separate from functional changes
+- **Never pull or fetch before committing**: always commit local changes first before any git operations that touch the remote (fetch, pull, merge). Uncommitted work must never be at risk from remote operations.
 - **Update CHANGELOG.md** for every user-facing change (Keep a Changelog format, under `[Unreleased]`)
-- **Rebase/merge `origin/main` before creating a PR**: before pushing the final branch and opening a PR, always `git fetch origin && git merge origin/main` into the feature branch, resolve any conflicts, and re-run tests/checks to ensure the branch is up to date and clean
+- **Merge `origin/main` before creating a PR** (never rebase): before pushing the final branch and opening a PR, always `git fetch origin && git merge origin/main` into the feature branch, resolve any conflicts, and re-run tests/checks to ensure the branch is up to date and clean. Always use merge, never rebase.
 
 ---
 
