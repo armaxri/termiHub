@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Passphrase-protected SSH key support via the connection editor (key passphrase field shown when auth method is "SSH Key")
 - Default shell detection and labeling: the user's system default shell (e.g., Zsh on macOS) is now detected and marked with "(default)" in the shell dropdown
 
+### Changed
+
+- Removed folder selector from the connection editor; use drag-and-drop in the sidebar to organize connections into folders
+
 ### Fixed
 
 - Windows: WSL shell tabs now browse the WSL Linux filesystem (via `\\wsl$\` UNC paths) instead of the Windows filesystem

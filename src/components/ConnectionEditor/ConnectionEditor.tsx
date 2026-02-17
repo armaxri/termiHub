@@ -94,7 +94,6 @@ interface ConnectionEditorProps {
 
 export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorProps) {
   const connections = useAppStore((s) => s.connections);
-  const folders = useAppStore((s) => s.folders);
   const externalSources = useAppStore((s) => s.externalSources);
   const addConnection = useAppStore((s) => s.addConnection);
   const updateConnection = useAppStore((s) => s.updateConnection);
@@ -124,8 +123,6 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         ? extSource.connections.find((c) => c.id === editingConnectionId)
         : connections.find((c) => c.id === editingConnectionId)
       : undefined;
-
-  const availableFolders = extSource ? extSource.folders : folders;
 
   const defaultShell = useAppStore((s) => s.defaultShell);
 
@@ -284,21 +281,6 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
             autoFocus
             data-testid="connection-editor-name-input"
           />
-        </label>
-        <label className="settings-form__field">
-          <span className="settings-form__label">Folder</span>
-          <select
-            value={folderId ?? ""}
-            onChange={(e) => setFolderId(e.target.value || null)}
-            data-testid="connection-editor-folder-select"
-          >
-            <option value="">(Root)</option>
-            {availableFolders.map((f) => (
-              <option key={f.id} value={f.id}>
-                {f.name}
-              </option>
-            ))}
-          </select>
         </label>
         <label className="settings-form__field">
           <span className="settings-form__label">Type</span>
