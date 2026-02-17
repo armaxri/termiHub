@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Powerline glyphs (e.g., agnoster zsh theme) rendering as boxes on Windows by bundling MesloLGS Nerd Font Mono
 - Windows: PowerShell and Git Bash shells launching WSL instead of the correct shell due to bare executable names being intercepted by WSL interop; now resolved via absolute paths
 - Windows: `bash` shell type on Windows now routes to Git Bash instead of being intercepted by WSL
 - Windows: new terminal tabs (keyboard shortcut / "+" button) defaulting to `zsh` instead of the platform default shell, causing WSL errors on Windows
