@@ -360,7 +360,10 @@ mod tests {
             dir.ends_with("/work"),
             "expected tilde expansion, got: {dir}"
         );
-        assert!(!dir.starts_with('~'), "tilde should be expanded, got: {dir}");
+        assert!(
+            !dir.starts_with('~'),
+            "tilde should be expanded, got: {dir}"
+        );
     }
 
     #[test]
