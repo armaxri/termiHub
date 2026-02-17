@@ -1,4 +1,5 @@
 use std::net::TcpStream;
+#[cfg(not(target_os = "windows"))]
 use std::path::Path;
 
 use ssh2::Session;
@@ -29,8 +30,9 @@ pub fn connect_and_authenticate(config: &SshConfig) -> Result<Session, TerminalE
                 .map_err(|e| TerminalError::SshError(format!("Agent auth failed: {}", e)))?;
         }
         "key" => {
+            // key_path is already tilde-expanded by SshConfig::expand()
             let key_path_str = config.key_path.as_deref().unwrap_or("~/.ssh/id_rsa");
-            let key_path = std::path::PathBuf::from(shellexpand(key_path_str));
+            let key_path = std::path::PathBuf::from(key_path_str);
             let passphrase = config.password.as_deref();
 
             // Convert OpenSSH-format keys (e.g. Ed25519) to PEM for libssh2
@@ -95,23 +97,6 @@ pub fn check_ssh_agent_status() -> String {
             _ => "stopped".to_string(),
         }
     }
-}
-
-/// Expand `~` prefix in paths to the user's home directory.
-pub fn shellexpand(path: &str) -> String {
-    if let Some(rest) = path.strip_prefix("~/") {
-        if let Some(home) = dirs_home() {
-            return format!("{}/{}", home, rest);
-        }
-    }
-    path.to_string()
-}
-
-/// Get the user's home directory from environment variables.
-pub fn dirs_home() -> Option<String> {
-    std::env::var("HOME")
-        .ok()
-        .or_else(|| std::env::var("USERPROFILE").ok())
 }
 
 #[cfg(test)]

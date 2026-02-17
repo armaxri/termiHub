@@ -169,7 +169,9 @@ impl SshConfig {
     pub fn expand(mut self) -> Self {
         self.host = expand_env_placeholders(&self.host);
         self.username = expand_env_placeholders(&self.username);
-        self.key_path = self.key_path.map(|s| expand_env_placeholders(&s));
+        self.key_path = self
+            .key_path
+            .map(|s| expand_tilde(&expand_env_placeholders(&s)));
         self.password = self.password.map(|s| expand_env_placeholders(&s));
         self
     }
@@ -315,6 +317,29 @@ mod tests {
     }
 
     #[test]
+    fn ssh_config_expand_expands_tilde_in_key_path() {
+        let config = SshConfig {
+            host: "example.com".to_string(),
+            port: 22,
+            username: "user".to_string(),
+            auth_method: "key".to_string(),
+            password: None,
+            key_path: Some("~/.ssh/id_ed25519".to_string()),
+            enable_x11_forwarding: false,
+        };
+        let expanded = config.expand();
+        let key = expanded.key_path.unwrap();
+        assert!(
+            !key.starts_with('~'),
+            "tilde should be expanded, got: {key}"
+        );
+        assert!(
+            key.ends_with(".ssh/id_ed25519") || key.ends_with(r".ssh\id_ed25519"),
+            "expected path ending in .ssh/id_ed25519, got: {key}"
+        );
+    }
+
+    #[test]
     fn local_config_expand_replaces_initial_command() {
         std::env::set_var("TERMIHUB_TEST_CMD", "make build");
 
@@ -360,7 +385,10 @@ mod tests {
             dir.ends_with("/work"),
             "expected tilde expansion, got: {dir}"
         );
-        assert!(!dir.starts_with('~'), "tilde should be expanded, got: {dir}");
+        assert!(
+            !dir.starts_with('~'),
+            "tilde should be expanded, got: {dir}"
+        );
     }
 
     #[test]
