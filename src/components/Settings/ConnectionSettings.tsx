@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { LocalShellConfig, ShellType } from "@/types/terminal";
 import { detectAvailableShells } from "@/utils/shell-detection";
 import { getWslDistroName } from "@/utils/shell-detection";
+import { useAppStore } from "@/store/appStore";
 
 interface ConnectionSettingsProps {
   config: LocalShellConfig;
@@ -17,16 +18,20 @@ const SHELL_LABELS: Record<string, string> = {
 };
 
 /** Get the display label for a shell type, including WSL distros. */
-function getShellLabel(shell: ShellType): string {
+function getShellLabel(shell: ShellType, defaultShell: ShellType): string {
   const distro = getWslDistroName(shell);
+  let label: string;
   if (distro !== null) {
-    return `WSL: ${distro}`;
+    label = `WSL: ${distro}`;
+  } else {
+    label = SHELL_LABELS[shell] ?? shell;
   }
-  return SHELL_LABELS[shell] ?? shell;
+  return shell === defaultShell ? `${label} (default)` : label;
 }
 
 export function ConnectionSettings({ config, onChange }: ConnectionSettingsProps) {
   const [availableShells, setAvailableShells] = useState<ShellType[]>([]);
+  const defaultShell = useAppStore((s) => s.defaultShell);
 
   useEffect(() => {
     detectAvailableShells().then(setAvailableShells);
@@ -46,7 +51,7 @@ export function ConnectionSettings({ config, onChange }: ConnectionSettingsProps
         >
           {options.map((shell) => (
             <option key={shell} value={shell}>
-              {getShellLabel(shell)}
+              {getShellLabel(shell, defaultShell)}
             </option>
           ))}
         </select>

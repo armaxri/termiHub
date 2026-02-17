@@ -49,6 +49,11 @@ export async function listAvailableShells(): Promise<string[]> {
   return await invoke<string[]>("list_available_shells");
 }
 
+/** Detect the user's default shell on this platform */
+export async function getDefaultShell(): Promise<string | null> {
+  return await invoke<string | null>("get_default_shell");
+}
+
 /** Check if a local X server is available for X11 forwarding */
 export async function checkX11Available(): Promise<boolean> {
   return await invoke<boolean>("check_x11_available");

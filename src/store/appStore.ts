@@ -43,6 +43,7 @@ import {
   monitoringClose,
   monitoringFetchStats,
   listAvailableShells,
+  getDefaultShell,
 } from "@/services/api";
 import { SystemStats } from "@/types/monitoring";
 import {
@@ -758,7 +759,10 @@ export const useAppStore = create<AppState>((set, get) => {
       // Detect platform default shell
       try {
         const shells = await listAvailableShells();
-        if (shells.length > 0) {
+        const detectedDefault = await getDefaultShell();
+        if (detectedDefault && shells.includes(detectedDefault)) {
+          set({ defaultShell: detectedDefault as ShellType });
+        } else if (shells.length > 0) {
           set({ defaultShell: shells[0] as ShellType });
         }
       } catch (err) {

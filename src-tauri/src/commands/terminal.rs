@@ -52,6 +52,12 @@ pub fn list_available_shells() -> Vec<String> {
     shell_detect::detect_available_shells()
 }
 
+/// Detect the user's default shell on this platform.
+#[tauri::command]
+pub fn get_default_shell() -> Option<String> {
+    shell_detect::detect_default_shell()
+}
+
 /// List available serial ports.
 #[tauri::command]
 pub fn list_serial_ports() -> Vec<String> {
