@@ -43,15 +43,23 @@ pub fn connect_and_authenticate(config: &SshConfig) -> Result<Session, TerminalE
 
             // Convert OpenSSH-format keys (e.g. Ed25519) to PEM for libssh2
             let prepared = crate::utils::ssh_key_convert::prepare_key(&key_path, passphrase)?;
-            let auth_path = match &prepared {
-                crate::utils::ssh_key_convert::PreparedKey::Original => key_path.as_path(),
-                crate::utils::ssh_key_convert::PreparedKey::Converted(temp) => temp.path(),
-            };
-
-            session
-                .userauth_pubkey_file(&config.username, None, auth_path, passphrase)
-                .map_err(|e| TerminalError::SshError(format!("Key auth failed: {}", e)))?;
-            // `prepared` dropped here — temp file cleaned up
+            match prepared {
+                crate::utils::ssh_key_convert::PreparedKey::Original => {
+                    session
+                        .userauth_pubkey_file(&config.username, None, &key_path, passphrase)
+                        .map_err(|e| TerminalError::SshError(format!("Key auth failed: {}", e)))?;
+                }
+                crate::utils::ssh_key_convert::PreparedKey::ConvertedPem(pem_bytes) => {
+                    // Use memory-based auth to avoid temp file issues on Windows.
+                    // The converted key is already decrypted, so pass None for passphrase.
+                    let pem_str = std::str::from_utf8(&pem_bytes).map_err(|e| {
+                        TerminalError::SshError(format!("Invalid PEM encoding: {}", e))
+                    })?;
+                    session
+                        .userauth_pubkey_memory(&config.username, None, pem_str, None)
+                        .map_err(|e| TerminalError::SshError(format!("Key auth failed: {}", e)))?;
+                }
+            }
         }
         _ => {
             let password = config.password.as_deref().unwrap_or("");

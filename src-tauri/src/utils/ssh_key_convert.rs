@@ -1,5 +1,4 @@
 use std::fs;
-use std::io::Write;
 use std::path::Path;
 
 use crate::utils::errors::TerminalError;
@@ -7,28 +6,12 @@ use crate::utils::errors::TerminalError;
 const OPENSSH_HEADER: &str = "-----BEGIN OPENSSH PRIVATE KEY-----";
 
 /// Result of preparing an SSH key for libssh2.
-/// If conversion was needed, holds a `TempPemKey` that must stay alive
-/// until authentication completes.
 pub enum PreparedKey {
     /// The original key path can be used directly (PEM or PKCS#8 format).
     Original,
-    /// A converted PEM key written to a secure temp file.
-    Converted(TempPemKey),
-}
-
-/// A temporary PEM-format key file with restricted permissions.
-/// Automatically deleted when dropped.
-#[derive(Debug)]
-pub struct TempPemKey {
-    _temp_file: tempfile::NamedTempFile,
-    path: std::path::PathBuf,
-}
-
-impl TempPemKey {
-    /// Get the path to the temporary PEM key file.
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
+    /// The key was converted from OpenSSH to PKCS#8 PEM format (in memory).
+    /// The PEM bytes are already decrypted — no passphrase is needed.
+    ConvertedPem(Vec<u8>),
 }
 
 /// Check if a key file is in OpenSSH format.
@@ -45,22 +28,25 @@ pub fn is_openssh_format(path: &Path) -> Result<bool, TerminalError> {
 
 /// Prepare a key for use with libssh2.
 ///
-/// If the key is in OpenSSH format, converts it to PKCS#8 PEM in a
-/// secure temp file. Otherwise returns `Original` to use the key as-is.
+/// If the key is in OpenSSH format, converts it to PKCS#8 PEM bytes
+/// in memory. Otherwise returns `Original` to use the key file as-is.
 pub fn prepare_key(path: &Path, passphrase: Option<&str>) -> Result<PreparedKey, TerminalError> {
     if is_openssh_format(path)? {
-        let temp = convert_openssh_to_pem(path, passphrase)?;
-        Ok(PreparedKey::Converted(temp))
+        let pem_bytes = convert_openssh_to_pem_bytes(path, passphrase)?;
+        Ok(PreparedKey::ConvertedPem(pem_bytes))
     } else {
         Ok(PreparedKey::Original)
     }
 }
 
-/// Convert an OpenSSH-format key to PKCS#8 PEM format.
-fn convert_openssh_to_pem(
+/// Convert an OpenSSH-format key to PKCS#8 PEM bytes.
+///
+/// If the key is encrypted, it is decrypted using the provided passphrase.
+/// The returned bytes are always an unencrypted PKCS#8 PEM key.
+fn convert_openssh_to_pem_bytes(
     path: &Path,
     passphrase: Option<&str>,
-) -> Result<TempPemKey, TerminalError> {
+) -> Result<Vec<u8>, TerminalError> {
     let key = ssh_key::PrivateKey::read_openssh_file(path)
         .map_err(|e| TerminalError::SshError(format!("Failed to parse OpenSSH key: {}", e)))?;
 
@@ -76,8 +62,7 @@ fn convert_openssh_to_pem(
         key
     };
 
-    let pem_bytes = key_data_to_pem(key.key_data())?;
-    write_temp_pem(&pem_bytes)
+    key_data_to_pem(key.key_data())
 }
 
 /// Extract raw key material and convert to PKCS#8 PEM via OpenSSL.
@@ -149,33 +134,6 @@ fn key_data_to_pem(key_data: &ssh_key::private::KeypairData) -> Result<Vec<u8>, 
     }
 }
 
-/// Write PEM bytes to a secure temporary file.
-fn write_temp_pem(pem_bytes: &[u8]) -> Result<TempPemKey, TerminalError> {
-    let mut temp = tempfile::NamedTempFile::new()
-        .map_err(|e| TerminalError::SshError(format!("Failed to create temp file: {}", e)))?;
-
-    temp.write_all(pem_bytes)
-        .map_err(|e| TerminalError::SshError(format!("Failed to write temp key: {}", e)))?;
-    temp.flush()
-        .map_err(|e| TerminalError::SshError(format!("Failed to flush temp key: {}", e)))?;
-
-    // Set restrictive permissions on Unix
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let perms = std::fs::Permissions::from_mode(0o600);
-        std::fs::set_permissions(temp.path(), perms).map_err(|e| {
-            TerminalError::SshError(format!("Failed to set key permissions: {}", e))
-        })?;
-    }
-
-    let path = temp.path().to_path_buf();
-    Ok(TempPemKey {
-        _temp_file: temp,
-        path,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -234,10 +192,10 @@ mod tests {
         let openssh_pem = key.to_openssh(ssh_key::LineEnding::LF).unwrap();
 
         let f = write_temp_key(&openssh_pem);
-        let result = convert_openssh_to_pem(f.path(), None).unwrap();
+        let pem_bytes = convert_openssh_to_pem_bytes(f.path(), None).unwrap();
 
-        // Verify the converted file contains PKCS#8 PEM
-        let converted = fs::read_to_string(result.path()).unwrap();
+        // Verify the converted bytes contain PKCS#8 PEM
+        let converted = std::str::from_utf8(&pem_bytes).unwrap();
         assert!(converted.contains("-----BEGIN PRIVATE KEY-----"));
     }
 
@@ -252,9 +210,9 @@ mod tests {
         let openssh_pem = key.to_openssh(ssh_key::LineEnding::LF).unwrap();
 
         let f = write_temp_key(&openssh_pem);
-        let result = convert_openssh_to_pem(f.path(), None).unwrap();
+        let pem_bytes = convert_openssh_to_pem_bytes(f.path(), None).unwrap();
 
-        let converted = fs::read_to_string(result.path()).unwrap();
+        let converted = std::str::from_utf8(&pem_bytes).unwrap();
         assert!(converted.contains("-----BEGIN PRIVATE KEY-----"));
     }
 
@@ -266,39 +224,7 @@ mod tests {
 
         let f = write_temp_key(&openssh_pem);
         let result = prepare_key(f.path(), None).unwrap();
-        assert!(matches!(result, PreparedKey::Converted(_)));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn temp_file_has_restricted_permissions() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let key = ssh_key::PrivateKey::random(&mut rand::thread_rng(), ssh_key::Algorithm::Ed25519)
-            .unwrap();
-        let openssh_pem = key.to_openssh(ssh_key::LineEnding::LF).unwrap();
-
-        let f = write_temp_key(&openssh_pem);
-        let result = convert_openssh_to_pem(f.path(), None).unwrap();
-
-        let metadata = fs::metadata(result.path()).unwrap();
-        let mode = metadata.permissions().mode() & 0o777;
-        assert_eq!(mode, 0o600);
-    }
-
-    #[test]
-    fn temp_file_cleaned_up_on_drop() {
-        let key = ssh_key::PrivateKey::random(&mut rand::thread_rng(), ssh_key::Algorithm::Ed25519)
-            .unwrap();
-        let openssh_pem = key.to_openssh(ssh_key::LineEnding::LF).unwrap();
-
-        let f = write_temp_key(&openssh_pem);
-        let result = convert_openssh_to_pem(f.path(), None).unwrap();
-        let temp_path = result.path().to_path_buf();
-        assert!(temp_path.exists());
-
-        drop(result);
-        assert!(!temp_path.exists());
+        assert!(matches!(result, PreparedKey::ConvertedPem(_)));
     }
 
     #[test]
@@ -311,7 +237,7 @@ mod tests {
         let openssh_pem = encrypted.to_openssh(ssh_key::LineEnding::LF).unwrap();
 
         let f = write_temp_key(&openssh_pem);
-        let result = convert_openssh_to_pem(f.path(), None);
+        let result = convert_openssh_to_pem_bytes(f.path(), None);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("passphrase"));
@@ -327,9 +253,9 @@ mod tests {
         let openssh_pem = encrypted.to_openssh(ssh_key::LineEnding::LF).unwrap();
 
         let f = write_temp_key(&openssh_pem);
-        let result = convert_openssh_to_pem(f.path(), Some("test-passphrase")).unwrap();
+        let pem_bytes = convert_openssh_to_pem_bytes(f.path(), Some("test-passphrase")).unwrap();
 
-        let converted = fs::read_to_string(result.path()).unwrap();
+        let converted = std::str::from_utf8(&pem_bytes).unwrap();
         assert!(converted.contains("-----BEGIN PRIVATE KEY-----"));
     }
 }
