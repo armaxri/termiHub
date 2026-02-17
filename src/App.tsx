@@ -16,6 +16,14 @@ function App() {
     loadFromBackend();
   }, [loadFromBackend]);
 
+  // Suppress the browser's default context menu globally so only custom
+  // Radix UI context menus appear on right-click.
+  useEffect(() => {
+    const suppress = (e: MouseEvent) => e.preventDefault();
+    window.addEventListener("contextmenu", suppress);
+    return () => window.removeEventListener("contextmenu", suppress);
+  }, []);
+
   return (
     <div className="app">
       <div className="app__main">
