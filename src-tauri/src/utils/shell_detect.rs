@@ -139,10 +139,21 @@ pub fn shell_to_command(shell: &str) -> (String, Vec<String>) {
 /// to emit OSC 7 CWD escape sequences. This allows the frontend file browser to
 /// track the working directory of WSL shells, which don't emit OSC 7 by default.
 ///
-/// Ends with `clear` to erase the echoed command text from the terminal, since
-/// stdin-injected commands are always echoed by the PTY.
+/// Also:
+/// - Changes to `$HOME` when the CWD is a Windows drive mount (`/mnt/c/…`),
+///   since WSL defaults to the Windows user directory which is inaccessible
+///   through the `\\wsl$\` UNC share.
+/// - Ends with ANSI escape sequences to clear the screen (erase echoed
+///   command text). Uses `printf` instead of `clear` for portability —
+///   minimal WSL distros (e.g. Fedora) may not have ncurses installed.
 pub fn wsl_osc7_setup() -> &'static str {
-    r#"__termihub_osc7(){ printf '\e]7;file://%s\a' "$PWD"; }; [ "$ZSH_VERSION" ] && precmd_functions+=(__termihub_osc7) || PROMPT_COMMAND="__termihub_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}"; clear"#
+    concat!(
+        r#"case "$PWD" in /mnt/[a-z]|/mnt/[a-z]/*) cd;; esac; "#,
+        r#"__termihub_osc7(){ printf '\e]7;file://%s\a' "$PWD"; }; "#,
+        r#"[ "$ZSH_VERSION" ] && precmd_functions+=(__termihub_osc7) || "#,
+        r#"PROMPT_COMMAND="__termihub_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}"; "#,
+        r#"printf '\033[2J\033[H'"#,
+    )
 }
 
 /// Resolve the path and arguments to launch a WSL distribution.
@@ -367,7 +378,7 @@ mod tests {
     }
 
     #[test]
-    fn wsl_osc7_setup_contains_escape_sequence() {
+    fn wsl_osc7_setup_contains_expected_parts() {
         let setup = wsl_osc7_setup();
         assert!(!setup.is_empty());
         assert!(
@@ -381,6 +392,16 @@ mod tests {
         assert!(
             setup.contains("precmd_functions"),
             "expected zsh precmd_functions, got: {setup}"
+        );
+        // Should cd to $HOME when starting in a Windows drive mount
+        assert!(
+            setup.contains("/mnt/[a-z]") && setup.contains("cd"),
+            "expected cd-home for /mnt/ paths, got: {setup}"
+        );
+        // Should use printf for screen clear (not `clear` which needs ncurses)
+        assert!(
+            setup.contains(r"\033[2J"),
+            "expected ANSI clear-screen escape, got: {setup}"
         );
     }
 
