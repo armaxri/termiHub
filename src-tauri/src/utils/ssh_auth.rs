@@ -30,9 +30,15 @@ pub fn connect_and_authenticate(config: &SshConfig) -> Result<Session, TerminalE
                 .map_err(|e| TerminalError::SshError(format!("Agent auth failed: {}", e)))?;
         }
         "key" => {
-            // key_path is already tilde-expanded by SshConfig::expand()
-            let key_path_str = config.key_path.as_deref().unwrap_or("~/.ssh/id_rsa");
-            let key_path = std::path::PathBuf::from(key_path_str);
+            // key_path is tilde-expanded by SshConfig::expand(); apply expansion
+            // to the fallback too in case key_path was None.
+            let key_path_str = config
+                .key_path
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .unwrap_or("~/.ssh/id_rsa");
+            let expanded = crate::utils::expand::expand_tilde(key_path_str);
+            let key_path = std::path::PathBuf::from(&expanded);
             let passphrase = config.password.as_deref();
 
             // Convert OpenSSH-format keys (e.g. Ed25519) to PEM for libssh2

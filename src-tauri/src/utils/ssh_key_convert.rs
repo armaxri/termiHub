@@ -33,8 +33,13 @@ impl TempPemKey {
 
 /// Check if a key file is in OpenSSH format.
 pub fn is_openssh_format(path: &Path) -> Result<bool, TerminalError> {
-    let content = fs::read_to_string(path)
-        .map_err(|e| TerminalError::SshError(format!("Failed to read key file: {}", e)))?;
+    let content = fs::read_to_string(path).map_err(|e| {
+        TerminalError::SshError(format!(
+            "Failed to read key file '{}': {}",
+            path.display(),
+            e
+        ))
+    })?;
     Ok(content.starts_with(OPENSSH_HEADER))
 }
 
