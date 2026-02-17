@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback } from "react";
 import { useAppStore } from "@/store/appStore";
 import {
   ConnectionType,
@@ -20,7 +20,6 @@ import {
   RemoteSettings,
 } from "@/components/Settings";
 import { ColorPickerDialog } from "@/components/Terminal/ColorPickerDialog";
-import { getDefaultShell } from "@/utils/shell-detection";
 import { findLeafByTab } from "@/utils/panelTree";
 import "./ConnectionEditor.css";
 
@@ -126,10 +125,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
 
   const availableFolders = extSource ? extSource.folders : folders;
 
-  const [defaultShell, setDefaultShell] = useState("bash");
-  useEffect(() => {
-    getDefaultShell().then(setDefaultShell);
-  }, []);
+  const defaultShell = useAppStore((s) => s.defaultShell);
 
   const defaultConfigs = getDefaultConfigs(defaultShell);
 
