@@ -53,8 +53,10 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
               isDirty={editorDirtyTabs[tab.id] ?? false}
               tabColor={tabColors[tab.id]}
               onRename={() => {
-                const newTitle = window.prompt("Rename tab:", tab.title);
-                if (newTitle !== null && newTitle.trim()) renameTab(tab.id, newTitle.trim());
+                setTimeout(() => {
+                  const newTitle = window.prompt("Rename tab:", tab.title);
+                  if (newTitle !== null && newTitle.trim()) renameTab(tab.id, newTitle.trim());
+                }, 0);
               }}
               onSetColor={() => setColorPickerTabId(tab.id)}
               remoteState={tab.connectionType === "remote" ? remoteStates[tab.id] : undefined}

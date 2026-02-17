@@ -242,8 +242,11 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
                   <ContextMenu.Item
                     className="context-menu__item"
                     onSelect={() => {
-                      const newTitle = window.prompt("Rename tab:", tab.title);
-                      if (newTitle !== null && newTitle.trim()) renameTab(tab.id, newTitle.trim());
+                      setTimeout(() => {
+                        const newTitle = window.prompt("Rename tab:", tab.title);
+                        if (newTitle !== null && newTitle.trim())
+                          renameTab(tab.id, newTitle.trim());
+                      }, 0);
                     }}
                   >
                     <Pencil size={14} /> Rename
