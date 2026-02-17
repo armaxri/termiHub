@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Windows: WSL shell tabs now browse the WSL Linux filesystem (via `\\wsl$\` UNC paths) instead of the Windows filesystem
+- Windows: file browser path navigation (navigate-up, rename) now works correctly by normalizing backend paths to forward slashes
 - Powerline glyphs (e.g., agnoster zsh theme) rendering as boxes on Windows by bundling MesloLGS Nerd Font Mono
 - Windows: PowerShell and Git Bash shells launching WSL instead of the correct shell due to bare executable names being intercepted by WSL interop; now resolved via absolute paths
 - Windows: `bash` shell type on Windows now routes to Git Bash instead of being intercepted by WSL

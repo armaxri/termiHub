@@ -4,6 +4,20 @@ use super::utils::chrono_from_epoch;
 use super::FileEntry;
 use crate::utils::errors::TerminalError;
 
+/// Normalize path separators to forward slashes for cross-platform consistency.
+/// On Windows, backslashes are replaced with forward slashes so the frontend
+/// can use a single `split("/")` code path for navigate-up and path manipulation.
+#[cfg(windows)]
+fn normalize_separators(path: String) -> String {
+    path.replace('\\', "/")
+}
+
+/// On non-Windows platforms, paths already use forward slashes.
+#[cfg(not(windows))]
+fn normalize_separators(path: String) -> String {
+    path
+}
+
 /// List directory contents, filtering out `.` and `..`.
 pub fn list_dir(path: &str) -> Result<Vec<FileEntry>, TerminalError> {
     let dir = Path::new(path);
@@ -34,7 +48,7 @@ pub fn list_dir(path: &str) -> Result<Vec<FileEntry>, TerminalError> {
 
         let permissions = get_permissions(&metadata);
 
-        let full_path = entry.path().to_string_lossy().to_string();
+        let full_path = normalize_separators(entry.path().to_string_lossy().to_string());
 
         result.push(FileEntry {
             name,
@@ -89,6 +103,7 @@ fn get_permissions(_metadata: &std::fs::Metadata) -> Option<String> {
 pub fn home_dir() -> Result<String, TerminalError> {
     std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
+        .map(normalize_separators)
         .map_err(|e| TerminalError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, e)))
 }
 
@@ -189,5 +204,29 @@ mod tests {
         write_file_content(path, "Hello, World!").unwrap();
         let content = read_file_content(path).unwrap();
         assert_eq!(content, "Hello, World!");
+    }
+
+    #[test]
+    fn normalize_separators_converts_backslashes() {
+        let result = normalize_separators(r"C:\Users\foo".to_string());
+        assert_eq!(result, "C:/Users/foo");
+    }
+
+    #[test]
+    fn normalize_separators_preserves_forward_slashes() {
+        let result = normalize_separators("/unix/path".to_string());
+        assert_eq!(result, "/unix/path");
+    }
+
+    #[test]
+    fn normalize_separators_handles_unc_paths() {
+        let result = normalize_separators(r"\\wsl$\Ubuntu\home".to_string());
+        assert_eq!(result, "//wsl$/Ubuntu/home");
+    }
+
+    #[test]
+    fn normalize_separators_preserves_already_normalized_unc() {
+        let result = normalize_separators("//wsl$/Ubuntu/home".to_string());
+        assert_eq!(result, "//wsl$/Ubuntu/home");
     }
 }

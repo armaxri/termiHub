@@ -26,7 +26,8 @@ import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { onVscodeEditComplete } from "@/services/events";
 import { getHomeDir } from "@/services/api";
 import { FileEntry } from "@/types/connection";
-import { SshConfig } from "@/types/terminal";
+import { LocalShellConfig, SshConfig } from "@/types/terminal";
+import { getWslDistroName, wslToWindowsPath } from "@/utils/shell-detection";
 import "./FileBrowser.css";
 
 function formatFileSize(bytes: number): string {
@@ -285,6 +286,13 @@ function useFileBrowserSync() {
 
   const activeTabEditorMeta = activeTab?.editorMeta ?? null;
 
+  // Extract the WSL distro name (if any) from the active tab's shell type
+  const activeTabShellType =
+    activeTab?.config.type === "local"
+      ? (activeTab.config.config as LocalShellConfig).shellType
+      : null;
+  const wslDistro = activeTabShellType ? getWslDistroName(activeTabShellType) : null;
+
   useEffect(() => {
     if (!activeTab || activeTabContentType === "settings") {
       setFileBrowserMode("none");
@@ -333,13 +341,14 @@ function useFileBrowserSync() {
     if (!cwd) return;
     const currentMode = useAppStore.getState().fileBrowserMode;
     if (currentMode === "local") {
-      navigateLocal(cwd);
+      navigateLocal(wslDistro ? wslToWindowsPath(cwd, wslDistro) : cwd);
     } else if (currentMode === "sftp" && sftpSessionId) {
       navigateSftp(cwd);
     }
   }, [
     activeTabId,
     cwd,
+    wslDistro,
     sidebarView,
     activeTabContentType,
     activeTabEditorMeta,
@@ -350,20 +359,22 @@ function useFileBrowserSync() {
 
   // Auto-navigate when entering local mode with no entries loaded yet.
   // Shells that don't send OSC 7 (e.g., bash) leave cwd undefined,
-  // so we fall back to the user's home directory.
+  // so we fall back to the user's home directory (or WSL root for WSL tabs).
   useEffect(() => {
     if (fileBrowserMode !== "local") return;
     const { localFileEntries } = useAppStore.getState();
     if (localFileEntries.length > 0) return; // Already loaded
 
     if (cwd) {
-      navigateLocal(cwd);
+      navigateLocal(wslDistro ? wslToWindowsPath(cwd, wslDistro) : cwd);
+    } else if (wslDistro) {
+      navigateLocal(wslToWindowsPath("/", wslDistro));
     } else {
       getHomeDir()
         .then((home) => navigateLocal(home))
         .catch(() => navigateLocal("/"));
     }
-  }, [fileBrowserMode, navigateLocal, cwd]);
+  }, [fileBrowserMode, navigateLocal, cwd, wslDistro]);
 
   // Auto-connect SFTP for SSH tabs
   useEffect(() => {

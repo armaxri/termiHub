@@ -32,3 +32,13 @@ export function getWslDistroName(shell: ShellType): string | null {
   }
   return shell.slice(4);
 }
+
+/**
+ * Convert a Linux filesystem path to a Windows UNC path for WSL access.
+ * Uses the `\\wsl$\<distro>` share that Windows exposes for WSL filesystems.
+ * Returns forward-slash UNC paths (e.g. `//wsl$/Ubuntu/home/user`) since
+ * the backend normalizes all paths to forward slashes.
+ */
+export function wslToWindowsPath(linuxPath: string, distro: string): string {
+  return `//wsl$/${distro}${linuxPath}`;
+}

@@ -4,6 +4,7 @@ import {
   getDefaultShell,
   isWslShell,
   getWslDistroName,
+  wslToWindowsPath,
 } from "./shell-detection";
 import { listAvailableShells } from "@/services/api";
 
@@ -116,6 +117,22 @@ describe("shell-detection", () => {
       expect(getWslDistroName("bash")).toBeNull();
       expect(getWslDistroName("zsh")).toBeNull();
       expect(getWslDistroName("powershell")).toBeNull();
+    });
+  });
+
+  describe("wslToWindowsPath", () => {
+    it("converts a home directory path", () => {
+      expect(wslToWindowsPath("/home/user", "Ubuntu")).toBe("//wsl$/Ubuntu/home/user");
+    });
+
+    it("converts the root path", () => {
+      expect(wslToWindowsPath("/", "Debian")).toBe("//wsl$/Debian/");
+    });
+
+    it("handles distro names with version numbers", () => {
+      expect(wslToWindowsPath("/home/user/docs", "Ubuntu-22.04")).toBe(
+        "//wsl$/Ubuntu-22.04/home/user/docs"
+      );
     });
   });
 });
