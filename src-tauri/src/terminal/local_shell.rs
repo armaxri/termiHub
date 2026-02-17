@@ -18,7 +18,14 @@ pub struct LocalShell {
 
 impl LocalShell {
     /// Spawn a new local shell.
-    pub fn new(shell_type: &str, output_tx: OutputSender) -> Result<Self, TerminalError> {
+    ///
+    /// If `starting_directory` is provided and non-empty, the shell starts in
+    /// that directory. Otherwise it defaults to the user's home directory.
+    pub fn new(
+        shell_type: &str,
+        starting_directory: Option<&str>,
+        output_tx: OutputSender,
+    ) -> Result<Self, TerminalError> {
         let pty_system = native_pty_system();
 
         let pty_pair = pty_system
@@ -40,14 +47,22 @@ impl LocalShell {
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
 
-        // Start in user's home directory (falls back to process CWD if unavailable)
-        #[cfg(unix)]
-        if let Ok(home) = std::env::var("HOME") {
-            command.cwd(home);
-        }
-        #[cfg(windows)]
-        if let Ok(home) = std::env::var("USERPROFILE") {
-            command.cwd(home);
+        // Start in the configured directory, or fall back to the user's home directory
+        let cwd = starting_directory
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+            .or_else(|| {
+                #[cfg(unix)]
+                {
+                    std::env::var("HOME").ok()
+                }
+                #[cfg(windows)]
+                {
+                    std::env::var("USERPROFILE").ok()
+                }
+            });
+        if let Some(dir) = cwd {
+            command.cwd(dir);
         }
 
         let child = pty_pair

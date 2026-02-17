@@ -64,7 +64,8 @@ impl TerminalManager {
 
         let (backend, title) = match &config {
             ConnectionConfig::Local(cfg) => {
-                let shell = LocalShell::new(&cfg.shell_type, output_tx)?;
+                let shell =
+                    LocalShell::new(&cfg.shell_type, cfg.starting_directory.as_deref(), output_tx)?;
                 let title = cfg.shell_type.clone();
                 (
                     Box::new(shell) as Box<dyn crate::terminal::backend::TerminalBackend>,

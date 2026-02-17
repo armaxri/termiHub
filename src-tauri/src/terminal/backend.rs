@@ -70,6 +70,8 @@ pub struct LocalShellConfig {
     pub shell_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub initial_command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub starting_directory: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -156,6 +158,7 @@ impl ConnectionConfig {
 impl LocalShellConfig {
     pub fn expand(mut self) -> Self {
         self.initial_command = self.initial_command.map(|s| expand_env_placeholders(&s));
+        self.starting_directory = self.starting_directory.map(|s| expand_env_placeholders(&s));
         self
     }
 }
@@ -229,12 +232,17 @@ mod tests {
         let config = ConnectionConfig::Local(LocalShellConfig {
             shell_type: "zsh".to_string(),
             initial_command: Some("echo hello".to_string()),
+            starting_directory: Some("/home/user/projects".to_string()),
         });
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: ConnectionConfig = serde_json::from_str(&json).unwrap();
         if let ConnectionConfig::Local(local) = deserialized {
             assert_eq!(local.shell_type, "zsh");
             assert_eq!(local.initial_command, Some("echo hello".to_string()));
+            assert_eq!(
+                local.starting_directory,
+                Some("/home/user/projects".to_string())
+            );
         } else {
             panic!("Expected Local config");
         }
@@ -311,11 +319,30 @@ mod tests {
         let config = LocalShellConfig {
             shell_type: "bash".to_string(),
             initial_command: Some("${env:TERMIHUB_TEST_CMD}".to_string()),
+            starting_directory: None,
         };
         let expanded = config.expand();
         assert_eq!(expanded.initial_command, Some("make build".to_string()));
 
         std::env::remove_var("TERMIHUB_TEST_CMD");
+    }
+
+    #[test]
+    fn local_config_expand_replaces_starting_directory() {
+        std::env::set_var("TERMIHUB_TEST_DIR", "/tmp/projects");
+
+        let config = LocalShellConfig {
+            shell_type: "bash".to_string(),
+            initial_command: None,
+            starting_directory: Some("${env:TERMIHUB_TEST_DIR}".to_string()),
+        };
+        let expanded = config.expand();
+        assert_eq!(
+            expanded.starting_directory,
+            Some("/tmp/projects".to_string())
+        );
+
+        std::env::remove_var("TERMIHUB_TEST_DIR");
     }
 
     #[test]

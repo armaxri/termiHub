@@ -25,6 +25,7 @@ export interface TerminalOptions {
 export interface LocalShellConfig {
   shellType: ShellType;
   initialCommand?: string;
+  startingDirectory?: string;
 }
 
 export interface SshConfig {
