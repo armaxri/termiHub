@@ -3,11 +3,6 @@ import { CSS } from "@dnd-kit/utilities";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import {
   X,
-  Terminal,
-  Wifi,
-  Cable,
-  Globe,
-  Server,
   Settings as SettingsIcon,
   FileEdit,
   SquarePen,
@@ -17,17 +12,10 @@ import {
   ArrowRightLeft,
   Check,
   Palette,
+  Pencil,
 } from "lucide-react";
 import { TerminalTab } from "@/types/terminal";
-import { ConnectionType } from "@/types/terminal";
-
-const TYPE_ICONS: Record<ConnectionType, typeof Terminal> = {
-  local: Terminal,
-  ssh: Wifi,
-  serial: Cable,
-  telnet: Globe,
-  remote: Server,
-};
+import { ConnectionIcon } from "@/utils/connectionIcons";
 
 interface TabProps {
   tab: TerminalTab;
@@ -40,6 +28,7 @@ interface TabProps {
   onToggleHorizontalScrolling?: () => void;
   isDirty?: boolean;
   tabColor?: string;
+  onRename?: () => void;
   onSetColor?: () => void;
   remoteState?: string;
 }
@@ -55,6 +44,7 @@ export function Tab({
   onToggleHorizontalScrolling,
   isDirty,
   tabColor,
+  onRename,
   onSetColor,
   remoteState,
 }: TabProps) {
@@ -70,14 +60,14 @@ export function Tab({
     ...(tabColor ? { borderLeft: `3px solid ${tabColor}` } : {}),
   };
 
-  const Icon =
+  const NonTerminalIcon =
     tab.contentType === "settings"
       ? SettingsIcon
       : tab.contentType === "editor"
         ? FileEdit
         : tab.contentType === "connection-editor"
           ? SquarePen
-          : TYPE_ICONS[tab.connectionType];
+          : null;
   const isTerminalTab = tab.contentType === "terminal";
 
   const tabElement = (
@@ -90,7 +80,11 @@ export function Tab({
       {...attributes}
       {...listeners}
     >
-      <Icon size={14} className="tab__icon" />
+      {NonTerminalIcon ? (
+        <NonTerminalIcon size={14} className="tab__icon" />
+      ) : (
+        <ConnectionIcon config={tab.config} size={14} className="tab__icon" />
+      )}
       {remoteState && (
         <span className={`tab__state-dot tab__state-dot--${remoteState}`} title={remoteState} />
       )}
@@ -121,6 +115,14 @@ export function Tab({
       <ContextMenu.Trigger asChild>{tabElement}</ContextMenu.Trigger>
       <ContextMenu.Portal>
         <ContextMenu.Content className="context-menu__content">
+          <ContextMenu.Item
+            className="context-menu__item"
+            onSelect={() => onRename?.()}
+            data-testid="tab-context-rename"
+          >
+            <Pencil size={14} /> Rename
+          </ContextMenu.Item>
+          <ContextMenu.Separator className="context-menu__separator" />
           <ContextMenu.Item
             className="context-menu__item"
             onSelect={() => onSave?.()}

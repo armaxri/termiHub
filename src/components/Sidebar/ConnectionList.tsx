@@ -17,11 +17,6 @@ import {
   Folder,
   FolderPlus,
   FolderGit2,
-  Terminal,
-  Wifi,
-  Cable,
-  Globe,
-  Server,
   Plus,
   Play,
   Pencil,
@@ -33,18 +28,11 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { ConnectionType, ShellType, SshConfig, RemoteConfig } from "@/types/terminal";
+import { ShellType, SshConfig, RemoteConfig } from "@/types/terminal";
 import { SavedConnection, ConnectionFolder, ExternalConnectionSource } from "@/types/connection";
 import { listAvailableShells } from "@/services/api";
+import { ConnectionIcon } from "@/utils/connectionIcons";
 import "./ConnectionList.css";
-
-const TYPE_ICONS: Record<ConnectionType, typeof Terminal> = {
-  local: Terminal,
-  ssh: Wifi,
-  serial: Cable,
-  telnet: Globe,
-  remote: Server,
-};
 
 interface InlineFolderInputProps {
   depth: number;
@@ -260,8 +248,6 @@ function ConnectionItem({
   onDuplicate,
   onPingHost,
 }: ConnectionItemProps) {
-  const Icon = TYPE_ICONS[connection.config.type];
-
   const {
     attributes,
     listeners,
@@ -285,7 +271,7 @@ function ConnectionItem({
           {...attributes}
           {...listeners}
         >
-          <Icon size={16} />
+          <ConnectionIcon config={connection.config} customIcon={connection.icon} size={16} />
           <span className="connection-tree__label">{connection.name}</span>
           <span className="connection-tree__type">{connection.config.type}</span>
         </button>
@@ -577,10 +563,11 @@ export function ConnectionList() {
         <DragOverlay>
           {draggingConnection ? (
             <div className="connection-tree__drag-overlay">
-              {(() => {
-                const DragIcon = TYPE_ICONS[draggingConnection.config.type];
-                return <DragIcon size={16} />;
-              })()}
+              <ConnectionIcon
+                config={draggingConnection.config}
+                customIcon={draggingConnection.icon}
+                size={16}
+              />
               <span>{draggingConnection.name}</span>
             </div>
           ) : null}
@@ -977,8 +964,6 @@ function ExternalConnectionItem({
   onDuplicate,
   onPingHost,
 }: ExternalConnectionItemProps) {
-  const Icon = TYPE_ICONS[connection.config.type];
-
   const {
     attributes,
     listeners,
@@ -1002,7 +987,7 @@ function ExternalConnectionItem({
           {...attributes}
           {...listeners}
         >
-          <Icon size={16} />
+          <ConnectionIcon config={connection.config} customIcon={connection.icon} size={16} />
           <span className="connection-tree__label">{connection.name}</span>
           <span className="connection-tree__type">{connection.config.type}</span>
         </button>

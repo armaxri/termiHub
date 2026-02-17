@@ -49,6 +49,7 @@ import { SystemStats } from "@/types/monitoring";
 import {
   createLeafPanel,
   findLeaf,
+  findLeafByTab,
   getAllLeaves,
   updateLeaf,
   removeLeaf,
@@ -243,6 +244,9 @@ interface AppState {
   // Per-tab horizontal scrolling
   tabHorizontalScrolling: Record<string, boolean>;
   setTabHorizontalScrolling: (tabId: string, enabled: boolean) => void;
+
+  // Rename tab
+  renameTab: (tabId: string, newTitle: string) => void;
 
   // Per-tab color
   tabColors: Record<string, string>;
@@ -1186,6 +1190,19 @@ export const useAppStore = create<AppState>((set, get) => {
       set((state) => ({
         tabHorizontalScrolling: { ...state.tabHorizontalScrolling, [tabId]: enabled },
       })),
+
+    // Rename tab
+    renameTab: (tabId, newTitle) =>
+      set((state) => {
+        const leaf = findLeafByTab(state.rootPanel, tabId);
+        if (!leaf) return state;
+        return {
+          rootPanel: updateLeaf(state.rootPanel, leaf.id, (l) => ({
+            ...l,
+            tabs: l.tabs.map((t) => (t.id === tabId ? { ...t, title: newTitle } : t)),
+          })),
+        };
+      }),
 
     // Per-tab color
     tabColors: {},

@@ -34,11 +34,22 @@ export function getWslDistroName(shell: ShellType): string | null {
 }
 
 /**
- * Convert a Linux filesystem path to a Windows UNC path for WSL access.
- * Uses the `\\wsl$\<distro>` share that Windows exposes for WSL filesystems.
- * Returns forward-slash UNC paths (e.g. `//wsl$/Ubuntu/home/user`) since
- * the backend normalizes all paths to forward slashes.
+ * Convert a Linux filesystem path to a Windows-accessible path for WSL.
+ *
+ * Paths under `/mnt/<letter>/` are Windows drive mounts — these are converted
+ * directly to native Windows paths (e.g. `/mnt/c/Users` → `C:/Users`) to
+ * avoid permission errors that occur when accessing Windows drives through
+ * the `\\wsl$\` UNC share.
+ *
+ * All other paths use the `\\wsl$\<distro>` share for native WSL filesystem
+ * access. Returns forward-slash paths since the backend normalizes separators.
  */
 export function wslToWindowsPath(linuxPath: string, distro: string): string {
+  const driveMatch = linuxPath.match(/^\/mnt\/([a-z])(\/.*)?$/);
+  if (driveMatch) {
+    const driveLetter = driveMatch[1].toUpperCase();
+    const rest = driveMatch[2] ?? "/";
+    return `${driveLetter}:${rest}`;
+  }
   return `//wsl$/${distro}${linuxPath}`;
 }

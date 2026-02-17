@@ -15,6 +15,8 @@ use crate::terminal::serial::SerialConnection;
 use crate::terminal::ssh::SshConnection;
 use crate::terminal::telnet::TelnetConnection;
 use crate::utils::errors::TerminalError;
+#[cfg(windows)]
+use crate::utils::shell_detect::wsl_osc7_setup;
 
 /// Maximum number of concurrent terminal sessions.
 const MAX_SESSIONS: usize = 50;
@@ -58,7 +60,20 @@ impl TerminalManager {
         let (output_tx, output_rx) = mpsc::sync_channel::<Vec<u8>>(OUTPUT_CHANNEL_CAPACITY);
 
         let initial_command = match &config {
-            ConnectionConfig::Local(cfg) => cfg.initial_command.clone(),
+            ConnectionConfig::Local(cfg) => {
+                #[cfg(windows)]
+                if cfg.shell_type.starts_with("wsl:") {
+                    let osc7 = wsl_osc7_setup().to_string();
+                    Some(match &cfg.initial_command {
+                        Some(cmd) => format!("{}\n{}", osc7, cmd),
+                        None => osc7,
+                    })
+                } else {
+                    cfg.initial_command.clone()
+                }
+                #[cfg(not(windows))]
+                cfg.initial_command.clone()
+            }
             _ => None,
         };
 

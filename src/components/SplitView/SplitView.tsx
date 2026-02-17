@@ -9,34 +9,32 @@ import {
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
+import * as ContextMenu from "@radix-ui/react-context-menu";
 import {
-  Terminal as TerminalIcon,
-  Wifi,
-  Cable,
-  Globe,
-  Server,
   Settings as SettingsIcon,
   FileEdit,
   SquarePen,
+  Pencil,
+  FileDown,
+  ClipboardCopy,
+  Eraser,
+  ArrowRightLeft,
+  Check,
+  Palette,
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { PanelNode, LeafPanel, TerminalTab, ConnectionType, DropEdge } from "@/types/terminal";
+import { PanelNode, LeafPanel, TerminalTab, DropEdge } from "@/types/terminal";
 import { getAllLeaves, findLeafByTab } from "@/utils/panelTree";
+import { ConnectionIcon } from "@/utils/connectionIcons";
 import { useTerminalRegistry } from "@/components/Terminal/TerminalRegistry";
 import { TabBar } from "@/components/Terminal/TabBar";
+import { ColorPickerDialog } from "@/components/Terminal/ColorPickerDialog";
+import { RenameDialog } from "@/components/Terminal/RenameDialog";
 import { SettingsPanel } from "@/components/Settings";
 import { FileEditor } from "@/components/FileEditor";
 import { ConnectionEditor } from "@/components/ConnectionEditor/ConnectionEditor";
 import { PanelDropZone } from "./PanelDropZone";
 import "./SplitView.css";
-
-const TYPE_ICONS: Record<ConnectionType, typeof TerminalIcon> = {
-  local: TerminalIcon,
-  ssh: Wifi,
-  serial: Cable,
-  telnet: Globe,
-  remote: Server,
-};
 
 export function SplitView() {
   const rootPanel = useAppStore((s) => s.rootPanel);
@@ -180,6 +178,18 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
   const hideEdges =
     activeDragTab !== null && activeDragTab.panelId === panel.id && panel.tabs.length <= 1;
 
+  const renameTab = useAppStore((s) => s.renameTab);
+  const tabHorizontalScrolling = useAppStore((s) => s.tabHorizontalScrolling);
+  const setTabHorizontalScrolling = useAppStore((s) => s.setTabHorizontalScrolling);
+  const tabColors = useAppStore((s) => s.tabColors);
+  const setTabColor = useAppStore((s) => s.setTabColor);
+  const { clearTerminal, saveTerminalToFile, copyTerminalToClipboard } = useTerminalRegistry();
+
+  const [colorPickerTabId, setColorPickerTabId] = useState<string | null>(null);
+  const [renameTabId, setRenameTabId] = useState<string | null>(null);
+
+  const renameTabData = renameTabId ? panel.tabs.find((t) => t.id === renameTabId) : null;
+
   return (
     <div className="split-view__panel-content" onClick={() => setActivePanel(panel.id)}>
       <TabBar panelId={panel.id} tabs={panel.tabs} />
@@ -207,11 +217,92 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
               isVisible={tab.id === panel.activeTabId}
             />
           ) : (
-            <TerminalSlot key={tab.id} tabId={tab.id} isVisible={tab.id === panel.activeTabId} />
+            <ContextMenu.Root key={tab.id}>
+              <ContextMenu.Trigger asChild>
+                <div
+                  className={
+                    tab.id === panel.activeTabId
+                      ? "terminal-context-trigger"
+                      : "terminal-context-trigger terminal-context-trigger--hidden"
+                  }
+                >
+                  <TerminalSlot tabId={tab.id} isVisible={tab.id === panel.activeTabId} />
+                </div>
+              </ContextMenu.Trigger>
+              <ContextMenu.Portal>
+                <ContextMenu.Content className="context-menu__content">
+                  <ContextMenu.Item
+                    className="context-menu__item"
+                    onSelect={() => setRenameTabId(tab.id)}
+                  >
+                    <Pencil size={14} /> Rename
+                  </ContextMenu.Item>
+                  <ContextMenu.Separator className="context-menu__separator" />
+                  <ContextMenu.Item
+                    className="context-menu__item"
+                    onSelect={() => saveTerminalToFile(tab.id)}
+                  >
+                    <FileDown size={14} /> Save to File
+                  </ContextMenu.Item>
+                  <ContextMenu.Item
+                    className="context-menu__item"
+                    onSelect={() => copyTerminalToClipboard(tab.id)}
+                  >
+                    <ClipboardCopy size={14} /> Copy to Clipboard
+                  </ContextMenu.Item>
+                  <ContextMenu.Item
+                    className="context-menu__item"
+                    onSelect={() => clearTerminal(tab.id)}
+                  >
+                    <Eraser size={14} /> Clear Terminal
+                  </ContextMenu.Item>
+                  <ContextMenu.Separator className="context-menu__separator" />
+                  <ContextMenu.CheckboxItem
+                    className="context-menu__item"
+                    checked={tabHorizontalScrolling[tab.id] ?? false}
+                    onSelect={() =>
+                      setTabHorizontalScrolling(tab.id, !(tabHorizontalScrolling[tab.id] ?? false))
+                    }
+                  >
+                    <ContextMenu.ItemIndicator className="context-menu__indicator">
+                      <Check size={14} />
+                    </ContextMenu.ItemIndicator>
+                    <ArrowRightLeft size={14} /> Horizontal Scrolling
+                  </ContextMenu.CheckboxItem>
+                  <ContextMenu.Separator className="context-menu__separator" />
+                  <ContextMenu.Item
+                    className="context-menu__item"
+                    onSelect={() => setColorPickerTabId(tab.id)}
+                  >
+                    <Palette size={14} /> Set Color...
+                  </ContextMenu.Item>
+                </ContextMenu.Content>
+              </ContextMenu.Portal>
+            </ContextMenu.Root>
           )
         )}
         {activeDragTab && <PanelDropZone panelId={panel.id} hideEdges={hideEdges} />}
       </div>
+      <ColorPickerDialog
+        open={colorPickerTabId !== null}
+        onOpenChange={(open) => {
+          if (!open) setColorPickerTabId(null);
+        }}
+        currentColor={colorPickerTabId ? tabColors[colorPickerTabId] : undefined}
+        onColorChange={(color) => {
+          if (colorPickerTabId) setTabColor(colorPickerTabId, color);
+        }}
+      />
+      <RenameDialog
+        open={renameTabId !== null}
+        onOpenChange={(open) => {
+          if (!open) setRenameTabId(null);
+        }}
+        currentTitle={renameTabData?.title ?? ""}
+        onRename={(newTitle) => {
+          if (renameTabId) renameTab(renameTabId, newTitle);
+        }}
+      />
     </div>
   );
 }
@@ -264,17 +355,21 @@ function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: boolean 
 }
 
 function TabDragOverlay({ tab }: { tab: TerminalTab }) {
-  const Icon =
+  const NonTerminalIcon =
     tab.contentType === "settings"
       ? SettingsIcon
       : tab.contentType === "editor"
         ? FileEdit
         : tab.contentType === "connection-editor"
           ? SquarePen
-          : TYPE_ICONS[tab.connectionType];
+          : null;
   return (
     <div className="tab tab--drag-overlay">
-      <Icon size={14} className="tab__icon" />
+      {NonTerminalIcon ? (
+        <NonTerminalIcon size={14} className="tab__icon" />
+      ) : (
+        <ConnectionIcon config={tab.config} size={14} className="tab__icon" />
+      )}
       <span className="tab__title">{tab.title}</span>
     </div>
   );

@@ -206,6 +206,7 @@ mod tests {
         assert_eq!(content, "Hello, World!");
     }
 
+    #[cfg(windows)]
     #[test]
     fn normalize_separators_converts_backslashes() {
         let result = normalize_separators(r"C:\Users\foo".to_string());
@@ -218,6 +219,7 @@ mod tests {
         assert_eq!(result, "/unix/path");
     }
 
+    #[cfg(windows)]
     #[test]
     fn normalize_separators_handles_unc_paths() {
         let result = normalize_separators(r"\\wsl$\Ubuntu\home".to_string());
