@@ -5,6 +5,7 @@ import {
   PanelNode,
   ConnectionType,
   ConnectionConfig,
+  ShellType,
   SshConfig,
   DropEdge,
   TabContentType,
@@ -146,7 +147,7 @@ async function persistExternalSource(source: ExternalConnectionSource): Promise<
 
 interface AppState {
   // Platform default shell (detected from backend at startup)
-  defaultShell: string;
+  defaultShell: ShellType;
 
   // Sidebar
   sidebarView: SidebarView;
@@ -758,7 +759,7 @@ export const useAppStore = create<AppState>((set, get) => {
       try {
         const shells = await listAvailableShells();
         if (shells.length > 0) {
-          set({ defaultShell: shells[0] });
+          set({ defaultShell: shells[0] as ShellType });
         }
       } catch (err) {
         console.error("Failed to detect available shells:", err);
