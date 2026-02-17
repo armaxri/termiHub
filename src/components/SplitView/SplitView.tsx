@@ -33,6 +33,7 @@ import { getAllLeaves, findLeafByTab } from "@/utils/panelTree";
 import { useTerminalRegistry } from "@/components/Terminal/TerminalRegistry";
 import { TabBar } from "@/components/Terminal/TabBar";
 import { ColorPickerDialog } from "@/components/Terminal/ColorPickerDialog";
+import { RenameDialog } from "@/components/Terminal/RenameDialog";
 import { SettingsPanel } from "@/components/Settings";
 import { FileEditor } from "@/components/FileEditor";
 import { ConnectionEditor } from "@/components/ConnectionEditor/ConnectionEditor";
@@ -197,6 +198,9 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
   const { clearTerminal, saveTerminalToFile, copyTerminalToClipboard } = useTerminalRegistry();
 
   const [colorPickerTabId, setColorPickerTabId] = useState<string | null>(null);
+  const [renameTabId, setRenameTabId] = useState<string | null>(null);
+
+  const renameTabData = renameTabId ? panel.tabs.find((t) => t.id === renameTabId) : null;
 
   return (
     <div className="split-view__panel-content" onClick={() => setActivePanel(panel.id)}>
@@ -241,13 +245,7 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
                 <ContextMenu.Content className="context-menu__content">
                   <ContextMenu.Item
                     className="context-menu__item"
-                    onSelect={() => {
-                      setTimeout(() => {
-                        const newTitle = window.prompt("Rename tab:", tab.title);
-                        if (newTitle !== null && newTitle.trim())
-                          renameTab(tab.id, newTitle.trim());
-                      }, 0);
-                    }}
+                    onSelect={() => setRenameTabId(tab.id)}
                   >
                     <Pencil size={14} /> Rename
                   </ContextMenu.Item>
@@ -305,6 +303,16 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
         currentColor={colorPickerTabId ? tabColors[colorPickerTabId] : undefined}
         onColorChange={(color) => {
           if (colorPickerTabId) setTabColor(colorPickerTabId, color);
+        }}
+      />
+      <RenameDialog
+        open={renameTabId !== null}
+        onOpenChange={(open) => {
+          if (!open) setRenameTabId(null);
+        }}
+        currentTitle={renameTabData?.title ?? ""}
+        onRename={(newTitle) => {
+          if (renameTabId) renameTab(renameTabId, newTitle);
         }}
       />
     </div>

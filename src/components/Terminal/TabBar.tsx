@@ -5,6 +5,7 @@ import { TerminalTab } from "@/types/terminal";
 import { useTerminalRegistry } from "./TerminalRegistry";
 import { Tab } from "./Tab";
 import { ColorPickerDialog } from "./ColorPickerDialog";
+import { RenameDialog } from "./RenameDialog";
 import "./TabBar.css";
 
 interface TabBarProps {
@@ -25,6 +26,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   const { clearTerminal, saveTerminalToFile, copyTerminalToClipboard } = useTerminalRegistry();
 
   const [colorPickerTabId, setColorPickerTabId] = useState<string | null>(null);
+  const [renameTabId, setRenameTabId] = useState<string | null>(null);
 
   const handleCloseTab = (tabId: string) => {
     if (editorDirtyTabs[tabId]) {
@@ -32,6 +34,8 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
     }
     closeTab(tabId, panelId);
   };
+
+  const renameTabData = renameTabId ? tabs.find((t) => t.id === renameTabId) : null;
 
   return (
     <div className="tab-bar">
@@ -52,12 +56,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
               }
               isDirty={editorDirtyTabs[tab.id] ?? false}
               tabColor={tabColors[tab.id]}
-              onRename={() => {
-                setTimeout(() => {
-                  const newTitle = window.prompt("Rename tab:", tab.title);
-                  if (newTitle !== null && newTitle.trim()) renameTab(tab.id, newTitle.trim());
-                }, 0);
-              }}
+              onRename={() => setRenameTabId(tab.id)}
               onSetColor={() => setColorPickerTabId(tab.id)}
               remoteState={tab.connectionType === "remote" ? remoteStates[tab.id] : undefined}
             />
@@ -72,6 +71,16 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
         currentColor={colorPickerTabId ? tabColors[colorPickerTabId] : undefined}
         onColorChange={(color) => {
           if (colorPickerTabId) setTabColor(colorPickerTabId, color);
+        }}
+      />
+      <RenameDialog
+        open={renameTabId !== null}
+        onOpenChange={(open) => {
+          if (!open) setRenameTabId(null);
+        }}
+        currentTitle={renameTabData?.title ?? ""}
+        onRename={(newTitle) => {
+          if (renameTabId) renameTab(renameTabId, newTitle);
         }}
       />
     </div>
