@@ -22,6 +22,8 @@ import {
   RemoteSettings,
 } from "@/components/Settings";
 import { ColorPickerDialog } from "@/components/Terminal/ColorPickerDialog";
+import { IconPickerDialog } from "./IconPickerDialog";
+import { IconByName } from "@/utils/connectionIcons";
 import { findLeafByTab } from "@/utils/panelTree";
 import "./ConnectionEditor.css";
 
@@ -136,7 +138,9 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const [terminalOptions, setTerminalOptions] = useState<TerminalOptions>(
     existingConnection?.terminalOptions ?? {}
   );
+  const [icon, setIcon] = useState<string | undefined>(existingConnection?.icon);
   const [colorPickerOpen, setColorPickerOpen] = useState(false);
+  const [iconPickerOpen, setIconPickerOpen] = useState(false);
 
   const handleTypeChange = useCallback(
     (type: ConnectionType) => {
@@ -168,6 +172,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           config: connectionConfig,
           folderId,
           terminalOptions: opts,
+          icon,
         };
         updateExternalConnection(extFilePath, saved);
         return saved;
@@ -178,6 +183,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           config: connectionConfig,
           folderId,
           terminalOptions: opts,
+          icon,
         };
         addExternalConnection(extFilePath, saved);
         return saved;
@@ -189,6 +195,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         config: connectionConfig,
         folderId,
         terminalOptions: opts,
+        icon,
       };
       updateConnection(saved);
       return saved;
@@ -199,6 +206,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         config: connectionConfig,
         folderId,
         terminalOptions: opts,
+        icon,
       };
       addConnection(saved);
       return saved;
@@ -207,6 +215,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     name,
     connectionConfig,
     terminalOptions,
+    icon,
     existingConnection,
     extFilePath,
     folderId,
@@ -372,6 +381,30 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
             )}
           </div>
         </div>
+        <div className="settings-form__field">
+          <span className="settings-form__label">Icon</span>
+          <div className="connection-editor__color-row">
+            {icon && <IconByName name={icon} size={18} />}
+            <button
+              className="connection-editor__btn connection-editor__btn--secondary"
+              type="button"
+              onClick={() => setIconPickerOpen(true)}
+              data-testid="connection-editor-icon-picker"
+            >
+              {icon ? "Change" : "Set Icon"}
+            </button>
+            {icon && (
+              <button
+                className="connection-editor__btn connection-editor__btn--secondary"
+                type="button"
+                onClick={() => setIcon(undefined)}
+                data-testid="connection-editor-clear-icon"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        </div>
         <ColorPickerDialog
           open={colorPickerOpen}
           onOpenChange={setColorPickerOpen}
@@ -379,6 +412,12 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           onColorChange={(color) =>
             setTerminalOptions({ ...terminalOptions, color: color ?? undefined })
           }
+        />
+        <IconPickerDialog
+          open={iconPickerOpen}
+          onOpenChange={setIconPickerOpen}
+          currentIcon={icon}
+          onIconChange={(i) => setIcon(i ?? undefined)}
         />
 
         <div className="connection-editor__actions">

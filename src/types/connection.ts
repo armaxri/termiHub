@@ -6,6 +6,7 @@ export interface SavedConnection {
   config: ConnectionConfig;
   folderId: string | null;
   terminalOptions?: TerminalOptions;
+  icon?: string;
 }
 
 export interface ConnectionFolder {
