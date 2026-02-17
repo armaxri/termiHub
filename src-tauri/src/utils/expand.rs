@@ -1,5 +1,38 @@
 use std::env;
 
+/// Expand a leading `~` or `~/` to the user's home directory.
+///
+/// On Unix, uses `$HOME`. On Windows, uses `%USERPROFILE%`.
+/// Returns the input unchanged if no home directory is available.
+pub fn expand_tilde(input: &str) -> String {
+    if !input.starts_with('~') {
+        return input.to_string();
+    }
+
+    // Only expand "~" alone or "~/..." — not "~user" patterns
+    if input.len() > 1 && !input[1..].starts_with('/') && !input[1..].starts_with('\\') {
+        return input.to_string();
+    }
+
+    #[cfg(unix)]
+    let home = env::var("HOME").ok();
+    #[cfg(windows)]
+    let home = env::var("USERPROFILE").ok();
+    #[cfg(not(any(unix, windows)))]
+    let home: Option<String> = None;
+
+    match home {
+        Some(h) => {
+            let mut result = h;
+            if input.len() > 1 {
+                result.push_str(&input[1..]);
+            }
+            result
+        }
+        None => input.to_string(),
+    }
+}
+
 /// Replace `${env:VAR_NAME}` placeholders with the value of the environment
 /// variable `VAR_NAME`. Unknown variables are left as-is.
 pub fn expand_env_placeholders(input: &str) -> String {
@@ -77,5 +110,32 @@ mod tests {
             "ssh alice@host"
         );
         env::remove_var("TERMIHUB_TEST_USER");
+    }
+
+    #[test]
+    fn tilde_alone_expands_to_home() {
+        let result = expand_tilde("~");
+        assert!(!result.starts_with('~'), "expected ~ to expand, got: {result}");
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn tilde_slash_expands_to_home_subpath() {
+        let result = expand_tilde("~/work");
+        assert!(
+            result.ends_with("/work"),
+            "expected path ending in /work, got: {result}"
+        );
+        assert!(!result.starts_with('~'));
+    }
+
+    #[test]
+    fn tilde_user_is_not_expanded() {
+        assert_eq!(expand_tilde("~user/foo"), "~user/foo");
+    }
+
+    #[test]
+    fn no_tilde_is_unchanged() {
+        assert_eq!(expand_tilde("/usr/local"), "/usr/local");
     }
 }

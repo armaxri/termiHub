@@ -2,7 +2,7 @@ use std::sync::mpsc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::utils::expand::expand_env_placeholders;
+use crate::utils::expand::{expand_env_placeholders, expand_tilde};
 
 /// Trait for all terminal backends (PTY, serial, SSH, telnet).
 pub trait TerminalBackend: Send {
@@ -158,7 +158,9 @@ impl ConnectionConfig {
 impl LocalShellConfig {
     pub fn expand(mut self) -> Self {
         self.initial_command = self.initial_command.map(|s| expand_env_placeholders(&s));
-        self.starting_directory = self.starting_directory.map(|s| expand_env_placeholders(&s));
+        self.starting_directory = self
+            .starting_directory
+            .map(|s| expand_tilde(&expand_env_placeholders(&s)));
         self
     }
 }
@@ -343,6 +345,22 @@ mod tests {
         );
 
         std::env::remove_var("TERMIHUB_TEST_DIR");
+    }
+
+    #[test]
+    fn local_config_expand_tilde_in_starting_directory() {
+        let config = LocalShellConfig {
+            shell_type: "zsh".to_string(),
+            initial_command: None,
+            starting_directory: Some("~/work".to_string()),
+        };
+        let expanded = config.expand();
+        let dir = expanded.starting_directory.unwrap();
+        assert!(
+            dir.ends_with("/work"),
+            "expected tilde expansion, got: {dir}"
+        );
+        assert!(!dir.starts_with('~'), "tilde should be expanded, got: {dir}");
     }
 
     #[test]
