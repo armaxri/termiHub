@@ -16,6 +16,7 @@ import {
   listSerialPorts,
   listAvailableShells,
   checkX11Available,
+  checkSshAgentStatus,
   loadConnectionsAndFolders,
   saveConnection,
   deleteConnectionFromBackend,
@@ -123,6 +124,15 @@ describe("api service", () => {
 
       expect(mockedInvoke).toHaveBeenCalledWith("check_x11_available");
       expect(result).toBe(true);
+    });
+
+    it("checkSshAgentStatus returns status string", async () => {
+      mockedInvoke.mockResolvedValue("running");
+
+      const result = await checkSshAgentStatus();
+
+      expect(mockedInvoke).toHaveBeenCalledWith("check_ssh_agent_status");
+      expect(result).toBe("running");
     });
   });
 

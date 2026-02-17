@@ -50,6 +50,43 @@ pub fn connect_and_authenticate(config: &SshConfig) -> Result<Session, TerminalE
     Ok(session)
 }
 
+/// Check whether the SSH agent is running, stopped, or not installed.
+///
+/// - **Windows**: tries to open the `openssh-ssh-agent` named pipe.
+///   `Path::exists()` does not work for named pipes, so we attempt
+///   an actual open — any result other than "not found" means the
+///   agent is running.
+/// - **Unix**: checks if `SSH_AUTH_SOCK` is set and the socket file exists.
+///
+/// Returns `"running"` or `"stopped"`.
+pub fn check_ssh_agent_status() -> String {
+    #[cfg(target_os = "windows")]
+    {
+        use std::fs::OpenOptions;
+        let pipe_path = r"\\.\pipe\openssh-ssh-agent";
+        match OpenOptions::new().read(true).open(pipe_path) {
+            Ok(_) => "running".to_string(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => "stopped".to_string(),
+            // Any other error (e.g. access denied, busy) means the pipe exists
+            Err(_) => "running".to_string(),
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        match std::env::var("SSH_AUTH_SOCK") {
+            Ok(sock_path) if !sock_path.is_empty() => {
+                if Path::new(&sock_path).exists() {
+                    "running".to_string()
+                } else {
+                    "stopped".to_string()
+                }
+            }
+            _ => "stopped".to_string(),
+        }
+    }
+}
+
 /// Expand `~` prefix in paths to the user's home directory.
 pub fn shellexpand(path: &str) -> String {
     if let Some(rest) = path.strip_prefix("~/") {
@@ -65,4 +102,34 @@ pub fn dirs_home() -> Option<String> {
     std::env::var("HOME")
         .ok()
         .or_else(|| std::env::var("USERPROFILE").ok())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn check_ssh_agent_status_returns_valid_value() {
+        let status = check_ssh_agent_status();
+        assert!(
+            status == "running" || status == "stopped" || status == "not_installed",
+            "unexpected status: {status}"
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn check_ssh_agent_status_stopped_when_sock_unset() {
+        // Temporarily remove SSH_AUTH_SOCK to test the "stopped" path
+        let orig = std::env::var("SSH_AUTH_SOCK").ok();
+        std::env::remove_var("SSH_AUTH_SOCK");
+
+        let status = check_ssh_agent_status();
+        assert_eq!(status, "stopped");
+
+        // Restore original value
+        if let Some(val) = orig {
+            std::env::set_var("SSH_AUTH_SOCK", val);
+        }
+    }
 }

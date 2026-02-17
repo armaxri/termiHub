@@ -63,3 +63,9 @@ pub fn list_serial_ports() -> Vec<String> {
 pub fn check_x11_available() -> bool {
     crate::utils::x11_detect::is_x_server_likely_running()
 }
+
+/// Check whether the SSH agent is running, stopped, or not installed.
+#[tauri::command]
+pub fn check_ssh_agent_status() -> String {
+    crate::utils::ssh_auth::check_ssh_agent_status()
+}

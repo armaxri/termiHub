@@ -190,7 +190,20 @@ export function Terminal({ tabId, config, isVisible }: TerminalProps) {
           }
         };
       } catch (err) {
-        xterm.writeln(`\x1b[31mFailed to create terminal: ${err}\x1b[0m`);
+        const errStr = String(err);
+        if (errStr.includes("Agent auth failed")) {
+          xterm.writeln(`\x1b[31m${errStr}\x1b[0m`);
+          xterm.writeln("");
+          xterm.writeln("\x1b[33mThe SSH agent may not be running.\x1b[0m");
+          xterm.writeln(
+            "\x1b[33mOn Windows, open the connection editor and use the 'Setup SSH Agent' button,\x1b[0m"
+          );
+          xterm.writeln(
+            "\x1b[33mor run: Start-Process powershell -Verb RunAs -ArgumentList 'Set-Service ssh-agent -StartupType Manual; Start-Service ssh-agent'\x1b[0m"
+          );
+        } else {
+          xterm.writeln(`\x1b[31mFailed to create terminal: ${err}\x1b[0m`);
+        }
       }
     },
     [config]

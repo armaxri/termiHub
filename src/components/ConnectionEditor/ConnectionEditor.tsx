@@ -8,9 +8,11 @@ import {
   TelnetConfig,
   SerialConfig,
   RemoteConfig,
+  ShellType,
   TerminalOptions,
   ConnectionEditorMeta,
 } from "@/types/terminal";
+import { listAvailableShells } from "@/services/api";
 import { SavedConnection } from "@/types/connection";
 import {
   ConnectionSettings,
@@ -219,6 +221,19 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     updateExternalConnection,
   ]);
 
+  const handleSetupSshAgent = useCallback(async () => {
+    const shells = await listAvailableShells();
+    if (shells.length === 0) return;
+    addTab("Setup SSH Agent", "local", {
+      type: "local",
+      config: {
+        shellType: "powershell" as ShellType,
+        initialCommand:
+          "Start-Process powershell -Verb RunAs -ArgumentList 'Set-Service ssh-agent -StartupType Manual; Start-Service ssh-agent; ssh-add; pause'",
+      },
+    });
+  }, [addTab]);
+
   const handleSave = useCallback(() => {
     if (saveConnection()) {
       closeThisTab();
@@ -310,6 +325,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           <SshSettings
             config={connectionConfig.config}
             onChange={(config: SshConfig) => setConnectionConfig({ type: "ssh", config })}
+            onSetupAgent={handleSetupSshAgent}
           />
         )}
         {connectionConfig.type === "serial" && (
