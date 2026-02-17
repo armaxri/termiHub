@@ -10,7 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Windows: PowerShell and Git Bash shells launching WSL instead of the correct shell due to bare executable names being intercepted by WSL interop; now resolved via absolute paths
+- Windows: `bash` shell type on Windows now routes to Git Bash instead of being intercepted by WSL
 - Windows: new terminal tabs (keyboard shortcut / "+" button) defaulting to `zsh` instead of the platform default shell, causing WSL errors on Windows
+- Windows: connection editor defaulting to `bash` instead of the platform default shell when creating new local connections (race condition with async shell detection)
 
 ### Added
 
