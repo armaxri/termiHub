@@ -1,8 +1,10 @@
+pub mod agent_manager;
 pub mod backend;
 pub mod jsonrpc;
 pub mod local_shell;
 pub mod manager;
 pub mod remote;
+pub mod remote_session;
 pub mod serial;
 pub mod ssh;
 pub mod telnet;

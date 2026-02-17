@@ -262,6 +262,7 @@ impl RemoteConfig {
 }
 
 impl RemoteAgentConfig {
+    #[allow(dead_code)]
     pub fn expand(mut self) -> Self {
         self.host = expand_env_placeholders(&self.host);
         self.username = expand_env_placeholders(&self.username);
