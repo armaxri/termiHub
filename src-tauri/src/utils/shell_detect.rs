@@ -1,6 +1,7 @@
 use std::path::Path;
 
 /// Well-known Git Bash installation paths on Windows.
+#[cfg(windows)]
 const GIT_BASH_PATHS: &[&str] = &[
     r"C:\Program Files\Git\bin\bash.exe",
     r"C:\Program Files (x86)\Git\bin\bash.exe",
