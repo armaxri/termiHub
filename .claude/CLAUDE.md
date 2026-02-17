@@ -61,6 +61,7 @@ examples/                     # Docker test environment (SSH, Telnet, virtual se
 - Doc comments (`///`) for public APIs
 - `tokio` for async, channels for communication
 - Naming: `PascalCase` types/traits, `snake_case` functions/modules, `UPPER_SNAKE_CASE` constants
+- **Cross-platform awareness**: TermiHub builds on Windows, macOS, and Linux. Gate platform-specific code with `#[cfg(windows)]`, `#[cfg(unix)]`, etc. — on functions, imports, and tests. CI runs on all platforms, so ungated platform-specific code will fail the build.
 
 ### Testing
 - Every bug fix and feature should include verification that the change works correctly, in order of preference:

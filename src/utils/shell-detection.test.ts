@@ -121,11 +121,11 @@ describe("shell-detection", () => {
   });
 
   describe("wslToWindowsPath", () => {
-    it("converts a home directory path", () => {
+    it("converts a home directory path via UNC", () => {
       expect(wslToWindowsPath("/home/user", "Ubuntu")).toBe("//wsl$/Ubuntu/home/user");
     });
 
-    it("converts the root path", () => {
+    it("converts the root path via UNC", () => {
       expect(wslToWindowsPath("/", "Debian")).toBe("//wsl$/Debian/");
     });
 
@@ -133,6 +133,22 @@ describe("shell-detection", () => {
       expect(wslToWindowsPath("/home/user/docs", "Ubuntu-22.04")).toBe(
         "//wsl$/Ubuntu-22.04/home/user/docs"
       );
+    });
+
+    it("converts /mnt/c/ paths to native Windows drive paths", () => {
+      expect(wslToWindowsPath("/mnt/c/Users/richtera", "Ubuntu")).toBe("C:/Users/richtera");
+    });
+
+    it("converts /mnt/d/ paths to D: drive", () => {
+      expect(wslToWindowsPath("/mnt/d/projects/app", "Ubuntu")).toBe("D:/projects/app");
+    });
+
+    it("converts bare /mnt/c to C:/", () => {
+      expect(wslToWindowsPath("/mnt/c", "Ubuntu")).toBe("C:/");
+    });
+
+    it("does not convert /mnt/wsl or other non-drive /mnt paths", () => {
+      expect(wslToWindowsPath("/mnt/wsl/docker", "Ubuntu")).toBe("//wsl$/Ubuntu/mnt/wsl/docker");
     });
   });
 });
