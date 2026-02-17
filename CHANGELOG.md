@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- SSH agent setup guidance: detect when the SSH agent is not running and offer a guided setup flow with pre-filled PowerShell commands (Windows) or shell instructions (Unix)
 - "Save & Connect" button in the connection editor to save and immediately open a terminal session
 - Serial port proxy support in the remote agent: serial ports connected to the Raspberry Pi are now accessible from the desktop app over SSH
 - 24/7 serial data buffering with 1 MiB ring buffer: data is captured continuously and replayed when a client attaches
