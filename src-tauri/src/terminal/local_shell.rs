@@ -143,6 +143,7 @@ impl TerminalBackend for LocalShell {
 
 #[cfg(test)]
 mod tests {
+    #[allow(unused_imports)]
     use super::*;
 
     /// Regression test: spawning PowerShell via portable-pty must not produce
