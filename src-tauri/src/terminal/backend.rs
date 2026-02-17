@@ -169,9 +169,11 @@ impl SshConfig {
     pub fn expand(mut self) -> Self {
         self.host = expand_env_placeholders(&self.host);
         self.username = expand_env_placeholders(&self.username);
-        self.key_path = self
-            .key_path
-            .map(|s| expand_tilde(&expand_env_placeholders(&s)));
+        self.key_path = self.key_path.map(|s| {
+            // Strip surrounding quotes — users often paste paths like "C:\...\key"
+            let stripped = s.trim().trim_matches('"').trim_matches('\'');
+            expand_tilde(&expand_env_placeholders(stripped))
+        });
         self.password = self.password.map(|s| expand_env_placeholders(&s));
         self
     }
@@ -336,6 +338,26 @@ mod tests {
         assert!(
             key.ends_with(".ssh/id_ed25519") || key.ends_with(r".ssh\id_ed25519"),
             "expected path ending in .ssh/id_ed25519, got: {key}"
+        );
+    }
+
+    #[test]
+    fn ssh_config_expand_strips_quotes_from_key_path() {
+        let config = SshConfig {
+            host: "example.com".to_string(),
+            port: 22,
+            username: "user".to_string(),
+            auth_method: "key".to_string(),
+            password: None,
+            key_path: Some(r#""C:\Users\me\.ssh\id_ed25519""#.to_string()),
+            enable_x11_forwarding: false,
+        };
+        let expanded = config.expand();
+        let key = expanded.key_path.unwrap();
+        assert!(!key.contains('"'), "quotes should be stripped, got: {key}");
+        assert!(
+            key.starts_with("C:"),
+            "expected Windows path after stripping, got: {key}"
         );
     }
 
