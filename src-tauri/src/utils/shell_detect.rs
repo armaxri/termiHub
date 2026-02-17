@@ -52,13 +52,27 @@ pub fn detect_available_shells() -> Vec<String> {
 pub fn shell_to_command(shell: &str) -> (String, Vec<String>) {
     match shell {
         "zsh" => ("zsh".into(), vec!["--login".into()]),
-        "bash" => ("bash".into(), vec!["--login".into()]),
+        "bash" => resolve_bash(),
         "sh" => ("sh".into(), vec![]),
         "cmd" => ("cmd.exe".into(), vec![]),
         "powershell" => resolve_powershell(),
         "gitbash" => resolve_git_bash(),
         _ => ("sh".into(), vec![]),
     }
+}
+
+/// Resolve bash.
+///
+/// On Windows, bare `bash` is intercepted by WSL, so we resolve to
+/// Git Bash instead. On Unix, uses the plain `bash` name.
+fn resolve_bash() -> (String, Vec<String>) {
+    #[cfg(windows)]
+    {
+        // On Windows, bare "bash" maps to WSL — use Git Bash instead
+        return resolve_git_bash();
+    }
+    #[allow(unreachable_code)]
+    ("bash".into(), vec!["--login".into()])
 }
 
 /// Resolve the full path to PowerShell on Windows.
@@ -110,8 +124,21 @@ mod tests {
     #[test]
     fn shell_to_command_bash() {
         let (cmd, args) = shell_to_command("bash");
-        assert_eq!(cmd, "bash");
         assert_eq!(args, vec!["--login"]);
+        // On Windows, "bash" resolves to Git Bash to avoid WSL interception
+        #[cfg(windows)]
+        {
+            if Path::new(r"C:\Program Files\Git\bin\bash.exe").exists()
+                || Path::new(r"C:\Program Files (x86)\Git\bin\bash.exe").exists()
+            {
+                assert!(
+                    cmd.ends_with(r"\bash.exe") && cmd.contains("Git"),
+                    "expected Git Bash absolute path, got: {cmd}"
+                );
+            }
+        }
+        #[cfg(not(windows))]
+        assert_eq!(cmd, "bash");
     }
 
     #[test]
@@ -177,5 +204,21 @@ mod tests {
             Path::new(&cmd).is_absolute(),
             "PowerShell path should be absolute on Windows, got: {cmd}"
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn bash_resolves_to_git_bash_on_windows() {
+        let (cmd, args) = resolve_bash();
+        assert_eq!(args, vec!["--login"]);
+        // If Git Bash is installed, should resolve to its absolute path
+        if Path::new(r"C:\Program Files\Git\bin\bash.exe").exists()
+            || Path::new(r"C:\Program Files (x86)\Git\bin\bash.exe").exists()
+        {
+            assert!(
+                cmd.contains("Git") && cmd.ends_with(r"\bash.exe"),
+                "bash should resolve to Git Bash on Windows, got: {cmd}"
+            );
+        }
     }
 }
