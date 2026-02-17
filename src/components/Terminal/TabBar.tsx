@@ -5,6 +5,7 @@ import { TerminalTab } from "@/types/terminal";
 import { useTerminalRegistry } from "./TerminalRegistry";
 import { Tab } from "./Tab";
 import { ColorPickerDialog } from "./ColorPickerDialog";
+import { RenameDialog } from "./RenameDialog";
 import "./TabBar.css";
 
 interface TabBarProps {
@@ -19,11 +20,13 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   const setTabHorizontalScrolling = useAppStore((s) => s.setTabHorizontalScrolling);
   const tabColors = useAppStore((s) => s.tabColors);
   const setTabColor = useAppStore((s) => s.setTabColor);
+  const renameTab = useAppStore((s) => s.renameTab);
   const editorDirtyTabs = useAppStore((s) => s.editorDirtyTabs);
   const remoteStates = useAppStore((s) => s.remoteStates);
   const { clearTerminal, saveTerminalToFile, copyTerminalToClipboard } = useTerminalRegistry();
 
   const [colorPickerTabId, setColorPickerTabId] = useState<string | null>(null);
+  const [renameTabId, setRenameTabId] = useState<string | null>(null);
 
   const handleCloseTab = (tabId: string) => {
     if (editorDirtyTabs[tabId]) {
@@ -31,6 +34,8 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
     }
     closeTab(tabId, panelId);
   };
+
+  const renameTabData = renameTabId ? tabs.find((t) => t.id === renameTabId) : null;
 
   return (
     <div className="tab-bar">
@@ -51,6 +56,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
               }
               isDirty={editorDirtyTabs[tab.id] ?? false}
               tabColor={tabColors[tab.id]}
+              onRename={() => setRenameTabId(tab.id)}
               onSetColor={() => setColorPickerTabId(tab.id)}
               remoteState={tab.connectionType === "remote" ? remoteStates[tab.id] : undefined}
             />
@@ -65,6 +71,16 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
         currentColor={colorPickerTabId ? tabColors[colorPickerTabId] : undefined}
         onColorChange={(color) => {
           if (colorPickerTabId) setTabColor(colorPickerTabId, color);
+        }}
+      />
+      <RenameDialog
+        open={renameTabId !== null}
+        onOpenChange={(open) => {
+          if (!open) setRenameTabId(null);
+        }}
+        currentTitle={renameTabData?.title ?? ""}
+        onRename={(newTitle) => {
+          if (renameTabId) renameTab(renameTabId, newTitle);
         }}
       />
     </div>
