@@ -31,8 +31,8 @@ impl LocalShell {
             .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?;
 
         let (cmd, args) = shell_to_command(shell_type);
-        let mut command = CommandBuilder::new(cmd);
-        for arg in args {
+        let mut command = CommandBuilder::new(&cmd);
+        for arg in &args {
             command.arg(arg);
         }
 
