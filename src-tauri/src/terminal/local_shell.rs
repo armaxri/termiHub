@@ -140,3 +140,61 @@ impl TerminalBackend for LocalShell {
         self.alive.load(Ordering::SeqCst)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression test: spawning PowerShell via portable-pty must not produce
+    /// WSL error output (see GitHub issue #126).
+    #[cfg(windows)]
+    #[test]
+    fn powershell_spawn_does_not_trigger_wsl() {
+        let pty_system = native_pty_system();
+        let pair = pty_system
+            .openpty(PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .expect("failed to open pty");
+
+        let (cmd, args) = shell_to_command("powershell");
+        let mut command = CommandBuilder::new(&cmd);
+        for arg in &args {
+            command.arg(arg);
+        }
+        command.env("TERM", "xterm-256color");
+        command.env("COLORTERM", "truecolor");
+        if let Ok(home) = std::env::var("USERPROFILE") {
+            command.cwd(home);
+        }
+
+        let mut child = pair
+            .slave
+            .spawn_command(command)
+            .expect("failed to spawn powershell");
+        drop(pair.slave);
+
+        let mut reader = pair
+            .master
+            .try_clone_reader()
+            .expect("failed to clone reader");
+
+        // Give PowerShell a moment to start and produce output
+        std::thread::sleep(std::time::Duration::from_secs(3));
+
+        let mut buf = [0u8; 8192];
+        let n = reader.read(&mut buf).unwrap_or(0);
+        let output = String::from_utf8_lossy(&buf[..n]);
+
+        assert!(
+            !output.contains("Linux"),
+            "PowerShell produced WSL error output: {}",
+            output
+        );
+
+        let _ = child.kill();
+    }
+}

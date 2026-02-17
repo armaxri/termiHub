@@ -41,6 +41,7 @@ import {
   monitoringOpen,
   monitoringClose,
   monitoringFetchStats,
+  listAvailableShells,
 } from "@/services/api";
 import { SystemStats } from "@/types/monitoring";
 import {
@@ -144,6 +145,9 @@ async function persistExternalSource(source: ExternalConnectionSource): Promise<
 }
 
 interface AppState {
+  // Platform default shell (detected from backend at startup)
+  defaultShell: string;
+
   // Sidebar
   sidebarView: SidebarView;
   sidebarCollapsed: boolean;
@@ -329,6 +333,9 @@ export const useAppStore = create<AppState>((set, get) => {
   const initialPanel = createLeafPanel();
 
   return {
+    // Platform default shell — updated by loadFromBackend()
+    defaultShell: "bash",
+
     // Sidebar
     sidebarView: "connections",
     sidebarCollapsed: false,
@@ -392,7 +399,7 @@ export const useAppStore = create<AppState>((set, get) => {
 
         const defaultConfig: ConnectionConfig = config ?? {
           type: "local",
-          config: { shellType: "zsh" },
+          config: { shellType: state.defaultShell },
         };
         const newTab = createTab(title, connectionType, defaultConfig, targetPanelId, contentType);
         const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
@@ -746,6 +753,15 @@ export const useAppStore = create<AppState>((set, get) => {
         set({ connections, folders, externalSources, settings });
       } catch (err) {
         console.error("Failed to load connections from backend:", err);
+      }
+      // Detect platform default shell
+      try {
+        const shells = await listAvailableShells();
+        if (shells.length > 0) {
+          set({ defaultShell: shells[0] });
+        }
+      } catch (err) {
+        console.error("Failed to detect available shells:", err);
       }
       // Check VS Code availability in the background
       get().checkVscodeAvailability();
