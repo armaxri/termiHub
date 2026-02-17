@@ -146,6 +146,7 @@ pub fn shell_to_command(shell: &str) -> (String, Vec<String>) {
 /// - Ends with ANSI escape sequences to clear the screen (erase echoed
 ///   command text). Uses `printf` instead of `clear` for portability —
 ///   minimal WSL distros (e.g. Fedora) may not have ncurses installed.
+#[cfg(windows)]
 pub fn wsl_osc7_setup() -> &'static str {
     concat!(
         r#"case "$PWD" in /mnt/[a-z]|/mnt/[a-z]/*) cd;; esac; "#,
@@ -377,6 +378,7 @@ mod tests {
         assert_eq!(result, vec!["Ubuntu"]);
     }
 
+    #[cfg(windows)]
     #[test]
     fn wsl_osc7_setup_contains_expected_parts() {
         let setup = wsl_osc7_setup();

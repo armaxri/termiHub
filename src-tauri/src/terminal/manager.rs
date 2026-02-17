@@ -15,6 +15,7 @@ use crate::terminal::serial::SerialConnection;
 use crate::terminal::ssh::SshConnection;
 use crate::terminal::telnet::TelnetConnection;
 use crate::utils::errors::TerminalError;
+#[cfg(windows)]
 use crate::utils::shell_detect::wsl_osc7_setup;
 
 /// Maximum number of concurrent terminal sessions.
@@ -60,6 +61,7 @@ impl TerminalManager {
 
         let initial_command = match &config {
             ConnectionConfig::Local(cfg) => {
+                #[cfg(windows)]
                 if cfg.shell_type.starts_with("wsl:") {
                     let osc7 = wsl_osc7_setup().to_string();
                     Some(match &cfg.initial_command {
@@ -69,6 +71,8 @@ impl TerminalManager {
                 } else {
                     cfg.initial_command.clone()
                 }
+                #[cfg(not(windows))]
+                cfg.initial_command.clone()
             }
             _ => None,
         };
