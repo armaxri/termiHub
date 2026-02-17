@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -130,6 +131,8 @@ impl Dispatcher {
             capabilities: Capabilities {
                 session_types: vec!["shell".to_string(), "serial".to_string()],
                 max_sessions: MAX_SESSIONS,
+                available_shells: detect_available_shells(),
+                available_serial_ports: detect_available_serial_ports(),
             },
         };
 
@@ -366,6 +369,37 @@ impl Dispatcher {
     }
 }
 
+/// Well-known shell paths to probe on the host system.
+const SHELL_CANDIDATES: &[&str] = &[
+    "/bin/bash",
+    "/bin/sh",
+    "/bin/zsh",
+    "/usr/bin/fish",
+    "/usr/bin/bash",
+    "/usr/bin/zsh",
+    "/usr/local/bin/bash",
+    "/usr/local/bin/zsh",
+    "/usr/local/bin/fish",
+];
+
+/// Detect available shells by checking which candidate paths exist on disk.
+fn detect_available_shells() -> Vec<String> {
+    SHELL_CANDIDATES
+        .iter()
+        .filter(|p| Path::new(p).exists())
+        .map(|p| p.to_string())
+        .collect()
+}
+
+/// Detect available serial ports using the `serialport` crate.
+fn detect_available_serial_ports() -> Vec<String> {
+    serialport::available_ports()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|p| p.port_name)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -414,6 +448,13 @@ mod tests {
             .as_array()
             .unwrap()
             .contains(&json!("shell")));
+        // available_shells and available_serial_ports must be arrays
+        assert!(json["result"]["capabilities"]["available_shells"]
+            .as_array()
+            .is_some());
+        assert!(json["result"]["capabilities"]["available_serial_ports"]
+            .as_array()
+            .is_some());
     }
 
     #[tokio::test]
@@ -779,5 +820,33 @@ mod tests {
         let req = make_request("health.check", json!({}), 11);
         let result = d.dispatch(req).await.to_json();
         assert_eq!(result["result"]["active_sessions"], 0);
+    }
+
+    // ── Capability detection tests ─────────────────────────────────
+
+    #[test]
+    fn detect_shells_returns_existing_paths() {
+        let shells = detect_available_shells();
+        // On any Unix-like system, /bin/sh should exist
+        #[cfg(unix)]
+        assert!(
+            shells.contains(&"/bin/sh".to_string()),
+            "Expected /bin/sh to be detected, got: {shells:?}"
+        );
+        // All returned paths must actually exist
+        for shell in &shells {
+            assert!(
+                Path::new(shell).exists(),
+                "Detected shell does not exist: {shell}"
+            );
+        }
+    }
+
+    #[test]
+    fn detect_serial_ports_returns_vec() {
+        // We can't assert specific ports exist in CI, but the function should not panic
+        let ports = detect_available_serial_ports();
+        // Just verify it returns a valid vector (may be empty in CI)
+        assert!(ports.len() < 1000, "Unreasonably many ports detected");
     }
 }

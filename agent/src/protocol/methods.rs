@@ -19,6 +19,8 @@ pub struct InitializeParams {
 pub struct Capabilities {
     pub session_types: Vec<String>,
     pub max_sessions: u32,
+    pub available_shells: Vec<String>,
+    pub available_serial_ports: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -192,12 +194,16 @@ mod tests {
             capabilities: Capabilities {
                 session_types: vec!["shell".to_string(), "serial".to_string()],
                 max_sessions: 20,
+                available_shells: vec!["/bin/bash".to_string(), "/bin/zsh".to_string()],
+                available_serial_ports: vec!["/dev/ttyUSB0".to_string()],
             },
         };
         let v = serde_json::to_value(&result).unwrap();
         assert_eq!(v["protocol_version"], "0.1.0");
         assert_eq!(v["capabilities"]["max_sessions"], 20);
         assert_eq!(v["capabilities"]["session_types"][0], "shell");
+        assert_eq!(v["capabilities"]["available_shells"][0], "/bin/bash");
+        assert_eq!(v["capabilities"]["available_serial_ports"][0], "/dev/ttyUSB0");
     }
 
     #[test]
