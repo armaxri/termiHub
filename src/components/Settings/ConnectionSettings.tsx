@@ -1,19 +1,29 @@
 import { useState, useEffect } from "react";
 import { LocalShellConfig, ShellType } from "@/types/terminal";
 import { detectAvailableShells } from "@/utils/shell-detection";
+import { getWslDistroName } from "@/utils/shell-detection";
 
 interface ConnectionSettingsProps {
   config: LocalShellConfig;
   onChange: (config: LocalShellConfig) => void;
 }
 
-const SHELL_LABELS: Record<ShellType, string> = {
+const SHELL_LABELS: Record<string, string> = {
   bash: "Bash",
   zsh: "Zsh",
   cmd: "Command Prompt",
   powershell: "PowerShell",
   gitbash: "Git Bash",
 };
+
+/** Get the display label for a shell type, including WSL distros. */
+function getShellLabel(shell: ShellType): string {
+  const distro = getWslDistroName(shell);
+  if (distro !== null) {
+    return `WSL: ${distro}`;
+  }
+  return SHELL_LABELS[shell] ?? shell;
+}
 
 export function ConnectionSettings({ config, onChange }: ConnectionSettingsProps) {
   const [availableShells, setAvailableShells] = useState<ShellType[]>([]);
@@ -36,7 +46,7 @@ export function ConnectionSettings({ config, onChange }: ConnectionSettingsProps
         >
           {options.map((shell) => (
             <option key={shell} value={shell}>
-              {SHELL_LABELS[shell] ?? shell}
+              {getShellLabel(shell)}
             </option>
           ))}
         </select>

@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Windows: WSL distributions now appear as shell options — each installed distro (e.g., "WSL: Ubuntu") is automatically detected and selectable in the connection editor
 - SSH agent setup guidance: detect when the SSH agent is not running and offer a guided setup flow with pre-filled PowerShell commands (Windows) or shell instructions (Unix)
 - "Save & Connect" button in the connection editor to save and immediately open a terminal session
 - Serial port proxy support in the remote agent: serial ports connected to the Raspberry Pi are now accessible from the desktop app over SSH

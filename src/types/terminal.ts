@@ -1,6 +1,6 @@
 export type SessionId = string;
 
-export type ShellType = "zsh" | "bash" | "cmd" | "powershell" | "gitbash";
+export type ShellType = "zsh" | "bash" | "cmd" | "powershell" | "gitbash" | `wsl:${string}`;
 
 export type ConnectionType = "local" | "ssh" | "telnet" | "serial" | "remote";
 
