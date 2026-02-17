@@ -103,16 +103,28 @@ export function SshSettings({ config, onChange, onSetupAgent }: SshSettingsProps
         </p>
       )}
       {config.authMethod === "key" && (
-        <label className="settings-form__field">
-          <span className="settings-form__label">Key Path</span>
-          <input
-            type="text"
-            value={config.keyPath ?? ""}
-            onChange={(e) => onChange({ ...config, keyPath: e.target.value })}
-            placeholder="~/.ssh/id_rsa"
-            data-testid="ssh-settings-key-path-input"
-          />
-        </label>
+        <>
+          <label className="settings-form__field">
+            <span className="settings-form__label">Key Path</span>
+            <input
+              type="text"
+              value={config.keyPath ?? ""}
+              onChange={(e) => onChange({ ...config, keyPath: e.target.value })}
+              placeholder="~/.ssh/id_ed25519"
+              data-testid="ssh-settings-key-path-input"
+            />
+          </label>
+          <label className="settings-form__field">
+            <span className="settings-form__label">Key Passphrase (optional)</span>
+            <input
+              type="password"
+              value={config.password ?? ""}
+              onChange={(e) => onChange({ ...config, password: e.target.value || undefined })}
+              placeholder="Leave empty if unencrypted"
+              data-testid="ssh-settings-key-passphrase-input"
+            />
+          </label>
+        </>
       )}
       <label className="settings-form__field settings-form__field--checkbox">
         <input

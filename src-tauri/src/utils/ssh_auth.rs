@@ -29,11 +29,21 @@ pub fn connect_and_authenticate(config: &SshConfig) -> Result<Session, TerminalE
                 .map_err(|e| TerminalError::SshError(format!("Agent auth failed: {}", e)))?;
         }
         "key" => {
-            let key_path = config.key_path.as_deref().unwrap_or("~/.ssh/id_rsa");
-            let expanded = shellexpand(key_path);
+            let key_path_str = config.key_path.as_deref().unwrap_or("~/.ssh/id_rsa");
+            let key_path = std::path::PathBuf::from(shellexpand(key_path_str));
+            let passphrase = config.password.as_deref();
+
+            // Convert OpenSSH-format keys (e.g. Ed25519) to PEM for libssh2
+            let prepared = crate::utils::ssh_key_convert::prepare_key(&key_path, passphrase)?;
+            let auth_path = match &prepared {
+                crate::utils::ssh_key_convert::PreparedKey::Original => key_path.as_path(),
+                crate::utils::ssh_key_convert::PreparedKey::Converted(temp) => temp.path(),
+            };
+
             session
-                .userauth_pubkey_file(&config.username, None, Path::new(&expanded), None)
+                .userauth_pubkey_file(&config.username, None, auth_path, passphrase)
                 .map_err(|e| TerminalError::SshError(format!("Key auth failed: {}", e)))?;
+            // `prepared` dropped here — temp file cleaned up
         }
         _ => {
             let password = config.password.as_deref().unwrap_or("");
