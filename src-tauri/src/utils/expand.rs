@@ -115,7 +115,10 @@ mod tests {
     #[test]
     fn tilde_alone_expands_to_home() {
         let result = expand_tilde("~");
-        assert!(!result.starts_with('~'), "expected ~ to expand, got: {result}");
+        assert!(
+            !result.starts_with('~'),
+            "expected ~ to expand, got: {result}"
+        );
         assert!(!result.is_empty());
     }
 
