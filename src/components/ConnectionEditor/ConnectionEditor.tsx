@@ -62,6 +62,14 @@ function getDefaultConfigs(defaultShell: string): Record<ConnectionType, Connect
         sessionType: "shell",
       } as RemoteConfig,
     },
+    "remote-session": {
+      type: "remote-session",
+      config: {
+        agentId: "",
+        sessionType: "shell",
+        persistent: false,
+      },
+    },
   };
 }
 

@@ -126,6 +126,12 @@ impl TerminalManager {
                     title,
                 )
             }
+            ConnectionConfig::RemoteSession(_cfg) => {
+                // TODO(phase-4): route through AgentConnectionManager
+                return Err(TerminalError::SpawnFailed(
+                    "remote-session backend not yet implemented".to_string(),
+                ));
+            }
         };
 
         let connection_type = match &config {
@@ -134,6 +140,7 @@ impl TerminalManager {
             ConnectionConfig::Ssh(_) => "ssh",
             ConnectionConfig::Telnet(_) => "telnet",
             ConnectionConfig::Remote(_) => "remote",
+            ConnectionConfig::RemoteSession(_) => "remote-session",
         };
 
         let info = SessionInfo {

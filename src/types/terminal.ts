@@ -2,7 +2,7 @@ export type SessionId = string;
 
 export type ShellType = "zsh" | "bash" | "cmd" | "powershell" | "gitbash" | `wsl:${string}`;
 
-export type ConnectionType = "local" | "ssh" | "telnet" | "serial" | "remote";
+export type ConnectionType = "local" | "ssh" | "telnet" | "serial" | "remote" | "remote-session";
 
 export type TabContentType = "terminal" | "settings" | "editor" | "connection-editor";
 
@@ -70,12 +70,39 @@ export interface RemoteConfig {
   title?: string;
 }
 
+/** SSH transport configuration for a remote agent (no session details). */
+export interface RemoteAgentConfig {
+  host: string;
+  port: number;
+  username: string;
+  authMethod: "password" | "key" | "agent";
+  password?: string;
+  keyPath?: string;
+}
+
+/** Session configuration for a session running on a remote agent. */
+export interface RemoteSessionConfig {
+  agentId: string;
+  sessionType: "shell" | "serial";
+  shell?: string;
+  serialPort?: string;
+  baudRate?: number;
+  dataBits?: 5 | 6 | 7 | 8;
+  stopBits?: 1 | 2;
+  parity?: "none" | "odd" | "even";
+  flowControl?: "none" | "hardware" | "software";
+  title?: string;
+  /** Whether this session survives reconnection (re-attach vs recreate). */
+  persistent: boolean;
+}
+
 export type ConnectionConfig =
   | { type: "local"; config: LocalShellConfig }
   | { type: "ssh"; config: SshConfig }
   | { type: "telnet"; config: TelnetConfig }
   | { type: "serial"; config: SerialConfig }
-  | { type: "remote"; config: RemoteConfig };
+  | { type: "remote"; config: RemoteConfig }
+  | { type: "remote-session"; config: RemoteSessionConfig };
 
 export interface TerminalTab {
   id: string;
