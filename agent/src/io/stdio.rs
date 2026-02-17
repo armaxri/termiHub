@@ -7,6 +7,7 @@ use tracing::info;
 use crate::handler::dispatch::Dispatcher;
 use crate::io::transport::run_transport_loop;
 use crate::protocol::messages::JsonRpcNotification;
+use crate::session::definitions::DefinitionStore;
 use crate::session::manager::SessionManager;
 
 /// Run the NDJSON stdio transport loop.
@@ -19,7 +20,8 @@ pub async fn run_stdio_loop(shutdown: CancellationToken) -> anyhow::Result<()> {
         tokio::sync::mpsc::unbounded_channel::<JsonRpcNotification>();
 
     let session_manager = Arc::new(SessionManager::new(notification_tx));
-    let mut dispatcher = Dispatcher::new(session_manager.clone());
+    let definition_store = Arc::new(DefinitionStore::new(DefinitionStore::default_path()));
+    let mut dispatcher = Dispatcher::new(session_manager.clone(), definition_store);
 
     let stdin = tokio::io::stdin();
     let mut stdout = tokio::io::stdout();

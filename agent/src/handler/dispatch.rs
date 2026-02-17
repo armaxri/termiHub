@@ -11,9 +11,11 @@ use crate::protocol::errors;
 use crate::protocol::messages::{JsonRpcErrorResponse, JsonRpcRequest, JsonRpcResponse};
 use crate::protocol::methods::{
     Capabilities, HealthCheckResult, InitializeParams, InitializeResult, SessionAttachParams,
-    SessionCloseParams, SessionCreateParams, SessionCreateResult, SessionDetachParams,
-    SessionInputParams, SessionListEntry, SessionListResult,
+    SessionCloseParams, SessionCreateParams, SessionCreateResult, SessionDefineParams,
+    SessionDefinitionDeleteParams, SessionDetachParams, SessionInputParams, SessionListEntry,
+    SessionListResult,
 };
+use crate::session::definitions::{DefinitionStore, SessionDefinition};
 use crate::session::manager::{SessionCreateError, SessionManager, MAX_SESSIONS};
 use crate::session::types::SessionType;
 
@@ -24,6 +26,7 @@ const AGENT_PROTOCOL_VERSION: &str = "0.1.0";
 /// to the appropriate handler function.
 pub struct Dispatcher {
     session_manager: Arc<SessionManager>,
+    definition_store: Arc<DefinitionStore>,
     initialized: bool,
     start_time: Instant,
 }
@@ -45,9 +48,13 @@ impl DispatchResult {
 }
 
 impl Dispatcher {
-    pub fn new(session_manager: Arc<SessionManager>) -> Self {
+    pub fn new(
+        session_manager: Arc<SessionManager>,
+        definition_store: Arc<DefinitionStore>,
+    ) -> Self {
         Self {
             session_manager,
+            definition_store,
             initialized: false,
             start_time: Instant::now(),
         }
@@ -82,6 +89,11 @@ impl Dispatcher {
             "session.detach" => self.handle_session_detach(request).await,
             "session.input" => self.handle_session_input(request).await,
             "session.resize" => self.handle_session_resize(request).await,
+            "session.define" => self.handle_session_define(request).await,
+            "session.definitions.list" => self.handle_session_definitions_list(request).await,
+            "session.definitions.delete" => {
+                self.handle_session_definitions_delete(request).await
+            }
             "health.check" => self.handle_health_check(request).await,
             _ => {
                 warn!("Unknown method: {}", method);
@@ -367,6 +379,71 @@ impl Dispatcher {
         // No-op for serial sessions; returns success for all session types.
         DispatchResult::Success(JsonRpcResponse::new(request.id, json!({})))
     }
+
+    async fn handle_session_define(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+
+        let params: SessionDefineParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid session.define params: {e}"),
+                ));
+            }
+        };
+
+        let def_id = params
+            .id
+            .unwrap_or_else(|| format!("def-{}", uuid::Uuid::new_v4()));
+
+        let definition = SessionDefinition {
+            id: def_id,
+            name: params.name,
+            session_type: params.session_type,
+            config: params.config,
+            persistent: params.persistent,
+        };
+
+        let snapshot = self.definition_store.define(definition).await;
+        DispatchResult::Success(JsonRpcResponse::new(
+            id,
+            serde_json::to_value(snapshot).unwrap(),
+        ))
+    }
+
+    async fn handle_session_definitions_list(&self, request: JsonRpcRequest) -> DispatchResult {
+        let list = self.definition_store.list().await;
+        DispatchResult::Success(JsonRpcResponse::new(
+            request.id,
+            json!({"definitions": list}),
+        ))
+    }
+
+    async fn handle_session_definitions_delete(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+
+        let params: SessionDefinitionDeleteParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid session.definitions.delete params: {e}"),
+                ));
+            }
+        };
+
+        if self.definition_store.delete(&params.id).await {
+            DispatchResult::Success(JsonRpcResponse::new(id, json!({})))
+        } else {
+            DispatchResult::Error(
+                JsonRpcErrorResponse::new(id, errors::SESSION_NOT_FOUND, "Definition not found")
+                    .with_data(json!({"id": params.id})),
+            )
+        }
+    }
 }
 
 /// Well-known shell paths to probe on the host system.
@@ -407,7 +484,12 @@ mod tests {
 
     fn make_dispatcher() -> Dispatcher {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        Dispatcher::new(Arc::new(SessionManager::new(tx)))
+        let tmp = std::env::temp_dir().join(format!(
+            "termihub-test-{}.json",
+            uuid::Uuid::new_v4()
+        ));
+        let def_store = Arc::new(DefinitionStore::new_temp(tmp));
+        Dispatcher::new(Arc::new(SessionManager::new(tx)), def_store)
     }
 
     fn make_request(method: &str, params: Value, id: u64) -> JsonRpcRequest {
@@ -848,5 +930,96 @@ mod tests {
         let ports = detect_available_serial_ports();
         // Just verify it returns a valid vector (may be empty in CI)
         assert!(ports.len() < 1000, "Unreasonably many ports detected");
+    }
+
+    // ── Session definition tests ──────────────────────────────────────
+
+    #[tokio::test]
+    async fn session_define_and_list() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        // Define
+        let req = make_request(
+            "session.define",
+            json!({
+                "id": "def-1",
+                "name": "Build Shell",
+                "type": "shell",
+                "config": {"shell": "/bin/bash"},
+                "persistent": true
+            }),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["result"]["id"], "def-1");
+        assert_eq!(result["result"]["name"], "Build Shell");
+        assert!(result["result"]["persistent"].as_bool().unwrap());
+
+        // List
+        let req = make_request("session.definitions.list", json!({}), 3);
+        let result = d.dispatch(req).await.to_json();
+        let defs = result["result"]["definitions"].as_array().unwrap();
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0]["id"], "def-1");
+    }
+
+    #[tokio::test]
+    async fn session_define_auto_generates_id() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request(
+            "session.define",
+            json!({
+                "name": "Auto ID Shell",
+                "type": "shell"
+            }),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        let id = result["result"]["id"].as_str().unwrap();
+        assert!(id.starts_with("def-"), "Expected auto-generated id starting with 'def-', got: {id}");
+    }
+
+    #[tokio::test]
+    async fn session_definitions_delete() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        // Define
+        let req = make_request(
+            "session.define",
+            json!({"id": "def-del", "name": "Temp", "type": "shell"}),
+            2,
+        );
+        d.dispatch(req).await;
+
+        // Delete
+        let req = make_request("session.definitions.delete", json!({"id": "def-del"}), 3);
+        let result = d.dispatch(req).await.to_json();
+        assert!(result.get("result").is_some());
+
+        // Verify gone
+        let req = make_request("session.definitions.list", json!({}), 4);
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(
+            result["result"]["definitions"].as_array().unwrap().len(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn session_definitions_delete_not_found() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request(
+            "session.definitions.delete",
+            json!({"id": "nonexistent"}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["error"]["code"], errors::SESSION_NOT_FOUND);
     }
 }

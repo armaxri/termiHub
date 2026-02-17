@@ -118,6 +118,29 @@ pub struct HealthCheckResult {
     pub active_sessions: u32,
 }
 
+// ── session.define ──────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SessionDefineParams {
+    /// Unique ID for this definition. If omitted, auto-generated.
+    pub id: Option<String>,
+    pub name: String,
+    /// "shell" or "serial".
+    #[serde(rename = "type")]
+    pub session_type: String,
+    #[serde(default)]
+    pub config: serde_json::Value,
+    #[serde(default)]
+    pub persistent: bool,
+}
+
+// ── session.definitions.delete ──────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SessionDefinitionDeleteParams {
+    pub id: String,
+}
+
 // ── Shell / Serial config (for validation in the stub) ──────────────
 
 #[derive(Debug, Clone, Deserialize)]
@@ -354,5 +377,34 @@ mod tests {
         assert_eq!(params.session_id, "abc-123");
         assert_eq!(params.cols, 120);
         assert_eq!(params.rows, 40);
+    }
+
+    #[test]
+    fn session_define_params_serde() {
+        let json = json!({
+            "name": "Build Shell",
+            "type": "shell",
+            "config": {"shell": "/bin/bash"},
+            "persistent": true
+        });
+        let params: SessionDefineParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.name, "Build Shell");
+        assert_eq!(params.session_type, "shell");
+        assert!(params.persistent);
+        assert!(params.id.is_none());
+    }
+
+    #[test]
+    fn session_define_params_persistent_defaults_false() {
+        let json = json!({"name": "Temp", "type": "shell"});
+        let params: SessionDefineParams = serde_json::from_value(json).unwrap();
+        assert!(!params.persistent);
+    }
+
+    #[test]
+    fn session_definition_delete_params_serde() {
+        let json = json!({"id": "def-123"});
+        let params: SessionDefinitionDeleteParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.id, "def-123");
     }
 }
