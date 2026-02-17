@@ -117,9 +117,7 @@ export interface IconCatalogEntry {
 
 /** Convert PascalCase or camelCase to space-separated words */
 function toDisplayName(name: string): string {
-  return name
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .replace(/^./, (c) => c.toUpperCase());
+  return name.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/^./, (c) => c.toUpperCase());
 }
 
 let _catalog: IconCatalogEntry[] | null = null;
