@@ -19,6 +19,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   const setTabHorizontalScrolling = useAppStore((s) => s.setTabHorizontalScrolling);
   const tabColors = useAppStore((s) => s.tabColors);
   const setTabColor = useAppStore((s) => s.setTabColor);
+  const renameTab = useAppStore((s) => s.renameTab);
   const editorDirtyTabs = useAppStore((s) => s.editorDirtyTabs);
   const remoteStates = useAppStore((s) => s.remoteStates);
   const { clearTerminal, saveTerminalToFile, copyTerminalToClipboard } = useTerminalRegistry();
@@ -51,6 +52,10 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
               }
               isDirty={editorDirtyTabs[tab.id] ?? false}
               tabColor={tabColors[tab.id]}
+              onRename={() => {
+                const newTitle = window.prompt("Rename tab:", tab.title);
+                if (newTitle !== null && newTitle.trim()) renameTab(tab.id, newTitle.trim());
+              }}
               onSetColor={() => setColorPickerTabId(tab.id)}
               remoteState={tab.connectionType === "remote" ? remoteStates[tab.id] : undefined}
             />

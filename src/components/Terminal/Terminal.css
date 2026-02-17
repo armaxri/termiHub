@@ -1,3 +1,13 @@
+.terminal-context-trigger {
+  position: absolute;
+  inset: 0;
+}
+
+.terminal-context-trigger--hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .terminal-container {
   position: absolute;
   inset: 0;

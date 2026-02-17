@@ -17,6 +17,7 @@ import {
   ArrowRightLeft,
   Check,
   Palette,
+  Pencil,
 } from "lucide-react";
 import { TerminalTab } from "@/types/terminal";
 import { ConnectionType } from "@/types/terminal";
@@ -40,6 +41,7 @@ interface TabProps {
   onToggleHorizontalScrolling?: () => void;
   isDirty?: boolean;
   tabColor?: string;
+  onRename?: () => void;
   onSetColor?: () => void;
   remoteState?: string;
 }
@@ -55,6 +57,7 @@ export function Tab({
   onToggleHorizontalScrolling,
   isDirty,
   tabColor,
+  onRename,
   onSetColor,
   remoteState,
 }: TabProps) {
@@ -121,6 +124,14 @@ export function Tab({
       <ContextMenu.Trigger asChild>{tabElement}</ContextMenu.Trigger>
       <ContextMenu.Portal>
         <ContextMenu.Content className="context-menu__content">
+          <ContextMenu.Item
+            className="context-menu__item"
+            onSelect={() => onRename?.()}
+            data-testid="tab-context-rename"
+          >
+            <Pencil size={14} /> Rename
+          </ContextMenu.Item>
+          <ContextMenu.Separator className="context-menu__separator" />
           <ContextMenu.Item
             className="context-menu__item"
             onSelect={() => onSave?.()}
