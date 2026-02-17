@@ -200,8 +200,8 @@ export function Terminal({ tabId, config, isVisible }: TerminalProps) {
   useEffect(() => {
     // Create an imperative DOM element for xterm (not managed by React rendering)
     const el = document.createElement("div");
-    el.style.width = "100%";
-    el.style.height = "100%";
+    el.style.position = "absolute";
+    el.style.inset = "0";
     terminalElRef.current = el;
 
     // Park the element so xterm.open() has a DOM parent
