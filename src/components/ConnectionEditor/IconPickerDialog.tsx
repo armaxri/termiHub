@@ -35,7 +35,11 @@ export function IconPickerDialog({
   const filtered = useMemo(() => {
     if (!search.trim()) return catalog;
     const q = search.toLowerCase();
-    return catalog.filter((e) => e.displayName.toLowerCase().includes(q));
+    return catalog.filter(
+      (e) =>
+        e.displayName.toLowerCase().includes(q) ||
+        e.tags.some((tag) => tag.toLowerCase().includes(q))
+    );
   }, [catalog, search]);
 
   const handleApply = () => {

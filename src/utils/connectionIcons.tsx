@@ -12,6 +12,7 @@ import {
 import type { LucideIcon, IconNode } from "lucide-react";
 import * as labIcons from "@lucide/lab";
 import type { ConnectionConfig, ShellType } from "@/types/terminal";
+import lucideTags from "@/data/lucide-tags.json";
 
 /** Default icon by connection type (non-local or local without special shell) */
 const TYPE_ICONS: Record<string, LucideIcon> = {
@@ -113,12 +114,24 @@ export interface IconCatalogEntry {
   name: string;
   /** Human-readable name for display and search */
   displayName: string;
+  /** Searchable tags (e.g. "arm", "muscle" for BicepsFlexed) */
+  tags: string[];
 }
 
 /** Convert PascalCase or camelCase to space-separated words */
 function toDisplayName(name: string): string {
   return name.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/^./, (c) => c.toUpperCase());
 }
+
+/** Convert PascalCase to kebab-case for tag lookup */
+function toKebabCase(name: string): string {
+  return name
+    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+    .replace(/([A-Z])([A-Z][a-z])/g, "$1-$2")
+    .toLowerCase();
+}
+
+const tagMap = lucideTags as Record<string, string[]>;
 
 let _catalog: IconCatalogEntry[] | null = null;
 
@@ -129,12 +142,16 @@ export function getIconCatalog(): IconCatalogEntry[] {
   const entries: IconCatalogEntry[] = [];
 
   for (const name of Object.keys(lucideIconMap)) {
-    entries.push({ name, displayName: toDisplayName(name) });
+    const kebab = toKebabCase(name);
+    const tags = tagMap[kebab] ?? [];
+    entries.push({ name, displayName: toDisplayName(name), tags });
   }
 
   for (const name of Object.keys(labIcons)) {
     if (name === "__esModule" || name === "default") continue;
-    entries.push({ name: `lab:${name}`, displayName: toDisplayName(name) });
+    const kebab = toKebabCase(name);
+    const tags = tagMap[kebab] ?? [];
+    entries.push({ name: `lab:${name}`, displayName: toDisplayName(name), tags });
   }
 
   entries.sort((a, b) => a.displayName.localeCompare(b.displayName));
