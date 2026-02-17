@@ -12,6 +12,7 @@ const GIT_BASH_PATHS: &[&str] = &[
 /// `wsl.exe` emits UTF-16LE text (often with a BOM). This function decodes
 /// the bytes, strips the BOM and null characters, and returns a list of
 /// distro names with empty lines removed.
+#[cfg(any(windows, test))]
 pub fn parse_wsl_output(raw: &[u8]) -> Vec<String> {
     // Decode UTF-16LE: take pairs of bytes, form u16 code units
     let code_units: Vec<u16> = raw
@@ -31,23 +32,16 @@ pub fn parse_wsl_output(raw: &[u8]) -> Vec<String> {
 
 /// Detect installed WSL distributions by running `wsl.exe --list --quiet`.
 ///
-/// Returns an empty list on non-Windows platforms or if the command fails.
+/// Returns an empty list if the command fails or WSL is not installed.
+#[cfg(windows)]
 pub fn detect_wsl_distros() -> Vec<String> {
-    #[cfg(windows)]
-    {
-        let output = std::process::Command::new("wsl.exe")
-            .args(["--list", "--quiet"])
-            .output();
+    let output = std::process::Command::new("wsl.exe")
+        .args(["--list", "--quiet"])
+        .output();
 
-        match output {
-            Ok(out) if out.status.success() => parse_wsl_output(&out.stdout),
-            _ => Vec::new(),
-        }
-    }
-
-    #[cfg(not(windows))]
-    {
-        Vec::new()
+    match output {
+        Ok(out) if out.status.success() => parse_wsl_output(&out.stdout),
+        _ => Vec::new(),
     }
 }
 
