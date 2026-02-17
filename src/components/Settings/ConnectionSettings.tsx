@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { LocalShellConfig, ShellType } from "@/types/terminal";
 import { detectAvailableShells } from "@/utils/shell-detection";
+import { useAppStore } from "@/store/appStore";
 
 interface ConnectionSettingsProps {
   config: LocalShellConfig;
@@ -17,6 +18,7 @@ const SHELL_LABELS: Record<ShellType, string> = {
 
 export function ConnectionSettings({ config, onChange }: ConnectionSettingsProps) {
   const [availableShells, setAvailableShells] = useState<ShellType[]>([]);
+  const defaultShell = useAppStore((s) => s.defaultShell);
 
   useEffect(() => {
     detectAvailableShells().then(setAvailableShells);
@@ -34,11 +36,14 @@ export function ConnectionSettings({ config, onChange }: ConnectionSettingsProps
           onChange={(e) => onChange({ ...config, shellType: e.target.value as ShellType })}
           data-testid="connection-settings-shell-select"
         >
-          {options.map((shell) => (
-            <option key={shell} value={shell}>
-              {SHELL_LABELS[shell] ?? shell}
-            </option>
-          ))}
+          {options.map((shell) => {
+            const label = SHELL_LABELS[shell] ?? shell;
+            return (
+              <option key={shell} value={shell}>
+                {shell === defaultShell ? `${label} (default)` : label}
+              </option>
+            );
+          })}
         </select>
       </label>
     </div>

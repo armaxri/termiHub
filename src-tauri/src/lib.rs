@@ -42,6 +42,7 @@ pub fn run() {
             commands::terminal::resize_terminal,
             commands::terminal::close_terminal,
             commands::terminal::list_available_shells,
+            commands::terminal::get_default_shell,
             commands::terminal::list_serial_ports,
             commands::terminal::check_x11_available,
             commands::terminal::check_ssh_agent_status,

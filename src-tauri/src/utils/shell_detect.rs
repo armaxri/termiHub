@@ -45,6 +45,31 @@ pub fn detect_available_shells() -> Vec<String> {
     shells
 }
 
+/// Detect the user's default shell on this platform.
+///
+/// On Unix, reads the `$SHELL` environment variable and extracts the
+/// shell name (e.g., `/bin/zsh` → `"zsh"`).
+/// On Windows, returns `"powershell"` as the modern default.
+pub fn detect_default_shell() -> Option<String> {
+    #[cfg(unix)]
+    {
+        if let Ok(shell_path) = std::env::var("SHELL") {
+            if let Some(name) = Path::new(&shell_path).file_name() {
+                return Some(name.to_string_lossy().to_string());
+            }
+        }
+        return None;
+    }
+
+    #[cfg(windows)]
+    {
+        return Some("powershell".to_string());
+    }
+
+    #[allow(unreachable_code)]
+    None
+}
+
 /// Resolve a shell name to the executable path and arguments.
 ///
 /// On Windows, returns full paths for PowerShell and Git Bash to avoid
@@ -220,6 +245,35 @@ mod tests {
                 cmd.contains("Git") && cmd.ends_with(r"\bash.exe"),
                 "bash should resolve to Git Bash on Windows, got: {cmd}"
             );
+        }
+    }
+
+    #[test]
+    fn detect_default_shell_returns_some() {
+        // On any CI or dev machine, there should be a default shell
+        let result = detect_default_shell();
+        assert!(result.is_some(), "expected a default shell to be detected");
+        let name = result.unwrap();
+        assert!(!name.is_empty());
+        // Should be a bare name, not a path
+        assert!(!name.contains('/'), "expected bare name, got: {name}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn detect_default_shell_reads_shell_env() {
+        // Temporarily set SHELL to a known value
+        let orig = std::env::var("SHELL").ok();
+        std::env::set_var("SHELL", "/usr/bin/fish");
+
+        let result = detect_default_shell();
+        assert_eq!(result, Some("fish".to_string()));
+
+        // Restore
+        if let Some(val) = orig {
+            std::env::set_var("SHELL", val);
+        } else {
+            std::env::remove_var("SHELL");
         }
     }
 }
