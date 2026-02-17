@@ -1,11 +1,28 @@
+import { useState, useEffect } from "react";
 import { SshConfig } from "@/types/terminal";
+import { checkSshAgentStatus } from "@/services/api";
 
 interface SshSettingsProps {
   config: SshConfig;
   onChange: (config: SshConfig) => void;
+  onSetupAgent?: () => void;
 }
 
-export function SshSettings({ config, onChange }: SshSettingsProps) {
+export function SshSettings({ config, onChange, onSetupAgent }: SshSettingsProps) {
+  const [agentStatus, setAgentStatus] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (config.authMethod === "agent") {
+      checkSshAgentStatus()
+        .then(setAgentStatus)
+        .catch(() => setAgentStatus(null));
+    } else {
+      setAgentStatus(null);
+    }
+  }, [config.authMethod]);
+
+  const isWindows = navigator.userAgent.includes("Windows");
+
   return (
     <div className="settings-form">
       <label className="settings-form__field">
@@ -51,7 +68,31 @@ export function SshSettings({ config, onChange }: SshSettingsProps) {
           <option value="password">Password</option>
         </select>
       </label>
-      {config.authMethod === "agent" && (
+      {config.authMethod === "agent" && agentStatus !== null && agentStatus !== "running" && (
+        <p className="settings-form__hint settings-form__hint--warning">
+          {isWindows ? (
+            <>
+              SSH agent service is not running. Start it to use agent authentication.
+              {onSetupAgent && (
+                <button
+                  type="button"
+                  className="settings-form__hint-action"
+                  onClick={onSetupAgent}
+                  data-testid="ssh-settings-setup-agent"
+                >
+                  Setup SSH Agent
+                </button>
+              )}
+            </>
+          ) : (
+            <>
+              SSH_AUTH_SOCK is not set. Start your SSH agent with <code>eval $(ssh-agent)</code> and
+              add keys with <code>ssh-add</code>.
+            </>
+          )}
+        </p>
+      )}
+      {config.authMethod === "agent" && (agentStatus === null || agentStatus === "running") && (
         <p className="settings-form__hint">
           Uses keys from your running SSH agent (ssh-agent or Pageant).
         </p>

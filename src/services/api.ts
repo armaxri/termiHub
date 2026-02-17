@@ -54,6 +54,11 @@ export async function checkX11Available(): Promise<boolean> {
   return await invoke<boolean>("check_x11_available");
 }
 
+/** Check whether the SSH agent is running, stopped, or not installed. */
+export async function checkSshAgentStatus(): Promise<string> {
+  return await invoke<string>("check_ssh_agent_status");
+}
+
 // --- Connection persistence commands ---
 
 interface ConnectionData {
