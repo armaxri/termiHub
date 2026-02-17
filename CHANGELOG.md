@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Passphrase-protected SSH key support via the connection editor (key passphrase field shown when auth method is "SSH Key")
 - Default shell detection and labeling: the user's system default shell (e.g., Zsh on macOS) is now detected and marked with "(default)" in the shell dropdown
 - Configurable starting directory for local shell connections — set a custom working directory per connection instead of always starting in the home directory
+- Rename terminal tabs via right-click context menu on tabs or the terminal area
 
 ### Changed
 
