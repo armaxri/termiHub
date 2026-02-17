@@ -367,6 +367,7 @@ mod tests {
             config: ConnectionConfig::Local(LocalShellConfig {
                 shell_type: "bash".to_string(),
                 initial_command: None,
+                starting_directory: None,
             }),
             folder_id: None,
             terminal_options: None,

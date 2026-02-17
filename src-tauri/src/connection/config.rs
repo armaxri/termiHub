@@ -75,6 +75,7 @@ mod tests {
             config: ConnectionConfig::Local(LocalShellConfig {
                 shell_type: "zsh".to_string(),
                 initial_command: Some("ls".to_string()),
+                starting_directory: None,
             }),
             folder_id: None,
             terminal_options: None,
@@ -168,6 +169,7 @@ mod tests {
             config: ConnectionConfig::Local(LocalShellConfig {
                 shell_type: "bash".to_string(),
                 initial_command: None,
+                starting_directory: None,
             }),
             folder_id: None,
             terminal_options: Some(TerminalOptions {

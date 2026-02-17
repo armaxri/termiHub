@@ -56,6 +56,16 @@ export function ConnectionSettings({ config, onChange }: ConnectionSettingsProps
           ))}
         </select>
       </label>
+      <label className="settings-form__field">
+        <span className="settings-form__label">Starting Directory</span>
+        <input
+          type="text"
+          value={config.startingDirectory ?? ""}
+          onChange={(e) => onChange({ ...config, startingDirectory: e.target.value || undefined })}
+          placeholder="Leave empty for home directory"
+          data-testid="connection-settings-starting-directory"
+        />
+      </label>
     </div>
   );
 }
