@@ -11,11 +11,6 @@ import {
 } from "@dnd-kit/core";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import {
-  Terminal as TerminalIcon,
-  Wifi,
-  Cable,
-  Globe,
-  Server,
   Settings as SettingsIcon,
   FileEdit,
   SquarePen,
@@ -28,8 +23,9 @@ import {
   Palette,
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { PanelNode, LeafPanel, TerminalTab, ConnectionType, DropEdge } from "@/types/terminal";
+import { PanelNode, LeafPanel, TerminalTab, DropEdge } from "@/types/terminal";
 import { getAllLeaves, findLeafByTab } from "@/utils/panelTree";
+import { ConnectionIcon } from "@/utils/connectionIcons";
 import { useTerminalRegistry } from "@/components/Terminal/TerminalRegistry";
 import { TabBar } from "@/components/Terminal/TabBar";
 import { ColorPickerDialog } from "@/components/Terminal/ColorPickerDialog";
@@ -39,14 +35,6 @@ import { FileEditor } from "@/components/FileEditor";
 import { ConnectionEditor } from "@/components/ConnectionEditor/ConnectionEditor";
 import { PanelDropZone } from "./PanelDropZone";
 import "./SplitView.css";
-
-const TYPE_ICONS: Record<ConnectionType, typeof TerminalIcon> = {
-  local: TerminalIcon,
-  ssh: Wifi,
-  serial: Cable,
-  telnet: Globe,
-  remote: Server,
-};
 
 export function SplitView() {
   const rootPanel = useAppStore((s) => s.rootPanel);
@@ -367,17 +355,21 @@ function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: boolean 
 }
 
 function TabDragOverlay({ tab }: { tab: TerminalTab }) {
-  const Icon =
+  const NonTerminalIcon =
     tab.contentType === "settings"
       ? SettingsIcon
       : tab.contentType === "editor"
         ? FileEdit
         : tab.contentType === "connection-editor"
           ? SquarePen
-          : TYPE_ICONS[tab.connectionType];
+          : null;
   return (
     <div className="tab tab--drag-overlay">
-      <Icon size={14} className="tab__icon" />
+      {NonTerminalIcon ? (
+        <NonTerminalIcon size={14} className="tab__icon" />
+      ) : (
+        <ConnectionIcon config={tab.config} size={14} className="tab__icon" />
+      )}
       <span className="tab__title">{tab.title}</span>
     </div>
   );
