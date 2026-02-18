@@ -205,7 +205,7 @@ Each section groups related tests by feature area. Individual test items referen
 
 - [ ] Create connection with horizontal scrolling enabled — connect — run `echo $(python3 -c "print('A'*300)")` — line should not wrap, horizontal scrollbar appears
 - [ ] Create connection without horizontal scrolling — same command — line wraps normally
-- [ ] Right-click tab — "Horizontal Scrolling" toggle — behavior switches dynamically
+- [x] Right-click tab — "Horizontal Scrolling" toggle — behavior switches dynamically
 - [ ] Hold a key down — key repeat works normally in horizontal scroll mode
 - [ ] Close and reopen app — connection setting persists
 - [ ] Resize window/panels — scroll area adjusts correctly

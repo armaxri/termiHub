@@ -175,6 +175,42 @@ describe('Tab Management', () => {
     });
   });
 
+  describe('TAB-HSCROLL: Horizontal scrolling toggle (PR #45)', () => {
+    it('should show "Horizontal Scrolling" toggle in tab context menu', async () => {
+      const name = uniqueName('hscroll-menu');
+      await createLocalConnection(name);
+      await connectByName(name);
+
+      const tab = await findTabByTitle(name);
+      await tab.click({ button: 'right' });
+      await browser.pause(300);
+
+      const hscrollItem = await browser.$('[data-testid="tab-context-horizontal-scroll"]');
+      expect(await hscrollItem.isDisplayed()).toBe(true);
+
+      await browser.keys('Escape');
+    });
+
+    it('should toggle horizontal scrolling via context menu without error', async () => {
+      const name = uniqueName('hscroll-toggle');
+      await createLocalConnection(name);
+      await connectByName(name);
+
+      // Right-click and toggle horizontal scrolling on
+      const tab = await findTabByTitle(name);
+      await tab.click({ button: 'right' });
+      await browser.pause(300);
+
+      const hscrollItem = await browser.$('[data-testid="tab-context-horizontal-scroll"]');
+      await hscrollItem.click();
+      await browser.pause(500);
+
+      // Terminal should still be functional
+      const xtermContainer = await browser.$('.xterm');
+      expect(await xtermContainer.isExisting()).toBe(true);
+    });
+  });
+
   describe('TAB-CTX-SUPPRESS: Suppress default context menu (PR #150)', () => {
     it('should show custom context menu on connection right-click', async () => {
       const name = uniqueName('ctx-conn');
