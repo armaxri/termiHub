@@ -210,7 +210,11 @@ impl RemoteAgentConfig {
     pub fn expand(mut self) -> Self {
         self.host = expand_env_placeholders(&self.host);
         self.username = expand_env_placeholders(&self.username);
-        self.key_path = self.key_path.map(|s| expand_env_placeholders(&s));
+        self.key_path = self.key_path.map(|s| {
+            // Strip surrounding quotes — users often paste paths like "C:\...\key"
+            let stripped = s.trim().trim_matches('"').trim_matches('\'');
+            expand_tilde(&expand_env_placeholders(stripped))
+        });
         self.password = self.password.map(|s| expand_env_placeholders(&s));
         self
     }
