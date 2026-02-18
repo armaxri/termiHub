@@ -1,8 +1,8 @@
 // Settings and color picker tests.
-// Covers: SET-01, SET-04 (tab coloring).
+// Covers: SET-01, SET-02, SET-04 (tab coloring).
 
 import { waitForAppReady, ensureConnectionsSidebar, closeAllTabs } from './helpers/app.js';
-import { openSettingsTab } from './helpers/sidebar.js';
+import { openSettingsTab, switchToFilesSidebar } from './helpers/sidebar.js';
 import {
   uniqueName,
   createLocalConnection,
@@ -12,7 +12,7 @@ import {
   connectionContextAction,
   CTX_CONNECTION_EDIT,
 } from './helpers/connections.js';
-import { findTabByTitle } from './helpers/tabs.js';
+import { findTabByTitle, closeTabByTitle, getTabCount } from './helpers/tabs.js';
 import {
   CONN_EDITOR_COLOR_PICKER,
   CONN_EDITOR_SAVE,
@@ -56,6 +56,41 @@ describe('Settings & Color Picker', () => {
         }
       }
       expect(settingsCount).toBe(1);
+    });
+  });
+
+  describe('SET-02: Settings tab lifecycle (PR #32)', () => {
+    it('should close the Settings tab like any other tab', async () => {
+      await openSettingsTab();
+      const settingsTab = await findTabByTitle('Settings');
+      expect(settingsTab).not.toBeNull();
+
+      const countBefore = await getTabCount();
+      await closeTabByTitle('Settings');
+      const countAfter = await getTabCount();
+      expect(countAfter).toBe(countBefore - 1);
+
+      // Verify it's gone
+      const gone = await findTabByTitle('Settings');
+      expect(gone).toBeNull();
+    });
+
+    it('should not break sidebar views after Settings tab interactions', async () => {
+      await openSettingsTab();
+      await closeTabByTitle('Settings');
+
+      // Connections sidebar should still work
+      await ensureConnectionsSidebar();
+      const connBtn = await browser.$('[data-testid="activity-bar-connections"]');
+      expect(await connBtn.isDisplayed()).toBe(true);
+
+      // File browser sidebar should still work
+      await switchToFilesSidebar();
+      const filesBtn = await browser.$('[data-testid="activity-bar-file-browser"]');
+      expect(await filesBtn.isDisplayed()).toBe(true);
+
+      // Switch back to connections for cleanup
+      await ensureConnectionsSidebar();
     });
   });
 

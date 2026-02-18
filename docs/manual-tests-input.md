@@ -385,11 +385,11 @@ Each section groups related tests by feature area. Individual test items referen
 
 ### Settings as tab (PR #32)
 
-- [ ] Click Settings — a "Settings" tab opens with content
-- [ ] Click Settings again — reactivates existing settings tab (no duplicate)
-- [ ] Close the settings tab — it's removed like any other tab
+- [x] Click Settings — a "Settings" tab opens with content
+- [x] Click Settings again — reactivates existing settings tab (no duplicate)
+- [x] Close the settings tab — it's removed like any other tab
 - [ ] Drag the settings tab between panels — works with correct Settings icon
-- [ ] Connections and File Browser sidebar views still work normally
+- [x] Connections and File Browser sidebar views still work normally
 
 ### Settings button at bottom of activity bar (PR #31)
 
