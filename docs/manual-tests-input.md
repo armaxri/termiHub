@@ -126,11 +126,11 @@ Each section groups related tests by feature area. Individual test items referen
 
 ### Ping host context menu (PR #37)
 
-- [ ] Right-click an SSH connection with a host configured — "Ping Host" appears between "Connect" and "Edit"
-- [ ] Right-click a Telnet connection — "Ping Host" appears
-- [ ] Right-click a Local or Serial connection — no "Ping Host" item
-- [ ] Click "Ping Host" — new terminal tab opens titled "Ping <host>" running `ping <host>`
-- [ ] Existing "Connect" action still works as before
+- [x] Right-click an SSH connection with a host configured — "Ping Host" appears between "Connect" and "Edit"
+- [x] Right-click a Telnet connection — "Ping Host" appears
+- [x] Right-click a Local or Serial connection — no "Ping Host" item
+- [x] Click "Ping Host" — new terminal tab opens titled "Ping <host>" running `ping <host>`
+- [x] Existing "Connect" action still works as before
 
 ### Environment variable expansion in connections (PR #68)
 

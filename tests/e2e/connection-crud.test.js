@@ -1,7 +1,7 @@
 // Connection CRUD tests.
-// Covers: CONN-01, CONN-02, CONN-03, CONN-04, CONN-10.
+// Covers: CONN-01, CONN-02, CONN-03, CONN-04, CONN-10, CONN-PING.
 
-import { waitForAppReady, ensureConnectionsSidebar } from './helpers/app.js';
+import { waitForAppReady, ensureConnectionsSidebar, closeAllTabs } from './helpers/app.js';
 import {
   uniqueName,
   createLocalConnection,
@@ -13,12 +13,15 @@ import {
   CTX_CONNECTION_DUPLICATE,
   CTX_CONNECTION_DELETE,
 } from './helpers/connections.js';
+import { findTabByTitle } from './helpers/tabs.js';
+import { createSshConnection, createTelnetConnection } from './helpers/infrastructure.js';
 import {
   CONN_EDITOR_NAME,
   CONN_EDITOR_SAVE,
   CONNECTION_LIST_NEW_FOLDER,
   INLINE_FOLDER_NAME_INPUT,
   INLINE_FOLDER_CONFIRM,
+  CTX_CONNECTION_PING,
 } from './helpers/selectors.js';
 
 describe('Connection CRUD', () => {
@@ -135,6 +138,67 @@ describe('Connection CRUD', () => {
       // The duplicate should appear with "Copy of" prefix
       const duplicate = await findConnectionByName(`Copy of ${name}`);
       expect(duplicate).not.toBeNull();
+    });
+  });
+
+  describe('CONN-PING: Ping host context menu (PR #37)', () => {
+    afterEach(async () => {
+      await closeAllTabs();
+    });
+
+    it('should show "Ping Host" in context menu for SSH connections', async () => {
+      const name = uniqueName('ping-ssh');
+      await createSshConnection(name, { host: '127.0.0.1', port: '22' });
+
+      const item = await findConnectionByName(name);
+      await item.click({ button: 'right' });
+      await browser.pause(300);
+
+      const pingItem = await browser.$(CTX_CONNECTION_PING);
+      expect(await pingItem.isDisplayed()).toBe(true);
+
+      await browser.keys('Escape');
+    });
+
+    it('should show "Ping Host" in context menu for Telnet connections', async () => {
+      const name = uniqueName('ping-telnet');
+      await createTelnetConnection(name, { host: '127.0.0.1', port: '23' });
+
+      const item = await findConnectionByName(name);
+      await item.click({ button: 'right' });
+      await browser.pause(300);
+
+      const pingItem = await browser.$(CTX_CONNECTION_PING);
+      expect(await pingItem.isDisplayed()).toBe(true);
+
+      await browser.keys('Escape');
+    });
+
+    it('should not show "Ping Host" for Local connections', async () => {
+      const name = uniqueName('ping-local');
+      await createLocalConnection(name);
+
+      const item = await findConnectionByName(name);
+      await item.click({ button: 'right' });
+      await browser.pause(300);
+
+      const pingItem = await browser.$(CTX_CONNECTION_PING);
+      const visible = await pingItem.isExisting() && await pingItem.isDisplayed();
+      expect(visible).toBe(false);
+
+      await browser.keys('Escape');
+    });
+
+    it('should open a Ping tab when clicking "Ping Host"', async () => {
+      const name = uniqueName('ping-tab');
+      await createSshConnection(name, { host: '127.0.0.1', port: '22' });
+
+      await connectionContextAction(name, CTX_CONNECTION_PING);
+      await browser.pause(1000);
+
+      // A tab titled "Ping ..." should appear
+      const tab = await findTabByTitle('Ping');
+      expect(tab).not.toBeNull();
     });
   });
 });
