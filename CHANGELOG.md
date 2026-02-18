@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- SSH connection monitor now auto-connects when switching to an SSH terminal tab (Fixes #159)
 - Windows: SSH key authentication failing with "invalid filename syntax" (os error 123) due to mixed path separators from tilde expansion — now uses the centralized `expand_tilde` which handles platform-native separators
 - Browser's default context menu ("Print", "Save As", etc.) no longer appears on right-click; only custom app menus are shown
 - Windows: WSL file browser now follows the terminal's working directory by injecting OSC 7 PROMPT_COMMAND into WSL shells
