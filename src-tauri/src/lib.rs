@@ -64,6 +64,8 @@ pub fn run() {
             commands::connection::save_settings,
             commands::connection::save_external_file,
             commands::connection::reload_external_connections,
+            commands::connection::save_remote_agent,
+            commands::connection::delete_remote_agent,
             commands::files::sftp_open,
             commands::files::sftp_close,
             commands::files::sftp_list_dir,

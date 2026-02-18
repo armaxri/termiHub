@@ -34,6 +34,28 @@ export function TerminalView() {
     };
   }, []);
 
+  // Update agent connection state in the store (drives sidebar state dots).
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    listen<{ session_id: string; state: string }>("agent-state-change", (event) => {
+      const { session_id, state } = event.payload;
+      const store = useAppStore.getState();
+      store.setAgentConnectionState(
+        session_id,
+        state as "disconnected" | "connecting" | "connected" | "reconnecting"
+      );
+      // Auto-refresh sessions when agent reconnects
+      if (state === "connected") {
+        store.refreshAgentSessions(session_id);
+      }
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, []);
+
   const addTab = useAppStore((s) => s.addTab);
   const splitPanel = useAppStore((s) => s.splitPanel);
   const rootPanel = useAppStore((s) => s.rootPanel);

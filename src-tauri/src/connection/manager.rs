@@ -4,7 +4,9 @@ use std::sync::Mutex;
 use anyhow::{Context, Result};
 use tauri::AppHandle;
 
-use super::config::{ConnectionFolder, ConnectionStore, ExternalConnectionStore, SavedConnection};
+use super::config::{
+    ConnectionFolder, ConnectionStore, ExternalConnectionStore, SavedConnection, SavedRemoteAgent,
+};
 use super::settings::{AppSettings, SettingsStorage};
 use super::storage::ConnectionStorage;
 use crate::terminal::backend::ConnectionConfig;
@@ -21,6 +23,12 @@ pub(crate) fn strip_ssh_password(mut connection: SavedConnection) -> SavedConnec
         _ => {}
     }
     connection
+}
+
+/// Strip the password field from agent configs before persisting.
+pub(crate) fn strip_agent_password(mut agent: SavedRemoteAgent) -> SavedRemoteAgent {
+    agent.config.password = None;
+    agent
 }
 
 /// Result of loading a single external connection file.
@@ -66,6 +74,12 @@ impl ConnectionManager {
                 _ => {}
             }
         }
+        for agent in &mut store.agents {
+            if agent.config.password.is_some() {
+                agent.config.password = None;
+                needs_save = true;
+            }
+        }
         if needs_save {
             storage
                 .save(&store)
@@ -87,6 +101,29 @@ impl ConnectionManager {
     pub fn get_all(&self) -> Result<ConnectionStore> {
         let store = self.store.lock().unwrap();
         Ok(store.clone())
+    }
+
+    /// Save (add or update) a remote agent. Passwords are stripped before persisting.
+    pub fn save_agent(&self, agent: SavedRemoteAgent) -> Result<()> {
+        let agent = strip_agent_password(agent);
+        let mut store = self.store.lock().unwrap();
+
+        if let Some(existing) = store.agents.iter_mut().find(|a| a.id == agent.id) {
+            *existing = agent;
+        } else {
+            store.agents.push(agent);
+        }
+
+        self.storage.save(&store).context("Failed to persist agent")
+    }
+
+    /// Delete a remote agent by ID.
+    pub fn delete_agent(&self, id: &str) -> Result<()> {
+        let mut store = self.store.lock().unwrap();
+        store.agents.retain(|a| a.id != id);
+        self.storage
+            .save(&store)
+            .context("Failed to persist after agent delete")
     }
 
     /// Save (add or update) a connection. Passwords are stripped before persisting.

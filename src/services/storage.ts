@@ -15,13 +15,17 @@ import {
   saveSettings,
   saveExternalFile,
   reloadExternalConnections,
+  SavedRemoteAgent,
+  saveRemoteAgent,
+  deleteRemoteAgentFromBackend,
 } from "./api";
 
-/** Load all saved connections, folders, and external sources from the backend */
+/** Load all saved connections, folders, external sources, and agents from the backend */
 export async function loadConnections(): Promise<{
   connections: SavedConnection[];
   folders: ConnectionFolder[];
   externalSources: ExternalConnectionSource[];
+  agents: SavedRemoteAgent[];
 }> {
   return await loadConnectionsAndFolders();
 }
@@ -44,6 +48,16 @@ export async function persistFolder(folder: ConnectionFolder): Promise<void> {
 /** Delete a folder from persistent storage */
 export async function removeFolder(id: string): Promise<void> {
   await deleteFolderFromBackend(id);
+}
+
+/** Persist a remote agent (add or update) */
+export async function persistAgent(agent: SavedRemoteAgent): Promise<void> {
+  await saveRemoteAgent(agent);
+}
+
+/** Delete a remote agent from persistent storage */
+export async function removeAgent(id: string): Promise<void> {
+  await deleteRemoteAgentFromBackend(id);
 }
 
 /** Export all connections as JSON */

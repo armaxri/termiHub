@@ -30,6 +30,8 @@ import {
   removeConnection,
   persistFolder,
   removeFolder,
+  persistAgent,
+  removeAgent,
   getSettings,
   saveSettings as persistSettings,
   saveExternalFile,
@@ -784,9 +786,15 @@ export const useAppStore = create<AppState>((set, get) => {
     settings: { version: "1", externalConnectionFiles: [] },
     loadFromBackend: async () => {
       try {
-        const { connections, folders, externalSources } = await loadConnections();
+        const { connections, folders, externalSources, agents } = await loadConnections();
         const settings = await getSettings();
-        set({ connections, folders, externalSources, settings });
+        // Hydrate agents: add ephemeral state (disconnected, collapsed)
+        const remoteAgents = agents.map((a) => ({
+          ...a,
+          isExpanded: false,
+          connectionState: "disconnected" as const,
+        }));
+        set({ connections, folders, externalSources, settings, remoteAgents });
       } catch (err) {
         console.error("Failed to load connections from backend:", err);
       }
@@ -1257,12 +1265,18 @@ export const useAppStore = create<AppState>((set, get) => {
 
     addRemoteAgent: (agent) => {
       set((state) => ({ remoteAgents: [...state.remoteAgents, agent] }));
+      persistAgent({ id: agent.id, name: agent.name, config: agent.config }).catch((err) =>
+        console.error("Failed to persist new agent:", err)
+      );
     },
 
     updateRemoteAgent: (agent) => {
       set((state) => ({
         remoteAgents: state.remoteAgents.map((a) => (a.id === agent.id ? agent : a)),
       }));
+      persistAgent({ id: agent.id, name: agent.name, config: agent.config }).catch((err) =>
+        console.error("Failed to persist agent update:", err)
+      );
     },
 
     deleteRemoteAgent: (agentId) => {
@@ -1281,6 +1295,7 @@ export const useAppStore = create<AppState>((set, get) => {
           Object.entries(s.agentDefinitions).filter(([k]) => k !== agentId)
         ),
       }));
+      removeAgent(agentId).catch((err) => console.error("Failed to persist agent deletion:", err));
     },
 
     toggleRemoteAgent: (agentId) => {

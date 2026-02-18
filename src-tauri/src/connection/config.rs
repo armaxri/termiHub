@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::terminal::backend::ConnectionConfig;
+use crate::terminal::backend::{ConnectionConfig, RemoteAgentConfig};
 
 /// Per-connection terminal display options.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -34,12 +34,23 @@ pub struct ConnectionFolder {
     pub is_expanded: bool,
 }
 
+/// A saved remote agent definition (SSH transport config only, no ephemeral state).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedRemoteAgent {
+    pub id: String,
+    pub name: String,
+    pub config: RemoteAgentConfig,
+}
+
 /// Top-level schema for the connections JSON file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionStore {
     pub version: String,
     pub folders: Vec<ConnectionFolder>,
     pub connections: Vec<SavedConnection>,
+    #[serde(default)]
+    pub agents: Vec<SavedRemoteAgent>,
 }
 
 impl Default for ConnectionStore {
@@ -48,6 +59,7 @@ impl Default for ConnectionStore {
             version: "1".to_string(),
             folders: Vec::new(),
             connections: Vec::new(),
+            agents: Vec::new(),
         }
     }
 }
@@ -65,7 +77,9 @@ pub struct ExternalConnectionStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::terminal::backend::{LocalShellConfig, SerialConfig, SshConfig, TelnetConfig};
+    use crate::terminal::backend::{
+        LocalShellConfig, RemoteAgentConfig, SerialConfig, SshConfig, TelnetConfig,
+    };
 
     #[test]
     fn saved_connection_local_serde_round_trip() {
@@ -159,6 +173,36 @@ mod tests {
         } else {
             panic!("Expected Telnet config");
         }
+    }
+
+    #[test]
+    fn saved_remote_agent_serde_round_trip() {
+        let agent = SavedRemoteAgent {
+            id: "agent-1".to_string(),
+            name: "Pi Agent".to_string(),
+            config: RemoteAgentConfig {
+                host: "pi.local".to_string(),
+                port: 22,
+                username: "pi".to_string(),
+                auth_method: "key".to_string(),
+                password: None,
+                key_path: Some("~/.ssh/id_ed25519".to_string()),
+            },
+        };
+        let json = serde_json::to_string(&agent).unwrap();
+        let deserialized: SavedRemoteAgent = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.id, "agent-1");
+        assert_eq!(deserialized.name, "Pi Agent");
+        assert_eq!(deserialized.config.host, "pi.local");
+        assert_eq!(deserialized.config.auth_method, "key");
+    }
+
+    #[test]
+    fn connection_store_with_agents_backward_compat() {
+        // Existing JSON without "agents" field should deserialize with empty agents vec
+        let json = r#"{"version":"1","folders":[],"connections":[]}"#;
+        let store: ConnectionStore = serde_json::from_str(json).unwrap();
+        assert!(store.agents.is_empty());
     }
 
     #[test]

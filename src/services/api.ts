@@ -67,10 +67,18 @@ export async function checkSshAgentStatus(): Promise<string> {
 
 // --- Connection persistence commands ---
 
+/** Saved remote agent (persisted form, no ephemeral state). */
+export interface SavedRemoteAgent {
+  id: string;
+  name: string;
+  config: RemoteAgentConfig;
+}
+
 interface ConnectionData {
   connections: SavedConnection[];
   folders: ConnectionFolder[];
   externalSources: ExternalConnectionSource[];
+  agents: SavedRemoteAgent[];
 }
 
 /** Load all saved connections and folders from disk */
@@ -325,6 +333,18 @@ export async function saveAgentDefinition(
 /** Delete a session definition on an agent. */
 export async function deleteAgentDefinition(agentId: string, definitionId: string): Promise<void> {
   await invoke("delete_agent_definition", { agentId, definitionId });
+}
+
+// --- Agent persistence commands ---
+
+/** Save (add or update) a remote agent definition to disk. */
+export async function saveRemoteAgent(agent: SavedRemoteAgent): Promise<void> {
+  await invoke("save_remote_agent", { agent });
+}
+
+/** Delete a remote agent definition from disk. */
+export async function deleteRemoteAgentFromBackend(id: string): Promise<void> {
+  await invoke("delete_remote_agent", { id });
 }
 
 // --- Monitoring commands ---

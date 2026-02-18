@@ -1,7 +1,7 @@
 use serde::Serialize;
 use tauri::State;
 
-use crate::connection::config::{ConnectionFolder, SavedConnection};
+use crate::connection::config::{ConnectionFolder, SavedConnection, SavedRemoteAgent};
 use crate::connection::manager::{self, ConnectionManager};
 use crate::connection::settings::AppSettings;
 
@@ -16,13 +16,14 @@ pub struct ExternalConnectionSource {
     pub error: Option<String>,
 }
 
-/// Response containing all connections and folders.
+/// Response containing all connections, folders, and agents.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionData {
     pub connections: Vec<SavedConnection>,
     pub folders: Vec<ConnectionFolder>,
     pub external_sources: Vec<ExternalConnectionSource>,
+    pub agents: Vec<SavedRemoteAgent>,
 }
 
 /// Load all saved connections, folders, and external sources.
@@ -47,6 +48,7 @@ pub fn load_connections_and_folders(
         connections: store.connections,
         folders: store.folders,
         external_sources,
+        agents: store.agents,
     })
 }
 
@@ -139,4 +141,22 @@ pub fn reload_external_connections(
             error: s.error,
         })
         .collect())
+}
+
+/// Save (add or update) a remote agent definition.
+#[tauri::command]
+pub fn save_remote_agent(
+    agent: SavedRemoteAgent,
+    manager: State<'_, ConnectionManager>,
+) -> Result<(), String> {
+    manager.save_agent(agent).map_err(|e| e.to_string())
+}
+
+/// Delete a remote agent definition by ID.
+#[tauri::command]
+pub fn delete_remote_agent(
+    id: String,
+    manager: State<'_, ConnectionManager>,
+) -> Result<(), String> {
+    manager.delete_agent(&id).map_err(|e| e.to_string())
 }
