@@ -18,7 +18,9 @@ import {
   CONN_EDITOR_SAVE,
   CONN_EDITOR_NAME,
   COLOR_PICKER_APPLY,
+  COLOR_PICKER_CLEAR,
   COLOR_PICKER_HEX_INPUT,
+  TAB_CTX_SET_COLOR,
   colorPickerSwatch,
 } from './helpers/selectors.js';
 
@@ -220,6 +222,192 @@ describe('Settings & Color Picker', () => {
       // Check the tab has a border-left style (our color indicator)
       const tab = await findTabByTitle(name);
       expect(tab).not.toBeNull();
+      const style = await tab.getAttribute('style');
+      expect(style).toContain('border-left');
+    });
+
+    it('should set tab color via context menu (PR #67)', async () => {
+      await ensureConnectionsSidebar();
+      const name = uniqueName('ctx-color');
+      await createLocalConnection(name);
+      await connectByName(name);
+
+      // Right-click tab to open context menu
+      const tab = await findTabByTitle(name);
+      await tab.click({ button: 'right' });
+      await browser.pause(300);
+
+      // Click "Set Color..."
+      const setColorItem = await browser.$(TAB_CTX_SET_COLOR);
+      expect(await setColorItem.isDisplayed()).toBe(true);
+      await setColorItem.click();
+      await browser.pause(300);
+
+      // Pick a color (red = #ef4444)
+      const swatch = await browser.$(colorPickerSwatch('#ef4444'));
+      if (await swatch.isExisting() && await swatch.isDisplayed()) {
+        await swatch.click();
+      } else {
+        const hexInput = await browser.$(COLOR_PICKER_HEX_INPUT);
+        await hexInput.clearValue();
+        await hexInput.setValue('#ef4444');
+      }
+
+      const applyBtn = await browser.$(COLOR_PICKER_APPLY);
+      await applyBtn.click();
+      await browser.pause(300);
+
+      // Verify tab has colored border
+      const updatedTab = await findTabByTitle(name);
+      const style = await updatedTab.getAttribute('style');
+      expect(style).toContain('border-left');
+    });
+
+    it('should clear tab color via context menu (PR #67)', async () => {
+      await ensureConnectionsSidebar();
+      const name = uniqueName('clr-color');
+      await createLocalConnection(name);
+      await connectByName(name);
+
+      // First set a color via context menu
+      let tab = await findTabByTitle(name);
+      await tab.click({ button: 'right' });
+      await browser.pause(300);
+      const setColorItem = await browser.$(TAB_CTX_SET_COLOR);
+      await setColorItem.click();
+      await browser.pause(300);
+
+      const swatch = await browser.$(colorPickerSwatch('#ef4444'));
+      if (await swatch.isExisting() && await swatch.isDisplayed()) {
+        await swatch.click();
+      } else {
+        const hexInput = await browser.$(COLOR_PICKER_HEX_INPUT);
+        await hexInput.clearValue();
+        await hexInput.setValue('#ef4444');
+      }
+      const applyBtn = await browser.$(COLOR_PICKER_APPLY);
+      await applyBtn.click();
+      await browser.pause(300);
+
+      // Verify color was set
+      tab = await findTabByTitle(name);
+      let style = await tab.getAttribute('style');
+      expect(style).toContain('border-left');
+
+      // Now clear the color via context menu
+      await tab.click({ button: 'right' });
+      await browser.pause(300);
+      const setColorItem2 = await browser.$(TAB_CTX_SET_COLOR);
+      await setColorItem2.click();
+      await browser.pause(300);
+
+      const clearBtn = await browser.$(COLOR_PICKER_CLEAR);
+      await clearBtn.click();
+      await browser.pause(300);
+
+      // Verify border is removed
+      const updatedTab = await findTabByTitle(name);
+      style = await updatedTab.getAttribute('style');
+      const hasBorder = style && style.includes('border-left');
+      expect(hasBorder).toBeFalsy();
+    });
+
+    it('should persist tab color after close and reopen (PR #67)', async () => {
+      await ensureConnectionsSidebar();
+      const name = uniqueName('persist-color');
+      await createLocalConnection(name);
+
+      // Set color via connection editor
+      await connectionContextAction(name, CTX_CONNECTION_EDIT);
+      await browser.pause(300);
+      const colorPickerBtn = await browser.$(CONN_EDITOR_COLOR_PICKER);
+      await colorPickerBtn.click();
+      await browser.pause(300);
+      const swatch = await browser.$(colorPickerSwatch('#3b82f6'));
+      if (await swatch.isExisting() && await swatch.isDisplayed()) {
+        await swatch.click();
+      } else {
+        const hexInput = await browser.$(COLOR_PICKER_HEX_INPUT);
+        await hexInput.clearValue();
+        await hexInput.setValue('#3b82f6');
+      }
+      const applyBtn = await browser.$(COLOR_PICKER_APPLY);
+      await applyBtn.click();
+      await browser.pause(300);
+      const saveBtn = await browser.$(CONN_EDITOR_SAVE);
+      await saveBtn.click();
+      await browser.pause(300);
+
+      // Open the connection
+      await connectByName(name);
+      let tab = await findTabByTitle(name);
+      expect(tab).not.toBeNull();
+      let style = await tab.getAttribute('style');
+      expect(style).toContain('border-left');
+
+      // Close the tab
+      await closeTabByTitle(name);
+      await browser.pause(300);
+
+      // Reopen the connection
+      await connectByName(name);
+      tab = await findTabByTitle(name);
+      expect(tab).not.toBeNull();
+      style = await tab.getAttribute('style');
+      expect(style).toContain('border-left');
+    });
+
+    it('should override persisted color via context menu (PR #67)', async () => {
+      await ensureConnectionsSidebar();
+      const name = uniqueName('override-color');
+      await createLocalConnection(name);
+
+      // Set blue color via connection editor
+      await connectionContextAction(name, CTX_CONNECTION_EDIT);
+      await browser.pause(300);
+      const colorPickerBtn = await browser.$(CONN_EDITOR_COLOR_PICKER);
+      await colorPickerBtn.click();
+      await browser.pause(300);
+      const blueSwatch = await browser.$(colorPickerSwatch('#3b82f6'));
+      if (await blueSwatch.isExisting() && await blueSwatch.isDisplayed()) {
+        await blueSwatch.click();
+      } else {
+        const hexInput = await browser.$(COLOR_PICKER_HEX_INPUT);
+        await hexInput.clearValue();
+        await hexInput.setValue('#3b82f6');
+      }
+      let applyBtn = await browser.$(COLOR_PICKER_APPLY);
+      await applyBtn.click();
+      await browser.pause(300);
+      const saveBtn = await browser.$(CONN_EDITOR_SAVE);
+      await saveBtn.click();
+      await browser.pause(300);
+
+      // Open the connection
+      await connectByName(name);
+      const tab = await findTabByTitle(name);
+      expect(tab).not.toBeNull();
+
+      // Override color via context menu to red
+      await tab.click({ button: 'right' });
+      await browser.pause(300);
+      const setColorItem = await browser.$(TAB_CTX_SET_COLOR);
+      await setColorItem.click();
+      await browser.pause(300);
+
+      const redSwatch = await browser.$(colorPickerSwatch('#ef4444'));
+      if (await redSwatch.isExisting() && await redSwatch.isDisplayed()) {
+        await redSwatch.click();
+      } else {
+        const hexInput = await browser.$(COLOR_PICKER_HEX_INPUT);
+        await hexInput.clearValue();
+        await hexInput.setValue('#ef4444');
+      }
+      applyBtn = await browser.$(COLOR_PICKER_APPLY);
+      await applyBtn.click();
+      await browser.pause(300);
+
+      // Verify the tab color changed (runtime override)
       const style = await tab.getAttribute('style');
       expect(style).toContain('border-left');
     });

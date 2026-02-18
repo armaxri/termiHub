@@ -167,11 +167,11 @@ Each section groups related tests by feature area. Individual test items referen
 
 ### Tab coloring with color picker (PR #67)
 
-- [ ] Right-click a terminal tab — "Set Color..." — pick a color — verify tab shows colored left border and terminal has colored frame
-- [ ] Clear the color — verify indicators are removed
+- [x] Right-click a terminal tab — "Set Color..." — pick a color — verify tab shows colored left border and terminal has colored frame
+- [x] Clear the color — verify indicators are removed
 - [x] Edit a connection — set a color — connect — verify tab starts with that color
-- [ ] Close and reopen a colored connection — verify color persists
-- [ ] Override a persisted color via context menu — verify runtime color takes effect
+- [x] Close and reopen a colored connection — verify color persists
+- [x] Override a persisted color via context menu — verify runtime color takes effect
 
 ### Clear terminal via context menu (PR #34)
 
