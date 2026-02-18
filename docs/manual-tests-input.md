@@ -169,7 +169,7 @@ Each section groups related tests by feature area. Individual test items referen
 
 - [ ] Right-click a terminal tab — "Set Color..." — pick a color — verify tab shows colored left border and terminal has colored frame
 - [ ] Clear the color — verify indicators are removed
-- [ ] Edit a connection — set a color — connect — verify tab starts with that color
+- [x] Edit a connection — set a color — connect — verify tab starts with that color
 - [ ] Close and reopen a colored connection — verify color persists
 - [ ] Override a persisted color via context menu — verify runtime color takes effect
 
