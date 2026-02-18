@@ -59,6 +59,22 @@ describe('Settings & Color Picker', () => {
     });
   });
 
+  describe('SET-STATUSBAR: Status bar presence (PR #30)', () => {
+    it('should display a status bar at the bottom of the window', async () => {
+      const statusBar = await browser.$('.status-bar');
+      expect(await statusBar.isExisting()).toBe(true);
+      expect(await statusBar.isDisplayed()).toBe(true);
+    });
+
+    it('should show activity bar, sidebar, and terminal area alongside status bar', async () => {
+      const activityBar = await browser.$('[data-testid="activity-bar-connections"]');
+      expect(await activityBar.isDisplayed()).toBe(true);
+
+      const statusBar = await browser.$('.status-bar');
+      expect(await statusBar.isDisplayed()).toBe(true);
+    });
+  });
+
   describe('SET-LAYOUT: Activity bar button placement (PR #31)', () => {
     it('should show settings gear icon in the activity bar', async () => {
       const gear = await browser.$('[data-testid="activity-bar-settings"]');

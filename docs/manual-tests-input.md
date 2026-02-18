@@ -380,8 +380,8 @@ Each section groups related tests by feature area. Individual test items referen
 ### Status bar (PR #30)
 
 - [ ] Run `npm run build` — no compile errors
-- [ ] Launch the app and verify the status bar appears at the bottom spanning the full window width
-- [ ] Verify existing layout (Activity Bar, Sidebar, Terminal View) is unaffected
+- [x] Launch the app and verify the status bar appears at the bottom spanning the full window width
+- [x] Verify existing layout (Activity Bar, Sidebar, Terminal View) is unaffected
 
 ### Settings as tab (PR #32)
 
