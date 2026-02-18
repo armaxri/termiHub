@@ -225,6 +225,31 @@ describe('Connection CRUD', () => {
 
       await cancelEditor();
     });
+
+    it('should open multiple editor tabs for different connections (PR #109)', async () => {
+      const name1 = uniqueName('multi-ed1');
+      const name2 = uniqueName('multi-ed2');
+      await createLocalConnection(name1);
+      await createLocalConnection(name2);
+
+      // Edit first connection
+      await connectionContextAction(name1, CTX_CONNECTION_EDIT);
+      await browser.pause(300);
+      const tabsAfterFirst = await getTabCount();
+
+      // Edit second connection — should open a SECOND editor tab
+      await connectionContextAction(name2, CTX_CONNECTION_EDIT);
+      await browser.pause(300);
+      const tabsAfterSecond = await getTabCount();
+
+      expect(tabsAfterSecond).toBe(tabsAfterFirst + 1);
+
+      // Both editor tabs should be open
+      const editTab1 = await findTabByTitle(name1);
+      const editTab2 = await findTabByTitle(name2);
+      expect(editTab1).not.toBeNull();
+      expect(editTab2).not.toBeNull();
+    });
   });
 
   describe('CONN-SAVE-CONNECT: Save & Connect button (PR #112)', () => {

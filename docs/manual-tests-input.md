@@ -228,7 +228,7 @@ Each section groups related tests by feature area. Individual test items referen
 - [x] Right-click a connection — Edit — editor tab opens with "Edit: <name>" title
 - [x] Save a connection — tab closes and connection is persisted
 - [x] Cancel — tab closes without saving
-- [ ] Open multiple editor tabs simultaneously for different connections
+- [x] Open multiple editor tabs simultaneously for different connections
 - [x] Re-clicking Edit on an already-open connection activates the existing tab
 
 ### Remove folder selector from editor (PR #146)
