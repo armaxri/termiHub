@@ -62,6 +62,22 @@ describe('Connection Editor Forms', () => {
       expect(options.length).toBeGreaterThanOrEqual(1);
     });
 
+    it('should label the system default shell with "(default)" (PR #140)', async () => {
+      await openNewConnectionEditor();
+      const shellSelect = await browser.$(SHELL_SELECT);
+      const options = await shellSelect.$$('option');
+
+      let hasDefault = false;
+      for (const opt of options) {
+        const text = await opt.getText();
+        if (text.includes('(default)')) {
+          hasDefault = true;
+          break;
+        }
+      }
+      expect(hasDefault).toBe(true);
+    });
+
     it('should have type selector set to local by default', async () => {
       await openNewConnectionEditor();
       const typeSelect = await browser.$(CONN_EDITOR_TYPE);

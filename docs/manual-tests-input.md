@@ -10,8 +10,8 @@ Each section groups related tests by feature area. Individual test items referen
 
 ### Default shell detection and labeling (PR #140)
 
-- [ ] Open connection editor for a local shell — the shell dropdown should show e.g. "Zsh (default)"
-- [ ] New terminals default to the correct system shell
+- [x] Open connection editor for a local shell — the shell dropdown should show e.g. "Zsh (default)"
+- [x] New terminals default to the correct system shell
 
 ### Configurable starting directory (PR #148)
 
