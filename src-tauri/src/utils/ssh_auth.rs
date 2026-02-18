@@ -1,4 +1,5 @@
 use std::net::TcpStream;
+#[cfg(not(target_os = "windows"))]
 use std::path::Path;
 
 use ssh2::Session;
@@ -29,21 +30,36 @@ pub fn connect_and_authenticate(config: &SshConfig) -> Result<Session, TerminalE
                 .map_err(|e| TerminalError::SshError(format!("Agent auth failed: {}", e)))?;
         }
         "key" => {
-            let key_path_str = config.key_path.as_deref().unwrap_or("~/.ssh/id_rsa");
-            let key_path = std::path::PathBuf::from(shellexpand(key_path_str));
+            // key_path is tilde-expanded by SshConfig::expand(); apply expansion
+            // to the fallback too in case key_path was None.
+            let key_path_str = config
+                .key_path
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .unwrap_or("~/.ssh/id_rsa");
+            let expanded = crate::utils::expand::expand_tilde(key_path_str);
+            let key_path = std::path::PathBuf::from(&expanded);
             let passphrase = config.password.as_deref();
 
             // Convert OpenSSH-format keys (e.g. Ed25519) to PEM for libssh2
             let prepared = crate::utils::ssh_key_convert::prepare_key(&key_path, passphrase)?;
-            let auth_path = match &prepared {
-                crate::utils::ssh_key_convert::PreparedKey::Original => key_path.as_path(),
-                crate::utils::ssh_key_convert::PreparedKey::Converted(temp) => temp.path(),
-            };
-
-            session
-                .userauth_pubkey_file(&config.username, None, auth_path, passphrase)
-                .map_err(|e| TerminalError::SshError(format!("Key auth failed: {}", e)))?;
-            // `prepared` dropped here — temp file cleaned up
+            match prepared {
+                crate::utils::ssh_key_convert::PreparedKey::Original => {
+                    session
+                        .userauth_pubkey_file(&config.username, None, &key_path, passphrase)
+                        .map_err(|e| TerminalError::SshError(format!("Key auth failed: {}", e)))?;
+                }
+                crate::utils::ssh_key_convert::PreparedKey::ConvertedPem(pem_bytes) => {
+                    // Use memory-based auth to avoid temp file issues on Windows.
+                    // The converted key is already decrypted, so pass None for passphrase.
+                    let pem_str = std::str::from_utf8(&pem_bytes).map_err(|e| {
+                        TerminalError::SshError(format!("Invalid PEM encoding: {}", e))
+                    })?;
+                    session
+                        .userauth_pubkey_memory(&config.username, None, pem_str, None)
+                        .map_err(|e| TerminalError::SshError(format!("Key auth failed: {}", e)))?;
+                }
+            }
         }
         _ => {
             let password = config.password.as_deref().unwrap_or("");
@@ -95,23 +111,6 @@ pub fn check_ssh_agent_status() -> String {
             _ => "stopped".to_string(),
         }
     }
-}
-
-/// Expand `~` prefix in paths to the user's home directory.
-pub fn shellexpand(path: &str) -> String {
-    if let Some(rest) = path.strip_prefix("~/") {
-        if let Some(home) = dirs_home() {
-            return format!("{}/{}", home, rest);
-        }
-    }
-    path.to_string()
-}
-
-/// Get the user's home directory from environment variables.
-pub fn dirs_home() -> Option<String> {
-    std::env::var("HOME")
-        .ok()
-        .or_else(|| std::env::var("USERPROFILE").ok())
 }
 
 #[cfg(test)]
