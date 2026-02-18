@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- System test script (`scripts/test-system.sh`) that orchestrates Docker infrastructure (SSH + Telnet servers), virtual serial ports (socat), and the E2E infrastructure test suite for automated system-level testing on macOS
 - Remote agents as folder-like entries in the sidebar: one shared SSH connection per agent with multiple child sessions (shell/serial) multiplexed over JSON-RPC
 - Agent capabilities discovery: available shells and serial ports are reported by the remote agent on connect and shown in session creation
 - Persistent sessions for remote agents: sessions flagged as persistent survive reconnection and are re-attached automatically

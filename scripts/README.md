@@ -11,6 +11,7 @@ Helper scripts for common development tasks. Each script has a `.sh` (Unix/macOS
 | `check` | Read-only quality checks mirroring CI (formatting, linting, clippy) |
 | `format` | Auto-fix all formatting issues (Prettier + cargo fmt) |
 | `clean` | Remove all build artifacts for a fresh start |
+| `test-system` | Start Docker infra + virtual serial ports and run system-level E2E tests |
 
 ## Typical workflow
 
@@ -25,4 +26,10 @@ Helper scripts for common development tasks. Each script has a `.sh` (Unix/macOS
 ./scripts/format.sh
 ./scripts/test.sh
 ./scripts/check.sh
+
+# System tests (Docker + virtual serial)
+./scripts/test-system.sh              # Full run (build + Docker + serial + tests)
+./scripts/test-system.sh --skip-build # Reuse existing binary
+./scripts/test-system.sh --skip-serial # SSH/Telnet only, no serial port setup
+./scripts/test-system.sh --keep-infra  # Keep Docker containers after tests
 ```

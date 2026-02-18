@@ -111,6 +111,7 @@ All scripts live in `scripts/` with `.sh` (Unix/macOS) and `.cmd` (Windows) vari
 | `./scripts/check.sh` | Read-only quality checks mirroring CI (formatting, linting, clippy) |
 | `./scripts/format.sh` | Auto-fix all formatting issues (Prettier + cargo fmt) |
 | `./scripts/clean.sh` | Remove all build artifacts for a fresh start |
+| `./scripts/test-system.sh` | Start Docker infra + virtual serial ports and run system-level E2E tests |
 
 ### Before Creating a PR
 
