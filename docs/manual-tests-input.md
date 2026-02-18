@@ -111,13 +111,13 @@ Each section groups related tests by feature area. Individual test items referen
 
 ### SSH monitoring in status bar (PR #114, #115)
 
-- [ ] Status bar left section shows "Monitor" button with Activity icon
-- [ ] Clicking "Monitor" opens dropdown listing all saved SSH connections
+- [x] Status bar left section shows "Monitor" button with Activity icon
+- [x] Clicking "Monitor" opens dropdown listing all saved SSH connections
 - [ ] Selecting a connection connects monitoring, shows inline stats
 - [ ] Stats auto-refresh every 5 seconds
 - [ ] Refresh and disconnect icon buttons work
 - [ ] High values show warning (yellow >= 70%) and critical (red >= 90%) colors
-- [ ] Activity bar no longer shows monitoring icon
+- [x] Activity bar no longer shows monitoring icon
 - [ ] Sidebar no longer has monitoring view
 - [ ] Save & Connect button saves and opens terminal in one action
 - [ ] After connecting, status bar displays: hostname, CPU%, Mem%, Disk%

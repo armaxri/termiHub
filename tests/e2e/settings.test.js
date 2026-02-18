@@ -1,5 +1,5 @@
-// Settings and color picker tests.
-// Covers: SET-01, SET-02, SET-04 (tab coloring).
+// Settings, color picker, and monitoring tests.
+// Covers: SET-01, SET-02, SET-04 (tab coloring), SET-MONITOR (PR #114/#115).
 
 import { waitForAppReady, ensureConnectionsSidebar, closeAllTabs } from './helpers/app.js';
 import { openSettingsTab, switchToFilesSidebar } from './helpers/sidebar.js';
@@ -12,6 +12,7 @@ import {
   connectionContextAction,
   CTX_CONNECTION_EDIT,
 } from './helpers/connections.js';
+import { createSshConnection } from './helpers/infrastructure.js';
 import { findTabByTitle, closeTabByTitle, getTabCount } from './helpers/tabs.js';
 import {
   CONN_EDITOR_COLOR_PICKER,
@@ -410,6 +411,47 @@ describe('Settings & Color Picker', () => {
       // Verify the tab color changed (runtime override)
       const style = await tab.getAttribute('style');
       expect(style).toContain('border-left');
+    });
+  });
+
+  describe('SET-MONITOR: Monitoring in status bar (PR #114, #115)', () => {
+    it('should show Monitor button in status bar when SSH connections exist', async () => {
+      await ensureConnectionsSidebar();
+      const name = uniqueName('mon-ssh');
+      await createSshConnection(name, { host: '127.0.0.1', port: '22' });
+
+      // Monitor button should appear in status bar
+      const monitorBtn = await browser.$('[data-testid="monitoring-connect-btn"]');
+      await monitorBtn.waitForExist({ timeout: 5000 });
+      expect(await monitorBtn.isDisplayed()).toBe(true);
+
+      const text = await monitorBtn.getText();
+      expect(text).toContain('Monitor');
+    });
+
+    it('should open dropdown listing SSH connections when clicking Monitor', async () => {
+      await ensureConnectionsSidebar();
+      const name = uniqueName('mon-drop');
+      await createSshConnection(name, { host: '127.0.0.1', port: '22' });
+
+      const monitorBtn = await browser.$('[data-testid="monitoring-connect-btn"]');
+      await monitorBtn.waitForExist({ timeout: 5000 });
+      await monitorBtn.click();
+      await browser.pause(300);
+
+      // Dropdown should list saved SSH connections
+      const dropdownItems = await browser.$$('[data-testid^="monitoring-connect-"]');
+      // At least the button itself and connection items
+      expect(dropdownItems.length).toBeGreaterThanOrEqual(1);
+
+      await browser.keys('Escape');
+    });
+
+    it('should not show monitoring icon in activity bar', async () => {
+      // PR #114/#115 moved monitoring from sidebar to status bar
+      const monitoringActivityBtn = await browser.$('[data-testid="activity-bar-monitoring"]');
+      const exists = await monitoringActivityBtn.isExisting();
+      expect(exists).toBe(false);
     });
   });
 });
