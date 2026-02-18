@@ -175,6 +175,55 @@ describe('Tab Management', () => {
     });
   });
 
+  describe('TAB-COPY: Copy to Clipboard context menu (PR #36)', () => {
+    it('should show Save, Copy, Clear in correct order in context menu', async () => {
+      const name = uniqueName('copy-order');
+      await createLocalConnection(name);
+      await connectByName(name);
+
+      const tab = await findTabByTitle(name);
+      await tab.click({ button: 'right' });
+      await browser.pause(300);
+
+      const saveItem = await browser.$('[data-testid="tab-context-save"]');
+      const copyItem = await browser.$('[data-testid="tab-context-copy"]');
+      const clearItem = await browser.$('[data-testid="tab-context-clear"]');
+
+      expect(await saveItem.isDisplayed()).toBe(true);
+      expect(await copyItem.isDisplayed()).toBe(true);
+      expect(await clearItem.isDisplayed()).toBe(true);
+
+      // Verify order: Save < Copy < Clear (by Y position)
+      const saveLoc = await saveItem.getLocation();
+      const copyLoc = await copyItem.getLocation();
+      const clearLoc = await clearItem.getLocation();
+      expect(saveLoc.y).toBeLessThan(copyLoc.y);
+      expect(copyLoc.y).toBeLessThan(clearLoc.y);
+
+      await browser.keys('Escape');
+    });
+
+    it('should copy terminal content to clipboard without error', async () => {
+      const name = uniqueName('copy-action');
+      await createLocalConnection(name);
+      await connectByName(name);
+      await browser.pause(1000);
+
+      // Right-click tab and click Copy to Clipboard
+      const tab = await findTabByTitle(name);
+      await tab.click({ button: 'right' });
+      await browser.pause(300);
+
+      const copyItem = await browser.$('[data-testid="tab-context-copy"]');
+      await copyItem.click();
+      await browser.pause(500);
+
+      // Verify the terminal still exists (action completed without crashing)
+      const xtermContainer = await browser.$('.xterm');
+      expect(await xtermContainer.isExisting()).toBe(true);
+    });
+  });
+
   describe('TAB-SAVE: Save to File in context menu (PR #35)', () => {
     it('should show "Save to File" above "Clear Terminal" in context menu', async () => {
       const name = uniqueName('save-order');

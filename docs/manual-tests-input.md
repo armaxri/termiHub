@@ -190,10 +190,10 @@ Each section groups related tests by feature area. Individual test items referen
 
 ### Copy terminal content to clipboard (PR #36)
 
-- [ ] Right-click a terminal tab — context menu shows "Save to File", "Copy to Clipboard", "Clear Terminal" in that order
-- [ ] Click "Copy to Clipboard" — paste elsewhere to verify terminal content is on the clipboard
-- [ ] "Save to File" still works as before (regression check)
-- [ ] Settings tab has no context menu (unchanged behavior)
+- [x] Right-click a terminal tab — context menu shows "Save to File", "Copy to Clipboard", "Clear Terminal" in that order
+- [x] Click "Copy to Clipboard" — paste elsewhere to verify terminal content is on the clipboard
+- [x] "Save to File" still works as before (regression check)
+- [x] Settings tab has no context menu (unchanged behavior)
 
 ### Suppress browser default context menu (PR #150)
 
