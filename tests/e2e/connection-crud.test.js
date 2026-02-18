@@ -13,11 +13,12 @@ import {
   CTX_CONNECTION_DUPLICATE,
   CTX_CONNECTION_DELETE,
 } from './helpers/connections.js';
-import { findTabByTitle } from './helpers/tabs.js';
+import { findTabByTitle, getTabCount, getActiveTab } from './helpers/tabs.js';
 import { createSshConnection, createTelnetConnection } from './helpers/infrastructure.js';
 import {
   CONN_EDITOR_NAME,
   CONN_EDITOR_SAVE,
+  CONN_EDITOR_CANCEL,
   CONNECTION_LIST_NEW_FOLDER,
   INLINE_FOLDER_NAME_INPUT,
   INLINE_FOLDER_CONFIRM,
@@ -138,6 +139,90 @@ describe('Connection CRUD', () => {
       // The duplicate should appear with "Copy of" prefix
       const duplicate = await findConnectionByName(`Copy of ${name}`);
       expect(duplicate).not.toBeNull();
+    });
+  });
+
+  describe('CONN-EDITOR-TAB: Connection editor as tab (PR #109)', () => {
+    afterEach(async () => {
+      await closeAllTabs();
+    });
+
+    it('should open editor as a tab when clicking New Connection', async () => {
+      await openNewConnectionEditor();
+
+      // An editor tab should appear (the form is inside a tab)
+      const tabCount = await getTabCount();
+      expect(tabCount).toBeGreaterThanOrEqual(1);
+
+      // The editor form should be visible
+      const nameInput = await browser.$(CONN_EDITOR_NAME);
+      expect(await nameInput.isDisplayed()).toBe(true);
+
+      await cancelEditor();
+    });
+
+    it('should open editor tab with "Edit: <name>" title when editing', async () => {
+      const name = uniqueName('edit-tab');
+      await createLocalConnection(name);
+
+      await connectionContextAction(name, CTX_CONNECTION_EDIT);
+      await browser.pause(300);
+
+      // Editor tab should contain "Edit" in its title
+      const editTab = await findTabByTitle('Edit');
+      expect(editTab).not.toBeNull();
+
+      await cancelEditor();
+    });
+
+    it('should close editor tab when saving', async () => {
+      const name = uniqueName('save-close');
+      await openNewConnectionEditor();
+      const nameInput = await browser.$(CONN_EDITOR_NAME);
+      await nameInput.setValue(name);
+
+      const tabsBefore = await getTabCount();
+      const saveBtn = await browser.$(CONN_EDITOR_SAVE);
+      await saveBtn.click();
+      await browser.pause(300);
+
+      const tabsAfter = await getTabCount();
+      expect(tabsAfter).toBeLessThan(tabsBefore);
+    });
+
+    it('should close editor tab when cancelling without saving', async () => {
+      await openNewConnectionEditor();
+
+      const tabsBefore = await getTabCount();
+      const cancelBtn = await browser.$(CONN_EDITOR_CANCEL);
+      await cancelBtn.click();
+      await browser.pause(300);
+
+      const tabsAfter = await getTabCount();
+      expect(tabsAfter).toBeLessThan(tabsBefore);
+    });
+
+    it('should activate existing editor tab when re-editing same connection', async () => {
+      const name = uniqueName('re-edit');
+      await createLocalConnection(name);
+
+      // Open editor for the connection
+      await connectionContextAction(name, CTX_CONNECTION_EDIT);
+      await browser.pause(300);
+      const tabsAfterFirst = await getTabCount();
+
+      await browser.keys('Escape');
+      await browser.pause(200);
+
+      // Edit the same connection again
+      await connectionContextAction(name, CTX_CONNECTION_EDIT);
+      await browser.pause(300);
+      const tabsAfterSecond = await getTabCount();
+
+      // Should not have created a second editor tab
+      expect(tabsAfterSecond).toBe(tabsAfterFirst);
+
+      await cancelEditor();
     });
   });
 

@@ -224,12 +224,12 @@ Each section groups related tests by feature area. Individual test items referen
 
 ### Connection editor as tab (PR #109)
 
-- [ ] Click "New Connection" in sidebar — editor opens as a tab in the panel area
-- [ ] Right-click a connection — Edit — editor tab opens with "Edit: <name>" title
-- [ ] Save a connection — tab closes and connection is persisted
-- [ ] Cancel — tab closes without saving
+- [x] Click "New Connection" in sidebar — editor opens as a tab in the panel area
+- [x] Right-click a connection — Edit — editor tab opens with "Edit: <name>" title
+- [x] Save a connection — tab closes and connection is persisted
+- [x] Cancel — tab closes without saving
 - [ ] Open multiple editor tabs simultaneously for different connections
-- [ ] Re-clicking Edit on an already-open connection activates the existing tab
+- [x] Re-clicking Edit on an already-open connection activates the existing tab
 
 ### Remove folder selector from editor (PR #146)
 
