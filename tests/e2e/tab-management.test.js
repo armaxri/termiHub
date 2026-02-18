@@ -175,6 +175,43 @@ describe('Tab Management', () => {
     });
   });
 
+  describe('TAB-CTX-SUPPRESS: Suppress default context menu (PR #150)', () => {
+    it('should show custom context menu on connection right-click', async () => {
+      const name = uniqueName('ctx-conn');
+      await createLocalConnection(name);
+
+      // Right-click the connection in the sidebar
+      const item = await browser.$(`[data-testid^="connection-item-"]`);
+      if (item && await item.isExisting()) {
+        await item.click({ button: 'right' });
+        await browser.pause(300);
+
+        // Custom context menu should appear (has connect/edit/delete items)
+        const editItem = await browser.$('[data-testid="context-connection-edit"]');
+        const visible = await editItem.isExisting() && await editItem.isDisplayed();
+        expect(visible).toBe(true);
+
+        await browser.keys('Escape');
+      }
+    });
+
+    it('should show custom context menu on tab right-click', async () => {
+      const name = uniqueName('ctx-tab');
+      await createLocalConnection(name);
+      await connectByName(name);
+
+      const tab = await findTabByTitle(name);
+      await tab.click({ button: 'right' });
+      await browser.pause(300);
+
+      // Custom tab context menu should appear
+      const clearItem = await browser.$('[data-testid="tab-context-clear"]');
+      expect(await clearItem.isDisplayed()).toBe(true);
+
+      await browser.keys('Escape');
+    });
+  });
+
   describe('TAB-COPY: Copy to Clipboard context menu (PR #36)', () => {
     it('should show Save, Copy, Clear in correct order in context menu', async () => {
       const name = uniqueName('copy-order');

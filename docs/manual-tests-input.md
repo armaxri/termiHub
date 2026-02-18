@@ -198,8 +198,8 @@ Each section groups related tests by feature area. Individual test items referen
 ### Suppress browser default context menu (PR #150)
 
 - [ ] Right-click on empty areas (sidebar whitespace, terminal, activity bar) — no menu appears
-- [ ] Right-click on a connection — custom context menu still works
-- [ ] Right-click on a tab — custom context menu still works
+- [x] Right-click on a connection — custom context menu still works
+- [x] Right-click on a tab — custom context menu still works
 
 ### Per-connection horizontal scrolling (PR #45)
 
