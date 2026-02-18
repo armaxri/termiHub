@@ -344,26 +344,26 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           </select>
         </label>
 
-        {selectedType === "local" && (
+        {connectionConfig.type === "local" && (
           <ConnectionSettings
             config={connectionConfig.config}
             onChange={(config: LocalShellConfig) => setConnectionConfig({ type: "local", config })}
           />
         )}
-        {selectedType === "ssh" && (
+        {connectionConfig.type === "ssh" && (
           <SshSettings
             config={connectionConfig.config}
             onChange={(config: SshConfig) => setConnectionConfig({ type: "ssh", config })}
             onSetupAgent={handleSetupSshAgent}
           />
         )}
-        {selectedType === "serial" && (
+        {connectionConfig.type === "serial" && (
           <SerialSettings
             config={connectionConfig.config}
             onChange={(config: SerialConfig) => setConnectionConfig({ type: "serial", config })}
           />
         )}
-        {selectedType === "telnet" && (
+        {connectionConfig.type === "telnet" && (
           <TelnetSettings
             config={connectionConfig.config}
             onChange={(config: TelnetConfig) => setConnectionConfig({ type: "telnet", config })}
