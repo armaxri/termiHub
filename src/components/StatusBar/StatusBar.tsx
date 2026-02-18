@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Activity, RefreshCw, Unplug, Loader2 } from "lucide-react";
-import { useAppStore } from "@/store/appStore";
+import { useAppStore, getActiveTab } from "@/store/appStore";
 import { SshConfig, ConnectionConfig } from "@/types/terminal";
 import { SavedConnection } from "@/types/connection";
 import { SystemStats } from "@/types/monitoring";
@@ -150,6 +150,9 @@ function MonitoringStatus() {
 
   const connections = useAppStore((s) => s.connections);
   const externalSources = useAppStore((s) => s.externalSources);
+  const activeTab = useAppStore((s) => getActiveTab(s));
+  const activeTabId = activeTab?.id ?? null;
+  const requestPassword = useAppStore((s) => s.requestPassword);
 
   const sshConnections = useMemo(() => {
     const result: SavedConnection[] = [];
@@ -180,6 +183,55 @@ function MonitoringStatus() {
       }
     };
   }, [monitoringSessionId, refreshMonitoring]);
+
+  // Auto-connect monitoring when active tab is an SSH session
+  useEffect(() => {
+    if (!activeTab || activeTab.config.type !== "ssh") return;
+
+    const sshConfig = activeTab.config.config as SshConfig;
+    const hostKey = `${sshConfig.username}@${sshConfig.host}:${sshConfig.port}`;
+
+    // Already monitoring the right host
+    if (monitoringSessionId && monitoringHost === hostKey) return;
+
+    const doConnect = async () => {
+      // Disconnect from previous host if needed
+      if (monitoringSessionId && monitoringHost !== hostKey) {
+        await disconnectMonitoring();
+      }
+
+      // Handle password-based auth: prompt if password is missing
+      let configToUse = sshConfig;
+      if (sshConfig.authMethod === "password" && !sshConfig.password) {
+        const savedConn = connections.find((c) => {
+          if (c.config.type !== "ssh") return false;
+          const sc = c.config.config as SshConfig;
+          return (
+            sc.host === sshConfig.host &&
+            sc.port === sshConfig.port &&
+            sc.username === sshConfig.username
+          );
+        });
+        const baseConfig = savedConn ? (savedConn.config.config as SshConfig) : sshConfig;
+        const password = await requestPassword(sshConfig.host, sshConfig.username);
+        if (password === null) return;
+        configToUse = { ...baseConfig, password };
+      }
+
+      connectMonitoring(configToUse);
+    };
+
+    doConnect();
+  }, [
+    activeTabId,
+    activeTab,
+    monitoringSessionId,
+    monitoringHost,
+    connections,
+    connectMonitoring,
+    disconnectMonitoring,
+    requestPassword,
+  ]);
 
   const handleConnect = useCallback(
     (connection: SavedConnection) => {
