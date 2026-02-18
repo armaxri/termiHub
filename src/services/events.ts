@@ -19,6 +19,11 @@ interface RemoteStateChangePayload {
   state: string;
 }
 
+interface AgentStateChangePayload {
+  session_id: string;
+  state: string;
+}
+
 /** Subscribe to terminal output events */
 export async function onTerminalOutput(
   callback: (sessionId: string, data: Uint8Array) => void
@@ -49,9 +54,11 @@ export class TerminalOutputDispatcher {
   private outputCallbacks = new Map<string, (data: Uint8Array) => void>();
   private exitCallbacks = new Map<string, (exitCode: number | null) => void>();
   private remoteStateCallbacks = new Map<string, (state: string) => void>();
+  private agentStateCallbacks = new Map<string, (state: string) => void>();
   private unlistenOutput: UnlistenFn | null = null;
   private unlistenExit: UnlistenFn | null = null;
   private unlistenRemoteState: UnlistenFn | null = null;
+  private unlistenAgentState: UnlistenFn | null = null;
   private initialized = false;
   private initGeneration = 0;
 
@@ -118,6 +125,29 @@ export class TerminalOutputDispatcher {
       return;
     }
     this.unlistenRemoteState = unlistenRemoteState;
+
+    const unlistenAgentState = await listen<AgentStateChangePayload>(
+      "agent-state-change",
+      (event) => {
+        const { session_id, state } = event.payload;
+        const cb = this.agentStateCallbacks.get(session_id);
+        if (cb) {
+          cb(state);
+        }
+      }
+    );
+
+    if (gen !== this.initGeneration) {
+      unlistenAgentState();
+      this.unlistenOutput();
+      this.unlistenOutput = null;
+      this.unlistenExit();
+      this.unlistenExit = null;
+      this.unlistenRemoteState();
+      this.unlistenRemoteState = null;
+      return;
+    }
+    this.unlistenAgentState = unlistenAgentState;
   }
 
   /** Subscribe to output events for a specific session. Returns an unsubscribe function. */
@@ -144,6 +174,14 @@ export class TerminalOutputDispatcher {
     };
   }
 
+  /** Subscribe to agent state change events for a specific agent. Returns an unsubscribe function. */
+  subscribeAgentState(agentId: string, callback: (state: string) => void): () => void {
+    this.agentStateCallbacks.set(agentId, callback);
+    return () => {
+      this.agentStateCallbacks.delete(agentId);
+    };
+  }
+
   /** Tear down global listeners and clear all callbacks. */
   destroy(): void {
     this.initGeneration++;
@@ -159,9 +197,14 @@ export class TerminalOutputDispatcher {
       this.unlistenRemoteState();
       this.unlistenRemoteState = null;
     }
+    if (this.unlistenAgentState) {
+      this.unlistenAgentState();
+      this.unlistenAgentState = null;
+    }
     this.outputCallbacks.clear();
     this.exitCallbacks.clear();
     this.remoteStateCallbacks.clear();
+    this.agentStateCallbacks.clear();
     this.initialized = false;
   }
 }

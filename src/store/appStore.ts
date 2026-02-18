@@ -21,6 +21,8 @@ import {
   FileEntry,
   ExternalConnectionSource,
   AppSettings,
+  RemoteAgentDefinition,
+  AgentCapabilities,
 } from "@/types/connection";
 import {
   loadConnections,
@@ -44,7 +46,16 @@ import {
   monitoringFetchStats,
   listAvailableShells,
   getDefaultShell,
+  connectAgent as apiConnectAgent,
+  disconnectAgent as apiDisconnectAgent,
+  listAgentSessions,
+  listAgentDefinitions,
+  saveAgentDefinition,
+  deleteAgentDefinition,
+  AgentSessionInfo,
+  AgentDefinitionInfo,
 } from "@/services/api";
+import { RemoteAgentConfig } from "@/types/terminal";
 import { SystemStats } from "@/types/monitoring";
 import {
   createLeafPanel,
@@ -255,6 +266,25 @@ interface AppState {
   // Remote connection states
   remoteStates: Record<string, string>;
   setRemoteState: (sessionId: string, state: string) => void;
+
+  // Remote agents
+  remoteAgents: RemoteAgentDefinition[];
+  agentSessions: Record<string, AgentSessionInfo[]>;
+  agentDefinitions: Record<string, AgentDefinitionInfo[]>;
+  addRemoteAgent: (agent: RemoteAgentDefinition) => void;
+  updateRemoteAgent: (agent: RemoteAgentDefinition) => void;
+  deleteRemoteAgent: (agentId: string) => void;
+  toggleRemoteAgent: (agentId: string) => void;
+  connectRemoteAgent: (agentId: string, password?: string) => Promise<void>;
+  disconnectRemoteAgent: (agentId: string) => Promise<void>;
+  setAgentConnectionState: (
+    agentId: string,
+    state: RemoteAgentDefinition["connectionState"]
+  ) => void;
+  setAgentCapabilities: (agentId: string, capabilities: AgentCapabilities) => void;
+  refreshAgentSessions: (agentId: string) => Promise<void>;
+  saveAgentDef: (agentId: string, definition: Record<string, unknown>) => Promise<void>;
+  deleteAgentDef: (agentId: string, definitionId: string) => Promise<void>;
 
   // Local file browser state
   localFileEntries: FileEntry[];
@@ -1219,6 +1249,166 @@ export const useAppStore = create<AppState>((set, get) => {
     remoteStates: {},
     setRemoteState: (sessionId, state) =>
       set((s) => ({ remoteStates: { ...s.remoteStates, [sessionId]: state } })),
+
+    // Remote agents
+    remoteAgents: [],
+    agentSessions: {},
+    agentDefinitions: {},
+
+    addRemoteAgent: (agent) => {
+      set((state) => ({ remoteAgents: [...state.remoteAgents, agent] }));
+    },
+
+    updateRemoteAgent: (agent) => {
+      set((state) => ({
+        remoteAgents: state.remoteAgents.map((a) => (a.id === agent.id ? agent : a)),
+      }));
+    },
+
+    deleteRemoteAgent: (agentId) => {
+      const state = get();
+      // Disconnect first if connected
+      const agent = state.remoteAgents.find((a) => a.id === agentId);
+      if (agent && agent.connectionState !== "disconnected") {
+        apiDisconnectAgent(agentId).catch(() => {});
+      }
+      set((s) => ({
+        remoteAgents: s.remoteAgents.filter((a) => a.id !== agentId),
+        agentSessions: Object.fromEntries(
+          Object.entries(s.agentSessions).filter(([k]) => k !== agentId)
+        ),
+        agentDefinitions: Object.fromEntries(
+          Object.entries(s.agentDefinitions).filter(([k]) => k !== agentId)
+        ),
+      }));
+    },
+
+    toggleRemoteAgent: (agentId) => {
+      set((state) => ({
+        remoteAgents: state.remoteAgents.map((a) =>
+          a.id === agentId ? { ...a, isExpanded: !a.isExpanded } : a
+        ),
+      }));
+    },
+
+    connectRemoteAgent: async (agentId, password) => {
+      const state = get();
+      const agent = state.remoteAgents.find((a) => a.id === agentId);
+      if (!agent) return;
+
+      set((s) => ({
+        remoteAgents: s.remoteAgents.map((a) =>
+          a.id === agentId ? { ...a, connectionState: "connecting" as const } : a
+        ),
+      }));
+
+      try {
+        const config: RemoteAgentConfig = { ...agent.config };
+        if (password && config.authMethod === "password") {
+          config.password = password;
+        }
+        const result = await apiConnectAgent(agentId, config);
+
+        set((s) => ({
+          remoteAgents: s.remoteAgents.map((a) =>
+            a.id === agentId
+              ? {
+                  ...a,
+                  connectionState: "connected" as const,
+                  capabilities: result.capabilities,
+                  isExpanded: true,
+                }
+              : a
+          ),
+        }));
+
+        // Fetch sessions and definitions
+        await get().refreshAgentSessions(agentId);
+      } catch (err) {
+        console.error(`Failed to connect agent ${agentId}:`, err);
+        set((s) => ({
+          remoteAgents: s.remoteAgents.map((a) =>
+            a.id === agentId ? { ...a, connectionState: "disconnected" as const } : a
+          ),
+        }));
+      }
+    },
+
+    disconnectRemoteAgent: async (agentId) => {
+      try {
+        await apiDisconnectAgent(agentId);
+      } catch (err) {
+        console.error(`Failed to disconnect agent ${agentId}:`, err);
+      }
+      set((s) => ({
+        remoteAgents: s.remoteAgents.map((a) =>
+          a.id === agentId ? { ...a, connectionState: "disconnected" as const } : a
+        ),
+        agentSessions: { ...s.agentSessions, [agentId]: [] },
+      }));
+    },
+
+    setAgentConnectionState: (agentId, connectionState) => {
+      set((state) => ({
+        remoteAgents: state.remoteAgents.map((a) =>
+          a.id === agentId ? { ...a, connectionState } : a
+        ),
+      }));
+    },
+
+    setAgentCapabilities: (agentId, capabilities) => {
+      set((state) => ({
+        remoteAgents: state.remoteAgents.map((a) =>
+          a.id === agentId ? { ...a, capabilities } : a
+        ),
+      }));
+    },
+
+    refreshAgentSessions: async (agentId) => {
+      try {
+        const [sessions, definitions] = await Promise.all([
+          listAgentSessions(agentId),
+          listAgentDefinitions(agentId),
+        ]);
+        set((s) => ({
+          agentSessions: { ...s.agentSessions, [agentId]: sessions },
+          agentDefinitions: { ...s.agentDefinitions, [agentId]: definitions },
+        }));
+      } catch (err) {
+        console.error(`Failed to refresh agent sessions for ${agentId}:`, err);
+      }
+    },
+
+    saveAgentDef: async (agentId, definition) => {
+      try {
+        const saved = await saveAgentDefinition(agentId, definition);
+        set((s) => ({
+          agentDefinitions: {
+            ...s.agentDefinitions,
+            [agentId]: [
+              ...(s.agentDefinitions[agentId] ?? []).filter((d) => d.id !== saved.id),
+              saved,
+            ],
+          },
+        }));
+      } catch (err) {
+        console.error(`Failed to save agent definition on ${agentId}:`, err);
+      }
+    },
+
+    deleteAgentDef: async (agentId, definitionId) => {
+      try {
+        await deleteAgentDefinition(agentId, definitionId);
+        set((s) => ({
+          agentDefinitions: {
+            ...s.agentDefinitions,
+            [agentId]: (s.agentDefinitions[agentId] ?? []).filter((d) => d.id !== definitionId),
+          },
+        }));
+      } catch (err) {
+        console.error(`Failed to delete agent definition on ${agentId}:`, err);
+      }
+    },
 
     // Local file browser state
     localFileEntries: [],
