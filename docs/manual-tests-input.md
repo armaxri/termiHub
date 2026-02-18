@@ -154,7 +154,7 @@ Each section groups related tests by feature area. Individual test items referen
 
 ### Docker Telnet connection (PR #40)
 
-- [ ] Connect to Docker Telnet (port 2323) — login prompt works with `testuser`/`testpass`
+- [x] Connect to Docker Telnet (port 2323) — login prompt works with `testuser`/`testpass`
 
 ---
 
