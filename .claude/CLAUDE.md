@@ -70,6 +70,7 @@ examples/                     # Docker test environment (SSH, Telnet, virtual se
   3. **Documented manual test steps** — last resort for things that can't be automated (e.g., visual rendering, platform-specific hardware)
 - No change should ship without at least one of the above
 - For bug fixes, add a regression test that would fail without the fix (when possible)
+- **Manual test tracking**: When a PR includes manual test steps (in the PR description's "Test plan" section), also add those steps to `docs/manual-tests-input.md` under the appropriate feature area heading, referencing the PR number. This keeps manual tests discoverable and prevents them from being forgotten after merge.
 
 ### General
 - Max ~500 lines per file, ~50 lines per function
@@ -169,6 +170,7 @@ pnpm tauri dev
 - [Contributing](../docs/contributing.md) — Development workflow and coding standards
 - [Testing Strategy](../docs/testing.md) — Automated and manual testing approach
 - [Manual Testing](../docs/manual-testing.md) — Hardware-dependent test plan
+- [Manual Tests Input](../docs/manual-tests-input.md) — Collected manual test steps from PRs
 - [Performance](../docs/performance.md) — Profiling guide and baseline metrics
 - [Building](../docs/building.md) — Platform-specific build instructions
 - [Releasing](../docs/releasing.md) — Release process and version management
