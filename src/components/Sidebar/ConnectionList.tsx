@@ -32,6 +32,7 @@ import { ShellType, SshConfig, RemoteConfig } from "@/types/terminal";
 import { SavedConnection, ConnectionFolder, ExternalConnectionSource } from "@/types/connection";
 import { listAvailableShells } from "@/services/api";
 import { ConnectionIcon } from "@/utils/connectionIcons";
+import { AgentNode } from "./AgentNode";
 import "./ConnectionList.css";
 
 interface InlineFolderInputProps {
@@ -330,6 +331,7 @@ export function ConnectionList() {
   const folders = useAppStore((s) => s.folders);
   const connections = useAppStore((s) => s.connections);
   const externalSources = useAppStore((s) => s.externalSources);
+  const remoteAgents = useAppStore((s) => s.remoteAgents);
   const toggleFolder = useAppStore((s) => s.toggleFolder);
   const addTab = useAppStore((s) => s.addTab);
   const openConnectionEditorTab = useAppStore((s) => s.openConnectionEditorTab);
@@ -560,6 +562,8 @@ export function ConnectionList() {
             }}
           />
         ))}
+        {remoteAgents.length > 0 &&
+          remoteAgents.map((agent) => <AgentNode key={agent.id} agent={agent} />)}
         <DragOverlay>
           {draggingConnection ? (
             <div className="connection-tree__drag-overlay">

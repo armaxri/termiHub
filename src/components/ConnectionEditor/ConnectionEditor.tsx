@@ -8,18 +8,20 @@ import {
   TelnetConfig,
   SerialConfig,
   RemoteConfig,
+  RemoteAgentConfig,
   ShellType,
   TerminalOptions,
   ConnectionEditorMeta,
 } from "@/types/terminal";
 import { listAvailableShells } from "@/services/api";
-import { SavedConnection } from "@/types/connection";
+import { SavedConnection, RemoteAgentDefinition } from "@/types/connection";
 import {
   ConnectionSettings,
   SshSettings,
   SerialSettings,
   TelnetSettings,
   RemoteSettings,
+  AgentSettings,
 } from "@/components/Settings";
 import { ColorPickerDialog } from "@/components/Terminal/ColorPickerDialog";
 import { IconPickerDialog } from "./IconPickerDialog";
@@ -113,6 +115,9 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const addTab = useAppStore((s) => s.addTab);
   const requestPassword = useAppStore((s) => s.requestPassword);
   const rootPanel = useAppStore((s) => s.rootPanel);
+  const remoteAgents = useAppStore((s) => s.remoteAgents);
+  const addRemoteAgent = useAppStore((s) => s.addRemoteAgent);
+  const updateRemoteAgent = useAppStore((s) => s.updateRemoteAgent);
 
   const editingConnectionId = meta.connectionId;
   const editingConnectionFolderId = meta.folderId;
@@ -134,15 +139,27 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         : connections.find((c) => c.id === editingConnectionId)
       : undefined;
 
+  const existingAgent =
+    editingConnectionId && editingConnectionId !== "new"
+      ? remoteAgents.find((a) => a.id === editingConnectionId)
+      : undefined;
+
   const defaultShell = useAppStore((s) => s.defaultShell);
 
   const defaultConfigs = getDefaultConfigs(defaultShell);
 
-  const [name, setName] = useState(existingConnection?.name ?? "");
+  const [name, setName] = useState(existingConnection?.name ?? existingAgent?.name ?? "");
   const folderId = existingConnection?.folderId ?? editingConnectionFolderId ?? null;
   const [connectionConfig, setConnectionConfig] = useState<ConnectionConfig>(
-    existingConnection?.config ?? defaultConfigs.local
+    existingAgent ? defaultConfigs.remote : (existingConnection?.config ?? defaultConfigs.local)
   );
+  const [agentConfig, setAgentConfig] = useState<RemoteAgentConfig>(
+    existingAgent?.config ?? { host: "", port: 22, username: "", authMethod: "password" }
+  );
+
+  /** Agent mode: editing an existing agent, or creating new with "remote" type selected. */
+  const isAgentMode =
+    !!existingAgent || (connectionConfig.type === "remote" && !existingConnection);
   const [terminalOptions, setTerminalOptions] = useState<TerminalOptions>(
     existingConnection?.terminalOptions ?? {}
   );
@@ -164,9 +181,27 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     }
   }, [rootPanel, tabId, closeTab]);
 
-  /** Save the connection and return the saved entry (or null if name is empty). */
-  const saveConnection = useCallback((): SavedConnection | null => {
+  /** Save the connection (or agent) and return the saved entry (or null if name is empty). */
+  const saveConnection = useCallback((): SavedConnection | RemoteAgentDefinition | null => {
     if (!name.trim()) return null;
+
+    if (isAgentMode) {
+      if (existingAgent) {
+        const updated: RemoteAgentDefinition = { ...existingAgent, name, config: agentConfig };
+        updateRemoteAgent(updated);
+        return updated;
+      } else {
+        const newAgent: RemoteAgentDefinition = {
+          id: `agent-${Date.now()}`,
+          name,
+          config: agentConfig,
+          isExpanded: false,
+          connectionState: "disconnected",
+        };
+        addRemoteAgent(newAgent);
+        return newAgent;
+      }
+    }
 
     const opts =
       terminalOptions.horizontalScrolling || terminalOptions.color ? terminalOptions : undefined;
@@ -225,12 +260,17 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     terminalOptions,
     icon,
     existingConnection,
+    existingAgent,
+    isAgentMode,
+    agentConfig,
     extFilePath,
     folderId,
     addConnection,
     updateConnection,
     addExternalConnection,
     updateExternalConnection,
+    addRemoteAgent,
+    updateRemoteAgent,
   ]);
 
   const handleSetupSshAgent = useCallback(async () => {
@@ -254,7 +294,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
 
   const handleSaveAndConnect = useCallback(async () => {
     const saved = saveConnection();
-    if (!saved) return;
+    if (!saved || "connectionState" in saved) return;
 
     let config = saved.config;
 
@@ -283,7 +323,11 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   return (
     <div className="connection-editor" style={{ display: isVisible ? undefined : "none" }}>
       <div className="connection-editor__header">
-        {existingConnection ? "Edit Connection" : "New Connection"}
+        {existingAgent
+          ? "Edit Remote Agent"
+          : existingConnection
+            ? "Edit Connection"
+            : "New Connection"}
       </div>
       <div className="connection-editor__form">
         <label className="settings-form__field">
@@ -302,6 +346,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           <select
             value={connectionConfig.type}
             onChange={(e) => handleTypeChange(e.target.value as ConnectionType)}
+            disabled={!!existingAgent}
             data-testid="connection-editor-type-select"
           >
             {TYPE_OPTIONS.map((opt) => (
@@ -337,96 +382,105 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
             onChange={(config: TelnetConfig) => setConnectionConfig({ type: "telnet", config })}
           />
         )}
-        {connectionConfig.type === "remote" && (
+        {connectionConfig.type === "remote" && isAgentMode && (
+          <AgentSettings config={agentConfig} onChange={setAgentConfig} />
+        )}
+        {connectionConfig.type === "remote" && !isAgentMode && (
           <RemoteSettings
             config={connectionConfig.config}
             onChange={(config: RemoteConfig) => setConnectionConfig({ type: "remote", config })}
           />
         )}
 
-        <p className="settings-form__hint">
-          Use {"${env:VAR}"} for environment variables, e.g. {"${env:USER}"}
-        </p>
+        {!isAgentMode && (
+          <p className="settings-form__hint">
+            Use {"${env:VAR}"} for environment variables, e.g. {"${env:USER}"}
+          </p>
+        )}
 
-        <label className="settings-form__field settings-form__field--checkbox">
-          <input
-            type="checkbox"
-            checked={terminalOptions.horizontalScrolling ?? false}
-            onChange={(e) =>
-              setTerminalOptions({ ...terminalOptions, horizontalScrolling: e.target.checked })
-            }
-            data-testid="connection-editor-horizontal-scroll"
-          />
-          <span className="settings-form__label">Enable horizontal scrolling</span>
-        </label>
-
-        <div className="settings-form__field">
-          <span className="settings-form__label">Tab Color</span>
-          <div className="connection-editor__color-row">
-            {terminalOptions.color && (
-              <div
-                className="connection-editor__color-preview"
-                style={{ backgroundColor: terminalOptions.color }}
+        {!isAgentMode && (
+          <>
+            <label className="settings-form__field settings-form__field--checkbox">
+              <input
+                type="checkbox"
+                checked={terminalOptions.horizontalScrolling ?? false}
+                onChange={(e) =>
+                  setTerminalOptions({ ...terminalOptions, horizontalScrolling: e.target.checked })
+                }
+                data-testid="connection-editor-horizontal-scroll"
               />
-            )}
-            <button
-              className="connection-editor__btn connection-editor__btn--secondary"
-              type="button"
-              onClick={() => setColorPickerOpen(true)}
-              data-testid="connection-editor-color-picker"
-            >
-              {terminalOptions.color ? "Change" : "Set Color"}
-            </button>
-            {terminalOptions.color && (
-              <button
-                className="connection-editor__btn connection-editor__btn--secondary"
-                type="button"
-                onClick={() => setTerminalOptions({ ...terminalOptions, color: undefined })}
-                data-testid="connection-editor-clear-color"
-              >
-                Clear
-              </button>
-            )}
-          </div>
-        </div>
-        <div className="settings-form__field">
-          <span className="settings-form__label">Icon</span>
-          <div className="connection-editor__color-row">
-            {icon && <IconByName name={icon} size={18} />}
-            <button
-              className="connection-editor__btn connection-editor__btn--secondary"
-              type="button"
-              onClick={() => setIconPickerOpen(true)}
-              data-testid="connection-editor-icon-picker"
-            >
-              {icon ? "Change" : "Set Icon"}
-            </button>
-            {icon && (
-              <button
-                className="connection-editor__btn connection-editor__btn--secondary"
-                type="button"
-                onClick={() => setIcon(undefined)}
-                data-testid="connection-editor-clear-icon"
-              >
-                Clear
-              </button>
-            )}
-          </div>
-        </div>
-        <ColorPickerDialog
-          open={colorPickerOpen}
-          onOpenChange={setColorPickerOpen}
-          currentColor={terminalOptions.color}
-          onColorChange={(color) =>
-            setTerminalOptions({ ...terminalOptions, color: color ?? undefined })
-          }
-        />
-        <IconPickerDialog
-          open={iconPickerOpen}
-          onOpenChange={setIconPickerOpen}
-          currentIcon={icon}
-          onIconChange={(i) => setIcon(i ?? undefined)}
-        />
+              <span className="settings-form__label">Enable horizontal scrolling</span>
+            </label>
+
+            <div className="settings-form__field">
+              <span className="settings-form__label">Tab Color</span>
+              <div className="connection-editor__color-row">
+                {terminalOptions.color && (
+                  <div
+                    className="connection-editor__color-preview"
+                    style={{ backgroundColor: terminalOptions.color }}
+                  />
+                )}
+                <button
+                  className="connection-editor__btn connection-editor__btn--secondary"
+                  type="button"
+                  onClick={() => setColorPickerOpen(true)}
+                  data-testid="connection-editor-color-picker"
+                >
+                  {terminalOptions.color ? "Change" : "Set Color"}
+                </button>
+                {terminalOptions.color && (
+                  <button
+                    className="connection-editor__btn connection-editor__btn--secondary"
+                    type="button"
+                    onClick={() => setTerminalOptions({ ...terminalOptions, color: undefined })}
+                    data-testid="connection-editor-clear-color"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="settings-form__field">
+              <span className="settings-form__label">Icon</span>
+              <div className="connection-editor__color-row">
+                {icon && <IconByName name={icon} size={18} />}
+                <button
+                  className="connection-editor__btn connection-editor__btn--secondary"
+                  type="button"
+                  onClick={() => setIconPickerOpen(true)}
+                  data-testid="connection-editor-icon-picker"
+                >
+                  {icon ? "Change" : "Set Icon"}
+                </button>
+                {icon && (
+                  <button
+                    className="connection-editor__btn connection-editor__btn--secondary"
+                    type="button"
+                    onClick={() => setIcon(undefined)}
+                    data-testid="connection-editor-clear-icon"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+            </div>
+            <ColorPickerDialog
+              open={colorPickerOpen}
+              onOpenChange={setColorPickerOpen}
+              currentColor={terminalOptions.color}
+              onColorChange={(color) =>
+                setTerminalOptions({ ...terminalOptions, color: color ?? undefined })
+              }
+            />
+            <IconPickerDialog
+              open={iconPickerOpen}
+              onOpenChange={setIconPickerOpen}
+              currentIcon={icon}
+              onIconChange={(i) => setIcon(i ?? undefined)}
+            />
+          </>
+        )}
 
         <div className="connection-editor__actions">
           <button
@@ -436,13 +490,15 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           >
             Cancel
           </button>
-          <button
-            className="connection-editor__btn connection-editor__btn--primary"
-            onClick={handleSaveAndConnect}
-            data-testid="connection-editor-save-connect"
-          >
-            Save &amp; Connect
-          </button>
+          {!isAgentMode && (
+            <button
+              className="connection-editor__btn connection-editor__btn--primary"
+              onClick={handleSaveAndConnect}
+              data-testid="connection-editor-save-connect"
+            >
+              Save &amp; Connect
+            </button>
+          )}
           <button
             className="connection-editor__btn connection-editor__btn--primary"
             onClick={handleSave}
