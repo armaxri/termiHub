@@ -71,6 +71,7 @@ examples/                     # Docker test environment (SSH, Telnet, virtual se
 - No change should ship without at least one of the above
 - For bug fixes, add a regression test that would fail without the fix (when possible)
 - **Manual test tracking**: When a PR includes manual test steps (in the PR description's "Test plan" section), also add those steps to `docs/manual-tests-input.md` under the appropriate feature area heading, referencing the PR number. This keeps manual tests discoverable and prevents them from being forgotten after merge.
+- **E2E platform constraint**: `tauri-driver` only supports Linux and Windows — it does **not** work on macOS (no WKWebView driver exists). E2E system tests run inside Docker (Linux) on all platforms. See ADR-5 in [architecture.md](../docs/architecture.md). macOS-specific behavior must be verified via manual tests.
 
 ### General
 - Max ~500 lines per file, ~50 lines per function
@@ -112,7 +113,7 @@ All scripts live in `scripts/` with `.sh` (Unix/macOS) and `.cmd` (Windows) vari
 | `./scripts/check.sh` | Read-only quality checks mirroring CI (formatting, linting, clippy) |
 | `./scripts/format.sh` | Auto-fix all formatting issues (Prettier + cargo fmt) |
 | `./scripts/clean.sh` | Remove all build artifacts for a fresh start |
-| `./scripts/test-system.sh` | Start Docker infra + virtual serial ports and run system-level E2E tests |
+| `./scripts/test-system.sh` | Start Docker infra + virtual serial ports and run system-level E2E tests (Linux via Docker; `tauri-driver` does not support macOS — see ADR-5 in [architecture.md](../docs/architecture.md)) |
 
 ### Before Creating a PR
 
