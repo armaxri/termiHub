@@ -3,7 +3,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import { SessionId, ConnectionConfig, SshConfig } from "@/types/terminal";
+import { SessionId, ConnectionConfig, SshConfig, RemoteAgentConfig } from "@/types/terminal";
 import { SystemStats } from "@/types/monitoring";
 import {
   SavedConnection,
@@ -11,6 +11,7 @@ import {
   FileEntry,
   ExternalConnectionSource,
   AppSettings,
+  AgentCapabilities,
 } from "@/types/connection";
 
 // --- Terminal commands ---
@@ -66,10 +67,18 @@ export async function checkSshAgentStatus(): Promise<string> {
 
 // --- Connection persistence commands ---
 
+/** Saved remote agent (persisted form, no ephemeral state). */
+export interface SavedRemoteAgent {
+  id: string;
+  name: string;
+  config: RemoteAgentConfig;
+}
+
 interface ConnectionData {
   connections: SavedConnection[];
   folders: ConnectionFolder[];
   externalSources: ExternalConnectionSource[];
+  agents: SavedRemoteAgent[];
 }
 
 /** Load all saved connections and folders from disk */
@@ -258,6 +267,84 @@ export async function vscodeOpenLocal(path: string): Promise<void> {
 /** Open a remote file in VS Code: download, edit, re-upload. */
 export async function vscodeOpenRemote(sessionId: string, remotePath: string): Promise<void> {
   await invoke("vscode_open_remote", { sessionId, remotePath });
+}
+
+// --- Agent commands ---
+
+/** Info about a remote session on an agent. */
+export interface AgentSessionInfo {
+  sessionId: string;
+  title: string;
+  type: string;
+  status: string;
+  attached: boolean;
+}
+
+/** Info about a saved session definition on an agent. */
+export interface AgentDefinitionInfo {
+  id: string;
+  name: string;
+  sessionType: string;
+  config: Record<string, unknown>;
+  persistent: boolean;
+}
+
+/** Result of connecting to an agent. */
+interface AgentConnectResult {
+  capabilities: AgentCapabilities;
+}
+
+/** Connect to a remote agent via SSH. Returns capabilities. */
+export async function connectAgent(
+  agentId: string,
+  config: RemoteAgentConfig
+): Promise<AgentConnectResult> {
+  return await invoke<AgentConnectResult>("connect_agent", { agentId, config });
+}
+
+/** Disconnect from a remote agent. */
+export async function disconnectAgent(agentId: string): Promise<void> {
+  await invoke("disconnect_agent", { agentId });
+}
+
+/** Get capabilities of a connected agent. */
+export async function getAgentCapabilities(agentId: string): Promise<AgentCapabilities> {
+  return await invoke<AgentCapabilities>("get_agent_capabilities", { agentId });
+}
+
+/** List active sessions on an agent. */
+export async function listAgentSessions(agentId: string): Promise<AgentSessionInfo[]> {
+  return await invoke<AgentSessionInfo[]>("list_agent_sessions", { agentId });
+}
+
+/** List saved session definitions on an agent. */
+export async function listAgentDefinitions(agentId: string): Promise<AgentDefinitionInfo[]> {
+  return await invoke<AgentDefinitionInfo[]>("list_agent_definitions", { agentId });
+}
+
+/** Save a session definition on an agent. */
+export async function saveAgentDefinition(
+  agentId: string,
+  definition: Record<string, unknown>
+): Promise<AgentDefinitionInfo> {
+  return await invoke<AgentDefinitionInfo>("save_agent_definition", { agentId, definition });
+}
+
+/** Delete a session definition on an agent. */
+export async function deleteAgentDefinition(agentId: string, definitionId: string): Promise<void> {
+  await invoke("delete_agent_definition", { agentId, definitionId });
+}
+
+// --- Agent persistence commands ---
+
+/** Save (add or update) a remote agent definition to disk. */
+export async function saveRemoteAgent(agent: SavedRemoteAgent): Promise<void> {
+  await invoke("save_remote_agent", { agent });
+}
+
+/** Delete a remote agent definition from disk. */
+export async function deleteRemoteAgentFromBackend(id: string): Promise<void> {
+  await invoke("delete_remote_agent", { id });
 }
 
 // --- Monitoring commands ---

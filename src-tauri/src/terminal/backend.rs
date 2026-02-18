@@ -60,8 +60,8 @@ pub enum ConnectionConfig {
     Telnet(TelnetConfig),
     #[serde(rename = "serial")]
     Serial(SerialConfig),
-    #[serde(rename = "remote")]
-    Remote(RemoteConfig),
+    #[serde(rename = "remote-session")]
+    RemoteSession(RemoteSessionConfig),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -104,9 +104,10 @@ pub struct SerialConfig {
     pub flow_control: String,
 }
 
+/// SSH transport configuration for a remote agent (no session details).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RemoteConfig {
+pub struct RemoteAgentConfig {
     pub host: String,
     pub port: u16,
     pub username: String,
@@ -115,7 +116,15 @@ pub struct RemoteConfig {
     pub password: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub key_path: Option<String>,
-    /// "shell" or "serial"
+}
+
+/// Session configuration for a session running on a remote agent.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteSessionConfig {
+    /// ID of the parent remote agent.
+    pub agent_id: String,
+    /// "shell" or "serial".
     pub session_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shell: Option<String>,
@@ -133,6 +142,9 @@ pub struct RemoteConfig {
     pub flow_control: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// Whether this session survives reconnection (re-attach vs recreate).
+    #[serde(default)]
+    pub persistent: bool,
 }
 
 /// Event emitted when a remote connection's state changes.
@@ -150,7 +162,7 @@ impl ConnectionConfig {
             Self::Ssh(cfg) => Self::Ssh(cfg.expand()),
             Self::Telnet(cfg) => Self::Telnet(cfg.expand()),
             Self::Serial(cfg) => Self::Serial(cfg.expand()),
-            Self::Remote(cfg) => Self::Remote(cfg.expand()),
+            Self::RemoteSession(cfg) => Self::RemoteSession(cfg.expand()),
         }
     }
 }
@@ -193,19 +205,21 @@ impl SerialConfig {
     }
 }
 
-impl RemoteConfig {
+impl RemoteAgentConfig {
+    #[allow(dead_code)]
     pub fn expand(mut self) -> Self {
         self.host = expand_env_placeholders(&self.host);
         self.username = expand_env_placeholders(&self.username);
-        self.key_path = self.key_path.map(|s| expand_env_placeholders(&s));
+        self.key_path = self.key_path.map(|s| {
+            // Strip surrounding quotes — users often paste paths like "C:\...\key"
+            let stripped = s.trim().trim_matches('"').trim_matches('\'');
+            expand_tilde(&expand_env_placeholders(stripped))
+        });
         self.password = self.password.map(|s| expand_env_placeholders(&s));
-        self.shell = self.shell.map(|s| expand_env_placeholders(&s));
-        self.serial_port = self.serial_port.map(|s| expand_env_placeholders(&s));
         self
     }
 
-    /// Build an `SshConfig` from this remote config for SSH connection reuse.
-    #[allow(dead_code)]
+    /// Build an `SshConfig` from this agent config for SSH connection.
     pub fn to_ssh_config(&self) -> SshConfig {
         SshConfig {
             host: self.host.clone(),
@@ -216,6 +230,14 @@ impl RemoteConfig {
             key_path: self.key_path.clone(),
             enable_x11_forwarding: false,
         }
+    }
+}
+
+impl RemoteSessionConfig {
+    pub fn expand(mut self) -> Self {
+        self.shell = self.shell.map(|s| expand_env_placeholders(&s));
+        self.serial_port = self.serial_port.map(|s| expand_env_placeholders(&s));
+        self
     }
 }
 
@@ -446,14 +468,71 @@ mod tests {
     }
 
     #[test]
-    fn connection_config_remote_serde_round_trip() {
-        let config = ConnectionConfig::Remote(RemoteConfig {
+    fn remote_agent_config_serde_round_trip() {
+        let config = RemoteAgentConfig {
             host: "pi.local".to_string(),
             port: 22,
             username: "pi".to_string(),
             auth_method: "key".to_string(),
             password: None,
             key_path: Some("/home/user/.ssh/id_rsa".to_string()),
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: RemoteAgentConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.host, "pi.local");
+        assert_eq!(deserialized.port, 22);
+        assert_eq!(deserialized.username, "pi");
+        assert_eq!(deserialized.auth_method, "key");
+        assert_eq!(
+            deserialized.key_path,
+            Some("/home/user/.ssh/id_rsa".to_string())
+        );
+        assert!(deserialized.password.is_none());
+    }
+
+    #[test]
+    fn remote_agent_config_expand_replaces_placeholders() {
+        std::env::set_var("TERMIHUB_TEST_AGENT_HOST", "10.0.0.99");
+        std::env::set_var("TERMIHUB_TEST_AGENT_USER", "deploy");
+
+        let config = RemoteAgentConfig {
+            host: "${env:TERMIHUB_TEST_AGENT_HOST}".to_string(),
+            port: 22,
+            username: "${env:TERMIHUB_TEST_AGENT_USER}".to_string(),
+            auth_method: "key".to_string(),
+            password: None,
+            key_path: Some("${env:HOME}/.ssh/id_rsa".to_string()),
+        };
+        let expanded = config.expand();
+        assert_eq!(expanded.host, "10.0.0.99");
+        assert_eq!(expanded.username, "deploy");
+
+        std::env::remove_var("TERMIHUB_TEST_AGENT_HOST");
+        std::env::remove_var("TERMIHUB_TEST_AGENT_USER");
+    }
+
+    #[test]
+    fn remote_agent_config_to_ssh_config() {
+        let agent = RemoteAgentConfig {
+            host: "pi.local".to_string(),
+            port: 2222,
+            username: "pi".to_string(),
+            auth_method: "key".to_string(),
+            password: None,
+            key_path: Some("/home/.ssh/id_rsa".to_string()),
+        };
+        let ssh = agent.to_ssh_config();
+        assert_eq!(ssh.host, "pi.local");
+        assert_eq!(ssh.port, 2222);
+        assert_eq!(ssh.username, "pi");
+        assert_eq!(ssh.auth_method, "key");
+        assert!(!ssh.enable_x11_forwarding);
+    }
+
+    #[test]
+    fn remote_session_config_serde_round_trip() {
+        let config = ConnectionConfig::RemoteSession(RemoteSessionConfig {
+            agent_id: "agent-123".to_string(),
             session_type: "shell".to_string(),
             shell: Some("/bin/bash".to_string()),
             serial_port: None,
@@ -463,30 +542,25 @@ mod tests {
             parity: None,
             flow_control: None,
             title: Some("Build session".to_string()),
+            persistent: true,
         });
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: ConnectionConfig = serde_json::from_str(&json).unwrap();
-        if let ConnectionConfig::Remote(remote) = deserialized {
-            assert_eq!(remote.host, "pi.local");
-            assert_eq!(remote.port, 22);
-            assert_eq!(remote.username, "pi");
-            assert_eq!(remote.session_type, "shell");
-            assert_eq!(remote.shell, Some("/bin/bash".to_string()));
-            assert_eq!(remote.title, Some("Build session".to_string()));
+        if let ConnectionConfig::RemoteSession(session) = deserialized {
+            assert_eq!(session.agent_id, "agent-123");
+            assert_eq!(session.session_type, "shell");
+            assert_eq!(session.shell, Some("/bin/bash".to_string()));
+            assert_eq!(session.title, Some("Build session".to_string()));
+            assert!(session.persistent);
         } else {
-            panic!("Expected Remote config");
+            panic!("Expected RemoteSession config");
         }
     }
 
     #[test]
-    fn connection_config_remote_serial_serde_round_trip() {
-        let config = ConnectionConfig::Remote(RemoteConfig {
-            host: "pi.local".to_string(),
-            port: 22,
-            username: "pi".to_string(),
-            auth_method: "password".to_string(),
-            password: None,
-            key_path: None,
+    fn remote_session_config_serial_serde_round_trip() {
+        let config = ConnectionConfig::RemoteSession(RemoteSessionConfig {
+            agent_id: "agent-456".to_string(),
             session_type: "serial".to_string(),
             shell: None,
             serial_port: Some("/dev/ttyUSB0".to_string()),
@@ -496,32 +570,26 @@ mod tests {
             parity: Some("none".to_string()),
             flow_control: Some("none".to_string()),
             title: None,
+            persistent: false,
         });
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: ConnectionConfig = serde_json::from_str(&json).unwrap();
-        if let ConnectionConfig::Remote(remote) = deserialized {
-            assert_eq!(remote.session_type, "serial");
-            assert_eq!(remote.serial_port, Some("/dev/ttyUSB0".to_string()));
-            assert_eq!(remote.baud_rate, Some(115200));
+        if let ConnectionConfig::RemoteSession(session) = deserialized {
+            assert_eq!(session.session_type, "serial");
+            assert_eq!(session.serial_port, Some("/dev/ttyUSB0".to_string()));
+            assert_eq!(session.baud_rate, Some(115200));
+            assert!(!session.persistent);
         } else {
-            panic!("Expected Remote config");
+            panic!("Expected RemoteSession config");
         }
     }
 
     #[test]
-    fn remote_config_expand_replaces_placeholders() {
-        std::env::set_var("TERMIHUB_TEST_REMOTE_HOST", "10.0.0.50");
-        std::env::set_var("TERMIHUB_TEST_REMOTE_USER", "admin");
-
-        let config = RemoteConfig {
-            host: "${env:TERMIHUB_TEST_REMOTE_HOST}".to_string(),
-            port: 22,
-            username: "${env:TERMIHUB_TEST_REMOTE_USER}".to_string(),
-            auth_method: "key".to_string(),
-            password: None,
-            key_path: Some("${env:HOME}/.ssh/id_rsa".to_string()),
+    fn remote_session_config_json_shape_matches_frontend() {
+        let config = ConnectionConfig::RemoteSession(RemoteSessionConfig {
+            agent_id: "agent-1".to_string(),
             session_type: "shell".to_string(),
-            shell: Some("${env:SHELL}".to_string()),
+            shell: Some("/bin/zsh".to_string()),
             serial_port: None,
             baud_rate: None,
             data_bits: None,
@@ -529,38 +597,55 @@ mod tests {
             parity: None,
             flow_control: None,
             title: None,
-        };
-        let expanded = config.expand();
-        assert_eq!(expanded.host, "10.0.0.50");
-        assert_eq!(expanded.username, "admin");
-
-        std::env::remove_var("TERMIHUB_TEST_REMOTE_HOST");
-        std::env::remove_var("TERMIHUB_TEST_REMOTE_USER");
-    }
-
-    #[test]
-    fn remote_config_json_shape_matches_frontend() {
-        let config = ConnectionConfig::Remote(RemoteConfig {
-            host: "host".to_string(),
-            port: 22,
-            username: "user".to_string(),
-            auth_method: "password".to_string(),
-            password: None,
-            key_path: None,
-            session_type: "shell".to_string(),
-            shell: None,
-            serial_port: None,
-            baud_rate: None,
-            data_bits: None,
-            stop_bits: None,
-            parity: None,
-            flow_control: None,
-            title: None,
+            persistent: true,
         });
         let json = serde_json::to_string(&config).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(v["type"], "remote");
+        assert_eq!(v["type"], "remote-session");
+        assert_eq!(v["config"]["agentId"], "agent-1");
         assert_eq!(v["config"]["sessionType"], "shell");
-        assert_eq!(v["config"]["authMethod"], "password");
+        assert_eq!(v["config"]["persistent"], true);
+    }
+
+    #[test]
+    fn remote_session_config_persistent_defaults_to_false() {
+        let json = r#"{
+            "agentId": "agent-1",
+            "sessionType": "shell",
+            "persistent": false
+        }"#;
+        let config: RemoteSessionConfig = serde_json::from_str(json).unwrap();
+        assert!(!config.persistent);
+
+        // Also test when persistent is omitted (should default to false)
+        let json_no_persistent = r#"{
+            "agentId": "agent-1",
+            "sessionType": "shell"
+        }"#;
+        let config2: RemoteSessionConfig = serde_json::from_str(json_no_persistent).unwrap();
+        assert!(!config2.persistent);
+    }
+
+    #[test]
+    fn remote_session_config_expand_replaces_placeholders() {
+        std::env::set_var("TERMIHUB_TEST_SESSION_SHELL", "/usr/bin/fish");
+
+        let config = RemoteSessionConfig {
+            agent_id: "agent-1".to_string(),
+            session_type: "shell".to_string(),
+            shell: Some("${env:TERMIHUB_TEST_SESSION_SHELL}".to_string()),
+            serial_port: None,
+            baud_rate: None,
+            data_bits: None,
+            stop_bits: None,
+            parity: None,
+            flow_control: None,
+            title: None,
+            persistent: false,
+        };
+        let expanded = config.expand();
+        assert_eq!(expanded.shell, Some("/usr/bin/fish".to_string()));
+
+        std::env::remove_var("TERMIHUB_TEST_SESSION_SHELL");
     }
 }

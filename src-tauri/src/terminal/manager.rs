@@ -5,12 +5,13 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
 use tracing::{error, info};
 
+use crate::terminal::agent_manager::AgentConnectionManager;
 use crate::terminal::backend::{
     ConnectionConfig, SessionInfo, TerminalExitEvent, TerminalOutputEvent, TerminalSession,
     OUTPUT_CHANNEL_CAPACITY,
 };
 use crate::terminal::local_shell::LocalShell;
-use crate::terminal::remote::RemoteBackend;
+use crate::terminal::remote_session::RemoteSessionBackend;
 use crate::terminal::serial::SerialConnection;
 use crate::terminal::ssh::SshConnection;
 use crate::terminal::telnet::TelnetConnection;
@@ -41,6 +42,7 @@ impl TerminalManager {
         &self,
         config: ConnectionConfig,
         app_handle: AppHandle,
+        agent_manager: Option<Arc<AgentConnectionManager>>,
     ) -> Result<String, TerminalError> {
         // Enforce session limit
         {
@@ -114,13 +116,15 @@ impl TerminalManager {
                     title,
                 )
             }
-            ConnectionConfig::Remote(cfg) => {
-                let conn =
-                    RemoteBackend::new(cfg, output_tx, app_handle.clone(), session_id.clone())?;
+            ConnectionConfig::RemoteSession(cfg) => {
+                let agent_mgr = agent_manager.ok_or_else(|| {
+                    TerminalError::SpawnFailed("AgentConnectionManager not available".to_string())
+                })?;
+                let conn = RemoteSessionBackend::new(cfg, output_tx, agent_mgr)?;
                 let title = cfg
                     .title
                     .clone()
-                    .unwrap_or_else(|| format!("Remote: {}@{}", cfg.username, cfg.host));
+                    .unwrap_or_else(|| format!("Remote: {}", cfg.agent_id));
                 (
                     Box::new(conn) as Box<dyn crate::terminal::backend::TerminalBackend>,
                     title,
@@ -133,7 +137,7 @@ impl TerminalManager {
             ConnectionConfig::Serial(_) => "serial",
             ConnectionConfig::Ssh(_) => "ssh",
             ConnectionConfig::Telnet(_) => "telnet",
-            ConnectionConfig::Remote(_) => "remote",
+            ConnectionConfig::RemoteSession(_) => "remote-session",
         };
 
         let info = SessionInfo {

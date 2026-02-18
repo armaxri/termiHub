@@ -4,23 +4,25 @@ use std::sync::Mutex;
 use anyhow::{Context, Result};
 use tauri::AppHandle;
 
-use super::config::{ConnectionFolder, ConnectionStore, ExternalConnectionStore, SavedConnection};
+use super::config::{
+    ConnectionFolder, ConnectionStore, ExternalConnectionStore, SavedConnection, SavedRemoteAgent,
+};
 use super::settings::{AppSettings, SettingsStorage};
 use super::storage::ConnectionStorage;
 use crate::terminal::backend::ConnectionConfig;
 
-/// Strip the password field from SSH and Remote connection configs.
+/// Strip the password field from SSH connection configs.
 pub(crate) fn strip_ssh_password(mut connection: SavedConnection) -> SavedConnection {
-    match connection.config {
-        ConnectionConfig::Ssh(ref mut ssh_cfg) => {
-            ssh_cfg.password = None;
-        }
-        ConnectionConfig::Remote(ref mut remote_cfg) => {
-            remote_cfg.password = None;
-        }
-        _ => {}
+    if let ConnectionConfig::Ssh(ref mut ssh_cfg) = connection.config {
+        ssh_cfg.password = None;
     }
     connection
+}
+
+/// Strip the password field from agent configs before persisting.
+pub(crate) fn strip_agent_password(mut agent: SavedRemoteAgent) -> SavedRemoteAgent {
+    agent.config.password = None;
+    agent
 }
 
 /// Result of loading a single external connection file.
@@ -50,20 +52,17 @@ impl ConnectionManager {
         // Migrate: strip any existing stored passwords
         let mut needs_save = false;
         for conn in &mut store.connections {
-            match conn.config {
-                ConnectionConfig::Ssh(ref mut ssh_cfg) => {
-                    if ssh_cfg.password.is_some() {
-                        ssh_cfg.password = None;
-                        needs_save = true;
-                    }
+            if let ConnectionConfig::Ssh(ref mut ssh_cfg) = conn.config {
+                if ssh_cfg.password.is_some() {
+                    ssh_cfg.password = None;
+                    needs_save = true;
                 }
-                ConnectionConfig::Remote(ref mut remote_cfg) => {
-                    if remote_cfg.password.is_some() {
-                        remote_cfg.password = None;
-                        needs_save = true;
-                    }
-                }
-                _ => {}
+            }
+        }
+        for agent in &mut store.agents {
+            if agent.config.password.is_some() {
+                agent.config.password = None;
+                needs_save = true;
             }
         }
         if needs_save {
@@ -87,6 +86,29 @@ impl ConnectionManager {
     pub fn get_all(&self) -> Result<ConnectionStore> {
         let store = self.store.lock().unwrap();
         Ok(store.clone())
+    }
+
+    /// Save (add or update) a remote agent. Passwords are stripped before persisting.
+    pub fn save_agent(&self, agent: SavedRemoteAgent) -> Result<()> {
+        let agent = strip_agent_password(agent);
+        let mut store = self.store.lock().unwrap();
+
+        if let Some(existing) = store.agents.iter_mut().find(|a| a.id == agent.id) {
+            *existing = agent;
+        } else {
+            store.agents.push(agent);
+        }
+
+        self.storage.save(&store).context("Failed to persist agent")
+    }
+
+    /// Delete a remote agent by ID.
+    pub fn delete_agent(&self, id: &str) -> Result<()> {
+        let mut store = self.store.lock().unwrap();
+        store.agents.retain(|a| a.id != id);
+        self.storage
+            .save(&store)
+            .context("Failed to persist after agent delete")
     }
 
     /// Save (add or update) a connection. Passwords are stripped before persisting.
@@ -332,7 +354,7 @@ pub(crate) fn filename_from_path(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::terminal::backend::{LocalShellConfig, RemoteConfig, SshConfig};
+    use crate::terminal::backend::{LocalShellConfig, SshConfig};
 
     #[test]
     fn strip_ssh_password_removes_password() {
@@ -378,39 +400,6 @@ mod tests {
             assert_eq!(local.shell_type, "bash");
         } else {
             panic!("Expected Local config");
-        }
-    }
-
-    #[test]
-    fn strip_ssh_password_strips_remote_password() {
-        let conn = SavedConnection {
-            id: "test".to_string(),
-            name: "Remote Pi".to_string(),
-            config: ConnectionConfig::Remote(RemoteConfig {
-                host: "pi.local".to_string(),
-                port: 22,
-                username: "pi".to_string(),
-                auth_method: "password".to_string(),
-                password: Some("secret".to_string()),
-                key_path: None,
-                session_type: "shell".to_string(),
-                shell: None,
-                serial_port: None,
-                baud_rate: None,
-                data_bits: None,
-                stop_bits: None,
-                parity: None,
-                flow_control: None,
-                title: None,
-            }),
-            folder_id: None,
-            terminal_options: None,
-        };
-        let stripped = strip_ssh_password(conn);
-        if let ConnectionConfig::Remote(remote) = &stripped.config {
-            assert!(remote.password.is_none());
-        } else {
-            panic!("Expected Remote config");
         }
     }
 

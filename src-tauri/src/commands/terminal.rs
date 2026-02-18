@@ -1,5 +1,8 @@
+use std::sync::Arc;
+
 use tauri::State;
 
+use crate::terminal::agent_manager::AgentConnectionManager;
 use crate::terminal::backend::ConnectionConfig;
 use crate::terminal::manager::TerminalManager;
 use crate::terminal::serial;
@@ -12,8 +15,14 @@ pub fn create_terminal(
     config: ConnectionConfig,
     app_handle: tauri::AppHandle,
     manager: State<'_, TerminalManager>,
+    agent_manager: State<'_, Arc<AgentConnectionManager>>,
 ) -> Result<String, TerminalError> {
-    manager.create_session(config, app_handle)
+    let agent_mgr = if matches!(config, ConnectionConfig::RemoteSession(_)) {
+        Some(agent_manager.inner().clone())
+    } else {
+        None
+    };
+    manager.create_session(config, app_handle, agent_mgr)
 }
 
 /// Send input data to a terminal session.

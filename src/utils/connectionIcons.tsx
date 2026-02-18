@@ -21,6 +21,7 @@ const TYPE_ICONS: Record<string, LucideIcon> = {
   serial: Cable,
   telnet: Globe,
   remote: Server,
+  "remote-session": Server,
 };
 
 /** Shell-specific icon overrides for local connections */

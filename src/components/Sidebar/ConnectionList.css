@@ -247,3 +247,19 @@
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
   white-space: nowrap;
 }
+
+/* Agent node */
+.agent-node__state-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.agent-node__hint {
+  font-size: var(--font-size-xs, 11px);
+  color: var(--text-secondary);
+  padding: 2px 0;
+  user-select: none;
+}

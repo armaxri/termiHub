@@ -1,4 +1,4 @@
-import { ConnectionConfig, TerminalOptions } from "./terminal";
+import { ConnectionConfig, RemoteAgentConfig, TerminalOptions } from "./terminal";
 
 export interface SavedConnection {
   id: string;
@@ -31,6 +31,24 @@ export interface ExternalConnectionSource {
   folders: ConnectionFolder[];
   connections: SavedConnection[];
   error: string | null;
+}
+
+/** Capabilities reported by a connected remote agent. */
+export interface AgentCapabilities {
+  sessionTypes: string[];
+  maxSessions: number;
+  availableShells?: string[];
+  availableSerialPorts?: string[];
+}
+
+/** A remote agent definition stored in the sidebar as a folder-like entry. */
+export interface RemoteAgentDefinition {
+  id: string;
+  name: string;
+  config: RemoteAgentConfig;
+  isExpanded: boolean;
+  connectionState: "disconnected" | "connecting" | "connected" | "reconnecting";
+  capabilities?: AgentCapabilities;
 }
 
 export interface AppSettings {

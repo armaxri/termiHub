@@ -19,6 +19,8 @@ pub struct InitializeParams {
 pub struct Capabilities {
     pub session_types: Vec<String>,
     pub max_sessions: u32,
+    pub available_shells: Vec<String>,
+    pub available_serial_ports: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -116,6 +118,29 @@ pub struct HealthCheckResult {
     pub active_sessions: u32,
 }
 
+// ── session.define ──────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SessionDefineParams {
+    /// Unique ID for this definition. If omitted, auto-generated.
+    pub id: Option<String>,
+    pub name: String,
+    /// "shell" or "serial".
+    #[serde(rename = "type")]
+    pub session_type: String,
+    #[serde(default)]
+    pub config: serde_json::Value,
+    #[serde(default)]
+    pub persistent: bool,
+}
+
+// ── session.definitions.delete ──────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SessionDefinitionDeleteParams {
+    pub id: String,
+}
+
 // ── Shell / Serial config (for validation in the stub) ──────────────
 
 #[derive(Debug, Clone, Deserialize)]
@@ -192,12 +217,16 @@ mod tests {
             capabilities: Capabilities {
                 session_types: vec!["shell".to_string(), "serial".to_string()],
                 max_sessions: 20,
+                available_shells: vec!["/bin/bash".to_string(), "/bin/zsh".to_string()],
+                available_serial_ports: vec!["/dev/ttyUSB0".to_string()],
             },
         };
         let v = serde_json::to_value(&result).unwrap();
         assert_eq!(v["protocol_version"], "0.1.0");
         assert_eq!(v["capabilities"]["max_sessions"], 20);
         assert_eq!(v["capabilities"]["session_types"][0], "shell");
+        assert_eq!(v["capabilities"]["available_shells"][0], "/bin/bash");
+        assert_eq!(v["capabilities"]["available_serial_ports"][0], "/dev/ttyUSB0");
     }
 
     #[test]
@@ -348,5 +377,34 @@ mod tests {
         assert_eq!(params.session_id, "abc-123");
         assert_eq!(params.cols, 120);
         assert_eq!(params.rows, 40);
+    }
+
+    #[test]
+    fn session_define_params_serde() {
+        let json = json!({
+            "name": "Build Shell",
+            "type": "shell",
+            "config": {"shell": "/bin/bash"},
+            "persistent": true
+        });
+        let params: SessionDefineParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.name, "Build Shell");
+        assert_eq!(params.session_type, "shell");
+        assert!(params.persistent);
+        assert!(params.id.is_none());
+    }
+
+    #[test]
+    fn session_define_params_persistent_defaults_false() {
+        let json = json!({"name": "Temp", "type": "shell"});
+        let params: SessionDefineParams = serde_json::from_value(json).unwrap();
+        assert!(!params.persistent);
+    }
+
+    #[test]
+    fn session_definition_delete_params_serde() {
+        let json = json!({"id": "def-123"});
+        let params: SessionDefinitionDeleteParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.id, "def-123");
     }
 }

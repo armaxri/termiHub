@@ -5,11 +5,14 @@ mod monitoring;
 mod terminal;
 mod utils;
 
+use std::sync::Arc;
+
 use tauri::Manager;
 
 use connection::manager::ConnectionManager;
 use files::sftp::SftpManager;
 use monitoring::MonitoringManager;
+use terminal::agent_manager::AgentConnectionManager;
 use terminal::manager::TerminalManager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -34,6 +37,10 @@ pub fn run() {
             let connection_manager = ConnectionManager::new(app.handle())
                 .expect("Failed to initialize connection manager");
             app.manage(connection_manager);
+
+            let agent_manager = Arc::new(AgentConnectionManager::new(app.handle().clone()));
+            app.manage(agent_manager);
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -57,6 +64,8 @@ pub fn run() {
             commands::connection::save_settings,
             commands::connection::save_external_file,
             commands::connection::reload_external_connections,
+            commands::connection::save_remote_agent,
+            commands::connection::delete_remote_agent,
             commands::files::sftp_open,
             commands::files::sftp_close,
             commands::files::sftp_list_dir,
@@ -80,6 +89,13 @@ pub fn run() {
             commands::monitoring::monitoring_open,
             commands::monitoring::monitoring_close,
             commands::monitoring::monitoring_fetch_stats,
+            commands::agent::connect_agent,
+            commands::agent::disconnect_agent,
+            commands::agent::get_agent_capabilities,
+            commands::agent::list_agent_sessions,
+            commands::agent::list_agent_definitions,
+            commands::agent::save_agent_definition,
+            commands::agent::delete_agent_definition,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

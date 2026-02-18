@@ -152,15 +152,16 @@ describe("events service", () => {
       dispatcher = new TerminalOutputDispatcher();
     });
 
-    it("init registers three global listeners", async () => {
+    it("init registers four global listeners", async () => {
       mockedListen.mockResolvedValue(vi.fn());
 
       await dispatcher.init();
 
-      expect(mockedListen).toHaveBeenCalledTimes(3);
+      expect(mockedListen).toHaveBeenCalledTimes(4);
       expect(mockedListen).toHaveBeenCalledWith("terminal-output", expect.any(Function));
       expect(mockedListen).toHaveBeenCalledWith("terminal-exit", expect.any(Function));
       expect(mockedListen).toHaveBeenCalledWith("remote-state-change", expect.any(Function));
+      expect(mockedListen).toHaveBeenCalledWith("agent-state-change", expect.any(Function));
     });
 
     it("init is idempotent — second call does nothing", async () => {
@@ -169,7 +170,7 @@ describe("events service", () => {
       await dispatcher.init();
       await dispatcher.init();
 
-      expect(mockedListen).toHaveBeenCalledTimes(3);
+      expect(mockedListen).toHaveBeenCalledTimes(4);
     });
 
     it("routes output events to the correct session callback", async () => {
@@ -312,7 +313,7 @@ describe("events service", () => {
 
       await dispatcher.init();
 
-      expect(mockedListen).toHaveBeenCalledTimes(3);
+      expect(mockedListen).toHaveBeenCalledTimes(4);
     });
 
     it("handles StrictMode race: destroy during pending init cleans up leaked listeners", async () => {
