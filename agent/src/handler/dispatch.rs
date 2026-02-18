@@ -91,9 +91,7 @@ impl Dispatcher {
             "session.resize" => self.handle_session_resize(request).await,
             "session.define" => self.handle_session_define(request).await,
             "session.definitions.list" => self.handle_session_definitions_list(request).await,
-            "session.definitions.delete" => {
-                self.handle_session_definitions_delete(request).await
-            }
+            "session.definitions.delete" => self.handle_session_definitions_delete(request).await,
             "health.check" => self.handle_health_check(request).await,
             _ => {
                 warn!("Unknown method: {}", method);
@@ -484,10 +482,7 @@ mod tests {
 
     fn make_dispatcher() -> Dispatcher {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        let tmp = std::env::temp_dir().join(format!(
-            "termihub-test-{}.json",
-            uuid::Uuid::new_v4()
-        ));
+        let tmp = std::env::temp_dir().join(format!("termihub-test-{}.json", uuid::Uuid::new_v4()));
         let def_store = Arc::new(DefinitionStore::new_temp(tmp));
         Dispatcher::new(Arc::new(SessionManager::new(tx)), def_store)
     }
@@ -979,7 +974,10 @@ mod tests {
         );
         let result = d.dispatch(req).await.to_json();
         let id = result["result"]["id"].as_str().unwrap();
-        assert!(id.starts_with("def-"), "Expected auto-generated id starting with 'def-', got: {id}");
+        assert!(
+            id.starts_with("def-"),
+            "Expected auto-generated id starting with 'def-', got: {id}"
+        );
     }
 
     #[tokio::test]
@@ -1003,10 +1001,7 @@ mod tests {
         // Verify gone
         let req = make_request("session.definitions.list", json!({}), 4);
         let result = d.dispatch(req).await.to_json();
-        assert_eq!(
-            result["result"]["definitions"].as_array().unwrap().len(),
-            0
-        );
+        assert_eq!(result["result"]["definitions"].as_array().unwrap().len(), 0);
     }
 
     #[tokio::test]

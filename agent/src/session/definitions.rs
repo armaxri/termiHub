@@ -100,18 +100,24 @@ impl DefinitionStore {
 
     fn load_from_disk(path: &PathBuf) -> HashMap<String, SessionDefinition> {
         match std::fs::read_to_string(path) {
-            Ok(contents) => {
-                match serde_json::from_str::<Vec<SessionDefinition>>(&contents) {
-                    Ok(defs) => {
-                        debug!("Loaded {} session definitions from {}", defs.len(), path.display());
-                        defs.into_iter().map(|d| (d.id.clone(), d)).collect()
-                    }
-                    Err(e) => {
-                        warn!("Failed to parse session definitions from {}: {}", path.display(), e);
-                        HashMap::new()
-                    }
+            Ok(contents) => match serde_json::from_str::<Vec<SessionDefinition>>(&contents) {
+                Ok(defs) => {
+                    debug!(
+                        "Loaded {} session definitions from {}",
+                        defs.len(),
+                        path.display()
+                    );
+                    defs.into_iter().map(|d| (d.id.clone(), d)).collect()
                 }
-            }
+                Err(e) => {
+                    warn!(
+                        "Failed to parse session definitions from {}: {}",
+                        path.display(),
+                        e
+                    );
+                    HashMap::new()
+                }
+            },
             Err(_) => {
                 debug!("No session definitions file at {}", path.display());
                 HashMap::new()
@@ -123,14 +129,22 @@ impl DefinitionStore {
         let list: Vec<&SessionDefinition> = defs.values().collect();
         if let Some(parent) = self.file_path.parent() {
             if let Err(e) = std::fs::create_dir_all(parent) {
-                warn!("Failed to create config directory {}: {}", parent.display(), e);
+                warn!(
+                    "Failed to create config directory {}: {}",
+                    parent.display(),
+                    e
+                );
                 return;
             }
         }
         match serde_json::to_string_pretty(&list) {
             Ok(json) => {
                 if let Err(e) = std::fs::write(&self.file_path, json) {
-                    warn!("Failed to write session definitions to {}: {}", self.file_path.display(), e);
+                    warn!(
+                        "Failed to write session definitions to {}: {}",
+                        self.file_path.display(),
+                        e
+                    );
                 }
             }
             Err(e) => {
@@ -148,7 +162,9 @@ fn dirs_config_dir() -> PathBuf {
     }
     if let Ok(home) = std::env::var("HOME") {
         #[cfg(target_os = "macos")]
-        return PathBuf::from(&home).join("Library").join("Application Support");
+        return PathBuf::from(&home)
+            .join("Library")
+            .join("Application Support");
         #[cfg(not(target_os = "macos"))]
         return PathBuf::from(&home).join(".config");
     }
@@ -195,8 +211,12 @@ mod tests {
         let path = tmp.path().join("sessions.json");
         let store = DefinitionStore::new_temp(path);
 
-        store.define(make_definition("def-1", "Old Name", false)).await;
-        store.define(make_definition("def-1", "New Name", true)).await;
+        store
+            .define(make_definition("def-1", "Old Name", false))
+            .await;
+        store
+            .define(make_definition("def-1", "New Name", true))
+            .await;
 
         let list = store.list().await;
         assert_eq!(list.len(), 1);
@@ -232,8 +252,12 @@ mod tests {
         // Write definitions
         {
             let store = DefinitionStore::new_temp(path.clone());
-            store.define(make_definition("def-1", "Shell 1", true)).await;
-            store.define(make_definition("def-2", "Shell 2", false)).await;
+            store
+                .define(make_definition("def-1", "Shell 1", true))
+                .await;
+            store
+                .define(make_definition("def-2", "Shell 2", false))
+                .await;
         }
 
         // Read back from disk
