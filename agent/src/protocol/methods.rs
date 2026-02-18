@@ -226,7 +226,10 @@ mod tests {
         assert_eq!(v["capabilities"]["max_sessions"], 20);
         assert_eq!(v["capabilities"]["session_types"][0], "shell");
         assert_eq!(v["capabilities"]["available_shells"][0], "/bin/bash");
-        assert_eq!(v["capabilities"]["available_serial_ports"][0], "/dev/ttyUSB0");
+        assert_eq!(
+            v["capabilities"]["available_serial_ports"][0],
+            "/dev/ttyUSB0"
+        );
     }
 
     #[test]
