@@ -162,8 +162,8 @@ Each section groups related tests by feature area. Individual test items referen
 
 ### Rename terminal tab (PR #156)
 
-- [ ] Right-click terminal tab — "Rename" appears — renaming works
-- [ ] Right-click inside terminal area — full context menu appears with same options
+- [x] Right-click terminal tab — "Rename" appears — renaming works
+- [x] Right-click inside terminal area — full context menu appears with same options
 
 ### Tab coloring with color picker (PR #67)
 

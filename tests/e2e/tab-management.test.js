@@ -1,5 +1,5 @@
 // Tab management tests.
-// Covers: TAB-01, TAB-02, TAB-03, TAB-04, TAB-05.
+// Covers: TAB-01, TAB-02, TAB-03, TAB-04, TAB-05, TAB-06.
 
 import { waitForAppReady, ensureConnectionsSidebar, closeAllTabs } from './helpers/app.js';
 import {
@@ -14,7 +14,12 @@ import {
   closeTabByTitle,
   getActiveTab,
 } from './helpers/tabs.js';
-import { TOOLBAR_NEW_TERMINAL } from './helpers/selectors.js';
+import {
+  TOOLBAR_NEW_TERMINAL,
+  TAB_CTX_RENAME,
+  RENAME_DIALOG_INPUT,
+  RENAME_DIALOG_APPLY,
+} from './helpers/selectors.js';
 
 describe('Tab Management', () => {
   before(async () => {
@@ -167,6 +172,77 @@ describe('Tab Management', () => {
 
       // Dismiss menu by pressing Escape
       await browser.keys('Escape');
+    });
+  });
+
+  describe('TAB-06: Rename tab (PR #156)', () => {
+    it('should show "Rename" in the tab context menu', async () => {
+      const name = uniqueName('rename-menu');
+      await createLocalConnection(name);
+      await connectByName(name);
+
+      const tab = await findTabByTitle(name);
+      await tab.click({ button: 'right' });
+      await browser.pause(300);
+
+      const renameItem = await browser.$(TAB_CTX_RENAME);
+      expect(await renameItem.isDisplayed()).toBe(true);
+
+      await browser.keys('Escape');
+    });
+
+    it('should rename a tab via the context menu', async () => {
+      const name = uniqueName('rename-src');
+      const newName = uniqueName('rename-dst');
+      await createLocalConnection(name);
+      await connectByName(name);
+
+      // Right-click tab and select Rename
+      const tab = await findTabByTitle(name);
+      await tab.click({ button: 'right' });
+      await browser.pause(300);
+
+      const renameItem = await browser.$(TAB_CTX_RENAME);
+      await renameItem.click();
+      await browser.pause(300);
+
+      // Rename dialog should appear with input
+      const input = await browser.$(RENAME_DIALOG_INPUT);
+      await input.waitForDisplayed({ timeout: 3000 });
+      await input.clearValue();
+      await input.setValue(newName);
+
+      const applyBtn = await browser.$(RENAME_DIALOG_APPLY);
+      await applyBtn.click();
+      await browser.pause(300);
+
+      // Tab should now show the new name
+      const renamedTab = await findTabByTitle(newName);
+      expect(renamedTab).not.toBeNull();
+
+      // Old name should no longer appear
+      const oldTab = await findTabByTitle(name);
+      expect(oldTab).toBeNull();
+    });
+
+    it('should show context menu with Rename when right-clicking terminal area', async () => {
+      const name = uniqueName('rename-area');
+      await createLocalConnection(name);
+      await connectByName(name);
+      await browser.pause(1000);
+
+      // Right-click inside the terminal content area
+      const xtermContainer = await browser.$('.xterm');
+      if (await xtermContainer.isExisting()) {
+        await xtermContainer.click({ button: 'right' });
+        await browser.pause(300);
+
+        const renameItem = await browser.$(TAB_CTX_RENAME);
+        const visible = await renameItem.isExisting() && await renameItem.isDisplayed();
+        expect(visible).toBe(true);
+
+        await browser.keys('Escape');
+      }
     });
   });
 });

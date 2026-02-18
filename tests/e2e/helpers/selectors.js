@@ -21,6 +21,7 @@ export const CONN_EDITOR_CLEAR_COLOR = '[data-testid="connection-editor-clear-co
 
 // --- Local Shell Settings ---
 export const SHELL_SELECT = '[data-testid="connection-settings-shell-select"]';
+export const STARTING_DIRECTORY = '[data-testid="connection-settings-starting-directory"]';
 
 // --- SSH Settings ---
 export const SSH_HOST = '[data-testid="ssh-settings-host-input"]';
@@ -76,6 +77,7 @@ export const TAB_ACTIVE_CLASS = 'tab--active';
 export const TAB_CTX_SAVE = '[data-testid="tab-context-save"]';
 export const TAB_CTX_COPY = '[data-testid="tab-context-copy"]';
 export const TAB_CTX_CLEAR = '[data-testid="tab-context-clear"]';
+export const TAB_CTX_RENAME = '[data-testid="tab-context-rename"]';
 export const TAB_CTX_HORIZONTAL_SCROLL = '[data-testid="tab-context-horizontal-scroll"]';
 export const TAB_CTX_SET_COLOR = '[data-testid="tab-context-set-color"]';
 
@@ -111,6 +113,11 @@ export const PASSWORD_PROMPT_CONNECT = '[data-testid="password-prompt-connect"]'
 // --- Status Bar ---
 export const STATUS_BAR_TAB_SIZE = '[data-testid="status-bar-tab-size"]';
 export const STATUS_BAR_EOL = '[data-testid="status-bar-eol"]';
+
+// --- Rename Dialog ---
+export const RENAME_DIALOG_INPUT = '[data-testid="rename-dialog-input"]';
+export const RENAME_DIALOG_CANCEL = '[data-testid="rename-dialog-cancel"]';
+export const RENAME_DIALOG_APPLY = '[data-testid="rename-dialog-apply"]';
 
 // --- File Editor ---
 export const FILE_EDITOR_SAVE = '[data-testid="file-editor-save"]';
