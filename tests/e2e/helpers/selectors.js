@@ -14,6 +14,7 @@ export const CONN_EDITOR_NAME = '[data-testid="connection-editor-name-input"]';
 export const CONN_EDITOR_FOLDER = '[data-testid="connection-editor-folder-select"]';
 export const CONN_EDITOR_TYPE = '[data-testid="connection-editor-type-select"]';
 export const CONN_EDITOR_SAVE = '[data-testid="connection-editor-save"]';
+export const CONN_EDITOR_SAVE_CONNECT = '[data-testid="connection-editor-save-connect"]';
 export const CONN_EDITOR_CANCEL = '[data-testid="connection-editor-cancel"]';
 export const CONN_EDITOR_HORIZONTAL_SCROLL = '[data-testid="connection-editor-horizontal-scroll"]';
 export const CONN_EDITOR_COLOR_PICKER = '[data-testid="connection-editor-color-picker"]';

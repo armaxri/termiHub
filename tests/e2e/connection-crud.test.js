@@ -18,6 +18,7 @@ import { createSshConnection, createTelnetConnection } from './helpers/infrastru
 import {
   CONN_EDITOR_NAME,
   CONN_EDITOR_SAVE,
+  CONN_EDITOR_SAVE_CONNECT,
   CONN_EDITOR_CANCEL,
   CONNECTION_LIST_NEW_FOLDER,
   INLINE_FOLDER_NAME_INPUT,
@@ -223,6 +224,57 @@ describe('Connection CRUD', () => {
       expect(tabsAfterSecond).toBe(tabsAfterFirst);
 
       await cancelEditor();
+    });
+  });
+
+  describe('CONN-SAVE-CONNECT: Save & Connect button (PR #112)', () => {
+    afterEach(async () => {
+      await closeAllTabs();
+    });
+
+    it('should save connection AND open terminal tab when clicking Save & Connect', async () => {
+      await openNewConnectionEditor();
+      const name = uniqueName('save-conn');
+      const nameInput = await browser.$(CONN_EDITOR_NAME);
+      await nameInput.setValue(name);
+
+      // Click Save & Connect
+      const saveConnectBtn = await browser.$(CONN_EDITOR_SAVE_CONNECT);
+      await saveConnectBtn.click();
+      await browser.pause(1000);
+
+      // Connection should be saved in sidebar
+      const item = await findConnectionByName(name);
+      expect(item).not.toBeNull();
+
+      // A terminal tab should have opened
+      const tab = await findTabByTitle(name);
+      expect(tab).not.toBeNull();
+    });
+
+    it('should still have working Save and Cancel buttons', async () => {
+      // Test Save
+      await openNewConnectionEditor();
+      const name = uniqueName('save-only');
+      const nameInput = await browser.$(CONN_EDITOR_NAME);
+      await nameInput.setValue(name);
+      const saveBtn = await browser.$(CONN_EDITOR_SAVE);
+      await saveBtn.click();
+      await browser.pause(300);
+
+      const item = await findConnectionByName(name);
+      expect(item).not.toBeNull();
+
+      // Test Cancel
+      await openNewConnectionEditor();
+      const cancelBtn = await browser.$(CONN_EDITOR_CANCEL);
+      await cancelBtn.click();
+      await browser.pause(300);
+
+      // Editor should be closed
+      const editorName = await browser.$(CONN_EDITOR_NAME);
+      const visible = await editorName.isExisting() && await editorName.isDisplayed();
+      expect(visible).toBe(false);
     });
   });
 

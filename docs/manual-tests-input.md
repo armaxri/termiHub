@@ -249,10 +249,10 @@ Each section groups related tests by feature area. Individual test items referen
 
 ### Save & Connect button (PR #112)
 
-- [ ] Open New Connection — fill form — click "Save & Connect" — connection is saved AND a terminal tab opens
+- [x] Open New Connection — fill form — click "Save & Connect" — connection is saved AND a terminal tab opens
 - [ ] Edit existing SSH connection — click "Save & Connect" — password prompt appears — connection opens after password entry
 - [ ] Click "Save & Connect" with password auth, cancel password prompt — editor tab stays open (connect aborted, but save already completed)
-- [ ] Existing "Save" and "Cancel" buttons still work as before
+- [x] Existing "Save" and "Cancel" buttons still work as before
 
 ### Import/export in settings gear dropdown (PR #33)
 
