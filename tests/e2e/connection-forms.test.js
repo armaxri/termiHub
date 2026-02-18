@@ -98,6 +98,21 @@ describe('Connection Editor Forms', () => {
       expect(await browser.$(SSH_X11_CHECKBOX).isDisplayed()).toBe(true);
     });
 
+    it('should not show a password field for SSH password auth (PR #38)', async () => {
+      await openNewConnectionEditor();
+      await setConnectionType('ssh');
+
+      // Select password auth method
+      const authSelect = await browser.$(SSH_AUTH_METHOD);
+      await authSelect.selectByAttribute('value', 'password');
+      await browser.pause(200);
+
+      // There should be NO password input field in the editor
+      const passwordField = await browser.$('[data-testid="ssh-settings-password-input"]');
+      const visible = await passwordField.isExisting() && await passwordField.isDisplayed();
+      expect(visible).toBe(false);
+    });
+
     it('should default SSH port to 22', async () => {
       await openNewConnectionEditor();
       await setConnectionType('ssh');

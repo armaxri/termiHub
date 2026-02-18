@@ -84,10 +84,10 @@ Each section groups related tests by feature area. Individual test items referen
 
 ### Password prompt at connect (PR #38)
 
-- [ ] Create an SSH connection with password auth — no password field in editor, hint text shown instead
-- [ ] Right-click — Connect on a password-auth SSH connection — password dialog appears
-- [ ] Enter password and click Connect — SSH terminal opens normally
-- [ ] Click Cancel in password dialog — no tab is created
+- [x] Create an SSH connection with password auth — no password field in editor, hint text shown instead
+- [x] Right-click — Connect on a password-auth SSH connection — password dialog appears
+- [x] Enter password and click Connect — SSH terminal opens normally
+- [x] Click Cancel in password dialog — no tab is created
 - [ ] SSH key-auth connections — no password dialog, connects directly
 - [ ] SFTP connect to password-auth SSH — password dialog appears
 - [ ] Inspect `connections.json` — no `password` field present for any SSH connection

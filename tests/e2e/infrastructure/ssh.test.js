@@ -9,13 +9,18 @@
 //   - tauri-driver installed (cargo install tauri-driver)
 
 import { waitForAppReady, ensureConnectionsSidebar, closeAllTabs } from '../helpers/app.js';
-import { uniqueName, connectByName } from '../helpers/connections.js';
+import { uniqueName, connectByName, connectionContextAction } from '../helpers/connections.js';
 import { findTabByTitle, getActiveTab, getTabCount } from '../helpers/tabs.js';
 import {
   createSshConnection,
   handlePasswordPrompt,
   verifyTerminalRendered,
 } from '../helpers/infrastructure.js';
+import {
+  PASSWORD_PROMPT_INPUT,
+  PASSWORD_PROMPT_CANCEL,
+  CTX_CONNECTION_CONNECT,
+} from '../helpers/selectors.js';
 
 describe('SSH Connections (requires live server)', () => {
   before(async () => {
@@ -67,6 +72,70 @@ describe('SSH Connections (requires live server)', () => {
       // Verify xterm rendered
       const rendered = await verifyTerminalRendered();
       expect(rendered).toBe(true);
+    });
+  });
+
+  describe('SSH-PASSWORD: Password prompt flow (PR #38)', () => {
+    it('should show password prompt dialog when connecting via context menu', async () => {
+      const name = uniqueName('ssh-prompt');
+      await createSshConnection(name, {
+        host: '127.0.0.1',
+        port: '2222',
+        username: 'testuser',
+        authMethod: 'password',
+      });
+
+      // Right-click > Connect
+      await connectionContextAction(name, CTX_CONNECTION_CONNECT);
+
+      // Password prompt should appear
+      const input = await browser.$(PASSWORD_PROMPT_INPUT);
+      await input.waitForDisplayed({ timeout: 10000 });
+      expect(await input.isDisplayed()).toBe(true);
+
+      // Cancel to clean up
+      const cancelBtn = await browser.$(PASSWORD_PROMPT_CANCEL);
+      await cancelBtn.click();
+      await browser.pause(300);
+    });
+
+    it('should not create a tab when password dialog is cancelled', async () => {
+      const name = uniqueName('ssh-cancel');
+      await createSshConnection(name, {
+        host: '127.0.0.1',
+        port: '2222',
+        username: 'testuser',
+        authMethod: 'password',
+      });
+
+      const tabsBefore = await getTabCount();
+
+      // Connect and cancel the password prompt
+      await connectionContextAction(name, CTX_CONNECTION_CONNECT);
+      const input = await browser.$(PASSWORD_PROMPT_INPUT);
+      await input.waitForDisplayed({ timeout: 10000 });
+      const cancelBtn = await browser.$(PASSWORD_PROMPT_CANCEL);
+      await cancelBtn.click();
+      await browser.pause(500);
+
+      const tabsAfter = await getTabCount();
+      expect(tabsAfter).toBe(tabsBefore);
+    });
+
+    it('should connect successfully after entering password', async () => {
+      const name = uniqueName('ssh-enter');
+      await createSshConnection(name, {
+        host: '127.0.0.1',
+        port: '2222',
+        username: 'testuser',
+        authMethod: 'password',
+      });
+
+      await connectByName(name);
+      await handlePasswordPrompt('testpass');
+
+      const tab = await findTabByTitle(name);
+      expect(tab).not.toBeNull();
     });
   });
 
