@@ -186,6 +186,7 @@ function MonitoringStatus() {
 
   // Auto-connect monitoring when active tab is an SSH session
   useEffect(() => {
+    if (monitoringLoading) return;
     if (!activeTab || activeTab.config.type !== "ssh") return;
 
     const sshConfig = activeTab.config.config as SshConfig;
@@ -225,6 +226,7 @@ function MonitoringStatus() {
   }, [
     activeTabId,
     activeTab,
+    monitoringLoading,
     monitoringSessionId,
     monitoringHost,
     connections,
