@@ -182,11 +182,11 @@ Each section groups related tests by feature area. Individual test items referen
 
 ### Save terminal content to file (PR #35)
 
-- [ ] Right-click a terminal tab — context menu shows "Save to File" above "Clear Terminal"
+- [x] Right-click a terminal tab — context menu shows "Save to File" above "Clear Terminal"
 - [ ] Click "Save to File" — native save dialog opens with default filename `terminal-output.txt`
 - [ ] Choose a location — file is written with the terminal's text content
 - [ ] Cancel the dialog — nothing happens
-- [ ] Settings tab still has no context menu
+- [x] Settings tab still has no context menu
 
 ### Copy terminal content to clipboard (PR #36)
 

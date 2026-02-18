@@ -175,6 +175,31 @@ describe('Tab Management', () => {
     });
   });
 
+  describe('TAB-SAVE: Save to File in context menu (PR #35)', () => {
+    it('should show "Save to File" above "Clear Terminal" in context menu', async () => {
+      const name = uniqueName('save-order');
+      await createLocalConnection(name);
+      await connectByName(name);
+
+      const tab = await findTabByTitle(name);
+      await tab.click({ button: 'right' });
+      await browser.pause(300);
+
+      // Verify both items are visible
+      const saveItem = await browser.$('[data-testid="tab-context-save"]');
+      const clearItem = await browser.$('[data-testid="tab-context-clear"]');
+      expect(await saveItem.isDisplayed()).toBe(true);
+      expect(await clearItem.isDisplayed()).toBe(true);
+
+      // Verify order: Save should appear above Clear (lower Y position)
+      const saveLoc = await saveItem.getLocation();
+      const clearLoc = await clearItem.getLocation();
+      expect(saveLoc.y).toBeLessThan(clearLoc.y);
+
+      await browser.keys('Escape');
+    });
+  });
+
   describe('TAB-CLEAR: Clear terminal via context menu (PR #34)', () => {
     it('should show "Clear Terminal" in tab context menu', async () => {
       const name = uniqueName('clear-menu');
