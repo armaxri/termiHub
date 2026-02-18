@@ -150,9 +150,10 @@ function MonitoringStatus() {
 
   const connections = useAppStore((s) => s.connections);
   const externalSources = useAppStore((s) => s.externalSources);
-  const activeTab = useAppStore((s) => getActiveTab(s));
-  const activeTabId = activeTab?.id ?? null;
-  const requestPassword = useAppStore((s) => s.requestPassword);
+  const activeTabId = useAppStore((s) => getActiveTab(s)?.id ?? null);
+
+  /** Tracks which host key already failed auto-connect to prevent retry loops. */
+  const autoConnectFailedRef = useRef<string | null>(null);
 
   const sshConnections = useMemo(() => {
     const result: SavedConnection[] = [];
@@ -186,7 +187,8 @@ function MonitoringStatus() {
 
   // Auto-connect monitoring when active tab is an SSH session
   useEffect(() => {
-    if (monitoringLoading) return;
+    // Read the active tab from the store (avoids subscribing to the full object)
+    const activeTab = getActiveTab(useAppStore.getState());
     if (!activeTab || activeTab.config.type !== "ssh") return;
 
     const sshConfig = activeTab.config.config as SshConfig;
@@ -195,16 +197,30 @@ function MonitoringStatus() {
     // Already monitoring the right host
     if (monitoringSessionId && monitoringHost === hostKey) return;
 
+    // Don't retry a host that already failed auto-connect
+    if (autoConnectFailedRef.current === hostKey) return;
+
+    // Mark as attempted synchronously BEFORE the async call to prevent
+    // re-entry when connectMonitoring toggles monitoringLoading.
+    autoConnectFailedRef.current = hostKey;
+
     const doConnect = async () => {
+      const {
+        connections: conns,
+        disconnectMonitoring: disconnect,
+        connectMonitoring: connect,
+        requestPassword,
+      } = useAppStore.getState();
+
       // Disconnect from previous host if needed
       if (monitoringSessionId && monitoringHost !== hostKey) {
-        await disconnectMonitoring();
+        await disconnect();
       }
 
       // Handle password-based auth: prompt if password is missing
       let configToUse = sshConfig;
       if (sshConfig.authMethod === "password" && !sshConfig.password) {
-        const savedConn = connections.find((c) => {
+        const savedConn = conns.find((c) => {
           if (c.config.type !== "ssh") return false;
           const sc = c.config.config as SshConfig;
           return (
@@ -219,21 +235,16 @@ function MonitoringStatus() {
         configToUse = { ...baseConfig, password };
       }
 
-      connectMonitoring(configToUse);
+      await connect(configToUse);
+
+      // On success, clear the guard so switching away and back works
+      if (useAppStore.getState().monitoringSessionId) {
+        autoConnectFailedRef.current = null;
+      }
     };
 
     doConnect();
-  }, [
-    activeTabId,
-    activeTab,
-    monitoringLoading,
-    monitoringSessionId,
-    monitoringHost,
-    connections,
-    connectMonitoring,
-    disconnectMonitoring,
-    requestPassword,
-  ]);
+  }, [activeTabId, monitoringSessionId, monitoringHost]);
 
   const handleConnect = useCallback(
     (connection: SavedConnection) => {
