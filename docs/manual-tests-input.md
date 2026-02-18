@@ -256,11 +256,11 @@ Each section groups related tests by feature area. Individual test items referen
 
 ### Import/export in settings gear dropdown (PR #33)
 
-- [ ] Click the Settings gear in the activity bar — dropdown menu appears with three items
-- [ ] Click "Settings" — settings tab opens
+- [x] Click the Settings gear in the activity bar — dropdown menu appears with three items
+- [x] Click "Settings" — settings tab opens
 - [ ] Click "Import Connections" — file open dialog, imports JSON, connection list refreshes
 - [ ] Click "Export Connections" — file save dialog, saves JSON
-- [ ] Connection list toolbar no longer has Import/Export buttons (only New Folder and New Connection remain)
+- [x] Connection list toolbar no longer has Import/Export buttons (only New Folder and New Connection remain)
 
 ### External connection file support (PR #50)
 

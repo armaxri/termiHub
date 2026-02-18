@@ -59,6 +59,47 @@ describe('Settings & Color Picker', () => {
     });
   });
 
+  describe('SET-GEAR: Settings gear dropdown (PR #33)', () => {
+    it('should show dropdown menu with three items when clicking gear', async () => {
+      const gear = await browser.$('[data-testid="activity-bar-settings"]');
+      await gear.click();
+      await browser.pause(300);
+
+      const settingsItem = await browser.$('[data-testid="settings-menu-open"]');
+      const importItem = await browser.$('[data-testid="settings-menu-import"]');
+      const exportItem = await browser.$('[data-testid="settings-menu-export"]');
+
+      expect(await settingsItem.isDisplayed()).toBe(true);
+      expect(await importItem.isDisplayed()).toBe(true);
+      expect(await exportItem.isDisplayed()).toBe(true);
+
+      await browser.keys('Escape');
+    });
+
+    it('should open Settings tab when clicking "Settings" in dropdown', async () => {
+      await openSettingsTab();
+      const tab = await findTabByTitle('Settings');
+      expect(tab).not.toBeNull();
+    });
+
+    it('should only show New Folder and New Connection in connection list toolbar', async () => {
+      await ensureConnectionsSidebar();
+
+      const newFolder = await browser.$('[data-testid="connection-list-new-folder"]');
+      const newConn = await browser.$('[data-testid="connection-list-new-connection"]');
+      expect(await newFolder.isDisplayed()).toBe(true);
+      expect(await newConn.isDisplayed()).toBe(true);
+
+      // Import/Export buttons should not exist in the toolbar
+      const importBtn = await browser.$('[data-testid="connection-list-import"]');
+      const exportBtn = await browser.$('[data-testid="connection-list-export"]');
+      const importVisible = await importBtn.isExisting() && await importBtn.isDisplayed();
+      const exportVisible = await exportBtn.isExisting() && await exportBtn.isDisplayed();
+      expect(importVisible).toBe(false);
+      expect(exportVisible).toBe(false);
+    });
+  });
+
   describe('SET-STATUSBAR: Status bar presence (PR #30)', () => {
     it('should display a status bar at the bottom of the window', async () => {
       const statusBar = await browser.$('.status-bar');
