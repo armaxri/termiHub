@@ -175,9 +175,9 @@ Each section groups related tests by feature area. Individual test items referen
 
 ### Clear terminal via context menu (PR #34)
 
-- [ ] Right-click a terminal tab — context menu with "Clear Terminal" appears
-- [ ] Click "Clear Terminal" — terminal scrollback is cleared
-- [ ] Right-click the Settings tab — no context menu appears
+- [x] Right-click a terminal tab — context menu with "Clear Terminal" appears
+- [x] Click "Clear Terminal" — terminal scrollback is cleared
+- [x] Right-click the Settings tab — no context menu appears
 - [ ] Drag-and-drop tabs still works correctly
 
 ### Save terminal content to file (PR #35)

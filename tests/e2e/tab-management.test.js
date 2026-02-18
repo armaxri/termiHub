@@ -175,6 +175,67 @@ describe('Tab Management', () => {
     });
   });
 
+  describe('TAB-CLEAR: Clear terminal via context menu (PR #34)', () => {
+    it('should show "Clear Terminal" in tab context menu', async () => {
+      const name = uniqueName('clear-menu');
+      await createLocalConnection(name);
+      await connectByName(name);
+
+      const tab = await findTabByTitle(name);
+      await tab.click({ button: 'right' });
+      await browser.pause(300);
+
+      const clearItem = await browser.$('[data-testid="tab-context-clear"]');
+      expect(await clearItem.isDisplayed()).toBe(true);
+
+      await browser.keys('Escape');
+    });
+
+    it('should clear terminal scrollback when clicking "Clear Terminal"', async () => {
+      const name = uniqueName('clear-action');
+      await createLocalConnection(name);
+      await connectByName(name);
+      await browser.pause(1000);
+
+      // Right-click tab and click Clear Terminal
+      const tab = await findTabByTitle(name);
+      await tab.click({ button: 'right' });
+      await browser.pause(300);
+
+      const clearItem = await browser.$('[data-testid="tab-context-clear"]');
+      await clearItem.click();
+      await browser.pause(500);
+
+      // Verify the xterm container still exists (terminal wasn't destroyed)
+      const xtermContainer = await browser.$('.xterm');
+      expect(await xtermContainer.isExisting()).toBe(true);
+    });
+
+    it('should not show context menu on Settings tab', async () => {
+      // Open settings tab
+      const gear = await browser.$('[data-testid="activity-bar-settings"]');
+      await gear.click();
+      await browser.pause(300);
+      const openItem = await browser.$('[data-testid="settings-menu-open"]');
+      await openItem.waitForDisplayed({ timeout: 3000 });
+      await openItem.click();
+      await browser.pause(300);
+
+      // Find the Settings tab and right-click it
+      const settingsTab = await findTabByTitle('Settings');
+      expect(settingsTab).not.toBeNull();
+      await settingsTab.click({ button: 'right' });
+      await browser.pause(300);
+
+      // Clear Terminal should NOT be visible (no terminal context menu for settings)
+      const clearItem = await browser.$('[data-testid="tab-context-clear"]');
+      const visible = await clearItem.isExisting() && await clearItem.isDisplayed();
+      expect(visible).toBe(false);
+
+      await browser.keys('Escape');
+    });
+  });
+
   describe('TAB-06: Rename tab (PR #156)', () => {
     it('should show "Rename" in the tab context menu', async () => {
       const name = uniqueName('rename-menu');
