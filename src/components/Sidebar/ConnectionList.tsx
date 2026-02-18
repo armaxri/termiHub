@@ -28,7 +28,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { ShellType, SshConfig, RemoteConfig } from "@/types/terminal";
+import { ShellType, SshConfig } from "@/types/terminal";
 import { SavedConnection, ConnectionFolder, ExternalConnectionSource } from "@/types/connection";
 import { listAvailableShells } from "@/services/api";
 import { ConnectionIcon } from "@/utils/connectionIcons";
@@ -286,9 +286,7 @@ function ConnectionItem({
           >
             <Play size={14} /> Connect
           </ContextMenu.Item>
-          {(connection.config.type === "ssh" ||
-            connection.config.type === "telnet" ||
-            connection.config.type === "remote") && (
+          {(connection.config.type === "ssh" || connection.config.type === "telnet") && (
             <ContextMenu.Item
               className="context-menu__item"
               onSelect={() => onPingHost(connection)}
@@ -364,13 +362,6 @@ export function ConnectionList() {
         config = { ...config, config: { ...sshCfg, password } };
       }
 
-      if (config.type === "remote" && config.config.authMethod === "password") {
-        const remoteCfg = config.config as RemoteConfig;
-        const password = await requestPassword(remoteCfg.host, remoteCfg.username);
-        if (password === null) return;
-        config = { ...config, config: { ...remoteCfg, password } };
-      }
-
       addTab(
         connection.name,
         connection.config.type,
@@ -437,7 +428,7 @@ export function ConnectionList() {
   const handlePingHost = useCallback(
     async (connection: SavedConnection) => {
       const config = connection.config;
-      if (config.type !== "ssh" && config.type !== "telnet" && config.type !== "remote") return;
+      if (config.type !== "ssh" && config.type !== "telnet") return;
       const host = config.config.host;
       const shells = await listAvailableShells();
       if (shells.length === 0) return;
@@ -1005,9 +996,7 @@ function ExternalConnectionItem({
           >
             <Play size={14} /> Connect
           </ContextMenu.Item>
-          {(connection.config.type === "ssh" ||
-            connection.config.type === "telnet" ||
-            connection.config.type === "remote") && (
+          {(connection.config.type === "ssh" || connection.config.type === "telnet") && (
             <ContextMenu.Item
               className="context-menu__item"
               onSelect={() => onPingHost(connection)}

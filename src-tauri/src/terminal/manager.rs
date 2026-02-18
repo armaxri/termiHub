@@ -11,7 +11,6 @@ use crate::terminal::backend::{
     OUTPUT_CHANNEL_CAPACITY,
 };
 use crate::terminal::local_shell::LocalShell;
-use crate::terminal::remote::RemoteBackend;
 use crate::terminal::remote_session::RemoteSessionBackend;
 use crate::terminal::serial::SerialConnection;
 use crate::terminal::ssh::SshConnection;
@@ -117,18 +116,6 @@ impl TerminalManager {
                     title,
                 )
             }
-            ConnectionConfig::Remote(cfg) => {
-                let conn =
-                    RemoteBackend::new(cfg, output_tx, app_handle.clone(), session_id.clone())?;
-                let title = cfg
-                    .title
-                    .clone()
-                    .unwrap_or_else(|| format!("Remote: {}@{}", cfg.username, cfg.host));
-                (
-                    Box::new(conn) as Box<dyn crate::terminal::backend::TerminalBackend>,
-                    title,
-                )
-            }
             ConnectionConfig::RemoteSession(cfg) => {
                 let agent_mgr = agent_manager.ok_or_else(|| {
                     TerminalError::SpawnFailed("AgentConnectionManager not available".to_string())
@@ -150,7 +137,6 @@ impl TerminalManager {
             ConnectionConfig::Serial(_) => "serial",
             ConnectionConfig::Ssh(_) => "ssh",
             ConnectionConfig::Telnet(_) => "telnet",
-            ConnectionConfig::Remote(_) => "remote",
             ConnectionConfig::RemoteSession(_) => "remote-session",
         };
 

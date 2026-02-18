@@ -86,15 +86,6 @@ function stripPassword(connection: SavedConnection): SavedConnection {
       },
     };
   }
-  if (connection.config.type === "remote" && connection.config.config.password) {
-    return {
-      ...connection,
-      config: {
-        ...connection.config,
-        config: { ...connection.config.config, password: undefined },
-      },
-    };
-  }
   return connection;
 }
 

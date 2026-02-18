@@ -52,24 +52,6 @@ export interface SerialConfig {
   flowControl: "none" | "hardware" | "software";
 }
 
-export interface RemoteConfig {
-  host: string;
-  port: number;
-  username: string;
-  authMethod: "password" | "key" | "agent";
-  password?: string;
-  keyPath?: string;
-  sessionType: "shell" | "serial";
-  shell?: string;
-  serialPort?: string;
-  baudRate?: number;
-  dataBits?: 5 | 6 | 7 | 8;
-  stopBits?: 1 | 2;
-  parity?: "none" | "odd" | "even";
-  flowControl?: "none" | "hardware" | "software";
-  title?: string;
-}
-
 /** SSH transport configuration for a remote agent (no session details). */
 export interface RemoteAgentConfig {
   host: string;
@@ -101,7 +83,6 @@ export type ConnectionConfig =
   | { type: "ssh"; config: SshConfig }
   | { type: "telnet"; config: TelnetConfig }
   | { type: "serial"; config: SerialConfig }
-  | { type: "remote"; config: RemoteConfig }
   | { type: "remote-session"; config: RemoteSessionConfig };
 
 export interface TerminalTab {

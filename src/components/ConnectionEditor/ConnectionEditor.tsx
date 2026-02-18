@@ -7,7 +7,6 @@ import {
   SshConfig,
   TelnetConfig,
   SerialConfig,
-  RemoteConfig,
   RemoteAgentConfig,
   ShellType,
   TerminalOptions,
@@ -20,7 +19,6 @@ import {
   SshSettings,
   SerialSettings,
   TelnetSettings,
-  RemoteSettings,
   AgentSettings,
 } from "@/components/Settings";
 import { ColorPickerDialog } from "@/components/Terminal/ColorPickerDialog";
@@ -29,7 +27,9 @@ import { IconByName } from "@/utils/connectionIcons";
 import { findLeafByTab } from "@/utils/panelTree";
 import "./ConnectionEditor.css";
 
-function getDefaultConfigs(defaultShell: string): Record<ConnectionType, ConnectionConfig> {
+function getDefaultConfigs(
+  defaultShell: string
+): Partial<Record<ConnectionType, ConnectionConfig>> {
   return {
     local: { type: "local", config: { shellType: defaultShell } as LocalShellConfig },
     ssh: {
@@ -53,16 +53,6 @@ function getDefaultConfigs(defaultShell: string): Record<ConnectionType, Connect
         parity: "none",
         flowControl: "none",
       },
-    },
-    remote: {
-      type: "remote",
-      config: {
-        host: "",
-        port: 22,
-        username: "",
-        authMethod: "password",
-        sessionType: "shell",
-      } as RemoteConfig,
     },
     "remote-session": {
       type: "remote-session",
@@ -150,16 +140,18 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
 
   const [name, setName] = useState(existingConnection?.name ?? existingAgent?.name ?? "");
   const folderId = existingConnection?.folderId ?? editingConnectionFolderId ?? null;
+  const [selectedType, setSelectedType] = useState<ConnectionType>(
+    existingAgent ? "remote" : (existingConnection?.config.type ?? "local")
+  );
   const [connectionConfig, setConnectionConfig] = useState<ConnectionConfig>(
-    existingAgent ? defaultConfigs.remote : (existingConnection?.config ?? defaultConfigs.local)
+    existingConnection?.config ?? defaultConfigs.local!
   );
   const [agentConfig, setAgentConfig] = useState<RemoteAgentConfig>(
     existingAgent?.config ?? { host: "", port: 22, username: "", authMethod: "password" }
   );
 
   /** Agent mode: editing an existing agent, or creating new with "remote" type selected. */
-  const isAgentMode =
-    !!existingAgent || (connectionConfig.type === "remote" && !existingConnection);
+  const isAgentMode = !!existingAgent || (selectedType === "remote" && !existingConnection);
   const [terminalOptions, setTerminalOptions] = useState<TerminalOptions>(
     existingConnection?.terminalOptions ?? {}
   );
@@ -169,7 +161,9 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
 
   const handleTypeChange = useCallback(
     (type: ConnectionType) => {
-      setConnectionConfig(getDefaultConfigs(defaultShell)[type]);
+      setSelectedType(type);
+      const config = getDefaultConfigs(defaultShell)[type];
+      if (config) setConnectionConfig(config);
     },
     [defaultShell]
   );
@@ -305,13 +299,6 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       config = { ...config, config: { ...sshCfg, password } };
     }
 
-    if (config.type === "remote" && config.config.authMethod === "password") {
-      const remoteCfg = config.config as RemoteConfig;
-      const password = await requestPassword(remoteCfg.host, remoteCfg.username);
-      if (password === null) return;
-      config = { ...config, config: { ...remoteCfg, password } };
-    }
-
     addTab(saved.name, saved.config.type, config, undefined, undefined, saved.terminalOptions);
     closeThisTab();
   }, [saveConnection, requestPassword, addTab, closeThisTab]);
@@ -344,7 +331,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         <label className="settings-form__field">
           <span className="settings-form__label">Type</span>
           <select
-            value={connectionConfig.type}
+            value={selectedType}
             onChange={(e) => handleTypeChange(e.target.value as ConnectionType)}
             disabled={!!existingAgent}
             data-testid="connection-editor-type-select"
@@ -357,39 +344,33 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           </select>
         </label>
 
-        {connectionConfig.type === "local" && (
+        {selectedType === "local" && (
           <ConnectionSettings
             config={connectionConfig.config}
             onChange={(config: LocalShellConfig) => setConnectionConfig({ type: "local", config })}
           />
         )}
-        {connectionConfig.type === "ssh" && (
+        {selectedType === "ssh" && (
           <SshSettings
             config={connectionConfig.config}
             onChange={(config: SshConfig) => setConnectionConfig({ type: "ssh", config })}
             onSetupAgent={handleSetupSshAgent}
           />
         )}
-        {connectionConfig.type === "serial" && (
+        {selectedType === "serial" && (
           <SerialSettings
             config={connectionConfig.config}
             onChange={(config: SerialConfig) => setConnectionConfig({ type: "serial", config })}
           />
         )}
-        {connectionConfig.type === "telnet" && (
+        {selectedType === "telnet" && (
           <TelnetSettings
             config={connectionConfig.config}
             onChange={(config: TelnetConfig) => setConnectionConfig({ type: "telnet", config })}
           />
         )}
-        {connectionConfig.type === "remote" && isAgentMode && (
+        {selectedType === "remote" && (
           <AgentSettings config={agentConfig} onChange={setAgentConfig} />
-        )}
-        {connectionConfig.type === "remote" && !isAgentMode && (
-          <RemoteSettings
-            config={connectionConfig.config}
-            onChange={(config: RemoteConfig) => setConnectionConfig({ type: "remote", config })}
-          />
         )}
 
         {!isAgentMode && (
