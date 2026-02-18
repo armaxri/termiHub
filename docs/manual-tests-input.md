@@ -393,9 +393,9 @@ Each section groups related tests by feature area. Individual test items referen
 
 ### Settings button at bottom of activity bar (PR #31)
 
-- [ ] Settings gear icon appears at the bottom of the activity bar
-- [ ] Connections and File Browser icons remain at the top
-- [ ] Clicking the settings icon still toggles the sidebar settings view
+- [x] Settings gear icon appears at the bottom of the activity bar
+- [x] Connections and File Browser icons remain at the top
+- [x] Clicking the settings icon still toggles the sidebar settings view
 
 ### Black bar at bottom of terminal fix (PR #130)
 

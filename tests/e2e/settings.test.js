@@ -59,6 +59,31 @@ describe('Settings & Color Picker', () => {
     });
   });
 
+  describe('SET-LAYOUT: Activity bar button placement (PR #31)', () => {
+    it('should show settings gear icon in the activity bar', async () => {
+      const gear = await browser.$('[data-testid="activity-bar-settings"]');
+      expect(await gear.isDisplayed()).toBe(true);
+    });
+
+    it('should show connections and file browser icons in the activity bar', async () => {
+      const connBtn = await browser.$('[data-testid="activity-bar-connections"]');
+      const filesBtn = await browser.$('[data-testid="activity-bar-file-browser"]');
+      expect(await connBtn.isDisplayed()).toBe(true);
+      expect(await filesBtn.isDisplayed()).toBe(true);
+    });
+
+    it('should position settings gear below connections and file browser icons', async () => {
+      const connBtn = await browser.$('[data-testid="activity-bar-connections"]');
+      const gear = await browser.$('[data-testid="activity-bar-settings"]');
+
+      const connLoc = await connBtn.getLocation();
+      const gearLoc = await gear.getLocation();
+
+      // Gear should be below the connections icon (higher Y value)
+      expect(gearLoc.y).toBeGreaterThan(connLoc.y);
+    });
+  });
+
   describe('SET-02: Settings tab lifecycle (PR #32)', () => {
     it('should close the Settings tab like any other tab', async () => {
       await openSettingsTab();
