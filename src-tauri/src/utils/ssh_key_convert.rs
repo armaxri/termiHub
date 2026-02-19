@@ -199,17 +199,43 @@ mod tests {
         assert!(converted.contains("-----BEGIN PRIVATE KEY-----"));
     }
 
+    /// Pre-generated 2048-bit RSA key in OpenSSH format.
+    ///
+    /// Using a fixture avoids the 60+ second runtime cost of generating a
+    /// 4096-bit RSA key, which was causing CI timeouts.
+    const TEST_RSA_OPENSSH_KEY: &str = "\
+-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAABFwAAAAdzc2gtcn
+NhAAAAAwEAAQAAAQEAyJegcuGHS6FKQsK9HSYC9Yyn8LY9UIDeDqOkvY2AcagyAwjPDvTs
+C2lah2fDU3+yO0AQLP18gtNCY1+rEytTOsCZzfnTazXz5V5u1HrmeiS2iq8uwYcxWlgBxo
+kT2mCDiD7PIqispyUEpJS2UmDUM9GA4Np7mBDjoFEW1p9Ft5mUiBAs93AT7ry2DsKxHf7j
+SsNVrYB6MH+bMF9BR1s5PNVEhwGjAfLYBFje5rv6tFN+Zjelbvbtp8MHlU3lc9RAI0rBHZ
+GTqqMbeeNR7Eqeng0UAJfpjIqTQlIhzTlqw3B+k5h7TUOOHofnY7UyoMxEe6zvjnONtOpl
+A3Y7LKdRpwAAA8gTIn8cEyJ/HAAAAAdzc2gtcnNhAAABAQDIl6By4YdLoUpCwr0dJgL1jK
+fwtj1QgN4Oo6S9jYBxqDIDCM8O9OwLaVqHZ8NTf7I7QBAs/XyC00JjX6sTK1M6wJnN+dNr
+NfPlXm7UeuZ6JLaKry7BhzFaWAHGiRPaYIOIPs8iqKynJQSklLZSYNQz0YDg2nuYEOOgUR
+bWn0W3mZSIECz3cBPuvLYOwrEd/uNKw1WtgHowf5swX0FHWzk81USHAaMB8tgEWN7mu/q0
+U35mN6Vu9u2nwweVTeVz1EAjSsEdkZOqoxt541HsSp6eDRQAl+mMipNCUiHNOWrDcH6TmH
+tNQ44eh+djtTKgzER7rO+Oc4206mUDdjssp1GnAAAAAwEAAQAAAQEAhxR8iwBO4OJTpNOJ
+EKj5UywOJ+5BKgYuA0O1+6PffCpcy2hSL2tFzYV73jVE9uTGPFouym1FPMBRM6RICxeg66
+6ppGh5M/hYLvzBu7qrnFM+zfOck9ybopAjWfQTd3qI+OX7DQbzhXdLQh2XDbCBFggeNs1K
+b6Pn9ZzFuW/2PeUwI202kUJE3cHiX5c1B3l26rYH8ShEgIbnqnS1xsZtyotYzK0PlWxKsd
+zM4VDrwXHL9faGh7Xs+HXpMijZkCGL7L0yV46nxCinWmeZHAkpQgxc5qrMAyEErdrXtAE3
+i4vkEHoPRh7b0HKMYexYtHVTeVCoUoq7WOy/vshq2xyAoQAAAIA2FqhmYtO877yz9sd9rM
+1T0UpdY9GTb+Onv9tCX7M07hzxlu5oOXph0yUn0mGsMikzifROsL/6dlIpTskFF2s+Ai+5
+Qit2u9m4bWuy1YlRPbGvr2gqrcY48Cvpltn5Ks62AlJBmWOsrL/X8lvQcxZRLNHJuLDUUI
+lNOw8avk7MJgAAAIEA6cxD/zWymZAgLTE8B3WfvYbmMhJLwBKDN5o3vF4TSMmrjsw3wGZR
+N9GNOq+b6IvkseZdezUQuNNpToDHkfYTTrJZXSawGKPsr5Wt8ulXK9URfbWgS0USx2kPkw
+nwE1k6u9CrvhVTCbuPcY1aOH7Y5Efj1zCecx+Lcla16Kl7J1cAAACBANukHgaibd//LMLc
+/qsyXESkE5p3XM+8wkVtR+QpL4Duu7vAJjN0XhOYelvFNpsk2EUIUMAjAdqmfz5ZgvUjU6
+Whf9wXZ7Azq8S73AVRd4t6K+sam+f1nWWuvnfGl+QBrgcjKCOjtvyXdtz7UZUKQT58Ni8s
+bBVwt04qVBuGZUYxAAAADXRlc3RAdGVybWlodWIBAgMEBQ==
+-----END OPENSSH PRIVATE KEY-----
+";
+
     #[test]
     fn convert_unencrypted_rsa_key() {
-        // Generate a real RSA key in OpenSSH format
-        let key = ssh_key::PrivateKey::random(
-            &mut rand::thread_rng(),
-            ssh_key::Algorithm::Rsa { hash: None },
-        )
-        .unwrap();
-        let openssh_pem = key.to_openssh(ssh_key::LineEnding::LF).unwrap();
-
-        let f = write_temp_key(&openssh_pem);
+        let f = write_temp_key(TEST_RSA_OPENSSH_KEY);
         let pem_bytes = convert_openssh_to_pem_bytes(f.path(), None).unwrap();
 
         let converted = std::str::from_utf8(&pem_bytes).unwrap();

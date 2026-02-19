@@ -88,6 +88,7 @@ interface TerminalProps {
   tabId: string;
   config: ConnectionConfig;
   isVisible: boolean;
+  existingSessionId?: string | null;
 }
 
 /**
@@ -95,7 +96,7 @@ interface TerminalProps {
  * Creates an imperative DOM element registered with the TerminalRegistry.
  * Renders nothing — TerminalSlot handles display by adopting the DOM element.
  */
-export function Terminal({ tabId, config, isVisible }: TerminalProps) {
+export function Terminal({ tabId, config, isVisible, existingSessionId }: TerminalProps) {
   const terminalElRef = useRef<HTMLDivElement | null>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -104,16 +105,23 @@ export function Terminal({ tabId, config, isVisible }: TerminalProps) {
   const horizontalScrollingRef = useRef(false);
   const lastInputTimeRef = useRef(0);
   const contentDirtyRef = useRef(false);
+  const pendingCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { register, unregister, parkingRef } = useTerminalRegistry();
 
   const setupTerminal = useCallback(
     async (xterm: XTerm, fitAddon: FitAddon) => {
+      // Cancel any pending session close from a StrictMode unmount cycle
+      if (pendingCloseTimerRef.current !== null) {
+        clearTimeout(pendingCloseTimerRef.current);
+        pendingCloseTimerRef.current = null;
+      }
+
       try {
         // Ensure the global Tauri event listener is registered before
         // creating the backend session — otherwise early output events
         // emitted by the PTY reader thread are silently lost.
         await terminalDispatcher.init();
-        const sessionId = await createTerminal(config);
+        const sessionId = existingSessionId ?? (await createTerminal(config));
         sessionIdRef.current = sessionId;
 
         // Output batching: buffer chunks and flush in a single RAF callback
@@ -189,8 +197,13 @@ export function Terminal({ tabId, config, isVisible }: TerminalProps) {
           onDataDisposable.dispose();
           onResizeDisposable.dispose();
           if (sessionIdRef.current) {
-            closeTerminal(sessionIdRef.current);
+            // Defer the close so that React StrictMode's rapid unmount→remount
+            // can cancel it before the backend session is destroyed.
+            const sid = sessionIdRef.current;
             sessionIdRef.current = null;
+            pendingCloseTimerRef.current = setTimeout(() => {
+              closeTerminal(sid);
+            }, 50);
           }
         };
       } catch (err) {
@@ -210,7 +223,7 @@ export function Terminal({ tabId, config, isVisible }: TerminalProps) {
         }
       }
     },
-    [config]
+    [config, existingSessionId]
   );
 
   // Create the terminal element, xterm instance, and register

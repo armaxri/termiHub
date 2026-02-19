@@ -19,10 +19,17 @@ import {
   RefreshCw,
   Terminal,
   Cable,
+  Upload,
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { RemoteAgentDefinition } from "@/types/connection";
 import { AgentSessionInfo, AgentDefinitionInfo } from "@/services/api";
+import { classifyAgentError, ClassifiedAgentError } from "@/utils/classifyAgentError";
+import { AgentSetupDialog } from "./AgentSetupDialog";
+import { ConnectionErrorDialog } from "./ConnectionErrorDialog";
+
+const EMPTY_SESSIONS: AgentSessionInfo[] = [];
+const EMPTY_DEFINITIONS: AgentDefinitionInfo[] = [];
 
 interface AgentNodeProps {
   agent: RemoteAgentDefinition;
@@ -44,11 +51,14 @@ export function AgentNode({ agent }: AgentNodeProps) {
   const openConnectionEditorTab = useAppStore((s) => s.openConnectionEditorTab);
   const requestPassword = useAppStore((s) => s.requestPassword);
   const addTab = useAppStore((s) => s.addTab);
-  const agentSessions = useAppStore((s) => s.agentSessions[agent.id] ?? []);
-  const agentDefinitions = useAppStore((s) => s.agentDefinitions[agent.id] ?? []);
+  const agentSessions = useAppStore((s) => s.agentSessions[agent.id]) ?? EMPTY_SESSIONS;
+  const agentDefinitions = useAppStore((s) => s.agentDefinitions[agent.id]) ?? EMPTY_DEFINITIONS;
   const refreshAgentSessions = useAppStore((s) => s.refreshAgentSessions);
 
   const [connecting, setConnecting] = useState(false);
+  const [setupDialogOpen, setSetupDialogOpen] = useState(false);
+  const [connectionError, setConnectionError] = useState<ClassifiedAgentError | null>(null);
+  const [errorDialogOpen, setErrorDialogOpen] = useState(false);
 
   const isConnected = agent.connectionState === "connected";
   const Chevron = agent.isExpanded ? ChevronDown : ChevronRight;
@@ -67,10 +77,19 @@ export function AgentNode({ agent }: AgentNodeProps) {
         password = result;
       }
       await connectRemoteAgent(agent.id, password);
+    } catch (err) {
+      const classified = classifyAgentError(err);
+      setConnectionError(classified);
+      setErrorDialogOpen(true);
     } finally {
       setConnecting(false);
     }
   }, [agent, connectRemoteAgent, requestPassword, connecting]);
+
+  const handleSetupFromError = useCallback(() => {
+    setErrorDialogOpen(false);
+    setSetupDialogOpen(true);
+  }, []);
 
   const handleDisconnect = useCallback(() => {
     disconnectRemoteAgent(agent.id);
@@ -174,10 +193,19 @@ export function AgentNode({ agent }: AgentNodeProps) {
         <ContextMenu.Portal>
           <ContextMenu.Content className="context-menu__content">
             {!isConnected ? (
-              <ContextMenu.Item className="context-menu__item" onSelect={handleConnect}>
-                <Play size={14} />
-                Connect
-              </ContextMenu.Item>
+              <>
+                <ContextMenu.Item className="context-menu__item" onSelect={handleConnect}>
+                  <Play size={14} />
+                  Connect
+                </ContextMenu.Item>
+                <ContextMenu.Item
+                  className="context-menu__item"
+                  onSelect={() => setSetupDialogOpen(true)}
+                >
+                  <Upload size={14} />
+                  Setup Agent...
+                </ContextMenu.Item>
+              </>
             ) : (
               <>
                 <ContextMenu.Item className="context-menu__item" onSelect={handleDisconnect}>
@@ -222,6 +250,14 @@ export function AgentNode({ agent }: AgentNodeProps) {
           </ContextMenu.Content>
         </ContextMenu.Portal>
       </ContextMenu.Root>
+
+      <AgentSetupDialog open={setupDialogOpen} onOpenChange={setSetupDialogOpen} agent={agent} />
+      <ConnectionErrorDialog
+        open={errorDialogOpen}
+        onOpenChange={setErrorDialogOpen}
+        error={connectionError}
+        onSetupAgent={handleSetupFromError}
+      />
 
       {agent.isExpanded && (
         <div className="connection-list__tree">

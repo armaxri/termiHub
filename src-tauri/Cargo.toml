@@ -18,7 +18,11 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# default-features = false avoids `common-controls-v6` which embeds a Windows
+# app manifest only in binaries (not test executables), causing
+# STATUS_ENTRYPOINT_NOT_FOUND (0xc0000139) in `cargo test` on Windows.
+# See: https://github.com/tauri-apps/tauri/issues/13419
+tauri = { version = "2", default-features = false, features = ["wry", "compression", "dynamic-acl"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
