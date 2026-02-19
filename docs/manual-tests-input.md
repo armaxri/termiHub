@@ -299,6 +299,13 @@ Each section groups related tests by feature area. Individual test items referen
 - [ ] Right-click rename/delete on local files — operations work and list refreshes
 - [ ] Create directory via toolbar button — works for both local and SFTP modes
 
+### File browser follows tab switch from WSL to PowerShell (PR #167)
+
+- [ ] Open a WSL tab — file browser shows `//wsl$/<distro>/home/<user>`
+- [ ] Open a PowerShell tab — file browser switches to Windows home directory
+- [ ] Switch back to WSL tab — file browser returns to WSL path
+- [ ] Open a bash tab (no OSC 7) — file browser shows home directory, not previous tab's path
+
 ### Local file explorer stuck at root fix (PR #110)
 
 - [ ] Open a local terminal, click Files sidebar — file list shows home directory contents
