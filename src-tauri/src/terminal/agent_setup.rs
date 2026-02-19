@@ -155,11 +155,7 @@ fn run_setup_background(
                 "error",
                 &format!("SFTP connection failed: {}", e),
             );
-            inject_commands(
-                sessions,
-                session_id,
-                "echo '\\x1b[31m=== Agent Setup Error: SFTP connection failed ===\\x1b[0m'\n",
-            );
+            inject_error(sessions, session_id, "SFTP connection failed");
             return;
         }
     };
@@ -193,14 +189,7 @@ fn run_setup_background(
                             );
                             error!("Agent setup: {}", msg);
                             emit_progress(app_handle, agent_id, "error", &msg);
-                            inject_commands(
-                                sessions,
-                                session_id,
-                                &format!(
-                                    "echo '\\x1b[31m=== Agent Setup Error: {} ===\\x1b[0m'\n",
-                                    msg
-                                ),
-                            );
+                            inject_error(sessions, session_id, &msg);
                             return;
                         }
                         info!("Agent setup: binary arch {} matches remote", binary_arch);
@@ -210,14 +199,7 @@ fn run_setup_background(
                     let msg = format!("{}", e);
                     error!("Agent setup: {}", msg);
                     emit_progress(app_handle, agent_id, "error", &msg);
-                    inject_commands(
-                        sessions,
-                        session_id,
-                        &format!(
-                            "echo '\\x1b[31m=== Agent Setup Error: {} ===\\x1b[0m'\n",
-                            msg
-                        ),
-                    );
+                    inject_error(sessions, session_id, &msg);
                     return;
                 }
             }
@@ -253,14 +235,7 @@ fn run_setup_background(
                 "error",
                 &format!("Upload failed: {}", e),
             );
-            inject_commands(
-                sessions,
-                session_id,
-                &format!(
-                    "echo '\\x1b[31m=== Agent Setup Error: Upload failed: {} ===\\x1b[0m'\n",
-                    e
-                ),
-            );
+            inject_error(sessions, session_id, &format!("Upload failed: {}", e));
             return;
         }
     }
@@ -285,13 +260,10 @@ fn run_setup_background(
                 "error",
                 &format!("Script upload failed: {}", e),
             );
-            inject_commands(
+            inject_error(
                 sessions,
                 session_id,
-                &format!(
-                    "echo '\\x1b[31m=== Agent Setup Error: Script upload failed: {} ===\\x1b[0m'\n",
-                    e
-                ),
+                &format!("Script upload failed: {}", e),
             );
             return;
         }
@@ -600,6 +572,28 @@ fn inject_commands(
             session_id
         );
     }
+}
+
+/// Inject a red error banner into the visible terminal session.
+///
+/// Uses `printf` with octal `\033` escapes (POSIX-portable) instead of
+/// `echo` which does not interpret `\x1b` in single-quoted strings.
+fn inject_error(
+    sessions: &Arc<
+        std::sync::Mutex<
+            std::collections::HashMap<String, crate::terminal::backend::TerminalSession>,
+        >,
+    >,
+    session_id: &str,
+    message: &str,
+) {
+    // Escape single quotes in the message for safe shell interpolation
+    let safe_msg = message.replace('\'', "'\\''");
+    let cmd = format!(
+        "printf '\\033[31m=== Agent Setup Error: %s ===\\033[0m\\n' '{}'\n",
+        safe_msg
+    );
+    inject_commands(sessions, session_id, &cmd);
 }
 
 /// Emit a setup progress event to the frontend.
