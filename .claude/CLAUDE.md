@@ -6,15 +6,32 @@ TermiHub is a cross-platform terminal hub built with Tauri 2 (Rust backend) + Re
 
 ## Task Management
 
-All work is tracked in **GitHub Issues**. Only pick up issues labeled **`Ready2Implement`**.
+All work is tracked in **GitHub Issues**. Pick up issues labeled **`Ready2Implement`** (for implementation) or **`Concept`** (for concept/design work only).
 
 ```bash
 gh issue list --label Ready2Implement
+gh issue list --label Concept
 ```
 
-- **Always confirm before implementing**: when picking up an issue, first show the user the issue title and description and ask for confirmation before starting any implementation work
+- **Always confirm before implementing**: when picking up an issue, first show the user the issue title and description and ask for confirmation before starting any work
+- **Assign yourself to picked issues**: when picking up an issue, determine the current GitHub user via `gh api user -q .login` and assign them to the issue with `gh issue edit <N> --add-assignee <login>`. Before starting work, check if the issue already has an assignee — if so, warn the user that someone else may already be working on it (check for existing branches like `feature/*` or `bugfix/*` referencing the issue number)
 - Reference issue numbers in commits and PRs (`Closes #N` / `Fixes #N`)
 - Create new issues for work discovered during development and label them appropriately
+
+### Concept Issues
+
+Issues labeled **`Concept`** are design-only tasks. Do **not** implement code for these — only produce a concept document.
+
+1. Create the concept document at `docs/concepts/<kebab-case-concept-name>.md`
+2. The document must contain these sections:
+   - **Overview** — the basic idea and motivation
+   - **UI Interface** — detailed description from the user's perspective (screens, controls, interactions, visual layout). Be as specific as possible.
+   - **General Handling** — workflows, user journeys, edge cases
+   - **States & Sequences** — use Mermaid.js diagrams (state diagrams, sequence diagrams, flowcharts as appropriate)
+   - **Preliminary Implementation Details** — based on the current project architecture at the time of concept creation. Note that the codebase may evolve between concept creation and implementation; this section captures the planned approach given the current state.
+3. Use Mermaid.js diagrams liberally throughout all sections (not just States & Sequences) — wherever a diagram aids understanding
+4. Reference the GitHub issue number in the document header
+5. Commit with `docs(concept): add concept for <name> (Closes #N)`
 
 ---
 
@@ -39,6 +56,7 @@ src-tauri/src/                # Rust backend
 agent/                        # Raspberry Pi remote agent (JSON-RPC over SSH)
 scripts/                      # Dev helper scripts (.sh + .cmd variants)
 docs/                         # All documentation
+  concepts/                   # Concept documents for "Concept" labeled issues
 tests/e2e/                    # WebdriverIO E2E tests
 examples/                     # Docker test environment (SSH, Telnet, virtual serial)
 ```
@@ -77,6 +95,7 @@ examples/                     # Docker test environment (SSH, Telnet, virtual se
 - Max ~500 lines per file, ~50 lines per function
 - Single Responsibility Principle
 - Clear, descriptive naming
+- **Prefer Mermaid.js diagrams** in documentation wherever they aid understanding (flowcharts, sequence diagrams, state diagrams, etc.)
 
 ---
 
@@ -119,6 +138,23 @@ All scripts live in `scripts/` with `.sh` (Unix/macOS) and `.cmd` (Windows) vari
 ### Auto-Formatting Hook
 
 A PostToolUse hook in `.claude/settings.json` runs `scripts/autoformat.sh` after every Edit/Write, automatically applying Prettier (TS/JS/CSS) and rustfmt (Rust). No manual formatting step is needed during development.
+
+### Pre-Push Checklist (Internal Tasks)
+
+**Before pushing or creating a PR**, complete all outstanding internal tasks first. Do not defer these to after pushing. When the user asks to push, **stop and report** which of the following items are still pending, then ask for permission before proceeding:
+
+1. **CHANGELOG.md** — updated for every user-facing change (under `[Unreleased]`)
+2. **docs/manual-tests-input.md** — updated if the PR includes manual test steps
+3. **Concept documents** — if working on a `Concept` issue, ensure `docs/concepts/<name>.md` is written and committed
+4. **Other documentation** — any doc updates implied by the changes (architecture.md, README references, JSDoc, doc comments, etc.)
+5. **Formatting** — run `./scripts/format.sh` and commit any formatting fixes as a separate commit
+6. **Quality checks** — run `./scripts/check.sh` to verify linting, formatting, and clippy pass
+
+**Workflow when user asks to push:**
+1. Review the list above against the current branch's changes
+2. List any items that are incomplete or skipped
+3. Ask the user for permission: either complete the remaining items first, or push as-is
+4. Only push after the user confirms
 
 ### Before Creating a PR
 
@@ -180,4 +216,5 @@ pnpm tauri dev
 - [Building](../docs/building.md) — Platform-specific build instructions
 - [Releasing](../docs/releasing.md) — Release process and version management
 - [Remote Protocol](../docs/remote-protocol.md) — Desktop-to-agent JSON-RPC specification
+- [Concepts](../docs/concepts/) — Design concept documents for `Concept` labeled issues
 - [Scripts](../scripts/README.md) — Development helper scripts
