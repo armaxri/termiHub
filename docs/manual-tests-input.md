@@ -463,6 +463,28 @@ Each section groups related tests by feature area. Individual test items referen
 - [ ] Kill SSH connection, verify "reconnecting" indicator and auto-reconnect
 - [ ] Close tab, verify cleanup (no orphan threads)
 
+### Connection error feedback dialog
+
+- [ ] Create a remote agent with an invalid hostname — click "Connect" — verify "Could Not Reach Host" dialog appears with Close button
+- [ ] Create a remote agent with valid host but wrong password — click "Connect" — verify "Authentication Failed" dialog appears with Close button
+- [ ] Create a remote agent with valid SSH credentials but no agent binary installed — click "Connect" — verify "Agent Not Installed" dialog appears with "Setup Agent" and Close buttons
+- [ ] In the "Agent Not Installed" dialog, click "Setup Agent" — verify the Agent Setup dialog opens
+- [ ] In any error dialog, click "Technical details" — verify the raw backend error message is shown
+- [ ] In any error dialog, click Close — verify the dialog closes and the agent remains in disconnected state
+
+### Agent setup wizard (PR #137)
+
+- [ ] Create a remote agent entry pointing to Docker SSH container (127.0.0.1:2222, testuser/testpass)
+- [ ] Right-click the disconnected agent — verify "Setup Agent..." appears in context menu
+- [ ] Click "Setup Agent..." — verify dialog opens with binary path, remote path, and service checkbox
+- [ ] Browse for a pre-built `termihub-agent` binary (Linux x86_64) — verify file picker works
+- [ ] Click "Start Setup" — verify SSH terminal tab opens with the shell prompt
+- [ ] Verify setup commands are injected into the terminal (mv, chmod, --version)
+- [ ] Verify the binary is uploaded and `termihub-agent --version` runs successfully
+- [ ] Test with "Install systemd service" checked — verify systemd commands are injected
+- [ ] After setup, right-click agent → "Connect" — verify agent connects successfully
+- [ ] Test error case: select a non-existent binary path — verify error is shown
+
 ### TCP listener mode and systemd (PR #116)
 
 - [ ] `cargo run -- --listen` starts and listens on 127.0.0.1:7685

@@ -6,7 +6,7 @@ Helper scripts for common development tasks. Each script has a `.sh` (Unix/macOS
 |--------|-------------|
 | `setup` | Install all dependencies and do an initial build |
 | `dev` | Start the app in development mode with hot-reload |
-| `build` | Build the app for production (creates platform installer) |
+| `build` | Build the app for production (creates platform installer); on macOS also cross-compiles agent for Linux x86_64 + aarch64 |
 | `test` | Run all unit tests (frontend + backend + agent) |
 | `check` | Read-only quality checks mirroring CI (formatting, linting, clippy) |
 | `format` | Auto-fix all formatting issues (Prettier + cargo fmt) |

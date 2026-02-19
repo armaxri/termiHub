@@ -7,4 +7,5 @@ export default {
       ["feat", "fix", "docs", "style", "refactor", "perf", "test", "chore"],
     ],
   },
+  ignores: [(message) => /^Merge\b/.test(message) || /^merge[:(]/.test(message)],
 };

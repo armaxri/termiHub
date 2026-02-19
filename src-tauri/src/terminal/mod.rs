@@ -1,4 +1,5 @@
 pub mod agent_manager;
+pub mod agent_setup;
 pub mod backend;
 pub mod docker_shell;
 pub mod jsonrpc;

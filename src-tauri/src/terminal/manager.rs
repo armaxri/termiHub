@@ -39,6 +39,7 @@ const SCREEN_CLEAR_SEQ: &[u8] = b"\x1b[2J\x1b[H";
 const CLEAR_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Manages all active terminal sessions.
+#[derive(Clone)]
 pub struct TerminalManager {
     sessions: Arc<Mutex<HashMap<String, TerminalSession>>>,
 }
@@ -200,6 +201,11 @@ impl TerminalManager {
 
         info!("Created terminal session: {}", session_id);
         Ok(session_id)
+    }
+
+    /// Get a clone of the sessions Arc for use by agent setup.
+    pub fn sessions_arc(&self) -> Arc<Mutex<HashMap<String, TerminalSession>>> {
+        self.sessions.clone()
     }
 
     /// Send input data to a terminal session.

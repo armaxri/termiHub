@@ -83,23 +83,20 @@ export function LogViewer({ isVisible }: LogViewerProps) {
     }
   }, []);
 
-  const handleSave = useCallback(
-    async (entriesToSave: LogEntry[]) => {
-      try {
-        const content = entriesToSave.map(formatEntry).join("\n");
-        const filePath = await save({
-          title: "Save logs",
-          defaultPath: "termihub-logs.txt",
-          filters: [{ name: "Text", extensions: ["txt", "log"] }],
-        });
-        if (!filePath) return;
-        await writeTextFile(filePath, content);
-      } catch {
-        // Ignore errors (user cancelled dialog, etc.)
-      }
-    },
-    []
-  );
+  const handleSave = useCallback(async (entriesToSave: LogEntry[]) => {
+    try {
+      const content = entriesToSave.map(formatEntry).join("\n");
+      const filePath = await save({
+        title: "Save logs",
+        defaultPath: "termihub-logs.txt",
+        filters: [{ name: "Text", extensions: ["txt", "log"] }],
+      });
+      if (!filePath) return;
+      await writeTextFile(filePath, content);
+    } catch {
+      // Ignore errors (user cancelled dialog, etc.)
+    }
+  }, []);
 
   const handleCopyEntry = useCallback(async (entry: LogEntry) => {
     try {

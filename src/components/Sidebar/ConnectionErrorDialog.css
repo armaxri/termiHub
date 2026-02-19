@@ -1,0 +1,103 @@
+.connection-error-dialog__overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 1000;
+}
+
+.connection-error-dialog__content {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1001;
+  width: 400px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.connection-error-dialog__icon-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.connection-error-dialog__icon {
+  color: var(--error-color, #cd3131);
+  flex-shrink: 0;
+}
+
+.connection-error-dialog__title {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.connection-error-dialog__message {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.connection-error-dialog__details {
+  font-size: var(--font-size-xs, 11px);
+  color: var(--text-secondary);
+}
+
+.connection-error-dialog__details summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+.connection-error-dialog__raw {
+  display: block;
+  margin-top: var(--spacing-xs);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: var(--bg-primary);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono, monospace);
+  font-size: var(--font-size-xs, 11px);
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+.connection-error-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-sm);
+}
+
+.connection-error-dialog__btn {
+  padding: var(--spacing-xs) var(--spacing-md);
+  font-size: var(--font-size-sm);
+  border-radius: var(--radius-sm);
+  border: none;
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
+}
+
+.connection-error-dialog__btn--primary {
+  background-color: var(--accent-color);
+  color: #ffffff;
+}
+
+.connection-error-dialog__btn--primary:hover {
+  background-color: var(--accent-hover);
+}
+
+.connection-error-dialog__btn--secondary {
+  background-color: transparent;
+  color: var(--text-secondary);
+}
+
+.connection-error-dialog__btn--secondary:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}

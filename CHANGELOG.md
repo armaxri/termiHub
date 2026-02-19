@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Connection error feedback dialog for remote agents: categorized error messages ("Could Not Reach Host", "Authentication Failed", "Agent Not Installed") with a "Setup Agent" button when the agent binary is missing
+- Agent setup wizard: right-click a remote agent and select "Setup Agent..." to upload and install the agent binary on the remote host via SFTP, with visible setup progress in an SSH terminal tab. Supports configurable install path and optional systemd service installation (#137)
 - SFTP file browser now follows SSH terminal working directory: running `cd /tmp` in an SSH session automatically navigates the file browser to `/tmp` (#158)
 - Log Viewer: new activity bar button opens a log viewer tab displaying backend tracing logs in real time with level filtering (ERROR/WARN/INFO/DEBUG), text search, pause/resume auto-scroll, clear, and save-to-file functionality (#183)
 - Log Viewer entry context menu: right-click a log entry to copy it to clipboard or save all logs to a file

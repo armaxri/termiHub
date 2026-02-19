@@ -179,7 +179,8 @@ interface AppState {
     config?: ConnectionConfig,
     panelId?: string,
     contentType?: TabContentType,
-    terminalOptions?: TerminalOptions
+    terminalOptions?: TerminalOptions,
+    sessionId?: string | null
   ) => void;
   openSettingsTab: () => void;
   openLogViewerTab: () => void;
@@ -320,12 +321,13 @@ function createTab(
   connectionType: ConnectionType,
   config: ConnectionConfig,
   panelId: string,
-  contentType: TabContentType = "terminal"
+  contentType: TabContentType = "terminal",
+  sessionId: string | null = null
 ): TerminalTab {
   tabCounter++;
   return {
     id: `tab-${tabCounter}`,
-    sessionId: null,
+    sessionId,
     title,
     connectionType,
     contentType,
@@ -421,7 +423,7 @@ export const useAppStore = create<AppState>((set, get) => {
 
     getAllPanels: () => getAllLeaves(get().rootPanel),
 
-    addTab: (title, connectionType, config, panelId, contentType, terminalOptions) =>
+    addTab: (title, connectionType, config, panelId, contentType, terminalOptions, sessionId) =>
       set((state) => {
         const allLeaves = getAllLeaves(state.rootPanel);
         const targetPanelId = panelId ?? state.activePanelId ?? allLeaves[0]?.id;
@@ -431,7 +433,14 @@ export const useAppStore = create<AppState>((set, get) => {
           type: "local",
           config: { shellType: state.defaultShell },
         };
-        const newTab = createTab(title, connectionType, defaultConfig, targetPanelId, contentType);
+        const newTab = createTab(
+          title,
+          connectionType,
+          defaultConfig,
+          targetPanelId,
+          contentType,
+          sessionId ?? null
+        );
         const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
           const tabs = leaf.tabs.map((t) => ({ ...t, isActive: false }));
           tabs.push(newTab);
@@ -1369,6 +1378,7 @@ export const useAppStore = create<AppState>((set, get) => {
             a.id === agentId ? { ...a, connectionState: "disconnected" as const } : a
           ),
         }));
+        throw err;
       }
     },
 

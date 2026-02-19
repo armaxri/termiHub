@@ -56,6 +56,8 @@ export class TerminalOutputDispatcher {
   private exitCallbacks = new Map<string, (exitCode: number | null) => void>();
   private remoteStateCallbacks = new Map<string, (state: string) => void>();
   private agentStateCallbacks = new Map<string, (state: string) => void>();
+  /** Buffer output for sessions whose subscriber hasn't registered yet. */
+  private pendingOutput = new Map<string, Uint8Array[]>();
   private unlistenOutput: UnlistenFn | null = null;
   private unlistenExit: UnlistenFn | null = null;
   private unlistenRemoteState: UnlistenFn | null = null;
@@ -87,6 +89,15 @@ export class TerminalOutputDispatcher {
       const cb = this.outputCallbacks.get(session_id);
       if (cb) {
         cb(new Uint8Array(data));
+      } else {
+        // Buffer output for sessions whose subscriber hasn't registered yet
+        // (e.g. pre-existing sessions created by agent setup).
+        let buf = this.pendingOutput.get(session_id);
+        if (!buf) {
+          buf = [];
+          this.pendingOutput.set(session_id, buf);
+        }
+        buf.push(new Uint8Array(data));
       }
     });
 
@@ -160,6 +171,14 @@ export class TerminalOutputDispatcher {
   /** Subscribe to output events for a specific session. Returns an unsubscribe function. */
   subscribeOutput(sessionId: string, callback: (data: Uint8Array) => void): () => void {
     this.outputCallbacks.set(sessionId, callback);
+    // Flush any output that arrived before the subscriber registered
+    const buffered = this.pendingOutput.get(sessionId);
+    if (buffered) {
+      this.pendingOutput.delete(sessionId);
+      for (const chunk of buffered) {
+        callback(chunk);
+      }
+    }
     return () => {
       this.outputCallbacks.delete(sessionId);
     };
@@ -212,12 +231,28 @@ export class TerminalOutputDispatcher {
     this.exitCallbacks.clear();
     this.remoteStateCallbacks.clear();
     this.agentStateCallbacks.clear();
+    this.pendingOutput.clear();
     this.initPromise = null;
   }
 }
 
 /** Singleton instance used by Terminal components. */
 export const terminalDispatcher = new TerminalOutputDispatcher();
+
+interface AgentSetupProgressPayload {
+  agent_id: string;
+  step: string;
+  message: string;
+}
+
+/** Subscribe to agent setup progress events. */
+export async function onAgentSetupProgress(
+  callback: (agentId: string, step: string, message: string) => void
+): Promise<UnlistenFn> {
+  return await listen<AgentSetupProgressPayload>("agent-setup-progress", (event) => {
+    callback(event.payload.agent_id, event.payload.step, event.payload.message);
+  });
+}
 
 interface VscodeEditCompletePayload {
   remotePath: string;
