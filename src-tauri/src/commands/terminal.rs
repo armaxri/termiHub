@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use tauri::State;
+use tracing::{debug, info};
 
 use crate::terminal::agent_manager::AgentConnectionManager;
 use crate::terminal::backend::ConnectionConfig;
@@ -17,6 +18,7 @@ pub fn create_terminal(
     manager: State<'_, TerminalManager>,
     agent_manager: State<'_, Arc<AgentConnectionManager>>,
 ) -> Result<String, TerminalError> {
+    info!("Creating terminal session");
     let agent_mgr = if matches!(config, ConnectionConfig::RemoteSession(_)) {
         Some(agent_manager.inner().clone())
     } else {
@@ -32,6 +34,7 @@ pub fn send_input(
     data: String,
     manager: State<'_, TerminalManager>,
 ) -> Result<(), TerminalError> {
+    debug!(session_id, "Sending input to terminal");
     manager.send_input(&session_id, data.as_bytes())
 }
 
@@ -43,6 +46,7 @@ pub fn resize_terminal(
     rows: u16,
     manager: State<'_, TerminalManager>,
 ) -> Result<(), TerminalError> {
+    debug!(session_id, cols, rows, "Resizing terminal");
     manager.resize(&session_id, cols, rows)
 }
 
@@ -52,6 +56,7 @@ pub fn close_terminal(
     session_id: String,
     manager: State<'_, TerminalManager>,
 ) -> Result<(), TerminalError> {
+    info!(session_id, "Closing terminal session");
     manager.close_session(&session_id)
 }
 

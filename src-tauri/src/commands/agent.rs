@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 use tauri::State;
+use tracing::{debug, info};
 
 use crate::terminal::agent_manager::{
     AgentCapabilities, AgentConnectResult, AgentConnectionManager, AgentDefinitionInfo,
@@ -15,6 +16,7 @@ pub fn connect_agent(
     config: RemoteAgentConfig,
     agent_manager: State<'_, Arc<AgentConnectionManager>>,
 ) -> Result<AgentConnectResult, String> {
+    info!(agent_id, host = %config.host, "Connecting to remote agent");
     agent_manager
         .connect_agent(&agent_id, &config)
         .map_err(|e| e.to_string())
@@ -25,6 +27,7 @@ pub fn disconnect_agent(
     agent_id: String,
     agent_manager: State<'_, Arc<AgentConnectionManager>>,
 ) -> Result<(), String> {
+    info!(agent_id, "Disconnecting remote agent");
     agent_manager
         .disconnect_agent(&agent_id)
         .map_err(|e| e.to_string())
@@ -45,6 +48,7 @@ pub fn list_agent_sessions(
     agent_id: String,
     agent_manager: State<'_, Arc<AgentConnectionManager>>,
 ) -> Result<Vec<AgentSessionInfo>, String> {
+    debug!(agent_id, "Listing agent sessions");
     agent_manager
         .list_sessions(&agent_id)
         .map_err(|e| e.to_string())

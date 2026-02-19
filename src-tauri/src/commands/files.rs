@@ -1,5 +1,6 @@
 use serde::Serialize;
 use tauri::{Emitter, State};
+use tracing::{debug, info};
 
 use crate::files::sftp::SftpManager;
 use crate::files::FileEntry;
@@ -13,12 +14,14 @@ pub fn sftp_open(
     config: SshConfig,
     manager: State<'_, SftpManager>,
 ) -> Result<String, TerminalError> {
+    info!(host = %config.host, port = config.port, "Opening SFTP session");
     manager.open_session(&config)
 }
 
 /// Close an SFTP session.
 #[tauri::command]
 pub fn sftp_close(session_id: String, manager: State<'_, SftpManager>) {
+    info!(session_id, "Closing SFTP session");
     manager.close_session(&session_id);
 }
 
@@ -29,6 +32,7 @@ pub fn sftp_list_dir(
     path: String,
     manager: State<'_, SftpManager>,
 ) -> Result<Vec<FileEntry>, TerminalError> {
+    debug!(session_id, path, "SFTP list directory");
     let session = manager.get_session(&session_id)?;
     let session = session.lock().unwrap();
     session.list_dir(&path)
@@ -42,6 +46,7 @@ pub fn sftp_download(
     local_path: String,
     manager: State<'_, SftpManager>,
 ) -> Result<u64, TerminalError> {
+    debug!(session_id, remote_path, local_path, "SFTP download");
     let session = manager.get_session(&session_id)?;
     let session = session.lock().unwrap();
     session.read_file(&remote_path, &local_path)
@@ -55,6 +60,7 @@ pub fn sftp_upload(
     remote_path: String,
     manager: State<'_, SftpManager>,
 ) -> Result<u64, TerminalError> {
+    debug!(session_id, local_path, remote_path, "SFTP upload");
     let session = manager.get_session(&session_id)?;
     let session = session.lock().unwrap();
     session.write_file(&local_path, &remote_path)

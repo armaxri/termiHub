@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+use tracing::{debug, info};
 
 use crate::terminal::backend::{OutputSender, TerminalBackend};
 use crate::utils::errors::TerminalError;
@@ -26,6 +27,7 @@ impl LocalShell {
         starting_directory: Option<&str>,
         output_tx: OutputSender,
     ) -> Result<Self, TerminalError> {
+        info!(shell_type, ?starting_directory, "Spawning local shell");
         let pty_system = native_pty_system();
 
         let pty_pair = pty_system
@@ -144,6 +146,7 @@ impl TerminalBackend for LocalShell {
     }
 
     fn close(&self) -> Result<(), TerminalError> {
+        debug!("Closing local shell");
         self.alive.store(false, Ordering::SeqCst);
         if let Ok(mut child) = self.child.lock() {
             let _ = child.kill();

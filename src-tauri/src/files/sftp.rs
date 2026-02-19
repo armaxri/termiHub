@@ -3,6 +3,7 @@ use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 
 use ssh2::{Session, Sftp};
+use tracing::{debug, info};
 
 use super::utils::{chrono_from_epoch, format_permissions};
 use super::FileEntry;
@@ -22,6 +23,7 @@ pub struct SftpSession {
 impl SftpSession {
     /// Open a new SFTP session to the given SSH host.
     pub fn new(config: &SshConfig) -> Result<Self, TerminalError> {
+        info!(host = %config.host, port = config.port, "Opening SFTP connection");
         let session = connect_and_authenticate(config)?;
         // Keep blocking mode for SFTP operations
         session.set_blocking(true);
@@ -38,6 +40,7 @@ impl SftpSession {
 
     /// List directory contents, filtering out `.` and `..`.
     pub fn list_dir(&self, path: &str) -> Result<Vec<FileEntry>, TerminalError> {
+        debug!(path, "SFTP listing directory");
         let dir = std::path::Path::new(path);
         let entries = self
             .sftp
@@ -223,6 +226,7 @@ impl SftpManager {
 
     /// Close and drop an SFTP session.
     pub fn close_session(&self, id: &str) {
+        info!(session_id = id, "Closing SFTP session");
         let mut sessions = self.sessions.lock().unwrap();
         sessions.remove(id);
     }
