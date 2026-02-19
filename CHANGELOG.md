@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Agent setup wizard: right-click a remote agent and select "Setup Agent..." to upload and install the agent binary on the remote host via SFTP, with visible setup progress in an SSH terminal tab. Supports configurable install path and optional systemd service installation (#137)
 - Docker shell support: create interactive terminal sessions inside Docker containers with image selection (autocomplete from local images), environment variable configuration, volume mounts with directory browser, working directory setting, and optional container removal on exit (#166)
 - Docker availability detection and image listing via `docker info` and `docker images` CLI commands
 - Remote agent Docker protocol support: agents report Docker availability and images in capabilities, with Docker as a new session type
