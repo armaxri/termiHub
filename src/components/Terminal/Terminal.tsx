@@ -117,6 +117,10 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
       }
 
       try {
+        // Ensure the global Tauri event listener is registered before
+        // creating the backend session — otherwise early output events
+        // emitted by the PTY reader thread are silently lost.
+        await terminalDispatcher.init();
         const sessionId = existingSessionId ?? (await createTerminal(config));
         sessionIdRef.current = sessionId;
 

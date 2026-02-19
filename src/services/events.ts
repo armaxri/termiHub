@@ -62,11 +62,13 @@ export class TerminalOutputDispatcher {
   private unlistenExit: UnlistenFn | null = null;
   private unlistenRemoteState: UnlistenFn | null = null;
   private unlistenAgentState: UnlistenFn | null = null;
-  private initialized = false;
+  private initPromise: Promise<void> | null = null;
   private initGeneration = 0;
 
   /**
-   * Register global Tauri event listeners. Call once when TerminalView mounts.
+   * Register global Tauri event listeners. Safe to call from multiple sites —
+   * the first call triggers initialization and subsequent calls return the
+   * same promise, guaranteeing listeners are registered before resolving.
    *
    * Uses a generation counter to handle the async race condition caused by
    * React StrictMode's mount → unmount → remount cycle: if destroy() is called
@@ -74,8 +76,12 @@ export class TerminalOutputDispatcher {
    * are immediately unregistered instead of leaking as duplicates.
    */
   async init(): Promise<void> {
-    if (this.initialized) return;
-    this.initialized = true;
+    if (this.initPromise) return this.initPromise;
+    this.initPromise = this.doInit();
+    return this.initPromise;
+  }
+
+  private async doInit(): Promise<void> {
     const gen = this.initGeneration;
 
     const unlistenOutput = await listen<TerminalOutputPayload>("terminal-output", (event) => {
@@ -226,7 +232,7 @@ export class TerminalOutputDispatcher {
     this.remoteStateCallbacks.clear();
     this.agentStateCallbacks.clear();
     this.pendingOutput.clear();
-    this.initialized = false;
+    this.initPromise = null;
   }
 }
 

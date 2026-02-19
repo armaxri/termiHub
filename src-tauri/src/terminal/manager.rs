@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter};
 use tracing::{error, info};
@@ -26,6 +27,16 @@ const MAX_SESSIONS: usize = 50;
 
 /// Maximum coalesced output size per emit (32 KB).
 const MAX_COALESCE_BYTES: usize = 32 * 1024;
+
+/// ANSI "erase display + cursor home" sequence emitted by the initial
+/// command's `printf '\033[2J\033[H'`.  The output reader buffers all
+/// output until this sequence appears, then flushes everything in one
+/// event so xterm processes the clear atomically with no visible flash.
+const SCREEN_CLEAR_SEQ: &[u8] = b"\x1b[2J\x1b[H";
+
+/// Maximum time to wait for the screen-clear sequence before flushing
+/// buffered output anyway.
+const CLEAR_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Manages all active terminal sessions.
 #[derive(Clone)]
@@ -167,15 +178,18 @@ impl TerminalManager {
             .map_err(|e| TerminalError::SpawnFailed(format!("Failed to lock sessions: {}", e)))?
             .insert(session_id.clone(), session);
 
-        // Spawn output streaming task
-        self.spawn_output_reader(session_id.clone(), output_rx, app_handle);
+        // Spawn output streaming task. When there is an initial command
+        // with a screen clear, the reader buffers output until the clear
+        // sequence appears so xterm processes everything atomically.
+        let wait_for_clear = initial_command.is_some();
+        self.spawn_output_reader(session_id.clone(), output_rx, app_handle, wait_for_clear);
 
-        // Send initial command after a short delay to let the shell initialize
+        // Send initial command after a short delay to let the shell initialize.
         if let Some(cmd) = initial_command {
             let sessions = self.sessions.clone();
             let sid = session_id.clone();
             std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(200));
+                std::thread::sleep(Duration::from_millis(200));
                 if let Ok(sessions) = sessions.lock() {
                     if let Some(session) = sessions.get(&sid) {
                         let input = format!("{}\n", cmd);
@@ -249,50 +263,125 @@ impl TerminalManager {
     }
 
     /// Spawn a thread that reads output from a backend and emits Tauri events.
-    /// Coalesces pending output chunks into a single event (up to MAX_COALESCE_BYTES)
-    /// to reduce IPC overhead.
+    ///
+    /// When `wait_for_clear` is true the reader buffers all output until the
+    /// ANSI screen-clear sequence appears (or a timeout expires), then emits
+    /// the entire buffer as a single event so xterm processes the clear
+    /// atomically — no visible flash of startup output.
     fn spawn_output_reader(
         &self,
         session_id: String,
         output_rx: mpsc::Receiver<Vec<u8>>,
         app_handle: AppHandle,
+        wait_for_clear: bool,
     ) {
         let sessions = self.sessions.clone();
-
         std::thread::spawn(move || {
-            while let Ok(first_chunk) = output_rx.recv() {
-                // Coalesce: drain any additional pending chunks up to MAX_COALESCE_BYTES
-                let mut coalesced = first_chunk;
-                while coalesced.len() < MAX_COALESCE_BYTES {
-                    match output_rx.try_recv() {
-                        Ok(chunk) => coalesced.extend_from_slice(&chunk),
-                        Err(_) => break,
-                    }
-                }
-
-                let event = TerminalOutputEvent {
-                    session_id: session_id.clone(),
-                    data: coalesced,
-                };
-                if let Err(e) = app_handle.emit("terminal-output", &event) {
-                    error!("Failed to emit terminal-output event: {}", e);
-                    break;
-                }
-            }
-
-            // Channel closed — terminal exited
-            let exit_event = TerminalExitEvent {
-                session_id: session_id.clone(),
-                exit_code: None,
-            };
-            let _ = app_handle.emit("terminal-exit", &exit_event);
-
-            // Clean up session
-            if let Ok(mut sessions) = sessions.lock() {
-                sessions.remove(&session_id);
-            }
-
-            info!("Terminal session ended: {}", session_id);
+            Self::run_output_reader(session_id, output_rx, app_handle, sessions, wait_for_clear);
         });
     }
+
+    /// Read output from a backend channel and emit Tauri events.
+    /// Coalesces pending output chunks into a single event (up to MAX_COALESCE_BYTES)
+    /// to reduce IPC overhead.
+    fn run_output_reader(
+        session_id: String,
+        output_rx: mpsc::Receiver<Vec<u8>>,
+        app_handle: AppHandle,
+        sessions: Arc<Mutex<HashMap<String, TerminalSession>>>,
+        wait_for_clear: bool,
+    ) {
+        // Phase 1: optionally buffer until the screen-clear sequence appears.
+        if wait_for_clear {
+            let deadline = Instant::now() + CLEAR_WAIT_TIMEOUT;
+            let mut buffer = Vec::new();
+
+            loop {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    break;
+                }
+                match output_rx.recv_timeout(remaining) {
+                    Ok(chunk) => {
+                        buffer.extend_from_slice(&chunk);
+                        if contains_seq(&buffer, SCREEN_CLEAR_SEQ) {
+                            break;
+                        }
+                    }
+                    Err(mpsc::RecvTimeoutError::Timeout) => break,
+                    Err(mpsc::RecvTimeoutError::Disconnected) => {
+                        // Terminal died during startup — flush whatever we have.
+                        Self::emit_and_cleanup(&session_id, buffer, &app_handle, &sessions);
+                        return;
+                    }
+                }
+            }
+
+            // Flush the buffered output as a single event.
+            if !buffer.is_empty() {
+                let event = TerminalOutputEvent {
+                    session_id: session_id.clone(),
+                    data: buffer,
+                };
+                if app_handle.emit("terminal-output", &event).is_err() {
+                    return;
+                }
+            }
+        }
+
+        // Phase 2: normal streaming with coalescing.
+        while let Ok(first_chunk) = output_rx.recv() {
+            let mut coalesced = first_chunk;
+            while coalesced.len() < MAX_COALESCE_BYTES {
+                match output_rx.try_recv() {
+                    Ok(chunk) => coalesced.extend_from_slice(&chunk),
+                    Err(_) => break,
+                }
+            }
+
+            let event = TerminalOutputEvent {
+                session_id: session_id.clone(),
+                data: coalesced,
+            };
+            if let Err(e) = app_handle.emit("terminal-output", &event) {
+                error!("Failed to emit terminal-output event: {}", e);
+                break;
+            }
+        }
+
+        Self::emit_and_cleanup(&session_id, Vec::new(), &app_handle, &sessions);
+    }
+
+    /// Emit remaining data (if any), send the exit event, and remove the session.
+    fn emit_and_cleanup(
+        session_id: &str,
+        data: Vec<u8>,
+        app_handle: &AppHandle,
+        sessions: &Arc<Mutex<HashMap<String, TerminalSession>>>,
+    ) {
+        if !data.is_empty() {
+            let event = TerminalOutputEvent {
+                session_id: session_id.to_string(),
+                data,
+            };
+            let _ = app_handle.emit("terminal-output", &event);
+        }
+
+        let exit_event = TerminalExitEvent {
+            session_id: session_id.to_string(),
+            exit_code: None,
+        };
+        let _ = app_handle.emit("terminal-exit", &exit_event);
+
+        if let Ok(mut sessions) = sessions.lock() {
+            sessions.remove(session_id);
+        }
+
+        info!("Terminal session ended: {}", session_id);
+    }
+}
+
+/// Check whether `haystack` contains the byte subsequence `needle`.
+fn contains_seq(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack.windows(needle.len()).any(|w| w == needle)
 }
