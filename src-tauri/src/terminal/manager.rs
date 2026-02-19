@@ -17,6 +17,7 @@ use crate::terminal::serial::SerialConnection;
 use crate::terminal::ssh::SshConnection;
 use crate::terminal::telnet::TelnetConnection;
 use crate::utils::errors::TerminalError;
+use crate::utils::shell_detect::ssh_osc7_setup;
 #[cfg(windows)]
 use crate::utils::shell_detect::wsl_osc7_setup;
 
@@ -77,6 +78,7 @@ impl TerminalManager {
                 #[cfg(not(windows))]
                 cfg.initial_command.clone()
             }
+            ConnectionConfig::Ssh(_) => Some(ssh_osc7_setup().to_string()),
             _ => None,
         };
 

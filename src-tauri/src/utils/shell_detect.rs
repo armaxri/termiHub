@@ -157,6 +157,22 @@ pub fn wsl_osc7_setup() -> &'static str {
     )
 }
 
+/// Return a shell command that configures `PROMPT_COMMAND` (bash) or `precmd` (zsh)
+/// to emit OSC 7 CWD escape sequences over SSH. This allows the frontend file
+/// browser to track the working directory of remote shells.
+///
+/// Unlike [`wsl_osc7_setup()`], this does not include a `cd $HOME` guard for
+/// `/mnt/` paths, since SSH sessions start in the remote user's home directory.
+/// Ends with ANSI escape sequences to clear the screen (erase echoed command text).
+pub fn ssh_osc7_setup() -> &'static str {
+    concat!(
+        r#"__termihub_osc7(){ printf '\e]7;file://%s\a' "$PWD"; }; "#,
+        r#"[ "$ZSH_VERSION" ] && precmd_functions+=(__termihub_osc7) || "#,
+        r#"PROMPT_COMMAND="__termihub_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}"; "#,
+        r#"printf '\033[2J\033[H'"#,
+    )
+}
+
 /// Resolve the path and arguments to launch a WSL distribution.
 ///
 /// On Windows, uses the absolute path under `SYSTEMROOT` for reliability.
@@ -399,6 +415,34 @@ mod tests {
         assert!(
             setup.contains("/mnt/[a-z]") && setup.contains("cd"),
             "expected cd-home for /mnt/ paths, got: {setup}"
+        );
+        // Should use printf for screen clear (not `clear` which needs ncurses)
+        assert!(
+            setup.contains(r"\033[2J"),
+            "expected ANSI clear-screen escape, got: {setup}"
+        );
+    }
+
+    #[test]
+    fn ssh_osc7_setup_contains_expected_parts() {
+        let setup = ssh_osc7_setup();
+        assert!(!setup.is_empty());
+        assert!(
+            setup.contains(r"\e]7;"),
+            "expected OSC 7 escape marker, got: {setup}"
+        );
+        assert!(
+            setup.contains("PROMPT_COMMAND"),
+            "expected bash PROMPT_COMMAND, got: {setup}"
+        );
+        assert!(
+            setup.contains("precmd_functions"),
+            "expected zsh precmd_functions, got: {setup}"
+        );
+        // Should NOT contain WSL-specific /mnt/ path handling
+        assert!(
+            !setup.contains("/mnt/"),
+            "SSH setup should not contain /mnt/ path handling, got: {setup}"
         );
         // Should use printf for screen clear (not `clear` which needs ncurses)
         assert!(
