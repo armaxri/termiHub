@@ -123,34 +123,35 @@ impl SshConnection {
 
 impl TerminalBackend for SshConnection {
     fn write_input(&self, data: &[u8]) -> Result<(), TerminalError> {
-        // Need blocking for writes
+        // Acquire the channel lock BEFORE toggling blocking mode so the reader
+        // thread cannot start a blocking read while we hold the session flag.
+        let mut channel = self
+            .channel
+            .lock()
+            .map_err(|e| TerminalError::WriteFailed(format!("Failed to lock channel: {}", e)))?;
         self.session.set_blocking(true);
-        let result = {
-            let mut channel = self.channel.lock().map_err(|e| {
-                TerminalError::WriteFailed(format!("Failed to lock channel: {}", e))
-            })?;
-            channel.write_all(data)
-        };
+        let result = channel.write_all(data);
         self.session.set_blocking(false);
+        drop(channel);
         result.map_err(|e| TerminalError::WriteFailed(e.to_string()))
     }
 
     fn resize(&self, cols: u16, rows: u16) -> Result<(), TerminalError> {
+        let mut channel = self
+            .channel
+            .lock()
+            .map_err(|e| TerminalError::ResizeFailed(format!("Failed to lock channel: {}", e)))?;
         self.session.set_blocking(true);
-        let result = {
-            let mut channel = self.channel.lock().map_err(|e| {
-                TerminalError::ResizeFailed(format!("Failed to lock channel: {}", e))
-            })?;
-            channel.request_pty_size(cols as u32, rows as u32, None, None)
-        };
+        let result = channel.request_pty_size(cols as u32, rows as u32, None, None);
         self.session.set_blocking(false);
+        drop(channel);
         result.map_err(|e| TerminalError::ResizeFailed(e.to_string()))
     }
 
     fn close(&self) -> Result<(), TerminalError> {
         self.alive.store(false, Ordering::SeqCst);
-        self.session.set_blocking(true);
         if let Ok(mut channel) = self.channel.lock() {
+            self.session.set_blocking(true);
             let _ = channel.send_eof();
             let _ = channel.close();
         }

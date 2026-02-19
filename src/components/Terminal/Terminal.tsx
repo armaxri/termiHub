@@ -105,10 +105,17 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
   const horizontalScrollingRef = useRef(false);
   const lastInputTimeRef = useRef(0);
   const contentDirtyRef = useRef(false);
+  const pendingCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { register, unregister, parkingRef } = useTerminalRegistry();
 
   const setupTerminal = useCallback(
     async (xterm: XTerm, fitAddon: FitAddon) => {
+      // Cancel any pending session close from a StrictMode unmount cycle
+      if (pendingCloseTimerRef.current !== null) {
+        clearTimeout(pendingCloseTimerRef.current);
+        pendingCloseTimerRef.current = null;
+      }
+
       try {
         const sessionId = existingSessionId ?? (await createTerminal(config));
         sessionIdRef.current = sessionId;
@@ -186,8 +193,13 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
           onDataDisposable.dispose();
           onResizeDisposable.dispose();
           if (sessionIdRef.current) {
-            closeTerminal(sessionIdRef.current);
+            // Defer the close so that React StrictMode's rapid unmount→remount
+            // can cancel it before the backend session is destroyed.
+            const sid = sessionIdRef.current;
             sessionIdRef.current = null;
+            pendingCloseTimerRef.current = setTimeout(() => {
+              closeTerminal(sid);
+            }, 50);
           }
         };
       } catch (err) {
