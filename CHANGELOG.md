@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Docker shell support: create interactive terminal sessions inside Docker containers with image selection (autocomplete from local images), environment variable configuration, volume mounts with directory browser, working directory setting, and optional container removal on exit (#166)
+- Docker availability detection and image listing via `docker info` and `docker images` CLI commands
+- Remote agent Docker protocol support: agents report Docker availability and images in capabilities, with Docker as a new session type
 - Manual tests input file (`docs/manual-tests-input.md`) collecting all manual test steps from PRs for regression testing and future automation
 - System test script (`scripts/test-system.sh`) that orchestrates Docker infrastructure (SSH + Telnet servers), virtual serial ports (socat), and the E2E infrastructure test suite for automated system-level testing on macOS
 - Implemented E2E infrastructure tests for SSH (password auth, connection failure, session output), Telnet (connect, send/receive, failure handling), and Serial (port enumeration, virtual port connection, non-default config parameters)
