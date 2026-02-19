@@ -11,7 +11,7 @@ export type ConnectionType =
   | "remote-session"
   | "docker";
 
-export type TabContentType = "terminal" | "settings" | "editor" | "connection-editor";
+export type TabContentType = "terminal" | "settings" | "editor" | "connection-editor" | "log-viewer";
 
 export interface EditorTabMeta {
   filePath: string;
@@ -176,4 +176,11 @@ export interface EditorActions {
   setIndent: (tabSize: number, insertSpaces: boolean) => void;
   toggleEol: () => void;
   setLanguage: (languageId: string) => void;
+}
+
+export interface LogEntry {
+  timestamp: string;
+  level: string;
+  target: string;
+  message: string;
 }

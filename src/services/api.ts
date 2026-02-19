@@ -3,7 +3,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import { SessionId, ConnectionConfig, SshConfig, RemoteAgentConfig } from "@/types/terminal";
+import { SessionId, ConnectionConfig, SshConfig, RemoteAgentConfig, LogEntry } from "@/types/terminal";
 import { SystemStats } from "@/types/monitoring";
 import {
   SavedConnection,
@@ -372,4 +372,16 @@ export async function monitoringClose(sessionId: string): Promise<void> {
 /** Fetch system stats from a monitoring session. */
 export async function monitoringFetchStats(sessionId: string): Promise<SystemStats> {
   return await invoke<SystemStats>("monitoring_fetch_stats", { sessionId });
+}
+
+// --- Log commands ---
+
+/** Retrieve the most recent log entries from the backend ring buffer. */
+export async function getLogs(count: number): Promise<LogEntry[]> {
+  return await invoke<LogEntry[]>("get_logs", { count });
+}
+
+/** Clear all buffered log entries in the backend. */
+export async function clearLogs(): Promise<void> {
+  await invoke("clear_logs");
 }
