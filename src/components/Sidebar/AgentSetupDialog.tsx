@@ -24,7 +24,7 @@ interface AgentSetupDialogProps {
 
 export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSetupDialogProps) {
   const [binaryPath, setBinaryPath] = useState("");
-  const [remotePath, setRemotePath] = useState("/usr/local/bin/termihub-agent");
+  const [remotePath, setRemotePath] = useState("~/.local/bin/termihub-agent");
   const [installService, setInstallService] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

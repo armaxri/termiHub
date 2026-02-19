@@ -3,7 +3,7 @@
 /// Orchestrates the setup flow:
 /// 1. Create a visible SSH terminal session for the user to observe.
 /// 2. Open a separate blocking SSH connection for SFTP upload + arch detection.
-/// 3. Inject setup commands into the visible terminal.
+/// 3. Upload a self-contained POSIX setup script and execute it in the terminal.
 use std::io::Read;
 use std::sync::Arc;
 
@@ -18,10 +18,16 @@ use crate::utils::errors::TerminalError;
 use crate::utils::ssh_auth::connect_and_authenticate;
 
 /// Default install path for the agent binary on the remote host.
-const DEFAULT_REMOTE_PATH: &str = "/usr/local/bin/termihub-agent";
+///
+/// Uses `~/.local/bin` so setup works without privilege escalation on any
+/// system (matching VS Code / JetBrains conventions).
+const DEFAULT_REMOTE_PATH: &str = "~/.local/bin/termihub-agent";
 
-/// Temporary upload path (writable without sudo).
+/// Temporary upload path for the agent binary (writable without sudo).
 const TEMP_UPLOAD_PATH: &str = "/tmp/termihub-agent-upload";
+
+/// Temporary upload path for the setup script.
+const TEMP_SCRIPT_PATH: &str = "/tmp/termihub-agent-setup.sh";
 
 /// Delay (ms) before injecting commands to let the shell initialize.
 const SHELL_INIT_DELAY_MS: u64 = 2000;
@@ -32,7 +38,7 @@ const SHELL_INIT_DELAY_MS: u64 = 2000;
 pub struct AgentSetupConfig {
     /// Local path to the pre-built agent binary.
     pub binary_path: String,
-    /// Remote install path (defaults to /usr/local/bin/termihub-agent).
+    /// Remote install path (defaults to ~/.local/bin/termihub-agent).
     pub remote_path: Option<String>,
     /// Whether to install a systemd service.
     pub install_service: bool,
@@ -110,7 +116,7 @@ pub fn setup_remote_agent(
     Ok(AgentSetupResult { session_id })
 }
 
-/// Background thread: detect arch, upload binary, inject commands.
+/// Background thread: detect arch, upload binary + script, execute script.
 fn run_setup_background(
     agent_id: &str,
     session_id: &str,
@@ -216,23 +222,50 @@ fn run_setup_background(
         }
     }
 
-    // Generate and inject setup commands into the visible terminal
+    // Generate and upload the setup script
     let remote_path = setup_config
         .remote_path
         .as_deref()
         .unwrap_or(DEFAULT_REMOTE_PATH);
-    let commands = generate_setup_commands(remote_path, setup_config.install_service);
+    let script = generate_setup_script(remote_path, setup_config.install_service);
 
-    emit_progress(app_handle, agent_id, "install", "Running setup commands...");
-    inject_commands(sessions, session_id, &commands);
+    emit_progress(app_handle, agent_id, "script", "Uploading setup script...");
+    match upload_bytes_via_sftp(&sftp_session, script.as_bytes(), TEMP_SCRIPT_PATH) {
+        Ok(bytes) => {
+            info!("Agent setup: uploaded setup script ({} bytes)", bytes);
+        }
+        Err(e) => {
+            error!("Agent setup: script upload failed: {}", e);
+            emit_progress(
+                app_handle,
+                agent_id,
+                "error",
+                &format!("Script upload failed: {}", e),
+            );
+            inject_commands(
+                sessions,
+                session_id,
+                &format!(
+                    "echo '\\x1b[31m=== Agent Setup Error: Script upload failed: {} ===\\x1b[0m'\n",
+                    e
+                ),
+            );
+            return;
+        }
+    }
+
+    // Execute the setup script in the visible terminal
+    emit_progress(app_handle, agent_id, "install", "Running setup script...");
+    let exec_command = format!("sh {}; rm -f {}\n", TEMP_SCRIPT_PATH, TEMP_SCRIPT_PATH);
+    inject_commands(sessions, session_id, &exec_command);
 
     emit_progress(
         app_handle,
         agent_id,
         "done",
-        "Setup commands injected into terminal",
+        "Setup script started in terminal",
     );
-    info!("Agent setup: commands injected for agent {}", agent_id);
+    info!("Agent setup: script started for agent {}", agent_id);
 }
 
 /// Detect the remote OS and architecture via exec channel.
@@ -295,61 +328,142 @@ fn upload_via_sftp(
     Ok(total)
 }
 
-/// Generate shell commands for the visible terminal.
-///
-/// Uses `$_SUDO` variable instead of hardcoded `sudo` so the commands
-/// work when running as root or when sudo is not installed.
-/// All install commands are chained with `&&` so that a failure in any
-/// step skips the rest and prints "Setup Failed" instead of "Setup Complete".
-pub fn generate_setup_commands(remote_path: &str, install_service: bool) -> String {
-    let mut cmds = String::new();
+/// Upload in-memory bytes to a remote path via SFTP.
+fn upload_bytes_via_sftp(
+    session: &Session,
+    data: &[u8],
+    remote_path: &str,
+) -> Result<u64, TerminalError> {
+    let sftp = session
+        .sftp()
+        .map_err(|e| TerminalError::SshError(format!("SFTP init failed: {}", e)))?;
 
-    cmds.push_str("echo '=== TermiHub Agent Setup ==='\n");
-    // Detect privilege escalation: use sudo only when not root and sudo exists
-    cmds.push_str(
-        "_SUDO=''; [ \"$(id -u)\" -ne 0 ] && command -v sudo >/dev/null 2>&1 && _SUDO='sudo'\n",
-    );
-    cmds.push_str(&format!(
-        "echo 'Moving agent binary to {}...' && \\\n",
-        remote_path
-    ));
-    cmds.push_str(&format!(
-        "$_SUDO mv {} {} && \\\n",
-        TEMP_UPLOAD_PATH, remote_path
-    ));
-    cmds.push_str(&format!("$_SUDO chmod +x {} && \\\n", remote_path));
-    cmds.push_str("echo 'Verifying installation...' && \\\n");
-    cmds.push_str(&format!("{} --version", remote_path));
+    let remote = std::path::Path::new(remote_path);
+    let mut remote_file = sftp
+        .create(remote)
+        .map_err(|e| TerminalError::SshError(format!("create remote file failed: {}", e)))?;
 
-    if install_service {
-        cmds.push_str(" && \\\necho 'Installing systemd service...' && \\\n");
-        cmds.push_str(&generate_systemd_commands(remote_path));
-    }
+    std::io::Write::write_all(&mut remote_file, data)
+        .map_err(|e| TerminalError::SshError(format!("write failed: {}", e)))?;
 
-    cmds.push_str(
-        " && \\\necho '=== Setup Complete ===' || printf '\\033[31m=== Setup Failed ===\\033[0m\\n'\n",
-    );
-    cmds
+    Ok(data.len() as u64)
 }
 
-/// Generate systemd service installation commands.
+/// Generate a self-contained POSIX shell script for agent installation.
 ///
-/// Uses `printf` + pipe instead of a heredoc so the commands can
-/// participate in the `&&` chain without breaking line continuations.
-fn generate_systemd_commands(remote_path: &str) -> String {
-    let mut cmds = String::new();
-    cmds.push_str(&format!(
-        "printf '[Unit]\\nDescription=TermiHub Agent\\nAfter=network.target\\n\\n\
-         [Service]\\nExecStart=%s --listen 127.0.0.1:7685\\nRestart=on-failure\\n\\n\
-         [Install]\\nWantedBy=multi-user.target\\n' '{}' \
-         | $_SUDO tee /etc/systemd/system/termihub-agent.service > /dev/null && \\\n",
-        remote_path
-    ));
-    cmds.push_str("$_SUDO systemctl daemon-reload && \\\n");
-    cmds.push_str("$_SUDO systemctl enable termihub-agent && \\\n");
-    cmds.push_str("$_SUDO systemctl start termihub-agent");
-    cmds
+/// The script handles privilege escalation detection, directory creation,
+/// binary installation, verification, and optional systemd service setup.
+/// It uses `set -e` for error handling and provides verbose emoji output.
+pub fn generate_setup_script(remote_path: &str, install_service: bool) -> String {
+    let service_flag = if install_service { "true" } else { "false" };
+    SETUP_SCRIPT_TEMPLATE
+        .replace("__INSTALL_PATH__", remote_path)
+        .replace("__INSTALL_SERVICE__", service_flag)
 }
+
+/// Template for the agent setup script.
+///
+/// Placeholders `__INSTALL_PATH__` and `__INSTALL_SERVICE__` are replaced
+/// at runtime by [`generate_setup_script`].
+const SETUP_SCRIPT_TEMPLATE: &str = r#"#!/bin/sh
+set -e
+
+BINARY_SRC="/tmp/termihub-agent-upload"
+INSTALL_PATH="__INSTALL_PATH__"
+INSTALL_SERVICE=__INSTALL_SERVICE__
+
+# --- Helpers ---
+fail() {
+    printf '\033[31m\342\235\214 Error: %s\033[0m\n' "$1"
+    echo ""
+    printf '\033[31m\342\235\214 === Setup Failed ===\033[0m\n'
+    exit 1
+}
+
+echo ""
+echo "\360\237\232\200 === TermiHub Agent Setup ==="
+echo ""
+
+# --- Step 1: Verify uploaded binary ---
+printf "\360\237\224\215 Checking uploaded binary... "
+if [ -f "$BINARY_SRC" ]; then
+    echo "found at $BINARY_SRC"
+else
+    echo ""
+    fail "Agent binary not found at $BINARY_SRC. The upload may have failed."
+fi
+
+# --- Step 2: Resolve install path ---
+case "$INSTALL_PATH" in
+    "~/"*) INSTALL_PATH="$HOME/${INSTALL_PATH#\~/}" ;;
+esac
+echo "\360\237\223\201 Install path: $INSTALL_PATH"
+
+# --- Step 3: Check permissions ---
+SUDO=""
+TARGET_DIR=$(dirname "$INSTALL_PATH")
+printf "\360\237\224\221 Checking permissions for $TARGET_DIR... "
+if [ ! -d "$TARGET_DIR" ]; then
+    PARENT_DIR=$(dirname "$TARGET_DIR")
+    if [ ! -w "$PARENT_DIR" ]; then
+        if [ "$(id -u)" -eq 0 ]; then
+            echo "running as root \342\234\223"
+        elif command -v sudo >/dev/null 2>&1; then
+            SUDO="sudo"
+            echo "using sudo \342\234\223"
+        else
+            echo "no write access"
+            fail "Cannot create $TARGET_DIR (permission denied, no sudo available).\n  \360\237\222\241 Try: ~/.local/bin/termihub-agent"
+        fi
+    else
+        echo "writable \342\234\223"
+    fi
+elif [ ! -w "$TARGET_DIR" ]; then
+    if [ "$(id -u)" -eq 0 ]; then
+        echo "running as root \342\234\223"
+    elif command -v sudo >/dev/null 2>&1; then
+        SUDO="sudo"
+        echo "using sudo \342\234\223"
+    else
+        echo "no write access"
+        fail "Cannot write to $TARGET_DIR (permission denied, no sudo available).\n  \360\237\222\241 Try: ~/.local/bin/termihub-agent"
+    fi
+else
+    echo "writable \342\234\223"
+fi
+
+# --- Step 4: Create directory ---
+if [ ! -d "$TARGET_DIR" ]; then
+    echo "\360\237\223\202 Creating directory $TARGET_DIR..."
+    $SUDO mkdir -p "$TARGET_DIR"
+fi
+
+# --- Step 5: Install binary ---
+echo "\360\237\223\246 Moving agent binary to $INSTALL_PATH..."
+$SUDO mv "$BINARY_SRC" "$INSTALL_PATH"
+$SUDO chmod +x "$INSTALL_PATH"
+
+# --- Step 6: Verify ---
+printf "\342\234\205 Verifying installation... "
+"$INSTALL_PATH" --version
+
+# --- Step 7: Optional systemd service ---
+if [ "$INSTALL_SERVICE" = true ]; then
+    echo "\342\232\231\357\270\217  Installing systemd service..."
+    printf '[Unit]\nDescription=TermiHub Agent\nAfter=network.target\n\n[Service]\nExecStart=%s --listen 127.0.0.1:7685\nRestart=on-failure\n\n[Install]\nWantedBy=multi-user.target\n' "$INSTALL_PATH" \
+        | $SUDO tee /etc/systemd/system/termihub-agent.service > /dev/null
+    $SUDO systemctl daemon-reload
+    printf "  \342\234\223 Service registered\n"
+    $SUDO systemctl enable termihub-agent
+    printf "  \342\234\223 Service enabled\n"
+    $SUDO systemctl start termihub-agent
+    printf "  \342\234\223 Service started\n"
+fi
+
+echo ""
+echo "\360\237\216\211 === Setup Complete ==="
+echo ""
+"#;
 
 /// Inject commands into the visible terminal session.
 fn inject_commands(
@@ -397,62 +511,68 @@ mod tests {
     use super::*;
 
     #[test]
-    fn generate_setup_commands_basic() {
-        let cmds = generate_setup_commands("/usr/local/bin/termihub-agent", false);
-        assert!(cmds.contains("$_SUDO mv /tmp/termihub-agent-upload /usr/local/bin/termihub-agent"));
-        assert!(cmds.contains("$_SUDO chmod +x /usr/local/bin/termihub-agent"));
-        assert!(cmds.contains("/usr/local/bin/termihub-agent --version"));
-        assert!(cmds.contains("=== TermiHub Agent Setup ==="));
-        assert!(cmds.contains("=== Setup Complete ==="));
-        assert!(cmds.contains("=== Setup Failed ==="));
-        assert!(!cmds.contains("systemd"));
+    fn generate_setup_script_basic() {
+        let script = generate_setup_script("/usr/local/bin/termihub-agent", false);
+        assert!(script.starts_with("#!/bin/sh\n"));
+        assert!(script.contains("set -e"));
+        assert!(script.contains("INSTALL_PATH=\"/usr/local/bin/termihub-agent\""));
+        assert!(script.contains("INSTALL_SERVICE=false"));
+        assert!(script.contains("--version"));
+        assert!(script.contains("=== TermiHub Agent Setup ==="));
+        assert!(script.contains("=== Setup Complete ==="));
+        assert!(script.contains("=== Setup Failed ==="));
+        // Service is disabled at runtime via the INSTALL_SERVICE variable
+        assert!(script.contains("INSTALL_SERVICE=false"));
     }
 
     #[test]
-    fn generate_setup_commands_with_service() {
-        let cmds = generate_setup_commands("/usr/local/bin/termihub-agent", true);
-        assert!(cmds.contains("systemd"));
-        assert!(cmds.contains("$_SUDO tee /etc/systemd/system/termihub-agent.service"));
-        assert!(cmds.contains("$_SUDO systemctl daemon-reload"));
-        assert!(cmds.contains("$_SUDO systemctl enable termihub-agent"));
-        assert!(cmds.contains("$_SUDO systemctl start termihub-agent"));
-        assert!(cmds.contains("ExecStart=%s --listen 127.0.0.1:7685"));
-        assert!(cmds.contains("'/usr/local/bin/termihub-agent'"));
+    fn generate_setup_script_with_service() {
+        let script = generate_setup_script("/usr/local/bin/termihub-agent", true);
+        assert!(script.contains("INSTALL_SERVICE=true"));
+        assert!(script.contains("systemd service"));
+        assert!(script.contains("$SUDO tee /etc/systemd/system/termihub-agent.service"));
+        assert!(script.contains("$SUDO systemctl daemon-reload"));
+        assert!(script.contains("$SUDO systemctl enable termihub-agent"));
+        assert!(script.contains("$SUDO systemctl start termihub-agent"));
+        assert!(script.contains("ExecStart=%s --listen 127.0.0.1:7685"));
     }
 
     #[test]
-    fn generate_setup_commands_custom_path() {
-        let cmds = generate_setup_commands("/opt/termihub/agent", false);
-        assert!(cmds.contains("$_SUDO mv /tmp/termihub-agent-upload /opt/termihub/agent"));
-        assert!(cmds.contains("$_SUDO chmod +x /opt/termihub/agent"));
-        assert!(cmds.contains("/opt/termihub/agent --version"));
+    fn generate_setup_script_custom_path() {
+        let script = generate_setup_script("/opt/termihub/agent", false);
+        assert!(script.contains("INSTALL_PATH=\"/opt/termihub/agent\""));
+        assert!(script.contains("$SUDO mv"));
+        assert!(script.contains("$SUDO chmod +x"));
     }
 
     #[test]
-    fn generate_setup_commands_custom_path_with_service() {
-        let cmds = generate_setup_commands("/opt/termihub/agent", true);
-        assert!(cmds.contains("'/opt/termihub/agent'"));
+    fn generate_setup_script_sudo_detection() {
+        let script = generate_setup_script("/usr/local/bin/termihub-agent", false);
+        // Checks directory writability, not just sudo existence
+        assert!(script.contains("id -u"));
+        assert!(script.contains("command -v sudo"));
+        assert!(script.contains("SUDO=\"sudo\""));
+        // Uses $SUDO variable, not hardcoded sudo
+        assert!(script.contains("$SUDO mv"));
+        assert!(script.contains("$SUDO chmod"));
     }
 
     #[test]
-    fn generate_setup_commands_sudo_detection() {
-        let cmds = generate_setup_commands("/usr/local/bin/termihub-agent", false);
-        assert!(cmds.contains("_SUDO=''"));
-        assert!(cmds.contains("command -v sudo"));
-        assert!(cmds.contains("_SUDO='sudo'"));
-        // Must not contain hardcoded sudo commands
-        assert!(!cmds.contains("sudo mv"));
-        assert!(!cmds.contains("sudo chmod"));
+    fn generate_setup_script_tilde_expansion() {
+        let script = generate_setup_script("~/.local/bin/termihub-agent", false);
+        assert!(script.contains("INSTALL_PATH=\"~/.local/bin/termihub-agent\""));
+        // Script expands ~ at runtime
+        assert!(script.contains("$HOME/${INSTALL_PATH#\\~/}"));
     }
 
     #[test]
-    fn generate_setup_commands_error_chaining() {
-        let cmds = generate_setup_commands("/usr/local/bin/termihub-agent", false);
-        // All install commands should be chained with && for error propagation
-        assert!(cmds.contains("&& \\"));
-        // Setup Failed should appear as the || fallback
-        assert!(cmds.contains("|| printf"));
-        assert!(cmds.contains("Setup Failed"));
+    fn generate_setup_script_no_bashisms() {
+        let script = generate_setup_script("/usr/local/bin/termihub-agent", true);
+        // Must not use bash-only features
+        assert!(!script.contains("[["));
+        assert!(!script.contains("local "));
+        assert!(!script.contains("declare "));
+        assert!(!script.contains("#!/bin/bash"));
     }
 
     #[test]
