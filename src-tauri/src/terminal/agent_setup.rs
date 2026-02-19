@@ -196,7 +196,12 @@ fn run_setup_background(
                     }
                 }
                 Err(e) => {
-                    let msg = format!("{}", e);
+                    // Extract the inner message without the TerminalError variant prefix
+                    // (e.g. "Failed to spawn terminal: ") for cleaner terminal output.
+                    let msg = match &e {
+                        TerminalError::SpawnFailed(inner) => inner.clone(),
+                        other => format!("{}", other),
+                    };
                     error!("Agent setup: {}", msg);
                     emit_progress(app_handle, agent_id, "error", &msg);
                     inject_error(sessions, session_id, &msg);
@@ -576,8 +581,10 @@ fn inject_commands(
 
 /// Inject a red error banner into the visible terminal session.
 ///
-/// Uses `printf` with octal `\033` escapes (POSIX-portable) instead of
-/// `echo` which does not interpret `\x1b` in single-quoted strings.
+/// Matches the setup script's `fail()` style (emoji + red text) so the
+/// output looks consistent regardless of whether the error occurs before
+/// or during script execution.  Uses `printf` with octal `\033` escapes
+/// (POSIX-portable); `echo` does not interpret them in single quotes.
 fn inject_error(
     sessions: &Arc<
         std::sync::Mutex<
@@ -589,8 +596,11 @@ fn inject_error(
 ) {
     // Escape single quotes in the message for safe shell interpolation
     let safe_msg = message.replace('\'', "'\\''");
+    // \342\235\214 = UTF-8 for ❌  (same encoding the setup script uses)
     let cmd = format!(
-        "printf '\\033[31m=== Agent Setup Error: %s ===\\033[0m\\n' '{}'\n",
+        "printf '\\033[31m\\342\\235\\214 Error: %s\\033[0m\\n' '{}'\n\
+         echo ''\n\
+         printf '\\033[31m\\342\\235\\214 === Setup Failed ===\\033[0m\\n'\n",
         safe_msg
     );
     inject_commands(sessions, session_id, &cmd);
