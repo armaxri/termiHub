@@ -155,7 +155,7 @@ fn run_setup_background(
                 "error",
                 &format!("SFTP connection failed: {}", e),
             );
-            inject_error(sessions, session_id, "SFTP connection failed");
+            inject_error_inline(sessions, session_id, "SFTP connection failed");
             return;
         }
     };
@@ -189,7 +189,7 @@ fn run_setup_background(
                             );
                             error!("Agent setup: {}", msg);
                             emit_progress(app_handle, agent_id, "error", &msg);
-                            inject_error(sessions, session_id, &msg);
+                            inject_error_script(&sftp_session, sessions, session_id, &msg);
                             return;
                         }
                         info!("Agent setup: binary arch {} matches remote", binary_arch);
@@ -204,7 +204,7 @@ fn run_setup_background(
                     };
                     error!("Agent setup: {}", msg);
                     emit_progress(app_handle, agent_id, "error", &msg);
-                    inject_error(sessions, session_id, &msg);
+                    inject_error_script(&sftp_session, sessions, session_id, &msg);
                     return;
                 }
             }
@@ -240,7 +240,12 @@ fn run_setup_background(
                 "error",
                 &format!("Upload failed: {}", e),
             );
-            inject_error(sessions, session_id, &format!("Upload failed: {}", e));
+            inject_error_script(
+                &sftp_session,
+                sessions,
+                session_id,
+                &format!("Upload failed: {}", e),
+            );
             return;
         }
     }
@@ -265,7 +270,8 @@ fn run_setup_background(
                 "error",
                 &format!("Script upload failed: {}", e),
             );
-            inject_error(
+            inject_error_script(
+                &sftp_session,
                 sessions,
                 session_id,
                 &format!("Script upload failed: {}", e),
@@ -579,13 +585,13 @@ fn inject_commands(
     }
 }
 
-/// Inject a red error banner into the visible terminal session.
+/// Upload a small error script via SFTP and execute it in the terminal.
 ///
-/// Matches the setup script's `fail()` style (emoji + red text) so the
-/// output looks consistent regardless of whether the error occurs before
-/// or during script execution.  Uses `printf` with octal `\033` escapes
-/// (POSIX-portable); `echo` does not interpret them in single quotes.
-fn inject_error(
+/// This avoids the shell echoing raw `printf` commands.  The user only
+/// sees the `sh /tmp/…` invocation (same pattern as the normal setup
+/// flow) followed by the styled error output.
+fn inject_error_script(
+    sftp_session: &Session,
     sessions: &Arc<
         std::sync::Mutex<
             std::collections::HashMap<String, crate::terminal::backend::TerminalSession>,
@@ -594,9 +600,33 @@ fn inject_error(
     session_id: &str,
     message: &str,
 ) {
-    // Escape single quotes in the message for safe shell interpolation
+    let script = generate_error_script(message);
+    match upload_bytes_via_sftp(sftp_session, script.as_bytes(), TEMP_SCRIPT_PATH) {
+        Ok(_) => {
+            let cmd = format!("sh {}; rm -f {}\n", TEMP_SCRIPT_PATH, TEMP_SCRIPT_PATH);
+            inject_commands(sessions, session_id, &cmd);
+        }
+        Err(e) => {
+            // Fallback: inject commands directly if upload fails
+            error!("Agent setup: error script upload failed: {}", e);
+            inject_error_inline(sessions, session_id, message);
+        }
+    }
+}
+
+/// Inject a red error banner directly into the terminal (fallback).
+///
+/// Used only when SFTP is unavailable (e.g. connection failed).
+fn inject_error_inline(
+    sessions: &Arc<
+        std::sync::Mutex<
+            std::collections::HashMap<String, crate::terminal::backend::TerminalSession>,
+        >,
+    >,
+    session_id: &str,
+    message: &str,
+) {
     let safe_msg = message.replace('\'', "'\\''");
-    // \342\235\214 = UTF-8 for ❌  (same encoding the setup script uses)
     let cmd = format!(
         "printf '\\033[31m\\342\\235\\214 Error: %s\\033[0m\\n' '{}'\n\
          echo ''\n\
@@ -604,6 +634,18 @@ fn inject_error(
         safe_msg
     );
     inject_commands(sessions, session_id, &cmd);
+}
+
+/// Generate a small POSIX error script matching the setup script's `fail()` style.
+fn generate_error_script(message: &str) -> String {
+    let safe_msg = message.replace('\'', "'\\''");
+    format!(
+        "#!/bin/sh\n\
+         printf '\\033[31m\\342\\235\\214 Error: %s\\033[0m\\n' '{}'\n\
+         echo ''\n\
+         printf '\\033[31m\\342\\235\\214 === Setup Failed ===\\033[0m\\n'\n",
+        safe_msg
+    )
 }
 
 /// Emit a setup progress event to the frontend.
