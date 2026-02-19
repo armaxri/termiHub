@@ -70,7 +70,7 @@ pnpm tauri dev
 pnpm tauri build
 ```
 
-**Output**: `src-tauri/target/release/bundle/dmg/TermiHub_<version>_aarch64.dmg` (Apple Silicon) or `TermiHub_<version>_x64.dmg` (Intel).
+**Output**: `src-tauri/target/release/bundle/dmg/termiHub_<version>_aarch64.dmg` (Apple Silicon) or `termiHub_<version>_x64.dmg` (Intel).
 
 The build also produces a `.app` bundle in `src-tauri/target/release/bundle/macos/`.
 
@@ -175,7 +175,7 @@ pnpm tauri dev
 pnpm tauri build
 ```
 
-**Output**: `src-tauri\target\release\bundle\msi\TermiHub_<version>_x64_en-US.msi` and `src-tauri\target\release\bundle\nsis\TermiHub_<version>_x64-setup.exe`.
+**Output**: `src-tauri\target\release\bundle\msi\termiHub_<version>_x64_en-US.msi` and `src-tauri\target\release\bundle\nsis\termiHub_<version>_x64-setup.exe`.
 
 ---
 
