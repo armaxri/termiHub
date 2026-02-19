@@ -338,11 +338,18 @@ function useFileBrowserSync() {
       return;
     }
 
-    if (!cwd) return;
     const currentMode = useAppStore.getState().fileBrowserMode;
     if (currentMode === "local") {
-      navigateLocal(wslDistro ? wslToWindowsPath(cwd, wslDistro) : cwd);
-    } else if (currentMode === "sftp" && sftpSessionId) {
+      if (cwd) {
+        navigateLocal(wslDistro ? wslToWindowsPath(cwd, wslDistro) : cwd);
+      } else if (wslDistro) {
+        navigateLocal(wslToWindowsPath("/", wslDistro));
+      } else {
+        getHomeDir()
+          .then((home) => navigateLocal(home))
+          .catch(() => navigateLocal("/"));
+      }
+    } else if (currentMode === "sftp" && sftpSessionId && cwd) {
       navigateSftp(cwd);
     }
   }, [
@@ -589,7 +596,11 @@ export function FileBrowser() {
   return (
     <div className="file-browser">
       <div className="file-browser__toolbar">
-        <span className="file-browser__path" title={currentPath}>
+        <span
+          className="file-browser__path"
+          title={currentPath}
+          data-testid="file-browser-current-path"
+        >
           {currentPath}
         </span>
         <div className="file-browser__actions">

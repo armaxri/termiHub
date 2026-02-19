@@ -104,6 +104,7 @@ export const FILE_BROWSER_NEW_FILE_INPUT = '[data-testid="file-browser-new-file-
 export const FILE_BROWSER_NEW_FILE_CONFIRM = '[data-testid="file-browser-new-file-confirm"]';
 export const FILE_BROWSER_NEW_FOLDER_INPUT = '[data-testid="file-browser-new-folder-input"]';
 export const FILE_BROWSER_NEW_FOLDER_CONFIRM = '[data-testid="file-browser-new-folder-confirm"]';
+export const FILE_BROWSER_CURRENT_PATH = '[data-testid="file-browser-current-path"]';
 export const fileRow = (name) => `[data-testid="file-row-${name}"]`;
 
 // --- Password Prompt ---
