@@ -645,7 +645,24 @@ The frontend uses a single **Zustand** store (`src/store/appStore.ts`) managing:
 - Single store simplifies state access and debugging
 - No context provider wrappers needed
 
-### ADR-5: No Credential Encryption in Phase 1
+### ADR-5: E2E System Tests Run in Docker (Linux Only)
+
+**Context:** Tauri's `tauri-driver` (the WebDriver proxy for E2E tests) only supports Linux (WebKitGTK) and Windows (Edge WebView2). On macOS, it prints "not supported on this platform" and exits because Apple provides no WKWebView driver — `safaridriver` only controls Safari the browser, not WKWebView instances embedded in apps. This is a known Tauri limitation ([tauri-apps/tauri#7068](https://github.com/tauri-apps/tauri/issues/7068)) with no upstream fix expected.
+
+**Decision:** Run E2E system tests inside a Docker container with a Linux environment (Xvfb + WebKitGTK + WebKitWebDriver + tauri-driver). This allows developers on macOS to run the full E2E suite locally via `./scripts/test-system.sh` without needing a CI service.
+
+**Rationale:**
+
+- Docker is already used for test infrastructure (SSH/Telnet servers, virtual serial ports)
+- Runs locally without external cloud services or CI
+- Tests the Linux build of the app, which shares the same React UI and Rust backend logic
+- Developers on Linux can also run E2E tests natively without Docker
+
+**Trade-off:** Tests run against the Linux build, not the native macOS build. macOS-specific rendering behavior (WKWebView quirks) must be verified via manual testing. See [Manual Testing](manual-testing.md).
+
+**Future consideration:** The experimental [danielraffel/tauri-webdriver](https://github.com/danielraffel/tauri-webdriver) project (Feb 2026) provides a WKWebView WebDriver via a Tauri plugin. If it matures, it could enable native macOS E2E testing without Docker. Evaluate periodically.
+
+### ADR-6: No Credential Encryption in Phase 1
 
 **Context:** SSH connections require authentication credentials.
 
@@ -716,6 +733,7 @@ graph TD
 | **Single-threaded IPC** | Tauri commands run on the main thread by default | Heavy operations use `tauri::async_runtime::spawn` |
 | **Session limit** | Hard cap at 50 concurrent terminals | Sufficient for target use case; can be raised if needed |
 | **No automated cross-platform tests for serial** | Serial tests require physical hardware | Docker-based virtual serial via socat in `examples/` |
+| **No native macOS E2E tests** | `tauri-driver` does not support macOS (no WKWebView driver exists); E2E tests run in Docker against the Linux build | Manual testing for macOS-specific behavior; evaluate [danielraffel/tauri-webdriver](https://github.com/danielraffel/tauri-webdriver) as it matures (see ADR-5) |
 
 ---
 

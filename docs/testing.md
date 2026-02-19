@@ -22,11 +22,20 @@ TermiHub uses a multi-layered testing approach to ensure quality across the enti
 
 **What it does**: Automates complete user workflows
 **Use for**:
+
 - Creating terminal connections
 - Opening multiple tabs
 - Drag & drop functionality
 - Split view operations
 - File browser interactions
+
+### Platform Support
+
+> **Important:** `tauri-driver` (the WebDriver proxy that bridges WebdriverIO to Tauri's WebView) only supports **Linux** (WebKitGTK via `WebKitWebDriver`) and **Windows** (Edge WebView2 via `msedgedriver`). It does **not** support macOS because Apple provides no WKWebView driver — `safaridriver` only controls Safari the browser, not WKWebView instances embedded in apps. This is a known upstream limitation ([tauri-apps/tauri#7068](https://github.com/tauri-apps/tauri/issues/7068)).
+>
+> **On macOS**, E2E tests run inside a Docker container with a Linux environment (Xvfb + WebKitGTK + tauri-driver). This tests the Linux build of the app, which shares the same React UI and Rust backend logic. macOS-specific rendering behavior (WKWebView quirks) must be verified via [manual testing](manual-testing.md).
+>
+> **Future:** The experimental [danielraffel/tauri-webdriver](https://github.com/danielraffel/tauri-webdriver) project (Feb 2026) aims to provide native WKWebView WebDriver support via a Tauri plugin. If it matures, it could enable native macOS E2E testing without Docker. See ADR-5 in [architecture.md](architecture.md).
 
 ### Setup
 
@@ -106,7 +115,7 @@ describe('Terminal Creation Flow', () => {
 ### Running E2E Tests
 
 ```bash
-# Run all E2E tests
+# Run all E2E tests (Linux/Windows only — tauri-driver required)
 pnpm test:e2e
 
 # Run specific test file
@@ -117,6 +126,11 @@ pnpm test:e2e:ci
 
 # Run with UI (helpful for debugging)
 pnpm test:e2e:ui
+
+# Run system tests with infrastructure (SSH, Telnet, serial)
+# On macOS: runs inside Docker (Linux) automatically
+# On Linux: runs natively with tauri-driver
+./scripts/test-system.sh
 ```
 
 ### Recording Interactions (Manual → Automated)
@@ -373,10 +387,13 @@ jobs:
       - uses: codecov/codecov-action@v3
 
   e2e-tests:
+    # NOTE: E2E tests only run on Linux and Windows.
+    # tauri-driver does not support macOS (no WKWebView driver).
+    # See ADR-5 in architecture.md for details.
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -508,7 +525,7 @@ Install the recommended VS Code extensions (already configured in `.vscode/exten
 TermiHub includes an automated E2E performance test suite that validates 40 concurrent terminals:
 
 ```bash
-# Run the performance test suite (requires built app + tauri-driver)
+# Run the performance test suite (requires built app + tauri-driver; Linux/Windows only)
 pnpm test:e2e:perf
 ```
 

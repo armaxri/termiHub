@@ -10,8 +10,8 @@ Each section groups related tests by feature area. Individual test items referen
 
 ### Default shell detection and labeling (PR #140)
 
-- [ ] Open connection editor for a local shell — the shell dropdown should show e.g. "Zsh (default)"
-- [ ] New terminals default to the correct system shell
+- [x] Open connection editor for a local shell — the shell dropdown should show e.g. "Zsh (default)"
+- [x] New terminals default to the correct system shell
 
 ### Configurable starting directory (PR #148)
 
@@ -84,10 +84,10 @@ Each section groups related tests by feature area. Individual test items referen
 
 ### Password prompt at connect (PR #38)
 
-- [ ] Create an SSH connection with password auth — no password field in editor, hint text shown instead
-- [ ] Right-click — Connect on a password-auth SSH connection — password dialog appears
-- [ ] Enter password and click Connect — SSH terminal opens normally
-- [ ] Click Cancel in password dialog — no tab is created
+- [x] Create an SSH connection with password auth — no password field in editor, hint text shown instead
+- [x] Right-click — Connect on a password-auth SSH connection — password dialog appears
+- [x] Enter password and click Connect — SSH terminal opens normally
+- [x] Click Cancel in password dialog — no tab is created
 - [ ] SSH key-auth connections — no password dialog, connects directly
 - [ ] SFTP connect to password-auth SSH — password dialog appears
 - [ ] Inspect `connections.json` — no `password` field present for any SSH connection
@@ -111,13 +111,13 @@ Each section groups related tests by feature area. Individual test items referen
 
 ### SSH monitoring in status bar (PR #114, #115)
 
-- [ ] Status bar left section shows "Monitor" button with Activity icon
-- [ ] Clicking "Monitor" opens dropdown listing all saved SSH connections
+- [x] Status bar left section shows "Monitor" button with Activity icon
+- [x] Clicking "Monitor" opens dropdown listing all saved SSH connections
 - [ ] Selecting a connection connects monitoring, shows inline stats
 - [ ] Stats auto-refresh every 5 seconds
 - [ ] Refresh and disconnect icon buttons work
 - [ ] High values show warning (yellow >= 70%) and critical (red >= 90%) colors
-- [ ] Activity bar no longer shows monitoring icon
+- [x] Activity bar no longer shows monitoring icon
 - [ ] Sidebar no longer has monitoring view
 - [ ] Save & Connect button saves and opens terminal in one action
 - [ ] After connecting, status bar displays: hostname, CPU%, Mem%, Disk%
@@ -126,11 +126,11 @@ Each section groups related tests by feature area. Individual test items referen
 
 ### Ping host context menu (PR #37)
 
-- [ ] Right-click an SSH connection with a host configured — "Ping Host" appears between "Connect" and "Edit"
-- [ ] Right-click a Telnet connection — "Ping Host" appears
-- [ ] Right-click a Local or Serial connection — no "Ping Host" item
-- [ ] Click "Ping Host" — new terminal tab opens titled "Ping <host>" running `ping <host>`
-- [ ] Existing "Connect" action still works as before
+- [x] Right-click an SSH connection with a host configured — "Ping Host" appears between "Connect" and "Edit"
+- [x] Right-click a Telnet connection — "Ping Host" appears
+- [x] Right-click a Local or Serial connection — no "Ping Host" item
+- [x] Click "Ping Host" — new terminal tab opens titled "Ping <host>" running `ping <host>`
+- [x] Existing "Connect" action still works as before
 
 ### Environment variable expansion in connections (PR #68)
 
@@ -154,7 +154,7 @@ Each section groups related tests by feature area. Individual test items referen
 
 ### Docker Telnet connection (PR #40)
 
-- [ ] Connect to Docker Telnet (port 2323) — login prompt works with `testuser`/`testpass`
+- [x] Connect to Docker Telnet (port 2323) — login prompt works with `testuser`/`testpass`
 
 ---
 
@@ -162,50 +162,50 @@ Each section groups related tests by feature area. Individual test items referen
 
 ### Rename terminal tab (PR #156)
 
-- [ ] Right-click terminal tab — "Rename" appears — renaming works
-- [ ] Right-click inside terminal area — full context menu appears with same options
+- [x] Right-click terminal tab — "Rename" appears — renaming works
+- [x] Right-click inside terminal area — full context menu appears with same options
 
 ### Tab coloring with color picker (PR #67)
 
-- [ ] Right-click a terminal tab — "Set Color..." — pick a color — verify tab shows colored left border and terminal has colored frame
-- [ ] Clear the color — verify indicators are removed
-- [ ] Edit a connection — set a color — connect — verify tab starts with that color
-- [ ] Close and reopen a colored connection — verify color persists
-- [ ] Override a persisted color via context menu — verify runtime color takes effect
+- [x] Right-click a terminal tab — "Set Color..." — pick a color — verify tab shows colored left border and terminal has colored frame
+- [x] Clear the color — verify indicators are removed
+- [x] Edit a connection — set a color — connect — verify tab starts with that color
+- [x] Close and reopen a colored connection — verify color persists
+- [x] Override a persisted color via context menu — verify runtime color takes effect
 
 ### Clear terminal via context menu (PR #34)
 
-- [ ] Right-click a terminal tab — context menu with "Clear Terminal" appears
-- [ ] Click "Clear Terminal" — terminal scrollback is cleared
-- [ ] Right-click the Settings tab — no context menu appears
+- [x] Right-click a terminal tab — context menu with "Clear Terminal" appears
+- [x] Click "Clear Terminal" — terminal scrollback is cleared
+- [x] Right-click the Settings tab — no context menu appears
 - [ ] Drag-and-drop tabs still works correctly
 
 ### Save terminal content to file (PR #35)
 
-- [ ] Right-click a terminal tab — context menu shows "Save to File" above "Clear Terminal"
+- [x] Right-click a terminal tab — context menu shows "Save to File" above "Clear Terminal"
 - [ ] Click "Save to File" — native save dialog opens with default filename `terminal-output.txt`
 - [ ] Choose a location — file is written with the terminal's text content
 - [ ] Cancel the dialog — nothing happens
-- [ ] Settings tab still has no context menu
+- [x] Settings tab still has no context menu
 
 ### Copy terminal content to clipboard (PR #36)
 
-- [ ] Right-click a terminal tab — context menu shows "Save to File", "Copy to Clipboard", "Clear Terminal" in that order
-- [ ] Click "Copy to Clipboard" — paste elsewhere to verify terminal content is on the clipboard
-- [ ] "Save to File" still works as before (regression check)
-- [ ] Settings tab has no context menu (unchanged behavior)
+- [x] Right-click a terminal tab — context menu shows "Save to File", "Copy to Clipboard", "Clear Terminal" in that order
+- [x] Click "Copy to Clipboard" — paste elsewhere to verify terminal content is on the clipboard
+- [x] "Save to File" still works as before (regression check)
+- [x] Settings tab has no context menu (unchanged behavior)
 
 ### Suppress browser default context menu (PR #150)
 
 - [ ] Right-click on empty areas (sidebar whitespace, terminal, activity bar) — no menu appears
-- [ ] Right-click on a connection — custom context menu still works
-- [ ] Right-click on a tab — custom context menu still works
+- [x] Right-click on a connection — custom context menu still works
+- [x] Right-click on a tab — custom context menu still works
 
 ### Per-connection horizontal scrolling (PR #45)
 
 - [ ] Create connection with horizontal scrolling enabled — connect — run `echo $(python3 -c "print('A'*300)")` — line should not wrap, horizontal scrollbar appears
 - [ ] Create connection without horizontal scrolling — same command — line wraps normally
-- [ ] Right-click tab — "Horizontal Scrolling" toggle — behavior switches dynamically
+- [x] Right-click tab — "Horizontal Scrolling" toggle — behavior switches dynamically
 - [ ] Hold a key down — key repeat works normally in horizontal scroll mode
 - [ ] Close and reopen app — connection setting persists
 - [ ] Resize window/panels — scroll area adjusts correctly
@@ -224,12 +224,12 @@ Each section groups related tests by feature area. Individual test items referen
 
 ### Connection editor as tab (PR #109)
 
-- [ ] Click "New Connection" in sidebar — editor opens as a tab in the panel area
-- [ ] Right-click a connection — Edit — editor tab opens with "Edit: <name>" title
-- [ ] Save a connection — tab closes and connection is persisted
-- [ ] Cancel — tab closes without saving
-- [ ] Open multiple editor tabs simultaneously for different connections
-- [ ] Re-clicking Edit on an already-open connection activates the existing tab
+- [x] Click "New Connection" in sidebar — editor opens as a tab in the panel area
+- [x] Right-click a connection — Edit — editor tab opens with "Edit: <name>" title
+- [x] Save a connection — tab closes and connection is persisted
+- [x] Cancel — tab closes without saving
+- [x] Open multiple editor tabs simultaneously for different connections
+- [x] Re-clicking Edit on an already-open connection activates the existing tab
 
 ### Remove folder selector from editor (PR #146)
 
@@ -249,18 +249,18 @@ Each section groups related tests by feature area. Individual test items referen
 
 ### Save & Connect button (PR #112)
 
-- [ ] Open New Connection — fill form — click "Save & Connect" — connection is saved AND a terminal tab opens
+- [x] Open New Connection — fill form — click "Save & Connect" — connection is saved AND a terminal tab opens
 - [ ] Edit existing SSH connection — click "Save & Connect" — password prompt appears — connection opens after password entry
 - [ ] Click "Save & Connect" with password auth, cancel password prompt — editor tab stays open (connect aborted, but save already completed)
-- [ ] Existing "Save" and "Cancel" buttons still work as before
+- [x] Existing "Save" and "Cancel" buttons still work as before
 
 ### Import/export in settings gear dropdown (PR #33)
 
-- [ ] Click the Settings gear in the activity bar — dropdown menu appears with three items
-- [ ] Click "Settings" — settings tab opens
+- [x] Click the Settings gear in the activity bar — dropdown menu appears with three items
+- [x] Click "Settings" — settings tab opens
 - [ ] Click "Import Connections" — file open dialog, imports JSON, connection list refreshes
 - [ ] Click "Export Connections" — file save dialog, saves JSON
-- [ ] Connection list toolbar no longer has Import/Export buttons (only New Folder and New Connection remain)
+- [x] Connection list toolbar no longer has Import/Export buttons (only New Folder and New Connection remain)
 
 ### External connection file support (PR #50)
 
@@ -380,22 +380,22 @@ Each section groups related tests by feature area. Individual test items referen
 ### Status bar (PR #30)
 
 - [ ] Run `npm run build` — no compile errors
-- [ ] Launch the app and verify the status bar appears at the bottom spanning the full window width
-- [ ] Verify existing layout (Activity Bar, Sidebar, Terminal View) is unaffected
+- [x] Launch the app and verify the status bar appears at the bottom spanning the full window width
+- [x] Verify existing layout (Activity Bar, Sidebar, Terminal View) is unaffected
 
 ### Settings as tab (PR #32)
 
-- [ ] Click Settings — a "Settings" tab opens with content
-- [ ] Click Settings again — reactivates existing settings tab (no duplicate)
-- [ ] Close the settings tab — it's removed like any other tab
+- [x] Click Settings — a "Settings" tab opens with content
+- [x] Click Settings again — reactivates existing settings tab (no duplicate)
+- [x] Close the settings tab — it's removed like any other tab
 - [ ] Drag the settings tab between panels — works with correct Settings icon
-- [ ] Connections and File Browser sidebar views still work normally
+- [x] Connections and File Browser sidebar views still work normally
 
 ### Settings button at bottom of activity bar (PR #31)
 
-- [ ] Settings gear icon appears at the bottom of the activity bar
-- [ ] Connections and File Browser icons remain at the top
-- [ ] Clicking the settings icon still toggles the sidebar settings view
+- [x] Settings gear icon appears at the bottom of the activity bar
+- [x] Connections and File Browser icons remain at the top
+- [x] Clicking the settings icon still toggles the sidebar settings view
 
 ### Black bar at bottom of terminal fix (PR #130)
 
