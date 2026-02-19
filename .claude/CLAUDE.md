@@ -112,15 +112,19 @@ All scripts live in `scripts/` with `.sh` (Unix/macOS) and `.cmd` (Windows) vari
 | `./scripts/test.sh` | Run all unit tests (frontend + backend + agent) |
 | `./scripts/check.sh` | Read-only quality checks mirroring CI (formatting, linting, clippy) |
 | `./scripts/format.sh` | Auto-fix all formatting issues (Prettier + cargo fmt) |
+| `./scripts/autoformat.sh` | Auto-format a single file (called by PostToolUse hook — do not run manually) |
 | `./scripts/clean.sh` | Remove all build artifacts for a fresh start |
 | `./scripts/test-system.sh` | Start Docker infra + virtual serial ports and run system-level E2E tests (Linux via Docker; `tauri-driver` does not support macOS — see ADR-5 in [architecture.md](../docs/architecture.md)) |
+
+### Auto-Formatting Hook
+
+A PostToolUse hook in `.claude/settings.json` runs `scripts/autoformat.sh` after every Edit/Write, automatically applying Prettier (TS/JS/CSS) and rustfmt (Rust). No manual formatting step is needed during development.
 
 ### Before Creating a PR
 
 Always run these before pushing:
 
 ```bash
-./scripts/format.sh    # Auto-fix formatting (Prettier + cargo fmt)
 ./scripts/test.sh      # Run all unit tests (frontend + backend + agent)
 ./scripts/check.sh     # Read-only quality checks mirroring CI
 ```

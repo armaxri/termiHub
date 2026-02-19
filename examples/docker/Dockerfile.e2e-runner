@@ -1,0 +1,62 @@
+# Dockerfile.e2e-runner — E2E test runner for TermiHub.
+#
+# Provides: Ubuntu 22.04, Rust stable, Node.js 20, pnpm, Tauri build deps,
+#           WebKitGTK runtime, Xvfb, socat, python3, tauri-driver.
+#
+# Source code is bind-mounted at /app (not copied).
+# Build cache directories use named Docker volumes.
+#
+# Usage (via docker-compose.e2e.yml):
+#   docker compose -f examples/docker/docker-compose.e2e.yml up --build
+
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ── System dependencies ──────────────────────────────────────────────────────
+# Tauri build deps + WebKitGTK runtime + test infrastructure tools.
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    ca-certificates \
+    curl \
+    git \
+    libayatana-appindicator3-dev \
+    libgtk-3-dev \
+    librsvg2-dev \
+    libssl-dev \
+    libudev-dev \
+    libwebkit2gtk-4.1-dev \
+    netcat-openbsd \
+    patchelf \
+    python3 \
+    socat \
+    wget \
+    xvfb \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Rust toolchain ───────────────────────────────────────────────────────────
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH="/usr/local/cargo/bin:$PATH"
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --default-toolchain stable \
+    && rustup show
+
+# ── tauri-driver ─────────────────────────────────────────────────────────────
+RUN cargo install tauri-driver
+
+# ── Node.js 20 + pnpm ────────────────────────────────────────────────────────
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/* \
+    && npm install -g pnpm@10
+
+# ── Working directory ─────────────────────────────────────────────────────────
+WORKDIR /app
+
+# ── Entrypoint ────────────────────────────────────────────────────────────────
+COPY e2e-entrypoint.sh /e2e-entrypoint.sh
+RUN chmod +x /e2e-entrypoint.sh
+
+ENTRYPOINT ["/e2e-entrypoint.sh"]
