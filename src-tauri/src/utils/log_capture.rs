@@ -76,15 +76,8 @@ impl LogCaptureLayer {
         }
     }
 
-    /// Inject the Tauri AppHandle so the layer can emit events to the frontend.
-    /// Call this in `.setup()` after the app is initialized.
-    pub fn set_app_handle(&self, handle: AppHandle) {
-        if let Ok(mut h) = self.app_handle.lock() {
-            *h = Some(handle);
-        }
-    }
-
     /// Return a clone of the app_handle Arc for deferred injection.
+    /// Set the inner `Option<AppHandle>` in `.setup()` after the app is initialized.
     pub fn app_handle_slot(&self) -> Arc<Mutex<Option<AppHandle>>> {
         self.app_handle.clone()
     }
