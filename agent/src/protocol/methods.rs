@@ -234,6 +234,11 @@ mod tests {
             v["capabilities"]["available_serial_ports"][0],
             "/dev/ttyUSB0"
         );
+        assert_eq!(v["capabilities"]["docker_available"], false);
+        assert!(v["capabilities"]["available_docker_images"]
+            .as_array()
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

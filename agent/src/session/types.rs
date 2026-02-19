@@ -132,4 +132,23 @@ mod tests {
         let v = serde_json::to_value(SessionType::Serial).unwrap();
         assert_eq!(v, "serial");
     }
+
+    #[test]
+    fn session_type_docker_from_str() {
+        assert_eq!(SessionType::from_str("docker"), Some(SessionType::Docker));
+    }
+
+    #[test]
+    fn session_type_docker_as_str_round_trip() {
+        assert_eq!(
+            SessionType::from_str(SessionType::Docker.as_str()),
+            Some(SessionType::Docker)
+        );
+    }
+
+    #[test]
+    fn session_type_docker_serializes_lowercase() {
+        let v = serde_json::to_value(SessionType::Docker).unwrap();
+        assert_eq!(v, "docker");
+    }
 }
