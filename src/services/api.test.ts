@@ -50,6 +50,8 @@ import {
   vscodeOpenRemote,
   checkDockerAvailable,
   listDockerImages,
+  getLogs,
+  clearLogs,
 } from "./api";
 
 describe("api service", () => {
@@ -531,6 +533,28 @@ describe("api service", () => {
       const result = await listDockerImages();
 
       expect(result).toEqual([]);
+    });
+  });
+
+  describe("log commands", () => {
+    it("getLogs invokes with count and returns entries", async () => {
+      const entries = [
+        { timestamp: "12:00:00.000", level: "INFO", target: "test", message: "hello" },
+      ];
+      mockedInvoke.mockResolvedValue(entries);
+
+      const result = await getLogs(100);
+
+      expect(mockedInvoke).toHaveBeenCalledWith("get_logs", { count: 100 });
+      expect(result).toEqual(entries);
+    });
+
+    it("clearLogs invokes correct command", async () => {
+      mockedInvoke.mockResolvedValue(undefined);
+
+      await clearLogs();
+
+      expect(mockedInvoke).toHaveBeenCalledWith("clear_logs");
     });
   });
 });
