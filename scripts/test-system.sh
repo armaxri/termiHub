@@ -142,7 +142,7 @@ fi
 
 APP_BINARY=""
 if [ "$(uname)" = "Darwin" ]; then
-    APP_BINARY="./src-tauri/target/release/bundle/macos/TermiHub.app/Contents/MacOS/TermiHub"
+    APP_BINARY="./src-tauri/target/release/bundle/macos/termiHub.app/Contents/MacOS/termiHub"
 else
     APP_BINARY="./src-tauri/target/release/termihub"
 fi

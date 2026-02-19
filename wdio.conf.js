@@ -20,7 +20,7 @@ function appBinaryPath() {
     return './src-tauri/target/release/termihub.exe';
   }
   if (process.platform === 'darwin') {
-    return './src-tauri/target/release/bundle/macos/TermiHub.app/Contents/MacOS/TermiHub';
+    return './src-tauri/target/release/bundle/macos/termiHub.app/Contents/MacOS/termiHub';
   }
   return './src-tauri/target/release/termihub';
 }
