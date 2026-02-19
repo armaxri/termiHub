@@ -8,6 +8,13 @@ Each section groups related tests by feature area. Individual test items referen
 
 ## Local Shell
 
+### No initial output flash for WSL/SSH terminals (PR #175)
+
+- [ ] Create a WSL connection — verify no welcome banner or setup commands flash before the prompt appears
+- [ ] Rapidly create two WSL connections after app startup — verify both terminals show a clean prompt with no strange output
+- [ ] Create an SSH connection — verify no setup command flash before the prompt appears
+- [ ] Create a local PowerShell or CMD connection — verify startup output is not delayed (no regression)
+
 ### Default shell detection and labeling (PR #140)
 
 - [x] Open connection editor for a local shell — the shell dropdown should show e.g. "Zsh (default)"
