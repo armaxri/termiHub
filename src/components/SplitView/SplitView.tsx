@@ -14,6 +14,7 @@ import {
   Settings as SettingsIcon,
   FileEdit,
   SquarePen,
+  ScrollText,
   Pencil,
   FileDown,
   ClipboardCopy,
@@ -33,6 +34,7 @@ import { RenameDialog } from "@/components/Terminal/RenameDialog";
 import { SettingsPanel } from "@/components/Settings";
 import { FileEditor } from "@/components/FileEditor";
 import { ConnectionEditor } from "@/components/ConnectionEditor/ConnectionEditor";
+import { LogViewer } from "@/components/LogViewer";
 import { PanelDropZone } from "./PanelDropZone";
 import "./SplitView.css";
 
@@ -202,6 +204,8 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
         {panel.tabs.map((tab) =>
           tab.contentType === "settings" ? (
             <SettingsPanel key={tab.id} isVisible={tab.id === panel.activeTabId} />
+          ) : tab.contentType === "log-viewer" ? (
+            <LogViewer key={tab.id} isVisible={tab.id === panel.activeTabId} />
           ) : tab.contentType === "editor" && tab.editorMeta ? (
             <FileEditor
               key={tab.id}
@@ -358,11 +362,13 @@ function TabDragOverlay({ tab }: { tab: TerminalTab }) {
   const NonTerminalIcon =
     tab.contentType === "settings"
       ? SettingsIcon
-      : tab.contentType === "editor"
-        ? FileEdit
-        : tab.contentType === "connection-editor"
-          ? SquarePen
-          : null;
+      : tab.contentType === "log-viewer"
+        ? ScrollText
+        : tab.contentType === "editor"
+          ? FileEdit
+          : tab.contentType === "connection-editor"
+            ? SquarePen
+            : null;
   return (
     <div className="tab tab--drag-overlay">
       {NonTerminalIcon ? (
