@@ -140,7 +140,13 @@ function TerminalHost() {
   return (
     <>
       {allTabs.map((tab) => (
-        <Terminal key={tab.id} tabId={tab.id} config={tab.config} isVisible={tab.isActive} />
+        <Terminal
+          key={tab.id}
+          tabId={tab.id}
+          config={tab.config}
+          isVisible={tab.isActive}
+          existingSessionId={tab.sessionId}
+        />
       ))}
     </>
   );

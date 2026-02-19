@@ -88,6 +88,7 @@ interface TerminalProps {
   tabId: string;
   config: ConnectionConfig;
   isVisible: boolean;
+  existingSessionId?: string | null;
 }
 
 /**
@@ -95,7 +96,7 @@ interface TerminalProps {
  * Creates an imperative DOM element registered with the TerminalRegistry.
  * Renders nothing — TerminalSlot handles display by adopting the DOM element.
  */
-export function Terminal({ tabId, config, isVisible }: TerminalProps) {
+export function Terminal({ tabId, config, isVisible, existingSessionId }: TerminalProps) {
   const terminalElRef = useRef<HTMLDivElement | null>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -109,7 +110,7 @@ export function Terminal({ tabId, config, isVisible }: TerminalProps) {
   const setupTerminal = useCallback(
     async (xterm: XTerm, fitAddon: FitAddon) => {
       try {
-        const sessionId = await createTerminal(config);
+        const sessionId = existingSessionId ?? (await createTerminal(config));
         sessionIdRef.current = sessionId;
 
         // Output batching: buffer chunks and flush in a single RAF callback
@@ -206,7 +207,7 @@ export function Terminal({ tabId, config, isVisible }: TerminalProps) {
         }
       }
     },
-    [config]
+    [config, existingSessionId]
   );
 
   // Create the terminal element, xterm instance, and register
