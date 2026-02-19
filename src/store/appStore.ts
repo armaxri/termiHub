@@ -1346,6 +1346,7 @@ export const useAppStore = create<AppState>((set, get) => {
             a.id === agentId ? { ...a, connectionState: "disconnected" as const } : a
           ),
         }));
+        throw err;
       }
     },
 

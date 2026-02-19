@@ -24,7 +24,9 @@ import {
 import { useAppStore } from "@/store/appStore";
 import { RemoteAgentDefinition } from "@/types/connection";
 import { AgentSessionInfo, AgentDefinitionInfo } from "@/services/api";
+import { classifyAgentError, ClassifiedAgentError } from "@/utils/classifyAgentError";
 import { AgentSetupDialog } from "./AgentSetupDialog";
+import { ConnectionErrorDialog } from "./ConnectionErrorDialog";
 
 const EMPTY_SESSIONS: AgentSessionInfo[] = [];
 const EMPTY_DEFINITIONS: AgentDefinitionInfo[] = [];
@@ -55,6 +57,8 @@ export function AgentNode({ agent }: AgentNodeProps) {
 
   const [connecting, setConnecting] = useState(false);
   const [setupDialogOpen, setSetupDialogOpen] = useState(false);
+  const [connectionError, setConnectionError] = useState<ClassifiedAgentError | null>(null);
+  const [errorDialogOpen, setErrorDialogOpen] = useState(false);
 
   const isConnected = agent.connectionState === "connected";
   const Chevron = agent.isExpanded ? ChevronDown : ChevronRight;
@@ -73,10 +77,19 @@ export function AgentNode({ agent }: AgentNodeProps) {
         password = result;
       }
       await connectRemoteAgent(agent.id, password);
+    } catch (err) {
+      const classified = classifyAgentError(err);
+      setConnectionError(classified);
+      setErrorDialogOpen(true);
     } finally {
       setConnecting(false);
     }
   }, [agent, connectRemoteAgent, requestPassword, connecting]);
+
+  const handleSetupFromError = useCallback(() => {
+    setErrorDialogOpen(false);
+    setSetupDialogOpen(true);
+  }, []);
 
   const handleDisconnect = useCallback(() => {
     disconnectRemoteAgent(agent.id);
@@ -239,6 +252,12 @@ export function AgentNode({ agent }: AgentNodeProps) {
       </ContextMenu.Root>
 
       <AgentSetupDialog open={setupDialogOpen} onOpenChange={setSetupDialogOpen} agent={agent} />
+      <ConnectionErrorDialog
+        open={errorDialogOpen}
+        onOpenChange={setErrorDialogOpen}
+        error={connectionError}
+        onSetupAgent={handleSetupFromError}
+      />
 
       {agent.isExpanded && (
         <div className="connection-list__tree">
