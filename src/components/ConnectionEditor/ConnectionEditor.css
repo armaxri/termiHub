@@ -78,6 +78,84 @@
   margin-left: 4px;
 }
 
+.settings-form__list-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.settings-form__list-input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  font-size: var(--font-size-sm);
+}
+
+.settings-form__list-remove {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 16px;
+  padding: 0;
+}
+
+.settings-form__list-remove:hover {
+  color: var(--text-primary);
+  background-color: var(--bg-hover);
+  border-radius: var(--radius-sm);
+}
+
+.settings-form__list-browse {
+  flex-shrink: 0;
+  height: 28px;
+  padding: 0 8px;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.settings-form__list-browse:hover {
+  color: var(--text-primary);
+  background-color: var(--bg-hover);
+}
+
+.settings-form__list-checkbox {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.settings-form__list-checkbox input[type="checkbox"] {
+  width: auto;
+  height: auto;
+}
+
+.settings-form__list-add {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  color: var(--focus-border);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  padding: var(--spacing-xs) 0;
+}
+
+.settings-form__list-add:hover {
+  text-decoration: underline;
+}
+
 .connection-editor__actions {
   display: flex;
   gap: var(--spacing-sm);

@@ -7,6 +7,7 @@ import {
   SshConfig,
   TelnetConfig,
   SerialConfig,
+  DockerConfig,
   RemoteAgentConfig,
   ShellType,
   TerminalOptions,
@@ -19,6 +20,7 @@ import {
   SshSettings,
   SerialSettings,
   TelnetSettings,
+  DockerSettings,
   AgentSettings,
 } from "@/components/Settings";
 import { ColorPickerDialog } from "@/components/Terminal/ColorPickerDialog";
@@ -54,6 +56,15 @@ function getDefaultConfigs(
         flowControl: "none",
       },
     },
+    docker: {
+      type: "docker",
+      config: {
+        image: "",
+        envVars: [],
+        volumes: [],
+        removeOnExit: true,
+      },
+    },
     "remote-session": {
       type: "remote-session",
       config: {
@@ -70,6 +81,7 @@ const TYPE_OPTIONS: { value: ConnectionType; label: string }[] = [
   { value: "ssh", label: "SSH" },
   { value: "serial", label: "Serial" },
   { value: "telnet", label: "Telnet" },
+  { value: "docker", label: "Docker" },
   { value: "remote", label: "Remote Agent" },
 ];
 
@@ -367,6 +379,12 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           <TelnetSettings
             config={connectionConfig.config}
             onChange={(config: TelnetConfig) => setConnectionConfig({ type: "telnet", config })}
+          />
+        )}
+        {connectionConfig.type === "docker" && (
+          <DockerSettings
+            config={connectionConfig.config}
+            onChange={(config: DockerConfig) => setConnectionConfig({ type: "docker", config })}
           />
         )}
         {selectedType === "remote" && (
