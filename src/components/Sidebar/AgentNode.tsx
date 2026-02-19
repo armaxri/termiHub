@@ -19,10 +19,12 @@ import {
   RefreshCw,
   Terminal,
   Cable,
+  Upload,
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { RemoteAgentDefinition } from "@/types/connection";
 import { AgentSessionInfo, AgentDefinitionInfo } from "@/services/api";
+import { AgentSetupDialog } from "./AgentSetupDialog";
 
 interface AgentNodeProps {
   agent: RemoteAgentDefinition;
@@ -49,6 +51,7 @@ export function AgentNode({ agent }: AgentNodeProps) {
   const refreshAgentSessions = useAppStore((s) => s.refreshAgentSessions);
 
   const [connecting, setConnecting] = useState(false);
+  const [setupDialogOpen, setSetupDialogOpen] = useState(false);
 
   const isConnected = agent.connectionState === "connected";
   const Chevron = agent.isExpanded ? ChevronDown : ChevronRight;
@@ -174,10 +177,19 @@ export function AgentNode({ agent }: AgentNodeProps) {
         <ContextMenu.Portal>
           <ContextMenu.Content className="context-menu__content">
             {!isConnected ? (
-              <ContextMenu.Item className="context-menu__item" onSelect={handleConnect}>
-                <Play size={14} />
-                Connect
-              </ContextMenu.Item>
+              <>
+                <ContextMenu.Item className="context-menu__item" onSelect={handleConnect}>
+                  <Play size={14} />
+                  Connect
+                </ContextMenu.Item>
+                <ContextMenu.Item
+                  className="context-menu__item"
+                  onSelect={() => setSetupDialogOpen(true)}
+                >
+                  <Upload size={14} />
+                  Setup Agent...
+                </ContextMenu.Item>
+              </>
             ) : (
               <>
                 <ContextMenu.Item className="context-menu__item" onSelect={handleDisconnect}>
@@ -222,6 +234,8 @@ export function AgentNode({ agent }: AgentNodeProps) {
           </ContextMenu.Content>
         </ContextMenu.Portal>
       </ContextMenu.Root>
+
+      <AgentSetupDialog open={setupDialogOpen} onOpenChange={setSetupDialogOpen} agent={agent} />
 
       {agent.isExpanded && (
         <div className="connection-list__tree">
