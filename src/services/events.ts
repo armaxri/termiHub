@@ -212,6 +212,21 @@ export class TerminalOutputDispatcher {
 /** Singleton instance used by Terminal components. */
 export const terminalDispatcher = new TerminalOutputDispatcher();
 
+interface AgentSetupProgressPayload {
+  agent_id: string;
+  step: string;
+  message: string;
+}
+
+/** Subscribe to agent setup progress events. */
+export async function onAgentSetupProgress(
+  callback: (agentId: string, step: string, message: string) => void
+): Promise<UnlistenFn> {
+  return await listen<AgentSetupProgressPayload>("agent-setup-progress", (event) => {
+    callback(event.payload.agent_id, event.payload.step, event.payload.message);
+  });
+}
+
 interface VscodeEditCompletePayload {
   remotePath: string;
   success: boolean;

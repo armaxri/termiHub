@@ -345,6 +345,33 @@ export async function deleteAgentDefinition(agentId: string, definitionId: strin
   await invoke("delete_agent_definition", { agentId, definitionId });
 }
 
+// --- Agent setup commands ---
+
+/** Configuration for setting up a remote agent. */
+export interface AgentSetupConfig {
+  binaryPath: string;
+  remotePath?: string;
+  installService: boolean;
+}
+
+/** Result of initiating the agent setup flow. */
+export interface AgentSetupResult {
+  sessionId: string;
+}
+
+/** Upload and install the remote agent binary on a host. */
+export async function setupRemoteAgent(
+  agentId: string,
+  config: RemoteAgentConfig,
+  setupConfig: AgentSetupConfig
+): Promise<AgentSetupResult> {
+  return await invoke<AgentSetupResult>("setup_remote_agent", {
+    agentId,
+    config,
+    setupConfig,
+  });
+}
+
 // --- Agent persistence commands ---
 
 /** Save (add or update) a remote agent definition to disk. */
