@@ -20,6 +20,11 @@ export function ActivityBar() {
   const openSettingsTab = useAppStore((s) => s.openSettingsTab);
   const openLogViewerTab = useAppStore((s) => s.openLogViewerTab);
   const loadFromBackend = useAppStore((s) => s.loadFromBackend);
+  const fileBrowserEnabled = useAppStore((s) => s.settings.fileBrowserEnabled);
+
+  const visibleTopItems = fileBrowserEnabled
+    ? TOP_ITEMS
+    : TOP_ITEMS.filter((item) => item.view !== "files");
 
   const handleExport = useCallback(async () => {
     try {
@@ -53,7 +58,7 @@ export function ActivityBar() {
   return (
     <div className="activity-bar">
       <div className="activity-bar__top">
-        {TOP_ITEMS.map((item) => (
+        {visibleTopItems.map((item) => (
           <ActivityBarItem
             key={item.view}
             icon={item.icon}

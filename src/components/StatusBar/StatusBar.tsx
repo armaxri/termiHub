@@ -139,6 +139,7 @@ export function StatusBar() {
  * Shows a connection picker when disconnected, and compact stats when connected.
  */
 function MonitoringStatus() {
+  const powerMonitoringEnabled = useAppStore((s) => s.settings.powerMonitoringEnabled);
   const monitoringSessionId = useAppStore((s) => s.monitoringSessionId);
   const monitoringHost = useAppStore((s) => s.monitoringHost);
   const monitoringStats = useAppStore((s) => s.monitoringStats);
@@ -188,6 +189,8 @@ function MonitoringStatus() {
 
   // Auto-connect monitoring when active tab is an SSH session
   useEffect(() => {
+    if (!powerMonitoringEnabled) return;
+
     // Read the active tab from the store (avoids subscribing to the full object)
     const activeTab = getActiveTab(useAppStore.getState());
     if (!activeTab || activeTab.config.type !== "ssh") return;
@@ -245,7 +248,7 @@ function MonitoringStatus() {
     };
 
     doConnect();
-  }, [activeTabId, monitoringSessionId, monitoringHost]);
+  }, [activeTabId, monitoringSessionId, monitoringHost, powerMonitoringEnabled]);
 
   const handleConnect = useCallback(
     (connection: SavedConnection) => {
@@ -257,7 +260,8 @@ function MonitoringStatus() {
     [connectMonitoring]
   );
 
-  // Hide monitoring UI when active tab is not SSH
+  // Hide monitoring UI when disabled or when active tab is not SSH
+  if (!powerMonitoringEnabled) return null;
   if (activeTabConnectionType !== "ssh") return null;
 
   // Not connected: show connect button (or loading/error state)

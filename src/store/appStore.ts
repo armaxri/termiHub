@@ -815,7 +815,12 @@ export const useAppStore = create<AppState>((set, get) => {
     folders: [],
     connections: [],
     externalSources: [],
-    settings: { version: "1", externalConnectionFiles: [] },
+    settings: {
+      version: "1",
+      externalConnectionFiles: [],
+      powerMonitoringEnabled: true,
+      fileBrowserEnabled: true,
+    },
     loadFromBackend: async () => {
       try {
         const { connections, folders, externalSources, agents } = await loadConnections();
@@ -848,8 +853,20 @@ export const useAppStore = create<AppState>((set, get) => {
 
     updateSettings: async (newSettings) => {
       try {
+        const oldSettings = get().settings;
         await persistSettings(newSettings);
         set({ settings: newSettings });
+
+        // Side-effects when features are toggled off
+        if (oldSettings.powerMonitoringEnabled && !newSettings.powerMonitoringEnabled) {
+          get().disconnectMonitoring();
+        }
+        if (oldSettings.fileBrowserEnabled && !newSettings.fileBrowserEnabled) {
+          get().disconnectSftp();
+          if (get().sidebarView === "files") {
+            set({ sidebarView: "connections" });
+          }
+        }
       } catch (err) {
         console.error("Failed to save settings:", err);
       }

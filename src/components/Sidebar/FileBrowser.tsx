@@ -277,6 +277,7 @@ function useFileBrowserSync() {
   const requestPassword = useAppStore((s) => s.requestPassword);
   const connections = useAppStore((s) => s.connections);
   const fileBrowserMode = useAppStore((s) => s.fileBrowserMode);
+  const fileBrowserEnabled = useAppStore((s) => s.settings.fileBrowserEnabled);
 
   // Derive mode from active tab
   const activeTab = useAppStore((s) => getActiveTab(s));
@@ -294,6 +295,10 @@ function useFileBrowserSync() {
   const wslDistro = activeTabShellType ? getWslDistroName(activeTabShellType) : null;
 
   useEffect(() => {
+    if (!fileBrowserEnabled) {
+      setFileBrowserMode("none");
+      return;
+    }
     if (!activeTab || activeTabContentType === "settings") {
       setFileBrowserMode("none");
       return;
@@ -315,6 +320,7 @@ function useFileBrowserSync() {
       setFileBrowserMode("none");
     }
   }, [
+    fileBrowserEnabled,
     activeTabId,
     activeTabConnectionType,
     activeTabContentType,
@@ -385,6 +391,7 @@ function useFileBrowserSync() {
 
   // Auto-connect SFTP for SSH tabs
   useEffect(() => {
+    if (!fileBrowserEnabled) return;
     if (fileBrowserMode !== "sftp" || !activeTab) return;
     if (activeTab.config.type !== "ssh") return;
 
@@ -424,6 +431,7 @@ function useFileBrowserSync() {
 
     doConnect();
   }, [
+    fileBrowserEnabled,
     fileBrowserMode,
     activeTabId,
     activeTab,
