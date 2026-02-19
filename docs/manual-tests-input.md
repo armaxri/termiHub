@@ -103,6 +103,14 @@ Each section groups related tests by feature area. Individual test items referen
 - [ ] Enable X11 without local X server — SSH connects with graceful degradation
 - [ ] Existing saved connections without the new field load correctly
 
+### SFTP file browser follows SSH terminal CWD (PR #186)
+
+- [ ] SSH to a Linux host — open Files sidebar — run `cd /tmp` in the terminal — SFTP browser navigates to `/tmp`
+- [ ] Run `cd ~` — SFTP browser navigates back to home directory
+- [ ] Run `cd /var/log` — SFTP browser navigates to `/var/log`
+- [ ] Open a second SSH tab to a different host — file browser follows the active tab's CWD independently
+- [ ] Switch between SSH tabs — file browser updates to each tab's last known CWD
+
 ### Auto-connect monitoring on SSH tab switch (PR #163)
 
 - [ ] Open an SSH terminal tab — monitoring stats appear automatically in the status bar
