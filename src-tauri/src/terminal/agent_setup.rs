@@ -296,52 +296,58 @@ fn upload_via_sftp(
 }
 
 /// Generate shell commands for the visible terminal.
+///
+/// Uses `$_SUDO` variable instead of hardcoded `sudo` so the commands
+/// work when running as root or when sudo is not installed.
+/// All install commands are chained with `&&` so that a failure in any
+/// step skips the rest and prints "Setup Failed" instead of "Setup Complete".
 pub fn generate_setup_commands(remote_path: &str, install_service: bool) -> String {
     let mut cmds = String::new();
 
     cmds.push_str("echo '=== TermiHub Agent Setup ==='\n");
+    // Detect privilege escalation: use sudo only when not root and sudo exists
+    cmds.push_str(
+        "_SUDO=''; [ \"$(id -u)\" -ne 0 ] && command -v sudo >/dev/null 2>&1 && _SUDO='sudo'\n",
+    );
     cmds.push_str(&format!(
-        "echo 'Moving agent binary to {}...'\n",
+        "echo 'Moving agent binary to {}...' && \\\n",
         remote_path
     ));
-    cmds.push_str(&format!("sudo mv {} {}\n", TEMP_UPLOAD_PATH, remote_path));
-    cmds.push_str(&format!("sudo chmod +x {}\n", remote_path));
-    cmds.push_str("echo 'Verifying installation...'\n");
-    cmds.push_str(&format!("{} --version\n", remote_path));
+    cmds.push_str(&format!(
+        "$_SUDO mv {} {} && \\\n",
+        TEMP_UPLOAD_PATH, remote_path
+    ));
+    cmds.push_str(&format!("$_SUDO chmod +x {} && \\\n", remote_path));
+    cmds.push_str("echo 'Verifying installation...' && \\\n");
+    cmds.push_str(&format!("{} --version", remote_path));
 
     if install_service {
-        cmds.push_str("echo 'Installing systemd service...'\n");
+        cmds.push_str(" && \\\necho 'Installing systemd service...' && \\\n");
         cmds.push_str(&generate_systemd_commands(remote_path));
     }
 
-    cmds.push_str("echo '=== Setup Complete ==='\n");
+    cmds.push_str(
+        " && \\\necho '=== Setup Complete ===' || printf '\\033[31m=== Setup Failed ===\\033[0m\\n'\n",
+    );
     cmds
 }
 
 /// Generate systemd service installation commands.
+///
+/// Uses `printf` + pipe instead of a heredoc so the commands can
+/// participate in the `&&` chain without breaking line continuations.
 fn generate_systemd_commands(remote_path: &str) -> String {
-    let service = format!(
-        "[Unit]\n\
-         Description=TermiHub Agent\n\
-         After=network.target\n\
-         \n\
-         [Service]\n\
-         ExecStart={} --listen 127.0.0.1:7685\n\
-         Restart=on-failure\n\
-         \n\
-         [Install]\n\
-         WantedBy=multi-user.target",
-        remote_path
-    );
-
     let mut cmds = String::new();
     cmds.push_str(&format!(
-        "sudo tee /etc/systemd/system/termihub-agent.service > /dev/null << 'SERVICEEOF'\n{}\nSERVICEEOF\n",
-        service
+        "printf '[Unit]\\nDescription=TermiHub Agent\\nAfter=network.target\\n\\n\
+         [Service]\\nExecStart=%s --listen 127.0.0.1:7685\\nRestart=on-failure\\n\\n\
+         [Install]\\nWantedBy=multi-user.target\\n' '{}' \
+         | $_SUDO tee /etc/systemd/system/termihub-agent.service > /dev/null && \\\n",
+        remote_path
     ));
-    cmds.push_str("sudo systemctl daemon-reload\n");
-    cmds.push_str("sudo systemctl enable termihub-agent\n");
-    cmds.push_str("sudo systemctl start termihub-agent\n");
+    cmds.push_str("$_SUDO systemctl daemon-reload && \\\n");
+    cmds.push_str("$_SUDO systemctl enable termihub-agent && \\\n");
+    cmds.push_str("$_SUDO systemctl start termihub-agent");
     cmds
 }
 
@@ -393,11 +399,12 @@ mod tests {
     #[test]
     fn generate_setup_commands_basic() {
         let cmds = generate_setup_commands("/usr/local/bin/termihub-agent", false);
-        assert!(cmds.contains("sudo mv /tmp/termihub-agent-upload /usr/local/bin/termihub-agent"));
-        assert!(cmds.contains("sudo chmod +x /usr/local/bin/termihub-agent"));
+        assert!(cmds.contains("$_SUDO mv /tmp/termihub-agent-upload /usr/local/bin/termihub-agent"));
+        assert!(cmds.contains("$_SUDO chmod +x /usr/local/bin/termihub-agent"));
         assert!(cmds.contains("/usr/local/bin/termihub-agent --version"));
         assert!(cmds.contains("=== TermiHub Agent Setup ==="));
         assert!(cmds.contains("=== Setup Complete ==="));
+        assert!(cmds.contains("=== Setup Failed ==="));
         assert!(!cmds.contains("systemd"));
     }
 
@@ -405,25 +412,47 @@ mod tests {
     fn generate_setup_commands_with_service() {
         let cmds = generate_setup_commands("/usr/local/bin/termihub-agent", true);
         assert!(cmds.contains("systemd"));
-        assert!(cmds.contains("sudo tee /etc/systemd/system/termihub-agent.service"));
-        assert!(cmds.contains("sudo systemctl daemon-reload"));
-        assert!(cmds.contains("sudo systemctl enable termihub-agent"));
-        assert!(cmds.contains("sudo systemctl start termihub-agent"));
-        assert!(cmds.contains("ExecStart=/usr/local/bin/termihub-agent --listen 127.0.0.1:7685"));
+        assert!(cmds.contains("$_SUDO tee /etc/systemd/system/termihub-agent.service"));
+        assert!(cmds.contains("$_SUDO systemctl daemon-reload"));
+        assert!(cmds.contains("$_SUDO systemctl enable termihub-agent"));
+        assert!(cmds.contains("$_SUDO systemctl start termihub-agent"));
+        assert!(cmds.contains("ExecStart=%s --listen 127.0.0.1:7685"));
+        assert!(cmds.contains("'/usr/local/bin/termihub-agent'"));
     }
 
     #[test]
     fn generate_setup_commands_custom_path() {
         let cmds = generate_setup_commands("/opt/termihub/agent", false);
-        assert!(cmds.contains("sudo mv /tmp/termihub-agent-upload /opt/termihub/agent"));
-        assert!(cmds.contains("sudo chmod +x /opt/termihub/agent"));
+        assert!(cmds.contains("$_SUDO mv /tmp/termihub-agent-upload /opt/termihub/agent"));
+        assert!(cmds.contains("$_SUDO chmod +x /opt/termihub/agent"));
         assert!(cmds.contains("/opt/termihub/agent --version"));
     }
 
     #[test]
     fn generate_setup_commands_custom_path_with_service() {
         let cmds = generate_setup_commands("/opt/termihub/agent", true);
-        assert!(cmds.contains("ExecStart=/opt/termihub/agent --listen 127.0.0.1:7685"));
+        assert!(cmds.contains("'/opt/termihub/agent'"));
+    }
+
+    #[test]
+    fn generate_setup_commands_sudo_detection() {
+        let cmds = generate_setup_commands("/usr/local/bin/termihub-agent", false);
+        assert!(cmds.contains("_SUDO=''"));
+        assert!(cmds.contains("command -v sudo"));
+        assert!(cmds.contains("_SUDO='sudo'"));
+        // Must not contain hardcoded sudo commands
+        assert!(!cmds.contains("sudo mv"));
+        assert!(!cmds.contains("sudo chmod"));
+    }
+
+    #[test]
+    fn generate_setup_commands_error_chaining() {
+        let cmds = generate_setup_commands("/usr/local/bin/termihub-agent", false);
+        // All install commands should be chained with && for error propagation
+        assert!(cmds.contains("&& \\"));
+        // Setup Failed should appear as the || fallback
+        assert!(cmds.contains("|| printf"));
+        assert!(cmds.contains("Setup Failed"));
     }
 
     #[test]
