@@ -186,6 +186,11 @@ impl TerminalManager {
         Ok(session_id)
     }
 
+    /// Get a clone of the sessions Arc for use by agent setup.
+    pub fn sessions_arc(&self) -> Arc<Mutex<HashMap<String, TerminalSession>>> {
+        self.sessions.clone()
+    }
+
     /// Send input data to a terminal session.
     pub fn send_input(&self, session_id: &str, data: &[u8]) -> Result<(), TerminalError> {
         let sessions = self

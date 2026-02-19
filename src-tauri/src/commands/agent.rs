@@ -7,7 +7,9 @@ use crate::terminal::agent_manager::{
     AgentCapabilities, AgentConnectResult, AgentConnectionManager, AgentDefinitionInfo,
     AgentSessionInfo,
 };
+use crate::terminal::agent_setup::{AgentSetupConfig, AgentSetupResult};
 use crate::terminal::backend::RemoteAgentConfig;
+use crate::terminal::manager::TerminalManager;
 
 #[tauri::command]
 pub fn connect_agent(
@@ -80,4 +82,22 @@ pub fn delete_agent_definition(
     agent_manager
         .delete_definition(&agent_id, &definition_id)
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn setup_remote_agent(
+    agent_id: String,
+    config: RemoteAgentConfig,
+    setup_config: AgentSetupConfig,
+    app_handle: tauri::AppHandle,
+    manager: State<'_, TerminalManager>,
+) -> Result<AgentSetupResult, String> {
+    crate::terminal::agent_setup::setup_remote_agent(
+        &agent_id,
+        &config,
+        &setup_config,
+        &app_handle,
+        &manager,
+    )
+    .map_err(|e| e.to_string())
 }
