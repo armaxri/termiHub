@@ -4,6 +4,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use tracing::{debug, info};
+
 use crate::terminal::backend::{OutputSender, TelnetConfig, TerminalBackend};
 use crate::utils::errors::TerminalError;
 
@@ -23,6 +25,7 @@ pub struct TelnetConnection {
 impl TelnetConnection {
     /// Connect to a telnet server.
     pub fn new(config: &TelnetConfig, output_tx: OutputSender) -> Result<Self, TerminalError> {
+        info!(host = %config.host, port = config.port, "Connecting telnet session");
         let addr = format!("{}:{}", config.host, config.port);
         let stream = TcpStream::connect_timeout(
             &addr
@@ -132,6 +135,7 @@ impl TerminalBackend for TelnetConnection {
     }
 
     fn close(&self) -> Result<(), TerminalError> {
+        debug!("Closing telnet session");
         self.alive.store(false, Ordering::SeqCst);
         if let Ok(stream) = self.stream.lock() {
             let _ = stream.shutdown(std::net::Shutdown::Both);

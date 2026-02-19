@@ -6,6 +6,7 @@ import {
   Settings as SettingsIcon,
   FileEdit,
   SquarePen,
+  ScrollText,
   Eraser,
   FileDown,
   ClipboardCopy,
@@ -63,11 +64,13 @@ export function Tab({
   const NonTerminalIcon =
     tab.contentType === "settings"
       ? SettingsIcon
-      : tab.contentType === "editor"
-        ? FileEdit
-        : tab.contentType === "connection-editor"
-          ? SquarePen
-          : null;
+      : tab.contentType === "log-viewer"
+        ? ScrollText
+        : tab.contentType === "editor"
+          ? FileEdit
+          : tab.contentType === "connection-editor"
+            ? SquarePen
+            : null;
   const isTerminalTab = tab.contentType === "terminal";
 
   const tabElement = (

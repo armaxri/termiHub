@@ -4,6 +4,7 @@ import {
   onTerminalOutput,
   onTerminalExit,
   onVscodeEditComplete,
+  onLogEntry,
   TerminalOutputDispatcher,
 } from "./events";
 
@@ -142,6 +143,46 @@ describe("events service", () => {
       });
 
       expect(callback).toHaveBeenCalledWith("/remote/file.txt", false, "Upload failed");
+    });
+  });
+
+  describe("onLogEntry", () => {
+    it("registers listener on log-entry event", async () => {
+      const unlisten = vi.fn();
+      mockedListen.mockResolvedValue(unlisten);
+
+      const callback = vi.fn();
+      const result = await onLogEntry(callback);
+
+      expect(mockedListen).toHaveBeenCalledWith("log-entry", expect.any(Function));
+      expect(result).toBe(unlisten);
+    });
+
+    it("transforms payload and calls callback with LogEntry", async () => {
+      let capturedHandler: ((event: unknown) => void) | undefined;
+      mockedListen.mockImplementation((_event, handler) => {
+        capturedHandler = handler as (event: unknown) => void;
+        return Promise.resolve(vi.fn());
+      });
+
+      const callback = vi.fn();
+      await onLogEntry(callback);
+
+      capturedHandler!({
+        payload: {
+          timestamp: "12:34:56.789",
+          level: "INFO",
+          target: "termihub::commands",
+          message: "test message",
+        },
+      });
+
+      expect(callback).toHaveBeenCalledWith({
+        timestamp: "12:34:56.789",
+        level: "INFO",
+        target: "termihub::commands",
+        message: "test message",
+      });
     });
   });
 
