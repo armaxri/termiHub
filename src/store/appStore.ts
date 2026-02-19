@@ -1516,13 +1516,11 @@ export const useAppStore = create<AppState>((set, get) => {
     refreshMonitoring: async () => {
       const { monitoringSessionId } = useAppStore.getState();
       if (!monitoringSessionId) return;
-      set({ monitoringLoading: true, monitoringError: null });
       try {
         const stats = await monitoringFetchStats(monitoringSessionId);
-        set({ monitoringStats: stats, monitoringLoading: false });
+        set({ monitoringStats: stats, monitoringError: null });
       } catch (err) {
         set({
-          monitoringLoading: false,
           monitoringError: err instanceof Error ? err.message : String(err),
         });
       }

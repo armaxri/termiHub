@@ -26,6 +26,6 @@ pub fn monitoring_fetch_stats(
     manager: State<'_, MonitoringManager>,
 ) -> Result<SystemStats, TerminalError> {
     let session = manager.get_session(&session_id)?;
-    let session = session.lock().unwrap();
+    let mut session = session.lock().unwrap();
     session.fetch_stats()
 }
