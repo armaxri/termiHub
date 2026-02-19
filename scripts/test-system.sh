@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Run system-level E2E tests with Docker infrastructure (SSH, Telnet)
-# and virtual serial ports on macOS.
+# and virtual serial ports.
+#
+# On macOS: runs the full E2E suite inside a Docker container (ADR-5),
+#           because tauri-driver does not support macOS/WKWebView.
+# On Linux: runs natively with Docker only for test targets (SSH/Telnet).
 #
 # This script:
 #   1. Checks prerequisites (Docker, socat, tauri-driver, built app)
@@ -49,6 +53,71 @@ for arg in "$@"; do
             ;;
     esac
 done
+
+# ─── macOS: run E2E tests inside Docker (ADR-5) ──────────────────────────────
+# tauri-driver does not support macOS (no WKWebView driver). On Darwin, we
+# delegate the entire build+test flow to a Linux Docker container with Xvfb,
+# WebKitGTK, and tauri-driver. See docs/architecture.md ADR-5.
+
+run_in_docker() {
+    echo "=== macOS detected — running E2E tests inside Docker (ADR-5) ==="
+    echo ""
+
+    # Only Docker is needed on the host for the Docker-based path
+    if ! command -v docker &>/dev/null; then
+        echo "  MISSING: docker — install Docker Desktop: https://www.docker.com/products/docker-desktop/"
+        exit 1
+    fi
+    if ! docker info &>/dev/null 2>&1; then
+        echo "  ERROR: Docker daemon is not running. Please start Docker Desktop."
+        exit 1
+    fi
+
+    export E2E_SKIP_BUILD="$SKIP_BUILD"
+    export E2E_SKIP_SERIAL="$SKIP_SERIAL"
+    export E2E_SUITE="infra"
+
+    COMPOSE_FILE="examples/docker/docker-compose.e2e.yml"
+
+    macos_cleanup() {
+        if [ "$KEEP_INFRA" -eq 0 ]; then
+            echo ""
+            echo "=== Stopping Docker containers ==="
+            docker compose -f "$COMPOSE_FILE" down 2>/dev/null || true
+        else
+            echo ""
+            echo "Keeping Docker containers running (--keep-infra)."
+            echo "Stop manually with: docker compose -f $COMPOSE_FILE down"
+        fi
+    }
+    trap macos_cleanup EXIT
+
+    echo "Building and starting E2E environment..."
+    echo "  (first run will take 10-15 minutes to build the Docker image)"
+    echo ""
+
+    TEST_EXIT=0
+    if docker compose -f "$COMPOSE_FILE" up \
+        --build \
+        --abort-on-container-exit \
+        --exit-code-from e2e-runner; then
+        echo ""
+        echo "SYSTEM TESTS PASSED."
+    else
+        TEST_EXIT=$?
+        echo ""
+        echo "SYSTEM TESTS FAILED."
+    fi
+
+    exit "$TEST_EXIT"
+}
+
+if [ "$(uname)" = "Darwin" ]; then
+    run_in_docker
+fi
+
+# ─── Linux: native execution ─────────────────────────────────────────────────
+# Everything below runs only on Linux, where tauri-driver works natively.
 
 # ─── Cleanup trap ───────────────────────────────────────────────────────────
 
@@ -140,12 +209,8 @@ fi
 
 # ─── Build the app ──────────────────────────────────────────────────────────
 
-APP_BINARY=""
-if [ "$(uname)" = "Darwin" ]; then
-    APP_BINARY="./src-tauri/target/release/bundle/macos/TermiHub.app/Contents/MacOS/TermiHub"
-else
-    APP_BINARY="./src-tauri/target/release/termihub"
-fi
+# macOS exits early via run_in_docker() above, so this is always Linux.
+APP_BINARY="./src-tauri/target/release/termihub"
 
 if [ "$SKIP_BUILD" -eq 0 ]; then
     echo ""
