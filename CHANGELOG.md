@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Connection monitor hides when switching to non-SSH tabs (Fixes #162)
 - SSH connection monitor now auto-connects when switching to an SSH terminal tab (Fixes #159)
 - Fix high CPU usage caused by monitoring auto-connect infinite retry loop (Fixes #161)
 - Windows: SSH key authentication failing with "invalid filename syntax" (os error 123) due to mixed path separators from tilde expansion — now uses the centralized `expand_tilde` which handles platform-native separators

@@ -109,6 +109,14 @@ Each section groups related tests by feature area. Individual test items referen
 - [ ] Switch between two SSH tabs connected to different hosts — monitoring switches hosts
 - [ ] Manual "Monitor" dropdown still works as a fallback
 
+### Monitoring hides on non-SSH tab (PR #165)
+
+- [ ] Open an SSH terminal tab — monitoring stats appear in the status bar
+- [ ] Switch to a local shell tab — monitoring section disappears from status bar
+- [ ] Switch back to the SSH tab — monitoring stats reappear immediately (no reconnect delay)
+- [ ] Open a settings tab — monitoring hides
+- [ ] Close all tabs — monitoring hides
+
 ### SSH monitoring in status bar (PR #114, #115)
 
 - [x] Status bar left section shows "Monitor" button with Activity icon

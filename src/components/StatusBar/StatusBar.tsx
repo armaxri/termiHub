@@ -151,6 +151,7 @@ function MonitoringStatus() {
   const connections = useAppStore((s) => s.connections);
   const externalSources = useAppStore((s) => s.externalSources);
   const activeTabId = useAppStore((s) => getActiveTab(s)?.id ?? null);
+  const activeTabConnectionType = useAppStore((s) => getActiveTab(s)?.connectionType ?? null);
 
   /** Tracks which host key already failed auto-connect to prevent retry loops. */
   const autoConnectFailedRef = useRef<string | null>(null);
@@ -255,6 +256,9 @@ function MonitoringStatus() {
     },
     [connectMonitoring]
   );
+
+  // Hide monitoring UI when active tab is not SSH
+  if (activeTabConnectionType !== "ssh") return null;
 
   // Not connected: show connect button (or loading/error state)
   if (!monitoringSessionId) {
