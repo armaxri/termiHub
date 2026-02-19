@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- SSH terminals with zsh Agnoster theme no longer show a jarring black rectangle behind the user@host prompt segment; ANSI black now matches the terminal background (#197)
 - Rapidly creating two WSL/SSH connections after startup no longer flashes initial shell output (welcome banner, setup commands) before the screen clear (#175)
 - Product name casing: changed `productName` in `tauri.conf.json` from `termihub` to `termiHub` and fixed macOS binary paths in `wdio.conf.js`, `test-system.sh`, and `building.md`
 - File browser now navigates to home directory when switching to a tab without CWD tracking (e.g., PowerShell), instead of staying on the previous tab's directory (#167)
