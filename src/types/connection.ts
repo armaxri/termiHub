@@ -39,6 +39,8 @@ export interface AgentCapabilities {
   maxSessions: number;
   availableShells?: string[];
   availableSerialPorts?: string[];
+  dockerAvailable?: boolean;
+  availableDockerImages?: string[];
 }
 
 /** A remote agent definition stored in the sidebar as a folder-like entry. */

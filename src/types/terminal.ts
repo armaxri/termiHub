@@ -2,7 +2,14 @@ export type SessionId = string;
 
 export type ShellType = "zsh" | "bash" | "cmd" | "powershell" | "gitbash" | `wsl:${string}`;
 
-export type ConnectionType = "local" | "ssh" | "telnet" | "serial" | "remote" | "remote-session";
+export type ConnectionType =
+  | "local"
+  | "ssh"
+  | "telnet"
+  | "serial"
+  | "remote"
+  | "remote-session"
+  | "docker";
 
 export type TabContentType = "terminal" | "settings" | "editor" | "connection-editor";
 
@@ -62,10 +69,33 @@ export interface RemoteAgentConfig {
   keyPath?: string;
 }
 
+/** Key-value pair for Docker environment variables. */
+export interface EnvVar {
+  key: string;
+  value: string;
+}
+
+/** Host-to-container volume mount. */
+export interface VolumeMount {
+  hostPath: string;
+  containerPath: string;
+  readOnly?: boolean;
+}
+
+/** Configuration for a Docker container shell. */
+export interface DockerConfig {
+  image: string;
+  shell?: string;
+  envVars: EnvVar[];
+  volumes: VolumeMount[];
+  workingDirectory?: string;
+  removeOnExit: boolean;
+}
+
 /** Session configuration for a session running on a remote agent. */
 export interface RemoteSessionConfig {
   agentId: string;
-  sessionType: "shell" | "serial";
+  sessionType: "shell" | "serial" | "docker";
   shell?: string;
   serialPort?: string;
   baudRate?: number;
@@ -76,6 +106,16 @@ export interface RemoteSessionConfig {
   title?: string;
   /** Whether this session survives reconnection (re-attach vs recreate). */
   persistent: boolean;
+  /** Docker image name (for docker session type). */
+  dockerImage?: string;
+  /** Docker environment variables (for docker session type). */
+  dockerEnvVars?: EnvVar[];
+  /** Docker volume mounts (for docker session type). */
+  dockerVolumes?: VolumeMount[];
+  /** Docker working directory (for docker session type). */
+  dockerWorkingDirectory?: string;
+  /** Remove Docker container on exit (for docker session type). */
+  dockerRemoveOnExit?: boolean;
 }
 
 export type ConnectionConfig =
@@ -83,7 +123,8 @@ export type ConnectionConfig =
   | { type: "ssh"; config: SshConfig }
   | { type: "telnet"; config: TelnetConfig }
   | { type: "serial"; config: SerialConfig }
-  | { type: "remote-session"; config: RemoteSessionConfig };
+  | { type: "remote-session"; config: RemoteSessionConfig }
+  | { type: "docker"; config: DockerConfig };
 
 export interface TerminalTab {
   id: string;

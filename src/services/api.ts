@@ -65,6 +65,16 @@ export async function checkSshAgentStatus(): Promise<string> {
   return await invoke<string>("check_ssh_agent_status");
 }
 
+/** Check if Docker is available on the local system. */
+export async function checkDockerAvailable(): Promise<boolean> {
+  return await invoke<boolean>("check_docker_available");
+}
+
+/** List locally available Docker images. */
+export async function listDockerImages(): Promise<string[]> {
+  return await invoke<string[]>("list_docker_images");
+}
+
 // --- Connection persistence commands ---
 
 /** Saved remote agent (persisted form, no ephemeral state). */
