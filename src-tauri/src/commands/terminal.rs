@@ -84,3 +84,15 @@ pub fn check_x11_available() -> bool {
 pub fn check_ssh_agent_status() -> String {
     crate::utils::ssh_auth::check_ssh_agent_status()
 }
+
+/// Check if Docker is available on the local system.
+#[tauri::command]
+pub fn check_docker_available() -> bool {
+    crate::utils::docker_detect::is_docker_available()
+}
+
+/// List locally available Docker images.
+#[tauri::command]
+pub fn list_docker_images() -> Vec<String> {
+    crate::utils::docker_detect::list_docker_images()
+}

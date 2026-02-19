@@ -48,6 +48,50 @@ pub struct TerminalExitEvent {
     pub exit_code: Option<i32>,
 }
 
+/// Key-value pair for Docker environment variables.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvVar {
+    pub key: String,
+    pub value: String,
+}
+
+/// Host-to-container volume mount.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VolumeMount {
+    pub host_path: String,
+    pub container_path: String,
+    #[serde(default)]
+    pub read_only: bool,
+}
+
+/// Configuration for a Docker container shell.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DockerConfig {
+    /// Docker image name (e.g., "ubuntu:22.04").
+    pub image: String,
+    /// Shell command to run inside the container (e.g., "/bin/bash").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shell: Option<String>,
+    /// Environment variables to pass to the container.
+    #[serde(default)]
+    pub env_vars: Vec<EnvVar>,
+    /// Volume mounts (host:container mappings).
+    #[serde(default)]
+    pub volumes: Vec<VolumeMount>,
+    /// Working directory inside the container.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub working_directory: Option<String>,
+    /// Remove container on exit (--rm flag). Default: true.
+    #[serde(default = "default_remove_on_exit")]
+    pub remove_on_exit: bool,
+}
+
+fn default_remove_on_exit() -> bool {
+    true
+}
+
 /// Connection configuration matching the frontend TypeScript types.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "config")]
@@ -62,6 +106,8 @@ pub enum ConnectionConfig {
     Serial(SerialConfig),
     #[serde(rename = "remote-session")]
     RemoteSession(RemoteSessionConfig),
+    #[serde(rename = "docker")]
+    Docker(DockerConfig),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -145,6 +191,21 @@ pub struct RemoteSessionConfig {
     /// Whether this session survives reconnection (re-attach vs recreate).
     #[serde(default)]
     pub persistent: bool,
+    /// Docker image name (for docker session type).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub docker_image: Option<String>,
+    /// Docker environment variables (for docker session type).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub docker_env_vars: Option<Vec<EnvVar>>,
+    /// Docker volume mounts (for docker session type).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub docker_volumes: Option<Vec<VolumeMount>>,
+    /// Docker working directory (for docker session type).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub docker_working_directory: Option<String>,
+    /// Remove Docker container on exit (for docker session type).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub docker_remove_on_exit: Option<bool>,
 }
 
 /// Event emitted when a remote connection's state changes.
@@ -163,6 +224,7 @@ impl ConnectionConfig {
             Self::Telnet(cfg) => Self::Telnet(cfg.expand()),
             Self::Serial(cfg) => Self::Serial(cfg.expand()),
             Self::RemoteSession(cfg) => Self::RemoteSession(cfg.expand()),
+            Self::Docker(cfg) => Self::Docker(cfg.expand()),
         }
     }
 }
@@ -205,6 +267,25 @@ impl SerialConfig {
     }
 }
 
+impl DockerConfig {
+    pub fn expand(mut self) -> Self {
+        self.image = expand_env_placeholders(&self.image);
+        self.shell = self.shell.map(|s| expand_env_placeholders(&s));
+        self.working_directory = self
+            .working_directory
+            .map(|s| expand_tilde(&expand_env_placeholders(&s)));
+        for env in &mut self.env_vars {
+            env.key = expand_env_placeholders(&env.key);
+            env.value = expand_env_placeholders(&env.value);
+        }
+        for vol in &mut self.volumes {
+            vol.host_path = expand_tilde(&expand_env_placeholders(&vol.host_path));
+            vol.container_path = expand_env_placeholders(&vol.container_path);
+        }
+        self
+    }
+}
+
 impl RemoteAgentConfig {
     #[allow(dead_code)]
     pub fn expand(mut self) -> Self {
@@ -237,6 +318,10 @@ impl RemoteSessionConfig {
     pub fn expand(mut self) -> Self {
         self.shell = self.shell.map(|s| expand_env_placeholders(&s));
         self.serial_port = self.serial_port.map(|s| expand_env_placeholders(&s));
+        self.docker_image = self.docker_image.map(|s| expand_env_placeholders(&s));
+        self.docker_working_directory = self
+            .docker_working_directory
+            .map(|s| expand_tilde(&expand_env_placeholders(&s)));
         self
     }
 }
@@ -543,6 +628,11 @@ mod tests {
             flow_control: None,
             title: Some("Build session".to_string()),
             persistent: true,
+            docker_image: None,
+            docker_env_vars: None,
+            docker_volumes: None,
+            docker_working_directory: None,
+            docker_remove_on_exit: None,
         });
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: ConnectionConfig = serde_json::from_str(&json).unwrap();
@@ -571,6 +661,11 @@ mod tests {
             flow_control: Some("none".to_string()),
             title: None,
             persistent: false,
+            docker_image: None,
+            docker_env_vars: None,
+            docker_volumes: None,
+            docker_working_directory: None,
+            docker_remove_on_exit: None,
         });
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: ConnectionConfig = serde_json::from_str(&json).unwrap();
@@ -598,6 +693,11 @@ mod tests {
             flow_control: None,
             title: None,
             persistent: true,
+            docker_image: None,
+            docker_env_vars: None,
+            docker_volumes: None,
+            docker_working_directory: None,
+            docker_remove_on_exit: None,
         });
         let json = serde_json::to_string(&config).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -642,10 +742,149 @@ mod tests {
             flow_control: None,
             title: None,
             persistent: false,
+            docker_image: None,
+            docker_env_vars: None,
+            docker_volumes: None,
+            docker_working_directory: None,
+            docker_remove_on_exit: None,
         };
         let expanded = config.expand();
         assert_eq!(expanded.shell, Some("/usr/bin/fish".to_string()));
 
         std::env::remove_var("TERMIHUB_TEST_SESSION_SHELL");
+    }
+
+    #[test]
+    fn connection_config_docker_serde_round_trip() {
+        let config = ConnectionConfig::Docker(DockerConfig {
+            image: "ubuntu:22.04".to_string(),
+            shell: Some("/bin/bash".to_string()),
+            env_vars: vec![EnvVar {
+                key: "TERM".to_string(),
+                value: "xterm-256color".to_string(),
+            }],
+            volumes: vec![VolumeMount {
+                host_path: "/home/user/project".to_string(),
+                container_path: "/workspace".to_string(),
+                read_only: false,
+            }],
+            working_directory: Some("/workspace".to_string()),
+            remove_on_exit: true,
+        });
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: ConnectionConfig = serde_json::from_str(&json).unwrap();
+        if let ConnectionConfig::Docker(docker) = deserialized {
+            assert_eq!(docker.image, "ubuntu:22.04");
+            assert_eq!(docker.shell, Some("/bin/bash".to_string()));
+            assert_eq!(docker.env_vars.len(), 1);
+            assert_eq!(docker.env_vars[0].key, "TERM");
+            assert_eq!(docker.volumes.len(), 1);
+            assert_eq!(docker.volumes[0].host_path, "/home/user/project");
+            assert_eq!(docker.volumes[0].container_path, "/workspace");
+            assert!(!docker.volumes[0].read_only);
+            assert_eq!(docker.working_directory, Some("/workspace".to_string()));
+            assert!(docker.remove_on_exit);
+        } else {
+            panic!("Expected Docker config");
+        }
+    }
+
+    #[test]
+    fn docker_config_default_remove_on_exit() {
+        let json = r#"{"image": "alpine"}"#;
+        let config: DockerConfig = serde_json::from_str(json).unwrap();
+        assert!(config.remove_on_exit);
+        assert!(config.env_vars.is_empty());
+        assert!(config.volumes.is_empty());
+        assert!(config.shell.is_none());
+        assert!(config.working_directory.is_none());
+    }
+
+    #[test]
+    fn docker_config_expand_replaces_placeholders() {
+        std::env::set_var("TERMIHUB_TEST_DOCKER_IMAGE", "myapp");
+        std::env::set_var("TERMIHUB_TEST_DOCKER_VAL", "production");
+
+        let config = DockerConfig {
+            image: "${env:TERMIHUB_TEST_DOCKER_IMAGE}:latest".to_string(),
+            shell: Some("${env:TERMIHUB_TEST_DOCKER_IMAGE}".to_string()),
+            env_vars: vec![EnvVar {
+                key: "ENV".to_string(),
+                value: "${env:TERMIHUB_TEST_DOCKER_VAL}".to_string(),
+            }],
+            volumes: vec![],
+            working_directory: Some("${env:TERMIHUB_TEST_DOCKER_VAL}".to_string()),
+            remove_on_exit: true,
+        };
+        let expanded = config.expand();
+        assert_eq!(expanded.image, "myapp:latest");
+        assert_eq!(expanded.shell, Some("myapp".to_string()));
+        assert_eq!(expanded.env_vars[0].value, "production");
+        assert_eq!(expanded.working_directory, Some("production".to_string()));
+
+        std::env::remove_var("TERMIHUB_TEST_DOCKER_IMAGE");
+        std::env::remove_var("TERMIHUB_TEST_DOCKER_VAL");
+    }
+
+    #[test]
+    fn docker_config_expand_tilde_in_volumes() {
+        let config = DockerConfig {
+            image: "ubuntu".to_string(),
+            shell: None,
+            env_vars: vec![],
+            volumes: vec![VolumeMount {
+                host_path: "~/projects".to_string(),
+                container_path: "/workspace".to_string(),
+                read_only: true,
+            }],
+            working_directory: Some("~/work".to_string()),
+            remove_on_exit: false,
+        };
+        let expanded = config.expand();
+        assert!(
+            !expanded.volumes[0].host_path.starts_with('~'),
+            "tilde should be expanded in volume host path, got: {}",
+            expanded.volumes[0].host_path
+        );
+        assert!(
+            !expanded
+                .working_directory
+                .as_ref()
+                .unwrap()
+                .starts_with('~'),
+            "tilde should be expanded in working directory"
+        );
+    }
+
+    #[test]
+    fn env_var_serde_round_trip() {
+        let env = EnvVar {
+            key: "FOO".to_string(),
+            value: "bar".to_string(),
+        };
+        let json = serde_json::to_string(&env).unwrap();
+        let deserialized: EnvVar = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.key, "FOO");
+        assert_eq!(deserialized.value, "bar");
+    }
+
+    #[test]
+    fn volume_mount_serde_round_trip() {
+        let vol = VolumeMount {
+            host_path: "/host/path".to_string(),
+            container_path: "/container/path".to_string(),
+            read_only: true,
+        };
+        let json = serde_json::to_string(&vol).unwrap();
+        let deserialized: VolumeMount = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.host_path, "/host/path");
+        assert_eq!(deserialized.container_path, "/container/path");
+        assert!(deserialized.read_only);
+
+        // Verify camelCase serialization
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(v["hostPath"].is_string());
+        assert!(v["containerPath"].is_string());
+        assert!(v["readOnly"].is_boolean());
     }
 }

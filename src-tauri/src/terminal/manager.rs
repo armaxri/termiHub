@@ -10,6 +10,7 @@ use crate::terminal::backend::{
     ConnectionConfig, SessionInfo, TerminalExitEvent, TerminalOutputEvent, TerminalSession,
     OUTPUT_CHANNEL_CAPACITY,
 };
+use crate::terminal::docker_shell::DockerShell;
 use crate::terminal::local_shell::LocalShell;
 use crate::terminal::remote_session::RemoteSessionBackend;
 use crate::terminal::serial::SerialConnection;
@@ -130,6 +131,14 @@ impl TerminalManager {
                     title,
                 )
             }
+            ConnectionConfig::Docker(cfg) => {
+                let shell = DockerShell::new(cfg, output_tx)?;
+                let title = format!("Docker: {}", cfg.image);
+                (
+                    Box::new(shell) as Box<dyn crate::terminal::backend::TerminalBackend>,
+                    title,
+                )
+            }
         };
 
         let connection_type = match &config {
@@ -138,6 +147,7 @@ impl TerminalManager {
             ConnectionConfig::Ssh(_) => "ssh",
             ConnectionConfig::Telnet(_) => "telnet",
             ConnectionConfig::RemoteSession(_) => "remote-session",
+            ConnectionConfig::Docker(_) => "docker",
         };
 
         let info = SessionInfo {

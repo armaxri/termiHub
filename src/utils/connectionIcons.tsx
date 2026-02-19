@@ -4,6 +4,7 @@ import {
   Cable,
   Globe,
   Server,
+  Container,
   BicepsFlexed,
   GitBranch,
   Icon as LucideIconRenderer,
@@ -20,6 +21,7 @@ const TYPE_ICONS: Record<string, LucideIcon> = {
   ssh: Wifi,
   serial: Cable,
   telnet: Globe,
+  docker: Container,
   remote: Server,
   "remote-session": Server,
 };

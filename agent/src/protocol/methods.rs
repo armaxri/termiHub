@@ -21,6 +21,8 @@ pub struct Capabilities {
     pub max_sessions: u32,
     pub available_shells: Vec<String>,
     pub available_serial_ports: Vec<String>,
+    pub docker_available: bool,
+    pub available_docker_images: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -219,6 +221,8 @@ mod tests {
                 max_sessions: 20,
                 available_shells: vec!["/bin/bash".to_string(), "/bin/zsh".to_string()],
                 available_serial_ports: vec!["/dev/ttyUSB0".to_string()],
+                docker_available: false,
+                available_docker_images: vec![],
             },
         };
         let v = serde_json::to_value(&result).unwrap();
@@ -230,6 +234,11 @@ mod tests {
             v["capabilities"]["available_serial_ports"][0],
             "/dev/ttyUSB0"
         );
+        assert_eq!(v["capabilities"]["docker_available"], false);
+        assert!(v["capabilities"]["available_docker_images"]
+            .as_array()
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

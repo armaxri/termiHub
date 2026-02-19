@@ -48,6 +48,8 @@ import {
   vscodeAvailable,
   vscodeOpenLocal,
   vscodeOpenRemote,
+  checkDockerAvailable,
+  listDockerImages,
 } from "./api";
 
 describe("api service", () => {
@@ -492,6 +494,43 @@ describe("api service", () => {
         sessionId: "sftp-1",
         remotePath: "/remote/file.txt",
       });
+    });
+  });
+
+  describe("docker commands", () => {
+    it("checkDockerAvailable invokes correct command", async () => {
+      mockedInvoke.mockResolvedValue(true);
+
+      const result = await checkDockerAvailable();
+
+      expect(mockedInvoke).toHaveBeenCalledWith("check_docker_available");
+      expect(result).toBe(true);
+    });
+
+    it("checkDockerAvailable returns false when unavailable", async () => {
+      mockedInvoke.mockResolvedValue(false);
+
+      const result = await checkDockerAvailable();
+
+      expect(result).toBe(false);
+    });
+
+    it("listDockerImages invokes correct command", async () => {
+      const images = ["ubuntu:22.04", "node:18-alpine", "nginx:latest"];
+      mockedInvoke.mockResolvedValue(images);
+
+      const result = await listDockerImages();
+
+      expect(mockedInvoke).toHaveBeenCalledWith("list_docker_images");
+      expect(result).toEqual(images);
+    });
+
+    it("listDockerImages returns empty array when none available", async () => {
+      mockedInvoke.mockResolvedValue([]);
+
+      const result = await listDockerImages();
+
+      expect(result).toEqual([]);
     });
   });
 });
