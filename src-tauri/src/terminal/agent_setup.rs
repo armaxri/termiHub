@@ -403,33 +403,25 @@ echo "\360\237\223\201 Install path: $INSTALL_PATH"
 SUDO=""
 TARGET_DIR=$(dirname "$INSTALL_PATH")
 printf "\360\237\224\221 Checking permissions for $TARGET_DIR... "
-if [ ! -d "$TARGET_DIR" ]; then
-    PARENT_DIR=$(dirname "$TARGET_DIR")
-    if [ ! -w "$PARENT_DIR" ]; then
-        if [ "$(id -u)" -eq 0 ]; then
-            echo "running as root \342\234\223"
-        elif command -v sudo >/dev/null 2>&1; then
-            SUDO="sudo"
-            echo "using sudo \342\234\223"
-        else
-            echo "no write access"
-            fail "Cannot create $TARGET_DIR (permission denied, no sudo available).\n  \360\237\222\241 Try: ~/.local/bin/termihub-agent"
-        fi
-    else
+if [ -d "$TARGET_DIR" ] && [ -w "$TARGET_DIR" ]; then
+    echo "writable \342\234\223"
+else
+    # Walk up to the first existing ancestor to check writability
+    CHECK_DIR="$TARGET_DIR"
+    while [ -n "$CHECK_DIR" ] && [ "$CHECK_DIR" != "/" ] && [ ! -d "$CHECK_DIR" ]; do
+        CHECK_DIR=$(dirname "$CHECK_DIR")
+    done
+    if [ -w "$CHECK_DIR" ]; then
         echo "writable \342\234\223"
-    fi
-elif [ ! -w "$TARGET_DIR" ]; then
-    if [ "$(id -u)" -eq 0 ]; then
+    elif [ "$(id -u)" -eq 0 ]; then
         echo "running as root \342\234\223"
     elif command -v sudo >/dev/null 2>&1; then
         SUDO="sudo"
         echo "using sudo \342\234\223"
     else
         echo "no write access"
-        fail "Cannot write to $TARGET_DIR (permission denied, no sudo available).\n  \360\237\222\241 Try: ~/.local/bin/termihub-agent"
+        fail "Cannot create $TARGET_DIR (permission denied, no sudo available).\n  \360\237\222\241 Ask the server admin to create the directory, or choose a writable path."
     fi
-else
-    echo "writable \342\234\223"
 fi
 
 # --- Step 4: Create directory ---
@@ -563,6 +555,19 @@ mod tests {
         assert!(script.contains("INSTALL_PATH=\"~/.local/bin/termihub-agent\""));
         // Script expands ~ at runtime
         assert!(script.contains("$HOME/${INSTALL_PATH#\\~/}"));
+    }
+
+    #[test]
+    fn generate_setup_script_walks_up_to_existing_ancestor() {
+        let script = generate_setup_script("~/.local/bin/termihub-agent", false);
+        // The permission check must walk up the directory tree to find the first
+        // existing ancestor, not just check the immediate parent. This handles
+        // cases like ~/.local/bin where ~/.local also doesn't exist yet but ~
+        // is writable (e.g., minimal Docker containers).
+        assert!(script.contains("CHECK_DIR=$(dirname \"$CHECK_DIR\")"));
+        assert!(script.contains("while"));
+        // Must NOT have the old single-parent check pattern
+        assert!(!script.contains("PARENT_DIR=$(dirname \"$TARGET_DIR\")"));
     }
 
     #[test]
