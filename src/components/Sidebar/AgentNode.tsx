@@ -26,6 +26,9 @@ import { RemoteAgentDefinition } from "@/types/connection";
 import { AgentSessionInfo, AgentDefinitionInfo } from "@/services/api";
 import { AgentSetupDialog } from "./AgentSetupDialog";
 
+const EMPTY_SESSIONS: AgentSessionInfo[] = [];
+const EMPTY_DEFINITIONS: AgentDefinitionInfo[] = [];
+
 interface AgentNodeProps {
   agent: RemoteAgentDefinition;
 }
@@ -46,8 +49,8 @@ export function AgentNode({ agent }: AgentNodeProps) {
   const openConnectionEditorTab = useAppStore((s) => s.openConnectionEditorTab);
   const requestPassword = useAppStore((s) => s.requestPassword);
   const addTab = useAppStore((s) => s.addTab);
-  const agentSessions = useAppStore((s) => s.agentSessions[agent.id] ?? []);
-  const agentDefinitions = useAppStore((s) => s.agentDefinitions[agent.id] ?? []);
+  const agentSessions = useAppStore((s) => s.agentSessions[agent.id]) ?? EMPTY_SESSIONS;
+  const agentDefinitions = useAppStore((s) => s.agentDefinitions[agent.id]) ?? EMPTY_DEFINITIONS;
   const refreshAgentSessions = useAppStore((s) => s.refreshAgentSessions);
 
   const [connecting, setConnecting] = useState(false);
