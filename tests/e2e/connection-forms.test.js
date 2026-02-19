@@ -62,6 +62,22 @@ describe('Connection Editor Forms', () => {
       expect(options.length).toBeGreaterThanOrEqual(1);
     });
 
+    it('should label the system default shell with "(default)" (PR #140)', async () => {
+      await openNewConnectionEditor();
+      const shellSelect = await browser.$(SHELL_SELECT);
+      const options = await shellSelect.$$('option');
+
+      let hasDefault = false;
+      for (const opt of options) {
+        const text = await opt.getText();
+        if (text.includes('(default)')) {
+          hasDefault = true;
+          break;
+        }
+      }
+      expect(hasDefault).toBe(true);
+    });
+
     it('should have type selector set to local by default', async () => {
       await openNewConnectionEditor();
       const typeSelect = await browser.$(CONN_EDITOR_TYPE);
@@ -80,6 +96,21 @@ describe('Connection Editor Forms', () => {
       expect(await browser.$(SSH_USERNAME).isDisplayed()).toBe(true);
       expect(await browser.$(SSH_AUTH_METHOD).isDisplayed()).toBe(true);
       expect(await browser.$(SSH_X11_CHECKBOX).isDisplayed()).toBe(true);
+    });
+
+    it('should not show a password field for SSH password auth (PR #38)', async () => {
+      await openNewConnectionEditor();
+      await setConnectionType('ssh');
+
+      // Select password auth method
+      const authSelect = await browser.$(SSH_AUTH_METHOD);
+      await authSelect.selectByAttribute('value', 'password');
+      await browser.pause(200);
+
+      // There should be NO password input field in the editor
+      const passwordField = await browser.$('[data-testid="ssh-settings-password-input"]');
+      const visible = await passwordField.isExisting() && await passwordField.isDisplayed();
+      expect(visible).toBe(false);
     });
 
     it('should default SSH port to 22', async () => {
