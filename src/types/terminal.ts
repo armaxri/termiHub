@@ -11,7 +11,12 @@ export type ConnectionType =
   | "remote-session"
   | "docker";
 
-export type TabContentType = "terminal" | "settings" | "editor" | "connection-editor" | "log-viewer";
+export type TabContentType =
+  | "terminal"
+  | "settings"
+  | "editor"
+  | "connection-editor"
+  | "log-viewer";
 
 export interface EditorTabMeta {
   filePath: string;

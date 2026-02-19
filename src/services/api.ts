@@ -3,7 +3,13 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import { SessionId, ConnectionConfig, SshConfig, RemoteAgentConfig, LogEntry } from "@/types/terminal";
+import {
+  SessionId,
+  ConnectionConfig,
+  SshConfig,
+  RemoteAgentConfig,
+  LogEntry,
+} from "@/types/terminal";
 import { SystemStats } from "@/types/monitoring";
 import {
   SavedConnection,
