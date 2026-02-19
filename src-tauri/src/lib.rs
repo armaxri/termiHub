@@ -8,16 +8,26 @@ mod utils;
 use std::sync::Arc;
 
 use tauri::Manager;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 use connection::manager::ConnectionManager;
 use files::sftp::SftpManager;
 use monitoring::MonitoringManager;
 use terminal::agent_manager::AgentConnectionManager;
 use terminal::manager::TerminalManager;
+use utils::log_capture::{create_log_buffer, LogCaptureLayer};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tracing_subscriber::fmt::init();
+    let log_buffer = create_log_buffer();
+    let capture_layer = LogCaptureLayer::new(log_buffer.clone());
+    let app_handle_slot = capture_layer.app_handle_slot();
+
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer())
+        .with(capture_layer)
+        .init();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -26,12 +36,18 @@ pub fn run() {
         .manage(TerminalManager::new())
         .manage(SftpManager::new())
         .manage(MonitoringManager::new())
-        .setup(|app| {
+        .manage(log_buffer)
+        .setup(move |app| {
             #[cfg(target_os = "macos")]
             {
                 use objc2_foundation::{NSString, NSUserDefaults};
                 let defaults = NSUserDefaults::standardUserDefaults();
                 defaults.setBool_forKey(false, &NSString::from_str("ApplePressAndHoldEnabled"));
+            }
+
+            // Inject AppHandle into the log capture layer so it can emit events
+            if let Ok(mut handle) = app_handle_slot.lock() {
+                *handle = Some(app.handle().clone());
             }
 
             let connection_manager = ConnectionManager::new(app.handle())
@@ -99,6 +115,8 @@ pub fn run() {
             commands::agent::save_agent_definition,
             commands::agent::delete_agent_definition,
             commands::agent::setup_remote_agent,
+            commands::logs::get_logs,
+            commands::logs::clear_logs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

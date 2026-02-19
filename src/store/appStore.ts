@@ -183,6 +183,7 @@ interface AppState {
     sessionId?: string | null
   ) => void;
   openSettingsTab: () => void;
+  openLogViewerTab: () => void;
   openEditorTab: (filePath: string, isRemote: boolean, sftpSessionId?: string) => void;
   openConnectionEditorTab: (connectionId: string, folderId?: string | null) => void;
   editorDirtyTabs: Record<string, boolean>;
@@ -479,6 +480,37 @@ export const useAppStore = create<AppState>((set, get) => {
 
         const dummyConfig: ConnectionConfig = { type: "local", config: { shellType: "zsh" } };
         const newTab = createTab("Settings", "local", dummyConfig, targetPanelId, "settings");
+        const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
+          const tabs = leaf.tabs.map((t) => ({ ...t, isActive: false }));
+          tabs.push(newTab);
+          return { ...leaf, tabs, activeTabId: newTab.id };
+        });
+        return { rootPanel, activePanelId: targetPanelId };
+      }),
+
+    openLogViewerTab: () =>
+      set((state) => {
+        const allLeaves = getAllLeaves(state.rootPanel);
+
+        // Look for an existing log-viewer tab
+        for (const leaf of allLeaves) {
+          const existing = leaf.tabs.find((t) => t.contentType === "log-viewer");
+          if (existing) {
+            const rootPanel = updateLeaf(state.rootPanel, leaf.id, (l) => ({
+              ...l,
+              tabs: l.tabs.map((t) => ({ ...t, isActive: t.id === existing.id })),
+              activeTabId: existing.id,
+            }));
+            return { rootPanel, activePanelId: leaf.id };
+          }
+        }
+
+        // No existing log-viewer tab — create one in the active panel
+        const targetPanelId = state.activePanelId ?? allLeaves[0]?.id;
+        if (!targetPanelId) return state;
+
+        const dummyConfig: ConnectionConfig = { type: "local", config: { shellType: "zsh" } };
+        const newTab = createTab("Logs", "local", dummyConfig, targetPanelId, "log-viewer");
         const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
           const tabs = leaf.tabs.map((t) => ({ ...t, isActive: false }));
           tabs.push(newTab);

@@ -209,4 +209,26 @@ describe("appStore", () => {
       expect(useAppStore.getState().sidebarCollapsed).toBe(false);
     });
   });
+
+  describe("openLogViewerTab", () => {
+    it("creates a log-viewer tab", () => {
+      useAppStore.getState().openLogViewerTab();
+
+      const state = useAppStore.getState();
+      const leaves = getAllLeaves(state.rootPanel);
+      const logTab = leaves.flatMap((l) => l.tabs).find((t) => t.contentType === "log-viewer");
+      expect(logTab).toBeDefined();
+      expect(logTab!.title).toBe("Logs");
+    });
+
+    it("reuses existing log-viewer tab when called twice", () => {
+      useAppStore.getState().openLogViewerTab();
+      useAppStore.getState().openLogViewerTab();
+
+      const state = useAppStore.getState();
+      const leaves = getAllLeaves(state.rootPanel);
+      const logTabs = leaves.flatMap((l) => l.tabs).filter((t) => t.contentType === "log-viewer");
+      expect(logTabs).toHaveLength(1);
+    });
+  });
 });

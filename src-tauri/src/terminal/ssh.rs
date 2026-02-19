@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use ssh2::Session;
-use tracing::warn;
+use tracing::{debug, info, warn};
 
 use crate::terminal::backend::{OutputSender, SshConfig, TerminalBackend};
 use crate::terminal::x11_forward::X11Forwarder;
@@ -21,6 +21,12 @@ pub struct SshConnection {
 impl SshConnection {
     /// Connect to an SSH server and open a shell channel.
     pub fn new(config: &SshConfig, output_tx: OutputSender) -> Result<Self, TerminalError> {
+        info!(
+            host = %config.host,
+            port = config.port,
+            user = %config.username,
+            "Connecting SSH session"
+        );
         let session = connect_and_authenticate(config)?;
 
         let alive = Arc::new(AtomicBool::new(true));
@@ -40,6 +46,7 @@ impl SshConnection {
             (None, None, None)
         };
 
+        debug!("Opening SSH shell channel");
         let mut channel = session
             .channel_session()
             .map_err(|e| TerminalError::SshError(e.to_string()))?;
@@ -149,6 +156,7 @@ impl TerminalBackend for SshConnection {
     }
 
     fn close(&self) -> Result<(), TerminalError> {
+        debug!("Closing SSH session");
         self.alive.store(false, Ordering::SeqCst);
         if let Ok(mut channel) = self.channel.lock() {
             self.session.set_blocking(true);

@@ -3,6 +3,7 @@
  */
 
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { LogEntry } from "@/types/terminal";
 
 interface TerminalOutputPayload {
   session_id: string;
@@ -259,5 +260,12 @@ export async function onVscodeEditComplete(
 ): Promise<UnlistenFn> {
   return await listen<VscodeEditCompletePayload>("vscode-edit-complete", (event) => {
     callback(event.payload.remotePath, event.payload.success, event.payload.error);
+  });
+}
+
+/** Subscribe to real-time log entry events from the backend. */
+export async function onLogEntry(callback: (entry: LogEntry) => void): Promise<UnlistenFn> {
+  return await listen<LogEntry>("log-entry", (event) => {
+    callback(event.payload);
   });
 }

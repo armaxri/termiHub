@@ -3,6 +3,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use tracing::{debug, info};
+
 use crate::terminal::backend::{OutputSender, SerialConfig, TerminalBackend};
 use crate::utils::errors::TerminalError;
 
@@ -15,6 +17,11 @@ pub struct SerialConnection {
 impl SerialConnection {
     /// Open a serial port with the given configuration.
     pub fn new(config: &SerialConfig, output_tx: OutputSender) -> Result<Self, TerminalError> {
+        info!(
+            port = %config.port,
+            baud_rate = config.baud_rate,
+            "Opening serial port"
+        );
         let data_bits = match config.data_bits {
             5 => serialport::DataBits::Five,
             6 => serialport::DataBits::Six,
@@ -99,6 +106,7 @@ impl TerminalBackend for SerialConnection {
     }
 
     fn close(&self) -> Result<(), TerminalError> {
+        debug!("Closing serial port");
         self.alive.store(false, Ordering::SeqCst);
         Ok(())
     }

@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { Network, FolderOpen, Settings, Download, Upload } from "lucide-react";
+import { Network, FolderOpen, Settings, Download, Upload, ScrollText } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { writeTextFile, readTextFile } from "@tauri-apps/plugin-fs";
@@ -18,6 +18,7 @@ export function ActivityBar() {
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
   const setSidebarView = useAppStore((s) => s.setSidebarView);
   const openSettingsTab = useAppStore((s) => s.openSettingsTab);
+  const openLogViewerTab = useAppStore((s) => s.openLogViewerTab);
   const loadFromBackend = useAppStore((s) => s.loadFromBackend);
 
   const handleExport = useCallback(async () => {
@@ -63,6 +64,15 @@ export function ActivityBar() {
         ))}
       </div>
       <div className="activity-bar__bottom">
+        <button
+          className="activity-bar__item"
+          title="Log Viewer"
+          aria-label="Log Viewer"
+          data-testid="activity-bar-logs"
+          onClick={openLogViewerTab}
+        >
+          <ScrollText size={24} strokeWidth={1.5} />
+        </button>
         <DropdownMenu.Root>
           <DropdownMenu.Trigger asChild>
             <button

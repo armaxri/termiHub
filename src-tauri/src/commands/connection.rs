@@ -1,5 +1,6 @@
 use serde::Serialize;
 use tauri::State;
+use tracing::{debug, info};
 
 use crate::connection::config::{ConnectionFolder, SavedConnection, SavedRemoteAgent};
 use crate::connection::manager::{self, ConnectionManager};
@@ -31,6 +32,7 @@ pub struct ConnectionData {
 pub fn load_connections_and_folders(
     manager: State<'_, ConnectionManager>,
 ) -> Result<ConnectionData, String> {
+    info!("Loading connections and folders");
     let store = manager.get_all().map_err(|e| e.to_string())?;
     let external_sources = manager
         .load_external_sources()
@@ -58,6 +60,7 @@ pub fn save_connection(
     connection: SavedConnection,
     manager: State<'_, ConnectionManager>,
 ) -> Result<(), String> {
+    debug!(id = %connection.id, name = %connection.name, "Saving connection");
     manager
         .save_connection(connection)
         .map_err(|e| e.to_string())
@@ -66,6 +69,7 @@ pub fn save_connection(
 /// Delete a connection by ID.
 #[tauri::command]
 pub fn delete_connection(id: String, manager: State<'_, ConnectionManager>) -> Result<(), String> {
+    info!(id, "Deleting connection");
     manager.delete_connection(&id).map_err(|e| e.to_string())
 }
 
