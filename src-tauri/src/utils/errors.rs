@@ -28,6 +28,9 @@ pub enum TerminalError {
     #[error("Telnet error: {0}")]
     TelnetError(String),
 
+    #[error("Docker error: {0}")]
+    DockerError(String),
+
     #[error("Editor error: {0}")]
     EditorError(String),
 

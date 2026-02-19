@@ -1,3 +1,4 @@
+pub mod docker_detect;
 pub mod errors;
 pub mod expand;
 pub mod shell_detect;
