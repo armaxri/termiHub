@@ -27,6 +27,7 @@ const MAX_SESSIONS: usize = 50;
 const MAX_COALESCE_BYTES: usize = 32 * 1024;
 
 /// Manages all active terminal sessions.
+#[derive(Clone)]
 pub struct TerminalManager {
     sessions: Arc<Mutex<HashMap<String, TerminalSession>>>,
 }

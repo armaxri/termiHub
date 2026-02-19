@@ -262,7 +262,7 @@ describe("events service", () => {
       expect(cb).toHaveBeenCalledTimes(1);
     });
 
-    it("ignores events for unknown sessions", async () => {
+    it("buffers output for sessions with no subscriber and does not throw", async () => {
       const handlers: Record<string, (event: unknown) => void> = {};
       mockedListen.mockImplementation((eventName, handler) => {
         handlers[eventName as string] = handler as (event: unknown) => void;
@@ -271,11 +271,84 @@ describe("events service", () => {
 
       await dispatcher.init();
 
-      // No callback registered for "sess-unknown"
-      // Should not throw
+      // No callback registered for "sess-unknown" — should not throw
       handlers["terminal-output"]({
         payload: { session_id: "sess-unknown", data: [1] },
       });
+    });
+
+    it("flushes buffered output when subscriber registers", async () => {
+      const handlers: Record<string, (event: unknown) => void> = {};
+      mockedListen.mockImplementation((eventName, handler) => {
+        handlers[eventName as string] = handler as (event: unknown) => void;
+        return Promise.resolve(vi.fn());
+      });
+
+      await dispatcher.init();
+
+      // Emit output BEFORE any subscriber registers
+      handlers["terminal-output"]({
+        payload: { session_id: "sess-pre", data: [72, 101] },
+      });
+      handlers["terminal-output"]({
+        payload: { session_id: "sess-pre", data: [108, 108, 111] },
+      });
+
+      // Now subscribe — should receive the buffered chunks immediately
+      const cb = vi.fn();
+      dispatcher.subscribeOutput("sess-pre", cb);
+
+      expect(cb).toHaveBeenCalledTimes(2);
+      expect(Array.from(cb.mock.calls[0][0] as Uint8Array)).toEqual([72, 101]);
+      expect(Array.from(cb.mock.calls[1][0] as Uint8Array)).toEqual([108, 108, 111]);
+    });
+
+    it("does not re-deliver buffered output on subsequent events", async () => {
+      const handlers: Record<string, (event: unknown) => void> = {};
+      mockedListen.mockImplementation((eventName, handler) => {
+        handlers[eventName as string] = handler as (event: unknown) => void;
+        return Promise.resolve(vi.fn());
+      });
+
+      await dispatcher.init();
+
+      // Buffer one chunk before subscriber
+      handlers["terminal-output"]({
+        payload: { session_id: "sess-x", data: [1] },
+      });
+
+      const cb = vi.fn();
+      dispatcher.subscribeOutput("sess-x", cb);
+      expect(cb).toHaveBeenCalledTimes(1); // flush
+
+      // New event after subscription — should only deliver once
+      handlers["terminal-output"]({
+        payload: { session_id: "sess-x", data: [2] },
+      });
+      expect(cb).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not buffer output for sessions that already have a subscriber", async () => {
+      const handlers: Record<string, (event: unknown) => void> = {};
+      mockedListen.mockImplementation((eventName, handler) => {
+        handlers[eventName as string] = handler as (event: unknown) => void;
+        return Promise.resolve(vi.fn());
+      });
+
+      await dispatcher.init();
+
+      const cb1 = vi.fn();
+      dispatcher.subscribeOutput("sess-a", cb1);
+
+      handlers["terminal-output"]({
+        payload: { session_id: "sess-a", data: [10] },
+      });
+      expect(cb1).toHaveBeenCalledTimes(1);
+
+      // Replace subscriber — should NOT get cb1's events again
+      const cb2 = vi.fn();
+      dispatcher.subscribeOutput("sess-a", cb2);
+      expect(cb2).not.toHaveBeenCalled();
     });
 
     it("destroy calls unlisten and clears callbacks", async () => {

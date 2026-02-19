@@ -10,8 +10,11 @@ use crate::utils::errors::TerminalError;
 use crate::utils::shell_detect;
 
 /// Create a new terminal session.
+///
+/// Async because session creation (SSH, Docker, serial) involves blocking
+/// I/O that must not run on the main thread (which would freeze the WebView).
 #[tauri::command]
-pub fn create_terminal(
+pub async fn create_terminal(
     config: ConnectionConfig,
     app_handle: tauri::AppHandle,
     manager: State<'_, TerminalManager>,
@@ -22,7 +25,15 @@ pub fn create_terminal(
     } else {
         None
     };
-    manager.create_session(config, app_handle, agent_mgr)
+    let tm = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || tm.create_session(config, app_handle, agent_mgr))
+        .await
+        .unwrap_or_else(|e| {
+            Err(TerminalError::SpawnFailed(format!(
+                "Task join error: {}",
+                e
+            )))
+        })
 }
 
 /// Send input data to a terminal session.

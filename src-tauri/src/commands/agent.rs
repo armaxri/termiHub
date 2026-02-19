@@ -11,15 +11,25 @@ use crate::terminal::agent_setup::{AgentSetupConfig, AgentSetupResult};
 use crate::terminal::backend::RemoteAgentConfig;
 use crate::terminal::manager::TerminalManager;
 
+/// Connect to a remote agent via SSH.
+///
+/// Async because SSH authentication + JSON-RPC handshake are blocking
+/// network operations that must not run on the main thread (which would
+/// freeze the WebView).
 #[tauri::command]
-pub fn connect_agent(
+pub async fn connect_agent(
     agent_id: String,
     config: RemoteAgentConfig,
     agent_manager: State<'_, Arc<AgentConnectionManager>>,
 ) -> Result<AgentConnectResult, String> {
-    agent_manager
-        .connect_agent(&agent_id, &config)
-        .map_err(|e| e.to_string())
+    let manager = agent_manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        manager
+            .connect_agent(&agent_id, &config)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .unwrap_or_else(|e| Err(e.to_string()))
 }
 
 #[tauri::command]
@@ -42,62 +52,100 @@ pub fn get_agent_capabilities(
         .ok_or_else(|| format!("Agent {} not connected", agent_id))
 }
 
+/// List sessions on a remote agent.
+///
+/// Async because it sends a JSON-RPC request over SSH.
 #[tauri::command]
-pub fn list_agent_sessions(
+pub async fn list_agent_sessions(
     agent_id: String,
     agent_manager: State<'_, Arc<AgentConnectionManager>>,
 ) -> Result<Vec<AgentSessionInfo>, String> {
-    agent_manager
-        .list_sessions(&agent_id)
-        .map_err(|e| e.to_string())
+    let manager = agent_manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        manager.list_sessions(&agent_id).map_err(|e| e.to_string())
+    })
+    .await
+    .unwrap_or_else(|e| Err(e.to_string()))
 }
 
+/// List saved session definitions on a remote agent.
+///
+/// Async because it sends a JSON-RPC request over SSH.
 #[tauri::command]
-pub fn list_agent_definitions(
+pub async fn list_agent_definitions(
     agent_id: String,
     agent_manager: State<'_, Arc<AgentConnectionManager>>,
 ) -> Result<Vec<AgentDefinitionInfo>, String> {
-    agent_manager
-        .list_definitions(&agent_id)
-        .map_err(|e| e.to_string())
+    let manager = agent_manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        manager
+            .list_definitions(&agent_id)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .unwrap_or_else(|e| Err(e.to_string()))
 }
 
+/// Save a session definition on a remote agent.
+///
+/// Async because it sends a JSON-RPC request over SSH.
 #[tauri::command]
-pub fn save_agent_definition(
+pub async fn save_agent_definition(
     agent_id: String,
     definition: Value,
     agent_manager: State<'_, Arc<AgentConnectionManager>>,
 ) -> Result<AgentDefinitionInfo, String> {
-    agent_manager
-        .save_definition(&agent_id, definition)
-        .map_err(|e| e.to_string())
+    let manager = agent_manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        manager
+            .save_definition(&agent_id, definition)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .unwrap_or_else(|e| Err(e.to_string()))
 }
 
+/// Delete a session definition on a remote agent.
+///
+/// Async because it sends a JSON-RPC request over SSH.
 #[tauri::command]
-pub fn delete_agent_definition(
+pub async fn delete_agent_definition(
     agent_id: String,
     definition_id: String,
     agent_manager: State<'_, Arc<AgentConnectionManager>>,
 ) -> Result<(), String> {
-    agent_manager
-        .delete_definition(&agent_id, &definition_id)
-        .map_err(|e| e.to_string())
+    let manager = agent_manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        manager
+            .delete_definition(&agent_id, &definition_id)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .unwrap_or_else(|e| Err(e.to_string()))
 }
 
+/// Upload and install the agent binary on a remote host.
+///
+/// Async because it creates an SSH terminal session (blocking network I/O).
 #[tauri::command]
-pub fn setup_remote_agent(
+pub async fn setup_remote_agent(
     agent_id: String,
     config: RemoteAgentConfig,
     setup_config: AgentSetupConfig,
     app_handle: tauri::AppHandle,
     manager: State<'_, TerminalManager>,
 ) -> Result<AgentSetupResult, String> {
-    crate::terminal::agent_setup::setup_remote_agent(
-        &agent_id,
-        &config,
-        &setup_config,
-        &app_handle,
-        &manager,
-    )
-    .map_err(|e| e.to_string())
+    let tm = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::terminal::agent_setup::setup_remote_agent(
+            &agent_id,
+            &config,
+            &setup_config,
+            &app_handle,
+            &tm,
+        )
+        .map_err(|e| e.to_string())
+    })
+    .await
+    .unwrap_or_else(|e| Err(e.to_string()))
 }
