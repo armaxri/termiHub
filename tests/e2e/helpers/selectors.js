@@ -112,6 +112,15 @@ export const PASSWORD_PROMPT_CONNECT = '[data-testid="password-prompt-connect"]'
 export const STATUS_BAR_TAB_SIZE = '[data-testid="status-bar-tab-size"]';
 export const STATUS_BAR_EOL = '[data-testid="status-bar-eol"]';
 
+// --- Monitoring ---
+export const MONITORING_CONNECT_BTN = '[data-testid="monitoring-connect-btn"]';
+export const MONITORING_LOADING = '[data-testid="monitoring-loading"]';
+export const MONITORING_ERROR = '[data-testid="monitoring-error"]';
+export const MONITORING_HOST = '[data-testid="monitoring-host"]';
+export const MONITORING_CPU = '[data-testid="monitoring-cpu"]';
+export const MONITORING_MEM = '[data-testid="monitoring-mem"]';
+export const MONITORING_DISK = '[data-testid="monitoring-disk"]';
+
 // --- File Editor ---
 export const FILE_EDITOR_SAVE = '[data-testid="file-editor-save"]';
 

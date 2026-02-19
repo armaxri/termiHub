@@ -9,13 +9,18 @@
 //   - tauri-driver installed (cargo install tauri-driver)
 
 import { waitForAppReady, ensureConnectionsSidebar, closeAllTabs } from '../helpers/app.js';
-import { uniqueName, connectByName } from '../helpers/connections.js';
+import { uniqueName, connectByName, createLocalConnection } from '../helpers/connections.js';
 import { findTabByTitle, getActiveTab, getTabCount } from '../helpers/tabs.js';
 import {
   createSshConnection,
   handlePasswordPrompt,
   verifyTerminalRendered,
 } from '../helpers/infrastructure.js';
+import {
+  MONITORING_CONNECT_BTN,
+  MONITORING_LOADING,
+  MONITORING_HOST,
+} from '../helpers/selectors.js';
 
 describe('SSH Connections (requires live server)', () => {
   before(async () => {
@@ -136,4 +141,105 @@ describe('SSH Connections (requires live server)', () => {
 
   // X11 forwarding requires an X server running on the test machine.
   it('SSH-07: should forward X11 applications');
+
+  describe('SSH-08: Monitoring hides on non-SSH tab', () => {
+    /**
+     * Check whether any monitoring UI element is present in the DOM.
+     * Monitoring may be in connect-button, loading, or connected state —
+     * any of these counts as "visible".
+     */
+    async function isMonitoringVisible() {
+      const btn = await browser.$(MONITORING_CONNECT_BTN);
+      if (await btn.isExisting()) return true;
+      const loading = await browser.$(MONITORING_LOADING);
+      if (await loading.isExisting()) return true;
+      const host = await browser.$(MONITORING_HOST);
+      if (await host.isExisting()) return true;
+      return false;
+    }
+
+    it('should show monitoring when SSH tab is active', async () => {
+      const name = uniqueName('ssh-mon-vis');
+      await createSshConnection(name, {
+        host: '127.0.0.1',
+        port: '2222',
+        username: 'testuser',
+        authMethod: 'password',
+      });
+
+      await connectByName(name);
+      await handlePasswordPrompt('testpass');
+
+      // Wait for terminal + monitoring auto-connect to settle
+      await browser.pause(3000);
+
+      expect(await isMonitoringVisible()).toBe(true);
+    });
+
+    it('should hide monitoring when switching to a local shell tab', async () => {
+      const sshName = uniqueName('ssh-mon-hide');
+      const localName = uniqueName('local-mon-hide');
+
+      // Create and connect SSH
+      await createSshConnection(sshName, {
+        host: '127.0.0.1',
+        port: '2222',
+        username: 'testuser',
+        authMethod: 'password',
+      });
+      await connectByName(sshName);
+      await handlePasswordPrompt('testpass');
+      await browser.pause(3000);
+
+      // Monitoring should be visible on the SSH tab
+      expect(await isMonitoringVisible()).toBe(true);
+
+      // Create and open a local shell tab — this switches the active tab
+      await createLocalConnection(localName);
+      await connectByName(localName);
+      await browser.pause(500);
+
+      // Verify local tab is now active
+      const active = await getActiveTab();
+      const activeText = await active.getText();
+      expect(activeText).toContain(localName);
+
+      // Monitoring should be hidden
+      expect(await isMonitoringVisible()).toBe(false);
+    });
+
+    it('should reappear when switching back to SSH tab', async () => {
+      const sshName = uniqueName('ssh-mon-back');
+      const localName = uniqueName('local-mon-back');
+
+      // Create and connect SSH
+      await createSshConnection(sshName, {
+        host: '127.0.0.1',
+        port: '2222',
+        username: 'testuser',
+        authMethod: 'password',
+      });
+      await connectByName(sshName);
+      await handlePasswordPrompt('testpass');
+      await browser.pause(3000);
+
+      expect(await isMonitoringVisible()).toBe(true);
+
+      // Switch to local shell
+      await createLocalConnection(localName);
+      await connectByName(localName);
+      await browser.pause(500);
+
+      expect(await isMonitoringVisible()).toBe(false);
+
+      // Click SSH tab to switch back
+      const sshTab = await findTabByTitle(sshName);
+      expect(sshTab).not.toBeNull();
+      await sshTab.click();
+      await browser.pause(500);
+
+      // Monitoring should reappear immediately (no reconnect delay)
+      expect(await isMonitoringVisible()).toBe(true);
+    });
+  });
 });
