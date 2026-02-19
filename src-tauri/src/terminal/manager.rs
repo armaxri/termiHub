@@ -177,6 +177,7 @@ impl TerminalManager {
             let sessions_reader = self.sessions.clone();
             let session_id_reader = session_id.clone();
             std::thread::spawn(move || {
+                // Wait for the shell to start up.
                 std::thread::sleep(std::time::Duration::from_millis(200));
                 if let Ok(sessions) = sessions_cmd.lock() {
                     if let Some(session) = sessions.get(&sid) {
@@ -184,6 +185,12 @@ impl TerminalManager {
                         let _ = session.backend.write_input(input.as_bytes());
                     }
                 }
+                // Give the shell time to execute the command (including the
+                // screen clear) so the clear output lands in the channel
+                // before we start reading. This way the welcome banner,
+                // command echo, and clear are all coalesced into one event
+                // and xterm processes them in a single write — no flash.
+                std::thread::sleep(std::time::Duration::from_millis(50));
                 Self::run_output_reader(session_id_reader, output_rx, app_handle, sessions_reader);
             });
         } else {
