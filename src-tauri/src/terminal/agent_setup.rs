@@ -150,9 +150,7 @@ fn run_setup_background(
             inject_commands(
                 sessions,
                 session_id,
-                &format!(
-                    "echo '\\x1b[31m=== Agent Setup Error: SFTP connection failed ===\\x1b[0m'\n"
-                ),
+                "echo '\\x1b[31m=== Agent Setup Error: SFTP connection failed ===\\x1b[0m'\n",
             );
             return;
         }
