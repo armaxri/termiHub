@@ -386,7 +386,8 @@ Linux 5.15.0"
 
     #[test]
     fn parse_cpu_line_parses_all_fields() {
-        let counters = parse_cpu_line("cpu  10132153 290696 3084719 46828483 16683 0 25195 100 0 0");
+        let counters =
+            parse_cpu_line("cpu  10132153 290696 3084719 46828483 16683 0 25195 100 0 0");
         assert_eq!(counters.user, 10132153);
         assert_eq!(counters.nice, 290696);
         assert_eq!(counters.system, 3084719);
