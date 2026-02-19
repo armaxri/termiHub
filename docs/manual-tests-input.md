@@ -285,6 +285,14 @@ Each section groups related tests by feature area. Individual test items referen
 - [ ] Click "Export Connections" — file save dialog, saves JSON
 - [x] Connection list toolbar no longer has Import/Export buttons (only New Folder and New Connection remain)
 
+### Auto-extract port from host field (PR #195)
+
+- [ ] Enter `192.168.0.2:2222` in the SSH host field, tab out — verify host becomes `192.168.0.2` and port becomes `2222`
+- [ ] Enter `[::1]:22` in the host field, tab out — verify host becomes `::1` and port becomes `22`
+- [ ] Enter `myhost.example.com` (no port) — verify host stays unchanged and port is not modified
+- [ ] Enter a bare IPv6 address `::1` — verify it is left untouched
+- [ ] Verify the same behavior works in Telnet and Agent settings
+
 ### External connection file support (PR #50)
 
 - [ ] Settings tab — "External Connection Files" section visible

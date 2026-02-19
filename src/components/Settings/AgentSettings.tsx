@@ -1,4 +1,5 @@
 import { RemoteAgentConfig } from "@/types/terminal";
+import { parseHostPort } from "@/utils/parseHostPort";
 
 interface AgentSettingsProps {
   config: RemoteAgentConfig;
@@ -18,6 +19,12 @@ export function AgentSettings({ config, onChange }: AgentSettingsProps) {
           type="text"
           value={config.host}
           onChange={(e) => onChange({ ...config, host: e.target.value })}
+          onBlur={() => {
+            const { host, port } = parseHostPort(config.host);
+            if (port !== null) {
+              onChange({ ...config, host, port });
+            }
+          }}
           placeholder="192.168.1.100"
         />
       </label>
