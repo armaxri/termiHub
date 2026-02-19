@@ -1,0 +1,67 @@
+# docker-compose.e2e.yml — E2E test environment for TermiHub.
+#
+# Services:
+#   e2e-runner:   Builds and tests TermiHub (Linux) inside Docker.
+#   test-target:  SSH + Telnet server for infrastructure tests.
+#
+# Usage:
+#   docker compose -f examples/docker/docker-compose.e2e.yml up \
+#     --build --abort-on-container-exit --exit-code-from e2e-runner
+#
+# The e2e-runner uses socat to forward localhost:2222/2323 to test-target,
+# so test code (host='127.0.0.1', port='2222') works unchanged.
+
+services:
+  test-target:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    networks:
+      - e2e-net
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "22"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  e2e-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.e2e-runner
+    depends_on:
+      test-target:
+        condition: service_healthy
+    environment:
+      - E2E_SKIP_BUILD=${E2E_SKIP_BUILD:-0}
+      - E2E_SKIP_SERIAL=${E2E_SKIP_SERIAL:-0}
+      - E2E_SUITE=${E2E_SUITE:-infra}
+    volumes:
+      # Source code (bind mount) — enables live test results on host
+      - ../..:/app
+
+      # Shadow host's node_modules with Linux-native install
+      - termihub-node-modules:/app/node_modules
+
+      # Shadow host's Rust target dir (avoid macOS/Linux artifact mixing)
+      - termihub-target:/app/src-tauri/target
+
+      # Cargo caches (persist between runs for fast rebuilds)
+      - termihub-cargo-registry:/usr/local/cargo/registry
+      - termihub-cargo-git:/usr/local/cargo/git
+
+      # pnpm content-addressable store
+      - termihub-pnpm-store:/root/.local/share/pnpm/store
+    networks:
+      - e2e-net
+
+networks:
+  e2e-net:
+    driver: bridge
+
+volumes:
+  termihub-node-modules:
+  termihub-target:
+  termihub-cargo-registry:
+  termihub-cargo-git:
+  termihub-pnpm-store:
