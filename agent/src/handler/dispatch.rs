@@ -135,14 +135,22 @@ impl Dispatcher {
 
         self.initialized = true;
 
+        let docker_available = detect_docker_available();
+        let mut session_types = vec!["shell".to_string(), "serial".to_string()];
+        if docker_available {
+            session_types.push("docker".to_string());
+        }
+
         let result = InitializeResult {
             protocol_version: AGENT_PROTOCOL_VERSION.to_string(),
             agent_version: env!("CARGO_PKG_VERSION").to_string(),
             capabilities: Capabilities {
-                session_types: vec!["shell".to_string(), "serial".to_string()],
+                session_types,
                 max_sessions: MAX_SESSIONS,
                 available_shells: detect_available_shells(),
                 available_serial_ports: detect_available_serial_ports(),
+                docker_available,
+                available_docker_images: detect_docker_images(),
             },
         };
 
@@ -473,6 +481,33 @@ fn detect_available_serial_ports() -> Vec<String> {
         .into_iter()
         .map(|p| p.port_name)
         .collect()
+}
+
+/// Check if Docker is available and running.
+fn detect_docker_available() -> bool {
+    std::process::Command::new("docker")
+        .args(["info"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// List locally available Docker images as "repository:tag" strings.
+fn detect_docker_images() -> Vec<String> {
+    let output = std::process::Command::new("docker")
+        .args(["images", "--format", "{{.Repository}}:{{.Tag}}"])
+        .output();
+
+    match output {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
+            .lines()
+            .filter(|line| !line.contains("<none>"))
+            .map(|s| s.to_string())
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
 #[cfg(test)]

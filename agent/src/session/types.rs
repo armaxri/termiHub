@@ -9,6 +9,7 @@ use crate::serial::backend::SerialBackend;
 pub enum SessionType {
     Shell,
     Serial,
+    Docker,
 }
 
 impl SessionType {
@@ -17,6 +18,7 @@ impl SessionType {
         match s {
             "shell" => Some(Self::Shell),
             "serial" => Some(Self::Serial),
+            "docker" => Some(Self::Docker),
             _ => None,
         }
     }
@@ -25,6 +27,7 @@ impl SessionType {
         match self {
             Self::Shell => "shell",
             Self::Serial => "serial",
+            Self::Docker => "docker",
         }
     }
 }
