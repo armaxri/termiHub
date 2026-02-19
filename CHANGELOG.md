@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Log Viewer: new activity bar button opens a log viewer tab displaying backend tracing logs in real time with level filtering (ERROR/WARN/INFO/DEBUG), text search, pause/resume auto-scroll, and clear functionality (#183)
+- Backend log capture layer: custom tracing subscriber captures logs into a 2000-entry ring buffer and streams them to the frontend via Tauri events
+- Tracing instrumentation across terminal backends (local shell, SSH, serial, telnet), command handlers, SFTP, monitoring, and agent operations
 - Docker shell support: create interactive terminal sessions inside Docker containers with image selection (autocomplete from local images), environment variable configuration, volume mounts with directory browser, working directory setting, and optional container removal on exit (#166)
 - Docker availability detection and image listing via `docker info` and `docker images` CLI commands
 - Remote agent Docker protocol support: agents report Docker availability and images in capabilities, with Docker as a new session type
