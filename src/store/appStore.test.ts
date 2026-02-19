@@ -59,6 +59,45 @@ describe("appStore", () => {
     });
   });
 
+  describe("addTab with sessionId", () => {
+    it("creates a tab with a pre-existing sessionId", () => {
+      const { addTab, activePanelId } = useAppStore.getState();
+      addTab(
+        "Setup: Pi",
+        "ssh",
+        {
+          type: "ssh",
+          config: {
+            host: "pi.local",
+            port: 22,
+            username: "pi",
+            authMethod: "key",
+            enableX11Forwarding: false,
+          },
+        },
+        undefined,
+        "terminal",
+        undefined,
+        "existing-session-123"
+      );
+
+      const state = useAppStore.getState();
+      const leaf = findLeaf(state.rootPanel, activePanelId!) as LeafPanel;
+      expect(leaf.tabs).toHaveLength(1);
+      expect(leaf.tabs[0].sessionId).toBe("existing-session-123");
+      expect(leaf.tabs[0].title).toBe("Setup: Pi");
+    });
+
+    it("defaults sessionId to null when not provided", () => {
+      const { addTab, activePanelId } = useAppStore.getState();
+      addTab("Terminal", "local");
+
+      const state = useAppStore.getState();
+      const leaf = findLeaf(state.rootPanel, activePanelId!) as LeafPanel;
+      expect(leaf.tabs[0].sessionId).toBeNull();
+    });
+  });
+
   describe("closeTab", () => {
     it("removes tab and selects next tab", () => {
       const { addTab } = useAppStore.getState();

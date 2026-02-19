@@ -50,6 +50,7 @@ import {
   vscodeOpenRemote,
   checkDockerAvailable,
   listDockerImages,
+  setupRemoteAgent,
 } from "./api";
 
 describe("api service", () => {
@@ -531,6 +532,44 @@ describe("api service", () => {
       const result = await listDockerImages();
 
       expect(result).toEqual([]);
+    });
+  });
+
+  describe("agent setup commands", () => {
+    it("setupRemoteAgent invokes with correct parameters", async () => {
+      mockedInvoke.mockResolvedValue({ sessionId: "setup-123" });
+      const config = {
+        host: "pi.local",
+        port: 22,
+        username: "pi",
+        authMethod: "key" as const,
+      };
+      const setupConfig = {
+        binaryPath: "/path/to/agent",
+        remotePath: "/usr/local/bin/termihub-agent",
+        installService: false,
+      };
+
+      const result = await setupRemoteAgent("agent-1", config, setupConfig);
+
+      expect(mockedInvoke).toHaveBeenCalledWith("setup_remote_agent", {
+        agentId: "agent-1",
+        config,
+        setupConfig,
+      });
+      expect(result.sessionId).toBe("setup-123");
+    });
+
+    it("setupRemoteAgent propagates errors", async () => {
+      mockedInvoke.mockRejectedValue("Binary not found");
+
+      await expect(
+        setupRemoteAgent(
+          "agent-1",
+          { host: "pi.local", port: 22, username: "pi", authMethod: "password" },
+          { binaryPath: "/nonexistent", installService: false }
+        )
+      ).rejects.toEqual("Binary not found");
     });
   });
 });
