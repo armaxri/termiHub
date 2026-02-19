@@ -109,6 +109,10 @@ export function Terminal({ tabId, config, isVisible }: TerminalProps) {
   const setupTerminal = useCallback(
     async (xterm: XTerm, fitAddon: FitAddon) => {
       try {
+        // Ensure the global Tauri event listener is registered before
+        // creating the backend session — otherwise early output events
+        // emitted by the PTY reader thread are silently lost.
+        await terminalDispatcher.init();
         const sessionId = await createTerminal(config);
         sessionIdRef.current = sessionId;
 
