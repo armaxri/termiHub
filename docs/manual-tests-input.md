@@ -70,6 +70,12 @@ Each section groups related tests by feature area. Individual test items referen
 
 ## SSH
 
+### Agnoster/Powerline theme rendering (PR #197)
+
+- [ ] Connect via SSH to a Linux machine with zsh + Agnoster theme — the `user@machine` prompt segment should blend with the terminal background (no visible black rectangle)
+- [ ] Connect via SSH to a machine with a default bash prompt — verify no visual regression in prompt rendering
+- [ ] Open a local shell terminal — verify ANSI color rendering is unaffected
+
 ### SSH key authentication on Windows (PR #160)
 
 - [ ] SSH key auth with Ed25519 key on Windows connects successfully
