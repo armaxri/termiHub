@@ -12,7 +12,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use ssh2::Session;
 use tauri::{AppHandle, Emitter};
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use crate::terminal::backend::{ConnectionConfig, RemoteAgentConfig};
 use crate::terminal::manager::TerminalManager;
@@ -298,11 +298,13 @@ fn run_setup_background(
 fn detect_remote_info(session: &Session) -> Result<(String, String), TerminalError> {
     let os = run_remote_command(session, "uname -s")?;
     let arch = run_remote_command(session, "uname -m")?;
+    debug!(os, arch, "Detected remote system info");
     Ok((os, arch))
 }
 
 /// Run a single command on the remote host and return trimmed stdout.
 fn run_remote_command(session: &Session, command: &str) -> Result<String, TerminalError> {
+    debug!(command, "Executing remote command");
     let mut channel = session
         .channel_session()
         .map_err(|e| TerminalError::SshError(format!("channel open failed: {}", e)))?;
@@ -316,7 +318,9 @@ fn run_remote_command(session: &Session, command: &str) -> Result<String, Termin
         .map_err(|e| TerminalError::SshError(format!("read failed: {}", e)))?;
     channel.wait_close().ok();
 
-    Ok(output.trim().to_string())
+    let result = output.trim().to_string();
+    debug!(command, result = %result, "Remote command completed");
+    Ok(result)
 }
 
 /// CPU architecture of an ELF binary.
@@ -372,13 +376,15 @@ fn detect_binary_arch(path: &str) -> Result<ElfArch, TerminalError> {
         u16::from_be_bytes([header[18], header[19]])
     };
 
-    Ok(match e_machine {
+    let arch = match e_machine {
         0x03 => ElfArch::X86,
         0x3E => ElfArch::X86_64,
         0x28 => ElfArch::Arm,
         0xB7 => ElfArch::Aarch64,
         other => ElfArch::Unknown(other),
-    })
+    };
+    debug!(path, %arch, "Detected binary architecture");
+    Ok(arch)
 }
 
 /// Map `uname -m` output to the expected ELF architecture.
@@ -398,6 +404,7 @@ fn upload_via_sftp(
     local_path: &str,
     remote_path: &str,
 ) -> Result<u64, TerminalError> {
+    debug!(local_path, remote_path, "Uploading file via SFTP");
     let sftp = session
         .sftp()
         .map_err(|e| TerminalError::SshError(format!("SFTP init failed: {}", e)))?;
@@ -433,6 +440,7 @@ fn upload_bytes_via_sftp(
     data: &[u8],
     remote_path: &str,
 ) -> Result<u64, TerminalError> {
+    debug!(remote_path, size = data.len(), "Uploading bytes via SFTP");
     let sftp = session
         .sftp()
         .map_err(|e| TerminalError::SshError(format!("SFTP init failed: {}", e)))?;

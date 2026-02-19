@@ -80,6 +80,7 @@ pub async fn list_agent_definitions(
     agent_id: String,
     agent_manager: State<'_, Arc<AgentConnectionManager>>,
 ) -> Result<Vec<AgentDefinitionInfo>, String> {
+    debug!(agent_id, "Listing agent definitions");
     let manager = agent_manager.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         manager
@@ -99,6 +100,7 @@ pub async fn save_agent_definition(
     definition: Value,
     agent_manager: State<'_, Arc<AgentConnectionManager>>,
 ) -> Result<AgentDefinitionInfo, String> {
+    debug!(agent_id, "Saving agent definition");
     let manager = agent_manager.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         manager
@@ -118,6 +120,7 @@ pub async fn delete_agent_definition(
     definition_id: String,
     agent_manager: State<'_, Arc<AgentConnectionManager>>,
 ) -> Result<(), String> {
+    info!(agent_id, definition_id, "Deleting agent definition");
     let manager = agent_manager.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         manager
@@ -139,6 +142,7 @@ pub async fn setup_remote_agent(
     app_handle: tauri::AppHandle,
     manager: State<'_, TerminalManager>,
 ) -> Result<AgentSetupResult, String> {
+    info!(agent_id, host = %config.host, "Starting remote agent setup");
     let tm = manager.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         crate::terminal::agent_setup::setup_remote_agent(
