@@ -166,22 +166,29 @@ impl TerminalManager {
             .map_err(|e| TerminalError::SpawnFailed(format!("Failed to lock sessions: {}", e)))?
             .insert(session_id.clone(), session);
 
-        // Spawn output streaming task
-        self.spawn_output_reader(session_id.clone(), output_rx, app_handle);
-
-        // Send initial command after a short delay to let the shell initialize
         if let Some(cmd) = initial_command {
-            let sessions = self.sessions.clone();
+            // When there is an initial command (e.g. WSL/SSH OSC 7 setup with
+            // screen clear), delay the output reader until after the command is
+            // written. The PTY reader thread buffers output in the channel
+            // during the wait, so the shell's welcome banner and the screen
+            // clear arrive together in a burst — preventing a visible flash.
+            let sessions_cmd = self.sessions.clone();
             let sid = session_id.clone();
+            let sessions_reader = self.sessions.clone();
+            let session_id_reader = session_id.clone();
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_millis(200));
-                if let Ok(sessions) = sessions.lock() {
+                if let Ok(sessions) = sessions_cmd.lock() {
                     if let Some(session) = sessions.get(&sid) {
                         let input = format!("{}\n", cmd);
                         let _ = session.backend.write_input(input.as_bytes());
                     }
                 }
+                Self::run_output_reader(session_id_reader, output_rx, app_handle, sessions_reader);
             });
+        } else {
+            // No initial command — start emitting output immediately.
+            self.spawn_output_reader(session_id.clone(), output_rx, app_handle);
         }
 
         info!("Created terminal session: {}", session_id);
@@ -243,8 +250,6 @@ impl TerminalManager {
     }
 
     /// Spawn a thread that reads output from a backend and emits Tauri events.
-    /// Coalesces pending output chunks into a single event (up to MAX_COALESCE_BYTES)
-    /// to reduce IPC overhead.
     fn spawn_output_reader(
         &self,
         session_id: String,
@@ -252,41 +257,51 @@ impl TerminalManager {
         app_handle: AppHandle,
     ) {
         let sessions = self.sessions.clone();
-
         std::thread::spawn(move || {
-            while let Ok(first_chunk) = output_rx.recv() {
-                // Coalesce: drain any additional pending chunks up to MAX_COALESCE_BYTES
-                let mut coalesced = first_chunk;
-                while coalesced.len() < MAX_COALESCE_BYTES {
-                    match output_rx.try_recv() {
-                        Ok(chunk) => coalesced.extend_from_slice(&chunk),
-                        Err(_) => break,
-                    }
-                }
-
-                let event = TerminalOutputEvent {
-                    session_id: session_id.clone(),
-                    data: coalesced,
-                };
-                if let Err(e) = app_handle.emit("terminal-output", &event) {
-                    error!("Failed to emit terminal-output event: {}", e);
-                    break;
-                }
-            }
-
-            // Channel closed — terminal exited
-            let exit_event = TerminalExitEvent {
-                session_id: session_id.clone(),
-                exit_code: None,
-            };
-            let _ = app_handle.emit("terminal-exit", &exit_event);
-
-            // Clean up session
-            if let Ok(mut sessions) = sessions.lock() {
-                sessions.remove(&session_id);
-            }
-
-            info!("Terminal session ended: {}", session_id);
+            Self::run_output_reader(session_id, output_rx, app_handle, sessions);
         });
+    }
+
+    /// Read output from a backend channel and emit Tauri events.
+    /// Coalesces pending output chunks into a single event (up to MAX_COALESCE_BYTES)
+    /// to reduce IPC overhead.
+    fn run_output_reader(
+        session_id: String,
+        output_rx: mpsc::Receiver<Vec<u8>>,
+        app_handle: AppHandle,
+        sessions: Arc<Mutex<HashMap<String, TerminalSession>>>,
+    ) {
+        while let Ok(first_chunk) = output_rx.recv() {
+            let mut coalesced = first_chunk;
+            while coalesced.len() < MAX_COALESCE_BYTES {
+                match output_rx.try_recv() {
+                    Ok(chunk) => coalesced.extend_from_slice(&chunk),
+                    Err(_) => break,
+                }
+            }
+
+            let event = TerminalOutputEvent {
+                session_id: session_id.clone(),
+                data: coalesced,
+            };
+            if let Err(e) = app_handle.emit("terminal-output", &event) {
+                error!("Failed to emit terminal-output event: {}", e);
+                break;
+            }
+        }
+
+        // Channel closed — terminal exited
+        let exit_event = TerminalExitEvent {
+            session_id: session_id.clone(),
+            exit_code: None,
+        };
+        let _ = app_handle.emit("terminal-exit", &exit_event);
+
+        // Clean up session
+        if let Ok(mut sessions) = sessions.lock() {
+            sessions.remove(&session_id);
+        }
+
+        info!("Terminal session ended: {}", session_id);
     }
 }
