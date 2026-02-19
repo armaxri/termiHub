@@ -1,5 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { Trash2, Pause, Play } from "lucide-react";
+import { Trash2, Pause, Play, Save, ClipboardCopy, FileDown } from "lucide-react";
+import * as ContextMenu from "@radix-ui/react-context-menu";
+import { save } from "@tauri-apps/plugin-dialog";
+import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { LogEntry } from "@/types/terminal";
 import { getLogs, clearLogs } from "@/services/api";
 import { onLogEntry } from "@/services/events";
@@ -80,6 +83,32 @@ export function LogViewer({ isVisible }: LogViewerProps) {
     }
   }, []);
 
+  const handleSave = useCallback(
+    async (entriesToSave: LogEntry[]) => {
+      try {
+        const content = entriesToSave.map(formatEntry).join("\n");
+        const filePath = await save({
+          title: "Save logs",
+          defaultPath: "termihub-logs.txt",
+          filters: [{ name: "Text", extensions: ["txt", "log"] }],
+        });
+        if (!filePath) return;
+        await writeTextFile(filePath, content);
+      } catch {
+        // Ignore errors (user cancelled dialog, etc.)
+      }
+    },
+    []
+  );
+
+  const handleCopyEntry = useCallback(async (entry: LogEntry) => {
+    try {
+      await navigator.clipboard.writeText(formatEntry(entry));
+    } catch {
+      // Ignore errors
+    }
+  }, []);
+
   const searchLower = search.toLowerCase();
 
   const filteredEntries = useMemo(
@@ -123,6 +152,13 @@ export function LogViewer({ isVisible }: LogViewerProps) {
         >
           {autoScroll ? <Pause size={14} /> : <Play size={14} />}
         </button>
+        <button
+          className="log-viewer__toolbar-btn"
+          onClick={() => handleSave(filteredEntries)}
+          title="Save logs to file"
+        >
+          <Save size={14} />
+        </button>
         <button className="log-viewer__toolbar-btn" onClick={handleClear} title="Clear logs">
           <Trash2 size={14} />
         </button>
@@ -133,14 +169,35 @@ export function LogViewer({ isVisible }: LogViewerProps) {
           <div className="log-viewer__empty">No log entries</div>
         ) : (
           filteredEntries.map((entry, i) => (
-            <div key={i} className="log-viewer__entry">
-              <span className="log-viewer__timestamp">{entry.timestamp}</span>
-              <span className={`log-viewer__level log-viewer__level--${entry.level}`}>
-                {entry.level}
-              </span>
-              <span className="log-viewer__target">{entry.target}</span>
-              <span className="log-viewer__message">{entry.message}</span>
-            </div>
+            <ContextMenu.Root key={i}>
+              <ContextMenu.Trigger asChild>
+                <div className="log-viewer__entry">
+                  <span className="log-viewer__timestamp">{entry.timestamp}</span>
+                  <span className={`log-viewer__level log-viewer__level--${entry.level}`}>
+                    {entry.level}
+                  </span>
+                  <span className="log-viewer__target">{entry.target}</span>
+                  <span className="log-viewer__message">{entry.message}</span>
+                </div>
+              </ContextMenu.Trigger>
+              <ContextMenu.Portal>
+                <ContextMenu.Content className="context-menu__content">
+                  <ContextMenu.Item
+                    className="context-menu__item"
+                    onSelect={() => handleCopyEntry(entry)}
+                  >
+                    <ClipboardCopy size={14} /> Copy Entry
+                  </ContextMenu.Item>
+                  <ContextMenu.Separator className="context-menu__separator" />
+                  <ContextMenu.Item
+                    className="context-menu__item"
+                    onSelect={() => handleSave(filteredEntries)}
+                  >
+                    <FileDown size={14} /> Save All Logs
+                  </ContextMenu.Item>
+                </ContextMenu.Content>
+              </ContextMenu.Portal>
+            </ContextMenu.Root>
           ))
         )}
       </div>
@@ -154,4 +211,8 @@ function entryMatchesSearch(entry: LogEntry, searchLower: string): boolean {
     entry.target.toLowerCase().includes(searchLower) ||
     entry.level.toLowerCase().includes(searchLower)
   );
+}
+
+function formatEntry(entry: LogEntry): string {
+  return `${entry.timestamp} [${entry.level}] ${entry.target}: ${entry.message}`;
 }
