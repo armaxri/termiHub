@@ -1,4 +1,5 @@
 import { TelnetConfig } from "@/types/terminal";
+import { parseHostPort } from "@/utils/parseHostPort";
 
 interface TelnetSettingsProps {
   config: TelnetConfig;
@@ -14,6 +15,12 @@ export function TelnetSettings({ config, onChange }: TelnetSettingsProps) {
           type="text"
           value={config.host}
           onChange={(e) => onChange({ ...config, host: e.target.value })}
+          onBlur={() => {
+            const { host, port } = parseHostPort(config.host);
+            if (port !== null) {
+              onChange({ ...config, host, port });
+            }
+          }}
           placeholder="192.168.1.200"
           data-testid="telnet-settings-host-input"
         />

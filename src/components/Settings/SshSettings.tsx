@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { SshConfig } from "@/types/terminal";
 import { checkSshAgentStatus } from "@/services/api";
+import { parseHostPort } from "@/utils/parseHostPort";
 
 interface SshSettingsProps {
   config: SshConfig;
@@ -31,6 +32,12 @@ export function SshSettings({ config, onChange, onSetupAgent }: SshSettingsProps
           type="text"
           value={config.host}
           onChange={(e) => onChange({ ...config, host: e.target.value })}
+          onBlur={() => {
+            const { host, port } = parseHostPort(config.host);
+            if (port !== null) {
+              onChange({ ...config, host, port });
+            }
+          }}
           placeholder="192.168.1.100"
           data-testid="ssh-settings-host-input"
         />
