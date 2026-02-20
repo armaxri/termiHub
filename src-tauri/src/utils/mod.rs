@@ -2,6 +2,7 @@ pub mod docker_detect;
 pub mod errors;
 pub mod expand;
 pub mod log_capture;
+pub mod remote_exec;
 pub mod shell_detect;
 pub mod ssh_auth;
 pub mod ssh_key_convert;
