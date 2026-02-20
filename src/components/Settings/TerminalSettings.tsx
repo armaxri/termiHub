@@ -6,11 +6,7 @@ interface TerminalSettingsProps {
   visibleFields?: Set<string>;
 }
 
-export function TerminalSettings({
-  settings,
-  onChange,
-  visibleFields,
-}: TerminalSettingsProps) {
+export function TerminalSettings({ settings, onChange, visibleFields }: TerminalSettingsProps) {
   const show = (field: string) => !visibleFields || visibleFields.has(field);
 
   return (

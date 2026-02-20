@@ -102,12 +102,7 @@ export function filterSettings(query: string): SettingDefinition[] {
   if (!q) return SETTINGS_REGISTRY;
 
   return SETTINGS_REGISTRY.filter((setting) => {
-    const haystack = [
-      setting.label,
-      setting.description,
-      setting.category,
-      ...setting.keywords,
-    ]
+    const haystack = [setting.label, setting.description, setting.category, ...setting.keywords]
       .join(" ")
       .toLowerCase();
     return haystack.includes(q);

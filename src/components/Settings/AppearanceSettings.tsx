@@ -9,11 +9,7 @@ interface AppearanceSettingsProps {
   visibleFields?: Set<string>;
 }
 
-export function AppearanceSettings({
-  settings,
-  onChange,
-  visibleFields,
-}: AppearanceSettingsProps) {
+export function AppearanceSettings({ settings, onChange, visibleFields }: AppearanceSettingsProps) {
   const show = (field: string) => !visibleFields || visibleFields.has(field);
 
   return (

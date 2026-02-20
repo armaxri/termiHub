@@ -110,7 +110,14 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
             value={settings.defaultShell ?? ""}
             onChange={(e) => onChange({ ...settings, defaultShell: e.target.value || undefined })}
           >
-            <option value="">Platform default ({getShellLabel(platformDefaultShell, platformDefaultShell).replace(" (platform default)", "")})</option>
+            <option value="">
+              Platform default (
+              {getShellLabel(platformDefaultShell, platformDefaultShell).replace(
+                " (platform default)",
+                ""
+              )}
+              )
+            </option>
             {availableShells.map((shell) => (
               <option key={shell} value={shell}>
                 {getShellLabel(shell, platformDefaultShell)}

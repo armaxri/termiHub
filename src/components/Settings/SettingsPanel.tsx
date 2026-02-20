@@ -18,7 +18,12 @@ const SAVE_DEBOUNCE_MS = 300;
 function loadSavedCategory(): SettingsCategory {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved === "general" || saved === "appearance" || saved === "terminal" || saved === "external-files") {
+    if (
+      saved === "general" ||
+      saved === "appearance" ||
+      saved === "terminal" ||
+      saved === "external-files"
+    ) {
       return saved;
     }
   } catch {

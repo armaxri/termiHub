@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { filterSettings, getMatchingCategories, SETTINGS_REGISTRY, CATEGORIES } from "./settingsRegistry";
+import {
+  filterSettings,
+  getMatchingCategories,
+  SETTINGS_REGISTRY,
+  CATEGORIES,
+} from "./settingsRegistry";
 
 describe("settingsRegistry", () => {
   describe("filterSettings", () => {

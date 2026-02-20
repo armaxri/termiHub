@@ -149,11 +149,13 @@ mod tests {
 
     #[test]
     fn round_trip_serialization() {
-        let mut settings = AppSettings::default();
-        settings.default_user = Some("testuser".to_string());
-        settings.font_family = Some("Fira Code".to_string());
-        settings.font_size = Some(18);
-        settings.theme = Some("light".to_string());
+        let settings = AppSettings {
+            default_user: Some("testuser".to_string()),
+            font_family: Some("Fira Code".to_string()),
+            font_size: Some(18),
+            theme: Some("light".to_string()),
+            ..Default::default()
+        };
 
         let json = serde_json::to_string(&settings).unwrap();
         let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
