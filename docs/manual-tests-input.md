@@ -321,20 +321,29 @@ Each section groups related tests by feature area. Individual test items referen
 - [ ] Enter a bare IPv6 address `::1` — verify it is left untouched
 - [ ] Verify the same behavior works in Telnet and Agent settings
 
-### External connection file support (PR #50)
+### External connection file support (PR #50, redesigned in PR #210)
 
 - [ ] Settings tab — "External Connection Files" section visible
 - [ ] "Create File" — enter name — save dialog — empty JSON file created and auto-added to list
 - [ ] "Add File" — native file picker — select JSON — path appears in list with toggle
-- [ ] Connection list shows external source as collapsible group with `FolderGit2` icon
-- [ ] External connections: create, edit, duplicate, delete via context menu
-- [ ] External folders: create, delete via context menu and header buttons
-- [ ] Drag-and-drop connections between local and external sources
-- [ ] Toggle file disabled — connections disappear after reload
-- [ ] Remove file — connections disappear
-- [ ] Malformed/missing JSON — error indicator on source group header
+- [ ] External connections appear in the unified "Connections" tree alongside local connections
+- [ ] External connections: edit, duplicate, delete via context menu
+- [ ] Drag-and-drop external connections into local folders — folder assignment persists correctly
+- [ ] Toggle file disabled in Settings — external connections disappear from the unified tree
+- [ ] Re-enable file — connections reappear
+- [ ] Remove file from Settings — connections disappear
 - [ ] Local connections still fully editable/draggable/deletable (no regressions)
-- [ ] Both "Connections" and external groups independently collapsible
+
+### Storage File selector in connection editor (PR #210)
+
+- [ ] Add an external connection file in Settings and enable it
+- [ ] Open connection editor — click "Advanced" — verify "Storage File" dropdown appears
+- [ ] Dropdown shows "Default (connections.json)" and the enabled external file paths
+- [ ] Create a new connection with "Default" storage file — verify it persists to connections.json
+- [ ] Create a new connection with an external file selected — verify it persists to that external file
+- [ ] Edit an existing local connection — change storage file to an external file — save — verify the connection moved (appears in external file, removed from connections.json)
+- [ ] Edit an external connection — change storage file to "Default" — save — verify it moved to connections.json
+- [ ] Advanced section does not appear when no external files are configured in Settings
 
 ---
 
