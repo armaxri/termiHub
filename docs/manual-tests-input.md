@@ -471,6 +471,13 @@ Each section groups related tests by feature area. Individual test items referen
 - [ ] Open a split view — verify the toggle button remains visible and functional in the toolbar
 - [ ] Hover the button — tooltip shows "Toggle Sidebar (Ctrl+B)" (or "Cmd+B" on Mac)
 
+### Highlight selected tab with top border accent (PR #190)
+
+- [ ] Open multiple tabs in a single panel — active tab should have a blue top border, inactive tabs should have no top border
+- [ ] Split the view into two panels — focused panel's active tab has a bright blue border, unfocused panel's active tab has a dimmer (gray) border
+- [ ] Click between panels to switch focus — borders update: focused panel gets bright blue, previously focused panel dims
+- [ ] Close all tabs in one panel — remaining panel's active tab still shows bright blue border
+
 ### Clear separation between split view panels (PR #189)
 
 - [ ] Open a split view (drag a tab to the edge of a panel) — verify a visible 1px line appears between adjacent panels

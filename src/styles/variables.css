@@ -25,6 +25,7 @@
   --tab-bg: #2d2d2d;
   --tab-active-bg: #1e1e1e;
   --tab-border: #252526;
+  --tab-active-border: var(--accent-color);
   --tab-height: 35px;
 
   /* Text colors */
