@@ -1,11 +1,13 @@
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
 import { FileBrowser } from "./FileBrowser";
+import { TunnelSidebar } from "@/components/TunnelSidebar";
 import "./Sidebar.css";
 
 const VIEW_TITLES: Record<string, string> = {
   connections: "Connections",
   files: "File Browser",
+  tunnels: "SSH Tunnels",
 };
 
 export function Sidebar() {
@@ -22,6 +24,7 @@ export function Sidebar() {
       <div className="sidebar__content">
         {sidebarView === "connections" && <ConnectionList />}
         {sidebarView === "files" && <FileBrowser />}
+        {sidebarView === "tunnels" && <TunnelSidebar />}
       </div>
     </div>
   );
