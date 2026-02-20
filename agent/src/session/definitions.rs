@@ -118,6 +118,12 @@ impl ConnectionStore {
         }
     }
 
+    /// Get a connection by ID. Returns `None` if not found.
+    pub async fn get(&self, id: &str) -> Option<ConnectionSnapshot> {
+        let conns = self.connections.lock().await;
+        conns.get(id).map(|c| c.snapshot())
+    }
+
     /// Create a new connection. Returns the snapshot.
     pub async fn create(&self, conn: Connection) -> ConnectionSnapshot {
         let snapshot = conn.snapshot();
@@ -452,6 +458,26 @@ mod tests {
     }
 
     // ── Connection CRUD ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn get_connection() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        let store = ConnectionStore::new_temp(path);
+
+        store
+            .create(make_connection("conn-1", "Shell", true))
+            .await;
+
+        let snap = store.get("conn-1").await;
+        assert!(snap.is_some());
+        let snap = snap.unwrap();
+        assert_eq!(snap.id, "conn-1");
+        assert_eq!(snap.name, "Shell");
+        assert!(snap.persistent);
+
+        assert!(store.get("nonexistent").await.is_none());
+    }
 
     #[tokio::test]
     async fn create_and_list() {
