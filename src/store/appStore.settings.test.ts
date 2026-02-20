@@ -23,17 +23,17 @@ vi.mock("@/services/storage", () => ({
   reloadExternalConnections: vi.fn(() => Promise.resolve([])),
 }));
 
-const mockMonitoringClose = vi.fn(() => Promise.resolve());
-const mockSftpClose = vi.fn(() => Promise.resolve());
+const mockMonitoringClose = vi.fn((_sessionId: string) => Promise.resolve());
+const mockSftpClose = vi.fn((_sessionId: string) => Promise.resolve());
 
 vi.mock("@/services/api", () => ({
   sftpOpen: vi.fn(),
-  sftpClose: (...args: unknown[]) => mockSftpClose(...args),
+  sftpClose: (sessionId: string) => mockSftpClose(sessionId),
   sftpListDir: vi.fn(),
   localListDir: vi.fn(),
   vscodeAvailable: vi.fn(() => Promise.resolve(false)),
   monitoringOpen: vi.fn(),
-  monitoringClose: (...args: unknown[]) => mockMonitoringClose(...args),
+  monitoringClose: (sessionId: string) => mockMonitoringClose(sessionId),
   monitoringFetchStats: vi.fn(),
 }));
 

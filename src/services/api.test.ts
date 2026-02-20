@@ -217,7 +217,12 @@ describe("api service", () => {
 
   describe("settings commands", () => {
     it("getSettings returns settings object", async () => {
-      const settings = { version: "1", externalConnectionFiles: [] };
+      const settings = {
+        version: "1",
+        externalConnectionFiles: [],
+        powerMonitoringEnabled: true,
+        fileBrowserEnabled: true,
+      };
       mockedInvoke.mockResolvedValue(settings);
 
       const result = await getSettings();
@@ -228,7 +233,12 @@ describe("api service", () => {
 
     it("saveSettings invokes with settings object", async () => {
       mockedInvoke.mockResolvedValue(undefined);
-      const settings = { version: "1", externalConnectionFiles: [] };
+      const settings = {
+        version: "1",
+        externalConnectionFiles: [],
+        powerMonitoringEnabled: true,
+        fileBrowserEnabled: true,
+      };
 
       await saveSettings(settings);
 
