@@ -98,7 +98,7 @@
 
 .agent-setup-dialog__error {
   font-size: var(--font-size-sm);
-  color: var(--error-color, #cd3131);
+  color: var(--color-error);
   margin: 0;
 }
 

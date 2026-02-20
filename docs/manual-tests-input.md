@@ -475,6 +475,18 @@ Each section groups related tests by feature area. Individual test items referen
 
 ## UI / Layout
 
+### Color theme switching (PR #220)
+
+- [ ] Open Settings > Appearance > Theme — select "Light" — verify all UI elements update: sidebar becomes light gray, tabs become light, text becomes dark, borders lighten
+- [ ] Select "Dark" — verify all UI elements revert to the dark color scheme
+- [ ] Select "System" — verify the app follows the current OS dark/light mode preference
+- [ ] In "System" mode, toggle OS dark/light mode — verify the app switches themes automatically without a restart
+- [ ] Open multiple terminal tabs — switch theme — verify all terminal instances re-theme live (background, foreground, ANSI colors all change)
+- [ ] Verify the activity bar stays dark in both Light and Dark themes (visual anchor)
+- [ ] Verify state dots (connected/connecting/disconnected) are visible in both themes on terminal tabs and agent sidebar nodes
+- [ ] Close and reopen the app — verify the selected theme persists across restarts
+- [ ] Trigger an error (e.g., throw in a component) to see the ErrorBoundary — verify it renders with theme-appropriate colors
+
 ### Status bar (PR #30)
 
 - [ ] Run `npm run build` — no compile errors

@@ -180,11 +180,11 @@
 }
 
 .monitoring-status__stat--warning {
-  color: #cca700;
+  color: var(--color-warning);
 }
 
 .monitoring-status__stat--critical {
-  color: #f44747;
+  color: var(--color-error);
 }
 
 .monitoring-status__loading {
@@ -207,7 +207,7 @@
 }
 
 .monitoring-status__error {
-  color: #f44747;
+  color: var(--color-error);
 }
 
 /* Monitoring connection picker dropdown */
