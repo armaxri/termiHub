@@ -102,13 +102,10 @@ impl SessionManager {
         let shell_backend = if session_type == SessionType::Shell {
             let shell_config: ShellConfig = serde_json::from_value(config.clone())
                 .map_err(|e| SessionCreateError::InvalidConfig(e.to_string()))?;
-            let backend = ShellBackend::new(
-                id.clone(),
-                &shell_config,
-                self.notification_tx.clone(),
-            )
-            .await
-            .map_err(|e| SessionCreateError::BackendFailed(e.to_string()))?;
+            let backend =
+                ShellBackend::new(id.clone(), &shell_config, self.notification_tx.clone())
+                    .await
+                    .map_err(|e| SessionCreateError::BackendFailed(e.to_string()))?;
 
             // Persist session to state.json for recovery
             let mut state = self.state.lock().await;
@@ -118,9 +115,7 @@ impl SessionManager {
                     session_type: "shell".to_string(),
                     title: title.clone(),
                     created_at: now.to_rfc3339(),
-                    daemon_socket: Some(
-                        backend.socket_path().to_string_lossy().to_string(),
-                    ),
+                    daemon_socket: Some(backend.socket_path().to_string_lossy().to_string()),
                     config: config.clone(),
                 },
             );
@@ -344,12 +339,8 @@ impl SessionManager {
             }
 
             // Try to reconnect
-            match ShellBackend::reconnect(
-                id.clone(),
-                socket_path,
-                self.notification_tx.clone(),
-            )
-            .await
+            match ShellBackend::reconnect(id.clone(), socket_path, self.notification_tx.clone())
+                .await
             {
                 Ok(backend) => {
                     let created_at = chrono::DateTime::parse_from_rfc3339(&session.created_at)

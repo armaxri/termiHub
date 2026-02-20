@@ -534,15 +534,10 @@ async fn test_shell_exit() {
 
     // Read until we get an Exited frame.
     let mut exit_code: Option<i32> = None;
-    loop {
-        match reader.next_frame(Duration::from_secs(5)).await {
-            Ok(Some(frame)) => {
-                if frame.msg_type == MSG_EXITED {
-                    exit_code = decode_exit_code(&frame.payload);
-                    break;
-                }
-            }
-            _ => break,
+    while let Ok(Some(frame)) = reader.next_frame(Duration::from_secs(5)).await {
+        if frame.msg_type == MSG_EXITED {
+            exit_code = decode_exit_code(&frame.payload);
+            break;
         }
     }
 

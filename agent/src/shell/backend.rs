@@ -5,7 +5,7 @@
 //! protocol. A tokio reader task converts daemon frames into JSON-RPC
 //! notifications for the desktop.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -51,15 +51,12 @@ impl ShellBackend {
         config: &ShellConfig,
         notification_tx: NotificationSender,
     ) -> Result<Self, anyhow::Error> {
-        let socket_path = crate::daemon::process::socket_dir()
-            .join(format!("session-{session_id}.sock"));
+        let socket_path =
+            crate::daemon::process::socket_dir().join(format!("session-{session_id}.sock"));
 
         // Build environment for the daemon
         let env_json = serde_json::to_string(&config.env)?;
-        let shell = config
-            .shell
-            .clone()
-            .unwrap_or_else(|| detect_default_shell());
+        let shell = config.shell.clone().unwrap_or_else(detect_default_shell);
 
         let agent_exe = std::env::current_exe()?;
 
@@ -190,12 +187,13 @@ impl ShellBackend {
     }
 
     /// Whether the daemon is still alive.
+    #[allow(dead_code)]
     pub fn is_alive(&self) -> bool {
         self.alive.load(Ordering::SeqCst)
     }
 
     /// Get the socket path for state persistence.
-    pub fn socket_path(&self) -> &PathBuf {
+    pub fn socket_path(&self) -> &Path {
         &self.socket_path
     }
 
@@ -216,7 +214,7 @@ fn detect_default_shell() -> String {
 }
 
 /// Wait for the daemon socket file to appear on disk.
-async fn wait_for_socket(path: &PathBuf) -> Result<(), anyhow::Error> {
+async fn wait_for_socket(path: &Path) -> Result<(), anyhow::Error> {
     let deadline = tokio::time::Instant::now() + SOCKET_WAIT_TIMEOUT;
 
     loop {
@@ -238,7 +236,7 @@ async fn wait_for_socket(path: &PathBuf) -> Result<(), anyhow::Error> {
 ///
 /// Returns the writer half, the reader task handle, and the alive flag.
 async fn connect_and_start_reader(
-    socket_path: &PathBuf,
+    socket_path: &Path,
     session_id: &str,
     notification_tx: NotificationSender,
 ) -> Result<
@@ -260,7 +258,10 @@ async fn connect_and_start_reader(
     loop {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         if remaining.is_zero() {
-            return Err(anyhow::anyhow!("Daemon did not send Ready within {:?}", READY_TIMEOUT));
+            return Err(anyhow::anyhow!(
+                "Daemon did not send Ready within {:?}",
+                READY_TIMEOUT
+            ));
         }
 
         match tokio::time::timeout(remaining, protocol::read_frame_async(&mut reader)).await {
@@ -279,7 +280,10 @@ async fn connect_and_start_reader(
                     return Err(anyhow::anyhow!("Shell already exited with code {code}"));
                 }
                 _ => {
-                    debug!("Unexpected frame during handshake: 0x{:02x}", frame.msg_type);
+                    debug!(
+                        "Unexpected frame during handshake: 0x{:02x}",
+                        frame.msg_type
+                    );
                 }
             },
             Ok(Ok(None)) => {
@@ -289,7 +293,10 @@ async fn connect_and_start_reader(
                 return Err(anyhow::anyhow!("Frame read error during handshake: {e}"));
             }
             Err(_) => {
-                return Err(anyhow::anyhow!("Daemon did not send Ready within {:?}", READY_TIMEOUT));
+                return Err(anyhow::anyhow!(
+                    "Daemon did not send Ready within {:?}",
+                    READY_TIMEOUT
+                ));
             }
         }
     }
