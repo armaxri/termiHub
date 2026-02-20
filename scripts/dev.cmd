@@ -12,7 +12,7 @@ if not exist node_modules (
 )
 
 REM Kill any process occupying the Vite dev server port (leftover from a previous run)
-node scripts\kill-port.js 1420
+node scripts\kill-port.cjs 1420
 
 echo Starting TermiHub in dev mode...
 call pnpm tauri dev
