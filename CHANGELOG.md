@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- SSH key path file suggestions: the Key Path field in SSH and Agent settings now scans `~/.ssh/` and shows a dropdown of available private key files with type-ahead filtering, arrow-key navigation, and Tab/Enter to accept (#118)
 - Connection editor now uses a categorized two-panel layout matching the global settings panel: Connection, Terminal, and Appearance categories with sidebar navigation and responsive compact mode
 - Per-connection terminal overrides: font family, font size, scrollback buffer, cursor style, cursor blink, and horizontal scrolling can be configured per-connection, overriding global defaults
 - Sidebar toggle button in the terminal toolbar and `Ctrl+B` (`Cmd+B` on Mac) keyboard shortcut to quickly hide/show the sidebar (#194)
