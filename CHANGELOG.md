@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Connection editor now uses a categorized two-panel layout matching the global settings panel: Connection, Terminal, and Appearance categories with sidebar navigation and responsive compact mode
+- Per-connection terminal overrides: font family, font size, scrollback buffer, cursor style, cursor blink, and horizontal scrolling can be configured per-connection, overriding global defaults
 - Redesigned Settings panel with a categorized two-panel layout: General, Appearance, Terminal, and External Files categories with a sidebar navigation, search bar, and version footer (#191)
 - New settings: default user, default SSH key path, default shell, theme, font family, font size, horizontal scrolling default, scrollback buffer, cursor style, and cursor blink
 - Terminal settings (font, cursor, scrollback) are applied live to existing terminals when changed
