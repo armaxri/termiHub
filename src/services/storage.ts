@@ -2,11 +2,12 @@
  * Connection persistence via Tauri backend.
  */
 
-import { SavedConnection, ConnectionFolder, ExternalConnectionSource } from "@/types/connection";
+import { SavedConnection, ConnectionFolder, ExternalFileError } from "@/types/connection";
 import {
   loadConnectionsAndFolders,
   saveConnection,
   deleteConnectionFromBackend,
+  moveConnectionToFile,
   saveFolder,
   deleteFolderFromBackend,
   exportConnections,
@@ -20,12 +21,12 @@ import {
   deleteRemoteAgentFromBackend,
 } from "./api";
 
-/** Load all saved connections, folders, external sources, and agents from the backend */
+/** Load all saved connections, folders, and agents from the backend (unified) */
 export async function loadConnections(): Promise<{
   connections: SavedConnection[];
   folders: ConnectionFolder[];
-  externalSources: ExternalConnectionSource[];
   agents: SavedRemoteAgent[];
+  externalErrors: ExternalFileError[];
 }> {
   return await loadConnectionsAndFolders();
 }
@@ -36,9 +37,12 @@ export async function persistConnection(connection: SavedConnection): Promise<vo
 }
 
 /** Delete a connection from persistent storage */
-export async function removeConnection(id: string): Promise<void> {
-  await deleteConnectionFromBackend(id);
+export async function removeConnection(id: string, sourceFile?: string | null): Promise<void> {
+  await deleteConnectionFromBackend(id, sourceFile);
 }
+
+/** Move a connection between storage files */
+export { moveConnectionToFile };
 
 /** Persist a folder (add or update) */
 export async function persistFolder(folder: ConnectionFolder): Promise<void> {

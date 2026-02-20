@@ -15,7 +15,7 @@ import {
   SavedConnection,
   ConnectionFolder,
   FileEntry,
-  ExternalConnectionSource,
+  ExternalFileError,
   AppSettings,
   AgentCapabilities,
 } from "@/types/connection";
@@ -93,8 +93,8 @@ export interface SavedRemoteAgent {
 interface ConnectionData {
   connections: SavedConnection[];
   folders: ConnectionFolder[];
-  externalSources: ExternalConnectionSource[];
   agents: SavedRemoteAgent[];
+  externalErrors: ExternalFileError[];
 }
 
 /** Load all saved connections and folders from disk */
@@ -107,9 +107,25 @@ export async function saveConnection(connection: SavedConnection): Promise<void>
   await invoke("save_connection", { connection });
 }
 
-/** Delete a connection by ID */
-export async function deleteConnectionFromBackend(id: string): Promise<void> {
-  await invoke("delete_connection", { id });
+/** Delete a connection by ID, optionally from an external file */
+export async function deleteConnectionFromBackend(
+  id: string,
+  sourceFile?: string | null
+): Promise<void> {
+  await invoke("delete_connection", { id, sourceFile: sourceFile ?? null });
+}
+
+/** Move a connection between storage files */
+export async function moveConnectionToFile(
+  connectionId: string,
+  currentSource: string | null,
+  targetSource: string | null
+): Promise<SavedConnection> {
+  return await invoke<SavedConnection>("move_connection_to_file", {
+    connectionId,
+    currentSource,
+    targetSource,
+  });
 }
 
 /** Save (add or update) a folder */
@@ -155,8 +171,8 @@ export async function saveExternalFile(
 }
 
 /** Reload external connection files */
-export async function reloadExternalConnections(): Promise<ExternalConnectionSource[]> {
-  return await invoke<ExternalConnectionSource[]>("reload_external_connections");
+export async function reloadExternalConnections(): Promise<SavedConnection[]> {
+  return await invoke<SavedConnection[]>("reload_external_connections");
 }
 
 // --- SFTP commands ---
