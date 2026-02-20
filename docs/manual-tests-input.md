@@ -507,6 +507,18 @@ Each section groups related tests by feature area. Individual test items referen
 - [ ] After setup, right-click agent → "Connect" — verify agent connects successfully
 - [ ] Test error case: select a non-existent binary path — verify error is shown
 
+### Agent shell sessions (PR TBD)
+
+- [ ] Start agent in TCP mode: `cargo run -- --listen 127.0.0.1:7685`
+- [ ] Send `initialize` + `session.create` (type "shell") via netcat — verify session ID returned
+- [ ] Send `session.attach` — verify `session.output` notifications with shell prompt
+- [ ] Send `session.input` with base64-encoded `echo hello\n` — verify output contains "hello"
+- [ ] Send `session.resize` with cols=120, rows=40 — verify no error
+- [ ] Send `session.detach`, then `session.attach` again — verify buffer replay includes previous output
+- [ ] Kill the agent process, restart it — verify `session.list` shows the recovered session
+- [ ] Attach to the recovered session — verify previous output is replayed
+- [ ] Send `session.close` — verify session is removed and daemon process exits
+
 ### TCP listener mode and systemd (PR #116)
 
 - [ ] `cargo run -- --listen` starts and listens on 127.0.0.1:7685
