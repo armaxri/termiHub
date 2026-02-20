@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Concept document for SSH tunneling feature: local, remote, and dynamic (SOCKS5) port forwarding with visual diagram-driven configuration UI (#107)
+
 ### Fixed
 
 - Vertically split panels can now be resized — the resize handle between top/bottom panels was invisible due to missing CSS height (#213)
