@@ -332,7 +332,7 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
     };
   }, [tabId, setupTerminal, register, unregister, parkingRef]);
 
-  // Re-fit when visibility changes
+  // Re-fit and focus when visibility changes
   useEffect(() => {
     if (isVisible && fitAddonRef.current && xtermRef.current && terminalElRef.current) {
       try {
@@ -344,6 +344,7 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
       } catch {
         // Ignore
       }
+      xtermRef.current.focus();
     }
   }, [isVisible]);
 
