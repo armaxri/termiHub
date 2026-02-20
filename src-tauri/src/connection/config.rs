@@ -10,6 +10,16 @@ pub struct TerminalOptions {
     pub horizontal_scrolling: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_family: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_size: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scrollback_buffer: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor_style: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor_blink: Option<bool>,
 }
 
 /// A saved connection with a name and optional folder assignment.
@@ -284,6 +294,7 @@ mod tests {
             terminal_options: Some(TerminalOptions {
                 horizontal_scrolling: Some(true),
                 color: None,
+                ..Default::default()
             }),
         };
         let json: serde_json::Value = serde_json::to_value(&conn).unwrap();

@@ -1,4 +1,5 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
+import { PlugZap, TerminalSquare, Palette } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import {
   ConnectionType,
@@ -22,12 +23,42 @@ import {
   TelnetSettings,
   DockerSettings,
   AgentSettings,
+  SettingsNav,
 } from "@/components/Settings";
-import { ColorPickerDialog } from "@/components/Terminal/ColorPickerDialog";
-import { IconPickerDialog } from "./IconPickerDialog";
-import { IconByName } from "@/utils/connectionIcons";
+import { ConnectionTerminalSettings } from "./ConnectionTerminalSettings";
+import { ConnectionAppearanceSettings } from "./ConnectionAppearanceSettings";
 import { findLeafByTab } from "@/utils/panelTree";
 import "./ConnectionEditor.css";
+
+type EditorCategory = "connection" | "terminal" | "appearance";
+
+const EDITOR_CATEGORIES = [
+  { id: "connection", label: "Connection" },
+  { id: "terminal", label: "Terminal" },
+  { id: "appearance", label: "Appearance" },
+];
+
+const AGENT_CATEGORIES = [{ id: "connection", label: "Connection" }];
+
+const EDITOR_ICONS: Record<EditorCategory, React.ComponentType<{ size?: number }>> = {
+  connection: PlugZap,
+  terminal: TerminalSquare,
+  appearance: Palette,
+};
+
+const STORAGE_KEY = "termihub-editor-category";
+
+function loadSavedCategory(): EditorCategory {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved === "connection" || saved === "terminal" || saved === "appearance") {
+      return saved;
+    }
+  } catch {
+    // Ignore localStorage errors
+  }
+  return "connection";
+}
 
 function getDefaultConfigs(
   defaultShell: string
@@ -100,6 +131,11 @@ function externalFilePathFromId(id: string): string | null {
   return null;
 }
 
+/** Check whether any field in TerminalOptions has a non-undefined value. */
+function hasTerminalOptions(opts: TerminalOptions): boolean {
+  return Object.values(opts).some((v) => v !== undefined);
+}
+
 interface ConnectionEditorProps {
   tabId: string;
   meta: ConnectionEditorMeta;
@@ -168,8 +204,41 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     existingConnection?.terminalOptions ?? {}
   );
   const [icon, setIcon] = useState<string | undefined>(existingConnection?.icon);
-  const [colorPickerOpen, setColorPickerOpen] = useState(false);
-  const [iconPickerOpen, setIconPickerOpen] = useState(false);
+
+  // Category navigation
+  const [activeCategory, setActiveCategory] = useState<EditorCategory>(loadSavedCategory);
+  const [isCompact, setIsCompact] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // ResizeObserver for compact mode
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setIsCompact(entry.contentRect.width < 480);
+      }
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  // In agent mode, force category to "connection"
+  useEffect(() => {
+    if (isAgentMode && activeCategory !== "connection") {
+      setActiveCategory("connection");
+    }
+  }, [isAgentMode, activeCategory]);
+
+  const handleCategoryChange = useCallback((category: EditorCategory) => {
+    setActiveCategory(category);
+    try {
+      localStorage.setItem(STORAGE_KEY, category);
+    } catch {
+      // Ignore localStorage errors
+    }
+  }, []);
 
   const handleTypeChange = useCallback(
     (type: ConnectionType) => {
@@ -209,8 +278,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       }
     }
 
-    const opts =
-      terminalOptions.horizontalScrolling || terminalOptions.color ? terminalOptions : undefined;
+    const opts = hasTerminalOptions(terminalOptions) ? terminalOptions : undefined;
 
     if (extFilePath) {
       const prefix = `ext:${extFilePath}::`;
@@ -319,8 +387,106 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     closeThisTab();
   }, [closeThisTab]);
 
+  const renderConnectionContent = () => (
+    <div className="connection-editor__form">
+      <label className="settings-form__field">
+        <span className="settings-form__label">Name</span>
+        <input
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Connection name"
+          autoFocus
+          data-testid="connection-editor-name-input"
+        />
+      </label>
+      <label className="settings-form__field">
+        <span className="settings-form__label">Type</span>
+        <select
+          value={selectedType}
+          onChange={(e) => handleTypeChange(e.target.value as ConnectionType)}
+          disabled={!!existingAgent}
+          data-testid="connection-editor-type-select"
+        >
+          {TYPE_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      {connectionConfig.type === "local" && (
+        <ConnectionSettings
+          config={connectionConfig.config}
+          onChange={(config: LocalShellConfig) => setConnectionConfig({ type: "local", config })}
+        />
+      )}
+      {connectionConfig.type === "ssh" && (
+        <SshSettings
+          config={connectionConfig.config}
+          onChange={(config: SshConfig) => setConnectionConfig({ type: "ssh", config })}
+          onSetupAgent={handleSetupSshAgent}
+        />
+      )}
+      {connectionConfig.type === "serial" && (
+        <SerialSettings
+          config={connectionConfig.config}
+          onChange={(config: SerialConfig) => setConnectionConfig({ type: "serial", config })}
+        />
+      )}
+      {connectionConfig.type === "telnet" && (
+        <TelnetSettings
+          config={connectionConfig.config}
+          onChange={(config: TelnetConfig) => setConnectionConfig({ type: "telnet", config })}
+        />
+      )}
+      {connectionConfig.type === "docker" && (
+        <DockerSettings
+          config={connectionConfig.config}
+          onChange={(config: DockerConfig) => setConnectionConfig({ type: "docker", config })}
+        />
+      )}
+      {selectedType === "remote" && (
+        <AgentSettings config={agentConfig} onChange={setAgentConfig} />
+      )}
+
+      {!isAgentMode && (
+        <p className="settings-form__hint">
+          Use {"${env:VAR}"} for environment variables, e.g. {"${env:USER}"}
+        </p>
+      )}
+    </div>
+  );
+
+  const renderContent = () => {
+    switch (activeCategory) {
+      case "connection":
+        return renderConnectionContent();
+      case "terminal":
+        return (
+          <ConnectionTerminalSettings options={terminalOptions} onChange={setTerminalOptions} />
+        );
+      case "appearance":
+        return (
+          <ConnectionAppearanceSettings
+            color={terminalOptions.color}
+            onColorChange={(color) => setTerminalOptions({ ...terminalOptions, color })}
+            icon={icon}
+            onIconChange={setIcon}
+          />
+        );
+    }
+  };
+
+  const categories = isAgentMode ? AGENT_CATEGORIES : EDITOR_CATEGORIES;
+
   return (
-    <div className="connection-editor" style={{ display: isVisible ? undefined : "none" }}>
+    <div
+      ref={containerRef}
+      className="connection-editor"
+      style={{ display: isVisible ? undefined : "none" }}
+    >
       <div className="connection-editor__header">
         {existingAgent
           ? "Edit Remote Agent"
@@ -328,184 +494,42 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
             ? "Edit Connection"
             : "New Connection"}
       </div>
-      <div className="connection-editor__form">
-        <label className="settings-form__field">
-          <span className="settings-form__label">Name</span>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Connection name"
-            autoFocus
-            data-testid="connection-editor-name-input"
-          />
-        </label>
-        <label className="settings-form__field">
-          <span className="settings-form__label">Type</span>
-          <select
-            value={selectedType}
-            onChange={(e) => handleTypeChange(e.target.value as ConnectionType)}
-            disabled={!!existingAgent}
-            data-testid="connection-editor-type-select"
-          >
-            {TYPE_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        {connectionConfig.type === "local" && (
-          <ConnectionSettings
-            config={connectionConfig.config}
-            onChange={(config: LocalShellConfig) => setConnectionConfig({ type: "local", config })}
-          />
-        )}
-        {connectionConfig.type === "ssh" && (
-          <SshSettings
-            config={connectionConfig.config}
-            onChange={(config: SshConfig) => setConnectionConfig({ type: "ssh", config })}
-            onSetupAgent={handleSetupSshAgent}
-          />
-        )}
-        {connectionConfig.type === "serial" && (
-          <SerialSettings
-            config={connectionConfig.config}
-            onChange={(config: SerialConfig) => setConnectionConfig({ type: "serial", config })}
-          />
-        )}
-        {connectionConfig.type === "telnet" && (
-          <TelnetSettings
-            config={connectionConfig.config}
-            onChange={(config: TelnetConfig) => setConnectionConfig({ type: "telnet", config })}
-          />
-        )}
-        {connectionConfig.type === "docker" && (
-          <DockerSettings
-            config={connectionConfig.config}
-            onChange={(config: DockerConfig) => setConnectionConfig({ type: "docker", config })}
-          />
-        )}
-        {selectedType === "remote" && (
-          <AgentSettings config={agentConfig} onChange={setAgentConfig} />
-        )}
-
+      <div
+        className={`connection-editor__body ${isCompact ? "connection-editor__body--compact" : ""}`}
+      >
+        <SettingsNav
+          categories={categories}
+          iconMap={EDITOR_ICONS}
+          activeCategory={activeCategory}
+          onCategoryChange={handleCategoryChange}
+          isCompact={isCompact}
+        />
+        <div className="connection-editor__content">{renderContent()}</div>
+      </div>
+      <div className="connection-editor__actions">
+        <button
+          className="connection-editor__btn connection-editor__btn--secondary"
+          onClick={handleCancel}
+          data-testid="connection-editor-cancel"
+        >
+          Cancel
+        </button>
         {!isAgentMode && (
-          <p className="settings-form__hint">
-            Use {"${env:VAR}"} for environment variables, e.g. {"${env:USER}"}
-          </p>
-        )}
-
-        {!isAgentMode && (
-          <>
-            <label className="settings-form__field settings-form__field--checkbox">
-              <input
-                type="checkbox"
-                checked={terminalOptions.horizontalScrolling ?? false}
-                onChange={(e) =>
-                  setTerminalOptions({ ...terminalOptions, horizontalScrolling: e.target.checked })
-                }
-                data-testid="connection-editor-horizontal-scroll"
-              />
-              <span className="settings-form__label">Enable horizontal scrolling</span>
-            </label>
-
-            <div className="settings-form__field">
-              <span className="settings-form__label">Tab Color</span>
-              <div className="connection-editor__color-row">
-                {terminalOptions.color && (
-                  <div
-                    className="connection-editor__color-preview"
-                    style={{ backgroundColor: terminalOptions.color }}
-                  />
-                )}
-                <button
-                  className="connection-editor__btn connection-editor__btn--secondary"
-                  type="button"
-                  onClick={() => setColorPickerOpen(true)}
-                  data-testid="connection-editor-color-picker"
-                >
-                  {terminalOptions.color ? "Change" : "Set Color"}
-                </button>
-                {terminalOptions.color && (
-                  <button
-                    className="connection-editor__btn connection-editor__btn--secondary"
-                    type="button"
-                    onClick={() => setTerminalOptions({ ...terminalOptions, color: undefined })}
-                    data-testid="connection-editor-clear-color"
-                  >
-                    Clear
-                  </button>
-                )}
-              </div>
-            </div>
-            <div className="settings-form__field">
-              <span className="settings-form__label">Icon</span>
-              <div className="connection-editor__color-row">
-                {icon && <IconByName name={icon} size={18} />}
-                <button
-                  className="connection-editor__btn connection-editor__btn--secondary"
-                  type="button"
-                  onClick={() => setIconPickerOpen(true)}
-                  data-testid="connection-editor-icon-picker"
-                >
-                  {icon ? "Change" : "Set Icon"}
-                </button>
-                {icon && (
-                  <button
-                    className="connection-editor__btn connection-editor__btn--secondary"
-                    type="button"
-                    onClick={() => setIcon(undefined)}
-                    data-testid="connection-editor-clear-icon"
-                  >
-                    Clear
-                  </button>
-                )}
-              </div>
-            </div>
-            <ColorPickerDialog
-              open={colorPickerOpen}
-              onOpenChange={setColorPickerOpen}
-              currentColor={terminalOptions.color}
-              onColorChange={(color) =>
-                setTerminalOptions({ ...terminalOptions, color: color ?? undefined })
-              }
-            />
-            <IconPickerDialog
-              open={iconPickerOpen}
-              onOpenChange={setIconPickerOpen}
-              currentIcon={icon}
-              onIconChange={(i) => setIcon(i ?? undefined)}
-            />
-          </>
-        )}
-
-        <div className="connection-editor__actions">
-          <button
-            className="connection-editor__btn connection-editor__btn--secondary"
-            onClick={handleCancel}
-            data-testid="connection-editor-cancel"
-          >
-            Cancel
-          </button>
-          {!isAgentMode && (
-            <button
-              className="connection-editor__btn connection-editor__btn--primary"
-              onClick={handleSaveAndConnect}
-              data-testid="connection-editor-save-connect"
-            >
-              Save &amp; Connect
-            </button>
-          )}
           <button
             className="connection-editor__btn connection-editor__btn--primary"
-            onClick={handleSave}
-            data-testid="connection-editor-save"
+            onClick={handleSaveAndConnect}
+            data-testid="connection-editor-save-connect"
           >
-            Save
+            Save &amp; Connect
           </button>
-        </div>
+        )}
+        <button
+          className="connection-editor__btn connection-editor__btn--primary"
+          onClick={handleSave}
+          data-testid="connection-editor-save"
+        >
+          Save
+        </button>
       </div>
     </div>
   );
