@@ -390,55 +390,133 @@ impl SessionManager {
         let mut recovered = Vec::new();
 
         for (id, session) in &persisted {
-            if session.session_type != "shell" {
-                continue;
-            }
-
-            let socket_path = match &session.daemon_socket {
-                Some(p) => PathBuf::from(p),
-                None => continue,
-            };
-
-            // Check if the socket file still exists
-            if !socket_path.exists() {
-                info!("Daemon socket gone for session {id}, removing from state");
-                let mut state = self.state.lock().await;
-                state.remove_session(id);
-                continue;
-            }
-
-            // Try to reconnect
-            match ShellBackend::reconnect(id.clone(), socket_path, self.notification_tx.clone())
-                .await
-            {
-                Ok(backend) => {
-                    let created_at = chrono::DateTime::parse_from_rfc3339(&session.created_at)
-                        .map(|dt| dt.with_timezone(&Utc))
-                        .unwrap_or_else(|_| Utc::now());
-
-                    let info = SessionInfo {
-                        id: id.clone(),
-                        title: session.title.clone(),
-                        session_type: SessionType::Shell,
-                        status: SessionStatus::Running,
-                        config: session.config.clone(),
-                        created_at,
-                        last_activity: Utc::now(),
-                        attached: false,
-                        serial_backend: None,
-                        shell_backend: Some(backend),
-                        docker_backend: None,
+            match session.session_type.as_str() {
+                "shell" => {
+                    let socket_path = match &session.daemon_socket {
+                        Some(p) => PathBuf::from(p),
+                        None => continue,
                     };
 
-                    let mut sessions = self.sessions.lock().await;
-                    sessions.insert(id.clone(), info);
-                    recovered.push(id.clone());
-                    info!("Recovered shell session {id}");
+                    if !socket_path.exists() {
+                        info!("Daemon socket gone for session {id}, removing from state");
+                        let mut state = self.state.lock().await;
+                        state.remove_session(id);
+                        continue;
+                    }
+
+                    match ShellBackend::reconnect(
+                        id.clone(),
+                        socket_path,
+                        self.notification_tx.clone(),
+                    )
+                    .await
+                    {
+                        Ok(backend) => {
+                            let created_at =
+                                chrono::DateTime::parse_from_rfc3339(&session.created_at)
+                                    .map(|dt| dt.with_timezone(&Utc))
+                                    .unwrap_or_else(|_| Utc::now());
+
+                            let info = SessionInfo {
+                                id: id.clone(),
+                                title: session.title.clone(),
+                                session_type: SessionType::Shell,
+                                status: SessionStatus::Running,
+                                config: session.config.clone(),
+                                created_at,
+                                last_activity: Utc::now(),
+                                attached: false,
+                                serial_backend: None,
+                                shell_backend: Some(backend),
+                                docker_backend: None,
+                            };
+
+                            let mut sessions = self.sessions.lock().await;
+                            sessions.insert(id.clone(), info);
+                            recovered.push(id.clone());
+                            info!("Recovered shell session {id}");
+                        }
+                        Err(e) => {
+                            warn!("Failed to recover shell session {id}: {e}");
+                            let mut state = self.state.lock().await;
+                            state.remove_session(id);
+                        }
+                    }
                 }
-                Err(e) => {
-                    warn!("Failed to recover session {id}: {e}");
-                    let mut state = self.state.lock().await;
-                    state.remove_session(id);
+                "docker" => {
+                    let container_name = match &session.container_name {
+                        Some(name) => name.clone(),
+                        None => {
+                            warn!("Docker session {id} missing container_name, removing");
+                            let mut state = self.state.lock().await;
+                            state.remove_session(id);
+                            continue;
+                        }
+                    };
+
+                    let remove_on_exit = session.remove_on_exit.unwrap_or(false);
+
+                    // Extract shell and dimensions from persisted config
+                    let docker_config: DockerSessionConfig =
+                        match serde_json::from_value(session.config.clone()) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                warn!("Failed to parse Docker config for session {id}: {e}");
+                                let mut state = self.state.lock().await;
+                                state.remove_session(id);
+                                continue;
+                            }
+                        };
+
+                    let shell = docker_config
+                        .shell
+                        .unwrap_or_else(|| "/bin/sh".to_string());
+
+                    match DockerBackend::reconnect(
+                        id.clone(),
+                        container_name,
+                        remove_on_exit,
+                        shell,
+                        docker_config.cols,
+                        docker_config.rows,
+                        self.notification_tx.clone(),
+                    )
+                    .await
+                    {
+                        Ok(backend) => {
+                            let created_at =
+                                chrono::DateTime::parse_from_rfc3339(&session.created_at)
+                                    .map(|dt| dt.with_timezone(&Utc))
+                                    .unwrap_or_else(|_| Utc::now());
+
+                            let info = SessionInfo {
+                                id: id.clone(),
+                                title: session.title.clone(),
+                                session_type: SessionType::Docker,
+                                status: SessionStatus::Running,
+                                config: session.config.clone(),
+                                created_at,
+                                last_activity: Utc::now(),
+                                attached: false,
+                                serial_backend: None,
+                                shell_backend: None,
+                                docker_backend: Some(backend),
+                            };
+
+                            let mut sessions = self.sessions.lock().await;
+                            sessions.insert(id.clone(), info);
+                            recovered.push(id.clone());
+                            info!("Recovered Docker session {id}");
+                        }
+                        Err(e) => {
+                            warn!("Failed to recover Docker session {id}: {e}");
+                            let mut state = self.state.lock().await;
+                            state.remove_session(id);
+                        }
+                    }
+                }
+                other => {
+                    info!("Skipping recovery for unknown session type: {other}");
                 }
             }
         }

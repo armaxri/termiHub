@@ -193,6 +193,89 @@ mod tests {
     }
 
     #[test]
+    fn docker_session_round_trip() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("state.json");
+
+        let mut state = AgentState::default();
+        state.sessions.insert(
+            "docker-1".to_string(),
+            PersistedSession {
+                session_type: "docker".to_string(),
+                title: "Docker test".to_string(),
+                created_at: "2026-02-20T10:00:00Z".to_string(),
+                daemon_socket: Some("/tmp/docker.sock".to_string()),
+                config: json!({"image": "ubuntu:22.04", "shell": "/bin/bash"}),
+                container_name: Some("termihub-docker-1".to_string()),
+                remove_on_exit: Some(true),
+            },
+        );
+        state.save_to(&path);
+
+        let loaded = AgentState::load_from(&path);
+        assert_eq!(loaded.sessions.len(), 1);
+
+        let s = &loaded.sessions["docker-1"];
+        assert_eq!(s.session_type, "docker");
+        assert_eq!(s.container_name.as_deref(), Some("termihub-docker-1"));
+        assert_eq!(s.remove_on_exit, Some(true));
+        assert_eq!(s.daemon_socket.as_deref(), Some("/tmp/docker.sock"));
+    }
+
+    #[test]
+    fn backward_compatible_load_without_docker_fields() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("state.json");
+
+        // Write JSON without container_name or remove_on_exit fields
+        // (simulating state saved before Docker support was added)
+        let json = r#"{
+            "sessions": {
+                "old-shell": {
+                    "session_type": "shell",
+                    "title": "Old shell",
+                    "created_at": "2026-02-20T10:00:00Z",
+                    "daemon_socket": "/tmp/old.sock",
+                    "config": {}
+                }
+            }
+        }"#;
+        std::fs::write(&path, json).unwrap();
+
+        let loaded = AgentState::load_from(&path);
+        assert_eq!(loaded.sessions.len(), 1);
+
+        let s = &loaded.sessions["old-shell"];
+        assert_eq!(s.session_type, "shell");
+        assert!(s.container_name.is_none());
+        assert!(s.remove_on_exit.is_none());
+    }
+
+    #[test]
+    fn docker_fields_skipped_when_none() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("state.json");
+
+        let mut state = AgentState::default();
+        state.sessions.insert(
+            "shell-1".to_string(),
+            make_session("shell", Some("/tmp/test.sock")),
+        );
+        state.save_to(&path);
+
+        // Read the raw JSON and verify Docker fields are absent
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !raw.contains("container_name"),
+            "container_name should be skipped when None"
+        );
+        assert!(
+            !raw.contains("remove_on_exit"),
+            "remove_on_exit should be skipped when None"
+        );
+    }
+
+    #[test]
     fn add_and_remove_session() {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("state.json");
