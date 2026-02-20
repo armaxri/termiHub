@@ -57,7 +57,7 @@ import {
   AgentSessionInfo,
   AgentDefinitionInfo,
 } from "@/services/api";
-import { RemoteAgentConfig, SshConfig } from "@/types/terminal";
+import { RemoteAgentConfig } from "@/types/terminal";
 import { SystemStats } from "@/types/monitoring";
 import {
   createLeafPanel,
