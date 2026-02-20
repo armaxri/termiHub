@@ -8,7 +8,7 @@ mod utils;
 
 use std::sync::Arc;
 
-use tauri::Manager;
+use tauri::{Manager, RunEvent, WindowEvent};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -60,6 +60,19 @@ pub fn run() {
 
             let tunnel_manager = tunnel::tunnel_manager::TunnelManager::new(app.handle())
                 .expect("Failed to initialize tunnel manager");
+
+            // Auto-start tunnels in a background thread to avoid blocking app startup
+            {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    // Wait briefly for the manager to be registered as state
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    if let Some(mgr) = handle.try_state::<tunnel::tunnel_manager::TunnelManager>() {
+                        mgr.start_auto_tunnels();
+                    }
+                });
+            }
+
             app.manage(tunnel_manager);
 
             Ok(())
@@ -130,6 +143,20 @@ pub fn run() {
             commands::tunnel::start_tunnel,
             commands::tunnel::stop_tunnel,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            if let RunEvent::WindowEvent {
+                event: WindowEvent::Destroyed,
+                ..
+            } = &event
+            {
+                // Gracefully stop all active tunnels on window close
+                if let Some(mgr) =
+                    app_handle.try_state::<tunnel::tunnel_manager::TunnelManager>()
+                {
+                    mgr.stop_all();
+                }
+            }
+        });
 }
