@@ -523,6 +523,13 @@ Each section groups related tests by feature area. Individual test items referen
 - [ ] Close and reopen the app — verify the selected theme persists across restarts
 - [ ] Trigger an error (e.g., throw in a component) to see the ErrorBoundary — verify it renders with theme-appropriate colors
 
+### Theme switching applies immediately (PR #224)
+
+- [ ] Open Settings > Appearance > Theme — switch from Dark to Light — verify the UI changes immediately without needing an app restart
+- [ ] Switch from Light to Dark — verify immediate visual change
+- [ ] Switch to System — verify the theme matches the current OS preference immediately
+- [ ] Rapidly toggle between Dark and Light several times — verify each switch is applied instantly with no delay
+
 ### Status bar (PR #30)
 
 - [ ] Run `npm run build` — no compile errors
