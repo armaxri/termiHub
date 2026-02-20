@@ -1,11 +1,10 @@
-import { useState, useEffect, useCallback } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
+import { useState, useEffect } from "react";
 import { AppSettings } from "@/types/connection";
 import { ShellType } from "@/types/terminal";
 import { detectAvailableShells } from "@/utils/shell-detection";
 import { getWslDistroName } from "@/utils/shell-detection";
 import { useAppStore } from "@/store/appStore";
-import { getHomeDir } from "@/services/api";
+import { KeyPathInput } from "./KeyPathInput";
 
 const SHELL_LABELS: Record<string, string> = {
   bash: "Bash",
@@ -40,24 +39,6 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
     detectAvailableShells().then(setAvailableShells);
   }, []);
 
-  const handleBrowseSshKey = useCallback(async () => {
-    let defaultPath: string | undefined;
-    try {
-      const home = await getHomeDir();
-      defaultPath = `${home}/.ssh`;
-    } catch {
-      // Fall through
-    }
-    const selected = await open({
-      multiple: false,
-      title: "Select default SSH private key",
-      defaultPath,
-    });
-    if (selected) {
-      onChange({ ...settings, defaultSshKeyPath: selected as string });
-    }
-  }, [settings, onChange]);
-
   const show = (field: string) => !visibleFields || visibleFields.has(field);
 
   return (
@@ -80,24 +61,12 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
       {show("defaultSshKeyPath") && (
         <div className="settings-form__field">
           <span className="settings-form__label">Default SSH Key Path</span>
-          <div className="settings-form__file-row">
-            <input
-              type="text"
-              value={settings.defaultSshKeyPath ?? ""}
-              onChange={(e) =>
-                onChange({ ...settings, defaultSshKeyPath: e.target.value || undefined })
-              }
-              placeholder="~/.ssh/id_ed25519"
-            />
-            <button
-              type="button"
-              className="settings-form__list-browse"
-              onClick={handleBrowseSshKey}
-              title="Browse"
-            >
-              ...
-            </button>
-          </div>
+          <KeyPathInput
+            value={settings.defaultSshKeyPath ?? ""}
+            onChange={(value) => onChange({ ...settings, defaultSshKeyPath: value || undefined })}
+            placeholder="~/.ssh/id_ed25519"
+            testIdPrefix="general-settings"
+          />
           <span className="settings-form__hint">
             Default private key path for SSH key authentication.
           </span>

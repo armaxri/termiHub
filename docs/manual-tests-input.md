@@ -326,6 +326,16 @@ Each section groups related tests by feature area. Individual test items referen
 - [ ] Repeat all of the above for the Agent settings Key Path field
 - [ ] Test with no `~/.ssh/` directory (or empty directory) — verify no dropdown appears and no error occurs
 
+### Default user and SSH key applied to new connections (PR #201)
+
+- [ ] Open Settings > General — set "Default User" to `admin` and "Default SSH Key Path" to a valid path — save
+- [ ] Create a new SSH connection — verify the username is pre-filled with `admin`, auth method is set to "Key", and key path is pre-filled
+- [ ] Clear "Default SSH Key Path" in settings — create a new SSH connection — verify auth method defaults to "Password" and key path is empty
+- [ ] Set only "Default User" — create a new SSH connection — verify username is pre-filled but auth method is "Password"
+- [ ] Create a new Remote Agent — verify username and key path are pre-filled from settings
+- [ ] Edit an existing SSH connection — verify it retains its own values (not overwritten by defaults)
+- [ ] Verify the "Default SSH Key Path" field in General Settings shows the `~/.ssh/` file suggestion dropdown
+
 ### Auto-extract port from host field (PR #195)
 
 - [ ] Enter `192.168.0.2:2222` in the SSH host field, tab out — verify host becomes `192.168.0.2` and port becomes `2222`

@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Dark, Light, and System color theme support — switch via Settings > Appearance > Theme; System mode auto-follows the OS preference (#193)
+- Concept document for SSH tunneling feature: local, remote, and dynamic (SOCKS5) port forwarding with visual diagram-driven configuration UI (#107)
 
 ### Fixed
 
@@ -23,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Default user and SSH key path from General Settings are now applied when creating new SSH and Remote Agent connections, pre-filling username and switching to key authentication when configured (#201)
+- General Settings "Default SSH Key Path" field now uses the same `~/.ssh/` file suggestion dropdown as the connection editor (#201)
 - SSH key path file suggestions: the Key Path field in SSH and Agent settings now scans `~/.ssh/` and shows a dropdown of available private key files with type-ahead filtering, arrow-key navigation, and Tab/Enter to accept (#118)
 - Connection editor now uses a categorized two-panel layout matching the global settings panel: Connection, Terminal, and Appearance categories with sidebar navigation and responsive compact mode
 - Per-connection terminal overrides: font family, font size, scrollback buffer, cursor style, cursor blink, and horizontal scrolling can be configured per-connection, overriding global defaults
