@@ -478,6 +478,13 @@ Each section groups related tests by feature area. Individual test items referen
 - [ ] Click between panels to switch focus — borders update: focused panel gets bright blue, previously focused panel dims
 - [ ] Close all tabs in one panel — remaining panel's active tab still shows bright blue border
 
+### Vertical split resize handle (PR #213)
+
+- [ ] Split a terminal vertically (top/bottom) — verify the resize handle between panels is visible
+- [ ] Drag the vertical resize handle — verify panels resize smoothly
+- [ ] Split a terminal horizontally (left/right) — verify no regression, resize handle still works
+- [ ] Create nested splits (horizontal inside vertical and vice versa) — verify all resize handles are visible and draggable
+
 ### Clear separation between split view panels (PR #189)
 
 - [ ] Open a split view (drag a tab to the edge of a panel) — verify a visible 1px line appears between adjacent panels
