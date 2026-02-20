@@ -194,6 +194,45 @@ fn default_flow_control() -> String {
     "none".to_string()
 }
 
+// ── Docker session config ───────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DockerSessionConfig {
+    pub image: String,
+    pub shell: Option<String>,
+    #[serde(default = "default_cols")]
+    pub cols: u16,
+    #[serde(default = "default_rows")]
+    pub rows: u16,
+    #[serde(default)]
+    pub env_vars: Vec<DockerEnvVar>,
+    #[serde(default)]
+    pub volumes: Vec<DockerVolumeMount>,
+    pub working_directory: Option<String>,
+    #[serde(default = "default_remove_on_exit")]
+    pub remove_on_exit: bool,
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+}
+
+fn default_remove_on_exit() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DockerEnvVar {
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DockerVolumeMount {
+    pub host_path: String,
+    pub container_path: String,
+    #[serde(default)]
+    pub read_only: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -418,5 +457,72 @@ mod tests {
         let json = json!({"id": "def-123"});
         let params: SessionDefinitionDeleteParams = serde_json::from_value(json).unwrap();
         assert_eq!(params.id, "def-123");
+    }
+
+    #[test]
+    fn docker_session_config_defaults() {
+        let json = json!({"image": "ubuntu:22.04"});
+        let cfg: DockerSessionConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(cfg.image, "ubuntu:22.04");
+        assert_eq!(cfg.cols, 80);
+        assert_eq!(cfg.rows, 24);
+        assert!(cfg.shell.is_none());
+        assert!(cfg.env_vars.is_empty());
+        assert!(cfg.volumes.is_empty());
+        assert!(cfg.working_directory.is_none());
+        assert!(cfg.remove_on_exit);
+        assert!(cfg.env.is_empty());
+    }
+
+    #[test]
+    fn docker_session_config_full() {
+        let json = json!({
+            "image": "ubuntu:22.04",
+            "shell": "/bin/bash",
+            "cols": 120,
+            "rows": 40,
+            "env_vars": [{"key": "FOO", "value": "bar"}],
+            "volumes": [{"host_path": "/host", "container_path": "/mnt", "read_only": true}],
+            "working_directory": "/app",
+            "remove_on_exit": false,
+            "env": {"TERM": "xterm-256color"}
+        });
+        let cfg: DockerSessionConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(cfg.shell, Some("/bin/bash".to_string()));
+        assert_eq!(cfg.cols, 120);
+        assert_eq!(cfg.rows, 40);
+        assert_eq!(cfg.env_vars.len(), 1);
+        assert_eq!(cfg.env_vars[0].key, "FOO");
+        assert_eq!(cfg.env_vars[0].value, "bar");
+        assert_eq!(cfg.volumes.len(), 1);
+        assert!(cfg.volumes[0].read_only);
+        assert_eq!(cfg.volumes[0].host_path, "/host");
+        assert_eq!(cfg.volumes[0].container_path, "/mnt");
+        assert_eq!(cfg.working_directory, Some("/app".to_string()));
+        assert!(!cfg.remove_on_exit);
+    }
+
+    #[test]
+    fn docker_env_var_serde() {
+        let env = DockerEnvVar {
+            key: "K".to_string(),
+            value: "V".to_string(),
+        };
+        let v = serde_json::to_value(&env).unwrap();
+        assert_eq!(v["key"], "K");
+        assert_eq!(v["value"], "V");
+    }
+
+    #[test]
+    fn docker_volume_mount_serde() {
+        let vol = DockerVolumeMount {
+            host_path: "/host".to_string(),
+            container_path: "/container".to_string(),
+            read_only: false,
+        };
+        let v = serde_json::to_value(&vol).unwrap();
+        assert_eq!(v["host_path"], "/host");
+        assert_eq!(v["container_path"], "/container");
+        assert!(!v["read_only"].as_bool().unwrap());
     }
 }
