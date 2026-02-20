@@ -49,9 +49,7 @@ export function SettingsNav<T extends string = string>({
       {categories.map((cat) => {
         const Icon = iconMap[cat.id as T];
         const isActive = cat.id === activeCategory;
-        const isHighlighted = highlightedCategories
-          ? highlightedCategories.has(cat.id as T)
-          : true;
+        const isHighlighted = highlightedCategories ? highlightedCategories.has(cat.id as T) : true;
         return (
           <button
             key={cat.id}

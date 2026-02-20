@@ -6,10 +6,7 @@ interface ConnectionTerminalSettingsProps {
   onChange: (options: TerminalOptions) => void;
 }
 
-export function ConnectionTerminalSettings({
-  options,
-  onChange,
-}: ConnectionTerminalSettingsProps) {
+export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerminalSettingsProps) {
   const globalSettings = useAppStore((s) => s.settings);
 
   const globalFontFamily =
@@ -29,14 +26,10 @@ export function ConnectionTerminalSettings({
         <input
           type="text"
           value={options.fontFamily ?? ""}
-          onChange={(e) =>
-            onChange({ ...options, fontFamily: e.target.value || undefined })
-          }
+          onChange={(e) => onChange({ ...options, fontFamily: e.target.value || undefined })}
           placeholder={`Use global default (${globalFontFamily})`}
         />
-        <span className="settings-form__hint">
-          Leave empty to use the global setting.
-        </span>
+        <span className="settings-form__hint">Leave empty to use the global setting.</span>
       </label>
 
       <label className="settings-form__field">
@@ -52,9 +45,7 @@ export function ConnectionTerminalSettings({
           }}
           placeholder={`Use global default (${globalFontSize})`}
         />
-        <span className="settings-form__hint">
-          Leave empty to use the global setting.
-        </span>
+        <span className="settings-form__hint">Leave empty to use the global setting.</span>
       </label>
 
       <label className="settings-form__field">
@@ -101,9 +92,7 @@ export function ConnectionTerminalSettings({
           <input
             type="checkbox"
             checked={options.cursorBlink ?? globalCursorBlink}
-            onChange={(e) =>
-              onChange({ ...options, cursorBlink: e.target.checked })
-            }
+            onChange={(e) => onChange({ ...options, cursorBlink: e.target.checked })}
           />
           <span className="settings-panel__toggle-slider" />
         </label>
@@ -129,9 +118,7 @@ export function ConnectionTerminalSettings({
           <input
             type="checkbox"
             checked={options.horizontalScrolling ?? globalHorizontalScrolling}
-            onChange={(e) =>
-              onChange({ ...options, horizontalScrolling: e.target.checked })
-            }
+            onChange={(e) => onChange({ ...options, horizontalScrolling: e.target.checked })}
           />
           <span className="settings-panel__toggle-slider" />
         </label>
@@ -143,9 +130,7 @@ export function ConnectionTerminalSettings({
               <button
                 type="button"
                 className="settings-form__hint-action"
-                onClick={() =>
-                  onChange({ ...options, horizontalScrolling: undefined })
-                }
+                onClick={() => onChange({ ...options, horizontalScrolling: undefined })}
               >
                 Reset to global default
               </button>

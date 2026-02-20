@@ -465,10 +465,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         return renderConnectionContent();
       case "terminal":
         return (
-          <ConnectionTerminalSettings
-            options={terminalOptions}
-            onChange={setTerminalOptions}
-          />
+          <ConnectionTerminalSettings options={terminalOptions} onChange={setTerminalOptions} />
         );
       case "appearance":
         return (

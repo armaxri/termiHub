@@ -27,10 +27,7 @@ export function ConnectionAppearanceSettings({
         <span className="settings-form__label">Tab Color</span>
         <div className="connection-editor__color-row">
           {color && (
-            <div
-              className="connection-editor__color-preview"
-              style={{ backgroundColor: color }}
-            />
+            <div className="connection-editor__color-preview" style={{ backgroundColor: color }} />
           )}
           <button
             className="connection-editor__btn connection-editor__btn--secondary"
