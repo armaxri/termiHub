@@ -1,4 +1,5 @@
 import { useCallback } from "react";
+import type { LucideIcon } from "lucide-react";
 import "./SettingsNav.css";
 
 interface CategoryItem {
@@ -8,7 +9,7 @@ interface CategoryItem {
 
 interface SettingsNavProps<T extends string = string> {
   categories: CategoryItem[];
-  iconMap: Record<T, React.ComponentType<{ size?: number }>>;
+  iconMap: Record<T, LucideIcon>;
   activeCategory: T;
   onCategoryChange: (category: T) => void;
   highlightedCategories?: Set<T>;
@@ -47,7 +48,7 @@ export function SettingsNav<T extends string = string>({
       onKeyDown={handleKeyDown}
     >
       {categories.map((cat) => {
-        const Icon = iconMap[cat.id as T];
+        const Icon: LucideIcon = iconMap[cat.id as T];
         const isActive = cat.id === activeCategory;
         const isHighlighted = highlightedCategories ? highlightedCategories.has(cat.id as T) : true;
         return (
