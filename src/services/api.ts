@@ -308,6 +308,8 @@ export interface AgentDefinitionInfo {
 /** Result of connecting to an agent. */
 interface AgentConnectResult {
   capabilities: AgentCapabilities;
+  agentVersion: string;
+  protocolVersion: string;
 }
 
 /** Connect to a remote agent via SSH. Returns capabilities. */
@@ -321,6 +323,11 @@ export async function connectAgent(
 /** Disconnect from a remote agent. */
 export async function disconnectAgent(agentId: string): Promise<void> {
   await invoke("disconnect_agent", { agentId });
+}
+
+/** Gracefully shut down a remote agent and disconnect. Returns detached session count. */
+export async function shutdownAgent(agentId: string, reason?: string): Promise<number> {
+  return await invoke<number>("shutdown_agent", { agentId, reason: reason ?? null });
 }
 
 /** Get capabilities of a connected agent. */

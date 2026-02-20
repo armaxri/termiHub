@@ -109,6 +109,7 @@ pub fn run() {
             commands::monitoring::monitoring_fetch_stats,
             commands::agent::connect_agent,
             commands::agent::disconnect_agent,
+            commands::agent::shutdown_agent,
             commands::agent::get_agent_capabilities,
             commands::agent::list_agent_sessions,
             commands::agent::list_agent_definitions,

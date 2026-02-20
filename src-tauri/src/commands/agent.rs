@@ -45,6 +45,27 @@ pub fn disconnect_agent(
         .map_err(|e| e.to_string())
 }
 
+/// Gracefully shut down a remote agent and disconnect.
+///
+/// Sends `agent.shutdown` over JSON-RPC, waits for the response, then
+/// disconnects. Returns the number of sessions left running on the remote.
+#[tauri::command]
+pub async fn shutdown_agent(
+    agent_id: String,
+    reason: Option<String>,
+    agent_manager: State<'_, Arc<AgentConnectionManager>>,
+) -> Result<u32, String> {
+    info!(agent_id, "Shutting down remote agent");
+    let manager = agent_manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        manager
+            .shutdown_agent(&agent_id, reason.as_deref())
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .unwrap_or_else(|e| Err(e.to_string()))
+}
+
 #[tauri::command]
 pub fn get_agent_capabilities(
     agent_id: String,
