@@ -57,6 +57,42 @@ impl RemoteSessionBackend {
                 }
                 cfg
             }
+            "docker" => {
+                let image = config.docker_image.as_deref().unwrap_or("ubuntu:22.04");
+
+                let mut cfg = serde_json::json!({
+                    "image": image,
+                    "cols": 80,
+                    "rows": 24,
+                    "env": { "TERM": "xterm-256color" },
+                    "remove_on_exit": config.docker_remove_on_exit.unwrap_or(true),
+                });
+
+                if let Some(ref shell) = config.shell {
+                    cfg["shell"] = serde_json::Value::String(shell.clone());
+                }
+                if let Some(ref workdir) = config.docker_working_directory {
+                    cfg["working_directory"] = serde_json::Value::String(workdir.clone());
+                }
+                if let Some(ref env_vars) = config.docker_env_vars {
+                    cfg["env_vars"] = serde_json::json!(env_vars
+                        .iter()
+                        .map(|e| serde_json::json!({"key": e.key, "value": e.value}))
+                        .collect::<Vec<_>>());
+                }
+                if let Some(ref volumes) = config.docker_volumes {
+                    cfg["volumes"] = serde_json::json!(volumes
+                        .iter()
+                        .map(|v| serde_json::json!({
+                            "host_path": v.host_path,
+                            "container_path": v.container_path,
+                            "read_only": v.read_only,
+                        }))
+                        .collect::<Vec<_>>());
+                }
+
+                cfg
+            }
             _ => {
                 // Default to shell
                 let mut cfg = serde_json::json!({
