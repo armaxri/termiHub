@@ -5,6 +5,7 @@ mod io;
 mod protocol;
 mod serial;
 mod session;
+mod shell;
 
 use tokio_util::sync::CancellationToken;
 use tracing::info;
