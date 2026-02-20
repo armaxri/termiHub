@@ -41,6 +41,12 @@ pub const SESSION_NOT_RUNNING: i64 = -32006;
 /// The agent has not been initialized yet (must call `initialize` first).
 pub const NOT_INITIALIZED: i64 = -32007;
 
+/// No connection with the given ID.
+pub const CONNECTION_NOT_FOUND: i64 = -32008;
+
+/// No folder with the given ID.
+pub const FOLDER_NOT_FOUND: i64 = -32009;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -60,6 +66,8 @@ mod tests {
             INVALID_CONFIGURATION,
             SESSION_NOT_RUNNING,
             NOT_INITIALIZED,
+            CONNECTION_NOT_FOUND,
+            FOLDER_NOT_FOUND,
         ];
         for code in codes {
             assert!(code < 0, "Error code {code} should be negative");
@@ -94,6 +102,8 @@ mod tests {
             INVALID_CONFIGURATION,
             SESSION_NOT_RUNNING,
             NOT_INITIALIZED,
+            CONNECTION_NOT_FOUND,
+            FOLDER_NOT_FOUND,
         ];
         for code in app_codes {
             assert!(

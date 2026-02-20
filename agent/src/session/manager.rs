@@ -170,10 +170,9 @@ impl SessionManager {
         let ssh_backend = if session_type == SessionType::Ssh {
             let ssh_config: SshSessionConfig = serde_json::from_value(config.clone())
                 .map_err(|e| SessionCreateError::InvalidConfig(e.to_string()))?;
-            let backend =
-                SshBackend::new(id.clone(), &ssh_config, self.notification_tx.clone())
-                    .await
-                    .map_err(|e| SessionCreateError::BackendFailed(e.to_string()))?;
+            let backend = SshBackend::new(id.clone(), &ssh_config, self.notification_tx.clone())
+                .await
+                .map_err(|e| SessionCreateError::BackendFailed(e.to_string()))?;
 
             // Persist session to state.json for recovery
             let mut state = self.state.lock().await;

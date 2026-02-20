@@ -10,12 +10,13 @@ use base64::Engine;
 use crate::protocol::errors;
 use crate::protocol::messages::{JsonRpcErrorResponse, JsonRpcRequest, JsonRpcResponse};
 use crate::protocol::methods::{
-    Capabilities, HealthCheckResult, InitializeParams, InitializeResult, SessionAttachParams,
-    SessionCloseParams, SessionCreateParams, SessionCreateResult, SessionDefineParams,
-    SessionDefinitionDeleteParams, SessionDetachParams, SessionInputParams, SessionListEntry,
-    SessionListResult, SessionResizeParams,
+    Capabilities, ConnectionCreateParams, ConnectionDeleteParams, ConnectionUpdateParams,
+    FolderCreateParams, FolderDeleteParams, FolderUpdateParams, HealthCheckResult,
+    InitializeParams, InitializeResult, SessionAttachParams, SessionCloseParams,
+    SessionCreateParams, SessionCreateResult, SessionDetachParams, SessionInputParams,
+    SessionListEntry, SessionListResult, SessionResizeParams,
 };
-use crate::session::definitions::{DefinitionStore, SessionDefinition};
+use crate::session::definitions::{Connection, ConnectionStore, Folder};
 use crate::session::manager::{SessionCreateError, SessionManager, MAX_SESSIONS};
 use crate::session::types::SessionType;
 
@@ -26,7 +27,7 @@ const AGENT_PROTOCOL_VERSION: &str = "0.1.0";
 /// to the appropriate handler function.
 pub struct Dispatcher {
     session_manager: Arc<SessionManager>,
-    definition_store: Arc<DefinitionStore>,
+    connection_store: Arc<ConnectionStore>,
     initialized: bool,
     start_time: Instant,
 }
@@ -50,11 +51,11 @@ impl DispatchResult {
 impl Dispatcher {
     pub fn new(
         session_manager: Arc<SessionManager>,
-        definition_store: Arc<DefinitionStore>,
+        connection_store: Arc<ConnectionStore>,
     ) -> Self {
         Self {
             session_manager,
-            definition_store,
+            connection_store,
             initialized: false,
             start_time: Instant::now(),
         }
@@ -89,9 +90,13 @@ impl Dispatcher {
             "session.detach" => self.handle_session_detach(request).await,
             "session.input" => self.handle_session_input(request).await,
             "session.resize" => self.handle_session_resize(request).await,
-            "session.define" => self.handle_session_define(request).await,
-            "session.definitions.list" => self.handle_session_definitions_list(request).await,
-            "session.definitions.delete" => self.handle_session_definitions_delete(request).await,
+            "connections.list" => self.handle_connections_list(request).await,
+            "connections.create" => self.handle_connections_create(request).await,
+            "connections.update" => self.handle_connections_update(request).await,
+            "connections.delete" => self.handle_connections_delete(request).await,
+            "connections.folders.create" => self.handle_connections_folders_create(request).await,
+            "connections.folders.update" => self.handle_connections_folders_update(request).await,
+            "connections.folders.delete" => self.handle_connections_folders_delete(request).await,
             "health.check" => self.handle_health_check(request).await,
             _ => {
                 warn!("Unknown method: {}", method);
@@ -410,66 +415,202 @@ impl Dispatcher {
         }
     }
 
-    async fn handle_session_define(&self, request: JsonRpcRequest) -> DispatchResult {
+    // ── connections.* handlers ───────────────────────────────────────
+
+    async fn handle_connections_list(&self, request: JsonRpcRequest) -> DispatchResult {
+        let (connections, folders) = self.connection_store.list().await;
+        DispatchResult::Success(JsonRpcResponse::new(
+            request.id,
+            json!({"connections": connections, "folders": folders}),
+        ))
+    }
+
+    async fn handle_connections_create(&self, request: JsonRpcRequest) -> DispatchResult {
         let id = request.id.clone();
 
-        let params: SessionDefineParams = match serde_json::from_value(request.params) {
+        let params: ConnectionCreateParams = match serde_json::from_value(request.params) {
             Ok(p) => p,
             Err(e) => {
                 return DispatchResult::Error(JsonRpcErrorResponse::new(
                     id,
                     errors::INVALID_PARAMS,
-                    format!("Invalid session.define params: {e}"),
+                    format!("Invalid connections.create params: {e}"),
                 ));
             }
         };
 
-        let def_id = params
-            .id
-            .unwrap_or_else(|| format!("def-{}", uuid::Uuid::new_v4()));
-
-        let definition = SessionDefinition {
-            id: def_id,
+        let conn = Connection {
+            id: format!("conn-{}", uuid::Uuid::new_v4()),
             name: params.name,
             session_type: params.session_type,
             config: params.config,
             persistent: params.persistent,
+            folder_id: params.folder_id,
         };
 
-        let snapshot = self.definition_store.define(definition).await;
+        let snapshot = self.connection_store.create(conn).await;
         DispatchResult::Success(JsonRpcResponse::new(
             id,
             serde_json::to_value(snapshot).unwrap(),
         ))
     }
 
-    async fn handle_session_definitions_list(&self, request: JsonRpcRequest) -> DispatchResult {
-        let list = self.definition_store.list().await;
-        DispatchResult::Success(JsonRpcResponse::new(
-            request.id,
-            json!({"definitions": list}),
-        ))
-    }
-
-    async fn handle_session_definitions_delete(&self, request: JsonRpcRequest) -> DispatchResult {
+    async fn handle_connections_update(&self, request: JsonRpcRequest) -> DispatchResult {
         let id = request.id.clone();
 
-        let params: SessionDefinitionDeleteParams = match serde_json::from_value(request.params) {
+        let params: ConnectionUpdateParams = match serde_json::from_value(request.params) {
             Ok(p) => p,
             Err(e) => {
                 return DispatchResult::Error(JsonRpcErrorResponse::new(
                     id,
                     errors::INVALID_PARAMS,
-                    format!("Invalid session.definitions.delete params: {e}"),
+                    format!("Invalid connections.update params: {e}"),
                 ));
             }
         };
 
-        if self.definition_store.delete(&params.id).await {
+        // Convert folder_id: absent → None, null → Some(None), string → Some(Some(s))
+        let folder_id = params.folder_id.map(|v| {
+            if v.is_null() {
+                None
+            } else {
+                v.as_str().map(|s| s.to_string())
+            }
+        });
+
+        match self
+            .connection_store
+            .update(
+                &params.id,
+                params.name,
+                params.session_type,
+                params.config,
+                params.persistent,
+                folder_id,
+            )
+            .await
+        {
+            Some(snapshot) => DispatchResult::Success(JsonRpcResponse::new(
+                id,
+                serde_json::to_value(snapshot).unwrap(),
+            )),
+            None => DispatchResult::Error(
+                JsonRpcErrorResponse::new(id, errors::CONNECTION_NOT_FOUND, "Connection not found")
+                    .with_data(json!({"id": params.id})),
+            ),
+        }
+    }
+
+    async fn handle_connections_delete(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+
+        let params: ConnectionDeleteParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid connections.delete params: {e}"),
+                ));
+            }
+        };
+
+        if self.connection_store.delete(&params.id).await {
             DispatchResult::Success(JsonRpcResponse::new(id, json!({})))
         } else {
             DispatchResult::Error(
-                JsonRpcErrorResponse::new(id, errors::SESSION_NOT_FOUND, "Definition not found")
+                JsonRpcErrorResponse::new(id, errors::CONNECTION_NOT_FOUND, "Connection not found")
+                    .with_data(json!({"id": params.id})),
+            )
+        }
+    }
+
+    async fn handle_connections_folders_create(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+
+        let params: FolderCreateParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid connections.folders.create params: {e}"),
+                ));
+            }
+        };
+
+        let folder = Folder {
+            id: format!("folder-{}", uuid::Uuid::new_v4()),
+            name: params.name,
+            parent_id: params.parent_id,
+            is_expanded: false,
+        };
+
+        let snapshot = self.connection_store.create_folder(folder).await;
+        DispatchResult::Success(JsonRpcResponse::new(
+            id,
+            serde_json::to_value(snapshot).unwrap(),
+        ))
+    }
+
+    async fn handle_connections_folders_update(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+
+        let params: FolderUpdateParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid connections.folders.update params: {e}"),
+                ));
+            }
+        };
+
+        // Convert parent_id: absent → None, null → Some(None), string → Some(Some(s))
+        let parent_id = params.parent_id.map(|v| {
+            if v.is_null() {
+                None
+            } else {
+                v.as_str().map(|s| s.to_string())
+            }
+        });
+
+        match self
+            .connection_store
+            .update_folder(&params.id, params.name, parent_id, params.is_expanded)
+            .await
+        {
+            Some(snapshot) => DispatchResult::Success(JsonRpcResponse::new(
+                id,
+                serde_json::to_value(snapshot).unwrap(),
+            )),
+            None => DispatchResult::Error(
+                JsonRpcErrorResponse::new(id, errors::FOLDER_NOT_FOUND, "Folder not found")
+                    .with_data(json!({"id": params.id})),
+            ),
+        }
+    }
+
+    async fn handle_connections_folders_delete(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+
+        let params: FolderDeleteParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid connections.folders.delete params: {e}"),
+                ));
+            }
+        };
+
+        if self.connection_store.delete_folder(&params.id).await {
+            DispatchResult::Success(JsonRpcResponse::new(id, json!({})))
+        } else {
+            DispatchResult::Error(
+                JsonRpcErrorResponse::new(id, errors::FOLDER_NOT_FOUND, "Folder not found")
                     .with_data(json!({"id": params.id})),
             )
         }
@@ -547,9 +688,9 @@ mod tests {
     fn make_dispatcher_with_manager() -> (Dispatcher, Arc<SessionManager>) {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let tmp = std::env::temp_dir().join(format!("termihub-test-{}.json", uuid::Uuid::new_v4()));
-        let def_store = Arc::new(DefinitionStore::new_temp(tmp));
+        let conn_store = Arc::new(ConnectionStore::new_temp(tmp));
         let session_manager = Arc::new(SessionManager::new(tx));
-        let dispatcher = Dispatcher::new(session_manager.clone(), def_store);
+        let dispatcher = Dispatcher::new(session_manager.clone(), conn_store);
         (dispatcher, session_manager)
     }
 
@@ -642,6 +783,8 @@ mod tests {
             "session.list",
             "session.close",
             "health.check",
+            "connections.list",
+            "connections.create",
         ] {
             let req = make_request(method, json!({}), 1);
             let result = d.dispatch(req).await;
@@ -661,7 +804,6 @@ mod tests {
         let mut d = make_dispatcher();
         init_dispatcher(&mut d).await;
 
-        // Docker config without image should fail with invalid config
         let req = make_request(
             "session.create",
             json!({
@@ -673,13 +815,11 @@ mod tests {
         );
         let result = d.dispatch(req).await;
         let json = result.to_json();
-        // Missing required `image` field
         assert_eq!(json["error"]["code"], errors::INVALID_CONFIGURATION);
     }
 
     #[tokio::test]
     async fn session_create_serial_fails_without_port() {
-        // Serial creation now actually opens the port, so it fails in CI
         let mut d = make_dispatcher();
         init_dispatcher(&mut d).await;
 
@@ -693,7 +833,6 @@ mod tests {
         );
         let result = d.dispatch(req).await;
         let json = result.to_json();
-        // Should get SESSION_CREATION_FAILED because the port doesn't exist
         assert_eq!(
             json["error"]["code"],
             crate::protocol::errors::SESSION_CREATION_FAILED
@@ -720,7 +859,6 @@ mod tests {
         let mut d = make_dispatcher();
         init_dispatcher(&mut d).await;
 
-        // SSH config without host should fail with invalid config
         let req = make_request(
             "session.create",
             json!({
@@ -732,7 +870,6 @@ mod tests {
         );
         let result = d.dispatch(req).await;
         let json = result.to_json();
-        // Missing required `host` field
         assert_eq!(json["error"]["code"], errors::INVALID_CONFIGURATION);
     }
 
@@ -754,12 +891,10 @@ mod tests {
         let (mut d, mgr) = make_dispatcher_with_manager();
         init_dispatcher(&mut d).await;
 
-        // Create a stub session (avoids spawning real backends)
         mgr.create_stub_session(SessionType::Shell, "test".to_string(), json!({}))
             .await
             .unwrap();
 
-        // List sessions
         let req = make_request("session.list", json!({}), 3);
         let result = d.dispatch(req).await;
         let json = result.to_json();
@@ -775,20 +910,17 @@ mod tests {
         let (mut d, mgr) = make_dispatcher_with_manager();
         init_dispatcher(&mut d).await;
 
-        // Create a stub session
         let snapshot = mgr
             .create_stub_session(SessionType::Shell, "temp".to_string(), json!({}))
             .await
             .unwrap();
         let sid = snapshot.id;
 
-        // Close
         let req = make_request("session.close", json!({"session_id": sid}), 3);
         let result = d.dispatch(req).await;
         let json = result.to_json();
         assert!(json.get("result").is_some());
 
-        // Verify gone
         let req = make_request("session.list", json!({}), 4);
         let result = d.dispatch(req).await.to_json();
         assert_eq!(result["result"]["sessions"].as_array().unwrap().len(), 0);
@@ -893,7 +1025,6 @@ mod tests {
         let (mut d, mgr) = make_dispatcher_with_manager();
         init_dispatcher(&mut d).await;
 
-        // Create a stub session
         let snapshot = mgr
             .create_stub_session(SessionType::Shell, "resize-test".to_string(), json!({}))
             .await
@@ -1005,13 +1136,11 @@ mod tests {
     #[test]
     fn detect_shells_returns_existing_paths() {
         let shells = detect_available_shells();
-        // On any Unix-like system, /bin/sh should exist
         #[cfg(unix)]
         assert!(
             shells.contains(&"/bin/sh".to_string()),
             "Expected /bin/sh to be detected, got: {shells:?}"
         );
-        // All returned paths must actually exist
         for shell in &shells {
             assert!(
                 Path::new(shell).exists(),
@@ -1022,24 +1151,21 @@ mod tests {
 
     #[test]
     fn detect_serial_ports_returns_vec() {
-        // We can't assert specific ports exist in CI, but the function should not panic
         let ports = detect_available_serial_ports();
-        // Just verify it returns a valid vector (may be empty in CI)
         assert!(ports.len() < 1000, "Unreasonably many ports detected");
     }
 
-    // ── Session definition tests ──────────────────────────────────────
+    // ── Connection tests ────────────────────────────────────────────
 
     #[tokio::test]
-    async fn session_define_and_list() {
+    async fn connections_create_and_list() {
         let mut d = make_dispatcher();
         init_dispatcher(&mut d).await;
 
-        // Define
+        // Create
         let req = make_request(
-            "session.define",
+            "connections.create",
             json!({
-                "id": "def-1",
                 "name": "Build Shell",
                 "type": "shell",
                 "config": {"shell": "/bin/bash"},
@@ -1048,74 +1174,213 @@ mod tests {
             2,
         );
         let result = d.dispatch(req).await.to_json();
-        assert_eq!(result["result"]["id"], "def-1");
+        let conn_id = result["result"]["id"].as_str().unwrap();
+        assert!(conn_id.starts_with("conn-"));
         assert_eq!(result["result"]["name"], "Build Shell");
         assert!(result["result"]["persistent"].as_bool().unwrap());
 
         // List
-        let req = make_request("session.definitions.list", json!({}), 3);
+        let req = make_request("connections.list", json!({}), 3);
         let result = d.dispatch(req).await.to_json();
-        let defs = result["result"]["definitions"].as_array().unwrap();
-        assert_eq!(defs.len(), 1);
-        assert_eq!(defs[0]["id"], "def-1");
+        let conns = result["result"]["connections"].as_array().unwrap();
+        assert_eq!(conns.len(), 1);
+        assert_eq!(conns[0]["name"], "Build Shell");
+        let folders = result["result"]["folders"].as_array().unwrap();
+        assert!(folders.is_empty());
     }
 
     #[tokio::test]
-    async fn session_define_auto_generates_id() {
+    async fn connections_update() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        // Create
+        let req = make_request(
+            "connections.create",
+            json!({"name": "Old", "type": "shell"}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        let conn_id = result["result"]["id"].as_str().unwrap().to_string();
+
+        // Update
+        let req = make_request(
+            "connections.update",
+            json!({"id": conn_id, "name": "New", "persistent": true}),
+            3,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["result"]["name"], "New");
+        assert!(result["result"]["persistent"].as_bool().unwrap());
+    }
+
+    #[tokio::test]
+    async fn connections_update_not_found() {
         let mut d = make_dispatcher();
         init_dispatcher(&mut d).await;
 
         let req = make_request(
-            "session.define",
-            json!({
-                "name": "Auto ID Shell",
-                "type": "shell"
-            }),
+            "connections.update",
+            json!({"id": "nonexistent", "name": "X"}),
             2,
         );
         let result = d.dispatch(req).await.to_json();
-        let id = result["result"]["id"].as_str().unwrap();
-        assert!(
-            id.starts_with("def-"),
-            "Expected auto-generated id starting with 'def-', got: {id}"
-        );
+        assert_eq!(result["error"]["code"], errors::CONNECTION_NOT_FOUND);
     }
 
     #[tokio::test]
-    async fn session_definitions_delete() {
+    async fn connections_delete() {
         let mut d = make_dispatcher();
         init_dispatcher(&mut d).await;
 
-        // Define
+        // Create
         let req = make_request(
-            "session.define",
-            json!({"id": "def-del", "name": "Temp", "type": "shell"}),
+            "connections.create",
+            json!({"name": "Temp", "type": "shell"}),
             2,
         );
-        d.dispatch(req).await;
+        let result = d.dispatch(req).await.to_json();
+        let conn_id = result["result"]["id"].as_str().unwrap().to_string();
 
         // Delete
-        let req = make_request("session.definitions.delete", json!({"id": "def-del"}), 3);
+        let req = make_request("connections.delete", json!({"id": conn_id}), 3);
         let result = d.dispatch(req).await.to_json();
         assert!(result.get("result").is_some());
 
         // Verify gone
-        let req = make_request("session.definitions.list", json!({}), 4);
+        let req = make_request("connections.list", json!({}), 4);
         let result = d.dispatch(req).await.to_json();
-        assert_eq!(result["result"]["definitions"].as_array().unwrap().len(), 0);
+        assert_eq!(result["result"]["connections"].as_array().unwrap().len(), 0);
     }
 
     #[tokio::test]
-    async fn session_definitions_delete_not_found() {
+    async fn connections_delete_not_found() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request("connections.delete", json!({"id": "nonexistent"}), 2);
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["error"]["code"], errors::CONNECTION_NOT_FOUND);
+    }
+
+    // ── Folder tests ────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn folders_create_and_list() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        // Create folder
+        let req = make_request(
+            "connections.folders.create",
+            json!({"name": "Project A"}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        let folder_id = result["result"]["id"].as_str().unwrap();
+        assert!(folder_id.starts_with("folder-"));
+        assert_eq!(result["result"]["name"], "Project A");
+        assert!(!result["result"]["is_expanded"].as_bool().unwrap());
+
+        // List
+        let req = make_request("connections.list", json!({}), 3);
+        let result = d.dispatch(req).await.to_json();
+        let folders = result["result"]["folders"].as_array().unwrap();
+        assert_eq!(folders.len(), 1);
+        assert_eq!(folders[0]["name"], "Project A");
+    }
+
+    #[tokio::test]
+    async fn folders_update() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        // Create
+        let req = make_request("connections.folders.create", json!({"name": "Old Name"}), 2);
+        let result = d.dispatch(req).await.to_json();
+        let folder_id = result["result"]["id"].as_str().unwrap().to_string();
+
+        // Update
+        let req = make_request(
+            "connections.folders.update",
+            json!({"id": folder_id, "name": "New Name", "is_expanded": true}),
+            3,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["result"]["name"], "New Name");
+        assert!(result["result"]["is_expanded"].as_bool().unwrap());
+    }
+
+    #[tokio::test]
+    async fn folders_update_not_found() {
         let mut d = make_dispatcher();
         init_dispatcher(&mut d).await;
 
         let req = make_request(
-            "session.definitions.delete",
+            "connections.folders.update",
+            json!({"id": "nonexistent", "name": "X"}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["error"]["code"], errors::FOLDER_NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn folders_delete() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        // Create
+        let req = make_request(
+            "connections.folders.create",
+            json!({"name": "Temp Folder"}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        let folder_id = result["result"]["id"].as_str().unwrap().to_string();
+
+        // Delete
+        let req = make_request("connections.folders.delete", json!({"id": folder_id}), 3);
+        let result = d.dispatch(req).await.to_json();
+        assert!(result.get("result").is_some());
+
+        // Verify gone
+        let req = make_request("connections.list", json!({}), 4);
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["result"]["folders"].as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn folders_delete_not_found() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request(
+            "connections.folders.delete",
             json!({"id": "nonexistent"}),
             2,
         );
         let result = d.dispatch(req).await.to_json();
-        assert_eq!(result["error"]["code"], errors::SESSION_NOT_FOUND);
+        assert_eq!(result["error"]["code"], errors::FOLDER_NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn connections_with_folder() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        // Create folder
+        let req = make_request("connections.folders.create", json!({"name": "Project"}), 2);
+        let result = d.dispatch(req).await.to_json();
+        let folder_id = result["result"]["id"].as_str().unwrap().to_string();
+
+        // Create connection in folder
+        let req = make_request(
+            "connections.create",
+            json!({"name": "Shell", "type": "shell", "folder_id": folder_id}),
+            3,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["result"]["folder_id"], folder_id);
     }
 }

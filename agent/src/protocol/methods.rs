@@ -120,27 +120,81 @@ pub struct HealthCheckResult {
     pub active_sessions: u32,
 }
 
-// ── session.define ──────────────────────────────────────────────────
+// ── connections.create ──────────────────────────────────────────────
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct SessionDefineParams {
-    /// Unique ID for this definition. If omitted, auto-generated.
-    pub id: Option<String>,
+pub struct ConnectionCreateParams {
     pub name: String,
-    /// "shell" or "serial".
     #[serde(rename = "type")]
     pub session_type: String,
     #[serde(default)]
     pub config: serde_json::Value,
     #[serde(default)]
     pub persistent: bool,
+    pub folder_id: Option<String>,
 }
 
-// ── session.definitions.delete ──────────────────────────────────────
+// ── connections.update ─────────────────────────────────────────────
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct SessionDefinitionDeleteParams {
+pub struct ConnectionUpdateParams {
     pub id: String,
+    pub name: Option<String>,
+    #[serde(rename = "type")]
+    pub session_type: Option<String>,
+    pub config: Option<serde_json::Value>,
+    pub persistent: Option<bool>,
+    /// Use JSON `null` to move to root, omit to leave unchanged.
+    #[serde(default, deserialize_with = "deserialize_optional_nullable")]
+    pub folder_id: Option<serde_json::Value>,
+}
+
+// ── connections.delete ─────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ConnectionDeleteParams {
+    pub id: String,
+}
+
+// ── connections.folders.create ──────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct FolderCreateParams {
+    pub name: String,
+    pub parent_id: Option<String>,
+}
+
+// ── connections.folders.update ──────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct FolderUpdateParams {
+    pub id: String,
+    pub name: Option<String>,
+    /// Use JSON `null` to move to root, omit to leave unchanged.
+    #[serde(default, deserialize_with = "deserialize_optional_nullable")]
+    pub parent_id: Option<serde_json::Value>,
+    pub is_expanded: Option<bool>,
+}
+
+// ── connections.folders.delete ──────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct FolderDeleteParams {
+    pub id: String,
+}
+
+// ── Helper: distinguish absent field from explicit null ──────────────
+
+/// Deserializes a field so that absent → `None`, explicit `null` → `Some(Value::Null)`,
+/// and a present value → `Some(value)`. Standard `Option<Value>` collapses both
+/// absent and null into `None`.
+fn deserialize_optional_nullable<'de, D>(
+    deserializer: D,
+) -> Result<Option<serde_json::Value>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Some(serde_json::Value::deserialize(deserializer)?))
 }
 
 // ── Shell / Serial config (for validation in the stub) ──────────────
@@ -455,32 +509,101 @@ mod tests {
     }
 
     #[test]
-    fn session_define_params_serde() {
+    fn connection_create_params_serde() {
         let json = json!({
             "name": "Build Shell",
             "type": "shell",
             "config": {"shell": "/bin/bash"},
-            "persistent": true
+            "persistent": true,
+            "folder_id": "folder-1"
         });
-        let params: SessionDefineParams = serde_json::from_value(json).unwrap();
+        let params: ConnectionCreateParams = serde_json::from_value(json).unwrap();
         assert_eq!(params.name, "Build Shell");
         assert_eq!(params.session_type, "shell");
         assert!(params.persistent);
-        assert!(params.id.is_none());
+        assert_eq!(params.folder_id, Some("folder-1".to_string()));
     }
 
     #[test]
-    fn session_define_params_persistent_defaults_false() {
+    fn connection_create_params_defaults() {
         let json = json!({"name": "Temp", "type": "shell"});
-        let params: SessionDefineParams = serde_json::from_value(json).unwrap();
+        let params: ConnectionCreateParams = serde_json::from_value(json).unwrap();
         assert!(!params.persistent);
+        assert_eq!(params.folder_id, None);
     }
 
     #[test]
-    fn session_definition_delete_params_serde() {
-        let json = json!({"id": "def-123"});
-        let params: SessionDefinitionDeleteParams = serde_json::from_value(json).unwrap();
-        assert_eq!(params.id, "def-123");
+    fn connection_update_params_serde() {
+        let json = json!({
+            "id": "conn-1",
+            "name": "New Name",
+            "persistent": true,
+            "folder_id": null
+        });
+        let params: ConnectionUpdateParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.id, "conn-1");
+        assert_eq!(params.name, Some("New Name".to_string()));
+        assert_eq!(params.persistent, Some(true));
+        assert!(params.folder_id.is_some()); // present but null
+        assert!(params.folder_id.unwrap().is_null());
+    }
+
+    #[test]
+    fn connection_update_params_minimal() {
+        let json = json!({"id": "conn-1"});
+        let params: ConnectionUpdateParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.id, "conn-1");
+        assert!(params.name.is_none());
+        assert!(params.session_type.is_none());
+        assert!(params.config.is_none());
+        assert!(params.persistent.is_none());
+        assert!(params.folder_id.is_none());
+    }
+
+    #[test]
+    fn connection_delete_params_serde() {
+        let json = json!({"id": "conn-123"});
+        let params: ConnectionDeleteParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.id, "conn-123");
+    }
+
+    #[test]
+    fn folder_create_params_serde() {
+        let json = json!({"name": "Project A", "parent_id": "folder-0"});
+        let params: FolderCreateParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.name, "Project A");
+        assert_eq!(params.parent_id, Some("folder-0".to_string()));
+    }
+
+    #[test]
+    fn folder_create_params_root() {
+        let json = json!({"name": "Root Folder"});
+        let params: FolderCreateParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.name, "Root Folder");
+        assert_eq!(params.parent_id, None);
+    }
+
+    #[test]
+    fn folder_update_params_serde() {
+        let json = json!({
+            "id": "folder-1",
+            "name": "Renamed",
+            "parent_id": null,
+            "is_expanded": true
+        });
+        let params: FolderUpdateParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.id, "folder-1");
+        assert_eq!(params.name, Some("Renamed".to_string()));
+        assert!(params.parent_id.is_some());
+        assert!(params.parent_id.unwrap().is_null());
+        assert_eq!(params.is_expanded, Some(true));
+    }
+
+    #[test]
+    fn folder_delete_params_serde() {
+        let json = json!({"id": "folder-123"});
+        let params: FolderDeleteParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.id, "folder-123");
     }
 
     #[test]

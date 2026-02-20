@@ -627,6 +627,275 @@ Check agent health and connectivity. Can be used as a keepalive.
 
 ---
 
+### `connections.list`
+
+List all saved connections and folders.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "connections.list",
+  "params": {},
+  "id": 10
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "connections": [
+      {
+        "id": "conn-a1b2c3d4",
+        "name": "Build Shell",
+        "session_type": "shell",
+        "config": { "shell": "/bin/bash" },
+        "persistent": true,
+        "folder_id": "folder-x1y2z3"
+      }
+    ],
+    "folders": [
+      {
+        "id": "folder-x1y2z3",
+        "name": "Project A",
+        "parent_id": null,
+        "is_expanded": true
+      }
+    ]
+  },
+  "id": 10
+}
+```
+
+| Result Field | Type | Description |
+|-------------|------|-------------|
+| `connections` | `Connection[]` | All saved connections |
+| `connections[].id` | `string` | Connection identifier |
+| `connections[].name` | `string` | Display name |
+| `connections[].session_type` | `string` | `"shell"`, `"serial"`, `"docker"`, or `"ssh"` |
+| `connections[].config` | `object` | Type-specific configuration |
+| `connections[].persistent` | `boolean` | Whether sessions are persistent |
+| `connections[].folder_id` | `string?` | Parent folder ID, or `null` for root |
+| `folders` | `Folder[]` | All folders |
+| `folders[].id` | `string` | Folder identifier |
+| `folders[].name` | `string` | Display name |
+| `folders[].parent_id` | `string?` | Parent folder ID, or `null` for root |
+| `folders[].is_expanded` | `boolean` | Whether expanded in UI |
+
+---
+
+### `connections.create`
+
+Create a new saved connection.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "connections.create",
+  "params": {
+    "name": "Build Shell",
+    "type": "shell",
+    "config": { "shell": "/bin/bash" },
+    "persistent": true,
+    "folder_id": "folder-x1y2z3"
+  },
+  "id": 11
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "id": "conn-a1b2c3d4",
+    "name": "Build Shell",
+    "session_type": "shell",
+    "config": { "shell": "/bin/bash" },
+    "persistent": true,
+    "folder_id": "folder-x1y2z3"
+  },
+  "id": 11
+}
+```
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `name` | `string` | *(required)* | Display name |
+| `type` | `string` | *(required)* | Session type |
+| `config` | `object` | `{}` | Type-specific configuration |
+| `persistent` | `boolean` | `false` | Whether sessions are persistent |
+| `folder_id` | `string?` | `null` | Parent folder ID |
+
+---
+
+### `connections.update`
+
+Update an existing connection's properties. Only provided fields are changed.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "connections.update",
+  "params": {
+    "id": "conn-a1b2c3d4",
+    "name": "Renamed Shell",
+    "folder_id": null
+  },
+  "id": 12
+}
+```
+
+**Response:** Same shape as `connections.create` response, with updated values.
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `id` | `string` | *(required)* Connection ID to update |
+| `name` | `string?` | New display name |
+| `type` | `string?` | New session type |
+| `config` | `object?` | New configuration |
+| `persistent` | `boolean?` | New persistent flag |
+| `folder_id` | `value?` | New folder ID. Explicit `null` moves to root; omit to leave unchanged |
+
+**Errors:**
+- `-32008` Connection not found
+
+---
+
+### `connections.delete`
+
+Delete a saved connection.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "connections.delete",
+  "params": {
+    "id": "conn-a1b2c3d4"
+  },
+  "id": 13
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {},
+  "id": 13
+}
+```
+
+**Errors:**
+- `-32008` Connection not found
+
+---
+
+### `connections.folders.create`
+
+Create a new folder for organizing connections.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "connections.folders.create",
+  "params": {
+    "name": "Project A",
+    "parent_id": null
+  },
+  "id": 14
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "id": "folder-x1y2z3",
+    "name": "Project A",
+    "parent_id": null,
+    "is_expanded": false
+  },
+  "id": 14
+}
+```
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `name` | `string` | *(required)* | Folder name |
+| `parent_id` | `string?` | `null` | Parent folder ID for nesting |
+
+---
+
+### `connections.folders.update`
+
+Update a folder's properties. Only provided fields are changed.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "connections.folders.update",
+  "params": {
+    "id": "folder-x1y2z3",
+    "name": "Renamed Folder",
+    "is_expanded": true
+  },
+  "id": 15
+}
+```
+
+**Response:** Same shape as `connections.folders.create` response, with updated values.
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `id` | `string` | *(required)* Folder ID to update |
+| `name` | `string?` | New folder name |
+| `parent_id` | `value?` | New parent. Explicit `null` moves to root; omit to leave unchanged |
+| `is_expanded` | `boolean?` | New expanded state |
+
+**Errors:**
+- `-32009` Folder not found
+
+---
+
+### `connections.folders.delete`
+
+Delete a folder. Connections and subfolders inside it are moved to the root level.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "connections.folders.delete",
+  "params": {
+    "id": "folder-x1y2z3"
+  },
+  "id": 16
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {},
+  "id": 16
+}
+```
+
+**Errors:**
+- `-32009` Folder not found
+
+---
+
 ## Notifications
 
 Notifications are messages from the agent to the desktop with **no `id` field**. The desktop MUST NOT send a response.
@@ -775,6 +1044,8 @@ For serial sessions:
 | `-32004` | Session limit reached | Agent has reached `max_sessions` |
 | `-32005` | Invalid configuration | Invalid config values (e.g., invalid baud rate, negative cols/rows) |
 | `-32006` | Session not running | Session exists but has exited |
+| `-32008` | Connection not found | No connection with the given ID |
+| `-32009` | Folder not found | No folder with the given ID |
 
 ---
 

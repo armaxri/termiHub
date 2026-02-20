@@ -8,7 +8,7 @@ use tracing::{info, warn};
 use crate::handler::dispatch::Dispatcher;
 use crate::io::transport::run_transport_loop;
 use crate::protocol::messages::JsonRpcNotification;
-use crate::session::definitions::DefinitionStore;
+use crate::session::definitions::ConnectionStore;
 use crate::session::manager::SessionManager;
 
 /// Run the NDJSON transport loop over a TCP listener.
@@ -26,7 +26,10 @@ pub async fn run_tcp_listener(addr: &str, shutdown: CancellationToken) -> anyhow
     let (notification_tx, mut notification_rx) =
         tokio::sync::mpsc::unbounded_channel::<JsonRpcNotification>();
     let session_manager = Arc::new(SessionManager::new(notification_tx));
-    let definition_store = Arc::new(DefinitionStore::new(DefinitionStore::default_path()));
+    let connection_store = Arc::new(ConnectionStore::new(ConnectionStore::default_path()));
+
+    // Ensure default shell connection exists on first run
+    connection_store.ensure_default_shell().await;
 
     // Recover sessions from previous agent run
     #[cfg(unix)]
@@ -48,7 +51,7 @@ pub async fn run_tcp_listener(addr: &str, shutdown: CancellationToken) -> anyhow
                 // replayed on attach, so these are not needed.
                 while notification_rx.try_recv().is_ok() {}
 
-                let mut dispatcher = Dispatcher::new(session_manager.clone(), definition_store.clone());
+                let mut dispatcher = Dispatcher::new(session_manager.clone(), connection_store.clone());
 
                 let (reader_half, mut writer_half) = stream.into_split();
                 let mut reader = BufReader::new(reader_half);
