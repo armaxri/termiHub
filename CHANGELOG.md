@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Vertically split panels can now be resized — the resize handle between top/bottom panels was invisible due to missing CSS height (#213)
+
 ### Changed
 
 - Split view panels now have a visible 1px border between them, making it easier to distinguish adjacent panels (#189)

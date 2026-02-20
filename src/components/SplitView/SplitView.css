@@ -28,12 +28,19 @@
 }
 
 .split-view__resize-handle {
-  width: var(--resize-handle-width);
   background-color: var(--resize-handle-color);
   transition: background-color var(--transition-normal);
 }
 
+.split-view__resize-handle[aria-orientation="vertical"] {
+  width: var(--resize-handle-width);
+}
+
+.split-view__resize-handle[aria-orientation="horizontal"] {
+  height: var(--resize-handle-width);
+}
+
 .split-view__resize-handle:hover,
-.split-view__resize-handle[data-resize-handle-active] {
+.split-view__resize-handle[data-separator="active"] {
   background-color: var(--resize-handle-hover-color);
 }
