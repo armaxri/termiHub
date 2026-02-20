@@ -56,6 +56,16 @@ export interface RemoteAgentDefinition {
 export interface AppSettings {
   version: string;
   externalConnectionFiles: ExternalFileConfig[];
+  defaultUser?: string;
+  defaultSshKeyPath?: string;
+  defaultShell?: string;
+  theme?: "dark" | "light" | "system";
+  fontFamily?: string;
+  fontSize?: number;
+  defaultHorizontalScrolling?: boolean;
+  scrollbackBuffer?: number;
+  cursorStyle?: "block" | "underline" | "bar";
+  cursorBlink?: boolean;
 }
 
 export interface FileEntry {
