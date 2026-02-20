@@ -71,6 +71,18 @@ export async function checkSshAgentStatus(): Promise<string> {
   return await invoke<string>("check_ssh_agent_status");
 }
 
+/** Result of validating an SSH key file path. */
+export interface SshKeyValidation {
+  status: "valid" | "warning" | "error";
+  message: string;
+  keyType: string;
+}
+
+/** Validate an SSH key file path and return a user-facing hint. */
+export async function validateSshKey(path: string): Promise<SshKeyValidation> {
+  return await invoke<SshKeyValidation>("validate_ssh_key", { path });
+}
+
 /** Check if Docker is available on the local system. */
 export async function checkDockerAvailable(): Promise<boolean> {
   return await invoke<boolean>("check_docker_available");

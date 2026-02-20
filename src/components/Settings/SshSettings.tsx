@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { SshConfig } from "@/types/terminal";
-import { checkSshAgentStatus } from "@/services/api";
+import { checkSshAgentStatus, validateSshKey, SshKeyValidation } from "@/services/api";
 import { parseHostPort } from "@/utils/parseHostPort";
 import { KeyPathInput } from "./KeyPathInput";
 
@@ -12,6 +12,8 @@ interface SshSettingsProps {
 
 export function SshSettings({ config, onChange, onSetupAgent }: SshSettingsProps) {
   const [agentStatus, setAgentStatus] = useState<string | null>(null);
+  const [keyValidation, setKeyValidation] = useState<SshKeyValidation | null>(null);
+  const validationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (config.authMethod === "agent") {
@@ -22,6 +24,31 @@ export function SshSettings({ config, onChange, onSetupAgent }: SshSettingsProps
       setAgentStatus(null);
     }
   }, [config.authMethod]);
+
+  useEffect(() => {
+    if (config.authMethod !== "key") {
+      setKeyValidation(null);
+      return;
+    }
+
+    const keyPath = config.keyPath ?? "";
+
+    if (validationTimer.current) {
+      clearTimeout(validationTimer.current);
+    }
+
+    validationTimer.current = setTimeout(() => {
+      validateSshKey(keyPath)
+        .then(setKeyValidation)
+        .catch(() => setKeyValidation(null));
+    }, 300);
+
+    return () => {
+      if (validationTimer.current) {
+        clearTimeout(validationTimer.current);
+      }
+    };
+  }, [config.authMethod, config.keyPath]);
 
   const isWindows = navigator.userAgent.includes("Windows");
 
@@ -121,6 +148,14 @@ export function SshSettings({ config, onChange, onSetupAgent }: SshSettingsProps
               testIdPrefix="ssh-settings"
             />
           </div>
+          {keyValidation && keyValidation.message && (
+            <p
+              className={`settings-form__hint settings-form__hint--${keyValidation.status}`}
+              data-testid="ssh-settings-key-validation"
+            >
+              {keyValidation.message}
+            </p>
+          )}
           <label className="settings-form__field">
             <span className="settings-form__label">Key Passphrase (optional)</span>
             <input

@@ -9,6 +9,7 @@ use crate::terminal::manager::TerminalManager;
 use crate::terminal::serial;
 use crate::utils::errors::TerminalError;
 use crate::utils::shell_detect;
+use crate::utils::ssh_key_validate::SshKeyValidation;
 
 /// Create a new terminal session.
 ///
@@ -111,4 +112,18 @@ pub fn check_docker_available() -> bool {
 #[tauri::command]
 pub fn list_docker_images() -> Vec<String> {
     crate::utils::docker_detect::list_docker_images()
+}
+
+/// Validate an SSH key file path and return a user-facing hint.
+#[tauri::command]
+pub async fn validate_ssh_key(path: String) -> SshKeyValidation {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::utils::ssh_key_validate::validate_ssh_key(&path)
+    })
+    .await
+    .unwrap_or_else(|_| SshKeyValidation {
+        status: crate::utils::ssh_key_validate::ValidationStatus::Error,
+        message: "Validation task failed.".to_string(),
+        key_type: String::new(),
+    })
 }
