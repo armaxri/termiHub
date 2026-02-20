@@ -11,9 +11,10 @@ if not exist node_modules (
     echo.
 )
 
-REM Kill any process occupying the Vite dev server port (leftover from a previous run)
+REM Kill any process occupying the Vite dev server port (leftover from a previous run).
+REM Uses PowerShell because netstat state names are localized (e.g. LISTENING vs ABHÖREN).
 set DEV_PORT=1420
-for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":%DEV_PORT% " ^| findstr "LISTENING"') do (
+for /f %%a in ('powershell -NoProfile -Command "(Get-NetTCPConnection -LocalPort %DEV_PORT% -State Listen -ErrorAction SilentlyContinue).OwningProcess" 2^>nul') do (
     echo Port %DEV_PORT% in use ^(PID %%a^), killing...
     taskkill /PID %%a /F >nul 2>&1
 )
