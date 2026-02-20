@@ -15,13 +15,14 @@ use crate::monitoring::MonitoringManager;
 use crate::protocol::errors;
 use crate::protocol::messages::{JsonRpcErrorResponse, JsonRpcRequest, JsonRpcResponse};
 use crate::protocol::methods::{
-    Capabilities, ConnectionCreateParams, ConnectionDeleteParams, ConnectionUpdateParams,
-    DockerSessionConfig, FilesDeleteParams, FilesListParams, FilesListResult, FilesReadParams,
-    FilesReadResult, FilesRenameParams, FilesStatParams, FilesWriteParams, FolderCreateParams,
-    FolderDeleteParams, FolderUpdateParams, HealthCheckResult, InitializeParams, InitializeResult,
-    MonitoringSubscribeParams, MonitoringUnsubscribeParams, SessionAttachParams,
-    SessionCloseParams, SessionCreateParams, SessionCreateResult, SessionDetachParams,
-    SessionInputParams, SessionListEntry, SessionListResult, SessionResizeParams, SshSessionConfig,
+    AgentShutdownParams, AgentShutdownResult, Capabilities, ConnectionCreateParams,
+    ConnectionDeleteParams, ConnectionUpdateParams, DockerSessionConfig, FilesDeleteParams,
+    FilesListParams, FilesListResult, FilesReadParams, FilesReadResult, FilesRenameParams,
+    FilesStatParams, FilesWriteParams, FolderCreateParams, FolderDeleteParams, FolderUpdateParams,
+    HealthCheckResult, InitializeParams, InitializeResult, MonitoringSubscribeParams,
+    MonitoringUnsubscribeParams, SessionAttachParams, SessionCloseParams, SessionCreateParams,
+    SessionCreateResult, SessionDetachParams, SessionInputParams, SessionListEntry,
+    SessionListResult, SessionResizeParams, SshSessionConfig,
 };
 use crate::session::definitions::{Connection, ConnectionStore, Folder};
 use crate::session::manager::{SessionCreateError, SessionManager, MAX_SESSIONS};
@@ -44,15 +45,25 @@ pub struct Dispatcher {
 pub enum DispatchResult {
     Success(JsonRpcResponse),
     Error(JsonRpcErrorResponse),
+    /// Send the response, then signal the transport loop to shut down.
+    SuccessAndShutdown(JsonRpcResponse),
 }
 
 impl DispatchResult {
     /// Serialize the result to a JSON `Value`.
     pub fn to_json(&self) -> Value {
         match self {
-            Self::Success(resp) => serde_json::to_value(resp).unwrap(),
+            Self::Success(resp) | Self::SuccessAndShutdown(resp) => {
+                serde_json::to_value(resp).unwrap()
+            }
             Self::Error(resp) => serde_json::to_value(resp).unwrap(),
         }
+    }
+
+    /// Returns `true` if this result signals the agent should shut down
+    /// after sending the response.
+    pub fn is_shutdown(&self) -> bool {
+        matches!(self, Self::SuccessAndShutdown(_))
     }
 }
 
@@ -116,6 +127,7 @@ impl Dispatcher {
             "monitoring.subscribe" => self.handle_monitoring_subscribe(request).await,
             "monitoring.unsubscribe" => self.handle_monitoring_unsubscribe(request).await,
             "health.check" => self.handle_health_check(request).await,
+            "agent.shutdown" => self.handle_agent_shutdown(request).await,
             _ => {
                 warn!("Unknown method: {}", method);
                 DispatchResult::Error(JsonRpcErrorResponse::new(
@@ -317,6 +329,38 @@ impl Dispatcher {
 
         DispatchResult::Success(JsonRpcResponse::new(
             request.id,
+            serde_json::to_value(result).unwrap(),
+        ))
+    }
+
+    async fn handle_agent_shutdown(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+
+        let _params: AgentShutdownParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid agent.shutdown params: {e}"),
+                ));
+            }
+        };
+
+        // Count active sessions before shutdown — they will be detached
+        // (left running in daemons) so the next agent instance can recover them.
+        let detached = self.session_manager.active_count().await;
+
+        // Stop monitoring subscriptions
+        self.monitoring_manager.shutdown().await;
+
+        let result = AgentShutdownResult {
+            detached_sessions: detached,
+        };
+
+        // Use SuccessAndShutdown so the transport loop exits after sending this response.
+        DispatchResult::SuccessAndShutdown(JsonRpcResponse::new(
+            id,
             serde_json::to_value(result).unwrap(),
         ))
     }
@@ -2027,5 +2071,59 @@ mod tests {
         );
         let result = d.dispatch(req).await.to_json();
         assert_eq!(result["error"]["code"], errors::MONITORING_ERROR);
+    }
+
+    // ── agent.shutdown tests ─────────────────────────────────────────
+
+    #[tokio::test]
+    async fn agent_shutdown_returns_session_count() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request("agent.shutdown", json!({}), 2);
+        let result = d.dispatch(req).await;
+        assert!(result.is_shutdown());
+        let json = result.to_json();
+        assert_eq!(json["result"]["detached_sessions"], 0);
+    }
+
+    #[tokio::test]
+    async fn agent_shutdown_with_reason() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request("agent.shutdown", json!({"reason": "update"}), 2);
+        let result = d.dispatch(req).await;
+        assert!(result.is_shutdown());
+        let json = result.to_json();
+        assert!(json.get("result").is_some());
+    }
+
+    #[tokio::test]
+    async fn agent_shutdown_with_active_sessions() {
+        let (mut d, mgr) = make_dispatcher_with_manager();
+        init_dispatcher(&mut d).await;
+
+        // Create a stub session
+        mgr.create_stub_session(SessionType::Shell, "test".to_string(), json!({}))
+            .await
+            .unwrap();
+
+        let req = make_request("agent.shutdown", json!({}), 2);
+        let result = d.dispatch(req).await;
+        assert!(result.is_shutdown());
+        let json = result.to_json();
+        assert_eq!(json["result"]["detached_sessions"], 1);
+    }
+
+    #[tokio::test]
+    async fn agent_shutdown_requires_initialization() {
+        let mut d = make_dispatcher();
+
+        let req = make_request("agent.shutdown", json!({}), 1);
+        let result = d.dispatch(req).await;
+        assert!(!result.is_shutdown());
+        let json = result.to_json();
+        assert_eq!(json["error"]["code"], errors::NOT_INITIALIZED);
     }
 }

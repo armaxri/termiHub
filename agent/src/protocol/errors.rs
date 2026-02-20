@@ -62,6 +62,9 @@ pub const FILE_BROWSING_NOT_SUPPORTED: i64 = -32013;
 /// A monitoring operation failed (collection error, SSH failure, etc.).
 pub const MONITORING_ERROR: i64 = -32014;
 
+/// An error occurred during agent shutdown.
+pub const SHUTDOWN_ERROR: i64 = -32015;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -88,6 +91,7 @@ mod tests {
             FILE_OPERATION_FAILED,
             FILE_BROWSING_NOT_SUPPORTED,
             MONITORING_ERROR,
+            SHUTDOWN_ERROR,
         ];
         for code in codes {
             assert!(code < 0, "Error code {code} should be negative");
@@ -129,6 +133,7 @@ mod tests {
             FILE_OPERATION_FAILED,
             FILE_BROWSING_NOT_SUPPORTED,
             MONITORING_ERROR,
+            SHUTDOWN_ERROR,
         ];
         for code in app_codes {
             assert!(

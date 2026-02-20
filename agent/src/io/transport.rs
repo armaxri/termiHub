@@ -90,9 +90,15 @@ where
                 }
 
                 let result = dispatcher.dispatch(request).await;
+                let should_shutdown = result.is_shutdown();
                 let response_json = result.to_json();
                 debug!("Sending: {}", response_json);
                 write_json(writer, &response_json).await?;
+
+                if should_shutdown {
+                    debug!("agent.shutdown handled, exiting transport loop");
+                    break;
+                }
             }
 
             Some(notification) = notification_rx.recv() => {

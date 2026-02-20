@@ -369,6 +369,21 @@ pub struct FilesStatResult {
     pub permissions: Option<String>,
 }
 
+// ── agent.shutdown ──────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AgentShutdownParams {
+    /// Optional reason: "update", "user", etc.
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AgentShutdownResult {
+    /// Number of sessions that were detached (left running in daemons).
+    pub detached_sessions: u32,
+}
+
 // ── monitoring.subscribe ────────────────────────────────────────────
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1027,5 +1042,30 @@ mod tests {
         assert!(v.get("uptime_seconds").is_none());
         assert!(v.get("cpu_usage_percent").is_none());
         assert!(v.get("memory_total_kb").is_none());
+    }
+
+    // ── agent.shutdown types ─────────────────────────────────────────
+
+    #[test]
+    fn agent_shutdown_params_with_reason() {
+        let json = json!({"reason": "update"});
+        let params: AgentShutdownParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.reason, Some("update".to_string()));
+    }
+
+    #[test]
+    fn agent_shutdown_params_empty() {
+        let json = json!({});
+        let params: AgentShutdownParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.reason, None);
+    }
+
+    #[test]
+    fn agent_shutdown_result_serializes() {
+        let result = AgentShutdownResult {
+            detached_sessions: 3,
+        };
+        let v = serde_json::to_value(&result).unwrap();
+        assert_eq!(v["detached_sessions"], 3);
     }
 }
