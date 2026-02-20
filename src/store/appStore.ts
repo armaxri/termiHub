@@ -58,6 +58,7 @@ import {
 } from "@/services/api";
 import { RemoteAgentConfig } from "@/types/terminal";
 import { SystemStats } from "@/types/monitoring";
+import { applyTheme, onThemeChange } from "@/themes";
 import {
   createLeafPanel,
   findLeaf,
@@ -783,6 +784,11 @@ export const useAppStore = create<AppState>((set, get) => {
           }
         }
         set({ connections, folders, settings, remoteAgents });
+        applyTheme(settings.theme);
+        // Re-render terminals when OS theme changes in system mode
+        onThemeChange(() => {
+          set({});
+        });
       } catch (err) {
         console.error("Failed to load connections from backend:", err);
       }
@@ -807,6 +813,10 @@ export const useAppStore = create<AppState>((set, get) => {
         const oldSettings = get().settings;
         await persistSettings(newSettings);
         set({ settings: newSettings });
+
+        if (oldSettings.theme !== newSettings.theme) {
+          applyTheme(newSettings.theme);
+        }
 
         // Side-effects when global defaults are toggled off.
         // Only disconnect if the active tab doesn't have an explicit override.
