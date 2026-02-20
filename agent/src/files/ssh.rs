@@ -35,6 +35,7 @@ impl SshFileBackend {
     }
 }
 
+#[async_trait::async_trait]
 impl FileBackend for SshFileBackend {
     async fn list(&self, path: &str) -> Result<Vec<FileEntry>, FileError> {
         let config = self.config.clone();

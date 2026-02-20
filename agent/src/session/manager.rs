@@ -682,6 +682,32 @@ impl SessionManager {
         Ok(snapshot)
     }
 
+    /// Find a running Docker container name by image name.
+    ///
+    /// Scans active Docker sessions for one whose config matches the given
+    /// image. Returns the first match's container name, or `None`.
+    #[cfg(unix)]
+    pub async fn find_docker_container(&self, image: &str) -> Option<String> {
+        let sessions = self.sessions.lock().await;
+        for info in sessions.values() {
+            if info.session_type != SessionType::Docker {
+                continue;
+            }
+            if info.status != SessionStatus::Running {
+                continue;
+            }
+            // Check if the session config matches the requested image
+            if let Some(config_image) = info.config.get("image").and_then(|v| v.as_str()) {
+                if config_image == image {
+                    if let Some(ref backend) = info.docker_backend {
+                        return Some(backend.container_name().to_string());
+                    }
+                }
+            }
+        }
+        None
+    }
+
     /// Return the number of sessions with status `Running`.
     pub async fn active_count(&self) -> u32 {
         let sessions = self.sessions.lock().await;

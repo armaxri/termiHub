@@ -18,6 +18,7 @@ impl DockerFileBackend {
     }
 }
 
+#[async_trait::async_trait]
 impl FileBackend for DockerFileBackend {
     async fn list(&self, path: &str) -> Result<Vec<FileEntry>, FileError> {
         let output = docker_exec(&self.container_name, &build_find_args(path)).await?;

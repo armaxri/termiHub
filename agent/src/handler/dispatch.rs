@@ -7,14 +7,20 @@ use tracing::{debug, warn};
 
 use base64::Engine;
 
+use crate::files::docker::DockerFileBackend;
+use crate::files::local::LocalFileBackend;
+use crate::files::ssh::SshFileBackend;
+use crate::files::{FileBackend, FileError};
 use crate::protocol::errors;
 use crate::protocol::messages::{JsonRpcErrorResponse, JsonRpcRequest, JsonRpcResponse};
 use crate::protocol::methods::{
     Capabilities, ConnectionCreateParams, ConnectionDeleteParams, ConnectionUpdateParams,
-    FolderCreateParams, FolderDeleteParams, FolderUpdateParams, HealthCheckResult,
-    InitializeParams, InitializeResult, SessionAttachParams, SessionCloseParams,
-    SessionCreateParams, SessionCreateResult, SessionDetachParams, SessionInputParams,
-    SessionListEntry, SessionListResult, SessionResizeParams,
+    DockerSessionConfig, FilesDeleteParams, FilesListParams, FilesListResult, FilesReadParams,
+    FilesReadResult, FilesRenameParams, FilesStatParams, FilesWriteParams, FolderCreateParams,
+    FolderDeleteParams, FolderUpdateParams, HealthCheckResult, InitializeParams, InitializeResult,
+    SessionAttachParams, SessionCloseParams, SessionCreateParams, SessionCreateResult,
+    SessionDetachParams, SessionInputParams, SessionListEntry, SessionListResult,
+    SessionResizeParams, SshSessionConfig,
 };
 use crate::session::definitions::{Connection, ConnectionStore, Folder};
 use crate::session::manager::{SessionCreateError, SessionManager, MAX_SESSIONS};
@@ -97,6 +103,12 @@ impl Dispatcher {
             "connections.folders.create" => self.handle_connections_folders_create(request).await,
             "connections.folders.update" => self.handle_connections_folders_update(request).await,
             "connections.folders.delete" => self.handle_connections_folders_delete(request).await,
+            "files.list" => self.handle_files_list(request).await,
+            "files.read" => self.handle_files_read(request).await,
+            "files.write" => self.handle_files_write(request).await,
+            "files.delete" => self.handle_files_delete(request).await,
+            "files.rename" => self.handle_files_rename(request).await,
+            "files.stat" => self.handle_files_stat(request).await,
             "health.check" => self.handle_health_check(request).await,
             _ => {
                 warn!("Unknown method: {}", method);
@@ -614,6 +626,301 @@ impl Dispatcher {
                     .with_data(json!({"id": params.id})),
             )
         }
+    }
+
+    // ── files.* handlers ───────────────────────────────────────────
+
+    async fn handle_files_list(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+
+        let params: FilesListParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid files.list params: {e}"),
+                ));
+            }
+        };
+
+        let backend = match self.resolve_file_backend(params.connection_id).await {
+            Ok(b) => b,
+            Err((code, msg)) => return DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg)),
+        };
+
+        match backend.list(&params.path).await {
+            Ok(entries) => {
+                let result = FilesListResult { entries };
+                DispatchResult::Success(JsonRpcResponse::new(
+                    id,
+                    serde_json::to_value(result).unwrap(),
+                ))
+            }
+            Err(e) => {
+                let (code, msg) = map_file_error(e);
+                DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
+            }
+        }
+    }
+
+    async fn handle_files_read(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+
+        let params: FilesReadParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid files.read params: {e}"),
+                ));
+            }
+        };
+
+        let backend = match self.resolve_file_backend(params.connection_id).await {
+            Ok(b) => b,
+            Err((code, msg)) => return DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg)),
+        };
+
+        match backend.read(&params.path).await {
+            Ok(data) => {
+                let b64 = base64::engine::general_purpose::STANDARD;
+                let size = data.len() as u64;
+                let result = FilesReadResult {
+                    data: b64.encode(&data),
+                    size,
+                };
+                DispatchResult::Success(JsonRpcResponse::new(
+                    id,
+                    serde_json::to_value(result).unwrap(),
+                ))
+            }
+            Err(e) => {
+                let (code, msg) = map_file_error(e);
+                DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
+            }
+        }
+    }
+
+    async fn handle_files_write(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+
+        let params: FilesWriteParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid files.write params: {e}"),
+                ));
+            }
+        };
+
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let data = match b64.decode(&params.data) {
+            Ok(d) => d,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid base64 data: {e}"),
+                ));
+            }
+        };
+
+        let backend = match self.resolve_file_backend(params.connection_id).await {
+            Ok(b) => b,
+            Err((code, msg)) => return DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg)),
+        };
+
+        match backend.write(&params.path, &data).await {
+            Ok(()) => DispatchResult::Success(JsonRpcResponse::new(id, json!({}))),
+            Err(e) => {
+                let (code, msg) = map_file_error(e);
+                DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
+            }
+        }
+    }
+
+    async fn handle_files_delete(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+
+        let params: FilesDeleteParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid files.delete params: {e}"),
+                ));
+            }
+        };
+
+        let backend = match self.resolve_file_backend(params.connection_id).await {
+            Ok(b) => b,
+            Err((code, msg)) => return DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg)),
+        };
+
+        match backend.delete(&params.path, params.is_directory).await {
+            Ok(()) => DispatchResult::Success(JsonRpcResponse::new(id, json!({}))),
+            Err(e) => {
+                let (code, msg) = map_file_error(e);
+                DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
+            }
+        }
+    }
+
+    async fn handle_files_rename(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+
+        let params: FilesRenameParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid files.rename params: {e}"),
+                ));
+            }
+        };
+
+        let backend = match self.resolve_file_backend(params.connection_id).await {
+            Ok(b) => b,
+            Err((code, msg)) => return DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg)),
+        };
+
+        match backend.rename(&params.old_path, &params.new_path).await {
+            Ok(()) => DispatchResult::Success(JsonRpcResponse::new(id, json!({}))),
+            Err(e) => {
+                let (code, msg) = map_file_error(e);
+                DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
+            }
+        }
+    }
+
+    async fn handle_files_stat(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+
+        let params: FilesStatParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid files.stat params: {e}"),
+                ));
+            }
+        };
+
+        let backend = match self.resolve_file_backend(params.connection_id).await {
+            Ok(b) => b,
+            Err((code, msg)) => return DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg)),
+        };
+
+        match backend.stat(&params.path).await {
+            Ok(result) => DispatchResult::Success(JsonRpcResponse::new(
+                id,
+                serde_json::to_value(result).unwrap(),
+            )),
+            Err(e) => {
+                let (code, msg) = map_file_error(e);
+                DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
+            }
+        }
+    }
+
+    /// Resolve the appropriate file backend for a connection.
+    ///
+    /// - `None` → local filesystem
+    /// - `Some(id)` → look up connection, dispatch by session type
+    async fn resolve_file_backend(
+        &self,
+        connection_id: Option<String>,
+    ) -> Result<Box<dyn FileBackend>, (i64, String)> {
+        let connection_id = match connection_id {
+            None => return Ok(Box::new(LocalFileBackend::new())),
+            Some(id) => id,
+        };
+
+        let connection = self
+            .connection_store
+            .get(&connection_id)
+            .await
+            .ok_or((
+                errors::CONNECTION_NOT_FOUND,
+                format!("Connection not found: {connection_id}"),
+            ))?;
+
+        match connection.session_type.as_str() {
+            "shell" => Ok(Box::new(LocalFileBackend::new())),
+            "docker" => {
+                let docker_config: DockerSessionConfig =
+                    serde_json::from_value(connection.config).map_err(|e| {
+                        (
+                            errors::INVALID_CONFIGURATION,
+                            format!("Invalid Docker config: {e}"),
+                        )
+                    })?;
+
+                // Find a running Docker container for this image
+                #[cfg(unix)]
+                {
+                    let container_name = self
+                        .session_manager
+                        .find_docker_container(&docker_config.image)
+                        .await
+                        .ok_or((
+                            errors::FILE_OPERATION_FAILED,
+                            format!(
+                                "No running Docker session for image '{}'. \
+                                 Start a Docker session first to browse its files.",
+                                docker_config.image
+                            ),
+                        ))?;
+                    Ok(Box::new(DockerFileBackend::new(container_name)))
+                }
+                #[cfg(not(unix))]
+                {
+                    let _ = docker_config;
+                    Err((
+                        errors::FILE_BROWSING_NOT_SUPPORTED,
+                        "Docker file browsing is not supported on this platform".to_string(),
+                    ))
+                }
+            }
+            "ssh" => {
+                let ssh_config: SshSessionConfig =
+                    serde_json::from_value(connection.config).map_err(|e| {
+                        (
+                            errors::INVALID_CONFIGURATION,
+                            format!("Invalid SSH config: {e}"),
+                        )
+                    })?;
+                Ok(Box::new(SshFileBackend::new(ssh_config)))
+            }
+            "serial" => Err((
+                errors::FILE_BROWSING_NOT_SUPPORTED,
+                "File browsing is not supported for serial connections".to_string(),
+            )),
+            other => Err((
+                errors::INVALID_CONFIGURATION,
+                format!("Unknown connection type: {other}"),
+            )),
+        }
+    }
+}
+
+/// Map a `FileError` to a JSON-RPC error code and message.
+fn map_file_error(e: FileError) -> (i64, String) {
+    match e {
+        FileError::NotFound(msg) => (errors::FILE_NOT_FOUND, msg),
+        FileError::PermissionDenied(msg) => (errors::PERMISSION_DENIED, msg),
+        FileError::OperationFailed(msg) => (errors::FILE_OPERATION_FAILED, msg),
+        FileError::NotSupported => (
+            errors::FILE_BROWSING_NOT_SUPPORTED,
+            e.to_string(),
+        ),
     }
 }
 
@@ -1382,5 +1689,225 @@ mod tests {
         );
         let result = d.dispatch(req).await.to_json();
         assert_eq!(result["result"]["folder_id"], folder_id);
+    }
+
+    // ── File browsing tests ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn files_list_local() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("hello.txt"), "world").unwrap();
+
+        let req = make_request(
+            "files.list",
+            json!({"path": dir.path().to_str().unwrap()}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        let entries = result["result"]["entries"].as_array().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["name"], "hello.txt");
+        assert_eq!(entries[0]["isDirectory"], false);
+        assert_eq!(entries[0]["size"], 5);
+    }
+
+    #[tokio::test]
+    async fn files_list_not_found() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request(
+            "files.list",
+            json!({"path": "/nonexistent/path/abc123"}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["error"]["code"], errors::FILE_NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn files_read_write_round_trip() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("test.txt");
+        let path_str = file_path.to_str().unwrap();
+
+        // Write
+        let data_b64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            b"hello, world!",
+        );
+        let req = make_request(
+            "files.write",
+            json!({"path": path_str, "data": data_b64}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert!(result.get("result").is_some());
+
+        // Read
+        let req = make_request("files.read", json!({"path": path_str}), 3);
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["result"]["data"], data_b64);
+        assert_eq!(result["result"]["size"], 13);
+    }
+
+    #[tokio::test]
+    async fn files_stat() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("stat_test.txt");
+        std::fs::write(&file_path, "hello").unwrap();
+
+        let req = make_request(
+            "files.stat",
+            json!({"path": file_path.to_str().unwrap()}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["result"]["name"], "stat_test.txt");
+        assert_eq!(result["result"]["isDirectory"], false);
+        assert_eq!(result["result"]["size"], 5);
+    }
+
+    #[tokio::test]
+    async fn files_delete() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("to_delete.txt");
+        std::fs::write(&file_path, "delete me").unwrap();
+
+        let req = make_request(
+            "files.delete",
+            json!({"path": file_path.to_str().unwrap(), "isDirectory": false}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert!(result.get("result").is_some());
+        assert!(!file_path.exists());
+    }
+
+    #[tokio::test]
+    async fn files_rename() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("old.txt");
+        let new = dir.path().join("new.txt");
+        std::fs::write(&old, "content").unwrap();
+
+        let req = make_request(
+            "files.rename",
+            json!({"old_path": old.to_str().unwrap(), "new_path": new.to_str().unwrap()}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert!(result.get("result").is_some());
+        assert!(!old.exists());
+        assert!(new.exists());
+    }
+
+    #[tokio::test]
+    async fn files_with_connection_id_not_found() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request(
+            "files.list",
+            json!({"connection_id": "nonexistent", "path": "/tmp"}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["error"]["code"], errors::CONNECTION_NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn files_serial_not_supported() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        // Create a serial connection
+        let req = make_request(
+            "connections.create",
+            json!({
+                "name": "Serial",
+                "type": "serial",
+                "config": {"port": "/dev/ttyUSB0"}
+            }),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        let conn_id = result["result"]["id"].as_str().unwrap().to_string();
+
+        // Try to list files via serial connection
+        let req = make_request(
+            "files.list",
+            json!({"connection_id": conn_id, "path": "/tmp"}),
+            3,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["error"]["code"], errors::FILE_BROWSING_NOT_SUPPORTED);
+    }
+
+    #[tokio::test]
+    async fn files_shell_connection_uses_local() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("file.txt"), "data").unwrap();
+
+        // Create a shell connection
+        let req = make_request(
+            "connections.create",
+            json!({"name": "Shell", "type": "shell", "config": {"shell": "/bin/sh"}}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        let conn_id = result["result"]["id"].as_str().unwrap().to_string();
+
+        // List files via shell connection (should use local backend)
+        let req = make_request(
+            "files.list",
+            json!({"connection_id": conn_id, "path": dir.path().to_str().unwrap()}),
+            3,
+        );
+        let result = d.dispatch(req).await.to_json();
+        let entries = result["result"]["entries"].as_array().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["name"], "file.txt");
+    }
+
+    #[tokio::test]
+    async fn files_require_initialization() {
+        let mut d = make_dispatcher();
+
+        let req = make_request("files.list", json!({"path": "/tmp"}), 1);
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["error"]["code"], errors::NOT_INITIALIZED);
+    }
+
+    #[tokio::test]
+    async fn files_write_invalid_base64() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request(
+            "files.write",
+            json!({"path": "/tmp/test.txt", "data": "!!!not-base64!!!"}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["error"]["code"], errors::INVALID_PARAMS);
     }
 }

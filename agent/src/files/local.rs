@@ -16,6 +16,7 @@ impl LocalFileBackend {
     }
 }
 
+#[async_trait::async_trait]
 impl FileBackend for LocalFileBackend {
     async fn list(&self, path: &str) -> Result<Vec<FileEntry>, FileError> {
         let path = path.to_string();
