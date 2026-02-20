@@ -100,11 +100,7 @@ impl FileBackend for SshFileBackend {
         tokio::task::spawn_blocking(move || {
             let conn = connect_sftp(&config)?;
             conn.sftp
-                .rename(
-                    std::path::Path::new(&old),
-                    std::path::Path::new(&new),
-                    None,
-                )
+                .rename(std::path::Path::new(&old), std::path::Path::new(&new), None)
                 .map_err(|e| map_ssh_error(e, &old))
         })
         .await
@@ -144,10 +140,13 @@ fn connect_sftp(config: &SshSessionConfig) -> Result<SftpConnection, FileError> 
             let key_path = config.key_path.as_deref().unwrap_or("~/.ssh/id_rsa");
             let expanded = shellexpand::tilde(key_path);
             session
-                .userauth_pubkey_file(&config.username, None, std::path::Path::new(expanded.as_ref()), None)
-                .map_err(|e| {
-                    FileError::OperationFailed(format!("SSH key auth failed: {e}"))
-                })?;
+                .userauth_pubkey_file(
+                    &config.username,
+                    None,
+                    std::path::Path::new(expanded.as_ref()),
+                    None,
+                )
+                .map_err(|e| FileError::OperationFailed(format!("SSH key auth failed: {e}")))?;
         }
         "password" => {
             let password = config.password.as_deref().unwrap_or("");
@@ -160,9 +159,7 @@ fn connect_sftp(config: &SshSessionConfig) -> Result<SftpConnection, FileError> 
         "agent" => {
             session
                 .userauth_agent(&config.username)
-                .map_err(|e| {
-                    FileError::OperationFailed(format!("SSH agent auth failed: {e}"))
-                })?;
+                .map_err(|e| FileError::OperationFailed(format!("SSH agent auth failed: {e}")))?;
         }
         other => {
             return Err(FileError::OperationFailed(format!(
@@ -212,10 +209,7 @@ fn sftp_list_dir(sftp: &Sftp, path: &str) -> Result<Vec<FileEntry>, FileError> {
 
         let is_directory = stat.is_dir();
         let size = stat.size.unwrap_or(0);
-        let modified = stat
-            .mtime
-            .map(|t| chrono_from_epoch(t))
-            .unwrap_or_default();
+        let modified = stat.mtime.map(chrono_from_epoch).unwrap_or_default();
         let permissions = stat.perm.map(|p| format_permissions(p & 0o777));
         let full_path = format!("{}{}", parent, name);
 
@@ -273,10 +267,7 @@ fn sftp_stat(sftp: &Sftp, path: &str) -> Result<FilesStatResult, FileError> {
         path: path.to_string(),
         is_directory: stat.is_dir(),
         size: stat.size.unwrap_or(0),
-        modified: stat
-            .mtime
-            .map(|t| chrono_from_epoch(t))
-            .unwrap_or_default(),
+        modified: stat.mtime.map(chrono_from_epoch).unwrap_or_default(),
         permissions: stat.perm.map(|p| format_permissions(p & 0o777)),
     })
 }

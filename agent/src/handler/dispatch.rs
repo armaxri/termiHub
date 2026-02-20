@@ -646,7 +646,9 @@ impl Dispatcher {
 
         let backend = match self.resolve_file_backend(params.connection_id).await {
             Ok(b) => b,
-            Err((code, msg)) => return DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg)),
+            Err((code, msg)) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
+            }
         };
 
         match backend.list(&params.path).await {
@@ -680,7 +682,9 @@ impl Dispatcher {
 
         let backend = match self.resolve_file_backend(params.connection_id).await {
             Ok(b) => b,
-            Err((code, msg)) => return DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg)),
+            Err((code, msg)) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
+            }
         };
 
         match backend.read(&params.path).await {
@@ -731,7 +735,9 @@ impl Dispatcher {
 
         let backend = match self.resolve_file_backend(params.connection_id).await {
             Ok(b) => b,
-            Err((code, msg)) => return DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg)),
+            Err((code, msg)) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
+            }
         };
 
         match backend.write(&params.path, &data).await {
@@ -759,7 +765,9 @@ impl Dispatcher {
 
         let backend = match self.resolve_file_backend(params.connection_id).await {
             Ok(b) => b,
-            Err((code, msg)) => return DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg)),
+            Err((code, msg)) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
+            }
         };
 
         match backend.delete(&params.path, params.is_directory).await {
@@ -787,7 +795,9 @@ impl Dispatcher {
 
         let backend = match self.resolve_file_backend(params.connection_id).await {
             Ok(b) => b,
-            Err((code, msg)) => return DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg)),
+            Err((code, msg)) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
+            }
         };
 
         match backend.rename(&params.old_path, &params.new_path).await {
@@ -815,7 +825,9 @@ impl Dispatcher {
 
         let backend = match self.resolve_file_backend(params.connection_id).await {
             Ok(b) => b,
-            Err((code, msg)) => return DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg)),
+            Err((code, msg)) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
+            }
         };
 
         match backend.stat(&params.path).await {
@@ -843,20 +855,16 @@ impl Dispatcher {
             Some(id) => id,
         };
 
-        let connection = self
-            .connection_store
-            .get(&connection_id)
-            .await
-            .ok_or((
-                errors::CONNECTION_NOT_FOUND,
-                format!("Connection not found: {connection_id}"),
-            ))?;
+        let connection = self.connection_store.get(&connection_id).await.ok_or((
+            errors::CONNECTION_NOT_FOUND,
+            format!("Connection not found: {connection_id}"),
+        ))?;
 
         match connection.session_type.as_str() {
             "shell" => Ok(Box::new(LocalFileBackend::new())),
             "docker" => {
-                let docker_config: DockerSessionConfig =
-                    serde_json::from_value(connection.config).map_err(|e| {
+                let docker_config: DockerSessionConfig = serde_json::from_value(connection.config)
+                    .map_err(|e| {
                         (
                             errors::INVALID_CONFIGURATION,
                             format!("Invalid Docker config: {e}"),
@@ -890,8 +898,8 @@ impl Dispatcher {
                 }
             }
             "ssh" => {
-                let ssh_config: SshSessionConfig =
-                    serde_json::from_value(connection.config).map_err(|e| {
+                let ssh_config: SshSessionConfig = serde_json::from_value(connection.config)
+                    .map_err(|e| {
                         (
                             errors::INVALID_CONFIGURATION,
                             format!("Invalid SSH config: {e}"),
@@ -917,10 +925,7 @@ fn map_file_error(e: FileError) -> (i64, String) {
         FileError::NotFound(msg) => (errors::FILE_NOT_FOUND, msg),
         FileError::PermissionDenied(msg) => (errors::PERMISSION_DENIED, msg),
         FileError::OperationFailed(msg) => (errors::FILE_OPERATION_FAILED, msg),
-        FileError::NotSupported => (
-            errors::FILE_BROWSING_NOT_SUPPORTED,
-            e.to_string(),
-        ),
+        FileError::NotSupported => (errors::FILE_BROWSING_NOT_SUPPORTED, e.to_string()),
     }
 }
 
@@ -1719,11 +1724,7 @@ mod tests {
         let mut d = make_dispatcher();
         init_dispatcher(&mut d).await;
 
-        let req = make_request(
-            "files.list",
-            json!({"path": "/nonexistent/path/abc123"}),
-            2,
-        );
+        let req = make_request("files.list", json!({"path": "/nonexistent/path/abc123"}), 2);
         let result = d.dispatch(req).await.to_json();
         assert_eq!(result["error"]["code"], errors::FILE_NOT_FOUND);
     }
@@ -1738,10 +1739,8 @@ mod tests {
         let path_str = file_path.to_str().unwrap();
 
         // Write
-        let data_b64 = base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            b"hello, world!",
-        );
+        let data_b64 =
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, b"hello, world!");
         let req = make_request(
             "files.write",
             json!({"path": path_str, "data": data_b64}),

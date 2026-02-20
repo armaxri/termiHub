@@ -465,9 +465,7 @@ mod tests {
         let path = tmp.path().join("connections.json");
         let store = ConnectionStore::new_temp(path);
 
-        store
-            .create(make_connection("conn-1", "Shell", true))
-            .await;
+        store.create(make_connection("conn-1", "Shell", true)).await;
 
         let snap = store.get("conn-1").await;
         assert!(snap.is_some());

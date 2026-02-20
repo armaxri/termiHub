@@ -23,6 +23,7 @@ pub enum FileError {
     OperationFailed(String),
 
     #[error("File browsing not supported for this connection type")]
+    #[allow(dead_code)]
     NotSupported,
 }
 

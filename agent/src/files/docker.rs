@@ -58,9 +58,11 @@ impl FileBackend for DockerFileBackend {
     }
 
     async fn stat(&self, path: &str) -> Result<FilesStatResult, FileError> {
-        let output =
-            docker_exec(&self.container_name, &["stat", "-c", "%n\t%F\t%s\t%Y\t%a", path])
-                .await?;
+        let output = docker_exec(
+            &self.container_name,
+            &["stat", "-c", "%n\t%F\t%s\t%Y\t%a", path],
+        )
+        .await?;
         parse_stat_output(&output, path)
     }
 }
