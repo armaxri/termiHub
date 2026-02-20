@@ -1,5 +1,13 @@
 import { useCallback } from "react";
-import { Network, FolderOpen, Settings, Download, Upload, ScrollText } from "lucide-react";
+import {
+  Network,
+  FolderOpen,
+  ArrowLeftRight,
+  Settings,
+  Download,
+  Upload,
+  ScrollText,
+} from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { writeTextFile, readTextFile } from "@tauri-apps/plugin-fs";
@@ -11,6 +19,7 @@ import "./ActivityBar.css";
 const TOP_ITEMS: { view: SidebarView; icon: typeof Network; label: string }[] = [
   { view: "connections", icon: Network, label: "Connections" },
   { view: "files", icon: FolderOpen, label: "File Browser" },
+  { view: "tunnels", icon: ArrowLeftRight, label: "SSH Tunnels" },
 ];
 
 export function ActivityBar() {

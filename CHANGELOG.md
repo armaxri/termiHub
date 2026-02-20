@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- SSH tunneling with local, remote, and dynamic (SOCKS5) port forwarding — create, edit, start/stop tunnels from a dedicated sidebar panel with live status indicators, traffic stats, and visual tunnel diagrams (#107)
+- Tunnel auto-start on app launch and graceful shutdown on window close
+- SSH session pool: tunnels sharing the same SSH connection reuse a single session
 - Dark, Light, and System color theme support — switch via Settings > Appearance > Theme; System mode auto-follows the OS preference (#193)
 - Concept document for SSH tunneling feature: local, remote, and dynamic (SOCKS5) port forwarding with visual diagram-driven configuration UI (#107)
 

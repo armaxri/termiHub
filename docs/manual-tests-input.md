@@ -190,6 +190,27 @@ Each section groups related tests by feature area. Individual test items referen
 - [ ] Use an undefined variable `${env:NONEXISTENT}` — left as-is, no crash
 - [ ] Verify saved connection JSON still contains literal `${env:USER}` (not expanded)
 
+### SSH tunneling (PR #225)
+
+- [ ] Click "SSH Tunnels" in the activity bar — verify the tunnels sidebar panel opens with "No SSH tunnels configured" message and a "+ New Tunnel" button
+- [ ] Click "+ New Tunnel" — verify a tunnel editor tab opens with name field, SSH connection dropdown, type selector (Local/Remote/Dynamic), and visual diagram
+- [ ] Select "Local" type — verify the diagram shows "Your PC → SSH → SSH Server → Target" and local/remote host/port fields appear
+- [ ] Select "Remote" type — verify the diagram shows "Local Target ← SSH ← SSH Server ← Remote Clients" and corresponding fields appear
+- [ ] Select "Dynamic" type — verify the diagram shows "Your PC → SSH → SSH Server → Internet" and only local host/port fields appear
+- [ ] Change port numbers — verify the visual diagram updates reactively with the new values
+- [ ] Fill in name, select an SSH connection, configure ports, click "Save" — verify the tunnel appears in the sidebar list and the editor tab closes
+- [ ] Verify the tunnel config persists across app restarts (check `tunnels.json` in the config directory)
+- [ ] Double-click a tunnel in the sidebar — verify the editor tab opens with the saved configuration pre-filled
+- [ ] Edit a tunnel and click "Save" — verify changes are persisted
+- [ ] Click the Play button on a tunnel in the sidebar — verify the status indicator turns green (connected)
+- [ ] Click the Stop button on an active tunnel — verify the status indicator turns grey (disconnected)
+- [ ] Click "Save & Start" in the tunnel editor — verify the tunnel is saved and started in one action
+- [ ] Create a local forward tunnel (e.g., local port 18080 → remote localhost:80) — start it — verify `curl http://127.0.0.1:18080` reaches the remote service
+- [ ] Click the Duplicate button on a tunnel — verify a "Copy of ..." tunnel appears in the sidebar
+- [ ] Click the Delete button on a tunnel — verify it is removed from the sidebar
+- [ ] Enable "Auto-start when app launches" on a tunnel — restart the app — verify the tunnel starts automatically
+- [ ] Verify traffic stats (bytes sent/received, active connections) update in the sidebar for active tunnels
+
 ---
 
 ## Serial

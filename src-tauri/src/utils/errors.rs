@@ -43,6 +43,9 @@ pub enum TerminalError {
     #[error("Monitoring session not found: {0}")]
     MonitoringSessionNotFound(String),
 
+    #[error("Tunnel error: {0}")]
+    TunnelError(String),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }
