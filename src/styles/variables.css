@@ -37,6 +37,7 @@
   /* Border colors */
   --border-primary: #474747;
   --border-secondary: #2b2b2b;
+  --panel-border: var(--border-primary);
 
   /* Accent / focus */
   --accent-color: #007acc;
