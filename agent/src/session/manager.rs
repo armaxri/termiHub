@@ -3,11 +3,23 @@ use std::fmt;
 
 use chrono::Utc;
 use tokio::sync::Mutex;
+use tracing::info;
 
 use crate::io::transport::NotificationSender;
 use crate::protocol::methods::SerialSessionConfig;
 use crate::serial::backend::SerialBackend;
 use crate::session::types::{SessionInfo, SessionSnapshot, SessionStatus, SessionType};
+
+#[cfg(unix)]
+use crate::protocol::methods::ShellConfig;
+#[cfg(unix)]
+use crate::shell::backend::ShellBackend;
+#[cfg(unix)]
+use crate::state::persistence::{AgentState, PersistedSession};
+#[cfg(unix)]
+use std::path::PathBuf;
+#[cfg(unix)]
+use tracing::warn;
 
 /// Maximum number of concurrent sessions the agent supports.
 pub const MAX_SESSIONS: u32 = 20;
@@ -40,6 +52,8 @@ impl fmt::Display for SessionCreateError {
 pub struct SessionManager {
     sessions: Mutex<HashMap<String, SessionInfo>>,
     notification_tx: NotificationSender,
+    #[cfg(unix)]
+    state: Mutex<AgentState>,
 }
 
 impl SessionManager {
@@ -47,13 +61,16 @@ impl SessionManager {
         Self {
             sessions: Mutex::new(HashMap::new()),
             notification_tx,
+            #[cfg(unix)]
+            state: Mutex::new(AgentState::load()),
         }
     }
 
     /// Create a new session.
     ///
     /// For serial sessions, this opens the serial port and starts the
-    /// background reader thread. Shell sessions remain stubs for now.
+    /// background reader thread. For shell sessions on Unix, this spawns
+    /// a daemon process that manages the PTY.
     pub async fn create(
         &self,
         session_type: SessionType,
@@ -80,6 +97,39 @@ impl SessionManager {
             None
         };
 
+        // On Unix, spawn a daemon for shell sessions
+        #[cfg(unix)]
+        let shell_backend = if session_type == SessionType::Shell {
+            let shell_config: ShellConfig = serde_json::from_value(config.clone())
+                .map_err(|e| SessionCreateError::InvalidConfig(e.to_string()))?;
+            let backend = ShellBackend::new(
+                id.clone(),
+                &shell_config,
+                self.notification_tx.clone(),
+            )
+            .await
+            .map_err(|e| SessionCreateError::BackendFailed(e.to_string()))?;
+
+            // Persist session to state.json for recovery
+            let mut state = self.state.lock().await;
+            state.add_session(
+                id.clone(),
+                PersistedSession {
+                    session_type: "shell".to_string(),
+                    title: title.clone(),
+                    created_at: now.to_rfc3339(),
+                    daemon_socket: Some(
+                        backend.socket_path().to_string_lossy().to_string(),
+                    ),
+                    config: config.clone(),
+                },
+            );
+
+            Some(backend)
+        } else {
+            None
+        };
+
         let info = SessionInfo {
             id: id.clone(),
             title,
@@ -90,6 +140,8 @@ impl SessionManager {
             last_activity: now,
             attached: false,
             serial_backend,
+            #[cfg(unix)]
+            shell_backend,
         };
 
         let snapshot = info.snapshot();
@@ -113,6 +165,18 @@ impl SessionManager {
             if let Some(ref mut backend) = info.serial_backend {
                 backend.close();
             }
+            #[cfg(unix)]
+            if let Some(ref mut backend) = info.shell_backend {
+                backend.close().await;
+            }
+
+            // Remove from persistent state
+            #[cfg(unix)]
+            {
+                let mut state = self.state.lock().await;
+                state.remove_session(session_id);
+            }
+
             true
         } else {
             false
@@ -131,6 +195,10 @@ impl SessionManager {
                 if let Some(ref backend) = info.serial_backend {
                     backend.detach();
                 }
+                #[cfg(unix)]
+                if let Some(ref mut backend) = info.shell_backend {
+                    backend.detach().await;
+                }
             }
         }
     }
@@ -142,13 +210,18 @@ impl SessionManager {
             if let Some(ref mut backend) = info.serial_backend {
                 backend.close();
             }
+            #[cfg(unix)]
+            if let Some(ref mut backend) = info.shell_backend {
+                backend.close().await;
+            }
         }
     }
 
     /// Attach a client to an existing session.
     ///
     /// For serial sessions, replays the buffer and starts forwarding
-    /// live output as notifications.
+    /// live output as notifications. For shell sessions, reconnects to
+    /// the daemon to trigger a buffer replay.
     pub async fn attach(&self, session_id: &str) -> Result<(), String> {
         let mut sessions = self.sessions.lock().await;
         let info = sessions
@@ -164,6 +237,11 @@ impl SessionManager {
 
         if let Some(ref backend) = info.serial_backend {
             backend.attach().map_err(|e| e.to_string())?;
+        }
+
+        #[cfg(unix)]
+        if let Some(ref mut backend) = info.shell_backend {
+            backend.attach().await.map_err(|e| e.to_string())?;
         }
 
         Ok(())
@@ -183,6 +261,11 @@ impl SessionManager {
             backend.detach();
         }
 
+        #[cfg(unix)]
+        if let Some(ref mut backend) = info.shell_backend {
+            backend.detach().await;
+        }
+
         Ok(())
     }
 
@@ -199,7 +282,143 @@ impl SessionManager {
             backend.write_input(data).map_err(|e| e.to_string())?;
         }
 
+        #[cfg(unix)]
+        if let Some(ref backend) = info.shell_backend {
+            backend.write_input(data).await.map_err(|e| e.to_string())?;
+        }
+
         Ok(())
+    }
+
+    /// Resize a session's PTY.
+    pub async fn resize(&self, session_id: &str, cols: u16, rows: u16) -> Result<(), String> {
+        let mut sessions = self.sessions.lock().await;
+        let info = sessions
+            .get_mut(session_id)
+            .ok_or_else(|| "Session not found".to_string())?;
+
+        info.last_activity = Utc::now();
+
+        #[cfg(unix)]
+        if let Some(ref backend) = info.shell_backend {
+            backend
+                .resize(cols, rows)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+
+        // Resize is a no-op for serial sessions (they don't have a PTY)
+        let _ = (cols, rows);
+
+        Ok(())
+    }
+
+    /// Recover sessions from persistent state by reconnecting to
+    /// surviving daemon processes.
+    ///
+    /// Returns the list of recovered session IDs.
+    #[cfg(unix)]
+    pub async fn recover_sessions(&self) -> Vec<String> {
+        let state = self.state.lock().await;
+        let persisted = state.sessions.clone();
+        drop(state);
+
+        let mut recovered = Vec::new();
+
+        for (id, session) in &persisted {
+            if session.session_type != "shell" {
+                continue;
+            }
+
+            let socket_path = match &session.daemon_socket {
+                Some(p) => PathBuf::from(p),
+                None => continue,
+            };
+
+            // Check if the socket file still exists
+            if !socket_path.exists() {
+                info!("Daemon socket gone for session {id}, removing from state");
+                let mut state = self.state.lock().await;
+                state.remove_session(id);
+                continue;
+            }
+
+            // Try to reconnect
+            match ShellBackend::reconnect(
+                id.clone(),
+                socket_path,
+                self.notification_tx.clone(),
+            )
+            .await
+            {
+                Ok(backend) => {
+                    let created_at = chrono::DateTime::parse_from_rfc3339(&session.created_at)
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .unwrap_or_else(|_| Utc::now());
+
+                    let info = SessionInfo {
+                        id: id.clone(),
+                        title: session.title.clone(),
+                        session_type: SessionType::Shell,
+                        status: SessionStatus::Running,
+                        config: session.config.clone(),
+                        created_at,
+                        last_activity: Utc::now(),
+                        attached: false,
+                        serial_backend: None,
+                        shell_backend: Some(backend),
+                    };
+
+                    let mut sessions = self.sessions.lock().await;
+                    sessions.insert(id.clone(), info);
+                    recovered.push(id.clone());
+                    info!("Recovered shell session {id}");
+                }
+                Err(e) => {
+                    warn!("Failed to recover session {id}: {e}");
+                    let mut state = self.state.lock().await;
+                    state.remove_session(id);
+                }
+            }
+        }
+
+        if !recovered.is_empty() {
+            info!("Recovered {} session(s)", recovered.len());
+        }
+
+        recovered
+    }
+
+    /// Create a session without spawning any backend (for unit tests only).
+    #[cfg(test)]
+    pub async fn create_stub_session(
+        &self,
+        session_type: SessionType,
+        title: String,
+        config: serde_json::Value,
+    ) -> Result<SessionSnapshot, SessionCreateError> {
+        let mut sessions = self.sessions.lock().await;
+        if sessions.len() >= MAX_SESSIONS as usize {
+            return Err(SessionCreateError::LimitReached);
+        }
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = Utc::now();
+        let info = SessionInfo {
+            id: id.clone(),
+            title,
+            session_type,
+            status: SessionStatus::Running,
+            config,
+            created_at: now,
+            last_activity: now,
+            attached: false,
+            serial_backend: None,
+            #[cfg(unix)]
+            shell_backend: None,
+        };
+        let snapshot = info.snapshot();
+        sessions.insert(id, info);
+        Ok(snapshot)
     }
 
     /// Return the number of sessions with status `Running`.
@@ -226,7 +445,7 @@ mod tests {
     async fn create_and_list() {
         let mgr = SessionManager::new(test_notification_tx());
         let snapshot = mgr
-            .create(
+            .create_stub_session(
                 SessionType::Shell,
                 "Test shell".to_string(),
                 json!({"shell": "/bin/bash"}),
@@ -247,9 +466,8 @@ mod tests {
     #[tokio::test]
     async fn close_existing_session() {
         let mgr = SessionManager::new(test_notification_tx());
-        // Use Shell type since serial requires a real port
         let snapshot = mgr
-            .create(
+            .create_stub_session(
                 SessionType::Shell,
                 "Shell test".to_string(),
                 json!({"shell": "/bin/bash"}),
@@ -272,10 +490,10 @@ mod tests {
         let mgr = SessionManager::new(test_notification_tx());
         assert_eq!(mgr.active_count().await, 0);
 
-        mgr.create(SessionType::Shell, "s1".to_string(), json!({}))
+        mgr.create_stub_session(SessionType::Shell, "s1".to_string(), json!({}))
             .await
             .unwrap();
-        mgr.create(SessionType::Shell, "s2".to_string(), json!({}))
+        mgr.create_stub_session(SessionType::Shell, "s2".to_string(), json!({}))
             .await
             .unwrap();
 
@@ -288,13 +506,13 @@ mod tests {
 
         for i in 0..MAX_SESSIONS {
             let result = mgr
-                .create(SessionType::Shell, format!("session-{i}"), json!({}))
+                .create_stub_session(SessionType::Shell, format!("session-{i}"), json!({}))
                 .await;
             assert!(result.is_ok(), "Session {i} should succeed");
         }
 
         let result = mgr
-            .create(SessionType::Shell, "overflow".to_string(), json!({}))
+            .create_stub_session(SessionType::Shell, "overflow".to_string(), json!({}))
             .await;
         assert!(
             matches!(result, Err(SessionCreateError::LimitReached)),
@@ -307,7 +525,7 @@ mod tests {
         let mgr = SessionManager::new(test_notification_tx());
         let before = Utc::now();
         let snapshot = mgr
-            .create(SessionType::Shell, "ts-test".to_string(), json!({}))
+            .create_stub_session(SessionType::Shell, "ts-test".to_string(), json!({}))
             .await
             .unwrap();
         let after = Utc::now();
@@ -320,11 +538,11 @@ mod tests {
     async fn create_generates_unique_ids() {
         let mgr = SessionManager::new(test_notification_tx());
         let a = mgr
-            .create(SessionType::Shell, "a".to_string(), json!({}))
+            .create_stub_session(SessionType::Shell, "a".to_string(), json!({}))
             .await
             .unwrap();
         let b = mgr
-            .create(SessionType::Shell, "b".to_string(), json!({}))
+            .create_stub_session(SessionType::Shell, "b".to_string(), json!({}))
             .await
             .unwrap();
         assert_ne!(a.id, b.id);
@@ -352,19 +570,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn attach_and_detach_shell_session() {
+    async fn attach_and_detach_session() {
         let mgr = SessionManager::new(test_notification_tx());
         let snapshot = mgr
-            .create(SessionType::Shell, "test".to_string(), json!({}))
+            .create_stub_session(SessionType::Shell, "test".to_string(), json!({}))
             .await
             .unwrap();
 
-        // Attach succeeds (shell sessions have no backend, so it's a no-op)
         mgr.attach(&snapshot.id).await.unwrap();
         let list = mgr.list().await;
         assert!(list[0].attached);
 
-        // Detach succeeds
         mgr.detach(&snapshot.id).await.unwrap();
         let list = mgr.list().await;
         assert!(!list[0].attached);
@@ -373,10 +589,10 @@ mod tests {
     #[tokio::test]
     async fn close_all_clears_sessions() {
         let mgr = SessionManager::new(test_notification_tx());
-        mgr.create(SessionType::Shell, "s1".to_string(), json!({}))
+        mgr.create_stub_session(SessionType::Shell, "s1".to_string(), json!({}))
             .await
             .unwrap();
-        mgr.create(SessionType::Shell, "s2".to_string(), json!({}))
+        mgr.create_stub_session(SessionType::Shell, "s2".to_string(), json!({}))
             .await
             .unwrap();
         assert_eq!(mgr.list().await.len(), 2);

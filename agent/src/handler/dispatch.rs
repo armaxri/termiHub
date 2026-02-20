@@ -13,7 +13,7 @@ use crate::protocol::methods::{
     Capabilities, HealthCheckResult, InitializeParams, InitializeResult, SessionAttachParams,
     SessionCloseParams, SessionCreateParams, SessionCreateResult, SessionDefineParams,
     SessionDefinitionDeleteParams, SessionDetachParams, SessionInputParams, SessionListEntry,
-    SessionListResult,
+    SessionListResult, SessionResizeParams,
 };
 use crate::session::definitions::{DefinitionStore, SessionDefinition};
 use crate::session::manager::{SessionCreateError, SessionManager, MAX_SESSIONS};
@@ -382,8 +382,30 @@ impl Dispatcher {
     }
 
     async fn handle_session_resize(&self, request: JsonRpcRequest) -> DispatchResult {
-        // No-op for serial sessions; returns success for all session types.
-        DispatchResult::Success(JsonRpcResponse::new(request.id, json!({})))
+        let id = request.id.clone();
+
+        let params: SessionResizeParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid session.resize params: {e}"),
+                ));
+            }
+        };
+
+        match self
+            .session_manager
+            .resize(&params.session_id, params.cols, params.rows)
+            .await
+        {
+            Ok(()) => DispatchResult::Success(JsonRpcResponse::new(id, json!({}))),
+            Err(msg) => DispatchResult::Error(
+                JsonRpcErrorResponse::new(id, errors::SESSION_NOT_FOUND, msg)
+                    .with_data(json!({"session_id": params.session_id})),
+            ),
+        }
     }
 
     async fn handle_session_define(&self, request: JsonRpcRequest) -> DispatchResult {
@@ -621,25 +643,25 @@ mod tests {
     // ── Session create tests ────────────────────────────────────────
 
     #[tokio::test]
-    async fn session_create_shell() {
+    async fn session_create_docker_stub() {
         let mut d = make_dispatcher();
         init_dispatcher(&mut d).await;
 
         let req = make_request(
             "session.create",
             json!({
-                "type": "shell",
-                "config": {"shell": "/bin/bash"},
-                "title": "My shell"
+                "type": "docker",
+                "config": {},
+                "title": "My session"
             }),
             2,
         );
         let result = d.dispatch(req).await;
         let json = result.to_json();
         assert!(json["result"]["session_id"].is_string());
-        assert_eq!(json["result"]["type"], "shell");
+        assert_eq!(json["result"]["type"], "docker");
         assert_eq!(json["result"]["status"], "running");
-        assert_eq!(json["result"]["title"], "My shell");
+        assert_eq!(json["result"]["title"], "My session");
     }
 
     #[tokio::test]
@@ -698,10 +720,10 @@ mod tests {
         let mut d = make_dispatcher();
         init_dispatcher(&mut d).await;
 
-        // Create a session
+        // Create a session (Docker type to avoid daemon spawn in tests)
         let req = make_request(
             "session.create",
-            json!({"type": "shell", "config": {}, "title": "test"}),
+            json!({"type": "docker", "config": {}, "title": "test"}),
             2,
         );
         d.dispatch(req).await;
@@ -722,10 +744,10 @@ mod tests {
         let mut d = make_dispatcher();
         init_dispatcher(&mut d).await;
 
-        // Create
+        // Create (Docker type to avoid daemon spawn in tests)
         let req = make_request(
             "session.create",
-            json!({"type": "shell", "config": {}, "title": "temp"}),
+            json!({"type": "docker", "config": {}, "title": "temp"}),
             2,
         );
         let create_result = d.dispatch(req).await.to_json();
@@ -842,14 +864,38 @@ mod tests {
         let mut d = make_dispatcher();
         init_dispatcher(&mut d).await;
 
+        // Create a session first (Docker type to avoid daemon spawn)
+        let req = make_request(
+            "session.create",
+            json!({"type": "docker", "config": {}, "title": "resize-test"}),
+            2,
+        );
+        let create_result = d.dispatch(req).await.to_json();
+        let sid = create_result["result"]["session_id"].as_str().unwrap();
+
         let req = make_request(
             "session.resize",
-            json!({"session_id": "any", "cols": 120, "rows": 40}),
-            2,
+            json!({"session_id": sid, "cols": 120, "rows": 40}),
+            3,
         );
         let result = d.dispatch(req).await;
         let json = result.to_json();
         assert!(json.get("result").is_some());
+    }
+
+    #[tokio::test]
+    async fn session_resize_not_found() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request(
+            "session.resize",
+            json!({"session_id": "nonexistent", "cols": 120, "rows": 40}),
+            2,
+        );
+        let result = d.dispatch(req).await;
+        let json = result.to_json();
+        assert_eq!(json["error"]["code"], errors::SESSION_NOT_FOUND);
     }
 
     // ── Full protocol flow integration test ─────────────────────────
@@ -863,12 +909,12 @@ mod tests {
         let result = d.dispatch(req).await.to_json();
         assert_eq!(result["result"]["protocol_version"], "0.1.0");
 
-        // 2. Create shell session
+        // 2. Create session (Docker type to avoid daemon spawn in tests)
         let req = make_request(
             "session.create",
             json!({
-                "type": "shell",
-                "config": {"shell": "/bin/bash", "cols": 80, "rows": 24},
+                "type": "docker",
+                "config": {},
                 "title": "Build"
             }),
             2,
@@ -882,7 +928,7 @@ mod tests {
         let result = d.dispatch(req).await.to_json();
         assert!(result.get("result").is_some());
 
-        // 4. Send input (no-op for shell stub, but protocol should succeed)
+        // 4. Send input (no-op for stub, but protocol should succeed)
         let req = make_request(
             "session.input",
             json!({"session_id": session_id, "data": "aGVsbG8="}),
@@ -891,7 +937,7 @@ mod tests {
         let result = d.dispatch(req).await.to_json();
         assert!(result.get("result").is_some());
 
-        // 5. Resize (no-op for serial/stub)
+        // 5. Resize (no-op for stub sessions)
         let req = make_request(
             "session.resize",
             json!({"session_id": session_id, "cols": 120, "rows": 40}),
