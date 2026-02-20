@@ -89,6 +89,7 @@ pub fn run() {
             commands::terminal::check_ssh_agent_status,
             commands::terminal::check_docker_available,
             commands::terminal::list_docker_images,
+            commands::terminal::validate_ssh_key,
             commands::connection::load_connections_and_folders,
             commands::connection::save_connection,
             commands::connection::delete_connection,

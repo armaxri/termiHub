@@ -139,6 +139,15 @@
   color: var(--color-warning);
 }
 
+.settings-form__hint--error {
+  color: var(--color-error);
+}
+
+.settings-form__hint--success,
+.settings-form__hint--valid {
+  color: var(--color-success);
+}
+
 .settings-form__hint-action {
   background: none;
   border: none;

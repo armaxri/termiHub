@@ -5,5 +5,6 @@ pub mod log_capture;
 pub mod shell_detect;
 pub mod ssh_auth;
 pub mod ssh_key_convert;
+pub mod ssh_key_validate;
 pub mod vscode;
 pub mod x11_detect;
