@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Eliminated white flash on startup — window now starts with dark background (#1e1e1e) instead of flashing white before the theme loads (#192)
 - Vertically split panels can now be resized — the resize handle between top/bottom panels was invisible due to missing CSS height (#213)
 
 ### Changed
