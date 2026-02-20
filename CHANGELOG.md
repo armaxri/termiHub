@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Concept document for SSH tunneling feature: local, remote, and dynamic (SOCKS5) port forwarding with visual diagram-driven configuration UI (#107)
 - Concept document for plugin system: plugin API, lifecycle, custom terminal backends, protocol parsers, theme extensions, and plugin management UI (#28)
 - Concept document for SSH key passphrase handling: encryption detection, runtime passphrase prompting, session caching, and secure storage options (#121)
+- Concept document for cross-platform testing: platform-specific test matrix, CI E2E expansion to Windows, release verification checklists, and platform-aware test infrastructure (#15)
 
 ### Fixed
 
