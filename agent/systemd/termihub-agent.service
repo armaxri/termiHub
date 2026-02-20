@@ -1,5 +1,5 @@
 [Unit]
-Description=TermiHub Remote Agent
+Description=termiHub Remote Agent
 Documentation=https://github.com/armaxri/termiHub
 After=network.target
 

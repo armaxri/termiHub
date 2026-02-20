@@ -11,5 +11,5 @@ if not exist node_modules (
     echo.
 )
 
-echo Starting TermiHub in dev mode...
+echo Starting termiHub in dev mode...
 call pnpm tauri dev

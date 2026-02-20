@@ -11,5 +11,5 @@ if not exist node_modules (
     echo.
 )
 
-echo Building TermiHub for production...
+echo Building termiHub for production...
 call pnpm tauri build

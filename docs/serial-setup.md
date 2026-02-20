@@ -1,6 +1,6 @@
 # Serial Port Setup
 
-This guide covers how to configure serial port connections in TermiHub on each platform.
+This guide covers how to configure serial port connections in termiHub on each platform.
 
 ---
 
@@ -26,7 +26,7 @@ Serial devices appear under `/dev/tty.*` when connected. Common paths:
    - [CH340 drivers](https://www.wch-ic.com/downloads/CH341SER_MAC_ZIP.html)
    - [CP210x drivers](https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers)
 3. Install and restart your Mac
-4. The device should appear in TermiHub's port dropdown
+4. The device should appear in termiHub's port dropdown
 
 **Tip**: Run `ls /dev/tty.*` in a terminal to list all available serial devices.
 
@@ -92,13 +92,13 @@ Serial devices appear as COM ports (e.g., `COM3`, `COM4`).
 2. Download from the manufacturer (same links as macOS section above)
 3. Install and check Device Manager again
 
-**Tip**: TermiHub auto-detects available COM ports in the connection editor. If no ports appear in the dropdown, enter the port name manually (e.g., `COM3`).
+**Tip**: termiHub auto-detects available COM ports in the connection editor. If no ports appear in the dropdown, enter the port name manually (e.g., `COM3`).
 
 ---
 
 ## Configuration Parameters
 
-When creating a serial connection in TermiHub, configure these parameters to match your device:
+When creating a serial connection in termiHub, configure these parameters to match your device:
 
 | Parameter | Options | Default | Description |
 |-----------|---------|---------|-------------|
@@ -138,7 +138,7 @@ Check your device's documentation for the correct settings. Mismatched baud rate
 
 ## Testing with Virtual Serial Ports
 
-TermiHub includes scripts for creating virtual serial ports, which is useful for testing without physical hardware.
+termiHub includes scripts for creating virtual serial ports, which is useful for testing without physical hardware.
 
 ### Setup (Linux/macOS)
 
@@ -157,7 +157,7 @@ cd examples/serial
 ```
 
 This creates two linked virtual ports:
-- `/tmp/termihub-serial-a` — Connect TermiHub to this port
+- `/tmp/termihub-serial-a` — Connect termiHub to this port
 - `/tmp/termihub-serial-b` — Used by the echo server
 
 ### Running the Echo Server
@@ -167,7 +167,7 @@ cd examples/serial
 python3 serial-echo-server.py
 ```
 
-The echo server reads from port B and echoes back whatever is sent. Connect TermiHub to port A and type to test.
+The echo server reads from port B and echoes back whatever is sent. Connect termiHub to port A and type to test.
 
 See [examples/README.md](../examples/README.md) for full test environment setup.
 

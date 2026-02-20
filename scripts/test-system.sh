@@ -214,7 +214,7 @@ APP_BINARY="./src-tauri/target/release/termihub"
 
 if [ "$SKIP_BUILD" -eq 0 ]; then
     echo ""
-    echo "=== Building TermiHub ==="
+    echo "=== Building termiHub ==="
     pnpm tauri build
 elif [ ! -f "$APP_BINARY" ]; then
     echo ""

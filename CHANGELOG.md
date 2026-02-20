@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Auto-extract port from host field: pasting `192.168.0.2:2222` or `[::1]:22` into the host field of SSH, Telnet, or Agent settings automatically splits the value into host and port on blur (#185)
 
+### Changed
+
+- Renamed "TermiHub" to "termiHub" throughout the project (documentation, window title, CI artifacts, scripts) to reflect the intended lowercase branding
+
 ### Fixed
 
 - SSH terminals with zsh Agnoster theme no longer show a jarring black rectangle behind the user@host prompt segment; ANSI black now matches the terminal background (#197)

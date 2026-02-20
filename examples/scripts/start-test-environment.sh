@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Start the Docker test environment and launch TermiHub with test config.
+# Start the Docker test environment and launch termiHub with test config.
 #
 set -euo pipefail
 
@@ -59,7 +59,7 @@ echo ""
 echo "==========================================="
 echo ""
 
-# --- Launch TermiHub with test config ---
-echo "Launching TermiHub with test configuration..."
+# --- Launch termiHub with test config ---
+echo "Launching termiHub with test configuration..."
 cd "$PROJECT_DIR"
 TERMIHUB_CONFIG_DIR="$CONFIG_DIR" pnpm tauri dev

@@ -1,6 +1,6 @@
 # Release Process
 
-This document describes how to create a new TermiHub release.
+This document describes how to create a new termiHub release.
 
 ## Pre-Release Checklist
 

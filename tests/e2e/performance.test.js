@@ -1,4 +1,4 @@
-// Performance tests for TermiHub.
+// Performance tests for termiHub.
 // Validates the app can handle 40 concurrent terminals without degradation.
 // Run with: pnpm test:e2e:perf
 

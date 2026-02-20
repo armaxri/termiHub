@@ -1,12 +1,12 @@
-# Contributing to TermiHub
+# Contributing to termiHub
 
-This guide covers the development workflow, architecture overview, and coding standards for contributing to TermiHub.
+This guide covers the development workflow, architecture overview, and coding standards for contributing to termiHub.
 
 ---
 
 ## Architecture Overview
 
-TermiHub is built with:
+termiHub is built with:
 
 - **Frontend**: React 18 + TypeScript, built with Vite
 - **Backend**: Rust, running inside Tauri 2
@@ -84,7 +84,7 @@ For the full architecture documentation, including class diagrams and data flow 
 
 ## Development Setup
 
-See [Building TermiHub](building.md) for detailed instructions on:
+See [Building termiHub](building.md) for detailed instructions on:
 - Installing prerequisites (Node.js, pnpm, Rust, system libraries)
 - Platform-specific dependencies
 - Running the development server

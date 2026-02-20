@@ -1,16 +1,16 @@
 # SSH Configuration
 
-This guide covers SSH connection setup in TermiHub, including key-based authentication, X11 forwarding, and the SFTP file browser.
+This guide covers SSH connection setup in termiHub, including key-based authentication, X11 forwarding, and the SFTP file browser.
 
 ---
 
 ## Authentication Methods
 
-TermiHub supports two SSH authentication methods:
+termiHub supports two SSH authentication methods:
 
 ### Password Authentication
 
-When **Auth Method** is set to **Password**, TermiHub prompts for the password each time you connect. Passwords are never stored in the configuration file.
+When **Auth Method** is set to **Password**, termiHub prompts for the password each time you connect. Passwords are never stored in the configuration file.
 
 ### Key-Based Authentication
 
@@ -39,7 +39,7 @@ This creates two files:
 - `~/.ssh/id_ed25519` — Your private key (keep this secret)
 - `~/.ssh/id_ed25519.pub` — Your public key (install on servers)
 
-**Note**: You can also use RSA keys (`ssh-keygen -t rsa -b 4096`). TermiHub supports both key types.
+**Note**: You can also use RSA keys (`ssh-keygen -t rsa -b 4096`). termiHub supports both key types.
 
 ### Install the Public Key on the Server
 
@@ -55,7 +55,7 @@ Or manually append it to `~/.ssh/authorized_keys` on the server:
 cat ~/.ssh/id_ed25519.pub | ssh user@hostname 'mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys'
 ```
 
-### Configure in TermiHub
+### Configure in termiHub
 
 1. Create or edit an SSH connection
 2. Set **Auth Method** to **SSH Key**
@@ -85,7 +85,7 @@ Host *
   IdentityFile ~/.ssh/id_ed25519
 ```
 
-**Key location**: Keys are typically stored in `~/.ssh/`. Use this path in TermiHub's Key Path field.
+**Key location**: Keys are typically stored in `~/.ssh/`. Use this path in termiHub's Key Path field.
 
 ### Linux
 
@@ -125,7 +125,7 @@ chmod 644 ~/.ssh/id_ed25519.pub
    ssh-add $env:USERPROFILE\.ssh\id_ed25519
    ```
 
-**Key location**: Keys are typically stored in `C:\Users\<username>\.ssh\`. In TermiHub, you can use either:
+**Key location**: Keys are typically stored in `C:\Users\<username>\.ssh\`. In termiHub, you can use either:
 - `~/.ssh/id_ed25519` (the `~` prefix works)
 - `C:\Users\<username>\.ssh\id_ed25519`
 
@@ -137,7 +137,7 @@ X11 forwarding lets you run graphical applications on a remote server and displa
 
 ### Enabling X11 Forwarding
 
-1. Edit an SSH connection in TermiHub
+1. Edit an SSH connection in termiHub
 2. Check **Enable X11 Forwarding**
 3. Save and connect
 
@@ -178,11 +178,11 @@ sudo dnf install xorg-x11-xauth
 sudo pacman -S xorg-xauth
 ```
 
-No additional setup is needed — TermiHub will use your existing X11 display.
+No additional setup is needed — termiHub will use your existing X11 display.
 
 #### Windows
 
-X11 forwarding is **not currently supported** on Windows. TermiHub's X11 proxy relies on Unix domain sockets, which are not available on Windows.
+X11 forwarding is **not currently supported** on Windows. termiHub's X11 proxy relies on Unix domain sockets, which are not available on Windows.
 
 For Windows users needing to run remote GUI applications, consider using a standalone X server like [VcXsrv](https://sourceforge.net/projects/vcxsrv/) with a standard SSH client.
 
@@ -201,7 +201,7 @@ The `xauth` package must also be installed on the server.
 
 ## SFTP File Browser
 
-When connected to an SSH server, TermiHub provides an integrated SFTP file browser for managing remote files.
+When connected to an SSH server, termiHub provides an integrated SFTP file browser for managing remote files.
 
 ### Auto-Connect
 
@@ -267,11 +267,11 @@ This is useful for shared connection configurations where values differ per user
 - **Password auth**: Verify the username and password are correct
 - **Key auth**: Ensure the public key is in `~/.ssh/authorized_keys` on the server
 - **Key permissions**: Check that your private key file has `600` permissions
-- **Wrong key**: Verify the Key Path in TermiHub points to the correct private key
+- **Wrong key**: Verify the Key Path in termiHub points to the correct private key
 
 ### "Host key verification failed"
 
-This occurs when connecting to a new server or when the server's host key has changed. TermiHub uses the system's `known_hosts` file. To resolve:
+This occurs when connecting to a new server or when the server's host key has changed. termiHub uses the system's `known_hosts` file. To resolve:
 
 ```bash
 # Connect once with standard SSH to accept the host key

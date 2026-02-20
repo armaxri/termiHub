@@ -1,4 +1,4 @@
-# Dockerfile.e2e-runner — E2E test runner for TermiHub.
+# Dockerfile.e2e-runner — E2E test runner for termiHub.
 #
 # Provides: Ubuntu 22.04, Rust stable, Node.js 20, pnpm, Tauri build deps,
 #           WebKitGTK runtime, Xvfb, socat, python3, tauri-driver.

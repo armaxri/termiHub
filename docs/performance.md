@@ -2,7 +2,7 @@
 
 ## Overview
 
-TermiHub targets 40 concurrent terminal sessions. This guide covers how to profile the application, what metrics to capture, and how to detect regressions.
+termiHub targets 40 concurrent terminal sessions. This guide covers how to profile the application, what metrics to capture, and how to detect regressions.
 
 ## Architecture Optimizations
 
