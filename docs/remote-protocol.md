@@ -627,6 +627,50 @@ Check agent health and connectivity. Can be used as a keepalive.
 
 ---
 
+### `agent.shutdown`
+
+Gracefully shut down the agent process. Active sessions are detached (left running in their daemon processes) so they can be recovered by the next agent instance. The agent sends the response before exiting.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "agent.shutdown",
+  "params": {
+    "reason": "update"
+  },
+  "id": 10
+}
+```
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `reason` | `string` | No | Human-readable reason for shutdown (e.g., `"update"`, `"user-requested"`) |
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "detached_sessions": 2
+  },
+  "id": 10
+}
+```
+
+| Result Field | Type | Description |
+|-------------|------|-------------|
+| `detached_sessions` | `integer` | Number of sessions left running (can be recovered later) |
+
+**Errors:**
+
+| Code | When |
+|------|------|
+| `-32007` | Agent not initialized |
+| `-32015` | Shutdown failed |
+
+---
+
 ### `connections.list`
 
 List all saved connections and folders.
@@ -1460,6 +1504,8 @@ For serial sessions:
 | `-32011` | Permission denied | Permission denied for the requested file operation |
 | `-32012` | File operation failed | A file operation failed (I/O error, docker exec failure, etc.) |
 | `-32013` | File browsing not supported | File browsing is not supported for this connection type (e.g., serial) |
+| `-32014` | Monitoring error | A monitoring operation failed (collection error, SSH failure, etc.) |
+| `-32015` | Shutdown error | An error occurred during agent shutdown |
 
 ---
 
