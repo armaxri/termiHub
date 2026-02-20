@@ -468,9 +468,7 @@ impl SessionManager {
                             }
                         };
 
-                    let shell = docker_config
-                        .shell
-                        .unwrap_or_else(|| "/bin/sh".to_string());
+                    let shell = docker_config.shell.unwrap_or_else(|| "/bin/sh".to_string());
 
                     match DockerBackend::reconnect(
                         id.clone(),

@@ -118,8 +118,7 @@ impl DockerBackend {
             .map_err(|e| anyhow::anyhow!("Failed to spawn daemon for Docker session: {e}"))?;
 
         DaemonClient::wait_for_socket(&socket_path).await?;
-        let client =
-            DaemonClient::connect(session_id, socket_path, notification_tx).await?;
+        let client = DaemonClient::connect(session_id, socket_path, notification_tx).await?;
 
         Ok(Self {
             container_name,
@@ -196,8 +195,7 @@ impl DockerBackend {
             .map_err(|e| anyhow::anyhow!("Failed to spawn daemon for Docker recovery: {e}"))?;
 
         DaemonClient::wait_for_socket(&socket_path).await?;
-        let client =
-            DaemonClient::connect(session_id, socket_path, notification_tx).await?;
+        let client = DaemonClient::connect(session_id, socket_path, notification_tx).await?;
 
         Ok(Self {
             container_name,

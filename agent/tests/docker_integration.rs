@@ -161,7 +161,15 @@ impl Drop for ContainerHandle {
 fn create_container(name: &str) -> ContainerHandle {
     let status = Command::new("docker")
         .args([
-            "run", "-d", "--init", "--name", name, "alpine:latest", "tail", "-f", "/dev/null",
+            "run",
+            "-d",
+            "--init",
+            "--name",
+            name,
+            "alpine:latest",
+            "tail",
+            "-f",
+            "/dev/null",
         ])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
@@ -195,13 +203,8 @@ impl Drop for DaemonHandle {
 }
 
 /// Spawn a daemon process configured to run `docker exec` on the given container.
-fn spawn_docker_daemon(
-    session_id: &str,
-    socket_path: &Path,
-    container_name: &str,
-) -> DaemonHandle {
-    let command_args =
-        serde_json::to_string(&["exec", "-it", container_name, "/bin/sh"]).unwrap();
+fn spawn_docker_daemon(session_id: &str, socket_path: &Path, container_name: &str) -> DaemonHandle {
+    let command_args = serde_json::to_string(&["exec", "-it", container_name, "/bin/sh"]).unwrap();
 
     let child = Command::new(agent_binary())
         .arg("--daemon")
@@ -347,8 +350,7 @@ async fn test_docker_session_basic() {
 
     // The container ID (first 12 chars) should appear in output.
     // Just verify we get some output back.
-    let found =
-        read_until_output_contains(&mut reader, b"\n", Duration::from_secs(5)).await;
+    let found = read_until_output_contains(&mut reader, b"\n", Duration::from_secs(5)).await;
     assert!(found, "Expected output from hostname command");
 }
 
@@ -405,7 +407,10 @@ async fn test_docker_session_recovery() {
     let running = String::from_utf8_lossy(&inspect.stdout)
         .trim()
         .eq_ignore_ascii_case("true");
-    assert!(running, "Container should still be running after daemon kill");
+    assert!(
+        running,
+        "Container should still be running after daemon kill"
+    );
 
     // Phase 2: Spawn a new daemon on the same container.
     let (_dir2, socket_path2) = temp_socket_path("docker-recovery2");
@@ -424,8 +429,7 @@ async fn test_docker_session_recovery() {
         .expect("Failed to send input after recovery");
 
     let found =
-        read_until_output_contains(&mut reader2, b"AFTER_RECOVERY", Duration::from_secs(10))
-            .await;
+        read_until_output_contains(&mut reader2, b"AFTER_RECOVERY", Duration::from_secs(10)).await;
     assert!(
         found,
         "Expected AFTER_RECOVERY in output after daemon recovery"

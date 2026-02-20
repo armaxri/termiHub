@@ -73,7 +73,10 @@ impl ShellBackend {
     ) -> Result<Self, anyhow::Error> {
         let client = DaemonClient::connect(session_id, socket_path, notification_tx).await?;
 
-        info!("Reconnected to daemon for session {}", client.socket_path().display());
+        info!(
+            "Reconnected to daemon for session {}",
+            client.socket_path().display()
+        );
 
         Ok(Self { client })
     }
