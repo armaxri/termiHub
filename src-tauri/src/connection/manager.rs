@@ -273,11 +273,7 @@ impl ConnectionManager {
     }
 
     /// Delete a connection from its appropriate file based on `source_file`.
-    pub fn delete_connection_routed(
-        &self,
-        id: &str,
-        source_file: Option<&str>,
-    ) -> Result<()> {
+    pub fn delete_connection_routed(&self, id: &str, source_file: Option<&str>) -> Result<()> {
         match source_file {
             None => self.delete_connection(id),
             Some(file_path) => remove_from_external_file(file_path, id),
@@ -301,7 +297,9 @@ impl ConnectionManager {
                     .position(|c| c.id == connection_id)
                     .context("Connection not found in main store")?;
                 let conn = store.connections.remove(idx);
-                self.storage.save(&store).context("Failed to persist removal from main store")?;
+                self.storage
+                    .save(&store)
+                    .context("Failed to persist removal from main store")?;
                 conn
             }
             Some(file_path) => remove_and_return_from_external_file(file_path, connection_id)?,
@@ -315,7 +313,9 @@ impl ConnectionManager {
                 disk_conn.source_file = None;
                 let mut store = self.store.lock().unwrap();
                 store.connections.push(disk_conn);
-                self.storage.save(&store).context("Failed to persist addition to main store")?;
+                self.storage
+                    .save(&store)
+                    .context("Failed to persist addition to main store")?;
             }
             Some(file_path) => {
                 let mut disk_conn = strip_ssh_password(connection.clone());
@@ -385,7 +385,11 @@ fn save_or_update_in_external_file(file_path: &str, connection: SavedConnection)
     let mut ext_store: ExternalConnectionStore = serde_json::from_str(&data)
         .with_context(|| format!("Failed to parse external file: {}", file_path))?;
 
-    if let Some(existing) = ext_store.connections.iter_mut().find(|c| c.id == connection.id) {
+    if let Some(existing) = ext_store
+        .connections
+        .iter_mut()
+        .find(|c| c.id == connection.id)
+    {
         *existing = connection;
     } else {
         ext_store.connections.push(connection);
@@ -554,8 +558,7 @@ mod tests {
         save_external_file(path_str, "Test File", folders, connections).unwrap();
 
         // Load with "folder-1" in the main folder set so it's recognized
-        let main_folders: std::collections::HashSet<&str> =
-            vec!["folder-1"].into_iter().collect();
+        let main_folders: std::collections::HashSet<&str> = vec!["folder-1"].into_iter().collect();
         let source = try_load_external_file(path_str, &main_folders).unwrap();
         assert!(source.error.is_none());
 
