@@ -40,7 +40,8 @@ export function TunnelListItem({
   const isActive = status === "connected" || status === "connecting" || status === "reconnecting";
   const sshConn = connections.find((c) => c.id === tunnel.sshConnectionId);
   const sshLabel = sshConn?.name ?? "Unknown";
-  const typeLabel = tunnel.tunnelType.type.charAt(0).toUpperCase() + tunnel.tunnelType.type.slice(1);
+  const typeLabel =
+    tunnel.tunnelType.type.charAt(0).toUpperCase() + tunnel.tunnelType.type.slice(1);
 
   return (
     <div className="tunnel-item" onDoubleClick={() => onEdit(tunnel.id)}>

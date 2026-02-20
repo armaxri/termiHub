@@ -59,7 +59,8 @@ impl RemoteForwarder {
 
     /// Stop the forwarder and wait for the thread to finish.
     pub fn stop(&mut self) {
-        self.shutdown.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.shutdown
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         if let Some(handle) = self.listener_thread.take() {
             let _ = handle.join();
         }

@@ -269,10 +269,7 @@ mod tests {
         let json = serde_json::to_string(&state).unwrap();
         assert!(json.contains("Connection refused"));
         let deserialized: TunnelState = serde_json::from_str(&json).unwrap();
-        assert_eq!(
-            deserialized.error.as_deref(),
-            Some("Connection refused")
-        );
+        assert_eq!(deserialized.error.as_deref(), Some("Connection refused"));
     }
 
     #[test]

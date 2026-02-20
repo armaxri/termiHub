@@ -35,9 +35,7 @@ export function TunnelSidebar() {
         name: `Copy of ${original.name}`,
         autoStart: false,
       };
-      saveTunnel(duplicate).catch((err) =>
-        console.error("Failed to duplicate tunnel:", err)
-      );
+      saveTunnel(duplicate).catch((err) => console.error("Failed to duplicate tunnel:", err));
     },
     [tunnels, saveTunnel]
   );
@@ -52,11 +50,7 @@ export function TunnelSidebar() {
   return (
     <div className="tunnel-sidebar">
       <div className="tunnel-sidebar__actions">
-        <button
-          className="tunnel-sidebar__add-btn"
-          onClick={handleNew}
-          title="New Tunnel"
-        >
+        <button className="tunnel-sidebar__add-btn" onClick={handleNew} title="New Tunnel">
           <Plus size={14} />
           New Tunnel
         </button>

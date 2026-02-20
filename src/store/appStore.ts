@@ -1495,9 +1495,7 @@ export const useAppStore = create<AppState>((set, get) => {
         // Look for an existing tunnel-editor tab for this tunnel
         for (const leaf of allLeaves) {
           const existing = leaf.tabs.find(
-            (t) =>
-              t.contentType === "tunnel-editor" &&
-              t.tunnelEditorMeta?.tunnelId === tunnelId
+            (t) => t.contentType === "tunnel-editor" && t.tunnelEditorMeta?.tunnelId === tunnelId
           );
           if (existing) {
             const rootPanel = updateLeaf(state.rootPanel, leaf.id, (l) => ({

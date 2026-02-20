@@ -54,4 +54,3 @@ export interface TunnelState {
   error?: string;
   stats: TunnelStats;
 }
-

@@ -91,28 +91,23 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
     [tunnelType.type]
   );
 
-  const updateConfig = useCallback(
-    (field: string, value: string | number) => {
-      setTunnelType((prev) => {
-        switch (prev.type) {
-          case "local":
-            return { type: "local", config: { ...prev.config, [field]: value } };
-          case "remote":
-            return { type: "remote", config: { ...prev.config, [field]: value } };
-          case "dynamic":
-            return { type: "dynamic", config: { ...prev.config, [field]: value } };
-        }
-      });
-    },
-    []
-  );
+  const updateConfig = useCallback((field: string, value: string | number) => {
+    setTunnelType((prev) => {
+      switch (prev.type) {
+        case "local":
+          return { type: "local", config: { ...prev.config, [field]: value } };
+        case "remote":
+          return { type: "remote", config: { ...prev.config, [field]: value } };
+        case "dynamic":
+          return { type: "dynamic", config: { ...prev.config, [field]: value } };
+      }
+    });
+  }, []);
 
   const handleSave = useCallback(
     async (andStart: boolean) => {
       const config: TunnelConfig = {
-        id:
-          existingTunnel?.id ??
-          `tun-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        id: existingTunnel?.id ?? `tun-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         name: name || "Untitled Tunnel",
         sshConnectionId,
         tunnelType,
@@ -187,9 +182,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
             value={sshConnectionId}
             onChange={(e) => setSshConnectionId(e.target.value)}
           >
-            {sshConnections.length === 0 && (
-              <option value="">No SSH connections available</option>
-            )}
+            {sshConnections.length === 0 && <option value="">No SSH connections available</option>}
             {sshConnections.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}

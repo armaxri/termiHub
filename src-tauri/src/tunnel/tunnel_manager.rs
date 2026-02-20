@@ -318,18 +318,16 @@ impl TunnelManager {
                 TerminalError::TunnelError("ConnectionManager not available".to_string())
             })?;
 
-        let store = conn_mgr
-            .get_all()
-            .map_err(|e| TerminalError::TunnelError(format!("Failed to load connections: {}", e)))?;
+        let store = conn_mgr.get_all().map_err(|e| {
+            TerminalError::TunnelError(format!("Failed to load connections: {}", e))
+        })?;
 
-        let conn = store.connections
+        let conn = store
+            .connections
             .iter()
             .find(|c| c.id == connection_id)
             .ok_or_else(|| {
-                TerminalError::TunnelError(format!(
-                    "SSH connection not found: {}",
-                    connection_id
-                ))
+                TerminalError::TunnelError(format!("SSH connection not found: {}", connection_id))
             })?;
 
         match &conn.config {

@@ -142,10 +142,7 @@ impl DynamicForwarder {
             let _ = stream.write_all(&[SOCKS5_VERSION, 0xFF]);
             return;
         }
-        if stream
-            .write_all(&[SOCKS5_VERSION, SOCKS5_NO_AUTH])
-            .is_err()
-        {
+        if stream.write_all(&[SOCKS5_VERSION, SOCKS5_NO_AUTH]).is_err() {
             return;
         }
 
@@ -214,7 +211,12 @@ impl DynamicForwarder {
             match sess.channel_direct_tcpip(&dest_host, dest_port, None) {
                 Ok(ch) => ch,
                 Err(e) => {
-                    tracing::debug!("SOCKS5 channel_direct_tcpip to {}:{} failed: {}", dest_host, dest_port, e);
+                    tracing::debug!(
+                        "SOCKS5 channel_direct_tcpip to {}:{} failed: {}",
+                        dest_host,
+                        dest_port,
+                        e
+                    );
                     let _ = Self::send_reply(&mut stream, SOCKS5_REP_GENERAL_FAILURE);
                     return;
                 }
@@ -296,10 +298,14 @@ impl DynamicForwarder {
         let reply = [
             SOCKS5_VERSION,
             rep,
-            0x00,            // RSV
+            0x00, // RSV
             SOCKS5_ATYP_IPV4,
-            0, 0, 0, 0,     // BND.ADDR (0.0.0.0)
-            0, 0,            // BND.PORT (0)
+            0,
+            0,
+            0,
+            0, // BND.ADDR (0.0.0.0)
+            0,
+            0, // BND.PORT (0)
         ];
         stream.write_all(&reply)
     }

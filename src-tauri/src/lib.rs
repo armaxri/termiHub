@@ -152,9 +152,7 @@ pub fn run() {
             } = &event
             {
                 // Gracefully stop all active tunnels on window close
-                if let Some(mgr) =
-                    app_handle.try_state::<tunnel::tunnel_manager::TunnelManager>()
-                {
+                if let Some(mgr) = app_handle.try_state::<tunnel::tunnel_manager::TunnelManager>() {
                     mgr.stop_all();
                 }
             }
