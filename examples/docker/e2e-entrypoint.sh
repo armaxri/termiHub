@@ -1,7 +1,7 @@
 #!/bin/bash
 # e2e-entrypoint.sh — Entrypoint for the E2E runner container.
 #
-# Builds TermiHub (Linux), starts Xvfb, sets up port-forwards and virtual
+# Builds termiHub (Linux), starts Xvfb, sets up port-forwards and virtual
 # serial ports, then runs the infrastructure E2E test suite.
 #
 # Environment variables (set by docker-compose or host script):
@@ -11,7 +11,7 @@
 #
 set -euo pipefail
 
-echo "=== TermiHub E2E Runner ==="
+echo "=== termiHub E2E Runner ==="
 echo "  Platform: $(uname -m)"
 echo "  Node:     $(node --version)"
 echo "  Rust:     $(rustc --version)"
@@ -172,7 +172,7 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     pnpm install --frozen-lockfile
 
     echo ""
-    echo "=== Building TermiHub (Linux release) ==="
+    echo "=== Building termiHub (Linux release) ==="
     pnpm tauri build
 else
     echo ""

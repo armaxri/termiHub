@@ -1,6 +1,6 @@
 # Serial Port Testing
 
-This directory contains tools for testing TermiHub's serial port functionality without physical hardware.
+This directory contains tools for testing termiHub's serial port functionality without physical hardware.
 
 ## Virtual Serial Port Pair
 
@@ -14,7 +14,7 @@ This creates two pseudo-terminals:
 
 | Path | Purpose |
 |------|---------|
-| `/tmp/termihub-serial-a` | Connect TermiHub here |
+| `/tmp/termihub-serial-a` | Connect termiHub here |
 | `/tmp/termihub-serial-b` | Connect the echo server (or another tool) here |
 
 ### Prerequisites
@@ -39,11 +39,11 @@ By default it listens on `/tmp/termihub-serial-b`. Pass a custom path as the fir
 python3 serial-echo-server.py /dev/pts/5
 ```
 
-## Configuring TermiHub
+## Configuring termiHub
 
 1. Start the virtual serial pair (keep the terminal open)
 2. Start the echo server in another terminal (keep it open)
-3. In TermiHub, create a Serial connection:
+3. In termiHub, create a Serial connection:
    - **Port**: `/tmp/termihub-serial-a`
    - **Baud rate**: 9600 (any rate works with virtual ports)
    - **Data bits**: 8

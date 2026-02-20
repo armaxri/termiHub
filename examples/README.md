@@ -1,6 +1,6 @@
-# TermiHub Examples & Test Environment
+# termiHub Examples & Test Environment
 
-This directory provides Docker-based test targets and scripts for testing all TermiHub connection types without external infrastructure.
+This directory provides Docker-based test targets and scripts for testing all termiHub connection types without external infrastructure.
 
 ## Prerequisites
 
@@ -10,7 +10,7 @@ This directory provides Docker-based test targets and scripts for testing all Te
 
 ## Quick Start
 
-Start the Docker test environment and launch TermiHub with pre-configured test connections:
+Start the Docker test environment and launch termiHub with pre-configured test connections:
 
 ```bash
 ./scripts/start-test-environment.sh
@@ -20,7 +20,7 @@ This will:
 
 1. Build and start a Docker container with SSH and Telnet servers
 2. Wait for the services to be ready
-3. Launch TermiHub with `TERMIHUB_CONFIG_DIR` pointing to `examples/config/`
+3. Launch termiHub with `TERMIHUB_CONFIG_DIR` pointing to `examples/config/`
 
 When you're done, stop the test containers:
 
@@ -63,7 +63,7 @@ Quick version:
 # Terminal 2: Start echo server
 python3 serial/serial-echo-server.py
 
-# Terminal 3: Connect TermiHub to /tmp/termihub-serial-a
+# Terminal 3: Connect termiHub to /tmp/termihub-serial-a
 ```
 
 ## Directory Structure
@@ -120,10 +120,10 @@ Install `socat` for virtual serial port testing:
 
 ## Config Directory Override
 
-The start script uses the `TERMIHUB_CONFIG_DIR` environment variable to point TermiHub at the example config. You can use this independently:
+The start script uses the `TERMIHUB_CONFIG_DIR` environment variable to point termiHub at the example config. You can use this independently:
 
 ```bash
 TERMIHUB_CONFIG_DIR=/path/to/custom/config pnpm tauri dev
 ```
 
-When unset, TermiHub uses the default Tauri config directory.
+When unset, termiHub uses the default Tauri config directory.

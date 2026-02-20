@@ -5,7 +5,7 @@
 # This creates two linked pseudo-terminals:
 #   /tmp/termihub-serial-a  <-->  /tmp/termihub-serial-b
 #
-# Connect TermiHub to one end and the echo server (or another tool) to the other.
+# Connect termiHub to one end and the echo server (or another tool) to the other.
 #
 set -euo pipefail
 
@@ -28,7 +28,7 @@ rm -f "$PTY_A" "$PTY_B"
 echo "Creating virtual serial port pair..."
 echo "  $PTY_A  <-->  $PTY_B"
 echo ""
-echo "Connect TermiHub to $PTY_A and the echo server to $PTY_B (or vice versa)."
+echo "Connect termiHub to $PTY_A and the echo server to $PTY_B (or vice versa)."
 echo "Press Ctrl+C to stop."
 echo ""
 

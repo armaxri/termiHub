@@ -1,7 +1,7 @@
-# docker-compose.e2e.yml — E2E test environment for TermiHub.
+# docker-compose.e2e.yml — E2E test environment for termiHub.
 #
 # Services:
-#   e2e-runner:   Builds and tests TermiHub (Linux) inside Docker.
+#   e2e-runner:   Builds and tests termiHub (Linux) inside Docker.
 #   test-target:  SSH + Telnet server for infrastructure tests.
 #
 # Usage:

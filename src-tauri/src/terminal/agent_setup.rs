@@ -488,7 +488,7 @@ fail() {
 }
 
 echo ""
-echo "\360\237\232\200 === TermiHub Agent Setup ==="
+echo "\360\237\232\200 === termiHub Agent Setup ==="
 echo ""
 
 # --- Step 1: Verify uploaded binary ---
@@ -549,7 +549,7 @@ printf "\342\234\205 Verifying installation... "
 # --- Step 7: Optional systemd service ---
 if [ "$INSTALL_SERVICE" = true ]; then
     echo "\342\232\231\357\270\217  Installing systemd service..."
-    printf '[Unit]\nDescription=TermiHub Agent\nAfter=network.target\n\n[Service]\nExecStart=%s --listen 127.0.0.1:7685\nRestart=on-failure\n\n[Install]\nWantedBy=multi-user.target\n' "$INSTALL_PATH" \
+    printf '[Unit]\nDescription=termiHub Agent\nAfter=network.target\n\n[Service]\nExecStart=%s --listen 127.0.0.1:7685\nRestart=on-failure\n\n[Install]\nWantedBy=multi-user.target\n' "$INSTALL_PATH" \
         | $SUDO tee /etc/systemd/system/termihub-agent.service > /dev/null
     $SUDO systemctl daemon-reload
     printf "  \342\234\223 Service registered\n"
@@ -680,7 +680,7 @@ mod tests {
         assert!(script.contains("INSTALL_PATH=\"/usr/local/bin/termihub-agent\""));
         assert!(script.contains("INSTALL_SERVICE=false"));
         assert!(script.contains("--version"));
-        assert!(script.contains("=== TermiHub Agent Setup ==="));
+        assert!(script.contains("=== termiHub Agent Setup ==="));
         assert!(script.contains("=== Setup Complete ==="));
         assert!(script.contains("=== Setup Failed ==="));
         // Service is disabled at runtime via the INSTALL_SERVICE variable

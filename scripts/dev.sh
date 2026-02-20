@@ -11,5 +11,5 @@ if [ ! -d node_modules ]; then
     echo ""
 fi
 
-echo "Starting TermiHub in dev mode..."
+echo "Starting termiHub in dev mode..."
 pnpm tauri dev

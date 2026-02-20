@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# TermiHub Agent installer
+# termiHub Agent installer
 # Installs the binary and systemd service on a Raspberry Pi (or any Linux host).
 
 BINARY="target/release/termihub-agent"

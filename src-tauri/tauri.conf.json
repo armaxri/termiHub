@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "TermiHub",
+        "title": "termiHub",
         "width": 1280,
         "height": 800,
         "minWidth": 800,

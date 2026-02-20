@@ -1,12 +1,12 @@
-# TermiHub User Guide
+# termiHub User Guide
 
-This guide covers the TermiHub interface, features, and day-to-day usage.
+This guide covers the termiHub interface, features, and day-to-day usage.
 
 ---
 
 ## Interface Overview
 
-TermiHub uses a VS Code-inspired three-column layout:
+termiHub uses a VS Code-inspired three-column layout:
 
 ```
 ┌──────────┬────────────────┬──────────────────────────────────────────┐
@@ -125,7 +125,7 @@ This is useful for shared connection files where values differ per user.
 
 ### Local Shell
 
-Opens a local terminal using a shell installed on your system. TermiHub auto-detects available shells:
+Opens a local terminal using a shell installed on your system. termiHub auto-detects available shells:
 
 - **macOS/Linux**: zsh, bash, sh
 - **Windows**: PowerShell, cmd, Git Bash
@@ -206,7 +206,7 @@ Right-click a terminal tab for these options:
 
 ## Split Views
 
-TermiHub supports splitting the terminal area into multiple panels arranged horizontally and vertically.
+termiHub supports splitting the terminal area into multiple panels arranged horizontally and vertically.
 
 ### Creating Splits
 
@@ -308,7 +308,7 @@ Each entry shows:
 
 ## Built-in File Editor
 
-TermiHub includes a built-in file editor powered by Monaco (the same engine as VS Code).
+termiHub includes a built-in file editor powered by Monaco (the same engine as VS Code).
 
 ### Opening Files
 
@@ -322,7 +322,7 @@ Files open in a new tab in the terminal view.
 - **Syntax highlighting** — Automatic language detection from file extension
 - **Search and replace** — Standard Ctrl+F / Ctrl+H
 - **Word wrap** — Enabled by default
-- **Dark theme** — Matches the TermiHub dark theme
+- **Dark theme** — Matches the termiHub dark theme
 
 ### Saving
 
@@ -345,7 +345,7 @@ When an editor tab is active, the status bar at the bottom shows:
 
 ### Open in VS Code
 
-If VS Code is installed, you can right-click a file in the file browser and select **Open in VS Code**. For remote (SFTP) files, TermiHub downloads the file to a temporary location first.
+If VS Code is installed, you can right-click a file in the file browser and select **Open in VS Code**. For remote (SFTP) files, termiHub downloads the file to a temporary location first.
 
 ---
 
@@ -357,7 +357,7 @@ Click the **gear icon** at the bottom of the Activity Bar, then select **Setting
 
 ### Configuration Directory
 
-TermiHub stores its configuration (connections, folders, settings) in a platform-specific directory. Override this by setting the `TERMIHUB_CONFIG_DIR` environment variable before launching the app:
+termiHub stores its configuration (connections, folders, settings) in a platform-specific directory. Override this by setting the `TERMIHUB_CONFIG_DIR` environment variable before launching the app:
 
 ```bash
 # Example: use a project-specific config directory

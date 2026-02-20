@@ -18,25 +18,25 @@ jobs:
           - platform: 'macos-latest'
             os: macos-latest
             rust_target: 'x86_64-apple-darwin'
-            artifact_name: 'TermiHub-macOS-x64'
+            artifact_name: 'termiHub-macOS-x64'
           - platform: 'macos-latest-arm'
             os: macos-latest
             rust_target: 'aarch64-apple-darwin'
-            artifact_name: 'TermiHub-macOS-arm64'
+            artifact_name: 'termiHub-macOS-arm64'
           - platform: 'ubuntu-latest'
             os: ubuntu-latest
             rust_target: 'x86_64-unknown-linux-gnu'
-            artifact_name: 'TermiHub-Linux-x64'
+            artifact_name: 'termiHub-Linux-x64'
           - platform: 'ubuntu-latest-arm64'
             os: ubuntu-latest
             rust_target: 'aarch64-unknown-linux-gnu'
-            artifact_name: 'TermiHub-Linux-arm64'
+            artifact_name: 'termiHub-Linux-arm64'
             # AppImage can't be cross-compiled (linuxdeploy is x86_64-only)
             extra_args: '--bundles deb,rpm'
           - platform: 'windows-latest'
             os: windows-latest
             rust_target: 'x86_64-pc-windows-msvc'
-            artifact_name: 'TermiHub-Windows-x64'
+            artifact_name: 'termiHub-Windows-x64'
 
     steps:
       - name: Checkout code
@@ -165,7 +165,7 @@ jobs:
           echo "| Platform | Size |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|------|" >> $GITHUB_STEP_SUMMARY
 
-          for dir in TermiHub-*; do
+          for dir in termiHub-*; do
             if [ -d "$dir" ]; then
               size=$(du -sh "$dir" | cut -f1)
               echo "| $dir | $size |" >> $GITHUB_STEP_SUMMARY

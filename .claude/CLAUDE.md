@@ -1,6 +1,6 @@
-# TermiHub — Claude Code Instructions
+# termiHub — Claude Code Instructions
 
-TermiHub is a cross-platform terminal hub built with Tauri 2 (Rust backend) + React 18 (TypeScript frontend). It supports local shells, SSH, serial, and telnet connections with VS Code-inspired UI, split views, drag-and-drop tabs, and SFTP file browsing. See [docs/architecture.md](../docs/architecture.md) for the full architecture documentation.
+termiHub is a cross-platform terminal hub built with Tauri 2 (Rust backend) + React 18 (TypeScript frontend). It supports local shells, SSH, serial, and telnet connections with VS Code-inspired UI, split views, drag-and-drop tabs, and SFTP file browsing. See [docs/architecture.md](../docs/architecture.md) for the full architecture documentation.
 
 ---
 
@@ -79,7 +79,7 @@ examples/                     # Docker test environment (SSH, Telnet, virtual se
 - Doc comments (`///`) for public APIs
 - `tokio` for async, channels for communication
 - Naming: `PascalCase` types/traits, `snake_case` functions/modules, `UPPER_SNAKE_CASE` constants
-- **Cross-platform awareness**: TermiHub builds on Windows, macOS, and Linux. Gate platform-specific code with `#[cfg(windows)]`, `#[cfg(unix)]`, etc. — on functions, imports, and tests. CI runs on all platforms, so ungated platform-specific code will fail the build.
+- **Cross-platform awareness**: termiHub builds on Windows, macOS, and Linux. Gate platform-specific code with `#[cfg(windows)]`, `#[cfg(unix)]`, etc. — on functions, imports, and tests. CI runs on all platforms, so ungated platform-specific code will fail the build.
 
 ### Testing
 - Every bug fix and feature should include verification that the change works correctly, in order of preference:

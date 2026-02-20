@@ -36,7 +36,7 @@ Each section groups related tests by feature area. Individual test items referen
 
 ### macOS key repeat fix (PR #48)
 
-- [ ] Launch TermiHub on macOS — open a local shell terminal
+- [ ] Launch termiHub on macOS — open a local shell terminal
 - [ ] Hold any letter key (e.g., `k`) — verify key repeats continuously
 - [ ] Verify accent picker no longer appears when holding letter keys
 - [ ] Verify system-wide setting is unchanged: `defaults read -g ApplePressAndHoldEnabled`
@@ -69,6 +69,12 @@ Each section groups related tests by feature area. Individual test items referen
 ---
 
 ## SSH
+
+### Agnoster/Powerline theme rendering (PR #197)
+
+- [ ] Connect via SSH to a Linux machine with zsh + Agnoster theme — the `user@machine` prompt segment should blend with the terminal background (no visible black rectangle)
+- [ ] Connect via SSH to a machine with a default bash prompt — verify no visual regression in prompt rendering
+- [ ] Open a local shell terminal — verify ANSI color rendering is unaffected
 
 ### SSH key authentication on Windows (PR #160)
 
@@ -285,6 +291,14 @@ Each section groups related tests by feature area. Individual test items referen
 - [ ] Click "Export Connections" — file save dialog, saves JSON
 - [x] Connection list toolbar no longer has Import/Export buttons (only New Folder and New Connection remain)
 
+### SSH key path browse button (PR #205)
+
+- [ ] Create or edit an SSH connection, set auth method to "Key", click "..." button — verify a native file dialog opens defaulting to `~/.ssh`
+- [ ] Select a key file — verify the path populates in the input field
+- [ ] Cancel the dialog — verify the input field remains unchanged
+- [ ] Repeat the above for Agent connection settings
+- [ ] Manually type a path in the input field — verify it still works as before
+
 ### Auto-extract port from host field (PR #195)
 
 - [ ] Enter `192.168.0.2:2222` in the SSH host field, tab out — verify host becomes `192.168.0.2` and port becomes `2222`
@@ -444,8 +458,8 @@ Each section groups related tests by feature area. Individual test items referen
 ### Custom app icon (PR #70)
 
 - [ ] `ls -la src-tauri/icons/` — all 16 PNGs + .icns + .ico present with reasonable sizes
-- [ ] Open `public/termihub.svg` in browser — shows TermiHub icon
-- [ ] `pnpm tauri dev` — app icon in dock/taskbar is the custom icon, favicon in browser tab is TermiHub
+- [ ] Open `public/termihub.svg` in browser — shows termiHub icon
+- [ ] `pnpm tauri dev` — app icon in dock/taskbar is the custom icon, favicon in browser tab is termiHub
 - [ ] `icon/` directory is gone
 - [ ] README renders correctly on GitHub with centered icon
 

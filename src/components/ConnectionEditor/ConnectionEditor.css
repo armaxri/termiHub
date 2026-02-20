@@ -127,6 +127,17 @@
   background-color: var(--bg-hover);
 }
 
+.settings-form__file-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.settings-form__file-row input {
+  flex: 1;
+  min-width: 0;
+}
+
 .settings-form__list-checkbox {
   flex-shrink: 0;
   display: flex;

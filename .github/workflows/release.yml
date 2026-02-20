@@ -48,7 +48,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: v${{ steps.get_version.outputs.version }}
-          release_name: TermiHub v${{ steps.get_version.outputs.version }}
+          release_name: termiHub v${{ steps.get_version.outputs.version }}
           body_path: release_notes.md
           draft: false
           prerelease: false
@@ -206,7 +206,7 @@ jobs:
           fi
 
           # Rename to include platform
-          FILENAME="TermiHub-${{ needs.create-release.outputs.version }}-${{ matrix.platform }}${{ matrix.file_ext }}"
+          FILENAME="termiHub-${{ needs.create-release.outputs.version }}-${{ matrix.platform }}${{ matrix.file_ext }}"
           mv "$ARTIFACT" "$FILENAME"
 
           echo "artifact_path=$FILENAME" >> $GITHUB_OUTPUT
@@ -228,7 +228,7 @@ jobs:
         run: |
           DEB_FILE=$(find src-tauri/target/${{ matrix.rust_target }}/release/bundle/deb -name "*.deb" | head -n 1)
           if [ -n "$DEB_FILE" ]; then
-            DEB_FILENAME="TermiHub-${{ needs.create-release.outputs.version }}-${{ matrix.platform }}.deb"
+            DEB_FILENAME="termiHub-${{ needs.create-release.outputs.version }}-${{ matrix.platform }}.deb"
             mv "$DEB_FILE" "$DEB_FILENAME"
 
             gh release upload v${{ needs.create-release.outputs.version }} "$DEB_FILENAME"
@@ -266,5 +266,5 @@ jobs:
           echo "Release v${{ needs.create-release.outputs.version }} published successfully!"
           # Add Discord/Slack webhook here if desired
           # curl -X POST -H 'Content-type: application/json' \
-          #   --data '{"text":"TermiHub v${{ needs.create-release.outputs.version }} released!"}' \
+          #   --data '{"text":"termiHub v${{ needs.create-release.outputs.version }} released!"}' \
           #   ${{ secrets.SLACK_WEBHOOK_URL }}
