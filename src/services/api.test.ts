@@ -143,7 +143,7 @@ describe("api service", () => {
 
   describe("connection persistence commands", () => {
     it("loadConnectionsAndFolders returns connection data", async () => {
-      const data = { connections: [], folders: [], externalSources: [] };
+      const data = { connections: [], folders: [], agents: [], externalErrors: [] };
       mockedInvoke.mockResolvedValue(data);
 
       const result = await loadConnectionsAndFolders();
@@ -171,7 +171,10 @@ describe("api service", () => {
 
       await deleteConnectionFromBackend("conn-1");
 
-      expect(mockedInvoke).toHaveBeenCalledWith("delete_connection", { id: "conn-1" });
+      expect(mockedInvoke).toHaveBeenCalledWith("delete_connection", {
+        id: "conn-1",
+        sourceFile: null,
+      });
     });
 
     it("saveFolder invokes with folder object", async () => {
