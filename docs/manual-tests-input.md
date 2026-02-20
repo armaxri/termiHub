@@ -313,6 +313,19 @@ Each section groups related tests by feature area. Individual test items referen
 - [ ] Repeat the above for Agent connection settings
 - [ ] Manually type a path in the input field — verify it still works as before
 
+### SSH key path file suggestions (PR #118)
+
+- [ ] Open connection editor, select SSH type, set auth method to "SSH Key" — focus the Key Path field — verify a dropdown appears listing private key files from `~/.ssh/`
+- [ ] Verify `.pub` files, `known_hosts`, `authorized_keys`, and `config` are NOT shown in the dropdown
+- [ ] Type part of a key name to filter — verify the dropdown filters in real time (case-insensitive)
+- [ ] Use arrow keys to navigate the dropdown — verify the highlighted item changes
+- [ ] Press Tab or Enter on a highlighted item — verify the path is accepted and the dropdown closes
+- [ ] Press Tab with no highlight but exactly one match — verify it auto-accepts that match
+- [ ] Press Escape — verify the dropdown closes without changing the value
+- [ ] Click the "..." browse button — verify the native file dialog still works
+- [ ] Repeat all of the above for the Agent settings Key Path field
+- [ ] Test with no `~/.ssh/` directory (or empty directory) — verify no dropdown appears and no error occurs
+
 ### Auto-extract port from host field (PR #195)
 
 - [ ] Enter `192.168.0.2:2222` in the SSH host field, tab out — verify host becomes `192.168.0.2` and port becomes `2222`
