@@ -130,6 +130,20 @@ Each section groups related tests by feature area. Individual test items referen
 - [ ] Switch between two SSH tabs connected to different hosts — monitoring switches hosts
 - [ ] Manual "Monitor" dropdown still works as a fallback
 
+### Optional monitoring and file browser settings (PR #199)
+
+- [ ] Open Settings > Advanced — verify "Power Monitoring" and "File Browser" toggles are visible and enabled by default
+- [ ] Disable "Power Monitoring" globally — connect to an SSH host — verify no monitoring stats appear in the status bar
+- [ ] Re-enable "Power Monitoring" globally — connect to an SSH host — verify monitoring stats appear again
+- [ ] Disable "File Browser" globally — switch to Files sidebar — verify SFTP file browser does not activate for SSH tabs
+- [ ] Re-enable "File Browser" globally — verify SFTP file browser works again for SSH tabs
+- [ ] Edit an SSH connection — verify "Power Monitoring" and "File Browser" dropdowns appear with Default/Enabled/Disabled options
+- [ ] Set per-connection monitoring to "Disabled" while global is enabled — connect — verify no monitoring for that connection
+- [ ] Set per-connection monitoring to "Enabled" while global is disabled — connect — verify monitoring works for that connection
+- [ ] Set per-connection monitoring to "Default" — verify it follows the global setting
+- [ ] Repeat the above three tests for the file browser per-connection override
+- [ ] Save a connection with per-connection overrides, close and reopen the app — verify settings persist
+
 ### Monitoring hides on non-SSH tab (PR #165)
 
 - [ ] Open an SSH terminal tab — monitoring stats appear in the status bar
