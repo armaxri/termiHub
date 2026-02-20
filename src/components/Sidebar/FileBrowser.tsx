@@ -28,6 +28,7 @@ import { getHomeDir } from "@/services/api";
 import { FileEntry } from "@/types/connection";
 import { LocalShellConfig, SshConfig } from "@/types/terminal";
 import { getWslDistroName, wslToWindowsPath } from "@/utils/shell-detection";
+import { resolveFeatureEnabled } from "@/utils/featureFlags";
 import "./FileBrowser.css";
 
 function formatFileSize(bytes: number): string {
@@ -277,13 +278,19 @@ function useFileBrowserSync() {
   const requestPassword = useAppStore((s) => s.requestPassword);
   const connections = useAppStore((s) => s.connections);
   const fileBrowserMode = useAppStore((s) => s.fileBrowserMode);
-  const fileBrowserEnabled = useAppStore((s) => s.settings.fileBrowserEnabled);
+  const globalFileBrowserEnabled = useAppStore((s) => s.settings.fileBrowserEnabled);
 
   // Derive mode from active tab
   const activeTab = useAppStore((s) => getActiveTab(s));
   const activeTabId = activeTab?.id ?? null;
   const activeTabConnectionType = activeTab?.connectionType ?? null;
   const activeTabContentType = activeTab?.contentType ?? null;
+  const activeTabConfig = activeTab?.config ?? undefined;
+
+  const fileBrowserEnabled =
+    activeTabConnectionType === "ssh"
+      ? resolveFeatureEnabled(activeTabConfig, "enableFileBrowser", globalFileBrowserEnabled)
+      : true; // Local tabs always have file browser
 
   const activeTabEditorMeta = activeTab?.editorMeta ?? null;
 
@@ -295,10 +302,6 @@ function useFileBrowserSync() {
   const wslDistro = activeTabShellType ? getWslDistroName(activeTabShellType) : null;
 
   useEffect(() => {
-    if (!fileBrowserEnabled) {
-      setFileBrowserMode("none");
-      return;
-    }
     if (!activeTab || activeTabContentType === "settings") {
       setFileBrowserMode("none");
       return;
@@ -315,7 +318,7 @@ function useFileBrowserSync() {
     if (activeTabConnectionType === "local") {
       setFileBrowserMode("local");
     } else if (activeTabConnectionType === "ssh") {
-      setFileBrowserMode("sftp");
+      setFileBrowserMode(fileBrowserEnabled ? "sftp" : "none");
     } else {
       setFileBrowserMode("none");
     }
@@ -391,7 +394,6 @@ function useFileBrowserSync() {
 
   // Auto-connect SFTP for SSH tabs
   useEffect(() => {
-    if (!fileBrowserEnabled) return;
     if (fileBrowserMode !== "sftp" || !activeTab) return;
     if (activeTab.config.type !== "ssh") return;
 
@@ -431,7 +433,6 @@ function useFileBrowserSync() {
 
     doConnect();
   }, [
-    fileBrowserEnabled,
     fileBrowserMode,
     activeTabId,
     activeTab,

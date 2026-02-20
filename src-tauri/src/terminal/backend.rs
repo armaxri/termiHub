@@ -131,6 +131,10 @@ pub struct SshConfig {
     pub key_path: Option<String>,
     #[serde(default)]
     pub enable_x11_forwarding: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enable_monitoring: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enable_file_browser: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -310,6 +314,8 @@ impl RemoteAgentConfig {
             password: self.password.clone(),
             key_path: self.key_path.clone(),
             enable_x11_forwarding: false,
+            enable_monitoring: None,
+            enable_file_browser: None,
         }
     }
 }
@@ -371,6 +377,8 @@ mod tests {
             password: None,
             key_path: Some("/home/user/.ssh/id_rsa".to_string()),
             enable_x11_forwarding: true,
+            enable_monitoring: None,
+            enable_file_browser: None,
         });
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: ConnectionConfig = serde_json::from_str(&json).unwrap();
@@ -416,6 +424,8 @@ mod tests {
             password: None,
             key_path: Some("${env:HOME}/.ssh/id_rsa".to_string()),
             enable_x11_forwarding: false,
+            enable_monitoring: None,
+            enable_file_browser: None,
         };
         let expanded = config.expand();
         assert_eq!(expanded.host, "192.168.1.100");
@@ -435,6 +445,8 @@ mod tests {
             password: None,
             key_path: Some("~/.ssh/id_ed25519".to_string()),
             enable_x11_forwarding: false,
+            enable_monitoring: None,
+            enable_file_browser: None,
         };
         let expanded = config.expand();
         let key = expanded.key_path.unwrap();
@@ -458,6 +470,8 @@ mod tests {
             password: None,
             key_path: Some(r#""C:\Users\me\.ssh\id_ed25519""#.to_string()),
             enable_x11_forwarding: false,
+            enable_monitoring: None,
+            enable_file_browser: None,
         };
         let expanded = config.expand();
         let key = expanded.key_path.unwrap();

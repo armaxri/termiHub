@@ -217,8 +217,9 @@ export function SettingsPanel({ isVisible }: SettingsPanelProps) {
             <h3 className="settings-panel__section-title">Advanced</h3>
           </div>
           <p className="settings-panel__description">
-            Enable or disable optional features. Disabling a feature disconnects any active session
-            for that feature.
+            Default settings for new SSH connections. Individual connections can override these in
+            their SSH settings. Disabling a default disconnects active sessions that use the
+            default.
           </p>
           <ul className="settings-panel__file-list">
             <li className="settings-panel__file-item">

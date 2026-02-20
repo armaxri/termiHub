@@ -145,6 +145,54 @@ export function SshSettings({ config, onChange, onSetupAgent }: SshSettingsProps
       <p className="settings-form__hint">
         Forwards remote GUI applications to your local X server (requires XQuartz on macOS).
       </p>
+      <label className="settings-form__field">
+        <span className="settings-form__label">Power Monitoring</span>
+        <select
+          value={
+            config.enableMonitoring === undefined
+              ? "default"
+              : config.enableMonitoring
+                ? "enabled"
+                : "disabled"
+          }
+          onChange={(e) => {
+            const v = e.target.value;
+            onChange({
+              ...config,
+              enableMonitoring: v === "default" ? undefined : v === "enabled",
+            });
+          }}
+          data-testid="ssh-settings-monitoring-select"
+        >
+          <option value="default">Default (from Settings)</option>
+          <option value="enabled">Enabled</option>
+          <option value="disabled">Disabled</option>
+        </select>
+      </label>
+      <label className="settings-form__field">
+        <span className="settings-form__label">File Browser</span>
+        <select
+          value={
+            config.enableFileBrowser === undefined
+              ? "default"
+              : config.enableFileBrowser
+                ? "enabled"
+                : "disabled"
+          }
+          onChange={(e) => {
+            const v = e.target.value;
+            onChange({
+              ...config,
+              enableFileBrowser: v === "default" ? undefined : v === "enabled",
+            });
+          }}
+          data-testid="ssh-settings-filebrowser-select"
+        >
+          <option value="default">Default (from Settings)</option>
+          <option value="enabled">Enabled</option>
+          <option value="disabled">Disabled</option>
+        </select>
+      </label>
     </div>
   );
 }
