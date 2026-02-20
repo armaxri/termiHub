@@ -12,11 +12,13 @@ if not exist node_modules (
 )
 
 REM Kill any process occupying the Vite dev server port (leftover from a previous run).
-REM Uses PowerShell because netstat state names are localized (e.g. LISTENING vs ABHÖREN).
+REM Avoids matching the state name because netstat localizes it (e.g. ABHÖREN on German Windows).
 set DEV_PORT=1420
-for /f %%a in ('powershell -NoProfile -Command "(Get-NetTCPConnection -LocalPort %DEV_PORT% -State Listen -ErrorAction SilentlyContinue).OwningProcess" 2^>nul') do (
-    echo Port %DEV_PORT% in use ^(PID %%a^), killing...
-    taskkill /PID %%a /F >nul 2>&1
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":%DEV_PORT% "') do (
+    if not "%%a"=="0" (
+        echo Port %DEV_PORT% in use ^(PID %%a^), killing...
+        taskkill /PID %%a /F >nul 2>&1
+    )
 )
 
 echo Starting TermiHub in dev mode...
