@@ -5,6 +5,7 @@ import { useAppStore, getActiveTab } from "@/store/appStore";
 import { SshConfig, ConnectionConfig } from "@/types/terminal";
 import { SavedConnection } from "@/types/connection";
 import { SystemStats } from "@/types/monitoring";
+import { resolveFeatureEnabled } from "@/utils/featureFlags";
 import "./StatusBar.css";
 
 const INDENT_SIZES = [1, 2, 4, 8] as const;
@@ -139,6 +140,7 @@ export function StatusBar() {
  * Shows a connection picker when disconnected, and compact stats when connected.
  */
 function MonitoringStatus() {
+  const globalMonitoringEnabled = useAppStore((s) => s.settings.powerMonitoringEnabled);
   const monitoringSessionId = useAppStore((s) => s.monitoringSessionId);
   const monitoringHost = useAppStore((s) => s.monitoringHost);
   const monitoringStats = useAppStore((s) => s.monitoringStats);
@@ -152,6 +154,13 @@ function MonitoringStatus() {
   const externalSources = useAppStore((s) => s.externalSources);
   const activeTabId = useAppStore((s) => getActiveTab(s)?.id ?? null);
   const activeTabConnectionType = useAppStore((s) => getActiveTab(s)?.connectionType ?? null);
+  const activeTabConfig = useAppStore((s) => getActiveTab(s)?.config ?? undefined);
+
+  const monitoringEnabled = resolveFeatureEnabled(
+    activeTabConfig,
+    "enableMonitoring",
+    globalMonitoringEnabled
+  );
 
   /** Tracks which host key already failed auto-connect to prevent retry loops. */
   const autoConnectFailedRef = useRef<string | null>(null);
@@ -188,6 +197,8 @@ function MonitoringStatus() {
 
   // Auto-connect monitoring when active tab is an SSH session
   useEffect(() => {
+    if (!monitoringEnabled) return;
+
     // Read the active tab from the store (avoids subscribing to the full object)
     const activeTab = getActiveTab(useAppStore.getState());
     if (!activeTab || activeTab.config.type !== "ssh") return;
@@ -245,7 +256,7 @@ function MonitoringStatus() {
     };
 
     doConnect();
-  }, [activeTabId, monitoringSessionId, monitoringHost]);
+  }, [activeTabId, monitoringSessionId, monitoringHost, monitoringEnabled]);
 
   const handleConnect = useCallback(
     (connection: SavedConnection) => {
@@ -257,7 +268,8 @@ function MonitoringStatus() {
     [connectMonitoring]
   );
 
-  // Hide monitoring UI when active tab is not SSH
+  // Hide monitoring UI when disabled or when active tab is not SSH
+  if (!monitoringEnabled) return null;
   if (activeTabConnectionType !== "ssh") return null;
 
   // Not connected: show connect button (or loading/error state)

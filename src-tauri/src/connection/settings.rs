@@ -14,12 +14,21 @@ pub struct ExternalFileConfig {
     pub enabled: bool,
 }
 
+/// Helper for serde default that returns `true`.
+fn default_true() -> bool {
+    true
+}
+
 /// Application-wide settings persisted to disk.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     pub version: String,
     pub external_connection_files: Vec<ExternalFileConfig>,
+    #[serde(default = "default_true")]
+    pub power_monitoring_enabled: bool,
+    #[serde(default = "default_true")]
+    pub file_browser_enabled: bool,
 }
 
 impl Default for AppSettings {
@@ -27,6 +36,8 @@ impl Default for AppSettings {
         Self {
             version: "1".to_string(),
             external_connection_files: Vec::new(),
+            power_monitoring_enabled: true,
+            file_browser_enabled: true,
         }
     }
 }
@@ -78,5 +89,51 @@ impl SettingsStorage {
         fs::write(&self.file_path, data).context("Failed to write settings file")?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_settings_have_features_enabled() {
+        let settings = AppSettings::default();
+        assert!(settings.power_monitoring_enabled);
+        assert!(settings.file_browser_enabled);
+    }
+
+    #[test]
+    fn backward_compat_deserializes_missing_fields_as_true() {
+        let json = r#"{"version":"1","externalConnectionFiles":[]}"#;
+        let settings: AppSettings = serde_json::from_str(json).unwrap();
+        assert!(settings.power_monitoring_enabled);
+        assert!(settings.file_browser_enabled);
+    }
+
+    #[test]
+    fn deserializes_explicit_false_values() {
+        let json = r#"{
+            "version": "1",
+            "externalConnectionFiles": [],
+            "powerMonitoringEnabled": false,
+            "fileBrowserEnabled": false
+        }"#;
+        let settings: AppSettings = serde_json::from_str(json).unwrap();
+        assert!(!settings.power_monitoring_enabled);
+        assert!(!settings.file_browser_enabled);
+    }
+
+    #[test]
+    fn round_trip_serialization() {
+        let settings = AppSettings {
+            power_monitoring_enabled: false,
+            ..Default::default()
+        };
+
+        let json = serde_json::to_string(&settings).unwrap();
+        let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
+        assert!(!deserialized.power_monitoring_enabled);
+        assert!(deserialized.file_browser_enabled);
     }
 }

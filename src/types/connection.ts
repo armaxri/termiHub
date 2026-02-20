@@ -56,6 +56,8 @@ export interface RemoteAgentDefinition {
 export interface AppSettings {
   version: string;
   externalConnectionFiles: ExternalFileConfig[];
+  powerMonitoringEnabled: boolean;
+  fileBrowserEnabled: boolean;
 }
 
 export interface FileEntry {

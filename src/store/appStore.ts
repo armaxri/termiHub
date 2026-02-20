@@ -57,7 +57,7 @@ import {
   AgentSessionInfo,
   AgentDefinitionInfo,
 } from "@/services/api";
-import { RemoteAgentConfig } from "@/types/terminal";
+import { RemoteAgentConfig, SshConfig } from "@/types/terminal";
 import { SystemStats } from "@/types/monitoring";
 import {
   createLeafPanel,
@@ -815,7 +815,12 @@ export const useAppStore = create<AppState>((set, get) => {
     folders: [],
     connections: [],
     externalSources: [],
-    settings: { version: "1", externalConnectionFiles: [] },
+    settings: {
+      version: "1",
+      externalConnectionFiles: [],
+      powerMonitoringEnabled: true,
+      fileBrowserEnabled: true,
+    },
     loadFromBackend: async () => {
       try {
         const { connections, folders, externalSources, agents } = await loadConnections();
@@ -848,8 +853,33 @@ export const useAppStore = create<AppState>((set, get) => {
 
     updateSettings: async (newSettings) => {
       try {
+        const oldSettings = get().settings;
         await persistSettings(newSettings);
         set({ settings: newSettings });
+
+        // Side-effects when global defaults are toggled off.
+        // Only disconnect if the active tab doesn't have an explicit override.
+        if (oldSettings.powerMonitoringEnabled && !newSettings.powerMonitoringEnabled) {
+          const activeTab = getActiveTab(get());
+          const hasOverride =
+            activeTab?.config.type === "ssh" &&
+            (activeTab.config.config as SshConfig).enableMonitoring === true;
+          if (!hasOverride) {
+            get().disconnectMonitoring();
+          }
+        }
+        if (oldSettings.fileBrowserEnabled && !newSettings.fileBrowserEnabled) {
+          const activeTab = getActiveTab(get());
+          const hasOverride =
+            activeTab?.config.type === "ssh" &&
+            (activeTab.config.config as SshConfig).enableFileBrowser === true;
+          if (!hasOverride) {
+            get().disconnectSftp();
+            if (get().sidebarView === "files") {
+              set({ sidebarView: "connections" });
+            }
+          }
+        }
       } catch (err) {
         console.error("Failed to save settings:", err);
       }
