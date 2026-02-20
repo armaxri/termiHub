@@ -26,6 +26,14 @@ vi.mock("@/services/storage", () => ({
 const mockMonitoringClose = vi.fn((_sessionId: string) => Promise.resolve());
 const mockSftpClose = vi.fn((_sessionId: string) => Promise.resolve());
 
+const mockApplyTheme = vi.fn();
+const mockOnThemeChange = vi.fn(() => vi.fn());
+
+vi.mock("@/themes", () => ({
+  applyTheme: (...args: unknown[]) => mockApplyTheme(...args),
+  onThemeChange: (...args: unknown[]) => mockOnThemeChange(...args),
+}));
+
 vi.mock("@/services/api", () => ({
   sftpOpen: vi.fn(),
   sftpClose: (sessionId: string) => mockSftpClose(sessionId),
@@ -261,5 +269,49 @@ describe("appStore — settings toggles", () => {
 
     // Should disconnect because the active tab inherits the global default
     expect(mockMonitoringClose).toHaveBeenCalledWith("mon-1");
+  });
+
+  it("calls applyTheme when theme changes via updateSettings", async () => {
+    useAppStore.setState({
+      settings: {
+        version: "1",
+        externalConnectionFiles: [],
+        powerMonitoringEnabled: true,
+        fileBrowserEnabled: true,
+        theme: "dark",
+      },
+    });
+
+    await useAppStore.getState().updateSettings({
+      version: "1",
+      externalConnectionFiles: [],
+      powerMonitoringEnabled: true,
+      fileBrowserEnabled: true,
+      theme: "light",
+    });
+
+    expect(mockApplyTheme).toHaveBeenCalledWith("light");
+  });
+
+  it("does not call applyTheme when theme is unchanged", async () => {
+    useAppStore.setState({
+      settings: {
+        version: "1",
+        externalConnectionFiles: [],
+        powerMonitoringEnabled: true,
+        fileBrowserEnabled: true,
+        theme: "dark",
+      },
+    });
+
+    await useAppStore.getState().updateSettings({
+      version: "1",
+      externalConnectionFiles: [],
+      powerMonitoringEnabled: false,
+      fileBrowserEnabled: true,
+      theme: "dark",
+    });
+
+    expect(mockApplyTheme).not.toHaveBeenCalled();
   });
 });

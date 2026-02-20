@@ -3,6 +3,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { Settings2, Palette, TerminalSquare, FileJson } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { applyTheme } from "@/themes/engine";
 import { AppSettings } from "@/types/connection";
 import { SettingsCategory, CATEGORIES } from "./settingsRegistry";
 import { filterSettings, getMatchingCategories } from "./settingsRegistry";
@@ -95,6 +96,11 @@ export function SettingsPanel({ isVisible }: SettingsPanelProps) {
   const handleSettingsChange = useCallback(
     (newSettings: AppSettings) => {
       pendingSettingsRef.current = newSettings;
+      // Apply theme immediately so the user sees the change without waiting
+      // for the debounced save (which would compare against already-updated state).
+      if (newSettings.theme !== settings.theme) {
+        applyTheme(newSettings.theme);
+      }
       // Update local state immediately via store for responsive UI
       useAppStore.setState({ settings: newSettings });
 
@@ -109,7 +115,7 @@ export function SettingsPanel({ isVisible }: SettingsPanelProps) {
         }
       }, SAVE_DEBOUNCE_MS);
     },
-    [updateSettings]
+    [updateSettings, settings.theme]
   );
 
   // Cleanup debounce timer on unmount
