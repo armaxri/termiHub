@@ -1,217 +1,198 @@
-import { useState, useCallback } from "react";
-import { open, save } from "@tauri-apps/plugin-dialog";
-import { writeTextFile } from "@tauri-apps/plugin-fs";
-import { FilePlus2, Plus, Trash2, RefreshCw, AlertTriangle } from "lucide-react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import { useAppStore } from "@/store/appStore";
-import { ExternalFileConfig } from "@/types/connection";
+import { AppSettings } from "@/types/connection";
+import { SettingsCategory } from "./settingsRegistry";
+import { filterSettings, getMatchingCategories } from "./settingsRegistry";
+import { SettingsNav } from "./SettingsNav";
+import { SettingsSearch } from "./SettingsSearch";
+import { GeneralSettings } from "./GeneralSettings";
+import { AppearanceSettings } from "./AppearanceSettings";
+import { TerminalSettings } from "./TerminalSettings";
+import { ExternalFilesSettings } from "./ExternalFilesSettings";
 import "./SettingsPanel.css";
+
+const STORAGE_KEY = "termihub-settings-category";
+const SAVE_DEBOUNCE_MS = 300;
+
+function loadSavedCategory(): SettingsCategory {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved === "general" || saved === "appearance" || saved === "terminal" || saved === "external-files") {
+      return saved;
+    }
+  } catch {
+    // Ignore localStorage errors
+  }
+  return "general";
+}
 
 interface SettingsPanelProps {
   isVisible: boolean;
 }
 
 /**
- * Settings tab content with external connection file management.
+ * Two-panel settings layout with categorized navigation, search, and version footer.
  */
 export function SettingsPanel({ isVisible }: SettingsPanelProps) {
   const settings = useAppStore((s) => s.settings);
-  const externalSources = useAppStore((s) => s.externalSources);
   const updateSettings = useAppStore((s) => s.updateSettings);
-  const reloadExternalConnections = useAppStore((s) => s.reloadExternalConnections);
-  const [reloading, setReloading] = useState(false);
-  const [showCreatePrompt, setShowCreatePrompt] = useState(false);
-  const [createName, setCreateName] = useState("Shared Connections");
 
-  const handleCreateFile = useCallback(async () => {
-    const name = createName.trim();
-    if (!name) return;
+  const [activeCategory, setActiveCategory] = useState<SettingsCategory>(loadSavedCategory);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [isCompact, setIsCompact] = useState(false);
+  const [appVersion, setAppVersion] = useState("");
+  const containerRef = useRef<HTMLDivElement>(null);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingSettingsRef = useRef<AppSettings | null>(null);
 
-    try {
-      const emptyStore = { name, version: "1", folders: [], connections: [] };
-      const output = JSON.stringify(emptyStore, null, 2);
+  // Load app version
+  useEffect(() => {
+    getVersion()
+      .then(setAppVersion)
+      .catch(() => setAppVersion("unknown"));
+  }, []);
 
-      const filePath = await save({
-        defaultPath: "shared-connections.json",
-        filters: [{ name: "JSON", extensions: ["json"] }],
-      });
-      if (!filePath) return;
+  // ResizeObserver for compact mode
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
 
-      await writeTextFile(filePath, output);
-      setShowCreatePrompt(false);
-
-      // Auto-add the newly created file to the list
-      if (!settings.externalConnectionFiles.some((f) => f.path === filePath)) {
-        const newFiles: ExternalFileConfig[] = [
-          ...settings.externalConnectionFiles,
-          { path: filePath, enabled: true },
-        ];
-        const newSettings = { ...settings, externalConnectionFiles: newFiles };
-        await updateSettings(newSettings);
-        await reloadExternalConnections();
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setIsCompact(entry.contentRect.width < 480);
       }
-    } catch (err) {
-      console.error("Failed to create external connection file:", err);
-    }
-  }, [createName, settings, updateSettings, reloadExternalConnections]);
-
-  const handleAddFile = useCallback(async () => {
-    const path = await open({
-      multiple: false,
-      filters: [{ name: "JSON", extensions: ["json"] }],
     });
-    if (!path) return;
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
-    // Don't add duplicates
-    if (settings.externalConnectionFiles.some((f) => f.path === path)) return;
-
-    const newFiles: ExternalFileConfig[] = [
-      ...settings.externalConnectionFiles,
-      { path, enabled: true },
-    ];
-    const newSettings = { ...settings, externalConnectionFiles: newFiles };
-    await updateSettings(newSettings);
-    await reloadExternalConnections();
-  }, [settings, updateSettings, reloadExternalConnections]);
-
-  const handleRemoveFile = useCallback(
-    async (path: string) => {
-      const newFiles = settings.externalConnectionFiles.filter((f) => f.path !== path);
-      const newSettings = { ...settings, externalConnectionFiles: newFiles };
-      await updateSettings(newSettings);
-      await reloadExternalConnections();
-    },
-    [settings, updateSettings, reloadExternalConnections]
-  );
-
-  const handleToggleFile = useCallback(
-    async (path: string) => {
-      const newFiles = settings.externalConnectionFiles.map((f) =>
-        f.path === path ? { ...f, enabled: !f.enabled } : f
-      );
-      const newSettings = { ...settings, externalConnectionFiles: newFiles };
-      await updateSettings(newSettings);
-      await reloadExternalConnections();
-    },
-    [settings, updateSettings, reloadExternalConnections]
-  );
-
-  const handleReload = useCallback(async () => {
-    setReloading(true);
-    await reloadExternalConnections();
-    setReloading(false);
-  }, [reloadExternalConnections]);
-
-  // Map source errors by path for display
-  const errorsByPath: Record<string, string> = {};
-  for (const source of externalSources) {
-    if (source.error) {
-      errorsByPath[source.filePath] = source.error;
+  // Persist active category to localStorage
+  const handleCategoryChange = useCallback((category: SettingsCategory) => {
+    setActiveCategory(category);
+    try {
+      localStorage.setItem(STORAGE_KEY, category);
+    } catch {
+      // Ignore localStorage errors
     }
-  }
+  }, []);
+
+  // Debounced save for General/Appearance/Terminal settings
+  const handleSettingsChange = useCallback(
+    (newSettings: AppSettings) => {
+      pendingSettingsRef.current = newSettings;
+      // Update local state immediately via store for responsive UI
+      useAppStore.setState({ settings: newSettings });
+
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+      }
+      saveTimerRef.current = setTimeout(() => {
+        const toSave = pendingSettingsRef.current;
+        if (toSave) {
+          pendingSettingsRef.current = null;
+          updateSettings(toSave);
+        }
+      }, SAVE_DEBOUNCE_MS);
+    },
+    [updateSettings]
+  );
+
+  // Cleanup debounce timer on unmount
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        // Flush pending save
+        const toSave = pendingSettingsRef.current;
+        if (toSave) {
+          pendingSettingsRef.current = null;
+          updateSettings(toSave);
+        }
+      }
+    };
+  }, [updateSettings]);
+
+  // Search filtering
+  const isSearchActive = searchQuery.trim().length > 0;
+  const highlightedCategories = useMemo(
+    () => (isSearchActive ? getMatchingCategories(searchQuery) : undefined),
+    [isSearchActive, searchQuery]
+  );
+  const visibleFields = useMemo(() => {
+    if (!isSearchActive) return undefined;
+    const matched = filterSettings(searchQuery);
+    return new Set(matched.map((s) => s.id));
+  }, [isSearchActive, searchQuery]);
+
+  const renderContent = () => {
+    if (isSearchActive) {
+      // Show all categories that have matching settings
+      const sections: React.ReactNode[] = [];
+      if (highlightedCategories?.has("general")) {
+        sections.push(
+          <GeneralSettings
+            key="general"
+            settings={settings}
+            onChange={handleSettingsChange}
+            visibleFields={visibleFields}
+          />
+        );
+      }
+      if (highlightedCategories?.has("appearance")) {
+        sections.push(
+          <AppearanceSettings
+            key="appearance"
+            settings={settings}
+            onChange={handleSettingsChange}
+            visibleFields={visibleFields}
+          />
+        );
+      }
+      if (highlightedCategories?.has("terminal")) {
+        sections.push(
+          <TerminalSettings
+            key="terminal"
+            settings={settings}
+            onChange={handleSettingsChange}
+            visibleFields={visibleFields}
+          />
+        );
+      }
+      if (sections.length === 0) {
+        return <div className="settings-panel__no-results">No settings match your search.</div>;
+      }
+      return <>{sections}</>;
+    }
+
+    switch (activeCategory) {
+      case "general":
+        return <GeneralSettings settings={settings} onChange={handleSettingsChange} />;
+      case "appearance":
+        return <AppearanceSettings settings={settings} onChange={handleSettingsChange} />;
+      case "terminal":
+        return <TerminalSettings settings={settings} onChange={handleSettingsChange} />;
+      case "external-files":
+        return <ExternalFilesSettings />;
+    }
+  };
 
   return (
-    <div className={`settings-panel ${isVisible ? "" : "settings-panel--hidden"}`}>
-      <div className="settings-panel__content">
-        <div className="settings-panel__section">
-          <div className="settings-panel__section-header">
-            <h3 className="settings-panel__section-title">External Connection Files</h3>
-            <div className="settings-panel__section-actions">
-              <button
-                className="settings-panel__btn"
-                onClick={handleReload}
-                disabled={reloading}
-                title="Reload all external files"
-              >
-                <RefreshCw size={14} className={reloading ? "settings-panel__spin" : ""} />
-                Reload
-              </button>
-              <button
-                className="settings-panel__btn"
-                onClick={() => setShowCreatePrompt((v) => !v)}
-                title="Create a new external connection file from your current connections"
-              >
-                <FilePlus2 size={14} />
-                Create File
-              </button>
-              <button
-                className="settings-panel__btn settings-panel__btn--primary"
-                onClick={handleAddFile}
-                title="Add external connection file"
-              >
-                <Plus size={14} />
-                Add File
-              </button>
-            </div>
-          </div>
-          <p className="settings-panel__description">
-            Load shared connection configs from external JSON files (e.g. from a git repo). External
-            connections appear read-only in the connection list.
-          </p>
-          {showCreatePrompt && (
-            <div className="settings-panel__create-prompt">
-              <label className="settings-panel__create-label">Display name:</label>
-              <input
-                className="settings-panel__create-input"
-                type="text"
-                value={createName}
-                onChange={(e) => setCreateName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") handleCreateFile();
-                  if (e.key === "Escape") setShowCreatePrompt(false);
-                }}
-                placeholder="e.g. Test Farm Connections"
-                autoFocus
-              />
-              <button
-                className="settings-panel__btn settings-panel__btn--primary"
-                onClick={handleCreateFile}
-                disabled={!createName.trim()}
-              >
-                Save
-              </button>
-              <button className="settings-panel__btn" onClick={() => setShowCreatePrompt(false)}>
-                Cancel
-              </button>
-            </div>
-          )}
-          {settings.externalConnectionFiles.length === 0 ? (
-            <div className="settings-panel__empty">No external connection files configured.</div>
-          ) : (
-            <ul className="settings-panel__file-list">
-              {settings.externalConnectionFiles.map((file) => (
-                <li key={file.path} className="settings-panel__file-item">
-                  <label className="settings-panel__toggle">
-                    <input
-                      type="checkbox"
-                      checked={file.enabled}
-                      onChange={() => handleToggleFile(file.path)}
-                    />
-                    <span className="settings-panel__toggle-slider" />
-                  </label>
-                  <span
-                    className={`settings-panel__file-path${!file.enabled ? " settings-panel__file-path--disabled" : ""}`}
-                    title={file.path}
-                  >
-                    {file.path}
-                  </span>
-                  {errorsByPath[file.path] && (
-                    <span className="settings-panel__file-error" title={errorsByPath[file.path]}>
-                      <AlertTriangle size={14} />
-                    </span>
-                  )}
-                  <button
-                    className="settings-panel__file-remove"
-                    onClick={() => handleRemoveFile(file.path)}
-                    title="Remove file"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+    <div
+      ref={containerRef}
+      className={`settings-panel ${isVisible ? "" : "settings-panel--hidden"}`}
+    >
+      <SettingsSearch query={searchQuery} onQueryChange={setSearchQuery} />
+      <div className={`settings-panel__body ${isCompact ? "settings-panel__body--compact" : ""}`}>
+        <SettingsNav
+          activeCategory={activeCategory}
+          onCategoryChange={handleCategoryChange}
+          highlightedCategories={highlightedCategories}
+          isCompact={isCompact}
+        />
+        <div className="settings-panel__content">{renderContent()}</div>
       </div>
+      <div className="settings-panel__footer">termiHub v{appVersion}</div>
     </div>
   );
 }

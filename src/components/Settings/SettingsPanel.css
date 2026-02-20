@@ -1,22 +1,131 @@
+/* === Layout === */
 .settings-panel {
   position: absolute;
   inset: 0;
   display: flex;
-  overflow-y: auto;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .settings-panel--hidden {
   display: none;
 }
 
-.settings-panel__content {
-  width: 100%;
-  max-width: 640px;
-  margin: 0 auto;
-  padding: var(--spacing-lg);
+.settings-panel__body {
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  min-height: 0;
 }
 
-/* Section */
+.settings-panel__body--compact {
+  flex-direction: column;
+}
+
+.settings-panel__content {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--spacing-lg);
+  max-width: 640px;
+}
+
+/* === Search bar === */
+.settings-search {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-bottom: 1px solid var(--border-primary);
+  flex-shrink: 0;
+}
+
+.settings-search__icon {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.settings-search__input {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 var(--spacing-sm);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  outline: none;
+}
+
+.settings-search__input:focus {
+  border-color: var(--accent-color);
+}
+
+.settings-search__clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.settings-search__clear:hover {
+  color: var(--text-primary);
+  background-color: var(--bg-hover);
+}
+
+/* === Category sections === */
+.settings-panel__category {
+  margin-bottom: var(--spacing-xl);
+}
+
+.settings-panel__category-title {
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 var(--spacing-md);
+  padding-bottom: var(--spacing-xs);
+  border-bottom: 1px solid var(--border-primary);
+}
+
+/* === No search results === */
+.settings-panel__no-results {
+  font-size: var(--font-size-sm);
+  color: var(--text-disabled);
+  padding: var(--spacing-xl);
+  text-align: center;
+}
+
+/* === Footer === */
+.settings-panel__footer {
+  flex-shrink: 0;
+  padding: var(--spacing-xs) var(--spacing-md);
+  border-top: 1px solid var(--border-primary);
+  font-size: 11px;
+  color: var(--text-disabled);
+  text-align: center;
+}
+
+/* === Form field rows for toggle + label === */
+.settings-form__field--row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-sm);
+}
+
+.settings-form__field--row > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* === Section (used by ExternalFilesSettings) === */
 .settings-panel__section {
   margin-bottom: var(--spacing-xl);
 }
@@ -57,7 +166,7 @@
   border-radius: var(--radius-md);
 }
 
-/* Buttons */
+/* === Buttons === */
 .settings-panel__btn {
   display: flex;
   align-items: center;
@@ -93,7 +202,7 @@
   background-color: color-mix(in srgb, var(--accent-color) 15%, transparent);
 }
 
-/* Create file prompt */
+/* === Create file prompt === */
 .settings-panel__create-prompt {
   display: flex;
   align-items: center;
@@ -127,7 +236,7 @@
   border-color: var(--accent-color);
 }
 
-/* File list */
+/* === File list === */
 .settings-panel__file-list {
   list-style: none;
   margin: 0;
@@ -192,7 +301,7 @@
   background-color: var(--bg-hover);
 }
 
-/* Toggle switch */
+/* === Toggle switch === */
 .settings-panel__toggle {
   position: relative;
   display: inline-flex;
@@ -240,7 +349,7 @@
   background-color: #ffffff;
 }
 
-/* Spin animation for reload */
+/* === Spin animation for reload === */
 @keyframes settings-spin {
   from {
     transform: rotate(0deg);
