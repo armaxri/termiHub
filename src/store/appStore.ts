@@ -446,7 +446,8 @@ export const useAppStore = create<AppState>((set, get) => {
           tabs.push(newTab);
           return { ...leaf, tabs, activeTabId: newTab.id };
         });
-        const hsEnabled = terminalOptions?.horizontalScrolling ?? false;
+        const hsEnabled =
+          terminalOptions?.horizontalScrolling ?? get().settings.defaultHorizontalScrolling ?? false;
         const tabColor = terminalOptions?.color;
         return {
           rootPanel,

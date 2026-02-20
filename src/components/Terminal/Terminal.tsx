@@ -12,6 +12,13 @@ import { useAppStore } from "@/store/appStore";
 
 const HORIZONTAL_SCROLL_COLS = 500;
 
+const DEFAULT_FONT_FAMILY =
+  "'MesloLGS Nerd Font Mono', 'MesloLGS NF', 'CaskaydiaCove Nerd Font', 'FiraCode Nerd Font', 'Hack Nerd Font', 'Cascadia Code', 'Fira Code', Menlo, Monaco, 'Courier New', monospace";
+const DEFAULT_FONT_SIZE = 14;
+const DEFAULT_SCROLLBACK = 5000;
+const DEFAULT_CURSOR_STYLE = "block" as const;
+const DEFAULT_CURSOR_BLINK = true;
+
 /**
  * Scan the terminal buffer and return the rightmost occupied cell index.
  * Efficiently skips lines shorter than the current maximum.
@@ -237,6 +244,7 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
     // Park the element so xterm.open() has a DOM parent
     parkingRef.current?.appendChild(el);
 
+    const appSettings = useAppStore.getState().settings;
     const xterm = new XTerm({
       theme: {
         background: "#1e1e1e",
@@ -260,12 +268,12 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
         brightCyan: "#29b8db",
         brightWhite: "#e5e5e5",
       },
-      fontFamily:
-        "'MesloLGS Nerd Font Mono', 'MesloLGS NF', 'CaskaydiaCove Nerd Font', 'FiraCode Nerd Font', 'Hack Nerd Font', 'Cascadia Code', 'Fira Code', Menlo, Monaco, 'Courier New', monospace",
-      fontSize: 14,
+      fontFamily: appSettings.fontFamily || DEFAULT_FONT_FAMILY,
+      fontSize: appSettings.fontSize ?? DEFAULT_FONT_SIZE,
       lineHeight: 1.2,
-      cursorBlink: true,
-      cursorStyle: "block",
+      scrollback: appSettings.scrollbackBuffer ?? DEFAULT_SCROLLBACK,
+      cursorBlink: appSettings.cursorBlink ?? DEFAULT_CURSOR_BLINK,
+      cursorStyle: appSettings.cursorStyle ?? DEFAULT_CURSOR_STYLE,
       allowProposedApi: true,
     });
 
@@ -409,6 +417,36 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
       }
     }
   }, [horizontalScrolling, tabId]);
+
+  // React to settings changes on live terminals
+  const fontFamily = useAppStore((s) => s.settings.fontFamily);
+  const fontSize = useAppStore((s) => s.settings.fontSize);
+  const cursorBlink = useAppStore((s) => s.settings.cursorBlink);
+  const cursorStyle = useAppStore((s) => s.settings.cursorStyle);
+  const scrollbackBuffer = useAppStore((s) => s.settings.scrollbackBuffer);
+
+  useEffect(() => {
+    const xterm = xtermRef.current;
+    const fitAddon = fitAddonRef.current;
+    if (!xterm) return;
+
+    xterm.options.fontFamily = fontFamily || DEFAULT_FONT_FAMILY;
+    xterm.options.fontSize = fontSize ?? DEFAULT_FONT_SIZE;
+    xterm.options.cursorBlink = cursorBlink ?? DEFAULT_CURSOR_BLINK;
+    xterm.options.cursorStyle = cursorStyle ?? DEFAULT_CURSOR_STYLE;
+    xterm.options.scrollback = scrollbackBuffer ?? DEFAULT_SCROLLBACK;
+
+    // Re-fit after font changes
+    if (fitAddon) {
+      try {
+        if (!horizontalScrollingRef.current) {
+          fitAddon.fit();
+        }
+      } catch {
+        // Ignore fit errors
+      }
+    }
+  }, [fontFamily, fontSize, cursorBlink, cursorStyle, scrollbackBuffer]);
 
   // Terminal renders nothing — TerminalSlot handles display
   return null;
