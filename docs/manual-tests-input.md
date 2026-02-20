@@ -504,6 +504,13 @@ Each section groups related tests by feature area. Individual test items referen
 
 ## UI / Layout
 
+### No white flash on startup (PR #192)
+
+- [ ] Build and run the app (`pnpm tauri dev`) — verify the window starts with a dark background (#1e1e1e) instead of flashing white
+- [ ] Observe the full startup sequence — there should be no white → dark → white transitions
+- [ ] Open Settings > Appearance > Theme — switch to Light, then back to Dark — verify theming still works correctly
+- [ ] Restart the app with Dark theme selected — verify no white flash on launch
+
 ### Color theme switching (PR #220)
 
 - [ ] Open Settings > Appearance > Theme — select "Light" — verify all UI elements update: sidebar becomes light gray, tabs become light, text becomes dark, borders lighten
