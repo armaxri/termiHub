@@ -87,8 +87,7 @@ function resolveTheme(setting: string | undefined): ThemeDefinition {
   if (setting === "light") return lightTheme;
   if (setting === "system") {
     const prefersDark =
-      typeof window !== "undefined" &&
-      window.matchMedia("(prefers-color-scheme: dark)").matches;
+      typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches;
     return prefersDark ? darkTheme : lightTheme;
   }
   return darkTheme;
