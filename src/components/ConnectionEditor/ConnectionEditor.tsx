@@ -28,6 +28,7 @@ import {
 } from "@/components/Settings";
 import { ConnectionTerminalSettings } from "./ConnectionTerminalSettings";
 import { ConnectionAppearanceSettings } from "./ConnectionAppearanceSettings";
+import { getDefaultConfigs, getDefaultAgentConfig } from "./defaultConfigs";
 import { findLeafByTab } from "@/utils/panelTree";
 import "./ConnectionEditor.css";
 
@@ -59,53 +60,6 @@ function loadSavedCategory(): EditorCategory {
     // Ignore localStorage errors
   }
   return "connection";
-}
-
-function getDefaultConfigs(
-  defaultShell: string
-): Partial<Record<ConnectionType, ConnectionConfig>> {
-  return {
-    local: { type: "local", config: { shellType: defaultShell } as LocalShellConfig },
-    ssh: {
-      type: "ssh",
-      config: {
-        host: "",
-        port: 22,
-        username: "",
-        authMethod: "password",
-        enableX11Forwarding: false,
-      },
-    },
-    telnet: { type: "telnet", config: { host: "", port: 23 } },
-    serial: {
-      type: "serial",
-      config: {
-        port: "",
-        baudRate: 115200,
-        dataBits: 8,
-        stopBits: 1,
-        parity: "none",
-        flowControl: "none",
-      },
-    },
-    docker: {
-      type: "docker",
-      config: {
-        image: "",
-        envVars: [],
-        volumes: [],
-        removeOnExit: true,
-      },
-    },
-    "remote-session": {
-      type: "remote-session",
-      config: {
-        agentId: "",
-        sessionType: "shell",
-        persistent: false,
-      },
-    },
-  };
 }
 
 const TYPE_OPTIONS: { value: ConnectionType; label: string }[] = [
@@ -157,7 +111,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
 
   const defaultShell = useAppStore((s) => s.defaultShell);
 
-  const defaultConfigs = getDefaultConfigs(defaultShell);
+  const defaultConfigs = getDefaultConfigs(defaultShell, settings);
 
   const [name, setName] = useState(existingConnection?.name ?? existingAgent?.name ?? "");
   const folderId = existingConnection?.folderId ?? editingConnectionFolderId ?? null;
@@ -168,7 +122,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     existingConnection?.config ?? defaultConfigs.local!
   );
   const [agentConfig, setAgentConfig] = useState<RemoteAgentConfig>(
-    existingAgent?.config ?? { host: "", port: 22, username: "", authMethod: "password" }
+    existingAgent?.config ?? getDefaultAgentConfig(settings)
   );
 
   /** Agent mode: editing an existing agent, or creating new with "remote" type selected. */
@@ -219,10 +173,10 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const handleTypeChange = useCallback(
     (type: ConnectionType) => {
       setSelectedType(type);
-      const config = getDefaultConfigs(defaultShell)[type];
+      const config = getDefaultConfigs(defaultShell, settings)[type];
       if (config) setConnectionConfig(config);
     },
-    [defaultShell]
+    [defaultShell, settings]
   );
 
   const closeThisTab = useCallback(() => {
