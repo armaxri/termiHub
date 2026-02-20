@@ -9,6 +9,7 @@
   height: 100%;
   overflow: hidden;
   position: relative;
+  border-left: 1px solid var(--panel-border);
 }
 
 .split-view__terminal-area {

@@ -449,6 +449,13 @@ Each section groups related tests by feature area. Individual test items referen
 - [x] Connections and File Browser icons remain at the top
 - [x] Clicking the settings icon still toggles the sidebar settings view
 
+### Clear separation between split view panels (PR #189)
+
+- [ ] Open a split view (drag a tab to the edge of a panel) — verify a visible 1px line appears between adjacent panels
+- [ ] Single-panel mode — verify the left border blends naturally against the sidebar edge
+- [ ] Test horizontal splits — verify border appears between left and right panels
+- [ ] Test vertical splits — verify border appears between top and bottom panels
+
 ### Black bar at bottom of terminal fix (PR #130)
 
 - [ ] Terminal tabs no longer show a black bar at the bottom
