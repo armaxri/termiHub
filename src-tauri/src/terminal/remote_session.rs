@@ -93,6 +93,38 @@ impl RemoteSessionBackend {
 
                 cfg
             }
+            "ssh" => {
+                let host = config.ssh_host.as_ref().ok_or_else(|| {
+                    TerminalError::SpawnFailed("SSH session requires ssh_host".to_string())
+                })?;
+                let username = config.ssh_username.as_ref().ok_or_else(|| {
+                    TerminalError::SpawnFailed("SSH session requires ssh_username".to_string())
+                })?;
+
+                let mut cfg = serde_json::json!({
+                    "host": host,
+                    "username": username,
+                    "auth_method": config.ssh_auth_method.as_deref().unwrap_or("agent"),
+                    "cols": 80,
+                    "rows": 24,
+                    "env": { "TERM": "xterm-256color" },
+                });
+
+                if let Some(port) = config.ssh_port {
+                    cfg["port"] = serde_json::json!(port);
+                }
+                if let Some(ref password) = config.ssh_password {
+                    cfg["password"] = serde_json::Value::String(password.clone());
+                }
+                if let Some(ref key_path) = config.ssh_key_path {
+                    cfg["key_path"] = serde_json::Value::String(key_path.clone());
+                }
+                if let Some(ref shell) = config.shell {
+                    cfg["shell"] = serde_json::Value::String(shell.clone());
+                }
+
+                cfg
+            }
             _ => {
                 // Default to shell
                 let mut cfg = serde_json::json!({

@@ -140,6 +140,8 @@ impl Dispatcher {
         if docker_available {
             session_types.push("docker".to_string());
         }
+        // SSH client is always available on the agent host
+        session_types.push("ssh".to_string());
 
         let result = InitializeResult {
             protocol_version: AGENT_PROTOCOL_VERSION.to_string(),
@@ -596,6 +598,11 @@ mod tests {
         assert!(json["result"]["capabilities"]["available_serial_ports"]
             .as_array()
             .is_some());
+        // SSH is always available
+        assert!(json["result"]["capabilities"]["session_types"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("ssh")));
     }
 
     #[tokio::test]
@@ -705,6 +712,27 @@ mod tests {
         );
         let result = d.dispatch(req).await;
         let json = result.to_json();
+        assert_eq!(json["error"]["code"], errors::INVALID_CONFIGURATION);
+    }
+
+    #[tokio::test]
+    async fn session_create_ssh_requires_host() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        // SSH config without host should fail with invalid config
+        let req = make_request(
+            "session.create",
+            json!({
+                "type": "ssh",
+                "config": {"username": "dev", "auth_method": "agent"},
+                "title": "Jump session"
+            }),
+            2,
+        );
+        let result = d.dispatch(req).await;
+        let json = result.to_json();
+        // Missing required `host` field
         assert_eq!(json["error"]["code"], errors::INVALID_CONFIGURATION);
     }
 

@@ -7,6 +7,7 @@ mod protocol;
 mod serial;
 mod session;
 mod shell;
+mod ssh;
 mod state;
 
 use tokio_util::sync::CancellationToken;

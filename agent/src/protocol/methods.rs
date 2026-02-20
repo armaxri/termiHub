@@ -233,6 +233,30 @@ pub struct DockerVolumeMount {
     pub read_only: bool,
 }
 
+// ── SSH session config ─────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SshSessionConfig {
+    pub host: String,
+    pub username: String,
+    /// "key", "password", or "agent".
+    pub auth_method: String,
+    /// SSH port (default: 22).
+    pub port: Option<u16>,
+    /// Password for password auth. Requires `sshpass` on the agent host.
+    pub password: Option<String>,
+    /// Path to private key file for key-based auth.
+    pub key_path: Option<String>,
+    /// Remote shell to invoke (default: user's login shell on target).
+    pub shell: Option<String>,
+    #[serde(default = "default_cols")]
+    pub cols: u16,
+    #[serde(default = "default_rows")]
+    pub rows: u16,
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -524,5 +548,48 @@ mod tests {
         assert_eq!(v["host_path"], "/host");
         assert_eq!(v["container_path"], "/container");
         assert!(!v["read_only"].as_bool().unwrap());
+    }
+
+    #[test]
+    fn ssh_session_config_defaults() {
+        let json = json!({"host": "build.internal", "username": "dev", "auth_method": "agent"});
+        let cfg: SshSessionConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(cfg.host, "build.internal");
+        assert_eq!(cfg.username, "dev");
+        assert_eq!(cfg.auth_method, "agent");
+        assert!(cfg.port.is_none());
+        assert!(cfg.password.is_none());
+        assert!(cfg.key_path.is_none());
+        assert!(cfg.shell.is_none());
+        assert_eq!(cfg.cols, 80);
+        assert_eq!(cfg.rows, 24);
+        assert!(cfg.env.is_empty());
+    }
+
+    #[test]
+    fn ssh_session_config_full() {
+        let json = json!({
+            "host": "build.internal",
+            "username": "deploy",
+            "auth_method": "key",
+            "port": 2222,
+            "password": "secret",
+            "key_path": "/home/user/.ssh/id_ed25519",
+            "shell": "/bin/bash",
+            "cols": 120,
+            "rows": 40,
+            "env": {"TERM": "xterm-256color"}
+        });
+        let cfg: SshSessionConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(cfg.host, "build.internal");
+        assert_eq!(cfg.username, "deploy");
+        assert_eq!(cfg.auth_method, "key");
+        assert_eq!(cfg.port, Some(2222));
+        assert_eq!(cfg.password.as_deref(), Some("secret"));
+        assert_eq!(cfg.key_path.as_deref(), Some("/home/user/.ssh/id_ed25519"));
+        assert_eq!(cfg.shell.as_deref(), Some("/bin/bash"));
+        assert_eq!(cfg.cols, 120);
+        assert_eq!(cfg.rows, 40);
+        assert_eq!(cfg.env.get("TERM").unwrap(), "xterm-256color");
     }
 }
