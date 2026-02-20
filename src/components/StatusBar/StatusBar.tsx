@@ -151,7 +151,6 @@ function MonitoringStatus() {
   const refreshMonitoring = useAppStore((s) => s.refreshMonitoring);
 
   const connections = useAppStore((s) => s.connections);
-  const externalSources = useAppStore((s) => s.externalSources);
   const activeTabId = useAppStore((s) => getActiveTab(s)?.id ?? null);
   const activeTabConnectionType = useAppStore((s) => getActiveTab(s)?.connectionType ?? null);
   const activeTabConfig = useAppStore((s) => getActiveTab(s)?.config ?? undefined);
@@ -166,17 +165,8 @@ function MonitoringStatus() {
   const autoConnectFailedRef = useRef<string | null>(null);
 
   const sshConnections = useMemo(() => {
-    const result: SavedConnection[] = [];
-    for (const c of connections) {
-      if (c.config.type === "ssh") result.push(c);
-    }
-    for (const source of externalSources) {
-      for (const c of source.connections) {
-        if (c.config.type === "ssh") result.push(c);
-      }
-    }
-    return result;
-  }, [connections, externalSources]);
+    return connections.filter((c) => c.config.type === "ssh");
+  }, [connections]);
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 

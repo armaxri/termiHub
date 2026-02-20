@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
-import { FilePlus2, Plus, Trash2, RefreshCw, AlertTriangle } from "lucide-react";
+import { FilePlus2, Plus, Trash2, RefreshCw } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { ExternalFileConfig } from "@/types/connection";
 
@@ -10,7 +10,6 @@ import { ExternalFileConfig } from "@/types/connection";
  */
 export function ExternalFilesSettings() {
   const settings = useAppStore((s) => s.settings);
-  const externalSources = useAppStore((s) => s.externalSources);
   const updateSettings = useAppStore((s) => s.updateSettings);
   const reloadExternalConnections = useAppStore((s) => s.reloadExternalConnections);
   const [reloading, setReloading] = useState(false);
@@ -96,14 +95,6 @@ export function ExternalFilesSettings() {
     setReloading(false);
   }, [reloadExternalConnections]);
 
-  // Map source errors by path for display
-  const errorsByPath: Record<string, string> = {};
-  for (const source of externalSources) {
-    if (source.error) {
-      errorsByPath[source.filePath] = source.error;
-    }
-  }
-
   return (
     <div className="settings-panel__category">
       <div className="settings-panel__section">
@@ -139,7 +130,7 @@ export function ExternalFilesSettings() {
         </div>
         <p className="settings-panel__description">
           Load shared connection configs from external JSON files (e.g. from a git repo). External
-          connections appear read-only in the connection list.
+          connections appear in the unified connection list alongside local connections.
         </p>
         {showCreatePrompt && (
           <div className="settings-panel__create-prompt">
@@ -188,11 +179,6 @@ export function ExternalFilesSettings() {
                 >
                   {file.path}
                 </span>
-                {errorsByPath[file.path] && (
-                  <span className="settings-panel__file-error" title={errorsByPath[file.path]}>
-                    <AlertTriangle size={14} />
-                  </span>
-                )}
                 <button
                   className="settings-panel__file-remove"
                   onClick={() => handleRemoveFile(file.path)}

@@ -6,55 +6,57 @@ use crate::connection::config::{ConnectionFolder, SavedConnection, SavedRemoteAg
 use crate::connection::manager::{self, ConnectionManager};
 use crate::connection::settings::AppSettings;
 
-/// A loaded external connection source for the frontend.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ExternalConnectionSource {
-    pub file_path: String,
-    pub name: String,
-    pub folders: Vec<ConnectionFolder>,
-    pub connections: Vec<SavedConnection>,
-    pub error: Option<String>,
-}
-
-/// Response containing all connections, folders, and agents.
+/// Response containing all connections (unified), folders, and agents.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionData {
     pub connections: Vec<SavedConnection>,
     pub folders: Vec<ConnectionFolder>,
-    pub external_sources: Vec<ExternalConnectionSource>,
     pub agents: Vec<SavedRemoteAgent>,
+    /// Errors from loading external files (file_path -> error message).
+    pub external_errors: Vec<ExternalFileError>,
 }
 
-/// Load all saved connections, folders, and external sources.
+/// An error encountered when loading an external connection file.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalFileError {
+    pub file_path: String,
+    pub error: String,
+}
+
+/// Load all saved connections, folders, and agents (unified view).
 #[tauri::command]
 pub fn load_connections_and_folders(
     manager: State<'_, ConnectionManager>,
 ) -> Result<ConnectionData, String> {
     info!("Loading connections and folders");
     let store = manager.get_all().map_err(|e| e.to_string())?;
-    let external_sources = manager
-        .load_external_sources()
-        .into_iter()
-        .map(|s| ExternalConnectionSource {
-            file_path: s.file_path,
-            name: s.name,
-            folders: s.folders,
-            connections: s.connections,
-            error: s.error,
-        })
-        .collect();
+
+    // Flatten external connections into the main connections list
+    let external_sources = manager.load_external_sources();
+    let mut all_connections = store.connections;
+    let mut external_errors = Vec::new();
+
+    for source in external_sources {
+        if let Some(err) = source.error {
+            external_errors.push(ExternalFileError {
+                file_path: source.file_path,
+                error: err,
+            });
+        }
+        all_connections.extend(source.connections);
+    }
 
     Ok(ConnectionData {
-        connections: store.connections,
+        connections: all_connections,
         folders: store.folders,
-        external_sources,
         agents: store.agents,
+        external_errors,
     })
 }
 
-/// Save (add or update) a connection.
+/// Save (add or update) a connection, routing to the correct file based on `sourceFile`.
 #[tauri::command]
 pub fn save_connection(
     connection: SavedConnection,
@@ -62,15 +64,40 @@ pub fn save_connection(
 ) -> Result<(), String> {
     debug!(id = %connection.id, name = %connection.name, "Saving connection");
     manager
-        .save_connection(connection)
+        .save_connection_routed(connection)
         .map_err(|e| e.to_string())
 }
 
-/// Delete a connection by ID.
+/// Delete a connection by ID, optionally from an external file.
 #[tauri::command]
-pub fn delete_connection(id: String, manager: State<'_, ConnectionManager>) -> Result<(), String> {
-    info!(id, "Deleting connection");
-    manager.delete_connection(&id).map_err(|e| e.to_string())
+pub fn delete_connection(
+    id: String,
+    source_file: Option<String>,
+    manager: State<'_, ConnectionManager>,
+) -> Result<(), String> {
+    info!(id, ?source_file, "Deleting connection");
+    manager
+        .delete_connection_routed(&id, source_file.as_deref())
+        .map_err(|e| e.to_string())
+}
+
+/// Move a connection between storage files (main <-> external).
+#[tauri::command]
+pub fn move_connection_to_file(
+    connection_id: String,
+    current_source: Option<String>,
+    target_source: Option<String>,
+    manager: State<'_, ConnectionManager>,
+) -> Result<SavedConnection, String> {
+    info!(
+        connection_id,
+        ?current_source,
+        ?target_source,
+        "Moving connection to file"
+    );
+    manager
+        .move_connection_to_file(&connection_id, current_source.as_deref(), target_source)
+        .map_err(|e| e.to_string())
 }
 
 /// Save (add or update) a folder.
@@ -129,22 +156,17 @@ pub fn save_external_file(
     manager::save_external_file(&file_path, &name, folders, connections).map_err(|e| e.to_string())
 }
 
-/// Reload external connection files and return them.
+/// Reload external connection files and return flattened connections.
 #[tauri::command]
 pub fn reload_external_connections(
     manager: State<'_, ConnectionManager>,
-) -> Result<Vec<ExternalConnectionSource>, String> {
-    Ok(manager
-        .load_external_sources()
-        .into_iter()
-        .map(|s| ExternalConnectionSource {
-            file_path: s.file_path,
-            name: s.name,
-            folders: s.folders,
-            connections: s.connections,
-            error: s.error,
-        })
-        .collect())
+) -> Result<Vec<SavedConnection>, String> {
+    let sources = manager.load_external_sources();
+    let mut connections = Vec::new();
+    for source in sources {
+        connections.extend(source.connections);
+    }
+    Ok(connections)
 }
 
 /// Save (add or update) a remote agent definition.

@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Split view panels now have a visible 1px border between them, making it easier to distinguish adjacent panels (#189)
 - Active tabs now show a colored top border: bright blue in the focused panel, dimmed in unfocused panels, following VS Code's tab highlight pattern (#190)
+- External connection files now display in a unified tree alongside local connections instead of separate sections; storage location is configurable via an Advanced dropdown in the connection editor (#210)
 
 ### Added
 

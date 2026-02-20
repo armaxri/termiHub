@@ -32,6 +32,11 @@ pub struct SavedConnection {
     pub folder_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal_options: Option<TerminalOptions>,
+    /// Runtime-only: which external file this connection was loaded from.
+    /// `None` = main connections.json, `Some(path)` = external file.
+    /// Stripped before writing to disk.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub source_file: Option<String>,
 }
 
 /// A folder for organizing connections.
@@ -103,6 +108,7 @@ mod tests {
             }),
             folder_id: None,
             terminal_options: None,
+            source_file: None,
         };
         let json = serde_json::to_string(&conn).unwrap();
         let deserialized: SavedConnection = serde_json::from_str(&json).unwrap();
@@ -128,6 +134,7 @@ mod tests {
             }),
             folder_id: Some("folder-1".to_string()),
             terminal_options: None,
+            source_file: None,
         };
         let json = serde_json::to_string(&conn).unwrap();
         let deserialized: SavedConnection = serde_json::from_str(&json).unwrap();
@@ -155,6 +162,7 @@ mod tests {
             }),
             folder_id: None,
             terminal_options: None,
+            source_file: None,
         };
         let json = serde_json::to_string(&conn).unwrap();
         let deserialized: SavedConnection = serde_json::from_str(&json).unwrap();
@@ -176,6 +184,7 @@ mod tests {
             }),
             folder_id: None,
             terminal_options: None,
+            source_file: None,
         };
         let json = serde_json::to_string(&conn).unwrap();
         let deserialized: SavedConnection = serde_json::from_str(&json).unwrap();
@@ -296,6 +305,7 @@ mod tests {
                 color: None,
                 ..Default::default()
             }),
+            source_file: None,
         };
         let json: serde_json::Value = serde_json::to_value(&conn).unwrap();
         // Check camelCase renaming
@@ -305,5 +315,41 @@ mod tests {
         let config = json.get("config").unwrap();
         assert_eq!(config.get("type").unwrap(), "local");
         assert!(config.get("config").is_some());
+        // source_file: None should be omitted from JSON
+        assert!(json.get("sourceFile").is_none());
+    }
+
+    #[test]
+    fn source_file_included_when_set() {
+        let conn = SavedConnection {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            config: ConnectionConfig::Local(LocalShellConfig {
+                shell_type: "bash".to_string(),
+                initial_command: None,
+                starting_directory: None,
+            }),
+            folder_id: None,
+            terminal_options: None,
+            source_file: Some("/path/to/external.json".to_string()),
+        };
+        let json: serde_json::Value = serde_json::to_value(&conn).unwrap();
+        assert_eq!(
+            json.get("sourceFile").unwrap().as_str().unwrap(),
+            "/path/to/external.json"
+        );
+    }
+
+    #[test]
+    fn source_file_defaults_to_none_on_deserialize() {
+        // JSON without sourceFile should deserialize with source_file = None
+        let json = r#"{
+            "id": "test",
+            "name": "Test",
+            "config": {"type": "local", "config": {"shellType": "bash"}},
+            "folderId": null
+        }"#;
+        let conn: SavedConnection = serde_json::from_str(json).unwrap();
+        assert!(conn.source_file.is_none());
     }
 }
