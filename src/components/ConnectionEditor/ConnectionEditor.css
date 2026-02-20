@@ -212,3 +212,28 @@
   flex-shrink: 0;
   border: 1px solid var(--border-primary);
 }
+
+/* Advanced section */
+.connection-editor__advanced {
+  margin-top: var(--spacing-xs);
+}
+
+.connection-editor__advanced-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  padding: var(--spacing-xs) 0;
+}
+
+.connection-editor__advanced-toggle:hover {
+  color: var(--text-primary);
+}
+
+.connection-editor__advanced-content {
+  padding-left: var(--spacing-md);
+}
