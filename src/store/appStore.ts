@@ -251,6 +251,9 @@ interface AppState {
   tabHorizontalScrolling: Record<string, boolean>;
   setTabHorizontalScrolling: (tabId: string, enabled: boolean) => void;
 
+  // Per-tab terminal options (per-connection overrides)
+  tabTerminalOptions: Record<string, TerminalOptions>;
+
   // Rename tab
   renameTab: (tabId: string, newTitle: string) => void;
 
@@ -451,11 +454,23 @@ export const useAppStore = create<AppState>((set, get) => {
           get().settings.defaultHorizontalScrolling ??
           false;
         const tabColor = terminalOptions?.color;
+        // Store per-tab terminal options (excluding horizontalScrolling and color which are tracked separately)
+        const tabOpts: TerminalOptions = {};
+        if (terminalOptions?.fontFamily) tabOpts.fontFamily = terminalOptions.fontFamily;
+        if (terminalOptions?.fontSize != null) tabOpts.fontSize = terminalOptions.fontSize;
+        if (terminalOptions?.scrollbackBuffer != null)
+          tabOpts.scrollbackBuffer = terminalOptions.scrollbackBuffer;
+        if (terminalOptions?.cursorStyle) tabOpts.cursorStyle = terminalOptions.cursorStyle;
+        if (terminalOptions?.cursorBlink != null) tabOpts.cursorBlink = terminalOptions.cursorBlink;
+        const hasTabOpts = Object.keys(tabOpts).length > 0;
         return {
           rootPanel,
           activePanelId: targetPanelId,
           tabHorizontalScrolling: { ...state.tabHorizontalScrolling, [newTab.id]: hsEnabled },
           ...(tabColor ? { tabColors: { ...state.tabColors, [newTab.id]: tabColor } } : {}),
+          ...(hasTabOpts
+            ? { tabTerminalOptions: { ...state.tabTerminalOptions, [newTab.id]: tabOpts } }
+            : {}),
         };
       }),
 
@@ -625,6 +640,7 @@ export const useAppStore = create<AppState>((set, get) => {
         const { [tabId]: _removedHs, ...remainingHs } = state.tabHorizontalScrolling;
         const { [tabId]: _removedDirty, ...remainingDirty } = state.editorDirtyTabs;
         const { [tabId]: _removedColor, ...remainingColors } = state.tabColors;
+        const { [tabId]: _removedOpts, ...remainingOpts } = state.tabTerminalOptions;
 
         let rootPanel = updateLeaf(state.rootPanel, panelId, (leaf) =>
           removeTabFromLeaf(leaf, tabId)
@@ -646,6 +662,7 @@ export const useAppStore = create<AppState>((set, get) => {
             tabHorizontalScrolling: remainingHs,
             editorDirtyTabs: remainingDirty,
             tabColors: remainingColors,
+            tabTerminalOptions: remainingOpts,
           };
         }
 
@@ -655,6 +672,7 @@ export const useAppStore = create<AppState>((set, get) => {
           tabHorizontalScrolling: remainingHs,
           editorDirtyTabs: remainingDirty,
           tabColors: remainingColors,
+          tabTerminalOptions: remainingOpts,
         };
       }),
 
@@ -1263,6 +1281,9 @@ export const useAppStore = create<AppState>((set, get) => {
       set((state) => ({
         tabHorizontalScrolling: { ...state.tabHorizontalScrolling, [tabId]: enabled },
       })),
+
+    // Per-tab terminal options
+    tabTerminalOptions: {},
 
     // Rename tab
     renameTab: (tabId, newTitle) =>

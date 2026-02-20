@@ -245,6 +245,7 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
     parkingRef.current?.appendChild(el);
 
     const appSettings = useAppStore.getState().settings;
+    const tabOpts = useAppStore.getState().tabTerminalOptions[tabId];
     const xterm = new XTerm({
       theme: {
         background: "#1e1e1e",
@@ -268,12 +269,12 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
         brightCyan: "#29b8db",
         brightWhite: "#e5e5e5",
       },
-      fontFamily: appSettings.fontFamily || DEFAULT_FONT_FAMILY,
-      fontSize: appSettings.fontSize ?? DEFAULT_FONT_SIZE,
+      fontFamily: tabOpts?.fontFamily || appSettings.fontFamily || DEFAULT_FONT_FAMILY,
+      fontSize: tabOpts?.fontSize ?? appSettings.fontSize ?? DEFAULT_FONT_SIZE,
       lineHeight: 1.2,
-      scrollback: appSettings.scrollbackBuffer ?? DEFAULT_SCROLLBACK,
-      cursorBlink: appSettings.cursorBlink ?? DEFAULT_CURSOR_BLINK,
-      cursorStyle: appSettings.cursorStyle ?? DEFAULT_CURSOR_STYLE,
+      scrollback: tabOpts?.scrollbackBuffer ?? appSettings.scrollbackBuffer ?? DEFAULT_SCROLLBACK,
+      cursorBlink: tabOpts?.cursorBlink ?? appSettings.cursorBlink ?? DEFAULT_CURSOR_BLINK,
+      cursorStyle: tabOpts?.cursorStyle ?? appSettings.cursorStyle ?? DEFAULT_CURSOR_STYLE,
       allowProposedApi: true,
     });
 
@@ -418,23 +419,25 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
     }
   }, [horizontalScrolling, tabId]);
 
-  // React to settings changes on live terminals
+  // React to settings changes on live terminals (per-tab overrides take precedence)
   const fontFamily = useAppStore((s) => s.settings.fontFamily);
   const fontSize = useAppStore((s) => s.settings.fontSize);
   const cursorBlink = useAppStore((s) => s.settings.cursorBlink);
   const cursorStyle = useAppStore((s) => s.settings.cursorStyle);
   const scrollbackBuffer = useAppStore((s) => s.settings.scrollbackBuffer);
+  const tabTermOpts = useAppStore((s) => s.tabTerminalOptions[tabId]);
 
   useEffect(() => {
     const xterm = xtermRef.current;
     const fitAddon = fitAddonRef.current;
     if (!xterm) return;
 
-    xterm.options.fontFamily = fontFamily || DEFAULT_FONT_FAMILY;
-    xterm.options.fontSize = fontSize ?? DEFAULT_FONT_SIZE;
-    xterm.options.cursorBlink = cursorBlink ?? DEFAULT_CURSOR_BLINK;
-    xterm.options.cursorStyle = cursorStyle ?? DEFAULT_CURSOR_STYLE;
-    xterm.options.scrollback = scrollbackBuffer ?? DEFAULT_SCROLLBACK;
+    xterm.options.fontFamily = tabTermOpts?.fontFamily || fontFamily || DEFAULT_FONT_FAMILY;
+    xterm.options.fontSize = tabTermOpts?.fontSize ?? fontSize ?? DEFAULT_FONT_SIZE;
+    xterm.options.cursorBlink = tabTermOpts?.cursorBlink ?? cursorBlink ?? DEFAULT_CURSOR_BLINK;
+    xterm.options.cursorStyle = tabTermOpts?.cursorStyle ?? cursorStyle ?? DEFAULT_CURSOR_STYLE;
+    xterm.options.scrollback =
+      tabTermOpts?.scrollbackBuffer ?? scrollbackBuffer ?? DEFAULT_SCROLLBACK;
 
     // Re-fit after font changes
     if (fitAddon) {
@@ -446,7 +449,7 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
         // Ignore fit errors
       }
     }
-  }, [fontFamily, fontSize, cursorBlink, cursorStyle, scrollbackBuffer]);
+  }, [fontFamily, fontSize, cursorBlink, cursorStyle, scrollbackBuffer, tabTermOpts, tabId]);
 
   // Terminal renders nothing — TerminalSlot handles display
   return null;
