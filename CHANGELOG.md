@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Dark, Light, and System color theme support — switch via Settings > Appearance > Theme; System mode auto-follows the OS preference (#193)
+
 ### Fixed
 
 - Vertically split panels can now be resized — the resize handle between top/bottom panels was invisible due to missing CSS height (#213)
