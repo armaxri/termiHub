@@ -1,4 +1,4 @@
-# TermiHub Architecture Documentation
+# termiHub Architecture Documentation
 
 > Based on the [arc42](https://arc42.org) template for software architecture documentation.
 
@@ -25,7 +25,7 @@
 
 ### Requirements Overview
 
-**TermiHub** is a modern, cross-platform terminal hub designed for embedded development workflows. It provides a VS Code-like interface for managing multiple terminal connections with support for split views, drag-and-drop tabs, and organized connection management.
+**termiHub** is a modern, cross-platform terminal hub designed for embedded development workflows. It provides a VS Code-like interface for managing multiple terminal connections with support for split views, drag-and-drop tabs, and organized connection management.
 
 **Core capabilities:**
 
@@ -93,13 +93,13 @@
 
 ### Business Context
 
-The following diagram shows TermiHub in its operational environment — an embedded development workflow where a developer interacts with multiple systems simultaneously.
+The following diagram shows termiHub in its operational environment — an embedded development workflow where a developer interacts with multiple systems simultaneously.
 
 ```mermaid
 graph TB
     DEV[Developer]
 
-    subgraph "TermiHub"
+    subgraph "termiHub"
         APP[Desktop Application]
     end
 
@@ -130,7 +130,7 @@ graph TB
 
 ```mermaid
 graph LR
-    subgraph "TermiHub Process"
+    subgraph "termiHub Process"
         WV[WebView<br/>React UI]
         IPC[Tauri IPC<br/>Commands + Events]
         RUST[Rust Backend]
@@ -469,7 +469,7 @@ sequenceDiagram
 ```mermaid
 graph TB
     subgraph "Developer Machine"
-        subgraph "TermiHub Application"
+        subgraph "termiHub Application"
             WV[WebView / React UI]
             RS[Rust Backend]
         end
@@ -514,7 +514,7 @@ The `scripts/` directory provides cross-platform helper scripts (`.sh` + `.cmd` 
 ```mermaid
 graph TB
     subgraph "Developer Machine"
-        APP[TermiHub Desktop]
+        APP[termiHub Desktop]
     end
 
     subgraph "Raspberry Pi"
@@ -717,7 +717,7 @@ graph TD
 | Connection failure | Reliability | SSH server becomes unreachable | Error shown in terminal, app stays stable | No crash, clear error message |
 | New protocol | Extensibility | Developer adds WebSocket backend | Only new files + manager registration needed | < 3 existing files modified |
 | Cross-platform use | Portability | User runs on Linux after using on Windows | Same features and behavior | All connection types available |
-| First-time user | Usability | User familiar with VS Code opens TermiHub | Can create and manage terminals | No documentation needed for basic use |
+| First-time user | Usability | User familiar with VS Code opens termiHub | Can create and manage terminals | No documentation needed for basic use |
 
 ---
 

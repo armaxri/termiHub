@@ -12,12 +12,12 @@ if [ ! -d node_modules ]; then
     echo ""
 fi
 
-echo "Building TermiHub for production..."
+echo "Building termiHub for production..."
 pnpm tauri build
 
 # --- Cross-compile agent binaries for Linux (macOS only) ---
 #
-# TermiHub connects to remote hosts (Raspberry Pi, servers) that need the
+# termiHub connects to remote hosts (Raspberry Pi, servers) that need the
 # agent binary.  Building both architectures alongside the desktop app
 # means users always have matching binaries ready for upload.
 #

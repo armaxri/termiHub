@@ -1,8 +1,12 @@
+mod buffer;
+mod daemon;
 mod handler;
 mod io;
 mod protocol;
 mod serial;
 mod session;
+mod shell;
+mod state;
 
 use tokio_util::sync::CancellationToken;
 use tracing::info;
@@ -17,6 +21,7 @@ fn print_usage() {
     eprintln!("Modes:");
     eprintln!("  --stdio              Run in stdio mode (NDJSON over stdin/stdout)");
     eprintln!("  --listen [addr]      Run in TCP listener mode (default: {DEFAULT_LISTEN_ADDR})");
+    eprintln!("  --daemon <id>        Run as a session daemon (internal use only)");
     eprintln!();
     eprintln!("Options:");
     eprintln!("  --version   Print version and exit");
@@ -62,6 +67,16 @@ async fn main() -> anyhow::Result<()> {
                 VERSION, addr
             );
             io::tcp::run_tcp_listener(addr, shutdown).await
+        }
+        #[cfg(unix)]
+        "--daemon" => {
+            init_tracing();
+
+            let session_id = args.get(2).unwrap_or_else(|| {
+                eprintln!("--daemon requires a session ID argument");
+                std::process::exit(1);
+            });
+            daemon::process::run_daemon(session_id)
         }
         other => {
             eprintln!("Unknown option: {}", other);

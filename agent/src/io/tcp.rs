@@ -28,6 +28,10 @@ pub async fn run_tcp_listener(addr: &str, shutdown: CancellationToken) -> anyhow
     let session_manager = Arc::new(SessionManager::new(notification_tx));
     let definition_store = Arc::new(DefinitionStore::new(DefinitionStore::default_path()));
 
+    // Recover sessions from previous agent run
+    #[cfg(unix)]
+    session_manager.recover_sessions().await;
+
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => {

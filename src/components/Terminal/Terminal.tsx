@@ -243,7 +243,7 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
         foreground: "#cccccc",
         cursor: "#aeafad",
         selectionBackground: "rgba(38, 79, 120, 0.5)",
-        black: "#000000",
+        black: "#1e1e1e",
         red: "#cd3131",
         green: "#0dbc79",
         yellow: "#e5e510",

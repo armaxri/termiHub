@@ -2,6 +2,8 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 
 use crate::serial::backend::SerialBackend;
+#[cfg(unix)]
+use crate::shell::backend::ShellBackend;
 
 /// The type of session running on the agent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -66,6 +68,9 @@ pub struct SessionInfo {
     pub attached: bool,
     /// Handle to the serial backend, if this is a serial session.
     pub serial_backend: Option<SerialBackend>,
+    /// Handle to the shell backend, if this is a shell session (Unix only).
+    #[cfg(unix)]
+    pub shell_backend: Option<ShellBackend>,
 }
 
 /// Read-only snapshot of session state, returned from list/create.

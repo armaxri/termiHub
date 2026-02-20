@@ -21,6 +21,11 @@ pub async fn run_stdio_loop(shutdown: CancellationToken) -> anyhow::Result<()> {
 
     let session_manager = Arc::new(SessionManager::new(notification_tx));
     let definition_store = Arc::new(DefinitionStore::new(DefinitionStore::default_path()));
+
+    // Recover sessions from previous agent run
+    #[cfg(unix)]
+    session_manager.recover_sessions().await;
+
     let mut dispatcher = Dispatcher::new(session_manager.clone(), definition_store);
 
     let stdin = tokio::io::stdin();
