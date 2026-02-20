@@ -14,7 +14,7 @@ if not exist node_modules (
 REM Kill any process occupying the Vite dev server port (leftover from a previous run)
 set DEV_PORT=1420
 for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":%DEV_PORT% " ^| findstr "LISTENING"') do (
-    echo Port %DEV_PORT% in use (PID %%a), killing...
+    echo Port %DEV_PORT% in use ^(PID %%a^), killing...
     taskkill /PID %%a /F >nul 2>&1
 )
 
