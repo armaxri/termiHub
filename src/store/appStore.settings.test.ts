@@ -26,12 +26,12 @@ vi.mock("@/services/storage", () => ({
 const mockMonitoringClose = vi.fn((_sessionId: string) => Promise.resolve());
 const mockSftpClose = vi.fn((_sessionId: string) => Promise.resolve());
 
-const mockApplyTheme = vi.fn();
-const mockOnThemeChange = vi.fn(() => vi.fn());
+const mockApplyTheme = vi.fn<(setting: string | undefined) => void>();
+const mockOnThemeChange = vi.fn<(callback: () => void) => () => void>(() => vi.fn());
 
 vi.mock("@/themes", () => ({
-  applyTheme: (...args: unknown[]) => mockApplyTheme(...args),
-  onThemeChange: (...args: unknown[]) => mockOnThemeChange(...args),
+  applyTheme: (setting: string | undefined) => mockApplyTheme(setting),
+  onThemeChange: (callback: () => void) => mockOnThemeChange(callback),
 }));
 
 vi.mock("@/services/api", () => ({
