@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from "react";
-import { Plus, Columns2, X } from "lucide-react";
+import { Plus, Columns2, X, PanelLeft } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { useAppStore } from "@/store/appStore";
 import { TerminalTab } from "@/types/terminal";
@@ -61,6 +61,11 @@ export function TerminalView() {
   const rootPanel = useAppStore((s) => s.rootPanel);
   const activePanelId = useAppStore((s) => s.activePanelId);
   const removePanel = useAppStore((s) => s.removePanel);
+  const toggleSidebar = useAppStore((s) => s.toggleSidebar);
+  const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
+
+  const isMac = navigator.platform.toUpperCase().includes("MAC");
+  const sidebarToggleTitle = `Toggle Sidebar (${isMac ? "Cmd" : "Ctrl"}+B)`;
 
   const allLeaves = getAllLeaves(rootPanel);
 
@@ -83,6 +88,14 @@ export function TerminalView() {
       <div className="terminal-view">
         <div className="terminal-view__toolbar">
           <div className="terminal-view__toolbar-left">
+            <button
+              className={`terminal-view__toolbar-btn${!sidebarCollapsed ? " terminal-view__toolbar-btn--active" : ""}`}
+              onClick={toggleSidebar}
+              title={sidebarToggleTitle}
+              data-testid="terminal-view-toggle-sidebar"
+            >
+              <PanelLeft size={16} />
+            </button>
             <span className="terminal-view__toolbar-title">Terminal</span>
           </div>
           <div className="terminal-view__toolbar-actions">
