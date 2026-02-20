@@ -117,7 +117,7 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
   const { register, unregister, parkingRef } = useTerminalRegistry();
 
   const setupTerminal = useCallback(
-    async (xterm: XTerm, fitAddon: FitAddon) => {
+    async (xterm: XTerm, fitAddon: FitAddon, isCanceled: () => boolean) => {
       // Cancel any pending session close from a StrictMode unmount cycle
       if (pendingCloseTimerRef.current !== null) {
         clearTimeout(pendingCloseTimerRef.current);
@@ -129,7 +129,20 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
         // creating the backend session — otherwise early output events
         // emitted by the PTY reader thread are silently lost.
         await terminalDispatcher.init();
+        if (isCanceled()) return;
+
         const sessionId = existingSessionId ?? (await createTerminal(config));
+
+        // Guard against StrictMode race: if this setup was canceled while
+        // the async createTerminal was in-flight, close the orphaned session
+        // and bail out — the remounted effect will create its own session.
+        if (isCanceled()) {
+          if (!existingSessionId) {
+            closeTerminal(sessionId);
+          }
+          return;
+        }
+
         sessionIdRef.current = sessionId;
 
         // Output batching: buffer chunks and flush in a single RAF callback
@@ -236,6 +249,12 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
 
   // Create the terminal element, xterm instance, and register
   useEffect(() => {
+    // Track whether this effect invocation is still active. In React StrictMode,
+    // the effect runs twice (mount → unmount → mount). The canceled flag prevents
+    // a stale async setupTerminal from overwriting the session created by the
+    // second mount, which would send input to the wrong backend session.
+    let canceled = false;
+
     // Create an imperative DOM element for xterm (not managed by React rendering)
     const el = document.createElement("div");
     el.style.position = "absolute";
@@ -294,7 +313,7 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
     fitAddonRef.current = fitAddon;
 
     // Wire to backend
-    setupTerminal(xterm, fitAddon);
+    setupTerminal(xterm, fitAddon, () => canceled);
 
     // ResizeObserver follows the element even when reparented
     const resizeObserver = new ResizeObserver(() => {
@@ -317,6 +336,7 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
     resizeObserver.observe(el);
 
     return () => {
+      canceled = true;
       resizeObserver.disconnect();
       osc7Disposable.dispose();
       unregister(tabId);
@@ -332,7 +352,7 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
     };
   }, [tabId, setupTerminal, register, unregister, parkingRef]);
 
-  // Re-fit when visibility changes
+  // Re-fit and focus when visibility changes
   useEffect(() => {
     if (isVisible && fitAddonRef.current && xtermRef.current && terminalElRef.current) {
       try {
@@ -344,6 +364,7 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
       } catch {
         // Ignore
       }
+      xtermRef.current.focus();
     }
   }, [isVisible]);
 

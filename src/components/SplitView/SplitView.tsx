@@ -327,7 +327,7 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
  */
 function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: boolean }) {
   const slotRef = useRef<HTMLDivElement>(null);
-  const { getElement, parkingRef } = useTerminalRegistry();
+  const { getElement, focusTerminal, parkingRef } = useTerminalRegistry();
   const tabColor = useAppStore((s) => s.tabColors[tabId]);
 
   useEffect(() => {
@@ -357,6 +357,13 @@ function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: boolean 
       }
     };
   }, [tabId, getElement, parkingRef]);
+
+  // Focus the terminal when it becomes visible (tab activation or initial creation)
+  useEffect(() => {
+    if (isVisible) {
+      focusTerminal(tabId);
+    }
+  }, [isVisible, tabId, focusTerminal]);
 
   return (
     <div
