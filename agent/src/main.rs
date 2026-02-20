@@ -1,6 +1,7 @@
 mod buffer;
 mod daemon;
 mod docker;
+mod files;
 mod handler;
 mod io;
 mod protocol;
