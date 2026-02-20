@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { getVersion } from "@tauri-apps/api/app";
+import { Settings2, Palette, TerminalSquare, FileJson } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { AppSettings } from "@/types/connection";
-import { SettingsCategory } from "./settingsRegistry";
+import { SettingsCategory, CATEGORIES } from "./settingsRegistry";
 import { filterSettings, getMatchingCategories } from "./settingsRegistry";
 import { SettingsNav } from "./SettingsNav";
 import { SettingsSearch } from "./SettingsSearch";
@@ -11,6 +12,13 @@ import { AppearanceSettings } from "./AppearanceSettings";
 import { TerminalSettings } from "./TerminalSettings";
 import { ExternalFilesSettings } from "./ExternalFilesSettings";
 import "./SettingsPanel.css";
+
+const SETTINGS_ICONS: Record<SettingsCategory, React.ComponentType<{ size?: number }>> = {
+  general: Settings2,
+  appearance: Palette,
+  terminal: TerminalSquare,
+  "external-files": FileJson,
+};
 
 const STORAGE_KEY = "termihub-settings-category";
 const SAVE_DEBOUNCE_MS = 300;
@@ -190,6 +198,8 @@ export function SettingsPanel({ isVisible }: SettingsPanelProps) {
       <SettingsSearch query={searchQuery} onQueryChange={setSearchQuery} />
       <div className={`settings-panel__body ${isCompact ? "settings-panel__body--compact" : ""}`}>
         <SettingsNav
+          categories={CATEGORIES}
+          iconMap={SETTINGS_ICONS}
           activeCategory={activeCategory}
           onCategoryChange={handleCategoryChange}
           highlightedCategories={highlightedCategories}
