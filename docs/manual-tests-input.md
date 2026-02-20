@@ -8,6 +8,14 @@ Each section groups related tests by feature area. Individual test items referen
 
 ## Local Shell
 
+### Terminal input works on new connections (PR #198)
+
+- [ ] Open a new local PowerShell terminal — verify keyboard input works immediately without needing to click the terminal area
+- [ ] Rapidly create 3–4 local terminals in a row — verify all accept keyboard input when switched to
+- [ ] Switch between multiple terminal tabs — verify the active terminal receives keyboard input each time
+- [ ] Create an SSH connection to a remote host — verify keyboard input works immediately
+- [ ] Split the panel and create a terminal in each split — verify input works in both
+
 ### No initial output flash for WSL/SSH terminals (PR #175)
 
 - [ ] Create a WSL connection — verify no welcome banner or setup commands flash before the prompt appears
