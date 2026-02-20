@@ -1,4 +1,5 @@
 mod buffer;
+mod daemon;
 mod handler;
 mod io;
 mod protocol;
