@@ -32,6 +32,11 @@ export interface ConnectionEditorMeta {
 export interface TerminalOptions {
   horizontalScrolling?: boolean;
   color?: string;
+  fontFamily?: string;
+  fontSize?: number;
+  scrollbackBuffer?: number;
+  cursorStyle?: "block" | "underline" | "bar";
+  cursorBlink?: boolean;
 }
 
 export interface LocalShellConfig {
