@@ -291,6 +291,14 @@ Each section groups related tests by feature area. Individual test items referen
 - [ ] Click "Export Connections" — file save dialog, saves JSON
 - [x] Connection list toolbar no longer has Import/Export buttons (only New Folder and New Connection remain)
 
+### SSH key path browse button (PR #205)
+
+- [ ] Create or edit an SSH connection, set auth method to "Key", click "..." button — verify a native file dialog opens defaulting to `~/.ssh`
+- [ ] Select a key file — verify the path populates in the input field
+- [ ] Cancel the dialog — verify the input field remains unchanged
+- [ ] Repeat the above for Agent connection settings
+- [ ] Manually type a path in the input field — verify it still works as before
+
 ### Auto-extract port from host field (PR #195)
 
 - [ ] Enter `192.168.0.2:2222` in the SSH host field, tab out — verify host becomes `192.168.0.2` and port becomes `2222`
