@@ -37,7 +37,7 @@ The remote session management protocol enables the termiHub desktop app to manag
 
 ### Non-Goals
 
-- File transfer (handled by existing SFTP infrastructure)
+- File transfer (handled by `files.*` RPC methods and existing SFTP infrastructure)
 - Agent discovery (the user configures the SSH host manually)
 - Multi-user access to the same agent (single-user assumed)
 
@@ -896,6 +896,295 @@ Delete a folder. Connections and subfolders inside it are moved to the root leve
 
 ---
 
+### `files.list`
+
+List directory contents, scoped to a connection. When `connection_id` is omitted the agent's local filesystem is used.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "files.list",
+  "params": {
+    "connection_id": "conn-a1b2c3d4",
+    "path": "/home/user"
+  },
+  "id": 17
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "entries": [
+      {
+        "name": "readme.md",
+        "path": "/home/user/readme.md",
+        "isDirectory": false,
+        "size": 1024,
+        "modified": "2026-02-20T10:00:00Z",
+        "permissions": "rw-r--r--"
+      },
+      {
+        "name": "src",
+        "path": "/home/user/src",
+        "isDirectory": true,
+        "size": 4096,
+        "modified": "2026-02-19T14:30:00Z",
+        "permissions": "rwxr-xr-x"
+      }
+    ]
+  },
+  "id": 17
+}
+```
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `connection_id` | `string?` | Connection to scope the operation to. Omit for local filesystem |
+| `path` | `string` | Directory path to list |
+
+| Result Field | Type | Description |
+|-------------|------|-------------|
+| `entries` | `FileEntry[]` | Directory contents |
+| `entries[].name` | `string` | File or directory name |
+| `entries[].path` | `string` | Full path |
+| `entries[].isDirectory` | `boolean` | Whether entry is a directory |
+| `entries[].size` | `integer` | Size in bytes |
+| `entries[].modified` | `string` | ISO 8601 last-modified timestamp |
+| `entries[].permissions` | `string?` | Unix "rwxrwxrwx" format, or `null` when unavailable |
+
+**Errors:**
+- `-32010` File not found (path does not exist)
+- `-32011` Permission denied
+- `-32012` File operation failed
+- `-32013` File browsing not supported (e.g., serial connections)
+
+---
+
+### `files.read`
+
+Read a file's content, returned as base64-encoded data.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "files.read",
+  "params": {
+    "connection_id": null,
+    "path": "/home/user/readme.md"
+  },
+  "id": 18
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "data": "IyBSZWFkbWUKClRoaXMgaXMgYSByZWFkbWUgZmlsZS4=",
+    "size": 31
+  },
+  "id": 18
+}
+```
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `connection_id` | `string?` | Connection to scope the operation to. Omit or `null` for local filesystem |
+| `path` | `string` | File path to read |
+
+| Result Field | Type | Description |
+|-------------|------|-------------|
+| `data` | `string` | Base64-encoded file content |
+| `size` | `integer` | File size in bytes |
+
+**Errors:**
+- `-32010` File not found
+- `-32011` Permission denied
+- `-32012` File operation failed
+- `-32013` File browsing not supported
+
+---
+
+### `files.write`
+
+Write content to a file. Content is base64-encoded.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "files.write",
+  "params": {
+    "path": "/home/user/output.txt",
+    "data": "SGVsbG8gV29ybGQh"
+  },
+  "id": 19
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {},
+  "id": 19
+}
+```
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `connection_id` | `string?` | Connection to scope the operation to. Omit for local filesystem |
+| `path` | `string` | File path to write |
+| `data` | `string` | Base64-encoded content to write |
+
+**Errors:**
+- `-32011` Permission denied
+- `-32012` File operation failed
+- `-32013` File browsing not supported
+
+---
+
+### `files.delete`
+
+Delete a file or directory.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "files.delete",
+  "params": {
+    "path": "/home/user/old-file.txt",
+    "isDirectory": false
+  },
+  "id": 20
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {},
+  "id": 20
+}
+```
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `connection_id` | `string?` | Connection to scope the operation to. Omit for local filesystem |
+| `path` | `string` | Path to delete |
+| `isDirectory` | `boolean` | `true` for directories (recursive delete), `false` for files |
+
+**Errors:**
+- `-32010` File not found
+- `-32011` Permission denied
+- `-32012` File operation failed
+- `-32013` File browsing not supported
+
+---
+
+### `files.rename`
+
+Rename or move a file or directory.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "files.rename",
+  "params": {
+    "old_path": "/home/user/old-name.txt",
+    "new_path": "/home/user/new-name.txt"
+  },
+  "id": 21
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {},
+  "id": 21
+}
+```
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `connection_id` | `string?` | Connection to scope the operation to. Omit for local filesystem |
+| `old_path` | `string` | Current path |
+| `new_path` | `string` | New path |
+
+**Errors:**
+- `-32010` File not found
+- `-32011` Permission denied
+- `-32012` File operation failed
+- `-32013` File browsing not supported
+
+---
+
+### `files.stat`
+
+Get metadata for a single file or directory.
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "files.stat",
+  "params": {
+    "connection_id": "conn-a1b2c3d4",
+    "path": "/var/log"
+  },
+  "id": 22
+}
+```
+
+**Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "name": "log",
+    "path": "/var/log",
+    "isDirectory": true,
+    "size": 4096,
+    "modified": "2026-02-20T10:00:00Z",
+    "permissions": "rwxr-xr-x"
+  },
+  "id": 22
+}
+```
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `connection_id` | `string?` | Connection to scope the operation to. Omit for local filesystem |
+| `path` | `string` | Path to stat |
+
+| Result Field | Type | Description |
+|-------------|------|-------------|
+| `name` | `string` | File or directory name |
+| `path` | `string` | Full path |
+| `isDirectory` | `boolean` | Whether entry is a directory |
+| `size` | `integer` | Size in bytes |
+| `modified` | `string` | ISO 8601 last-modified timestamp |
+| `permissions` | `string?` | Unix "rwxrwxrwx" format, or `null` when unavailable |
+
+**Errors:**
+- `-32010` File not found
+- `-32011` Permission denied
+- `-32012` File operation failed
+- `-32013` File browsing not supported
+
+---
+
 ## Notifications
 
 Notifications are messages from the agent to the desktop with **no `id` field**. The desktop MUST NOT send a response.
@@ -1044,8 +1333,13 @@ For serial sessions:
 | `-32004` | Session limit reached | Agent has reached `max_sessions` |
 | `-32005` | Invalid configuration | Invalid config values (e.g., invalid baud rate, negative cols/rows) |
 | `-32006` | Session not running | Session exists but has exited |
+| `-32007` | Not initialized | Agent has not been initialized yet (must call `initialize` first) |
 | `-32008` | Connection not found | No connection with the given ID |
 | `-32009` | Folder not found | No folder with the given ID |
+| `-32010` | File not found | The file or directory was not found |
+| `-32011` | Permission denied | Permission denied for the requested file operation |
+| `-32012` | File operation failed | A file operation failed (I/O error, docker exec failure, etc.) |
+| `-32013` | File browsing not supported | File browsing is not supported for this connection type (e.g., serial) |
 
 ---
 
