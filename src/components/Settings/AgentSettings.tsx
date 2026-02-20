@@ -1,8 +1,6 @@
-import { useCallback } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
 import { RemoteAgentConfig } from "@/types/terminal";
-import { getHomeDir } from "@/services/api";
 import { parseHostPort } from "@/utils/parseHostPort";
+import { KeyPathInput } from "./KeyPathInput";
 
 interface AgentSettingsProps {
   config: RemoteAgentConfig;
@@ -14,24 +12,6 @@ interface AgentSettingsProps {
  * No session details — just the SSH connection fields.
  */
 export function AgentSettings({ config, onChange }: AgentSettingsProps) {
-  const handleBrowseKeyPath = useCallback(async () => {
-    let defaultPath: string | undefined;
-    try {
-      const home = await getHomeDir();
-      defaultPath = `${home}/.ssh`;
-    } catch {
-      // Fall through — dialog opens without a default path
-    }
-    const selected = await open({
-      multiple: false,
-      title: "Select SSH private key",
-      defaultPath,
-    });
-    if (selected) {
-      onChange({ ...config, keyPath: selected as string });
-    }
-  }, [config, onChange]);
-
   return (
     <div className="settings-form">
       <label className="settings-form__field">
@@ -85,24 +65,12 @@ export function AgentSettings({ config, onChange }: AgentSettingsProps) {
       {config.authMethod === "key" && (
         <div className="settings-form__field">
           <span className="settings-form__label">Key Path</span>
-          <div className="settings-form__file-row">
-            <input
-              type="text"
-              value={config.keyPath ?? ""}
-              onChange={(e) => onChange({ ...config, keyPath: e.target.value || undefined })}
-              placeholder="~/.ssh/id_ed25519"
-              data-testid="agent-settings-key-path-input"
-            />
-            <button
-              type="button"
-              className="settings-form__list-browse"
-              onClick={handleBrowseKeyPath}
-              title="Browse"
-              data-testid="agent-settings-key-path-browse"
-            >
-              ...
-            </button>
-          </div>
+          <KeyPathInput
+            value={config.keyPath ?? ""}
+            onChange={(v) => onChange({ ...config, keyPath: v || undefined })}
+            placeholder="~/.ssh/id_ed25519"
+            testIdPrefix="agent-settings"
+          />
         </div>
       )}
       <p className="settings-form__hint">

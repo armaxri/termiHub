@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
+import { useState, useEffect } from "react";
 import { SshConfig } from "@/types/terminal";
-import { checkSshAgentStatus, getHomeDir } from "@/services/api";
+import { checkSshAgentStatus } from "@/services/api";
 import { parseHostPort } from "@/utils/parseHostPort";
+import { KeyPathInput } from "./KeyPathInput";
 
 interface SshSettingsProps {
   config: SshConfig;
@@ -22,24 +22,6 @@ export function SshSettings({ config, onChange, onSetupAgent }: SshSettingsProps
       setAgentStatus(null);
     }
   }, [config.authMethod]);
-
-  const handleBrowseKeyPath = useCallback(async () => {
-    let defaultPath: string | undefined;
-    try {
-      const home = await getHomeDir();
-      defaultPath = `${home}/.ssh`;
-    } catch {
-      // Fall through — dialog opens without a default path
-    }
-    const selected = await open({
-      multiple: false,
-      title: "Select SSH private key",
-      defaultPath,
-    });
-    if (selected) {
-      onChange({ ...config, keyPath: selected as string });
-    }
-  }, [config, onChange]);
 
   const isWindows = navigator.userAgent.includes("Windows");
 
@@ -132,24 +114,12 @@ export function SshSettings({ config, onChange, onSetupAgent }: SshSettingsProps
         <>
           <div className="settings-form__field">
             <span className="settings-form__label">Key Path</span>
-            <div className="settings-form__file-row">
-              <input
-                type="text"
-                value={config.keyPath ?? ""}
-                onChange={(e) => onChange({ ...config, keyPath: e.target.value })}
-                placeholder="~/.ssh/id_ed25519"
-                data-testid="ssh-settings-key-path-input"
-              />
-              <button
-                type="button"
-                className="settings-form__list-browse"
-                onClick={handleBrowseKeyPath}
-                title="Browse"
-                data-testid="ssh-settings-key-path-browse"
-              >
-                ...
-              </button>
-            </div>
+            <KeyPathInput
+              value={config.keyPath ?? ""}
+              onChange={(v) => onChange({ ...config, keyPath: v })}
+              placeholder="~/.ssh/id_ed25519"
+              testIdPrefix="ssh-settings"
+            />
           </div>
           <label className="settings-form__field">
             <span className="settings-form__label">Key Passphrase (optional)</span>
