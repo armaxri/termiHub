@@ -109,17 +109,17 @@
 }
 
 .tab__state-dot--connected {
-  background-color: #0dbc79;
+  background-color: var(--state-connected);
 }
 
 .tab__state-dot--reconnecting,
 .tab__state-dot--connecting {
-  background-color: #e5e510;
+  background-color: var(--state-connecting);
   animation: pulse-dot 1.2s ease-in-out infinite;
 }
 
 .tab__state-dot--disconnected {
-  background-color: #cd3131;
+  background-color: var(--state-disconnected);
 }
 
 @keyframes pulse-dot {

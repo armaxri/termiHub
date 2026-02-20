@@ -155,7 +155,7 @@
 }
 
 .file-browser__context-item--danger {
-  color: #f44747;
+  color: var(--color-error);
 }
 
 .file-browser__context-item--danger:hover {
@@ -227,7 +227,7 @@
   gap: var(--spacing-xs);
   padding: var(--spacing-xs) var(--spacing-sm);
   font-size: 11px;
-  color: #f44747;
+  color: var(--color-error);
   background: rgba(244, 71, 71, 0.08);
   border-bottom: 1px solid var(--border-secondary);
 }

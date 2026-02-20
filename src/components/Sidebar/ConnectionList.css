@@ -240,6 +240,20 @@
   height: 7px;
   border-radius: 50%;
   flex-shrink: 0;
+  background-color: var(--state-disconnected);
+}
+
+.agent-node__state-dot--connected {
+  background-color: var(--state-connected);
+}
+
+.agent-node__state-dot--connecting,
+.agent-node__state-dot--reconnecting {
+  background-color: var(--state-connecting);
+}
+
+.agent-node__state-dot--disconnected {
+  background-color: var(--state-disconnected);
 }
 
 .agent-node__hint {

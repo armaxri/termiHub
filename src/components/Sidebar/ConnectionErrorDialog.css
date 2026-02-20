@@ -28,7 +28,7 @@
 }
 
 .connection-error-dialog__icon {
-  color: var(--error-color, #cd3131);
+  color: var(--color-error);
   flex-shrink: 0;
 }
 

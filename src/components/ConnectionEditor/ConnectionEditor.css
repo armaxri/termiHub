@@ -136,7 +136,7 @@
 }
 
 .settings-form__hint--warning {
-  color: var(--text-warning, #cca700);
+  color: var(--color-warning);
 }
 
 .settings-form__hint-action {

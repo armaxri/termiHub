@@ -51,6 +51,11 @@
   --color-error: #f48771;
   --color-info: #75beff;
 
+  /* State indicator dots */
+  --state-connected: #0dbc79;
+  --state-connecting: #e5e510;
+  --state-disconnected: #cd3131;
+
   /* Terminal */
   --terminal-bg: #1e1e1e;
   --terminal-fg: #cccccc;

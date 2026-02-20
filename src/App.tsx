@@ -34,23 +34,30 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
         <div
           style={{
             padding: 24,
-            color: "#f48771",
-            background: "#1e1e1e",
+            color: "var(--color-error)",
+            background: "var(--bg-primary)",
             fontFamily: "monospace",
             height: "100%",
             overflow: "auto",
           }}
         >
-          <h2 style={{ color: "#cccccc" }}>Something went wrong</h2>
+          <h2 style={{ color: "var(--text-primary)" }}>Something went wrong</h2>
           <pre style={{ whiteSpace: "pre-wrap", marginTop: 12 }}>{this.state.error.message}</pre>
-          <pre style={{ whiteSpace: "pre-wrap", marginTop: 8, fontSize: 12, color: "#969696" }}>
+          <pre
+            style={{
+              whiteSpace: "pre-wrap",
+              marginTop: 8,
+              fontSize: 12,
+              color: "var(--text-secondary)",
+            }}
+          >
             {this.state.error.stack}
           </pre>
           <button
             style={{
               marginTop: 16,
               padding: "6px 16px",
-              background: "#007acc",
+              background: "var(--accent-color)",
               color: "#fff",
               border: "none",
               borderRadius: 4,
