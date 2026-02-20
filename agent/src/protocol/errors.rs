@@ -47,6 +47,18 @@ pub const CONNECTION_NOT_FOUND: i64 = -32008;
 /// No folder with the given ID.
 pub const FOLDER_NOT_FOUND: i64 = -32009;
 
+/// The file or directory was not found.
+pub const FILE_NOT_FOUND: i64 = -32010;
+
+/// Permission denied for the requested file operation.
+pub const PERMISSION_DENIED: i64 = -32011;
+
+/// A file operation failed (I/O error, docker exec failure, etc.).
+pub const FILE_OPERATION_FAILED: i64 = -32012;
+
+/// File browsing is not supported for this connection type (e.g., serial).
+pub const FILE_BROWSING_NOT_SUPPORTED: i64 = -32013;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -68,6 +80,10 @@ mod tests {
             NOT_INITIALIZED,
             CONNECTION_NOT_FOUND,
             FOLDER_NOT_FOUND,
+            FILE_NOT_FOUND,
+            PERMISSION_DENIED,
+            FILE_OPERATION_FAILED,
+            FILE_BROWSING_NOT_SUPPORTED,
         ];
         for code in codes {
             assert!(code < 0, "Error code {code} should be negative");
@@ -104,6 +120,10 @@ mod tests {
             NOT_INITIALIZED,
             CONNECTION_NOT_FOUND,
             FOLDER_NOT_FOUND,
+            FILE_NOT_FOUND,
+            PERMISSION_DENIED,
+            FILE_OPERATION_FAILED,
+            FILE_BROWSING_NOT_SUPPORTED,
         ];
         for code in app_codes {
             assert!(

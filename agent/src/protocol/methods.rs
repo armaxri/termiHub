@@ -287,6 +287,88 @@ pub struct DockerVolumeMount {
     pub read_only: bool,
 }
 
+// ── files.* types ──────────────────────────────────────────────────
+
+/// A file or directory entry returned by file browsing operations.
+/// Matches the desktop's `FileEntry` format for seamless display.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileEntry {
+    pub name: String,
+    pub path: String,
+    pub is_directory: bool,
+    pub size: u64,
+    /// ISO 8601 timestamp.
+    pub modified: String,
+    /// Unix "rwxrwxrwx" format, `None` when not available.
+    pub permissions: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct FilesListParams {
+    /// Connection to scope the operation to. If absent, use local filesystem.
+    pub connection_id: Option<String>,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FilesListResult {
+    pub entries: Vec<FileEntry>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct FilesReadParams {
+    pub connection_id: Option<String>,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FilesReadResult {
+    /// Base64-encoded file content.
+    pub data: String,
+    pub size: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct FilesWriteParams {
+    pub connection_id: Option<String>,
+    pub path: String,
+    /// Base64-encoded content to write.
+    pub data: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilesDeleteParams {
+    pub connection_id: Option<String>,
+    pub path: String,
+    pub is_directory: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct FilesRenameParams {
+    pub connection_id: Option<String>,
+    pub old_path: String,
+    pub new_path: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct FilesStatParams {
+    pub connection_id: Option<String>,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilesStatResult {
+    pub name: String,
+    pub path: String,
+    pub is_directory: bool,
+    pub size: u64,
+    pub modified: String,
+    pub permissions: Option<String>,
+}
+
 // ── SSH session config ─────────────────────────────────────────────
 
 #[derive(Debug, Clone, Deserialize)]
@@ -714,5 +796,139 @@ mod tests {
         assert_eq!(cfg.cols, 120);
         assert_eq!(cfg.rows, 40);
         assert_eq!(cfg.env.get("TERM").unwrap(), "xterm-256color");
+    }
+
+    // ── File browsing types ────────────────────────────────────────
+
+    #[test]
+    fn file_entry_serializes_camel_case() {
+        let entry = FileEntry {
+            name: "readme.md".to_string(),
+            path: "/home/user/readme.md".to_string(),
+            is_directory: false,
+            size: 1024,
+            modified: "2026-02-20T10:00:00Z".to_string(),
+            permissions: Some("rw-r--r--".to_string()),
+        };
+        let v = serde_json::to_value(&entry).unwrap();
+        assert_eq!(v["name"], "readme.md");
+        assert_eq!(v["isDirectory"], false);
+        assert!(v.get("is_directory").is_none());
+        assert_eq!(v["size"], 1024);
+        assert_eq!(v["modified"], "2026-02-20T10:00:00Z");
+        assert_eq!(v["permissions"], "rw-r--r--");
+    }
+
+    #[test]
+    fn file_entry_null_permissions() {
+        let entry = FileEntry {
+            name: "file.txt".to_string(),
+            path: "/file.txt".to_string(),
+            is_directory: false,
+            size: 0,
+            modified: String::new(),
+            permissions: None,
+        };
+        let v = serde_json::to_value(&entry).unwrap();
+        assert!(v["permissions"].is_null());
+    }
+
+    #[test]
+    fn files_list_params_serde() {
+        let json = json!({"path": "/home"});
+        let params: FilesListParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.path, "/home");
+        assert!(params.connection_id.is_none());
+
+        let json = json!({"connection_id": "conn-1", "path": "/tmp"});
+        let params: FilesListParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.connection_id, Some("conn-1".to_string()));
+        assert_eq!(params.path, "/tmp");
+    }
+
+    #[test]
+    fn files_list_result_serializes() {
+        let result = FilesListResult {
+            entries: vec![FileEntry {
+                name: "dir".to_string(),
+                path: "/dir".to_string(),
+                is_directory: true,
+                size: 4096,
+                modified: "2026-01-01T00:00:00Z".to_string(),
+                permissions: Some("rwxr-xr-x".to_string()),
+            }],
+        };
+        let v = serde_json::to_value(&result).unwrap();
+        assert_eq!(v["entries"].as_array().unwrap().len(), 1);
+        assert_eq!(v["entries"][0]["isDirectory"], true);
+    }
+
+    #[test]
+    fn files_read_params_serde() {
+        let json = json!({"path": "/etc/hosts"});
+        let params: FilesReadParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.path, "/etc/hosts");
+        assert!(params.connection_id.is_none());
+    }
+
+    #[test]
+    fn files_read_result_serializes() {
+        let result = FilesReadResult {
+            data: "aGVsbG8=".to_string(),
+            size: 5,
+        };
+        let v = serde_json::to_value(&result).unwrap();
+        assert_eq!(v["data"], "aGVsbG8=");
+        assert_eq!(v["size"], 5);
+    }
+
+    #[test]
+    fn files_write_params_serde() {
+        let json = json!({"path": "/tmp/out.txt", "data": "aGVsbG8="});
+        let params: FilesWriteParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.path, "/tmp/out.txt");
+        assert_eq!(params.data, "aGVsbG8=");
+        assert!(params.connection_id.is_none());
+    }
+
+    #[test]
+    fn files_delete_params_serde() {
+        let json = json!({"path": "/tmp/old", "isDirectory": true});
+        let params: FilesDeleteParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.path, "/tmp/old");
+        assert!(params.is_directory);
+        assert!(params.connection_id.is_none());
+    }
+
+    #[test]
+    fn files_rename_params_serde() {
+        let json = json!({"old_path": "/a.txt", "new_path": "/b.txt"});
+        let params: FilesRenameParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.old_path, "/a.txt");
+        assert_eq!(params.new_path, "/b.txt");
+    }
+
+    #[test]
+    fn files_stat_params_serde() {
+        let json = json!({"connection_id": "conn-42", "path": "/var/log"});
+        let params: FilesStatParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.connection_id, Some("conn-42".to_string()));
+        assert_eq!(params.path, "/var/log");
+    }
+
+    #[test]
+    fn files_stat_result_serializes_camel_case() {
+        let result = FilesStatResult {
+            name: "log".to_string(),
+            path: "/var/log".to_string(),
+            is_directory: true,
+            size: 4096,
+            modified: "2026-02-20T10:00:00Z".to_string(),
+            permissions: Some("rwxr-xr-x".to_string()),
+        };
+        let v = serde_json::to_value(&result).unwrap();
+        assert_eq!(v["isDirectory"], true);
+        assert!(v.get("is_directory").is_none());
+        assert_eq!(v["name"], "log");
     }
 }
