@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { PlugZap, TerminalSquare, Palette } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import {
   ConnectionType,
@@ -40,7 +41,7 @@ const EDITOR_CATEGORIES = [
 
 const AGENT_CATEGORIES = [{ id: "connection", label: "Connection" }];
 
-const EDITOR_ICONS: Record<EditorCategory, React.ComponentType<{ size?: number }>> = {
+const EDITOR_ICONS: Record<EditorCategory, LucideIcon> = {
   connection: PlugZap,
   terminal: TerminalSquare,
   appearance: Palette,
@@ -116,21 +117,6 @@ const TYPE_OPTIONS: { value: ConnectionType; label: string }[] = [
   { value: "remote", label: "Remote Agent" },
 ];
 
-/**
- * Determine the external file path from a namespaced ID.
- */
-function externalFilePathFromId(id: string): string | null {
-  if (id.startsWith("ext:")) {
-    const rest = id.slice(4);
-    const sep = rest.indexOf("::");
-    return sep >= 0 ? rest.slice(0, sep) : null;
-  }
-  if (id.startsWith("ext-root:")) {
-    return id.slice(9);
-  }
-  return null;
-}
-
 /** Check whether any field in TerminalOptions has a non-undefined value. */
 function hasTerminalOptions(opts: TerminalOptions): boolean {
   return Object.values(opts).some((v) => v !== undefined);
@@ -144,11 +130,9 @@ interface ConnectionEditorProps {
 
 export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorProps) {
   const connections = useAppStore((s) => s.connections);
-  const externalSources = useAppStore((s) => s.externalSources);
   const addConnection = useAppStore((s) => s.addConnection);
   const updateConnection = useAppStore((s) => s.updateConnection);
-  const addExternalConnection = useAppStore((s) => s.addExternalConnection);
-  const updateExternalConnection = useAppStore((s) => s.updateExternalConnection);
+  const moveConnectionToFile = useAppStore((s) => s.moveConnectionToFile);
   const closeTab = useAppStore((s) => s.closeTab);
   const addTab = useAppStore((s) => s.addTab);
   const requestPassword = useAppStore((s) => s.requestPassword);
@@ -156,25 +140,14 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const remoteAgents = useAppStore((s) => s.remoteAgents);
   const addRemoteAgent = useAppStore((s) => s.addRemoteAgent);
   const updateRemoteAgent = useAppStore((s) => s.updateRemoteAgent);
+  const settings = useAppStore((s) => s.settings);
 
   const editingConnectionId = meta.connectionId;
   const editingConnectionFolderId = meta.folderId;
 
-  // Determine if editing belongs to an external source
-  const extFilePath =
-    editingConnectionId && editingConnectionId !== "new"
-      ? externalFilePathFromId(editingConnectionId)
-      : editingConnectionFolderId
-        ? externalFilePathFromId(editingConnectionFolderId)
-        : null;
-
-  const extSource = extFilePath ? externalSources.find((s) => s.filePath === extFilePath) : null;
-
   const existingConnection =
     editingConnectionId !== "new"
-      ? extSource
-        ? extSource.connections.find((c) => c.id === editingConnectionId)
-        : connections.find((c) => c.id === editingConnectionId)
+      ? connections.find((c) => c.id === editingConnectionId)
       : undefined;
 
   const existingAgent =
@@ -204,6 +177,9 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     existingConnection?.terminalOptions ?? {}
   );
   const [icon, setIcon] = useState<string | undefined>(existingConnection?.icon);
+  const [sourceFile, setSourceFile] = useState<string | null>(
+    existingConnection?.sourceFile ?? null
+  );
 
   // Category navigation
   const [activeCategory, setActiveCategory] = useState<EditorCategory>(loadSavedCategory);
@@ -280,32 +256,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
 
     const opts = hasTerminalOptions(terminalOptions) ? terminalOptions : undefined;
 
-    if (extFilePath) {
-      const prefix = `ext:${extFilePath}::`;
-      if (existingConnection) {
-        const saved: SavedConnection = {
-          ...existingConnection,
-          name,
-          config: connectionConfig,
-          folderId,
-          terminalOptions: opts,
-          icon,
-        };
-        updateExternalConnection(extFilePath, saved);
-        return saved;
-      } else {
-        const saved: SavedConnection = {
-          id: `${prefix}conn-${Date.now()}`,
-          name,
-          config: connectionConfig,
-          folderId,
-          terminalOptions: opts,
-          icon,
-        };
-        addExternalConnection(extFilePath, saved);
-        return saved;
-      }
-    } else if (existingConnection) {
+    if (existingConnection) {
       const saved: SavedConnection = {
         ...existingConnection,
         name,
@@ -313,8 +264,16 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         folderId,
         terminalOptions: opts,
         icon,
+        sourceFile,
       };
       updateConnection(saved);
+
+      // If storage file changed, move connection to the new file
+      const originalSource = existingConnection.sourceFile ?? null;
+      if (originalSource !== sourceFile) {
+        moveConnectionToFile(existingConnection.id, sourceFile);
+      }
+
       return saved;
     } else {
       const saved: SavedConnection = {
@@ -324,6 +283,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         folderId,
         terminalOptions: opts,
         icon,
+        sourceFile,
       };
       addConnection(saved);
       return saved;
@@ -333,16 +293,15 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     connectionConfig,
     terminalOptions,
     icon,
+    sourceFile,
     existingConnection,
     existingAgent,
     isAgentMode,
     agentConfig,
-    extFilePath,
     folderId,
     addConnection,
     updateConnection,
-    addExternalConnection,
-    updateExternalConnection,
+    moveConnectionToFile,
     addRemoteAgent,
     updateRemoteAgent,
   ]);
@@ -386,6 +345,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const handleCancel = useCallback(() => {
     closeThisTab();
   }, [closeThisTab]);
+
+  const enabledExternalFiles = settings.externalConnectionFiles.filter((f) => f.enabled);
 
   const renderConnectionContent = () => (
     <div className="connection-editor__form">
@@ -455,6 +416,24 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         <p className="settings-form__hint">
           Use {"${env:VAR}"} for environment variables, e.g. {"${env:USER}"}
         </p>
+      )}
+
+      {!isAgentMode && enabledExternalFiles.length > 0 && (
+        <label className="settings-form__field">
+          <span className="settings-form__label">Storage File</span>
+          <select
+            value={sourceFile ?? ""}
+            onChange={(e) => setSourceFile(e.target.value || null)}
+            data-testid="connection-editor-source-file"
+          >
+            <option value="">Default (connections.json)</option>
+            {enabledExternalFiles.map((f) => (
+              <option key={f.path} value={f.path}>
+                {f.path}
+              </option>
+            ))}
+          </select>
+        </label>
       )}
     </div>
   );

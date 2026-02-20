@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { Settings2, Palette, TerminalSquare, FileJson } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { AppSettings } from "@/types/connection";
 import { SettingsCategory, CATEGORIES } from "./settingsRegistry";
@@ -13,7 +14,7 @@ import { TerminalSettings } from "./TerminalSettings";
 import { ExternalFilesSettings } from "./ExternalFilesSettings";
 import "./SettingsPanel.css";
 
-const SETTINGS_ICONS: Record<SettingsCategory, React.ComponentType<{ size?: number }>> = {
+const SETTINGS_ICONS: Record<SettingsCategory, LucideIcon> = {
   general: Settings2,
   appearance: Palette,
   terminal: TerminalSquare,
