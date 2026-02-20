@@ -463,6 +463,14 @@ Each section groups related tests by feature area. Individual test items referen
 - [x] Connections and File Browser icons remain at the top
 - [x] Clicking the settings icon still toggles the sidebar settings view
 
+### Sidebar toggle button and Ctrl+B shortcut (PR #194)
+
+- [ ] Click the PanelLeft icon button in the terminal toolbar (right side) — sidebar hides
+- [ ] Click the button again — sidebar shows, button appears highlighted
+- [ ] Press Ctrl+B (Cmd+B on Mac) — sidebar toggles
+- [ ] Open a split view — verify the toggle button remains visible and functional in the toolbar
+- [ ] Hover the button — tooltip shows "Toggle Sidebar (Ctrl+B)" (or "Cmd+B" on Mac)
+
 ### Clear separation between split view panels (PR #189)
 
 - [ ] Open a split view (drag a tab to the edge of a panel) — verify a visible 1px line appears between adjacent panels
