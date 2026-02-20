@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="public/icons/termihub-terminal-v2.svg" width="128" height="128" alt="TermiHub">
+  <img src="public/icons/termihub-terminal-v2.svg" width="128" height="128" alt="termiHub">
 </p>
 
-<h1 align="center">TermiHub</h1>
+<h1 align="center">termiHub</h1>
 
 <p align="center">
 A modern, cross-platform terminal hub for embedded development workflows.
@@ -16,7 +16,7 @@ A modern, cross-platform terminal hub for embedded development workflows.
 
 ---
 
-TermiHub provides a VS Code-like interface for managing multiple terminal connections with support for split views, drag-and-drop tabs, and organized connection management. Built with [Tauri](https://tauri.app/), [React](https://react.dev/), and [Rust](https://www.rust-lang.org/).
+termiHub provides a VS Code-like interface for managing multiple terminal connections with support for split views, drag-and-drop tabs, and organized connection management. Built with [Tauri](https://tauri.app/), [React](https://react.dev/), and [Rust](https://www.rust-lang.org/).
 
 ## Features
 

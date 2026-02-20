@@ -18,7 +18,7 @@ pub const INVALID_PARAMS: i64 = -32602;
 /// Internal JSON-RPC error.
 pub const INTERNAL_ERROR: i64 = -32603;
 
-// Application error codes (TermiHub-specific).
+// Application error codes (termiHub-specific).
 
 /// No session with the given ID.
 pub const SESSION_NOT_FOUND: i64 = -32001;

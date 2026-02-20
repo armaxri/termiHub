@@ -1,8 +1,8 @@
-# Testing Strategy for TermiHub
+# Testing Strategy for termiHub
 
 ## Overview
 
-TermiHub uses a multi-layered testing approach to ensure quality across the entire stack.
+termiHub uses a multi-layered testing approach to ensure quality across the entire stack.
 
 ## Testing Layers
 
@@ -522,7 +522,7 @@ Install the recommended VS Code extensions (already configured in `.vscode/exten
 
 ## Performance Testing
 
-TermiHub includes an automated E2E performance test suite that validates 40 concurrent terminals:
+termiHub includes an automated E2E performance test suite that validates 40 concurrent terminals:
 
 ```bash
 # Run the performance test suite (requires built app + tauri-driver; Linux/Windows only)
