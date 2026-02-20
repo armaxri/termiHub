@@ -3,6 +3,7 @@ mod connection;
 mod files;
 mod monitoring;
 mod terminal;
+mod tunnel;
 mod utils;
 
 use std::sync::Arc;
@@ -56,6 +57,10 @@ pub fn run() {
 
             let agent_manager = Arc::new(AgentConnectionManager::new(app.handle().clone()));
             app.manage(agent_manager);
+
+            let tunnel_manager = tunnel::tunnel_manager::TunnelManager::new(app.handle())
+                .expect("Failed to initialize tunnel manager");
+            app.manage(tunnel_manager);
 
             Ok(())
         })
@@ -118,6 +123,12 @@ pub fn run() {
             commands::agent::setup_remote_agent,
             commands::logs::get_logs,
             commands::logs::clear_logs,
+            commands::tunnel::get_tunnels,
+            commands::tunnel::save_tunnel,
+            commands::tunnel::delete_tunnel,
+            commands::tunnel::get_tunnel_statuses,
+            commands::tunnel::start_tunnel,
+            commands::tunnel::stop_tunnel,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
