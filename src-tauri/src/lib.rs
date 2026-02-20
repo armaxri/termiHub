@@ -116,6 +116,9 @@ pub fn run() {
             commands::agent::save_agent_definition,
             commands::agent::delete_agent_definition,
             commands::agent::setup_remote_agent,
+            commands::agent::probe_remote_agent,
+            commands::agent::deploy_agent,
+            commands::agent::update_agent,
             commands::logs::get_logs,
             commands::logs::clear_logs,
         ])
