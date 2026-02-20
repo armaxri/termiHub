@@ -21,10 +21,16 @@ pub struct PersistedSession {
     pub session_type: String,
     pub title: String,
     pub created_at: String,
-    /// Path to the daemon Unix socket (shell sessions only).
+    /// Path to the daemon Unix socket (shell and Docker sessions).
     pub daemon_socket: Option<String>,
     /// Original session config (for display/metadata).
     pub config: serde_json::Value,
+    /// Docker container name (Docker sessions only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container_name: Option<String>,
+    /// Whether to remove the Docker container on exit (Docker sessions only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remove_on_exit: Option<bool>,
 }
 
 impl AgentState {
@@ -138,6 +144,8 @@ mod tests {
             created_at: "2026-02-20T10:00:00Z".to_string(),
             daemon_socket: socket.map(|s| s.to_string()),
             config: json!({}),
+            container_name: None,
+            remove_on_exit: None,
         }
     }
 

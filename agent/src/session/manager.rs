@@ -11,6 +11,10 @@ use crate::serial::backend::SerialBackend;
 use crate::session::types::{SessionInfo, SessionSnapshot, SessionStatus, SessionType};
 
 #[cfg(unix)]
+use crate::docker::backend::DockerBackend;
+#[cfg(unix)]
+use crate::protocol::methods::DockerSessionConfig;
+#[cfg(unix)]
 use crate::protocol::methods::ShellConfig;
 #[cfg(unix)]
 use crate::shell::backend::ShellBackend;
@@ -117,6 +121,38 @@ impl SessionManager {
                     created_at: now.to_rfc3339(),
                     daemon_socket: Some(backend.socket_path().to_string_lossy().to_string()),
                     config: config.clone(),
+                    container_name: None,
+                    remove_on_exit: None,
+                },
+            );
+
+            Some(backend)
+        } else {
+            None
+        };
+
+        // On Unix, create a Docker container session
+        #[cfg(unix)]
+        let docker_backend = if session_type == SessionType::Docker {
+            let docker_config: DockerSessionConfig = serde_json::from_value(config.clone())
+                .map_err(|e| SessionCreateError::InvalidConfig(e.to_string()))?;
+            let backend =
+                DockerBackend::new(id.clone(), &docker_config, self.notification_tx.clone())
+                    .await
+                    .map_err(|e| SessionCreateError::BackendFailed(e.to_string()))?;
+
+            // Persist session to state.json for recovery
+            let mut state = self.state.lock().await;
+            state.add_session(
+                id.clone(),
+                PersistedSession {
+                    session_type: "docker".to_string(),
+                    title: title.clone(),
+                    created_at: now.to_rfc3339(),
+                    daemon_socket: Some(backend.socket_path().to_string_lossy().to_string()),
+                    config: config.clone(),
+                    container_name: Some(backend.container_name().to_string()),
+                    remove_on_exit: Some(backend.remove_on_exit()),
                 },
             );
 
@@ -137,6 +173,8 @@ impl SessionManager {
             serial_backend,
             #[cfg(unix)]
             shell_backend,
+            #[cfg(unix)]
+            docker_backend,
         };
 
         let snapshot = info.snapshot();
@@ -162,6 +200,10 @@ impl SessionManager {
             }
             #[cfg(unix)]
             if let Some(ref mut backend) = info.shell_backend {
+                backend.close().await;
+            }
+            #[cfg(unix)]
+            if let Some(ref mut backend) = info.docker_backend {
                 backend.close().await;
             }
 
@@ -194,6 +236,10 @@ impl SessionManager {
                 if let Some(ref mut backend) = info.shell_backend {
                     backend.detach().await;
                 }
+                #[cfg(unix)]
+                if let Some(ref mut backend) = info.docker_backend {
+                    backend.detach().await;
+                }
             }
         }
     }
@@ -207,6 +253,10 @@ impl SessionManager {
             }
             #[cfg(unix)]
             if let Some(ref mut backend) = info.shell_backend {
+                backend.close().await;
+            }
+            #[cfg(unix)]
+            if let Some(ref mut backend) = info.docker_backend {
                 backend.close().await;
             }
         }
@@ -238,6 +288,10 @@ impl SessionManager {
         if let Some(ref mut backend) = info.shell_backend {
             backend.attach().await.map_err(|e| e.to_string())?;
         }
+        #[cfg(unix)]
+        if let Some(ref mut backend) = info.docker_backend {
+            backend.attach().await.map_err(|e| e.to_string())?;
+        }
 
         Ok(())
     }
@@ -258,6 +312,10 @@ impl SessionManager {
 
         #[cfg(unix)]
         if let Some(ref mut backend) = info.shell_backend {
+            backend.detach().await;
+        }
+        #[cfg(unix)]
+        if let Some(ref mut backend) = info.docker_backend {
             backend.detach().await;
         }
 
@@ -281,6 +339,10 @@ impl SessionManager {
         if let Some(ref backend) = info.shell_backend {
             backend.write_input(data).await.map_err(|e| e.to_string())?;
         }
+        #[cfg(unix)]
+        if let Some(ref backend) = info.docker_backend {
+            backend.write_input(data).await.map_err(|e| e.to_string())?;
+        }
 
         Ok(())
     }
@@ -296,6 +358,13 @@ impl SessionManager {
 
         #[cfg(unix)]
         if let Some(ref backend) = info.shell_backend {
+            backend
+                .resize(cols, rows)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        #[cfg(unix)]
+        if let Some(ref backend) = info.docker_backend {
             backend
                 .resize(cols, rows)
                 .await
@@ -358,6 +427,7 @@ impl SessionManager {
                         attached: false,
                         serial_backend: None,
                         shell_backend: Some(backend),
+                        docker_backend: None,
                     };
 
                     let mut sessions = self.sessions.lock().await;
@@ -406,6 +476,8 @@ impl SessionManager {
             serial_backend: None,
             #[cfg(unix)]
             shell_backend: None,
+            #[cfg(unix)]
+            docker_backend: None,
         };
         let snapshot = info.snapshot();
         sessions.insert(id, info);

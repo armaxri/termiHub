@@ -1,6 +1,8 @@
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
+#[cfg(unix)]
+use crate::docker::backend::DockerBackend;
 use crate::serial::backend::SerialBackend;
 #[cfg(unix)]
 use crate::shell::backend::ShellBackend;
@@ -71,6 +73,9 @@ pub struct SessionInfo {
     /// Handle to the shell backend, if this is a shell session (Unix only).
     #[cfg(unix)]
     pub shell_backend: Option<ShellBackend>,
+    /// Handle to the Docker backend, if this is a Docker session (Unix only).
+    #[cfg(unix)]
+    pub docker_backend: Option<DockerBackend>,
 }
 
 /// Read-only snapshot of session state, returned from list/create.

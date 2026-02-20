@@ -538,10 +538,17 @@ mod tests {
     use serde_json::json;
 
     fn make_dispatcher() -> Dispatcher {
+        let (mgr, _) = make_dispatcher_with_manager();
+        mgr
+    }
+
+    fn make_dispatcher_with_manager() -> (Dispatcher, Arc<SessionManager>) {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let tmp = std::env::temp_dir().join(format!("termihub-test-{}.json", uuid::Uuid::new_v4()));
         let def_store = Arc::new(DefinitionStore::new_temp(tmp));
-        Dispatcher::new(Arc::new(SessionManager::new(tx)), def_store)
+        let session_manager = Arc::new(SessionManager::new(tx));
+        let dispatcher = Dispatcher::new(session_manager.clone(), def_store);
+        (dispatcher, session_manager)
     }
 
     fn make_request(method: &str, params: Value, id: u64) -> JsonRpcRequest {
@@ -643,10 +650,11 @@ mod tests {
     // ── Session create tests ────────────────────────────────────────
 
     #[tokio::test]
-    async fn session_create_docker_stub() {
+    async fn session_create_docker_requires_image() {
         let mut d = make_dispatcher();
         init_dispatcher(&mut d).await;
 
+        // Docker config without image should fail with invalid config
         let req = make_request(
             "session.create",
             json!({
@@ -658,10 +666,8 @@ mod tests {
         );
         let result = d.dispatch(req).await;
         let json = result.to_json();
-        assert!(json["result"]["session_id"].is_string());
-        assert_eq!(json["result"]["type"], "docker");
-        assert_eq!(json["result"]["status"], "running");
-        assert_eq!(json["result"]["title"], "My session");
+        // Missing required `image` field
+        assert_eq!(json["error"]["code"], errors::INVALID_CONFIGURATION);
     }
 
     #[tokio::test]
@@ -717,16 +723,13 @@ mod tests {
 
     #[tokio::test]
     async fn session_list_after_create() {
-        let mut d = make_dispatcher();
+        let (mut d, mgr) = make_dispatcher_with_manager();
         init_dispatcher(&mut d).await;
 
-        // Create a session (Docker type to avoid daemon spawn in tests)
-        let req = make_request(
-            "session.create",
-            json!({"type": "docker", "config": {}, "title": "test"}),
-            2,
-        );
-        d.dispatch(req).await;
+        // Create a stub session (avoids spawning real backends)
+        mgr.create_stub_session(SessionType::Shell, "test".to_string(), json!({}))
+            .await
+            .unwrap();
 
         // List sessions
         let req = make_request("session.list", json!({}), 3);
@@ -741,17 +744,15 @@ mod tests {
 
     #[tokio::test]
     async fn session_close_success() {
-        let mut d = make_dispatcher();
+        let (mut d, mgr) = make_dispatcher_with_manager();
         init_dispatcher(&mut d).await;
 
-        // Create (Docker type to avoid daemon spawn in tests)
-        let req = make_request(
-            "session.create",
-            json!({"type": "docker", "config": {}, "title": "temp"}),
-            2,
-        );
-        let create_result = d.dispatch(req).await.to_json();
-        let sid = create_result["result"]["session_id"].as_str().unwrap();
+        // Create a stub session
+        let snapshot = mgr
+            .create_stub_session(SessionType::Shell, "temp".to_string(), json!({}))
+            .await
+            .unwrap();
+        let sid = snapshot.id;
 
         // Close
         let req = make_request("session.close", json!({"session_id": sid}), 3);
@@ -861,17 +862,15 @@ mod tests {
 
     #[tokio::test]
     async fn session_resize_returns_success() {
-        let mut d = make_dispatcher();
+        let (mut d, mgr) = make_dispatcher_with_manager();
         init_dispatcher(&mut d).await;
 
-        // Create a session first (Docker type to avoid daemon spawn)
-        let req = make_request(
-            "session.create",
-            json!({"type": "docker", "config": {}, "title": "resize-test"}),
-            2,
-        );
-        let create_result = d.dispatch(req).await.to_json();
-        let sid = create_result["result"]["session_id"].as_str().unwrap();
+        // Create a stub session
+        let snapshot = mgr
+            .create_stub_session(SessionType::Shell, "resize-test".to_string(), json!({}))
+            .await
+            .unwrap();
+        let sid = snapshot.id;
 
         let req = make_request(
             "session.resize",
@@ -902,26 +901,19 @@ mod tests {
 
     #[tokio::test]
     async fn full_protocol_flow() {
-        let mut d = make_dispatcher();
+        let (mut d, mgr) = make_dispatcher_with_manager();
 
         // 1. Initialize
         let req = make_request("initialize", init_params(), 1);
         let result = d.dispatch(req).await.to_json();
         assert_eq!(result["result"]["protocol_version"], "0.1.0");
 
-        // 2. Create session (Docker type to avoid daemon spawn in tests)
-        let req = make_request(
-            "session.create",
-            json!({
-                "type": "docker",
-                "config": {},
-                "title": "Build"
-            }),
-            2,
-        );
-        let result = d.dispatch(req).await.to_json();
-        let session_id = result["result"]["session_id"].as_str().unwrap().to_string();
-        assert_eq!(result["result"]["status"], "running");
+        // 2. Create a stub session (avoids spawning real backends)
+        let snapshot = mgr
+            .create_stub_session(SessionType::Shell, "Build".to_string(), json!({}))
+            .await
+            .unwrap();
+        let session_id = snapshot.id;
 
         // 3. Attach to the session
         let req = make_request("session.attach", json!({"session_id": session_id}), 3);
