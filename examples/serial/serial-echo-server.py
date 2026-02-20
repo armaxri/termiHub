@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Simple serial echo server for testing TermiHub serial connections.
+Simple serial echo server for testing termiHub serial connections.
 
 Reads from a virtual serial port and echoes each line back with a prefix.
 Useful with the virtual serial pair created by setup-virtual-serial.sh.

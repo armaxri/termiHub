@@ -1,7 +1,7 @@
 // Performance stress test: 40 concurrent terminals.
 // Covers: PERF-01, PERF-02, PERF-03, PERF-04.
 //
-// Validates that TermiHub can handle its design target of 40 simultaneous
+// Validates that termiHub can handle its design target of 40 simultaneous
 // local shell terminals without crashing, and logs creation throughput,
 // tab-switch latency, and cleanup timing as performance baselines.
 

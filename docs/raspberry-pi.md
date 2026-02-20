@@ -2,7 +2,7 @@
 
 ## Installation on Raspberry Pi
 
-TermiHub builds for ARM64 Linux, which includes:
+termiHub builds for ARM64 Linux, which includes:
 - Raspberry Pi 3 (64-bit OS)
 - Raspberry Pi 4
 - Raspberry Pi 5
@@ -26,10 +26,10 @@ uname -m
 
 ```bash
 # Download the latest .deb for ARM64
-wget https://github.com/armaxri/termiHub/releases/latest/download/TermiHub-X.X.X-linux-arm64.deb
+wget https://github.com/armaxri/termiHub/releases/latest/download/termiHub-X.X.X-linux-arm64.deb
 
 # Install
-sudo dpkg -i TermiHub-X.X.X-linux-arm64.deb
+sudo dpkg -i termiHub-X.X.X-linux-arm64.deb
 
 # Fix dependencies if needed
 sudo apt-get install -f
@@ -39,18 +39,18 @@ sudo apt-get install -f
 
 ```bash
 # Download AppImage
-wget https://github.com/armaxri/termiHub/releases/latest/download/TermiHub-X.X.X-linux-arm64.AppImage
+wget https://github.com/armaxri/termiHub/releases/latest/download/termiHub-X.X.X-linux-arm64.AppImage
 
 # Make executable
-chmod +x TermiHub-X.X.X-linux-arm64.AppImage
+chmod +x termiHub-X.X.X-linux-arm64.AppImage
 
 # Run
-./TermiHub-X.X.X-linux-arm64.AppImage
+./termiHub-X.X.X-linux-arm64.AppImage
 ```
 
 ### System Dependencies
 
-TermiHub requires WebKitGTK and GTK3:
+termiHub requires WebKitGTK and GTK3:
 
 ```bash
 sudo apt-get update
@@ -109,7 +109,7 @@ sudo systemctl edit termihub-agent
 
 #### Connecting from the Desktop
 
-When the agent runs with `--listen`, connect from TermiHub desktop via:
+When the agent runs with `--listen`, connect from termiHub desktop via:
 
 - **SSH port forward**: `ssh -L 7685:127.0.0.1:7685 pi@raspberrypi` then connect to `localhost:7685`
 - **Direct LAN**: Start with `--listen 0.0.0.0:7685` and connect to the Pi's IP address
@@ -171,7 +171,7 @@ groups $USER  # Should include 'dialout'
 
 ### Building from Source on Raspberry Pi
 
-If you want to build TermiHub directly on your Raspberry Pi:
+If you want to build termiHub directly on your Raspberry Pi:
 
 ```bash
 # Install Rust
@@ -206,7 +206,7 @@ pnpm run build
 
 ### Remote Access Setup
 
-To access the TermiHub agent from your development machine:
+To access the termiHub agent from your development machine:
 
 1. **Ensure SSH is enabled** on Raspberry Pi:
 ```bash
@@ -219,7 +219,7 @@ sudo systemctl start ssh
 hostname -I
 ```
 
-3. **Connect from TermiHub on your PC**:
+3. **Connect from termiHub on your PC**:
 - Add new SSH connection
 - Enter Raspberry Pi IP and credentials
 - Enable X11 forwarding if needed
@@ -230,10 +230,10 @@ hostname -I
 **Using .deb package**:
 ```bash
 # Download new version
-wget https://github.com/armaxri/termiHub/releases/latest/download/TermiHub-X.X.X-linux-arm64.deb
+wget https://github.com/armaxri/termiHub/releases/latest/download/termiHub-X.X.X-linux-arm64.deb
 
 # Update
-sudo dpkg -i TermiHub-X.X.X-linux-arm64.deb
+sudo dpkg -i termiHub-X.X.X-linux-arm64.deb
 ```
 
 **Using AppImage**:

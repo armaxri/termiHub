@@ -1,6 +1,6 @@
-# Building TermiHub
+# Building termiHub
 
-This guide covers how to set up a development environment and build TermiHub from source on macOS, Linux, and Windows.
+This guide covers how to set up a development environment and build termiHub from source on macOS, Linux, and Windows.
 
 ---
 
@@ -80,7 +80,7 @@ The build also produces a `.app` bundle in `src-tauri/target/release/bundle/maco
 
 ### System Dependencies
 
-TermiHub requires several system libraries. Install them for your distribution:
+termiHub requires several system libraries. Install them for your distribution:
 
 #### Ubuntu / Debian
 
@@ -238,7 +238,7 @@ cd examples
 ./start-test-environment.sh
 ```
 
-This builds Docker containers, starts SSH (port 2222) and Telnet (port 2323) servers, and launches TermiHub with pre-configured test connections.
+This builds Docker containers, starts SSH (port 2222) and Telnet (port 2323) servers, and launches termiHub with pre-configured test connections.
 
 ---
 

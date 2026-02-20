@@ -1,6 +1,6 @@
 # Remote Session Management Protocol
 
-Protocol specification for communication between the TermiHub desktop app and remote Raspberry Pi agents.
+Protocol specification for communication between the termiHub desktop app and remote Raspberry Pi agents.
 
 **Version**: 0.1.0
 **Status**: Draft
@@ -26,7 +26,7 @@ Protocol specification for communication between the TermiHub desktop app and re
 
 ## Overview
 
-The remote session management protocol enables the TermiHub desktop app to manage persistent terminal sessions on a remote Raspberry Pi agent. Sessions survive desktop disconnects, allowing users to reconnect to long-running processes (overnight test runs, serial monitoring) without losing state.
+The remote session management protocol enables the termiHub desktop app to manage persistent terminal sessions on a remote Raspberry Pi agent. Sessions survive desktop disconnects, allowing users to reconnect to long-running processes (overnight test runs, serial monitoring) without losing state.
 
 ### Goals
 
@@ -861,7 +861,7 @@ Agent → Desktop:
 The protocol relies entirely on the SSH transport for encryption and authentication. No additional encryption or authentication layer is implemented at the protocol level.
 
 - **Encryption**: All messages are encrypted by the SSH channel
-- **Authentication**: SSH key-based or password authentication (same as existing SSH connections in TermiHub)
+- **Authentication**: SSH key-based or password authentication (same as existing SSH connections in termiHub)
 - **Authorization**: The agent trusts any client that successfully authenticates over SSH — no additional authorization model
 
 ### Agent Security

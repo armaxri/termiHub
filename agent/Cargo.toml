@@ -1,7 +1,7 @@
 [package]
 name = "termihub-agent"
 version = "0.1.0"
-description = "Remote agent for TermiHub — manages persistent terminal sessions on Raspberry Pi"
+description = "Remote agent for termiHub — manages persistent terminal sessions on Raspberry Pi"
 authors = ["Arne Maximilian Richter <armaxri@gmail.com>"]
 edition = "2021"
 
