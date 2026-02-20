@@ -89,17 +89,6 @@ export function TerminalView() {
         <div className="terminal-view__toolbar">
           <div className="terminal-view__toolbar-left">
             <button
-              className={`terminal-view__toolbar-btn${!sidebarCollapsed ? " terminal-view__toolbar-btn--active" : ""}`}
-              onClick={toggleSidebar}
-              title={sidebarToggleTitle}
-              data-testid="terminal-view-toggle-sidebar"
-            >
-              <PanelLeft size={16} />
-            </button>
-            <span className="terminal-view__toolbar-title">Terminal</span>
-          </div>
-          <div className="terminal-view__toolbar-actions">
-            <button
               className="terminal-view__toolbar-btn"
               onClick={handleNewTerminal}
               title="New Terminal"
@@ -125,6 +114,16 @@ export function TerminalView() {
                 <X size={16} />
               </button>
             )}
+          </div>
+          <div className="terminal-view__toolbar-actions">
+            <button
+              className={`terminal-view__toolbar-btn${!sidebarCollapsed ? " terminal-view__toolbar-btn--active" : ""}`}
+              onClick={toggleSidebar}
+              title={sidebarToggleTitle}
+              data-testid="terminal-view-toggle-sidebar"
+            >
+              <PanelLeft size={16} />
+            </button>
           </div>
         </div>
         <div className="terminal-view__content">
