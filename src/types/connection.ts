@@ -66,6 +66,8 @@ export interface AppSettings {
   scrollbackBuffer?: number;
   cursorStyle?: "block" | "underline" | "bar";
   cursorBlink?: boolean;
+  powerMonitoringEnabled: boolean;
+  fileBrowserEnabled: boolean;
 }
 
 export interface FileEntry {

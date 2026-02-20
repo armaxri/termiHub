@@ -205,6 +205,52 @@ export function ExternalFilesSettings() {
           </ul>
         )}
       </div>
+
+      <div className="settings-panel__section">
+        <div className="settings-panel__section-header">
+          <h3 className="settings-panel__section-title">Advanced</h3>
+        </div>
+        <p className="settings-panel__description">
+          Default settings for new SSH connections. Individual connections can override these in
+          their SSH settings. Disabling a default disconnects active sessions that use the default.
+        </p>
+        <ul className="settings-panel__file-list">
+          <li className="settings-panel__file-item">
+            <label className="settings-panel__toggle">
+              <input
+                type="checkbox"
+                checked={settings.powerMonitoringEnabled}
+                onChange={() =>
+                  updateSettings({
+                    ...settings,
+                    powerMonitoringEnabled: !settings.powerMonitoringEnabled,
+                  })
+                }
+                data-testid="toggle-power-monitoring"
+              />
+              <span className="settings-panel__toggle-slider" />
+            </label>
+            <span className="settings-panel__file-path">Power Monitoring</span>
+          </li>
+          <li className="settings-panel__file-item">
+            <label className="settings-panel__toggle">
+              <input
+                type="checkbox"
+                checked={settings.fileBrowserEnabled}
+                onChange={() =>
+                  updateSettings({
+                    ...settings,
+                    fileBrowserEnabled: !settings.fileBrowserEnabled,
+                  })
+                }
+                data-testid="toggle-file-browser"
+              />
+              <span className="settings-panel__toggle-slider" />
+            </label>
+            <span className="settings-panel__file-path">File Browser</span>
+          </li>
+        </ul>
+      </div>
     </div>
   );
 }

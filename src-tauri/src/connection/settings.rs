@@ -14,6 +14,11 @@ pub struct ExternalFileConfig {
     pub enabled: bool,
 }
 
+/// Helper for serde default that returns `true`.
+fn default_true() -> bool {
+    true
+}
+
 /// Application-wide settings persisted to disk.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -40,6 +45,10 @@ pub struct AppSettings {
     pub cursor_style: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor_blink: Option<bool>,
+    #[serde(default = "default_true")]
+    pub power_monitoring_enabled: bool,
+    #[serde(default = "default_true")]
+    pub file_browser_enabled: bool,
 }
 
 impl Default for AppSettings {
@@ -57,6 +66,8 @@ impl Default for AppSettings {
             scrollback_buffer: None,
             cursor_style: None,
             cursor_blink: None,
+            power_monitoring_enabled: true,
+            file_browser_enabled: true,
         }
     }
 }
@@ -124,6 +135,8 @@ mod tests {
         assert!(settings.default_user.is_none());
         assert!(settings.font_size.is_none());
         assert!(settings.cursor_blink.is_none());
+        assert!(settings.power_monitoring_enabled);
+        assert!(settings.file_browser_enabled);
     }
 
     #[test]
@@ -148,12 +161,41 @@ mod tests {
     }
 
     #[test]
+    fn default_settings_have_features_enabled() {
+        let settings = AppSettings::default();
+        assert!(settings.power_monitoring_enabled);
+        assert!(settings.file_browser_enabled);
+    }
+
+    #[test]
+    fn backward_compat_deserializes_missing_fields_as_true() {
+        let json = r#"{"version":"1","externalConnectionFiles":[]}"#;
+        let settings: AppSettings = serde_json::from_str(json).unwrap();
+        assert!(settings.power_monitoring_enabled);
+        assert!(settings.file_browser_enabled);
+    }
+
+    #[test]
+    fn deserializes_explicit_false_values() {
+        let json = r#"{
+            "version": "1",
+            "externalConnectionFiles": [],
+            "powerMonitoringEnabled": false,
+            "fileBrowserEnabled": false
+        }"#;
+        let settings: AppSettings = serde_json::from_str(json).unwrap();
+        assert!(!settings.power_monitoring_enabled);
+        assert!(!settings.file_browser_enabled);
+    }
+
+    #[test]
     fn round_trip_serialization() {
         let settings = AppSettings {
             default_user: Some("testuser".to_string()),
             font_family: Some("Fira Code".to_string()),
             font_size: Some(18),
             theme: Some("light".to_string()),
+            power_monitoring_enabled: false,
             ..Default::default()
         };
 
@@ -164,6 +206,8 @@ mod tests {
         assert_eq!(deserialized.font_family.as_deref(), Some("Fira Code"));
         assert_eq!(deserialized.font_size, Some(18));
         assert_eq!(deserialized.theme.as_deref(), Some("light"));
+        assert!(!deserialized.power_monitoring_enabled);
+        assert!(deserialized.file_browser_enabled);
         // Fields left as None should not appear in JSON
         assert!(!json.contains("cursorBlink"));
         assert!(!json.contains("scrollbackBuffer"));

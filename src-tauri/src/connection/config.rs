@@ -123,6 +123,8 @@ mod tests {
                 password: Some("secret".to_string()),
                 key_path: None,
                 enable_x11_forwarding: false,
+                enable_monitoring: None,
+                enable_file_browser: None,
             }),
             folder_id: Some("folder-1".to_string()),
             terminal_options: None,
@@ -213,6 +215,69 @@ mod tests {
         let json = r#"{"version":"1","folders":[],"connections":[]}"#;
         let store: ConnectionStore = serde_json::from_str(json).unwrap();
         assert!(store.agents.is_empty());
+    }
+
+    #[test]
+    fn ssh_config_backward_compat_missing_feature_fields() {
+        // Old JSON without enableMonitoring/enableFileBrowser should deserialize with None
+        let json = r#"{
+            "type": "ssh",
+            "config": {
+                "host": "example.com",
+                "port": 22,
+                "username": "admin",
+                "authMethod": "password",
+                "password": "secret",
+                "enableX11Forwarding": false
+            }
+        }"#;
+        let config: ConnectionConfig = serde_json::from_str(json).unwrap();
+        if let ConnectionConfig::Ssh(ssh) = &config {
+            assert_eq!(ssh.host, "example.com");
+            assert!(ssh.enable_monitoring.is_none());
+            assert!(ssh.enable_file_browser.is_none());
+        } else {
+            panic!("Expected SSH config");
+        }
+    }
+
+    #[test]
+    fn ssh_config_feature_fields_round_trip() {
+        let config = ConnectionConfig::Ssh(SshConfig {
+            host: "example.com".to_string(),
+            port: 22,
+            username: "admin".to_string(),
+            auth_method: "password".to_string(),
+            password: None,
+            key_path: None,
+            enable_x11_forwarding: false,
+            enable_monitoring: Some(false),
+            enable_file_browser: Some(true),
+        });
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: ConnectionConfig = serde_json::from_str(&json).unwrap();
+        if let ConnectionConfig::Ssh(ssh) = &deserialized {
+            assert_eq!(ssh.enable_monitoring, Some(false));
+            assert_eq!(ssh.enable_file_browser, Some(true));
+        } else {
+            panic!("Expected SSH config");
+        }
+
+        // Verify None values are omitted from JSON
+        let config_none = ConnectionConfig::Ssh(SshConfig {
+            host: "example.com".to_string(),
+            port: 22,
+            username: "admin".to_string(),
+            auth_method: "password".to_string(),
+            password: None,
+            key_path: None,
+            enable_x11_forwarding: false,
+            enable_monitoring: None,
+            enable_file_browser: None,
+        });
+        let json_none = serde_json::to_string(&config_none).unwrap();
+        assert!(!json_none.contains("enableMonitoring"));
+        assert!(!json_none.contains("enableFileBrowser"));
     }
 
     #[test]

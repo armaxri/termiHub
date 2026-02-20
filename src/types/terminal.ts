@@ -53,6 +53,8 @@ export interface SshConfig {
   password?: string;
   keyPath?: string;
   enableX11Forwarding?: boolean;
+  enableMonitoring?: boolean;
+  enableFileBrowser?: boolean;
 }
 
 export interface TelnetConfig {

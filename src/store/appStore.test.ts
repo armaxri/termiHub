@@ -9,7 +9,14 @@ vi.mock("@/services/storage", () => ({
   removeConnection: vi.fn(() => Promise.resolve()),
   persistFolder: vi.fn(() => Promise.resolve()),
   removeFolder: vi.fn(() => Promise.resolve()),
-  getSettings: vi.fn(() => Promise.resolve({ version: "1", externalConnectionFiles: [] })),
+  getSettings: vi.fn(() =>
+    Promise.resolve({
+      version: "1",
+      externalConnectionFiles: [],
+      powerMonitoringEnabled: true,
+      fileBrowserEnabled: true,
+    })
+  ),
   saveSettings: vi.fn(() => Promise.resolve()),
   saveExternalFile: vi.fn(() => Promise.resolve()),
   reloadExternalConnections: vi.fn(() => Promise.resolve([])),
