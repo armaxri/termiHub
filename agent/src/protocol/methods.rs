@@ -369,6 +369,44 @@ pub struct FilesStatResult {
     pub permissions: Option<String>,
 }
 
+// ── monitoring.subscribe ────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MonitoringSubscribeParams {
+    /// `"self"` for the agent's own host, or a connection ID for a jump target.
+    pub host: String,
+    /// Collection interval in milliseconds (default: 2000).
+    pub interval_ms: Option<u64>,
+}
+
+// ── monitoring.unsubscribe ──────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MonitoringUnsubscribeParams {
+    pub host: String,
+}
+
+// ── monitoring.data (notification payload) ──────────────────────────
+
+/// System statistics sent as a `monitoring.data` notification.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MonitoringData {
+    /// `"self"` or connection ID identifying the monitored host.
+    pub host: String,
+    pub hostname: String,
+    pub uptime_seconds: f64,
+    pub load_average: [f64; 3],
+    pub cpu_usage_percent: f64,
+    pub memory_total_kb: u64,
+    pub memory_available_kb: u64,
+    pub memory_used_percent: f64,
+    pub disk_total_kb: u64,
+    pub disk_used_kb: u64,
+    pub disk_used_percent: f64,
+    pub os_info: String,
+}
+
 // ── SSH session config ─────────────────────────────────────────────
 
 #[derive(Debug, Clone, Deserialize)]
@@ -930,5 +968,64 @@ mod tests {
         assert_eq!(v["isDirectory"], true);
         assert!(v.get("is_directory").is_none());
         assert_eq!(v["name"], "log");
+    }
+
+    // ── Monitoring types ─────────────────────────────────────────
+
+    #[test]
+    fn monitoring_subscribe_params_serde() {
+        let json = json!({"host": "self", "interval_ms": 5000});
+        let params: MonitoringSubscribeParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.host, "self");
+        assert_eq!(params.interval_ms, Some(5000));
+    }
+
+    #[test]
+    fn monitoring_subscribe_params_defaults() {
+        let json = json!({"host": "conn-123"});
+        let params: MonitoringSubscribeParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.host, "conn-123");
+        assert_eq!(params.interval_ms, None);
+    }
+
+    #[test]
+    fn monitoring_unsubscribe_params_serde() {
+        let json = json!({"host": "self"});
+        let params: MonitoringUnsubscribeParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.host, "self");
+    }
+
+    #[test]
+    fn monitoring_data_serializes_camel_case() {
+        let data = MonitoringData {
+            host: "self".to_string(),
+            hostname: "raspberrypi".to_string(),
+            uptime_seconds: 12345.67,
+            load_average: [0.15, 0.10, 0.05],
+            cpu_usage_percent: 78.5,
+            memory_total_kb: 16384000,
+            memory_available_kb: 12000000,
+            memory_used_percent: 25.0,
+            disk_total_kb: 50000000,
+            disk_used_kb: 20000000,
+            disk_used_percent: 42.0,
+            os_info: "Linux 5.15.0".to_string(),
+        };
+        let v = serde_json::to_value(&data).unwrap();
+        assert_eq!(v["host"], "self");
+        assert_eq!(v["hostname"], "raspberrypi");
+        assert_eq!(v["uptimeSeconds"], 12345.67);
+        assert_eq!(v["cpuUsagePercent"], 78.5);
+        assert_eq!(v["memoryTotalKb"], 16384000);
+        assert_eq!(v["memoryAvailableKb"], 12000000);
+        assert_eq!(v["memoryUsedPercent"], 25.0);
+        assert_eq!(v["diskTotalKb"], 50000000);
+        assert_eq!(v["diskUsedKb"], 20000000);
+        assert_eq!(v["diskUsedPercent"], 42.0);
+        assert_eq!(v["osInfo"], "Linux 5.15.0");
+        // Verify camelCase (no snake_case keys)
+        assert!(v.get("uptime_seconds").is_none());
+        assert!(v.get("cpu_usage_percent").is_none());
+        assert!(v.get("memory_total_kb").is_none());
     }
 }

@@ -1185,6 +1185,86 @@ Get metadata for a single file or directory.
 
 ---
 
+### `monitoring.subscribe`
+
+Start periodic system monitoring for a host. The agent will send `monitoring.data` notifications at the specified interval.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "monitoring.subscribe",
+  "params": {
+    "host": "self",
+    "interval_ms": 2000
+  },
+  "id": 30
+}
+```
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `host` | `string` | Yes | `"self"` for the agent's own host, or a connection ID for a remote SSH target |
+| `interval_ms` | `integer` | No | Collection interval in milliseconds (default: 2000, minimum: 500) |
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {},
+  "id": 30
+}
+```
+
+**Errors:**
+- `-32008` Connection not found (when `host` is a connection ID that doesn't exist)
+- `-32014` Monitoring error (SSH connection failed, unsupported connection type, etc.)
+
+**Notes:**
+- Subscribing to a host that is already subscribed replaces the existing subscription
+- Remote monitoring (`host` = connection ID) only supports SSH connections
+- CPU usage is computed from `/proc/stat` deltas — the first notification returns 0% CPU
+
+---
+
+### `monitoring.unsubscribe`
+
+Stop periodic monitoring for a host.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "monitoring.unsubscribe",
+  "params": {
+    "host": "self"
+  },
+  "id": 31
+}
+```
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `host` | `string` | Yes | `"self"` or connection ID |
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {},
+  "id": 31
+}
+```
+
+**Notes:**
+- Unsubscribing from a host that is not subscribed is a no-op (always succeeds)
+
+---
+
 ## Notifications
 
 Notifications are messages from the agent to the desktop with **no `id` field**. The desktop MUST NOT send a response.
@@ -1253,6 +1333,46 @@ A session-level error that does not necessarily terminate the session.
 |-------|------|-------------|
 | `session_id` | `string` | Affected session UUID |
 | `message` | `string` | Human-readable error description |
+
+### `monitoring.data`
+
+Periodic system statistics for a monitored host. Sent at the interval specified in `monitoring.subscribe`.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "monitoring.data",
+  "params": {
+    "host": "self",
+    "hostname": "raspberrypi",
+    "uptimeSeconds": 12345.67,
+    "loadAverage": [0.15, 0.10, 0.05],
+    "cpuUsagePercent": 78.5,
+    "memoryTotalKb": 16384000,
+    "memoryAvailableKb": 12000000,
+    "memoryUsedPercent": 25.0,
+    "diskTotalKb": 50000000,
+    "diskUsedKb": 20000000,
+    "diskUsedPercent": 42.0,
+    "osInfo": "Linux 5.15.0"
+  }
+}
+```
+
+| Param              | Type       | Description                                    |
+|--------------------|------------|------------------------------------------------|
+| `host`             | `string`   | `"self"` or connection ID                      |
+| `hostname`         | `string`   | Hostname of the monitored system               |
+| `uptimeSeconds`    | `number`   | System uptime in seconds                       |
+| `loadAverage`      | `number[]` | 1-min, 5-min, 15-min load averages             |
+| `cpuUsagePercent`  | `number`   | CPU usage 0–100 (0 on first sample)            |
+| `memoryTotalKb`    | `integer`  | Total physical memory in KB                    |
+| `memoryAvailableKb`| `integer`  | Available memory in KB                         |
+| `memoryUsedPercent`| `number`   | Memory usage 0–100                             |
+| `diskTotalKb`      | `integer`  | Root filesystem total in KB                    |
+| `diskUsedKb`       | `integer`  | Root filesystem used in KB                     |
+| `diskUsedPercent`  | `number`   | Disk usage 0–100                               |
+| `osInfo`           | `string`   | OS name and version (e.g., `"Linux 5.15.0"`)   |
 
 ---
 

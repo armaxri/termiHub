@@ -4,6 +4,7 @@ mod docker;
 mod files;
 mod handler;
 mod io;
+mod monitoring;
 mod protocol;
 mod serial;
 mod session;

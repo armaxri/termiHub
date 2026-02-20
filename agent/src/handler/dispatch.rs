@@ -11,6 +11,7 @@ use crate::files::docker::DockerFileBackend;
 use crate::files::local::LocalFileBackend;
 use crate::files::ssh::SshFileBackend;
 use crate::files::{FileBackend, FileError};
+use crate::monitoring::MonitoringManager;
 use crate::protocol::errors;
 use crate::protocol::messages::{JsonRpcErrorResponse, JsonRpcRequest, JsonRpcResponse};
 use crate::protocol::methods::{
@@ -18,9 +19,9 @@ use crate::protocol::methods::{
     DockerSessionConfig, FilesDeleteParams, FilesListParams, FilesListResult, FilesReadParams,
     FilesReadResult, FilesRenameParams, FilesStatParams, FilesWriteParams, FolderCreateParams,
     FolderDeleteParams, FolderUpdateParams, HealthCheckResult, InitializeParams, InitializeResult,
-    SessionAttachParams, SessionCloseParams, SessionCreateParams, SessionCreateResult,
-    SessionDetachParams, SessionInputParams, SessionListEntry, SessionListResult,
-    SessionResizeParams, SshSessionConfig,
+    MonitoringSubscribeParams, MonitoringUnsubscribeParams, SessionAttachParams,
+    SessionCloseParams, SessionCreateParams, SessionCreateResult, SessionDetachParams,
+    SessionInputParams, SessionListEntry, SessionListResult, SessionResizeParams, SshSessionConfig,
 };
 use crate::session::definitions::{Connection, ConnectionStore, Folder};
 use crate::session::manager::{SessionCreateError, SessionManager, MAX_SESSIONS};
@@ -34,6 +35,7 @@ const AGENT_PROTOCOL_VERSION: &str = "0.1.0";
 pub struct Dispatcher {
     session_manager: Arc<SessionManager>,
     connection_store: Arc<ConnectionStore>,
+    monitoring_manager: Arc<MonitoringManager>,
     initialized: bool,
     start_time: Instant,
 }
@@ -58,10 +60,12 @@ impl Dispatcher {
     pub fn new(
         session_manager: Arc<SessionManager>,
         connection_store: Arc<ConnectionStore>,
+        monitoring_manager: Arc<MonitoringManager>,
     ) -> Self {
         Self {
             session_manager,
             connection_store,
+            monitoring_manager,
             initialized: false,
             start_time: Instant::now(),
         }
@@ -109,6 +113,8 @@ impl Dispatcher {
             "files.delete" => self.handle_files_delete(request).await,
             "files.rename" => self.handle_files_rename(request).await,
             "files.stat" => self.handle_files_stat(request).await,
+            "monitoring.subscribe" => self.handle_monitoring_subscribe(request).await,
+            "monitoring.unsubscribe" => self.handle_monitoring_unsubscribe(request).await,
             "health.check" => self.handle_health_check(request).await,
             _ => {
                 warn!("Unknown method: {}", method);
@@ -842,6 +848,54 @@ impl Dispatcher {
         }
     }
 
+    // ── monitoring.* handlers ─────────────────────────────────────────
+
+    async fn handle_monitoring_subscribe(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+
+        let params: MonitoringSubscribeParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid monitoring.subscribe params: {e}"),
+                ));
+            }
+        };
+
+        match self
+            .monitoring_manager
+            .subscribe(&params.host, params.interval_ms)
+            .await
+        {
+            Ok(()) => DispatchResult::Success(JsonRpcResponse::new(id, json!({}))),
+            Err(e) => DispatchResult::Error(JsonRpcErrorResponse::new(
+                id,
+                errors::MONITORING_ERROR,
+                format!("Failed to subscribe: {e}"),
+            )),
+        }
+    }
+
+    async fn handle_monitoring_unsubscribe(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+
+        let params: MonitoringUnsubscribeParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid monitoring.unsubscribe params: {e}"),
+                ));
+            }
+        };
+
+        self.monitoring_manager.unsubscribe(&params.host).await;
+        DispatchResult::Success(JsonRpcResponse::new(id, json!({})))
+    }
+
     /// Resolve the appropriate file backend for a connection.
     ///
     /// - `None` → local filesystem
@@ -1001,8 +1055,9 @@ mod tests {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let tmp = std::env::temp_dir().join(format!("termihub-test-{}.json", uuid::Uuid::new_v4()));
         let conn_store = Arc::new(ConnectionStore::new_temp(tmp));
-        let session_manager = Arc::new(SessionManager::new(tx));
-        let dispatcher = Dispatcher::new(session_manager.clone(), conn_store);
+        let session_manager = Arc::new(SessionManager::new(tx.clone()));
+        let monitoring_manager = Arc::new(MonitoringManager::new(tx, conn_store.clone()));
+        let dispatcher = Dispatcher::new(session_manager.clone(), conn_store, monitoring_manager);
         (dispatcher, session_manager)
     }
 
@@ -1908,5 +1963,69 @@ mod tests {
         );
         let result = d.dispatch(req).await.to_json();
         assert_eq!(result["error"]["code"], errors::INVALID_PARAMS);
+    }
+
+    // ── Monitoring tests ────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn monitoring_subscribe_self() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request(
+            "monitoring.subscribe",
+            json!({"host": "self", "interval_ms": 5000}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert!(result.get("result").is_some());
+
+        // Clean up
+        let req = make_request("monitoring.unsubscribe", json!({"host": "self"}), 3);
+        d.dispatch(req).await;
+    }
+
+    #[tokio::test]
+    async fn monitoring_unsubscribe_nonexistent() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request("monitoring.unsubscribe", json!({"host": "nonexistent"}), 2);
+        let result = d.dispatch(req).await.to_json();
+        // Unsubscribe always succeeds (idempotent)
+        assert!(result.get("result").is_some());
+    }
+
+    #[tokio::test]
+    async fn monitoring_subscribe_invalid_params() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request("monitoring.subscribe", json!({}), 2);
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["error"]["code"], errors::INVALID_PARAMS);
+    }
+
+    #[tokio::test]
+    async fn monitoring_requires_initialization() {
+        let mut d = make_dispatcher();
+
+        let req = make_request("monitoring.subscribe", json!({"host": "self"}), 1);
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["error"]["code"], errors::NOT_INITIALIZED);
+    }
+
+    #[tokio::test]
+    async fn monitoring_subscribe_unknown_connection() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request(
+            "monitoring.subscribe",
+            json!({"host": "nonexistent-conn"}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["error"]["code"], errors::MONITORING_ERROR);
     }
 }
