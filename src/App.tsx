@@ -6,6 +6,7 @@ import { StatusBar } from "@/components/StatusBar";
 import { TerminalView } from "@/components/Terminal";
 import { PasswordPrompt } from "@/components/PasswordPrompt";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
+import { useTunnelEvents } from "@/hooks/useTunnelEvents";
 import { useAppStore } from "@/store/appStore";
 import "./App.css";
 
@@ -76,6 +77,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
 
 function App() {
   useKeyboardShortcuts();
+  useTunnelEvents();
   const loadFromBackend = useAppStore((s) => s.loadFromBackend);
 
   useEffect(() => {

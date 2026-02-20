@@ -16,7 +16,8 @@ export type TabContentType =
   | "settings"
   | "editor"
   | "connection-editor"
-  | "log-viewer";
+  | "log-viewer"
+  | "tunnel-editor";
 
 export interface EditorTabMeta {
   filePath: string;
@@ -27,6 +28,10 @@ export interface EditorTabMeta {
 export interface ConnectionEditorMeta {
   connectionId: string;
   folderId: string | null;
+}
+
+export interface TunnelEditorMeta {
+  tunnelId: string | null;
 }
 
 export interface TerminalOptions {
@@ -149,6 +154,7 @@ export interface TerminalTab {
   isActive: boolean;
   editorMeta?: EditorTabMeta;
   connectionEditorMeta?: ConnectionEditorMeta;
+  tunnelEditorMeta?: TunnelEditorMeta;
 }
 
 export interface LeafPanel {

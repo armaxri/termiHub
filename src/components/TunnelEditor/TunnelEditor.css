@@ -1,0 +1,181 @@
+.tunnel-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow-y: auto;
+  background: var(--bg-primary);
+}
+
+.tunnel-editor--hidden {
+  display: none;
+}
+
+.tunnel-editor__header {
+  display: flex;
+  align-items: center;
+  padding: 16px 24px 8px;
+  gap: 8px;
+}
+
+.tunnel-editor__title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.tunnel-editor__form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 8px 24px 24px;
+  max-width: 600px;
+}
+
+.tunnel-editor__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tunnel-editor__label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.tunnel-editor__input {
+  padding: 6px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+}
+
+.tunnel-editor__input:focus {
+  border-color: var(--accent-color);
+}
+
+.tunnel-editor__select {
+  padding: 6px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  cursor: pointer;
+}
+
+.tunnel-editor__select:focus {
+  border-color: var(--accent-color);
+}
+
+.tunnel-editor__row {
+  display: flex;
+  gap: 12px;
+}
+
+.tunnel-editor__row > .tunnel-editor__field {
+  flex: 1;
+}
+
+.tunnel-editor__port-field {
+  max-width: 120px;
+}
+
+.tunnel-editor__checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tunnel-editor__checkbox {
+  accent-color: var(--accent-color);
+}
+
+.tunnel-editor__checkbox-label {
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.tunnel-editor__type-selector {
+  display: flex;
+  gap: 8px;
+}
+
+.tunnel-editor__type-btn {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: center;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.tunnel-editor__type-btn:hover {
+  background: var(--bg-hover);
+}
+
+.tunnel-editor__type-btn--active {
+  border-color: var(--accent-color);
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent-color) 8%, var(--bg-secondary));
+}
+
+.tunnel-editor__type-btn-title {
+  font-weight: 600;
+  display: block;
+}
+
+.tunnel-editor__type-btn-desc {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.tunnel-editor__actions {
+  display: flex;
+  gap: 8px;
+  padding-top: 8px;
+}
+
+.tunnel-editor__btn {
+  padding: 8px 16px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.tunnel-editor__btn:hover {
+  background: var(--bg-hover);
+}
+
+.tunnel-editor__btn--primary {
+  background: var(--accent-color);
+  color: #fff;
+  border-color: var(--accent-color);
+}
+
+.tunnel-editor__btn--primary:hover {
+  opacity: 0.9;
+}
+
+.tunnel-editor__section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  padding-top: 8px;
+  border-top: 1px solid var(--border-color);
+}

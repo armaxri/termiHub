@@ -12,6 +12,7 @@ import {
   TerminalOptions,
   EditorTabMeta,
   ConnectionEditorMeta,
+  TunnelEditorMeta,
   EditorStatus,
   EditorActions,
 } from "@/types/terminal";
@@ -57,6 +58,15 @@ import {
   AgentDefinitionInfo,
 } from "@/services/api";
 import { RemoteAgentConfig } from "@/types/terminal";
+import { TunnelConfig, TunnelState } from "@/types/tunnel";
+import {
+  getTunnels,
+  saveTunnel as apiSaveTunnel,
+  deleteTunnel as apiDeleteTunnel,
+  startTunnel as apiStartTunnel,
+  stopTunnel as apiStopTunnel,
+  getTunnelStatuses,
+} from "@/services/tunnelApi";
 import { SystemStats } from "@/types/monitoring";
 import { applyTheme, onThemeChange } from "@/themes";
 import {
@@ -71,7 +81,7 @@ import {
   edgeToSplit,
 } from "@/utils/panelTree";
 
-export type SidebarView = "connections" | "files";
+export type SidebarView = "connections" | "files" | "tunnels";
 
 /**
  * Strip password from SSH and Remote connection configs so it is never persisted.
@@ -244,6 +254,17 @@ interface AppState {
   connectMonitoring: (config: SshConfig) => Promise<void>;
   disconnectMonitoring: () => Promise<void>;
   refreshMonitoring: () => Promise<void>;
+
+  // SSH Tunnels
+  tunnels: TunnelConfig[];
+  tunnelStates: Record<string, TunnelState>;
+  loadTunnels: () => Promise<void>;
+  saveTunnel: (config: TunnelConfig) => Promise<void>;
+  deleteTunnel: (tunnelId: string) => Promise<void>;
+  startTunnel: (tunnelId: string) => Promise<void>;
+  stopTunnel: (tunnelId: string) => Promise<void>;
+  updateTunnelState: (state: TunnelState) => void;
+  openTunnelEditorTab: (tunnelId: string | null) => void;
 }
 
 let tabCounter = 0;
@@ -804,6 +825,8 @@ export const useAppStore = create<AppState>((set, get) => {
       } catch (err) {
         console.error("Failed to detect available shells:", err);
       }
+      // Load SSH tunnels
+      get().loadTunnels();
       // Check VS Code availability in the background
       get().checkVscodeAvailability();
     },
@@ -1392,6 +1415,124 @@ export const useAppStore = create<AppState>((set, get) => {
         });
       }
     },
+
+    // SSH Tunnels
+    tunnels: [],
+    tunnelStates: {},
+
+    loadTunnels: async () => {
+      try {
+        const tunnels = await getTunnels();
+        const statuses = await getTunnelStatuses();
+        const tunnelStates: Record<string, TunnelState> = {};
+        for (const s of statuses) {
+          tunnelStates[s.tunnelId] = s;
+        }
+        set({ tunnels, tunnelStates });
+      } catch (err) {
+        console.error("Failed to load tunnels:", err);
+      }
+    },
+
+    saveTunnel: async (config) => {
+      try {
+        await apiSaveTunnel(config);
+        set((state) => {
+          const exists = state.tunnels.some((t) => t.id === config.id);
+          const tunnels = exists
+            ? state.tunnels.map((t) => (t.id === config.id ? config : t))
+            : [...state.tunnels, config];
+          return { tunnels };
+        });
+      } catch (err) {
+        console.error("Failed to save tunnel:", err);
+        throw err;
+      }
+    },
+
+    deleteTunnel: async (tunnelId) => {
+      try {
+        await apiDeleteTunnel(tunnelId);
+        set((state) => ({
+          tunnels: state.tunnels.filter((t) => t.id !== tunnelId),
+          tunnelStates: Object.fromEntries(
+            Object.entries(state.tunnelStates).filter(([k]) => k !== tunnelId)
+          ),
+        }));
+      } catch (err) {
+        console.error("Failed to delete tunnel:", err);
+      }
+    },
+
+    startTunnel: async (tunnelId) => {
+      try {
+        await apiStartTunnel(tunnelId);
+      } catch (err) {
+        console.error("Failed to start tunnel:", err);
+        throw err;
+      }
+    },
+
+    stopTunnel: async (tunnelId) => {
+      try {
+        await apiStopTunnel(tunnelId);
+      } catch (err) {
+        console.error("Failed to stop tunnel:", err);
+        throw err;
+      }
+    },
+
+    updateTunnelState: (state) => {
+      set((s) => ({
+        tunnelStates: { ...s.tunnelStates, [state.tunnelId]: state },
+      }));
+    },
+
+    openTunnelEditorTab: (tunnelId) =>
+      set((state) => {
+        const allLeaves = getAllLeaves(state.rootPanel);
+
+        // Look for an existing tunnel-editor tab for this tunnel
+        for (const leaf of allLeaves) {
+          const existing = leaf.tabs.find(
+            (t) =>
+              t.contentType === "tunnel-editor" &&
+              t.tunnelEditorMeta?.tunnelId === tunnelId
+          );
+          if (existing) {
+            const rootPanel = updateLeaf(state.rootPanel, leaf.id, (l) => ({
+              ...l,
+              tabs: l.tabs.map((t) => ({ ...t, isActive: t.id === existing.id })),
+              activeTabId: existing.id,
+            }));
+            return { rootPanel, activePanelId: leaf.id };
+          }
+        }
+
+        // Create new tunnel-editor tab in the active panel
+        const targetPanelId = state.activePanelId ?? allLeaves[0]?.id;
+        if (!targetPanelId) return state;
+
+        let title = "New Tunnel";
+        if (tunnelId) {
+          const tunnel = state.tunnels.find((t) => t.id === tunnelId);
+          if (tunnel) {
+            title = `Edit: ${tunnel.name}`;
+          }
+        }
+
+        const dummyConfig: ConnectionConfig = { type: "local", config: { shellType: "zsh" } };
+        const meta: TunnelEditorMeta = { tunnelId };
+        const newTab = createTab(title, "local", dummyConfig, targetPanelId, "tunnel-editor");
+        newTab.tunnelEditorMeta = meta;
+
+        const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
+          const tabs = leaf.tabs.map((t) => ({ ...t, isActive: false }));
+          tabs.push(newTab);
+          return { ...leaf, tabs, activeTabId: newTab.id };
+        });
+        return { rootPanel, activePanelId: targetPanelId };
+      }),
   };
 });
 
