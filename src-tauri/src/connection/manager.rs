@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use tauri::AppHandle;
@@ -9,6 +9,7 @@ use super::config::{
 };
 use super::settings::{AppSettings, SettingsStorage};
 use super::storage::ConnectionStorage;
+use crate::credential::{CredentialStore, NullStore};
 use crate::terminal::backend::ConnectionConfig;
 
 /// Strip the password field from SSH connection configs.
@@ -38,12 +39,16 @@ pub struct ConnectionManager {
     storage: ConnectionStorage,
     settings: Mutex<AppSettings>,
     settings_storage: SettingsStorage,
+    credential_store: Arc<dyn CredentialStore>,
 }
 
 impl ConnectionManager {
     /// Create a new connection manager, loading existing data from disk.
     /// On first load, strips any stored SSH passwords (migration).
-    pub fn new(app_handle: &AppHandle) -> Result<Self> {
+    pub fn new(
+        app_handle: &AppHandle,
+        credential_store: Arc<dyn CredentialStore>,
+    ) -> Result<Self> {
         let storage = ConnectionStorage::new(app_handle)?;
         let mut store = storage.load()?;
 
@@ -77,6 +82,7 @@ impl ConnectionManager {
             storage,
             settings: Mutex::new(settings),
             settings_storage,
+            credential_store,
         })
     }
 

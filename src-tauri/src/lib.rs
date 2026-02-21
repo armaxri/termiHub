@@ -1,7 +1,5 @@
 mod commands;
 mod connection;
-// Not yet consumed — foundation for credential storage (#246, #25).
-#[allow(dead_code, unused_imports)]
 mod credential;
 mod files;
 mod monitoring;
@@ -54,8 +52,11 @@ pub fn run() {
                 *handle = Some(app.handle().clone());
             }
 
-            let connection_manager = ConnectionManager::new(app.handle())
-                .expect("Failed to initialize connection manager");
+            let credential_store: Arc<dyn credential::CredentialStore> =
+                Arc::new(credential::NullStore);
+            let connection_manager =
+                ConnectionManager::new(app.handle(), credential_store)
+                    .expect("Failed to initialize connection manager");
             app.manage(connection_manager);
 
             let agent_manager = Arc::new(AgentConnectionManager::new(app.handle().clone()));
