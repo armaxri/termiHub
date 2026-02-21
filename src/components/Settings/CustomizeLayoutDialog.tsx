@@ -107,9 +107,7 @@ export function CustomizeLayoutDialog() {
       <Dialog.Portal>
         <Dialog.Overlay className="customize-layout-dialog__overlay" />
         <Dialog.Content className="customize-layout-dialog__content">
-          <Dialog.Title className="customize-layout-dialog__title">
-            Customize Layout
-          </Dialog.Title>
+          <Dialog.Title className="customize-layout-dialog__title">Customize Layout</Dialog.Title>
 
           {/* Presets */}
           <div className="customize-layout-dialog__presets">
@@ -134,9 +132,7 @@ export function CustomizeLayoutDialog() {
                 <input
                   type="checkbox"
                   checked={!abHidden}
-                  onChange={(e) =>
-                    handleActivityBarPosition(e.target.checked ? "left" : "hidden")
-                  }
+                  onChange={(e) => handleActivityBarPosition(e.target.checked ? "left" : "hidden")}
                   data-testid="layout-ab-visible"
                 />
                 Visible
