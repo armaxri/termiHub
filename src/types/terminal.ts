@@ -16,7 +16,8 @@ export type TabContentType =
   | "settings"
   | "editor"
   | "connection-editor"
-  | "log-viewer";
+  | "log-viewer"
+  | "tunnel-editor";
 
 export interface EditorTabMeta {
   filePath: string;
@@ -29,9 +30,18 @@ export interface ConnectionEditorMeta {
   folderId: string | null;
 }
 
+export interface TunnelEditorMeta {
+  tunnelId: string | null;
+}
+
 export interface TerminalOptions {
   horizontalScrolling?: boolean;
   color?: string;
+  fontFamily?: string;
+  fontSize?: number;
+  scrollbackBuffer?: number;
+  cursorStyle?: "block" | "underline" | "bar";
+  cursorBlink?: boolean;
 }
 
 export interface LocalShellConfig {
@@ -48,6 +58,8 @@ export interface SshConfig {
   password?: string;
   keyPath?: string;
   enableX11Forwarding?: boolean;
+  enableMonitoring?: boolean;
+  enableFileBrowser?: boolean;
 }
 
 export interface TelnetConfig {
@@ -154,6 +166,7 @@ export interface TerminalTab {
   isActive: boolean;
   editorMeta?: EditorTabMeta;
   connectionEditorMeta?: ConnectionEditorMeta;
+  tunnelEditorMeta?: TunnelEditorMeta;
 }
 
 export interface LeafPanel {

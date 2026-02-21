@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
+import { useState, useEffect, useRef } from "react";
 import { SshConfig } from "@/types/terminal";
-import { checkSshAgentStatus, getHomeDir } from "@/services/api";
+import { checkSshAgentStatus, validateSshKey, SshKeyValidation } from "@/services/api";
 import { parseHostPort } from "@/utils/parseHostPort";
+import { KeyPathInput } from "./KeyPathInput";
 
 interface SshSettingsProps {
   config: SshConfig;
@@ -12,6 +12,8 @@ interface SshSettingsProps {
 
 export function SshSettings({ config, onChange, onSetupAgent }: SshSettingsProps) {
   const [agentStatus, setAgentStatus] = useState<string | null>(null);
+  const [keyValidation, setKeyValidation] = useState<SshKeyValidation | null>(null);
+  const validationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (config.authMethod === "agent") {
@@ -23,23 +25,30 @@ export function SshSettings({ config, onChange, onSetupAgent }: SshSettingsProps
     }
   }, [config.authMethod]);
 
-  const handleBrowseKeyPath = useCallback(async () => {
-    let defaultPath: string | undefined;
-    try {
-      const home = await getHomeDir();
-      defaultPath = `${home}/.ssh`;
-    } catch {
-      // Fall through — dialog opens without a default path
+  useEffect(() => {
+    if (config.authMethod !== "key") {
+      setKeyValidation(null);
+      return;
     }
-    const selected = await open({
-      multiple: false,
-      title: "Select SSH private key",
-      defaultPath,
-    });
-    if (selected) {
-      onChange({ ...config, keyPath: selected as string });
+
+    const keyPath = config.keyPath ?? "";
+
+    if (validationTimer.current) {
+      clearTimeout(validationTimer.current);
     }
-  }, [config, onChange]);
+
+    validationTimer.current = setTimeout(() => {
+      validateSshKey(keyPath)
+        .then(setKeyValidation)
+        .catch(() => setKeyValidation(null));
+    }, 300);
+
+    return () => {
+      if (validationTimer.current) {
+        clearTimeout(validationTimer.current);
+      }
+    };
+  }, [config.authMethod, config.keyPath]);
 
   const isWindows = navigator.userAgent.includes("Windows");
 
@@ -132,25 +141,21 @@ export function SshSettings({ config, onChange, onSetupAgent }: SshSettingsProps
         <>
           <div className="settings-form__field">
             <span className="settings-form__label">Key Path</span>
-            <div className="settings-form__file-row">
-              <input
-                type="text"
-                value={config.keyPath ?? ""}
-                onChange={(e) => onChange({ ...config, keyPath: e.target.value })}
-                placeholder="~/.ssh/id_ed25519"
-                data-testid="ssh-settings-key-path-input"
-              />
-              <button
-                type="button"
-                className="settings-form__list-browse"
-                onClick={handleBrowseKeyPath}
-                title="Browse"
-                data-testid="ssh-settings-key-path-browse"
-              >
-                ...
-              </button>
-            </div>
+            <KeyPathInput
+              value={config.keyPath ?? ""}
+              onChange={(v) => onChange({ ...config, keyPath: v })}
+              placeholder="~/.ssh/id_ed25519"
+              testIdPrefix="ssh-settings"
+            />
           </div>
+          {keyValidation && keyValidation.message && (
+            <p
+              className={`settings-form__hint settings-form__hint--${keyValidation.status}`}
+              data-testid="ssh-settings-key-validation"
+            >
+              {keyValidation.message}
+            </p>
+          )}
           <label className="settings-form__field">
             <span className="settings-form__label">Key Passphrase (optional)</span>
             <input
@@ -175,6 +180,54 @@ export function SshSettings({ config, onChange, onSetupAgent }: SshSettingsProps
       <p className="settings-form__hint">
         Forwards remote GUI applications to your local X server (requires XQuartz on macOS).
       </p>
+      <label className="settings-form__field">
+        <span className="settings-form__label">Power Monitoring</span>
+        <select
+          value={
+            config.enableMonitoring === undefined
+              ? "default"
+              : config.enableMonitoring
+                ? "enabled"
+                : "disabled"
+          }
+          onChange={(e) => {
+            const v = e.target.value;
+            onChange({
+              ...config,
+              enableMonitoring: v === "default" ? undefined : v === "enabled",
+            });
+          }}
+          data-testid="ssh-settings-monitoring-select"
+        >
+          <option value="default">Default (from Settings)</option>
+          <option value="enabled">Enabled</option>
+          <option value="disabled">Disabled</option>
+        </select>
+      </label>
+      <label className="settings-form__field">
+        <span className="settings-form__label">File Browser</span>
+        <select
+          value={
+            config.enableFileBrowser === undefined
+              ? "default"
+              : config.enableFileBrowser
+                ? "enabled"
+                : "disabled"
+          }
+          onChange={(e) => {
+            const v = e.target.value;
+            onChange({
+              ...config,
+              enableFileBrowser: v === "default" ? undefined : v === "enabled",
+            });
+          }}
+          data-testid="ssh-settings-filebrowser-select"
+        >
+          <option value="default">Default (from Settings)</option>
+          <option value="enabled">Enabled</option>
+          <option value="disabled">Disabled</option>
+        </select>
+      </label>
     </div>
   );
 }

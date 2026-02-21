@@ -25,6 +25,7 @@
   --tab-bg: #2d2d2d;
   --tab-active-bg: #1e1e1e;
   --tab-border: #252526;
+  --tab-active-border: var(--accent-color);
   --tab-height: 35px;
 
   /* Text colors */
@@ -37,6 +38,7 @@
   /* Border colors */
   --border-primary: #474747;
   --border-secondary: #2b2b2b;
+  --panel-border: var(--border-primary);
 
   /* Accent / focus */
   --accent-color: #007acc;
@@ -48,6 +50,11 @@
   --color-warning: #cca700;
   --color-error: #f48771;
   --color-info: #75beff;
+
+  /* State indicator dots */
+  --state-connected: #0dbc79;
+  --state-connecting: #e5e510;
+  --state-disconnected: #cd3131;
 
   /* Terminal */
   --terminal-bg: #1e1e1e;

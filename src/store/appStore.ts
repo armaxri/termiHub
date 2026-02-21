@@ -12,6 +12,7 @@ import {
   TerminalOptions,
   EditorTabMeta,
   ConnectionEditorMeta,
+  TunnelEditorMeta,
   EditorStatus,
   EditorActions,
 } from "@/types/terminal";
@@ -19,7 +20,6 @@ import {
   SavedConnection,
   ConnectionFolder,
   FileEntry,
-  ExternalConnectionSource,
   AppSettings,
   RemoteAgentDefinition,
   AgentCapabilities,
@@ -28,14 +28,14 @@ import {
   loadConnections,
   persistConnection,
   removeConnection,
+  moveConnectionToFile as apiMoveConnectionToFile,
   persistFolder,
   removeFolder,
   persistAgent,
   removeAgent,
   getSettings,
   saveSettings as persistSettings,
-  saveExternalFile,
-  reloadExternalConnections as reloadExternalSources,
+  reloadExternalConnections as apiReloadExternalConnections,
 } from "@/services/storage";
 import {
   sftpOpen,
@@ -58,7 +58,17 @@ import {
   AgentDefinitionInfo,
 } from "@/services/api";
 import { RemoteAgentConfig } from "@/types/terminal";
+import { TunnelConfig, TunnelState } from "@/types/tunnel";
+import {
+  getTunnels,
+  saveTunnel as apiSaveTunnel,
+  deleteTunnel as apiDeleteTunnel,
+  startTunnel as apiStartTunnel,
+  stopTunnel as apiStopTunnel,
+  getTunnelStatuses,
+} from "@/services/tunnelApi";
 import { SystemStats } from "@/types/monitoring";
+import { applyTheme, onThemeChange } from "@/themes";
 import {
   createLeafPanel,
   findLeaf,
@@ -71,7 +81,7 @@ import {
   edgeToSplit,
 } from "@/utils/panelTree";
 
-export type SidebarView = "connections" | "files";
+export type SidebarView = "connections" | "files" | "tunnels";
 
 /**
  * Strip password from SSH and Remote connection configs so it is never persisted.
@@ -87,68 +97,6 @@ function stripPassword(connection: SavedConnection): SavedConnection {
     };
   }
   return connection;
-}
-
-/**
- * Return the external source file path that a namespaced ID belongs to, or null.
- */
-function externalFilePathFromId(id: string): string | null {
-  // IDs look like "ext:<filePath>::<originalId>" or "ext-root:<filePath>"
-  if (id.startsWith("ext:")) {
-    const rest = id.slice(4); // after "ext:"
-    const sep = rest.indexOf("::");
-    return sep >= 0 ? rest.slice(0, sep) : null;
-  }
-  if (id.startsWith("ext-root:")) {
-    return id.slice(9);
-  }
-  return null;
-}
-
-/**
- * Strip namespace prefix from an external source so it can be persisted.
- */
-function stripNamespace(source: ExternalConnectionSource): {
-  name: string;
-  folders: ConnectionFolder[];
-  connections: SavedConnection[];
-} {
-  const prefix = `ext:${source.filePath}::`;
-  const rootId = `ext-root:${source.filePath}`;
-
-  const folders = source.folders
-    .filter((f) => f.id !== rootId) // drop synthetic root
-    .map((f) => ({
-      ...f,
-      id: f.id.startsWith(prefix) ? f.id.slice(prefix.length) : f.id,
-      parentId:
-        f.parentId === rootId
-          ? null
-          : f.parentId?.startsWith(prefix)
-            ? f.parentId.slice(prefix.length)
-            : f.parentId,
-    }));
-
-  const connections = source.connections.map((c) => ({
-    ...c,
-    id: c.id.startsWith(prefix) ? c.id.slice(prefix.length) : c.id,
-    folderId:
-      c.folderId === rootId
-        ? null
-        : c.folderId?.startsWith(prefix)
-          ? c.folderId.slice(prefix.length)
-          : c.folderId,
-  }));
-
-  return { name: source.name, folders, connections };
-}
-
-/**
- * Persist an in-memory external source back to its file.
- */
-async function persistExternalSource(source: ExternalConnectionSource): Promise<void> {
-  const { name, folders, connections } = stripNamespace(source);
-  await saveExternalFile(source.filePath, name, folders, connections);
 }
 
 interface AppState {
@@ -206,7 +154,6 @@ interface AppState {
   // Connections
   folders: ConnectionFolder[];
   connections: SavedConnection[];
-  externalSources: ExternalConnectionSource[];
   settings: AppSettings;
   loadFromBackend: () => Promise<void>;
   updateSettings: (settings: AppSettings) => Promise<void>;
@@ -219,15 +166,7 @@ interface AppState {
   deleteFolder: (folderId: string) => void;
   duplicateConnection: (connectionId: string) => void;
   moveConnectionToFolder: (connectionId: string, folderId: string | null) => void;
-
-  // External source mutations
-  addExternalConnection: (filePath: string, connection: SavedConnection) => void;
-  updateExternalConnection: (filePath: string, connection: SavedConnection) => void;
-  deleteExternalConnection: (filePath: string, connectionId: string) => void;
-  duplicateExternalConnection: (filePath: string, connectionId: string) => void;
-  addExternalFolder: (filePath: string, folder: ConnectionFolder) => void;
-  deleteExternalFolder: (filePath: string, folderId: string) => void;
-  moveConnectionToExternalFolder: (connectionId: string, folderId: string) => void;
+  moveConnectionToFile: (connectionId: string, targetSource: string | null) => Promise<void>;
 
   // File browser / SFTP
   fileEntries: FileEntry[];
@@ -250,6 +189,9 @@ interface AppState {
   // Per-tab horizontal scrolling
   tabHorizontalScrolling: Record<string, boolean>;
   setTabHorizontalScrolling: (tabId: string, enabled: boolean) => void;
+
+  // Per-tab terminal options (per-connection overrides)
+  tabTerminalOptions: Record<string, TerminalOptions>;
 
   // Rename tab
   renameTab: (tabId: string, newTitle: string) => void;
@@ -312,6 +254,17 @@ interface AppState {
   connectMonitoring: (config: SshConfig) => Promise<void>;
   disconnectMonitoring: () => Promise<void>;
   refreshMonitoring: () => Promise<void>;
+
+  // SSH Tunnels
+  tunnels: TunnelConfig[];
+  tunnelStates: Record<string, TunnelState>;
+  loadTunnels: () => Promise<void>;
+  saveTunnel: (config: TunnelConfig) => Promise<void>;
+  deleteTunnel: (tunnelId: string) => Promise<void>;
+  startTunnel: (tunnelId: string) => Promise<void>;
+  stopTunnel: (tunnelId: string) => Promise<void>;
+  updateTunnelState: (state: TunnelState) => void;
+  openTunnelEditorTab: (tunnelId: string | null) => void;
 }
 
 let tabCounter = 0;
@@ -446,13 +399,28 @@ export const useAppStore = create<AppState>((set, get) => {
           tabs.push(newTab);
           return { ...leaf, tabs, activeTabId: newTab.id };
         });
-        const hsEnabled = terminalOptions?.horizontalScrolling ?? false;
+        const hsEnabled =
+          terminalOptions?.horizontalScrolling ??
+          get().settings.defaultHorizontalScrolling ??
+          false;
         const tabColor = terminalOptions?.color;
+        // Store per-tab terminal options (excluding horizontalScrolling and color which are tracked separately)
+        const tabOpts: TerminalOptions = {};
+        if (terminalOptions?.fontFamily) tabOpts.fontFamily = terminalOptions.fontFamily;
+        if (terminalOptions?.fontSize != null) tabOpts.fontSize = terminalOptions.fontSize;
+        if (terminalOptions?.scrollbackBuffer != null)
+          tabOpts.scrollbackBuffer = terminalOptions.scrollbackBuffer;
+        if (terminalOptions?.cursorStyle) tabOpts.cursorStyle = terminalOptions.cursorStyle;
+        if (terminalOptions?.cursorBlink != null) tabOpts.cursorBlink = terminalOptions.cursorBlink;
+        const hasTabOpts = Object.keys(tabOpts).length > 0;
         return {
           rootPanel,
           activePanelId: targetPanelId,
           tabHorizontalScrolling: { ...state.tabHorizontalScrolling, [newTab.id]: hsEnabled },
           ...(tabColor ? { tabColors: { ...state.tabColors, [newTab.id]: tabColor } } : {}),
+          ...(hasTabOpts
+            ? { tabTerminalOptions: { ...state.tabTerminalOptions, [newTab.id]: tabOpts } }
+            : {}),
         };
       }),
 
@@ -587,9 +555,7 @@ export const useAppStore = create<AppState>((set, get) => {
         // Determine tab title
         let title = "New Connection";
         if (connectionId !== "new") {
-          const conn =
-            state.connections.find((c) => c.id === connectionId) ??
-            state.externalSources.flatMap((s) => s.connections).find((c) => c.id === connectionId);
+          const conn = state.connections.find((c) => c.id === connectionId);
           if (conn) {
             title = `Edit: ${conn.name}`;
           }
@@ -622,6 +588,7 @@ export const useAppStore = create<AppState>((set, get) => {
         const { [tabId]: _removedHs, ...remainingHs } = state.tabHorizontalScrolling;
         const { [tabId]: _removedDirty, ...remainingDirty } = state.editorDirtyTabs;
         const { [tabId]: _removedColor, ...remainingColors } = state.tabColors;
+        const { [tabId]: _removedOpts, ...remainingOpts } = state.tabTerminalOptions;
 
         let rootPanel = updateLeaf(state.rootPanel, panelId, (leaf) =>
           removeTabFromLeaf(leaf, tabId)
@@ -643,6 +610,7 @@ export const useAppStore = create<AppState>((set, get) => {
             tabHorizontalScrolling: remainingHs,
             editorDirtyTabs: remainingDirty,
             tabColors: remainingColors,
+            tabTerminalOptions: remainingOpts,
           };
         }
 
@@ -652,6 +620,7 @@ export const useAppStore = create<AppState>((set, get) => {
           tabHorizontalScrolling: remainingHs,
           editorDirtyTabs: remainingDirty,
           tabColors: remainingColors,
+          tabTerminalOptions: remainingOpts,
         };
       }),
 
@@ -814,11 +783,15 @@ export const useAppStore = create<AppState>((set, get) => {
     // Connections — initialized empty, loaded from backend on mount
     folders: [],
     connections: [],
-    externalSources: [],
-    settings: { version: "1", externalConnectionFiles: [] },
+    settings: {
+      version: "1",
+      externalConnectionFiles: [],
+      powerMonitoringEnabled: true,
+      fileBrowserEnabled: true,
+    },
     loadFromBackend: async () => {
       try {
-        const { connections, folders, externalSources, agents } = await loadConnections();
+        const { connections, folders, agents, externalErrors } = await loadConnections();
         const settings = await getSettings();
         // Hydrate agents: add ephemeral state (disconnected, collapsed)
         const remoteAgents = agents.map((a) => ({
@@ -826,7 +799,17 @@ export const useAppStore = create<AppState>((set, get) => {
           isExpanded: false,
           connectionState: "disconnected" as const,
         }));
-        set({ connections, folders, externalSources, settings, remoteAgents });
+        if (externalErrors.length > 0) {
+          for (const err of externalErrors) {
+            console.error(`Failed to load external file ${err.filePath}: ${err.error}`);
+          }
+        }
+        set({ connections, folders, settings, remoteAgents });
+        applyTheme(settings.theme);
+        // Re-render terminals when OS theme changes in system mode
+        onThemeChange(() => {
+          set({});
+        });
       } catch (err) {
         console.error("Failed to load connections from backend:", err);
       }
@@ -842,14 +825,45 @@ export const useAppStore = create<AppState>((set, get) => {
       } catch (err) {
         console.error("Failed to detect available shells:", err);
       }
+      // Load SSH tunnels
+      get().loadTunnels();
       // Check VS Code availability in the background
       get().checkVscodeAvailability();
     },
 
     updateSettings: async (newSettings) => {
       try {
+        const oldSettings = get().settings;
         await persistSettings(newSettings);
         set({ settings: newSettings });
+
+        if (oldSettings.theme !== newSettings.theme) {
+          applyTheme(newSettings.theme);
+        }
+
+        // Side-effects when global defaults are toggled off.
+        // Only disconnect if the active tab doesn't have an explicit override.
+        if (oldSettings.powerMonitoringEnabled && !newSettings.powerMonitoringEnabled) {
+          const activeTab = getActiveTab(get());
+          const hasOverride =
+            activeTab?.config.type === "ssh" &&
+            (activeTab.config.config as SshConfig).enableMonitoring === true;
+          if (!hasOverride) {
+            get().disconnectMonitoring();
+          }
+        }
+        if (oldSettings.fileBrowserEnabled && !newSettings.fileBrowserEnabled) {
+          const activeTab = getActiveTab(get());
+          const hasOverride =
+            activeTab?.config.type === "ssh" &&
+            (activeTab.config.config as SshConfig).enableFileBrowser === true;
+          if (!hasOverride) {
+            get().disconnectSftp();
+            if (get().sidebarView === "files") {
+              set({ sidebarView: "connections" });
+            }
+          }
+        }
       } catch (err) {
         console.error("Failed to save settings:", err);
       }
@@ -857,8 +871,12 @@ export const useAppStore = create<AppState>((set, get) => {
 
     reloadExternalConnections: async () => {
       try {
-        const sources = await reloadExternalSources();
-        set({ externalSources: sources });
+        const externalConns = await apiReloadExternalConnections();
+        set((state) => {
+          // Replace external connections (those with sourceFile) while keeping main ones
+          const mainConns = state.connections.filter((c) => !c.sourceFile);
+          return { connections: [...mainConns, ...externalConns] };
+        });
       } catch (err) {
         console.error("Failed to reload external connections:", err);
       }
@@ -897,10 +915,11 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     deleteConnection: (connectionId) => {
+      const conn = get().connections.find((c) => c.id === connectionId);
       set((state) => ({
         connections: state.connections.filter((c) => c.id !== connectionId),
       }));
-      removeConnection(connectionId).catch((err) =>
+      removeConnection(connectionId, conn?.sourceFile).catch((err) =>
         console.error("Failed to persist connection deletion:", err)
       );
     },
@@ -958,6 +977,21 @@ export const useAppStore = create<AppState>((set, get) => {
       );
     },
 
+    moveConnectionToFile: async (connectionId, targetSource) => {
+      const conn = get().connections.find((c) => c.id === connectionId);
+      if (!conn) return;
+      const currentSource = conn.sourceFile ?? null;
+      if (currentSource === targetSource) return;
+      try {
+        const updated = await apiMoveConnectionToFile(connectionId, currentSource, targetSource);
+        set((state) => ({
+          connections: state.connections.map((c) => (c.id === connectionId ? updated : c)),
+        }));
+      } catch (err) {
+        console.error("Failed to move connection to file:", err);
+      }
+    },
+
     moveConnectionToFolder: (connectionId, folderId) => {
       set((state) => {
         const connections = state.connections.map((c) =>
@@ -965,200 +999,11 @@ export const useAppStore = create<AppState>((set, get) => {
         );
         const moved = connections.find((c) => c.id === connectionId);
         if (moved) {
-          persistConnection(moved).catch((err) =>
+          persistConnection(stripPassword(moved)).catch((err) =>
             console.error("Failed to persist connection move:", err)
           );
         }
         return { connections };
-      });
-    },
-
-    // External source mutations
-    addExternalConnection: (filePath, connection) => {
-      set((state) => {
-        const externalSources = state.externalSources.map((s) => {
-          if (s.filePath !== filePath) return s;
-          return { ...s, connections: [...s.connections, connection] };
-        });
-        const source = externalSources.find((s) => s.filePath === filePath);
-        if (source)
-          persistExternalSource(source).catch((err) =>
-            console.error("Failed to persist external connection:", err)
-          );
-        return { externalSources };
-      });
-    },
-
-    updateExternalConnection: (filePath, connection) => {
-      set((state) => {
-        const externalSources = state.externalSources.map((s) => {
-          if (s.filePath !== filePath) return s;
-          return {
-            ...s,
-            connections: s.connections.map((c) => (c.id === connection.id ? connection : c)),
-          };
-        });
-        const source = externalSources.find((s) => s.filePath === filePath);
-        if (source)
-          persistExternalSource(source).catch((err) =>
-            console.error("Failed to persist external connection update:", err)
-          );
-        return { externalSources };
-      });
-    },
-
-    deleteExternalConnection: (filePath, connectionId) => {
-      set((state) => {
-        const externalSources = state.externalSources.map((s) => {
-          if (s.filePath !== filePath) return s;
-          return { ...s, connections: s.connections.filter((c) => c.id !== connectionId) };
-        });
-        const source = externalSources.find((s) => s.filePath === filePath);
-        if (source)
-          persistExternalSource(source).catch((err) =>
-            console.error("Failed to persist external connection delete:", err)
-          );
-        return { externalSources };
-      });
-    },
-
-    duplicateExternalConnection: (filePath, connectionId) => {
-      const state = useAppStore.getState();
-      const source = state.externalSources.find((s) => s.filePath === filePath);
-      if (!source) return;
-      const original = source.connections.find((c) => c.id === connectionId);
-      if (!original) return;
-      const prefix = `ext:${filePath}::`;
-      const rawId = `conn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-      const duplicate: SavedConnection = {
-        ...original,
-        id: `${prefix}${rawId}`,
-        name: `Copy of ${original.name}`,
-      };
-      const newSource = { ...source, connections: [...source.connections, duplicate] };
-      set((s) => ({
-        externalSources: s.externalSources.map((es) => (es.filePath === filePath ? newSource : es)),
-      }));
-      persistExternalSource(newSource).catch((err) =>
-        console.error("Failed to persist external duplicate:", err)
-      );
-    },
-
-    addExternalFolder: (filePath, folder) => {
-      set((state) => {
-        const externalSources = state.externalSources.map((s) => {
-          if (s.filePath !== filePath) return s;
-          return { ...s, folders: [...s.folders, folder] };
-        });
-        const source = externalSources.find((s) => s.filePath === filePath);
-        if (source)
-          persistExternalSource(source).catch((err) =>
-            console.error("Failed to persist external folder:", err)
-          );
-        return { externalSources };
-      });
-    },
-
-    deleteExternalFolder: (filePath, folderId) => {
-      set((state) => {
-        const externalSources = state.externalSources.map((s) => {
-          if (s.filePath !== filePath) return s;
-          const rootId = `ext-root:${filePath}`;
-          const deletedFolder = s.folders.find((f) => f.id === folderId);
-          const parentId = deletedFolder?.parentId ?? rootId;
-          const folders = s.folders
-            .map((f) => (f.parentId === folderId ? { ...f, parentId } : f))
-            .filter((f) => f.id !== folderId);
-          const connections = s.connections.map((c) =>
-            c.folderId === folderId ? { ...c, folderId: parentId } : c
-          );
-          return { ...s, folders, connections };
-        });
-        const source = externalSources.find((s) => s.filePath === filePath);
-        if (source)
-          persistExternalSource(source).catch((err) =>
-            console.error("Failed to persist external folder delete:", err)
-          );
-        return { externalSources };
-      });
-    },
-
-    moveConnectionToExternalFolder: (connectionId, folderId) => {
-      const filePath = externalFilePathFromId(folderId);
-      if (!filePath) return;
-
-      set((state) => {
-        // Check if connection is from user-owned connections
-        const userConn = state.connections.find((c) => c.id === connectionId);
-        if (userConn) {
-          // Move user connection into external source
-          const prefix = `ext:${filePath}::`;
-          const extConn: SavedConnection = {
-            ...userConn,
-            id: `${prefix}${userConn.id}`,
-            folderId,
-          };
-          const connections = state.connections.filter((c) => c.id !== connectionId);
-          const externalSources = state.externalSources.map((s) => {
-            if (s.filePath !== filePath) return s;
-            return { ...s, connections: [...s.connections, extConn] };
-          });
-          // Persist both sides
-          removeConnection(connectionId).catch((err) =>
-            console.error("Failed to remove user connection:", err)
-          );
-          const source = externalSources.find((s) => s.filePath === filePath);
-          if (source)
-            persistExternalSource(source).catch((err) =>
-              console.error("Failed to persist external move:", err)
-            );
-          return { connections, externalSources };
-        }
-
-        // Connection is already external — move within/between external sources
-        const sourceFilePath = externalFilePathFromId(connectionId);
-        if (!sourceFilePath) return state;
-
-        let movedConn: SavedConnection | null = null;
-        let externalSources = state.externalSources.map((s) => {
-          if (s.filePath !== sourceFilePath) return s;
-          const conn = s.connections.find((c) => c.id === connectionId);
-          if (conn) movedConn = { ...conn };
-          return { ...s, connections: s.connections.filter((c) => c.id !== connectionId) };
-        });
-
-        if (!movedConn) return state;
-
-        if (sourceFilePath === filePath) {
-          // Same file — just update folderId
-          (movedConn as SavedConnection).folderId = folderId;
-          externalSources = externalSources.map((s) => {
-            if (s.filePath !== filePath) return s;
-            return { ...s, connections: [...s.connections, movedConn!] };
-          });
-        } else {
-          // Different file — re-namespace
-          const oldPrefix = `ext:${sourceFilePath}::`;
-          const newPrefix = `ext:${filePath}::`;
-          let rawId = (movedConn as SavedConnection).id;
-          if (rawId.startsWith(oldPrefix)) rawId = rawId.slice(oldPrefix.length);
-          (movedConn as SavedConnection).id = `${newPrefix}${rawId}`;
-          (movedConn as SavedConnection).folderId = folderId;
-          externalSources = externalSources.map((s) => {
-            if (s.filePath !== filePath) return s;
-            return { ...s, connections: [...s.connections, movedConn!] };
-          });
-        }
-
-        // Persist affected sources
-        for (const fp of [sourceFilePath, filePath]) {
-          const source = externalSources.find((s) => s.filePath === fp);
-          if (source)
-            persistExternalSource(source).catch((err) =>
-              console.error("Failed to persist external move:", err)
-            );
-        }
-        return { externalSources };
       });
     },
 
@@ -1260,6 +1105,9 @@ export const useAppStore = create<AppState>((set, get) => {
       set((state) => ({
         tabHorizontalScrolling: { ...state.tabHorizontalScrolling, [tabId]: enabled },
       })),
+
+    // Per-tab terminal options
+    tabTerminalOptions: {},
 
     // Rename tab
     renameTab: (tabId, newTitle) =>
@@ -1567,6 +1415,122 @@ export const useAppStore = create<AppState>((set, get) => {
         });
       }
     },
+
+    // SSH Tunnels
+    tunnels: [],
+    tunnelStates: {},
+
+    loadTunnels: async () => {
+      try {
+        const tunnels = await getTunnels();
+        const statuses = await getTunnelStatuses();
+        const tunnelStates: Record<string, TunnelState> = {};
+        for (const s of statuses) {
+          tunnelStates[s.tunnelId] = s;
+        }
+        set({ tunnels, tunnelStates });
+      } catch (err) {
+        console.error("Failed to load tunnels:", err);
+      }
+    },
+
+    saveTunnel: async (config) => {
+      try {
+        await apiSaveTunnel(config);
+        set((state) => {
+          const exists = state.tunnels.some((t) => t.id === config.id);
+          const tunnels = exists
+            ? state.tunnels.map((t) => (t.id === config.id ? config : t))
+            : [...state.tunnels, config];
+          return { tunnels };
+        });
+      } catch (err) {
+        console.error("Failed to save tunnel:", err);
+        throw err;
+      }
+    },
+
+    deleteTunnel: async (tunnelId) => {
+      try {
+        await apiDeleteTunnel(tunnelId);
+        set((state) => ({
+          tunnels: state.tunnels.filter((t) => t.id !== tunnelId),
+          tunnelStates: Object.fromEntries(
+            Object.entries(state.tunnelStates).filter(([k]) => k !== tunnelId)
+          ),
+        }));
+      } catch (err) {
+        console.error("Failed to delete tunnel:", err);
+      }
+    },
+
+    startTunnel: async (tunnelId) => {
+      try {
+        await apiStartTunnel(tunnelId);
+      } catch (err) {
+        console.error("Failed to start tunnel:", err);
+        throw err;
+      }
+    },
+
+    stopTunnel: async (tunnelId) => {
+      try {
+        await apiStopTunnel(tunnelId);
+      } catch (err) {
+        console.error("Failed to stop tunnel:", err);
+        throw err;
+      }
+    },
+
+    updateTunnelState: (state) => {
+      set((s) => ({
+        tunnelStates: { ...s.tunnelStates, [state.tunnelId]: state },
+      }));
+    },
+
+    openTunnelEditorTab: (tunnelId) =>
+      set((state) => {
+        const allLeaves = getAllLeaves(state.rootPanel);
+
+        // Look for an existing tunnel-editor tab for this tunnel
+        for (const leaf of allLeaves) {
+          const existing = leaf.tabs.find(
+            (t) => t.contentType === "tunnel-editor" && t.tunnelEditorMeta?.tunnelId === tunnelId
+          );
+          if (existing) {
+            const rootPanel = updateLeaf(state.rootPanel, leaf.id, (l) => ({
+              ...l,
+              tabs: l.tabs.map((t) => ({ ...t, isActive: t.id === existing.id })),
+              activeTabId: existing.id,
+            }));
+            return { rootPanel, activePanelId: leaf.id };
+          }
+        }
+
+        // Create new tunnel-editor tab in the active panel
+        const targetPanelId = state.activePanelId ?? allLeaves[0]?.id;
+        if (!targetPanelId) return state;
+
+        let title = "New Tunnel";
+        if (tunnelId) {
+          const tunnel = state.tunnels.find((t) => t.id === tunnelId);
+          if (tunnel) {
+            title = `Edit: ${tunnel.name}`;
+          }
+        }
+
+        const dummyConfig: ConnectionConfig = { type: "local", config: { shellType: "zsh" } };
+        const meta: TunnelEditorMeta = { tunnelId };
+        const newTab = createTab(title, "local", dummyConfig, targetPanelId, "tunnel-editor");
+        newTab.tunnelEditorMeta = meta;
+
+        const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
+          const tabs = leaf.tabs.map((t) => ({ ...t, isActive: false }));
+          tabs.push(newTab);
+          return { ...leaf, tabs, activeTabId: newTab.id };
+        });
+        return { rootPanel, activePanelId: targetPanelId };
+      }),
   };
 });
 

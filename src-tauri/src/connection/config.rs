@@ -10,6 +10,16 @@ pub struct TerminalOptions {
     pub horizontal_scrolling: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_family: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_size: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scrollback_buffer: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor_style: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor_blink: Option<bool>,
 }
 
 /// A saved connection with a name and optional folder assignment.
@@ -22,6 +32,11 @@ pub struct SavedConnection {
     pub folder_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal_options: Option<TerminalOptions>,
+    /// Runtime-only: which external file this connection was loaded from.
+    /// `None` = main connections.json, `Some(path)` = external file.
+    /// Stripped before writing to disk.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub source_file: Option<String>,
 }
 
 /// A folder for organizing connections.
@@ -93,6 +108,7 @@ mod tests {
             }),
             folder_id: None,
             terminal_options: None,
+            source_file: None,
         };
         let json = serde_json::to_string(&conn).unwrap();
         let deserialized: SavedConnection = serde_json::from_str(&json).unwrap();
@@ -113,9 +129,12 @@ mod tests {
                 password: Some("secret".to_string()),
                 key_path: None,
                 enable_x11_forwarding: false,
+                enable_monitoring: None,
+                enable_file_browser: None,
             }),
             folder_id: Some("folder-1".to_string()),
             terminal_options: None,
+            source_file: None,
         };
         let json = serde_json::to_string(&conn).unwrap();
         let deserialized: SavedConnection = serde_json::from_str(&json).unwrap();
@@ -143,6 +162,7 @@ mod tests {
             }),
             folder_id: None,
             terminal_options: None,
+            source_file: None,
         };
         let json = serde_json::to_string(&conn).unwrap();
         let deserialized: SavedConnection = serde_json::from_str(&json).unwrap();
@@ -164,6 +184,7 @@ mod tests {
             }),
             folder_id: None,
             terminal_options: None,
+            source_file: None,
         };
         let json = serde_json::to_string(&conn).unwrap();
         let deserialized: SavedConnection = serde_json::from_str(&json).unwrap();
@@ -206,6 +227,69 @@ mod tests {
     }
 
     #[test]
+    fn ssh_config_backward_compat_missing_feature_fields() {
+        // Old JSON without enableMonitoring/enableFileBrowser should deserialize with None
+        let json = r#"{
+            "type": "ssh",
+            "config": {
+                "host": "example.com",
+                "port": 22,
+                "username": "admin",
+                "authMethod": "password",
+                "password": "secret",
+                "enableX11Forwarding": false
+            }
+        }"#;
+        let config: ConnectionConfig = serde_json::from_str(json).unwrap();
+        if let ConnectionConfig::Ssh(ssh) = &config {
+            assert_eq!(ssh.host, "example.com");
+            assert!(ssh.enable_monitoring.is_none());
+            assert!(ssh.enable_file_browser.is_none());
+        } else {
+            panic!("Expected SSH config");
+        }
+    }
+
+    #[test]
+    fn ssh_config_feature_fields_round_trip() {
+        let config = ConnectionConfig::Ssh(SshConfig {
+            host: "example.com".to_string(),
+            port: 22,
+            username: "admin".to_string(),
+            auth_method: "password".to_string(),
+            password: None,
+            key_path: None,
+            enable_x11_forwarding: false,
+            enable_monitoring: Some(false),
+            enable_file_browser: Some(true),
+        });
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: ConnectionConfig = serde_json::from_str(&json).unwrap();
+        if let ConnectionConfig::Ssh(ssh) = &deserialized {
+            assert_eq!(ssh.enable_monitoring, Some(false));
+            assert_eq!(ssh.enable_file_browser, Some(true));
+        } else {
+            panic!("Expected SSH config");
+        }
+
+        // Verify None values are omitted from JSON
+        let config_none = ConnectionConfig::Ssh(SshConfig {
+            host: "example.com".to_string(),
+            port: 22,
+            username: "admin".to_string(),
+            auth_method: "password".to_string(),
+            password: None,
+            key_path: None,
+            enable_x11_forwarding: false,
+            enable_monitoring: None,
+            enable_file_browser: None,
+        });
+        let json_none = serde_json::to_string(&config_none).unwrap();
+        assert!(!json_none.contains("enableMonitoring"));
+        assert!(!json_none.contains("enableFileBrowser"));
+    }
+
+    #[test]
     fn serde_produces_correct_json_shape() {
         let conn = SavedConnection {
             id: "test".to_string(),
@@ -219,7 +303,9 @@ mod tests {
             terminal_options: Some(TerminalOptions {
                 horizontal_scrolling: Some(true),
                 color: None,
+                ..Default::default()
             }),
+            source_file: None,
         };
         let json: serde_json::Value = serde_json::to_value(&conn).unwrap();
         // Check camelCase renaming
@@ -229,5 +315,41 @@ mod tests {
         let config = json.get("config").unwrap();
         assert_eq!(config.get("type").unwrap(), "local");
         assert!(config.get("config").is_some());
+        // source_file: None should be omitted from JSON
+        assert!(json.get("sourceFile").is_none());
+    }
+
+    #[test]
+    fn source_file_included_when_set() {
+        let conn = SavedConnection {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            config: ConnectionConfig::Local(LocalShellConfig {
+                shell_type: "bash".to_string(),
+                initial_command: None,
+                starting_directory: None,
+            }),
+            folder_id: None,
+            terminal_options: None,
+            source_file: Some("/path/to/external.json".to_string()),
+        };
+        let json: serde_json::Value = serde_json::to_value(&conn).unwrap();
+        assert_eq!(
+            json.get("sourceFile").unwrap().as_str().unwrap(),
+            "/path/to/external.json"
+        );
+    }
+
+    #[test]
+    fn source_file_defaults_to_none_on_deserialize() {
+        // JSON without sourceFile should deserialize with source_file = None
+        let json = r#"{
+            "id": "test",
+            "name": "Test",
+            "config": {"type": "local", "config": {"shellType": "bash"}},
+            "folderId": null
+        }"#;
+        let conn: SavedConnection = serde_json::from_str(json).unwrap();
+        assert!(conn.source_file.is_none());
     }
 }

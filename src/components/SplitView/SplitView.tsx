@@ -15,6 +15,7 @@ import {
   FileEdit,
   SquarePen,
   ScrollText,
+  ArrowLeftRight,
   Pencil,
   FileDown,
   ClipboardCopy,
@@ -35,6 +36,7 @@ import { SettingsPanel } from "@/components/Settings";
 import { FileEditor } from "@/components/FileEditor";
 import { ConnectionEditor } from "@/components/ConnectionEditor/ConnectionEditor";
 import { LogViewer } from "@/components/LogViewer";
+import { TunnelEditor } from "@/components/TunnelEditor";
 import { PanelDropZone } from "./PanelDropZone";
 import "./SplitView.css";
 
@@ -220,6 +222,13 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
               meta={tab.connectionEditorMeta}
               isVisible={tab.id === panel.activeTabId}
             />
+          ) : tab.contentType === "tunnel-editor" && tab.tunnelEditorMeta ? (
+            <TunnelEditor
+              key={tab.id}
+              tabId={tab.id}
+              meta={tab.tunnelEditorMeta}
+              isVisible={tab.id === panel.activeTabId}
+            />
           ) : (
             <ContextMenu.Root key={tab.id}>
               <ContextMenu.Trigger asChild>
@@ -318,7 +327,7 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
  */
 function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: boolean }) {
   const slotRef = useRef<HTMLDivElement>(null);
-  const { getElement, parkingRef } = useTerminalRegistry();
+  const { getElement, focusTerminal, parkingRef } = useTerminalRegistry();
   const tabColor = useAppStore((s) => s.tabColors[tabId]);
 
   useEffect(() => {
@@ -349,6 +358,13 @@ function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: boolean 
     };
   }, [tabId, getElement, parkingRef]);
 
+  // Focus the terminal when it becomes visible (tab activation or initial creation)
+  useEffect(() => {
+    if (isVisible) {
+      focusTerminal(tabId);
+    }
+  }, [isVisible, tabId, focusTerminal]);
+
   return (
     <div
       ref={slotRef}
@@ -368,7 +384,9 @@ function TabDragOverlay({ tab }: { tab: TerminalTab }) {
           ? FileEdit
           : tab.contentType === "connection-editor"
             ? SquarePen
-            : null;
+            : tab.contentType === "tunnel-editor"
+              ? ArrowLeftRight
+              : null;
   return (
     <div className="tab tab--drag-overlay">
       {NonTerminalIcon ? (

@@ -11,11 +11,19 @@ export function useKeyboardShortcuts() {
   const activePanelId = useAppStore((s) => s.activePanelId);
   const closeTab = useAppStore((s) => s.closeTab);
   const setActiveTab = useAppStore((s) => s.setActiveTab);
+  const toggleSidebar = useAppStore((s) => s.toggleSidebar);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const isMod = e.metaKey || e.ctrlKey;
       const allLeaves = getAllLeaves(rootPanel);
+
+      // Ctrl/Cmd+B — Toggle sidebar
+      if (isMod && !e.shiftKey && e.key === "b") {
+        e.preventDefault();
+        toggleSidebar();
+        return;
+      }
 
       // Ctrl/Cmd+Shift+` — New terminal
       if (isMod && e.shiftKey && e.key === "`") {
@@ -59,5 +67,5 @@ export function useKeyboardShortcuts() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [addTab, rootPanel, activePanelId, closeTab, setActiveTab]);
+  }, [addTab, rootPanel, activePanelId, closeTab, setActiveTab, toggleSidebar]);
 }

@@ -3,11 +3,12 @@ mod connection;
 mod files;
 mod monitoring;
 mod terminal;
+mod tunnel;
 mod utils;
 
 use std::sync::Arc;
 
-use tauri::Manager;
+use tauri::{Manager, RunEvent, WindowEvent};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -57,6 +58,23 @@ pub fn run() {
             let agent_manager = Arc::new(AgentConnectionManager::new(app.handle().clone()));
             app.manage(agent_manager);
 
+            let tunnel_manager = tunnel::tunnel_manager::TunnelManager::new(app.handle())
+                .expect("Failed to initialize tunnel manager");
+
+            // Auto-start tunnels in a background thread to avoid blocking app startup
+            {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    // Wait briefly for the manager to be registered as state
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    if let Some(mgr) = handle.try_state::<tunnel::tunnel_manager::TunnelManager>() {
+                        mgr.start_auto_tunnels();
+                    }
+                });
+            }
+
+            app.manage(tunnel_manager);
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -71,6 +89,7 @@ pub fn run() {
             commands::terminal::check_ssh_agent_status,
             commands::terminal::check_docker_available,
             commands::terminal::list_docker_images,
+            commands::terminal::validate_ssh_key,
             commands::connection::load_connections_and_folders,
             commands::connection::save_connection,
             commands::connection::delete_connection,
@@ -80,6 +99,7 @@ pub fn run() {
             commands::connection::import_connections,
             commands::connection::get_settings,
             commands::connection::save_settings,
+            commands::connection::move_connection_to_file,
             commands::connection::save_external_file,
             commands::connection::reload_external_connections,
             commands::connection::save_remote_agent,
@@ -121,7 +141,25 @@ pub fn run() {
             commands::agent::update_agent,
             commands::logs::get_logs,
             commands::logs::clear_logs,
+            commands::tunnel::get_tunnels,
+            commands::tunnel::save_tunnel,
+            commands::tunnel::delete_tunnel,
+            commands::tunnel::get_tunnel_statuses,
+            commands::tunnel::start_tunnel,
+            commands::tunnel::stop_tunnel,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            if let RunEvent::WindowEvent {
+                event: WindowEvent::Destroyed,
+                ..
+            } = &event
+            {
+                // Gracefully stop all active tunnels on window close
+                if let Some(mgr) = app_handle.try_state::<tunnel::tunnel_manager::TunnelManager>() {
+                    mgr.stop_all();
+                }
+            }
+        });
 }

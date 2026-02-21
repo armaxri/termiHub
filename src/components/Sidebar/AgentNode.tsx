@@ -35,12 +35,12 @@ interface AgentNodeProps {
   agent: RemoteAgentDefinition;
 }
 
-/** State dot colors matching the tab state dot pattern. */
-const STATE_DOT_COLORS: Record<string, string> = {
-  connected: "#0dbc79",
-  connecting: "#e5e510",
-  reconnecting: "#e5e510",
-  disconnected: "#cd3131",
+/** CSS modifier class for each connection state dot. */
+const STATE_DOT_CLASSES: Record<string, string> = {
+  connected: "agent-node__state-dot--connected",
+  connecting: "agent-node__state-dot--connecting",
+  reconnecting: "agent-node__state-dot--reconnecting",
+  disconnected: "agent-node__state-dot--disconnected",
 };
 
 export function AgentNode({ agent }: AgentNodeProps) {
@@ -169,8 +169,7 @@ export function AgentNode({ agent }: AgentNodeProps) {
             >
               <Chevron size={16} className="connection-tree__chevron" />
               <span
-                className="agent-node__state-dot"
-                style={{ backgroundColor: STATE_DOT_COLORS[agent.connectionState] ?? "#cd3131" }}
+                className={`agent-node__state-dot ${STATE_DOT_CLASSES[agent.connectionState] ?? "agent-node__state-dot--disconnected"}`}
                 title={agent.connectionState}
               />
               <Server size={14} />

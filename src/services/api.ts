@@ -15,7 +15,7 @@ import {
   SavedConnection,
   ConnectionFolder,
   FileEntry,
-  ExternalConnectionSource,
+  ExternalFileError,
   AppSettings,
   AgentCapabilities,
 } from "@/types/connection";
@@ -71,6 +71,18 @@ export async function checkSshAgentStatus(): Promise<string> {
   return await invoke<string>("check_ssh_agent_status");
 }
 
+/** Result of validating an SSH key file path. */
+export interface SshKeyValidation {
+  status: "valid" | "warning" | "error";
+  message: string;
+  keyType: string;
+}
+
+/** Validate an SSH key file path and return a user-facing hint. */
+export async function validateSshKey(path: string): Promise<SshKeyValidation> {
+  return await invoke<SshKeyValidation>("validate_ssh_key", { path });
+}
+
 /** Check if Docker is available on the local system. */
 export async function checkDockerAvailable(): Promise<boolean> {
   return await invoke<boolean>("check_docker_available");
@@ -93,8 +105,8 @@ export interface SavedRemoteAgent {
 interface ConnectionData {
   connections: SavedConnection[];
   folders: ConnectionFolder[];
-  externalSources: ExternalConnectionSource[];
   agents: SavedRemoteAgent[];
+  externalErrors: ExternalFileError[];
 }
 
 /** Load all saved connections and folders from disk */
@@ -107,9 +119,25 @@ export async function saveConnection(connection: SavedConnection): Promise<void>
   await invoke("save_connection", { connection });
 }
 
-/** Delete a connection by ID */
-export async function deleteConnectionFromBackend(id: string): Promise<void> {
-  await invoke("delete_connection", { id });
+/** Delete a connection by ID, optionally from an external file */
+export async function deleteConnectionFromBackend(
+  id: string,
+  sourceFile?: string | null
+): Promise<void> {
+  await invoke("delete_connection", { id, sourceFile: sourceFile ?? null });
+}
+
+/** Move a connection between storage files */
+export async function moveConnectionToFile(
+  connectionId: string,
+  currentSource: string | null,
+  targetSource: string | null
+): Promise<SavedConnection> {
+  return await invoke<SavedConnection>("move_connection_to_file", {
+    connectionId,
+    currentSource,
+    targetSource,
+  });
 }
 
 /** Save (add or update) a folder */
@@ -155,8 +183,8 @@ export async function saveExternalFile(
 }
 
 /** Reload external connection files */
-export async function reloadExternalConnections(): Promise<ExternalConnectionSource[]> {
-  return await invoke<ExternalConnectionSource[]>("reload_external_connections");
+export async function reloadExternalConnections(): Promise<SavedConnection[]> {
+  return await invoke<SavedConnection[]>("reload_external_connections");
 }
 
 // --- SFTP commands ---

@@ -7,6 +7,7 @@ import {
   FileEdit,
   SquarePen,
   ScrollText,
+  ArrowLeftRight,
   Eraser,
   FileDown,
   ClipboardCopy,
@@ -70,7 +71,9 @@ export function Tab({
           ? FileEdit
           : tab.contentType === "connection-editor"
             ? SquarePen
-            : null;
+            : tab.contentType === "tunnel-editor"
+              ? ArrowLeftRight
+              : null;
   const isTerminalTab = tab.contentType === "terminal";
 
   const tabElement = (

@@ -1,6 +1,7 @@
 .connection-editor {
-  padding: var(--spacing-sm) var(--spacing-md);
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   height: 100%;
 }
 
@@ -8,7 +9,28 @@
   font-size: var(--font-size-md);
   font-weight: 600;
   color: var(--text-primary);
-  margin-bottom: var(--spacing-md);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-bottom: 1px solid var(--border-primary);
+  flex-shrink: 0;
+}
+
+/* Two-panel body: nav sidebar + content */
+.connection-editor__body {
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  min-height: 0;
+}
+
+.connection-editor__body--compact {
+  flex-direction: column;
+}
+
+.connection-editor__content {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--spacing-lg);
+  max-width: 640px;
 }
 
 .connection-editor__form {
@@ -18,6 +40,56 @@
   max-width: 600px;
 }
 
+/* Action buttons pinned at the bottom */
+.connection-editor__actions {
+  display: flex;
+  gap: var(--spacing-sm);
+  justify-content: flex-end;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-top: 1px solid var(--border-primary);
+  flex-shrink: 0;
+}
+
+.connection-editor__btn {
+  padding: var(--spacing-xs) var(--spacing-md);
+  font-size: var(--font-size-sm);
+  border-radius: var(--radius-sm);
+  transition: background-color var(--transition-fast);
+}
+
+.connection-editor__btn--primary {
+  background-color: var(--accent-color);
+  color: #ffffff;
+}
+
+.connection-editor__btn--primary:hover {
+  background-color: var(--accent-hover);
+}
+
+.connection-editor__btn--secondary {
+  color: var(--text-secondary);
+}
+
+.connection-editor__btn--secondary:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.connection-editor__color-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.connection-editor__color-preview {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+  border: 1px solid var(--border-primary);
+}
+
+/* === Shared form classes (used by Connection, Settings sub-components) === */
 .settings-form {
   display: flex;
   flex-direction: column;
@@ -64,7 +136,16 @@
 }
 
 .settings-form__hint--warning {
-  color: var(--text-warning, #cca700);
+  color: var(--color-warning);
+}
+
+.settings-form__hint--error {
+  color: var(--color-error);
+}
+
+.settings-form__hint--success,
+.settings-form__hint--valid {
+  color: var(--color-success);
 }
 
 .settings-form__hint-action {
@@ -165,50 +246,4 @@
 
 .settings-form__list-add:hover {
   text-decoration: underline;
-}
-
-.connection-editor__actions {
-  display: flex;
-  gap: var(--spacing-sm);
-  justify-content: flex-end;
-  margin-top: var(--spacing-sm);
-}
-
-.connection-editor__btn {
-  padding: var(--spacing-xs) var(--spacing-md);
-  font-size: var(--font-size-sm);
-  border-radius: var(--radius-sm);
-  transition: background-color var(--transition-fast);
-}
-
-.connection-editor__btn--primary {
-  background-color: var(--accent-color);
-  color: #ffffff;
-}
-
-.connection-editor__btn--primary:hover {
-  background-color: var(--accent-hover);
-}
-
-.connection-editor__btn--secondary {
-  color: var(--text-secondary);
-}
-
-.connection-editor__btn--secondary:hover {
-  background-color: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-.connection-editor__color-row {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-}
-
-.connection-editor__color-preview {
-  width: 24px;
-  height: 24px;
-  border-radius: var(--radius-sm);
-  flex-shrink: 0;
-  border: 1px solid var(--border-primary);
 }

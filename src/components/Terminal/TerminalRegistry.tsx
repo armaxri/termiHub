@@ -10,6 +10,8 @@ interface TerminalRegistryContextType {
   unregister: (tabId: string) => void;
   /** Get the registered element for a tab. */
   getElement: (tabId: string) => HTMLDivElement | undefined;
+  /** Focus the xterm instance for a tab so it receives keyboard input. */
+  focusTerminal: (tabId: string) => void;
   /** Clear the terminal scrollback and screen for a tab. */
   clearTerminal: (tabId: string) => void;
   /** Save terminal buffer content to a file via native save dialog. */
@@ -50,6 +52,13 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
 
   const getElement = useCallback((tabId: string) => {
     return registryRef.current.get(tabId);
+  }, []);
+
+  const focusTerminal = useCallback((tabId: string) => {
+    const xterm = xtermRegistryRef.current.get(tabId);
+    if (xterm) {
+      xterm.focus();
+    }
   }, []);
 
   const clearTerminal = useCallback((tabId: string) => {
@@ -109,12 +118,21 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       register,
       unregister,
       getElement,
+      focusTerminal,
       clearTerminal,
       saveTerminalToFile,
       copyTerminalToClipboard,
       parkingRef,
     }),
-    [register, unregister, getElement, clearTerminal, saveTerminalToFile, copyTerminalToClipboard]
+    [
+      register,
+      unregister,
+      getElement,
+      focusTerminal,
+      clearTerminal,
+      saveTerminalToFile,
+      copyTerminalToClipboard,
+    ]
   );
 
   return (

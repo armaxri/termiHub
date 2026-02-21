@@ -26,13 +26,15 @@
   padding: 0 var(--spacing-md);
   min-width: 100px;
   max-width: 200px;
+  border-top: 2px solid transparent;
   border-right: 1px solid var(--tab-border);
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
   cursor: pointer;
   transition:
     background-color var(--transition-fast),
-    color var(--transition-fast);
+    color var(--transition-fast),
+    border-top-color var(--transition-fast);
   white-space: nowrap;
   user-select: none;
 }
@@ -44,8 +46,13 @@
 .tab--active {
   background-color: var(--tab-active-bg);
   color: var(--text-primary);
+  border-top-color: var(--tab-active-border);
   border-bottom: 1px solid var(--tab-active-bg);
   margin-bottom: -1px;
+}
+
+.tab-bar:not(.tab-bar--focused) .tab--active {
+  border-top-color: var(--text-disabled);
 }
 
 .tab__icon {
@@ -102,17 +109,17 @@
 }
 
 .tab__state-dot--connected {
-  background-color: #0dbc79;
+  background-color: var(--state-connected);
 }
 
 .tab__state-dot--reconnecting,
 .tab__state-dot--connecting {
-  background-color: #e5e510;
+  background-color: var(--state-connecting);
   animation: pulse-dot 1.2s ease-in-out infinite;
 }
 
 .tab__state-dot--disconnected {
-  background-color: #cd3131;
+  background-color: var(--state-disconnected);
 }
 
 @keyframes pulse-dot {

@@ -1,0 +1,48 @@
+.key-path-input {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.key-path-input__field {
+  flex: 1;
+  min-width: 0;
+}
+
+.key-path-input__dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 2px;
+  background: var(--bg-dropdown);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 100;
+  list-style: none;
+  padding: 2px 0;
+}
+
+.key-path-input__option {
+  padding: 4px 8px;
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.key-path-input__option:hover,
+.key-path-input__option--highlighted {
+  background: var(--bg-active);
+}
+
+.key-path-input__option-path {
+  color: var(--text-secondary);
+  margin-left: 8px;
+  font-size: 11px;
+}

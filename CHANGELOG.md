@@ -15,6 +15,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Agent version reporting: `connectAgent` now returns `agentVersion` and `protocolVersion` from the agent handshake for version compatibility checking
 - Remote agent file browsing: the agent now supports connection-scoped file browsing via `files.list`, `files.read`, `files.write`, `files.delete`, `files.rename`, and `files.stat` JSON-RPC methods — browse the agent's local filesystem, Docker containers (via `docker exec`), or SSH jump targets (via SFTP relay)
 - Remote agent Docker container sessions: the agent can now create interactive terminal sessions inside Docker containers on the remote host, with container lifecycle management, session persistence, and automatic recovery after agent restart
+- Inline SSH key file validation: selecting a key file in the SSH connection editor now shows immediate feedback — detects public keys, PuTTY PPK files, unrecognized formats, and missing files before you attempt to connect (#204)
+- SSH tunneling with local, remote, and dynamic (SOCKS5) port forwarding — create, edit, start/stop tunnels from a dedicated sidebar panel with live status indicators, traffic stats, and visual tunnel diagrams (#107)
+- Tunnel auto-start on app launch and graceful shutdown on window close
+- SSH session pool: tunnels sharing the same SSH connection reuse a single session
+- Dark, Light, and System color theme support — switch via Settings > Appearance > Theme; System mode auto-follows the OS preference (#193)
+- Concept document for SSH tunneling feature: local, remote, and dynamic (SOCKS5) port forwarding with visual diagram-driven configuration UI (#107)
+- Concept document for plugin system: plugin API, lifecycle, custom terminal backends, protocol parsers, theme extensions, and plugin management UI (#28)
+- Concept document for SSH key passphrase handling: encryption detection, runtime passphrase prompting, session caching, and secure storage options (#121)
+- Concept document for cross-platform testing: platform-specific test matrix, CI E2E expansion to Windows, release verification checklists, and platform-aware test infrastructure (#15)
+
+### Fixed
+
+- Theme switching in Settings > Appearance now applies immediately instead of requiring an app restart (#224)
+- Eliminated white flash on startup — window now starts with dark background (#1e1e1e) instead of flashing white before the theme loads (#192)
+- Terminal input not working on new connections: a React StrictMode race condition could route keyboard input to the wrong backend session, making it appear as if typing had no effect; terminals now also auto-focus when created or switched to (#198)
+- Vertically split panels can now be resized — the resize handle between top/bottom panels was invisible due to missing CSS height (#213)
+
+### Changed
+
+- Split view panels now have a visible 1px border between them, making it easier to distinguish adjacent panels (#189)
+- Active tabs now show a colored top border: bright blue in the focused panel, dimmed in unfocused panels, following VS Code's tab highlight pattern (#190)
+- External connection files now display in a unified tree alongside local connections instead of separate sections; storage location is configurable via an Advanced dropdown in the connection editor (#210)
+
+### Added
+
+- Default user and SSH key path from General Settings are now applied when creating new SSH and Remote Agent connections, pre-filling username and switching to key authentication when configured (#201)
+- General Settings "Default SSH Key Path" field now uses the same `~/.ssh/` file suggestion dropdown as the connection editor (#201)
+- SSH key path file suggestions: the Key Path field in SSH and Agent settings now scans `~/.ssh/` and shows a dropdown of available private key files with type-ahead filtering, arrow-key navigation, and Tab/Enter to accept (#118)
+- Connection editor now uses a categorized two-panel layout matching the global settings panel: Connection, Terminal, and Appearance categories with sidebar navigation and responsive compact mode
+- Per-connection terminal overrides: font family, font size, scrollback buffer, cursor style, cursor blink, and horizontal scrolling can be configured per-connection, overriding global defaults
+- Sidebar toggle button in the terminal toolbar and `Ctrl+B` (`Cmd+B` on Mac) keyboard shortcut to quickly hide/show the sidebar (#194)
+- Per-SSH-connection monitoring and file browser settings: each SSH connection can now override the global defaults with Enabled/Disabled/Default, configured in the SSH connection editor
+- Power monitoring and file browser can now be independently disabled in Settings > Advanced (#199)
+- Redesigned Settings panel with a categorized two-panel layout: General, Appearance, Terminal, and External Files categories with a sidebar navigation, search bar, and version footer (#191)
+- New settings: default user, default SSH key path, default shell, theme, font family, font size, horizontal scrolling default, scrollback buffer, cursor style, and cursor blink
+- Terminal settings (font, cursor, scrollback) are applied live to existing terminals when changed
+- Settings search filters across all categories with keyword matching
+- Responsive compact mode: settings navigation collapses to horizontal tabs when the panel is narrow
 - Remote agent shell sessions: the agent now spawns real PTY-backed shell sessions via independent daemon processes, with ring-buffered output, terminal resize support, session persistence across agent restarts, and automatic session recovery
 - SSH key path browse button: key path fields in SSH and Agent settings now include a "..." button that opens a native file picker defaulting to `~/.ssh` (#117)
 - Auto-extract port from host field: pasting `192.168.0.2:2222` or `[::1]:22` into the host field of SSH, Telnet, or Agent settings automatically splits the value into host and port on blur (#185)

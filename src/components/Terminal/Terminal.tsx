@@ -9,8 +9,16 @@ import { createTerminal, sendInput, resizeTerminal, closeTerminal } from "@/serv
 import { terminalDispatcher } from "@/services/events";
 import { useTerminalRegistry } from "./TerminalRegistry";
 import { useAppStore } from "@/store/appStore";
+import { getXtermTheme } from "@/themes";
 
 const HORIZONTAL_SCROLL_COLS = 500;
+
+const DEFAULT_FONT_FAMILY =
+  "'MesloLGS Nerd Font Mono', 'MesloLGS NF', 'CaskaydiaCove Nerd Font', 'FiraCode Nerd Font', 'Hack Nerd Font', 'Cascadia Code', 'Fira Code', Menlo, Monaco, 'Courier New', monospace";
+const DEFAULT_FONT_SIZE = 14;
+const DEFAULT_SCROLLBACK = 5000;
+const DEFAULT_CURSOR_STYLE = "block" as const;
+const DEFAULT_CURSOR_BLINK = true;
 
 /**
  * Scan the terminal buffer and return the rightmost occupied cell index.
@@ -109,7 +117,7 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
   const { register, unregister, parkingRef } = useTerminalRegistry();
 
   const setupTerminal = useCallback(
-    async (xterm: XTerm, fitAddon: FitAddon) => {
+    async (xterm: XTerm, fitAddon: FitAddon, isCanceled: () => boolean) => {
       // Cancel any pending session close from a StrictMode unmount cycle
       if (pendingCloseTimerRef.current !== null) {
         clearTimeout(pendingCloseTimerRef.current);
@@ -121,7 +129,20 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
         // creating the backend session — otherwise early output events
         // emitted by the PTY reader thread are silently lost.
         await terminalDispatcher.init();
+        if (isCanceled()) return;
+
         const sessionId = existingSessionId ?? (await createTerminal(config));
+
+        // Guard against StrictMode race: if this setup was canceled while
+        // the async createTerminal was in-flight, close the orphaned session
+        // and bail out — the remounted effect will create its own session.
+        if (isCanceled()) {
+          if (!existingSessionId) {
+            closeTerminal(sessionId);
+          }
+          return;
+        }
+
         sessionIdRef.current = sessionId;
 
         // Output batching: buffer chunks and flush in a single RAF callback
@@ -228,6 +249,12 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
 
   // Create the terminal element, xterm instance, and register
   useEffect(() => {
+    // Track whether this effect invocation is still active. In React StrictMode,
+    // the effect runs twice (mount → unmount → mount). The canceled flag prevents
+    // a stale async setupTerminal from overwriting the session created by the
+    // second mount, which would send input to the wrong backend session.
+    let canceled = false;
+
     // Create an imperative DOM element for xterm (not managed by React rendering)
     const el = document.createElement("div");
     el.style.position = "absolute";
@@ -237,35 +264,16 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
     // Park the element so xterm.open() has a DOM parent
     parkingRef.current?.appendChild(el);
 
+    const appSettings = useAppStore.getState().settings;
+    const tabOpts = useAppStore.getState().tabTerminalOptions[tabId];
     const xterm = new XTerm({
-      theme: {
-        background: "#1e1e1e",
-        foreground: "#cccccc",
-        cursor: "#aeafad",
-        selectionBackground: "rgba(38, 79, 120, 0.5)",
-        black: "#1e1e1e",
-        red: "#cd3131",
-        green: "#0dbc79",
-        yellow: "#e5e510",
-        blue: "#2472c8",
-        magenta: "#bc3fbc",
-        cyan: "#11a8cd",
-        white: "#e5e5e5",
-        brightBlack: "#666666",
-        brightRed: "#f14c4c",
-        brightGreen: "#23d18b",
-        brightYellow: "#f5f543",
-        brightBlue: "#3b8eea",
-        brightMagenta: "#d670d6",
-        brightCyan: "#29b8db",
-        brightWhite: "#e5e5e5",
-      },
-      fontFamily:
-        "'MesloLGS Nerd Font Mono', 'MesloLGS NF', 'CaskaydiaCove Nerd Font', 'FiraCode Nerd Font', 'Hack Nerd Font', 'Cascadia Code', 'Fira Code', Menlo, Monaco, 'Courier New', monospace",
-      fontSize: 14,
+      theme: getXtermTheme(),
+      fontFamily: tabOpts?.fontFamily || appSettings.fontFamily || DEFAULT_FONT_FAMILY,
+      fontSize: tabOpts?.fontSize ?? appSettings.fontSize ?? DEFAULT_FONT_SIZE,
       lineHeight: 1.2,
-      cursorBlink: true,
-      cursorStyle: "block",
+      scrollback: tabOpts?.scrollbackBuffer ?? appSettings.scrollbackBuffer ?? DEFAULT_SCROLLBACK,
+      cursorBlink: tabOpts?.cursorBlink ?? appSettings.cursorBlink ?? DEFAULT_CURSOR_BLINK,
+      cursorStyle: tabOpts?.cursorStyle ?? appSettings.cursorStyle ?? DEFAULT_CURSOR_STYLE,
       allowProposedApi: true,
     });
 
@@ -305,7 +313,7 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
     fitAddonRef.current = fitAddon;
 
     // Wire to backend
-    setupTerminal(xterm, fitAddon);
+    setupTerminal(xterm, fitAddon, () => canceled);
 
     // ResizeObserver follows the element even when reparented
     const resizeObserver = new ResizeObserver(() => {
@@ -328,6 +336,7 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
     resizeObserver.observe(el);
 
     return () => {
+      canceled = true;
       resizeObserver.disconnect();
       osc7Disposable.dispose();
       unregister(tabId);
@@ -343,7 +352,7 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
     };
   }, [tabId, setupTerminal, register, unregister, parkingRef]);
 
-  // Re-fit when visibility changes
+  // Re-fit and focus when visibility changes
   useEffect(() => {
     if (isVisible && fitAddonRef.current && xtermRef.current && terminalElRef.current) {
       try {
@@ -355,6 +364,7 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
       } catch {
         // Ignore
       }
+      xtermRef.current.focus();
     }
   }, [isVisible]);
 
@@ -409,6 +419,40 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
       }
     }
   }, [horizontalScrolling, tabId]);
+
+  // React to settings changes on live terminals (per-tab overrides take precedence)
+  const theme = useAppStore((s) => s.settings.theme);
+  const fontFamily = useAppStore((s) => s.settings.fontFamily);
+  const fontSize = useAppStore((s) => s.settings.fontSize);
+  const cursorBlink = useAppStore((s) => s.settings.cursorBlink);
+  const cursorStyle = useAppStore((s) => s.settings.cursorStyle);
+  const scrollbackBuffer = useAppStore((s) => s.settings.scrollbackBuffer);
+  const tabTermOpts = useAppStore((s) => s.tabTerminalOptions[tabId]);
+
+  useEffect(() => {
+    const xterm = xtermRef.current;
+    const fitAddon = fitAddonRef.current;
+    if (!xterm) return;
+
+    xterm.options.theme = getXtermTheme();
+    xterm.options.fontFamily = tabTermOpts?.fontFamily || fontFamily || DEFAULT_FONT_FAMILY;
+    xterm.options.fontSize = tabTermOpts?.fontSize ?? fontSize ?? DEFAULT_FONT_SIZE;
+    xterm.options.cursorBlink = tabTermOpts?.cursorBlink ?? cursorBlink ?? DEFAULT_CURSOR_BLINK;
+    xterm.options.cursorStyle = tabTermOpts?.cursorStyle ?? cursorStyle ?? DEFAULT_CURSOR_STYLE;
+    xterm.options.scrollback =
+      tabTermOpts?.scrollbackBuffer ?? scrollbackBuffer ?? DEFAULT_SCROLLBACK;
+
+    // Re-fit after font changes
+    if (fitAddon) {
+      try {
+        if (!horizontalScrollingRef.current) {
+          fitAddon.fit();
+        }
+      } catch {
+        // Ignore fit errors
+      }
+    }
+  }, [theme, fontFamily, fontSize, cursorBlink, cursorStyle, scrollbackBuffer, tabTermOpts, tabId]);
 
   // Terminal renders nothing — TerminalSlot handles display
   return null;

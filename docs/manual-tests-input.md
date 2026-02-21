@@ -8,6 +8,14 @@ Each section groups related tests by feature area. Individual test items referen
 
 ## Local Shell
 
+### Terminal input works on new connections (PR #198)
+
+- [ ] Open a new local PowerShell terminal — verify keyboard input works immediately without needing to click the terminal area
+- [ ] Rapidly create 3–4 local terminals in a row — verify all accept keyboard input when switched to
+- [ ] Switch between multiple terminal tabs — verify the active terminal receives keyboard input each time
+- [ ] Create an SSH connection to a remote host — verify keyboard input works immediately
+- [ ] Split the panel and create a terminal in each split — verify input works in both
+
 ### No initial output flash for WSL/SSH terminals (PR #175)
 
 - [ ] Create a WSL connection — verify no welcome banner or setup commands flash before the prompt appears
@@ -130,6 +138,20 @@ Each section groups related tests by feature area. Individual test items referen
 - [ ] Switch between two SSH tabs connected to different hosts — monitoring switches hosts
 - [ ] Manual "Monitor" dropdown still works as a fallback
 
+### Optional monitoring and file browser settings (PR #199)
+
+- [ ] Open Settings > Advanced — verify "Power Monitoring" and "File Browser" toggles are visible and enabled by default
+- [ ] Disable "Power Monitoring" globally — connect to an SSH host — verify no monitoring stats appear in the status bar
+- [ ] Re-enable "Power Monitoring" globally — connect to an SSH host — verify monitoring stats appear again
+- [ ] Disable "File Browser" globally — switch to Files sidebar — verify SFTP file browser does not activate for SSH tabs
+- [ ] Re-enable "File Browser" globally — verify SFTP file browser works again for SSH tabs
+- [ ] Edit an SSH connection — verify "Power Monitoring" and "File Browser" dropdowns appear with Default/Enabled/Disabled options
+- [ ] Set per-connection monitoring to "Disabled" while global is enabled — connect — verify no monitoring for that connection
+- [ ] Set per-connection monitoring to "Enabled" while global is disabled — connect — verify monitoring works for that connection
+- [ ] Set per-connection monitoring to "Default" — verify it follows the global setting
+- [ ] Repeat the above three tests for the file browser per-connection override
+- [ ] Save a connection with per-connection overrides, close and reopen the app — verify settings persist
+
 ### Monitoring hides on non-SSH tab (PR #165)
 
 - [ ] Open an SSH terminal tab — monitoring stats appear in the status bar
@@ -167,6 +189,27 @@ Each section groups related tests by feature area. Individual test items referen
 - [ ] Create a local shell with initial command `echo ${env:HOME}` — prints home directory
 - [ ] Use an undefined variable `${env:NONEXISTENT}` — left as-is, no crash
 - [ ] Verify saved connection JSON still contains literal `${env:USER}` (not expanded)
+
+### SSH tunneling (PR #225)
+
+- [ ] Click "SSH Tunnels" in the activity bar — verify the tunnels sidebar panel opens with "No SSH tunnels configured" message and a "+ New Tunnel" button
+- [ ] Click "+ New Tunnel" — verify a tunnel editor tab opens with name field, SSH connection dropdown, type selector (Local/Remote/Dynamic), and visual diagram
+- [ ] Select "Local" type — verify the diagram shows "Your PC → SSH → SSH Server → Target" and local/remote host/port fields appear
+- [ ] Select "Remote" type — verify the diagram shows "Local Target ← SSH ← SSH Server ← Remote Clients" and corresponding fields appear
+- [ ] Select "Dynamic" type — verify the diagram shows "Your PC → SSH → SSH Server → Internet" and only local host/port fields appear
+- [ ] Change port numbers — verify the visual diagram updates reactively with the new values
+- [ ] Fill in name, select an SSH connection, configure ports, click "Save" — verify the tunnel appears in the sidebar list and the editor tab closes
+- [ ] Verify the tunnel config persists across app restarts (check `tunnels.json` in the config directory)
+- [ ] Double-click a tunnel in the sidebar — verify the editor tab opens with the saved configuration pre-filled
+- [ ] Edit a tunnel and click "Save" — verify changes are persisted
+- [ ] Click the Play button on a tunnel in the sidebar — verify the status indicator turns green (connected)
+- [ ] Click the Stop button on an active tunnel — verify the status indicator turns grey (disconnected)
+- [ ] Click "Save & Start" in the tunnel editor — verify the tunnel is saved and started in one action
+- [ ] Create a local forward tunnel (e.g., local port 18080 → remote localhost:80) — start it — verify `curl http://127.0.0.1:18080` reaches the remote service
+- [ ] Click the Duplicate button on a tunnel — verify a "Copy of ..." tunnel appears in the sidebar
+- [ ] Click the Delete button on a tunnel — verify it is removed from the sidebar
+- [ ] Enable "Auto-start when app launches" on a tunnel — restart the app — verify the tunnel starts automatically
+- [ ] Verify traffic stats (bytes sent/received, active connections) update in the sidebar for active tunnels
 
 ---
 
@@ -291,6 +334,17 @@ Each section groups related tests by feature area. Individual test items referen
 - [ ] Click "Export Connections" — file save dialog, saves JSON
 - [x] Connection list toolbar no longer has Import/Export buttons (only New Folder and New Connection remain)
 
+### SSH key file validation (PR #204)
+
+- [ ] Open connection editor, select SSH type, set auth method to "SSH Key" — select a `.pub` file via browse — verify a warning hint appears: "This looks like a public key (.pub)..."
+- [ ] Type or paste a path to a valid OpenSSH private key — verify a green success hint appears: "OpenSSH private key detected."
+- [ ] Type or paste a path to a valid RSA PEM private key — verify a green success hint appears: "RSA (PEM) private key detected."
+- [ ] Type a nonexistent path (e.g., `/no/such/key`) — verify a red error hint appears: "File not found."
+- [ ] Select a PuTTY PPK file — verify a warning hint appears mentioning `puttygen` conversion
+- [ ] Select a random non-key file (e.g., a `.txt` file) — verify a warning hint appears: "Not a recognized SSH private key format."
+- [ ] Clear the key path field — verify the hint disappears
+- [ ] Type a path character by character — verify the hint updates after a short debounce delay (no flickering on every keystroke)
+
 ### SSH key path browse button (PR #205)
 
 - [ ] Create or edit an SSH connection, set auth method to "Key", click "..." button — verify a native file dialog opens defaulting to `~/.ssh`
@@ -298,6 +352,29 @@ Each section groups related tests by feature area. Individual test items referen
 - [ ] Cancel the dialog — verify the input field remains unchanged
 - [ ] Repeat the above for Agent connection settings
 - [ ] Manually type a path in the input field — verify it still works as before
+
+### SSH key path file suggestions (PR #118)
+
+- [ ] Open connection editor, select SSH type, set auth method to "SSH Key" — focus the Key Path field — verify a dropdown appears listing private key files from `~/.ssh/`
+- [ ] Verify `.pub` files, `known_hosts`, `authorized_keys`, and `config` are NOT shown in the dropdown
+- [ ] Type part of a key name to filter — verify the dropdown filters in real time (case-insensitive)
+- [ ] Use arrow keys to navigate the dropdown — verify the highlighted item changes
+- [ ] Press Tab or Enter on a highlighted item — verify the path is accepted and the dropdown closes
+- [ ] Press Tab with no highlight but exactly one match — verify it auto-accepts that match
+- [ ] Press Escape — verify the dropdown closes without changing the value
+- [ ] Click the "..." browse button — verify the native file dialog still works
+- [ ] Repeat all of the above for the Agent settings Key Path field
+- [ ] Test with no `~/.ssh/` directory (or empty directory) — verify no dropdown appears and no error occurs
+
+### Default user and SSH key applied to new connections (PR #201)
+
+- [ ] Open Settings > General — set "Default User" to `admin` and "Default SSH Key Path" to a valid path — save
+- [ ] Create a new SSH connection — verify the username is pre-filled with `admin`, auth method is set to "Key", and key path is pre-filled
+- [ ] Clear "Default SSH Key Path" in settings — create a new SSH connection — verify auth method defaults to "Password" and key path is empty
+- [ ] Set only "Default User" — create a new SSH connection — verify username is pre-filled but auth method is "Password"
+- [ ] Create a new Remote Agent — verify username and key path are pre-filled from settings
+- [ ] Edit an existing SSH connection — verify it retains its own values (not overwritten by defaults)
+- [ ] Verify the "Default SSH Key Path" field in General Settings shows the `~/.ssh/` file suggestion dropdown
 
 ### Auto-extract port from host field (PR #195)
 
@@ -307,20 +384,29 @@ Each section groups related tests by feature area. Individual test items referen
 - [ ] Enter a bare IPv6 address `::1` — verify it is left untouched
 - [ ] Verify the same behavior works in Telnet and Agent settings
 
-### External connection file support (PR #50)
+### External connection file support (PR #50, redesigned in PR #210)
 
 - [ ] Settings tab — "External Connection Files" section visible
 - [ ] "Create File" — enter name — save dialog — empty JSON file created and auto-added to list
 - [ ] "Add File" — native file picker — select JSON — path appears in list with toggle
-- [ ] Connection list shows external source as collapsible group with `FolderGit2` icon
-- [ ] External connections: create, edit, duplicate, delete via context menu
-- [ ] External folders: create, delete via context menu and header buttons
-- [ ] Drag-and-drop connections between local and external sources
-- [ ] Toggle file disabled — connections disappear after reload
-- [ ] Remove file — connections disappear
-- [ ] Malformed/missing JSON — error indicator on source group header
+- [ ] External connections appear in the unified "Connections" tree alongside local connections
+- [ ] External connections: edit, duplicate, delete via context menu
+- [ ] Drag-and-drop external connections into local folders — folder assignment persists correctly
+- [ ] Toggle file disabled in Settings — external connections disappear from the unified tree
+- [ ] Re-enable file — connections reappear
+- [ ] Remove file from Settings — connections disappear
 - [ ] Local connections still fully editable/draggable/deletable (no regressions)
-- [ ] Both "Connections" and external groups independently collapsible
+
+### Storage File selector in connection editor (PR #210)
+
+- [ ] Add an external connection file in Settings and enable it
+- [ ] Open connection editor — click "Advanced" — verify "Storage File" dropdown appears
+- [ ] Dropdown shows "Default (connections.json)" and the enabled external file paths
+- [ ] Create a new connection with "Default" storage file — verify it persists to connections.json
+- [ ] Create a new connection with an external file selected — verify it persists to that external file
+- [ ] Edit an existing local connection — change storage file to an external file — save — verify the connection moved (appears in external file, removed from connections.json)
+- [ ] Edit an external connection — change storage file to "Default" — save — verify it moved to connections.json
+- [ ] Advanced section does not appear when no external files are configured in Settings
 
 ---
 
@@ -429,6 +515,32 @@ Each section groups related tests by feature area. Individual test items referen
 
 ## UI / Layout
 
+### No white flash on startup (PR #192)
+
+- [ ] Build and run the app (`pnpm tauri dev`) — verify the window starts with a dark background (#1e1e1e) instead of flashing white
+- [ ] Observe the full startup sequence — there should be no white → dark → white transitions
+- [ ] Open Settings > Appearance > Theme — switch to Light, then back to Dark — verify theming still works correctly
+- [ ] Restart the app with Dark theme selected — verify no white flash on launch
+
+### Color theme switching (PR #220)
+
+- [ ] Open Settings > Appearance > Theme — select "Light" — verify all UI elements update: sidebar becomes light gray, tabs become light, text becomes dark, borders lighten
+- [ ] Select "Dark" — verify all UI elements revert to the dark color scheme
+- [ ] Select "System" — verify the app follows the current OS dark/light mode preference
+- [ ] In "System" mode, toggle OS dark/light mode — verify the app switches themes automatically without a restart
+- [ ] Open multiple terminal tabs — switch theme — verify all terminal instances re-theme live (background, foreground, ANSI colors all change)
+- [ ] Verify the activity bar stays dark in both Light and Dark themes (visual anchor)
+- [ ] Verify state dots (connected/connecting/disconnected) are visible in both themes on terminal tabs and agent sidebar nodes
+- [ ] Close and reopen the app — verify the selected theme persists across restarts
+- [ ] Trigger an error (e.g., throw in a component) to see the ErrorBoundary — verify it renders with theme-appropriate colors
+
+### Theme switching applies immediately (PR #224)
+
+- [ ] Open Settings > Appearance > Theme — switch from Dark to Light — verify the UI changes immediately without needing an app restart
+- [ ] Switch from Light to Dark — verify immediate visual change
+- [ ] Switch to System — verify the theme matches the current OS preference immediately
+- [ ] Rapidly toggle between Dark and Light several times — verify each switch is applied instantly with no delay
+
 ### Status bar (PR #30)
 
 - [ ] Run `npm run build` — no compile errors
@@ -448,6 +560,35 @@ Each section groups related tests by feature area. Individual test items referen
 - [x] Settings gear icon appears at the bottom of the activity bar
 - [x] Connections and File Browser icons remain at the top
 - [x] Clicking the settings icon still toggles the sidebar settings view
+
+### Sidebar toggle button and Ctrl+B shortcut (PR #194)
+
+- [ ] Click the PanelLeft icon button in the terminal toolbar (right side) — sidebar hides
+- [ ] Click the button again — sidebar shows, button appears highlighted
+- [ ] Press Ctrl+B (Cmd+B on Mac) — sidebar toggles
+- [ ] Open a split view — verify the toggle button remains visible and functional in the toolbar
+- [ ] Hover the button — tooltip shows "Toggle Sidebar (Ctrl+B)" (or "Cmd+B" on Mac)
+
+### Highlight selected tab with top border accent (PR #190)
+
+- [ ] Open multiple tabs in a single panel — active tab should have a blue top border, inactive tabs should have no top border
+- [ ] Split the view into two panels — focused panel's active tab has a bright blue border, unfocused panel's active tab has a dimmer (gray) border
+- [ ] Click between panels to switch focus — borders update: focused panel gets bright blue, previously focused panel dims
+- [ ] Close all tabs in one panel — remaining panel's active tab still shows bright blue border
+
+### Vertical split resize handle (PR #213)
+
+- [ ] Split a terminal vertically (top/bottom) — verify the resize handle between panels is visible
+- [ ] Drag the vertical resize handle — verify panels resize smoothly
+- [ ] Split a terminal horizontally (left/right) — verify no regression, resize handle still works
+- [ ] Create nested splits (horizontal inside vertical and vice versa) — verify all resize handles are visible and draggable
+
+### Clear separation between split view panels (PR #189)
+
+- [ ] Open a split view (drag a tab to the edge of a panel) — verify a visible 1px line appears between adjacent panels
+- [ ] Single-panel mode — verify the left border blends naturally against the sidebar edge
+- [ ] Test horizontal splits — verify border appears between left and right panels
+- [ ] Test vertical splits — verify border appears between top and bottom panels
 
 ### Black bar at bottom of terminal fix (PR #130)
 

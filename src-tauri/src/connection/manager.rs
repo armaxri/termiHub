@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::collections::HashSet;
 use std::sync::Mutex;
 
 use anyhow::{Context, Result};
@@ -25,11 +25,9 @@ pub(crate) fn strip_agent_password(mut agent: SavedRemoteAgent) -> SavedRemoteAg
     agent
 }
 
-/// Result of loading a single external connection file.
+/// Result of loading a single external connection file (flattened).
 pub struct ExternalSource {
     pub file_path: String,
-    pub name: String,
-    pub folders: Vec<ConnectionFolder>,
     pub connections: Vec<SavedConnection>,
     pub error: Option<String>,
 }
@@ -237,9 +235,15 @@ impl ConnectionManager {
         Ok(())
     }
 
-    /// Load all enabled external connection files and return them as sources.
+    /// Load all enabled external connection files and return flattened connections.
     pub fn load_external_sources(&self) -> Vec<ExternalSource> {
         let settings = self.settings.lock().unwrap().clone();
+        let main_folder_ids: HashSet<String> = {
+            let store = self.store.lock().unwrap();
+            store.folders.iter().map(|f| f.id.clone()).collect()
+        };
+        let ids_ref: HashSet<&str> = main_folder_ids.iter().map(|s| s.as_str()).collect();
+
         let mut sources = Vec::new();
 
         for file_cfg in &settings.external_connection_files {
@@ -247,79 +251,199 @@ impl ConnectionManager {
                 continue;
             }
 
-            sources.push(load_single_external_file(&file_cfg.path));
+            sources.push(load_single_external_file(&file_cfg.path, &ids_ref));
         }
 
         sources
     }
+
+    /// Save a connection to its appropriate file based on `source_file`.
+    /// If `source_file` is `None`, saves to main connections.json.
+    /// If `source_file` is `Some(path)`, saves to that external file.
+    pub fn save_connection_routed(&self, connection: SavedConnection) -> Result<()> {
+        match &connection.source_file {
+            None => self.save_connection(connection),
+            Some(file_path) => {
+                let file_path = file_path.clone();
+                let mut conn = strip_ssh_password(connection);
+                conn.source_file = None; // Strip before writing to disk
+                save_or_update_in_external_file(&file_path, conn)
+            }
+        }
+    }
+
+    /// Delete a connection from its appropriate file based on `source_file`.
+    pub fn delete_connection_routed(&self, id: &str, source_file: Option<&str>) -> Result<()> {
+        match source_file {
+            None => self.delete_connection(id),
+            Some(file_path) => remove_from_external_file(file_path, id),
+        }
+    }
+
+    /// Move a connection between files. Removes from source, adds to target.
+    pub fn move_connection_to_file(
+        &self,
+        connection_id: &str,
+        current_source: Option<&str>,
+        target_source: Option<String>,
+    ) -> Result<SavedConnection> {
+        // 1. Find and remove the connection from its current location
+        let mut connection = match current_source {
+            None => {
+                let mut store = self.store.lock().unwrap();
+                let idx = store
+                    .connections
+                    .iter()
+                    .position(|c| c.id == connection_id)
+                    .context("Connection not found in main store")?;
+                let conn = store.connections.remove(idx);
+                self.storage
+                    .save(&store)
+                    .context("Failed to persist removal from main store")?;
+                conn
+            }
+            Some(file_path) => remove_and_return_from_external_file(file_path, connection_id)?,
+        };
+
+        // 2. Add to the target location
+        connection.source_file = target_source.clone();
+        match &target_source {
+            None => {
+                let mut disk_conn = strip_ssh_password(connection.clone());
+                disk_conn.source_file = None;
+                let mut store = self.store.lock().unwrap();
+                store.connections.push(disk_conn);
+                self.storage
+                    .save(&store)
+                    .context("Failed to persist addition to main store")?;
+            }
+            Some(file_path) => {
+                let mut disk_conn = strip_ssh_password(connection.clone());
+                disk_conn.source_file = None;
+                save_or_update_in_external_file(file_path, disk_conn)?;
+            }
+        }
+
+        Ok(connection)
+    }
 }
 
-/// Load and namespace a single external connection file.
-fn load_single_external_file(file_path: &str) -> ExternalSource {
-    match try_load_external_file(file_path) {
+/// Load a single external connection file, flattening connections.
+fn load_single_external_file(
+    file_path: &str,
+    main_folder_ids: &std::collections::HashSet<&str>,
+) -> ExternalSource {
+    match try_load_external_file(file_path, main_folder_ids) {
         Ok(source) => source,
         Err(err) => ExternalSource {
             file_path: file_path.to_string(),
-            name: filename_from_path(file_path),
-            folders: Vec::new(),
             connections: Vec::new(),
             error: Some(err.to_string()),
         },
     }
 }
 
-/// Try to load and parse an external connection file, namespacing all IDs.
-pub(crate) fn try_load_external_file(file_path: &str) -> Result<ExternalSource> {
+/// Try to load and parse an external connection file.
+/// Connections get `source_file` set and `folder_id` validated against the main folder tree.
+pub(crate) fn try_load_external_file(
+    file_path: &str,
+    main_folder_ids: &std::collections::HashSet<&str>,
+) -> Result<ExternalSource> {
     let data = std::fs::read_to_string(file_path)
         .with_context(|| format!("Failed to read external file: {}", file_path))?;
 
     let ext_store: ExternalConnectionStore = serde_json::from_str(&data)
         .with_context(|| format!("Failed to parse external file: {}", file_path))?;
 
-    let prefix = format!("ext:{}::", file_path);
-    let root_id = format!("ext-root:{}", file_path);
-    let display_name = ext_store
-        .name
-        .clone()
-        .unwrap_or_else(|| filename_from_path(file_path));
-
-    // Create synthetic root folder
-    let mut folders = vec![ConnectionFolder {
-        id: root_id.clone(),
-        name: display_name.clone(),
-        parent_id: None,
-        is_expanded: true,
-    }];
-
-    // Namespace and remap folders
-    for mut folder in ext_store.folders {
-        let original_id = folder.id.clone();
-        folder.id = format!("{}{}", prefix, original_id);
-        folder.parent_id = Some(match folder.parent_id {
-            Some(pid) => format!("{}{}", prefix, pid),
-            None => root_id.clone(),
-        });
-        folders.push(folder);
-    }
-
-    // Namespace and remap connections, stripping SSH passwords
+    // Flatten connections: set source_file, validate folder_id
     let mut connections = Vec::new();
     for mut conn in ext_store.connections {
-        conn.id = format!("{}{}", prefix, conn.id);
-        conn.folder_id = Some(match conn.folder_id {
-            Some(fid) => format!("{}{}", prefix, fid),
-            None => root_id.clone(),
-        });
+        conn.source_file = Some(file_path.to_string());
+
+        // If the connection's folder_id doesn't match any main folder, put it at root
+        if let Some(ref fid) = conn.folder_id {
+            if !main_folder_ids.contains(fid.as_str()) {
+                conn.folder_id = None;
+            }
+        }
+
         connections.push(strip_ssh_password(conn));
     }
 
     Ok(ExternalSource {
         file_path: file_path.to_string(),
-        name: display_name,
-        folders,
         connections,
         error: None,
     })
+}
+
+/// Save or update a single connection in an external file (by ID).
+fn save_or_update_in_external_file(file_path: &str, connection: SavedConnection) -> Result<()> {
+    let data = std::fs::read_to_string(file_path)
+        .with_context(|| format!("Failed to read external file: {}", file_path))?;
+
+    let mut ext_store: ExternalConnectionStore = serde_json::from_str(&data)
+        .with_context(|| format!("Failed to parse external file: {}", file_path))?;
+
+    if let Some(existing) = ext_store
+        .connections
+        .iter_mut()
+        .find(|c| c.id == connection.id)
+    {
+        *existing = connection;
+    } else {
+        ext_store.connections.push(connection);
+    }
+
+    let data = serde_json::to_string_pretty(&ext_store)
+        .context("Failed to serialize external connection file")?;
+    std::fs::write(file_path, data)
+        .with_context(|| format!("Failed to write external file: {}", file_path))?;
+    Ok(())
+}
+
+/// Remove a connection from an external file by ID.
+fn remove_from_external_file(file_path: &str, connection_id: &str) -> Result<()> {
+    let data = std::fs::read_to_string(file_path)
+        .with_context(|| format!("Failed to read external file: {}", file_path))?;
+
+    let mut ext_store: ExternalConnectionStore = serde_json::from_str(&data)
+        .with_context(|| format!("Failed to parse external file: {}", file_path))?;
+
+    ext_store.connections.retain(|c| c.id != connection_id);
+
+    let data = serde_json::to_string_pretty(&ext_store)
+        .context("Failed to serialize external connection file")?;
+    std::fs::write(file_path, data)
+        .with_context(|| format!("Failed to write external file: {}", file_path))?;
+    Ok(())
+}
+
+/// Remove a connection from an external file and return it.
+fn remove_and_return_from_external_file(
+    file_path: &str,
+    connection_id: &str,
+) -> Result<SavedConnection> {
+    let data = std::fs::read_to_string(file_path)
+        .with_context(|| format!("Failed to read external file: {}", file_path))?;
+
+    let mut ext_store: ExternalConnectionStore = serde_json::from_str(&data)
+        .with_context(|| format!("Failed to parse external file: {}", file_path))?;
+
+    let idx = ext_store
+        .connections
+        .iter()
+        .position(|c| c.id == connection_id)
+        .with_context(|| format!("Connection {} not found in {}", connection_id, file_path))?;
+
+    let conn = ext_store.connections.remove(idx);
+
+    let data = serde_json::to_string_pretty(&ext_store)
+        .context("Failed to serialize external connection file")?;
+    std::fs::write(file_path, data)
+        .with_context(|| format!("Failed to write external file: {}", file_path))?;
+
+    Ok(conn)
 }
 
 /// Write an `ExternalConnectionStore` to a given file path.
@@ -342,15 +466,6 @@ pub fn save_external_file(
     Ok(())
 }
 
-/// Extract a human-readable name from a file path.
-pub(crate) fn filename_from_path(path: &str) -> String {
-    Path::new(path)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("Unknown")
-        .to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -369,9 +484,12 @@ mod tests {
                 password: Some("secret".to_string()),
                 key_path: None,
                 enable_x11_forwarding: false,
+                enable_monitoring: None,
+                enable_file_browser: None,
             }),
             folder_id: None,
             terminal_options: None,
+            source_file: None,
         };
         let stripped = strip_ssh_password(conn);
         if let ConnectionConfig::Ssh(ssh) = &stripped.config {
@@ -393,6 +511,7 @@ mod tests {
             }),
             folder_id: None,
             terminal_options: None,
+            source_file: None,
         };
         let result = strip_ssh_password(conn.clone());
         // Should be unchanged
@@ -401,26 +520,6 @@ mod tests {
         } else {
             panic!("Expected Local config");
         }
-    }
-
-    #[test]
-    fn filename_from_path_with_extension() {
-        assert_eq!(filename_from_path("/path/to/file.json"), "file");
-    }
-
-    #[test]
-    fn filename_from_path_root_file() {
-        assert_eq!(filename_from_path("/file.json"), "file");
-    }
-
-    #[test]
-    fn filename_from_path_empty() {
-        assert_eq!(filename_from_path(""), "Unknown");
-    }
-
-    #[test]
-    fn filename_from_path_no_extension() {
-        assert_eq!(filename_from_path("/path/to/file"), "file");
     }
 
     #[test]
@@ -447,36 +546,60 @@ mod tests {
                 password: Some("secret".to_string()),
                 key_path: None,
                 enable_x11_forwarding: false,
+                enable_monitoring: None,
+                enable_file_browser: None,
             }),
             folder_id: Some("folder-1".to_string()),
             terminal_options: None,
+            source_file: None,
         }];
 
         // Save
         save_external_file(path_str, "Test File", folders, connections).unwrap();
 
-        // Load
-        let source = try_load_external_file(path_str).unwrap();
-        assert_eq!(source.name, "Test File");
+        // Load with "folder-1" in the main folder set so it's recognized
+        let main_folders: std::collections::HashSet<&str> = vec!["folder-1"].into_iter().collect();
+        let source = try_load_external_file(path_str, &main_folders).unwrap();
         assert!(source.error.is_none());
 
-        // Connections should be namespaced and password-stripped
+        // Connections should keep original IDs (no namespace) and have source_file set
         assert_eq!(source.connections.len(), 1);
         let conn = &source.connections[0];
-        assert!(conn.id.starts_with(&format!("ext:{}::", path_str)));
+        assert_eq!(conn.id, "conn-1");
+        assert_eq!(conn.source_file.as_deref(), Some(path_str));
+        assert_eq!(conn.folder_id.as_deref(), Some("folder-1"));
         if let ConnectionConfig::Ssh(ssh) = &conn.config {
             assert!(ssh.password.is_none(), "Password should be stripped");
         } else {
             panic!("Expected SSH config");
         }
+    }
 
-        // Should have synthetic root folder + our folder
-        assert_eq!(source.folders.len(), 2);
-        let root = source
-            .folders
-            .iter()
-            .find(|f| f.id == format!("ext-root:{}", path_str));
-        assert!(root.is_some(), "Should have synthetic root folder");
+    #[test]
+    fn external_file_folder_id_falls_to_root_when_not_in_main() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("test_fallback.json");
+        let path_str = file_path.to_str().unwrap();
+
+        let connections = vec![SavedConnection {
+            id: "conn-1".to_string(),
+            name: "Test".to_string(),
+            config: ConnectionConfig::Local(LocalShellConfig {
+                shell_type: "bash".to_string(),
+                initial_command: None,
+                starting_directory: None,
+            }),
+            folder_id: Some("unknown-folder".to_string()),
+            terminal_options: None,
+            source_file: None,
+        }];
+
+        save_external_file(path_str, "Test", Vec::new(), connections).unwrap();
+
+        // Load with empty main folders — folder_id should fall to None
+        let main_folders: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        let source = try_load_external_file(path_str, &main_folders).unwrap();
+        assert_eq!(source.connections[0].folder_id, None);
     }
 
     #[test]
@@ -496,9 +619,12 @@ mod tests {
                 password: Some("should_be_removed".to_string()),
                 key_path: None,
                 enable_x11_forwarding: false,
+                enable_monitoring: None,
+                enable_file_browser: None,
             }),
             folder_id: None,
             terminal_options: None,
+            source_file: None,
         }];
 
         save_external_file(path_str, "Test", Vec::new(), connections).unwrap();

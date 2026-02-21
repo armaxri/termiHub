@@ -48,6 +48,7 @@ import {
   vscodeAvailable,
   vscodeOpenLocal,
   vscodeOpenRemote,
+  validateSshKey,
   checkDockerAvailable,
   listDockerImages,
   setupRemoteAgent,
@@ -143,7 +144,7 @@ describe("api service", () => {
 
   describe("connection persistence commands", () => {
     it("loadConnectionsAndFolders returns connection data", async () => {
-      const data = { connections: [], folders: [], externalSources: [] };
+      const data = { connections: [], folders: [], agents: [], externalErrors: [] };
       mockedInvoke.mockResolvedValue(data);
 
       const result = await loadConnectionsAndFolders();
@@ -171,7 +172,10 @@ describe("api service", () => {
 
       await deleteConnectionFromBackend("conn-1");
 
-      expect(mockedInvoke).toHaveBeenCalledWith("delete_connection", { id: "conn-1" });
+      expect(mockedInvoke).toHaveBeenCalledWith("delete_connection", {
+        id: "conn-1",
+        sourceFile: null,
+      });
     });
 
     it("saveFolder invokes with folder object", async () => {
@@ -214,7 +218,12 @@ describe("api service", () => {
 
   describe("settings commands", () => {
     it("getSettings returns settings object", async () => {
-      const settings = { version: "1", externalConnectionFiles: [] };
+      const settings = {
+        version: "1",
+        externalConnectionFiles: [],
+        powerMonitoringEnabled: true,
+        fileBrowserEnabled: true,
+      };
       mockedInvoke.mockResolvedValue(settings);
 
       const result = await getSettings();
@@ -225,7 +234,12 @@ describe("api service", () => {
 
     it("saveSettings invokes with settings object", async () => {
       mockedInvoke.mockResolvedValue(undefined);
-      const settings = { version: "1", externalConnectionFiles: [] };
+      const settings = {
+        version: "1",
+        externalConnectionFiles: [],
+        powerMonitoringEnabled: true,
+        fileBrowserEnabled: true,
+      };
 
       await saveSettings(settings);
 
@@ -497,6 +511,50 @@ describe("api service", () => {
         sessionId: "sftp-1",
         remotePath: "/remote/file.txt",
       });
+    });
+  });
+
+  describe("SSH key validation", () => {
+    it("validateSshKey invokes with path and returns validation result", async () => {
+      const validation = {
+        status: "valid",
+        message: "OpenSSH private key detected.",
+        keyType: "OpenSSH",
+      };
+      mockedInvoke.mockResolvedValue(validation);
+
+      const result = await validateSshKey("/home/user/.ssh/id_ed25519");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("validate_ssh_key", {
+        path: "/home/user/.ssh/id_ed25519",
+      });
+      expect(result).toEqual(validation);
+    });
+
+    it("validateSshKey returns warning for public key", async () => {
+      const validation = {
+        status: "warning",
+        message: "This looks like a public key (.pub).",
+        keyType: "",
+      };
+      mockedInvoke.mockResolvedValue(validation);
+
+      const result = await validateSshKey("/home/user/.ssh/id_ed25519.pub");
+
+      expect(result.status).toBe("warning");
+    });
+
+    it("validateSshKey returns error for missing file", async () => {
+      const validation = {
+        status: "error",
+        message: "File not found.",
+        keyType: "",
+      };
+      mockedInvoke.mockResolvedValue(validation);
+
+      const result = await validateSshKey("/nonexistent/key");
+
+      expect(result.status).toBe("error");
     });
   });
 

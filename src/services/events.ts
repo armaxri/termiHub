@@ -4,6 +4,7 @@
 
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { LogEntry } from "@/types/terminal";
+import { TunnelState, TunnelStats } from "@/types/tunnel";
 
 interface TerminalOutputPayload {
   session_id: string;
@@ -294,5 +295,28 @@ export async function onVscodeEditComplete(
 export async function onLogEntry(callback: (entry: LogEntry) => void): Promise<UnlistenFn> {
   return await listen<LogEntry>("log-entry", (event) => {
     callback(event.payload);
+  });
+}
+
+/** Subscribe to tunnel status change events. */
+export async function onTunnelStatusChanged(
+  callback: (state: TunnelState) => void
+): Promise<UnlistenFn> {
+  return await listen<TunnelState>("tunnel-status-changed", (event) => {
+    callback(event.payload);
+  });
+}
+
+interface TunnelStatsPayload {
+  tunnel_id: string;
+  stats: TunnelStats;
+}
+
+/** Subscribe to tunnel stats update events. */
+export async function onTunnelStatsUpdated(
+  callback: (tunnelId: string, stats: TunnelStats) => void
+): Promise<UnlistenFn> {
+  return await listen<TunnelStatsPayload>("tunnel-stats-updated", (event) => {
+    callback(event.payload.tunnel_id, event.payload.stats);
   });
 }

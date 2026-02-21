@@ -7,6 +7,8 @@ export interface SavedConnection {
   folderId: string | null;
   terminalOptions?: TerminalOptions;
   icon?: string;
+  /** Which external file this connection was loaded from. null = main connections.json. */
+  sourceFile?: string | null;
 }
 
 export interface ConnectionFolder {
@@ -25,12 +27,10 @@ export interface ExternalFileConfig {
   enabled: boolean;
 }
 
-export interface ExternalConnectionSource {
+/** Error encountered when loading an external connection file. */
+export interface ExternalFileError {
   filePath: string;
-  name: string;
-  folders: ConnectionFolder[];
-  connections: SavedConnection[];
-  error: string | null;
+  error: string;
 }
 
 /** Capabilities reported by a connected remote agent. */
@@ -56,6 +56,18 @@ export interface RemoteAgentDefinition {
 export interface AppSettings {
   version: string;
   externalConnectionFiles: ExternalFileConfig[];
+  defaultUser?: string;
+  defaultSshKeyPath?: string;
+  defaultShell?: string;
+  theme?: "dark" | "light" | "system";
+  fontFamily?: string;
+  fontSize?: number;
+  defaultHorizontalScrolling?: boolean;
+  scrollbackBuffer?: number;
+  cursorStyle?: "block" | "underline" | "bar";
+  cursorBlink?: boolean;
+  powerMonitoringEnabled: boolean;
+  fileBrowserEnabled: boolean;
 }
 
 export interface FileEntry {

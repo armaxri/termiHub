@@ -3,15 +3,22 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // Mock service modules before importing the store
 vi.mock("@/services/storage", () => ({
   loadConnections: vi.fn(() =>
-    Promise.resolve({ connections: [], folders: [], externalSources: [] })
+    Promise.resolve({ connections: [], folders: [], agents: [], externalErrors: [] })
   ),
   persistConnection: vi.fn(() => Promise.resolve()),
   removeConnection: vi.fn(() => Promise.resolve()),
   persistFolder: vi.fn(() => Promise.resolve()),
   removeFolder: vi.fn(() => Promise.resolve()),
-  getSettings: vi.fn(() => Promise.resolve({ version: "1", externalConnectionFiles: [] })),
+  getSettings: vi.fn(() =>
+    Promise.resolve({
+      version: "1",
+      externalConnectionFiles: [],
+      powerMonitoringEnabled: true,
+      fileBrowserEnabled: true,
+    })
+  ),
   saveSettings: vi.fn(() => Promise.resolve()),
-  saveExternalFile: vi.fn(() => Promise.resolve()),
+  moveConnectionToFile: vi.fn(() => Promise.resolve()),
   reloadExternalConnections: vi.fn(() => Promise.resolve([])),
 }));
 
