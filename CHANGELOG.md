@@ -40,9 +40,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Layout Preview in Customize Layout dialog: live miniature schematic showing Activity Bar, Sidebar, Terminal Area, and Status Bar positions — updates in real-time as layout settings change (#243)
 - `MasterPasswordStore` credential backend — encrypts all credentials into a single file using Argon2id key derivation and AES-256-GCM authenticated encryption, with setup/unlock/lock/change-password lifecycle and atomic file writes (#251)
 - `CredentialManager` runtime wrapper with `StorageMode` switching, settings-based initialization, and Tauri IPC commands for credential store status, lock/unlock, setup, password change, backend switching with credential migration, and keychain availability check (#252)
+- Frontend credential store integration: TypeScript types, API wrappers for all 7 credential store commands, event listeners for lock/unlock/status-changed, and Zustand state with automatic status loading on startup (#253)
+- "Save password" and "Save passphrase" checkboxes in SSH and Agent connection editors — shown when a credential store is configured (keychain or master password), with mode-dependent hints; when no store is configured, a hint directs users to enable secure storage in Settings (#255)
 
 ### Fixed
 
+- `credentialStorageMode` TypeScript type now uses `"master_password"` (snake_case) matching the Rust backend's `StorageMode::to_settings_str()` — was incorrectly `"masterPassword"` (camelCase)
 - Theme switching in Settings > Appearance now applies immediately instead of requiring an app restart (#224)
 - Eliminated white flash on startup — window now starts with dark background (#1e1e1e) instead of flashing white before the theme loads (#192)
 - Terminal input not working on new connections: a React StrictMode race condition could route keyboard input to the wrong backend session, making it appear as if typing had no effect; terminals now also auto-focus when created or switched to (#198)
