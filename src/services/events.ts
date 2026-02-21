@@ -5,6 +5,7 @@
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { LogEntry } from "@/types/terminal";
 import { TunnelState, TunnelStats } from "@/types/tunnel";
+import { CredentialStoreStatusInfo } from "@/types/credential";
 
 interface TerminalOutputPayload {
   session_id: string;
@@ -318,5 +319,30 @@ export async function onTunnelStatsUpdated(
 ): Promise<UnlistenFn> {
   return await listen<TunnelStatsPayload>("tunnel-stats-updated", (event) => {
     callback(event.payload.tunnel_id, event.payload.stats);
+  });
+}
+
+// --- Credential store events ---
+
+/** Subscribe to credential store locked events. */
+export async function onCredentialStoreLocked(callback: () => void): Promise<UnlistenFn> {
+  return await listen("credential-store-locked", () => {
+    callback();
+  });
+}
+
+/** Subscribe to credential store unlocked events. */
+export async function onCredentialStoreUnlocked(callback: () => void): Promise<UnlistenFn> {
+  return await listen("credential-store-unlocked", () => {
+    callback();
+  });
+}
+
+/** Subscribe to credential store status change events. */
+export async function onCredentialStoreStatusChanged(
+  callback: (status: CredentialStoreStatusInfo) => void
+): Promise<UnlistenFn> {
+  return await listen<CredentialStoreStatusInfo>("credential-store-status-changed", (event) => {
+    callback(event.payload);
   });
 }
