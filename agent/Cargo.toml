@@ -23,6 +23,7 @@ base64 = "0.22"
 async-trait = "0.1"
 serialport = "4"
 ssh2 = "0.9"
+openssl = { version = "0.10", features = ["vendored"] }
 shellexpand = "3"
 tokio-util = { version = "0.7", features = ["rt"] }
 
