@@ -48,6 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Master password unlock dialog on app startup when credential store is locked, setup/change password dialog with strength indicator and validation, and status bar lock/unlock indicator for the credential store (#257)
 - Credential store integration in connection flow: SSH and agent connections now automatically resolve stored credentials before prompting the user, with stale credential detection and cleanup on auth failure (#258)
 - Unified configuration types in `termihub-core` crate: `ShellConfig`, `SerialConfig`, `DockerConfig`, `SshConfig`, `PtySize`, `EnvVar`, `VolumeMount` — superset types shared between desktop and agent, with config value expansion utilities (`expand_tilde`, `expand_env_placeholders`, `expand_config_value`) (#295)
+- JSON-RPC 2.0 protocol types and error codes in `termihub-core` crate: `JsonRpcRequest`, `JsonRpcResponse`, `JsonRpcErrorResponse`, `JsonRpcErrorData`, `JsonRpcNotification` message types (all with `Serialize` + `Deserialize`) and standard/application error code constants — shared between desktop and agent (#296)
 
 ### Fixed
 
