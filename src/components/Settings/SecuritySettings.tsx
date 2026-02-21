@@ -7,6 +7,7 @@ import {
   setupMasterPassword,
   changeMasterPassword,
   checkKeychainAvailable,
+  setAutoLockTimeout,
 } from "@/services/api";
 
 interface SecuritySettingsProps {
@@ -196,6 +197,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
   const handleAutoLockChange = useCallback(
     (value: number) => {
       updateSettings({ ...settings, credentialAutoLockMinutes: value });
+      setAutoLockTimeout(value === 0 ? null : value);
     },
     [settings, updateSettings]
   );

@@ -593,6 +593,11 @@ export async function checkKeychainAvailable(): Promise<boolean> {
   return await invoke<boolean>("check_keychain_available");
 }
 
+/** Update the auto-lock timeout for the master password credential store. */
+export async function setAutoLockTimeout(minutes: number | null): Promise<void> {
+  await invoke("set_auto_lock_timeout", { minutes });
+}
+
 /** Resolve a stored credential for a connection. Returns the value or null if not found. */
 export async function resolveCredential(
   connectionId: string,
