@@ -9,21 +9,50 @@ use super::config::{
 };
 use super::settings::{AppSettings, SettingsStorage};
 use super::storage::ConnectionStorage;
+use crate::credential::types::{CredentialKey, CredentialType};
 use crate::credential::{CredentialStore, NullStore};
 use crate::terminal::backend::ConnectionConfig;
 
-/// Strip the password field from SSH connection configs.
-pub(crate) fn strip_ssh_password(mut connection: SavedConnection) -> SavedConnection {
+/// Route the SSH password to the credential store (when `save_password` is
+/// enabled) and then strip it from the config so it is never written to disk.
+pub(crate) fn prepare_for_storage(
+    mut connection: SavedConnection,
+    store: &dyn CredentialStore,
+) -> Result<SavedConnection> {
     if let ConnectionConfig::Ssh(ref mut ssh_cfg) = connection.config {
-        ssh_cfg.password = None;
+        if let Some(ref password) = ssh_cfg.password {
+            if ssh_cfg.save_password == Some(true) {
+                store
+                    .set(
+                        &CredentialKey::new(&connection.id, CredentialType::Password),
+                        password,
+                    )
+                    .context("Failed to store SSH password in credential store")?;
+            }
+            ssh_cfg.password = None;
+        }
     }
-    connection
+    Ok(connection)
 }
 
-/// Strip the password field from agent configs before persisting.
-pub(crate) fn strip_agent_password(mut agent: SavedRemoteAgent) -> SavedRemoteAgent {
-    agent.config.password = None;
-    agent
+/// Route the agent password to the credential store (when `save_password` is
+/// enabled) and then strip it from the config so it is never written to disk.
+pub(crate) fn prepare_agent_for_storage(
+    mut agent: SavedRemoteAgent,
+    store: &dyn CredentialStore,
+) -> Result<SavedRemoteAgent> {
+    if let Some(ref password) = agent.config.password {
+        if agent.config.save_password == Some(true) {
+            store
+                .set(
+                    &CredentialKey::new(&agent.id, CredentialType::Password),
+                    password,
+                )
+                .context("Failed to store agent password in credential store")?;
+        }
+        agent.config.password = None;
+    }
+    Ok(agent)
 }
 
 /// Result of loading a single external connection file (flattened).
@@ -92,9 +121,10 @@ impl ConnectionManager {
         Ok(store.clone())
     }
 
-    /// Save (add or update) a remote agent. Passwords are stripped before persisting.
+    /// Save (add or update) a remote agent. Passwords are routed to the
+    /// credential store (when `save_password` is enabled) then stripped.
     pub fn save_agent(&self, agent: SavedRemoteAgent) -> Result<()> {
-        let agent = strip_agent_password(agent);
+        let agent = prepare_agent_for_storage(agent, &*self.credential_store)?;
         let mut store = self.store.lock().unwrap();
 
         if let Some(existing) = store.agents.iter_mut().find(|a| a.id == agent.id) {
@@ -115,9 +145,10 @@ impl ConnectionManager {
             .context("Failed to persist after agent delete")
     }
 
-    /// Save (add or update) a connection. Passwords are stripped before persisting.
+    /// Save (add or update) a connection. Passwords are routed to the
+    /// credential store (when `save_password` is enabled) then stripped.
     pub fn save_connection(&self, connection: SavedConnection) -> Result<()> {
-        let connection = strip_ssh_password(connection);
+        let connection = prepare_for_storage(connection, &*self.credential_store)?;
         let mut store = self.store.lock().unwrap();
 
         if let Some(existing) = store.connections.iter_mut().find(|c| c.id == connection.id) {
@@ -192,8 +223,8 @@ impl ConnectionManager {
         export_store.connections = export_store
             .connections
             .into_iter()
-            .map(strip_ssh_password)
-            .collect();
+            .map(|c| prepare_for_storage(c, &*self.credential_store))
+            .collect::<Result<Vec<_>>>()?;
         serde_json::to_string_pretty(&export_store)
             .context("Failed to serialize connections for export")
     }
@@ -217,7 +248,9 @@ impl ConnectionManager {
         // Merge: add imported connections that don't already exist (strip passwords)
         for conn in imported.connections {
             if !store.connections.iter().any(|c| c.id == conn.id) {
-                store.connections.push(strip_ssh_password(conn));
+                store
+                    .connections
+                    .push(prepare_for_storage(conn, &*self.credential_store)?);
             }
         }
 
@@ -271,7 +304,7 @@ impl ConnectionManager {
             None => self.save_connection(connection),
             Some(file_path) => {
                 let file_path = file_path.clone();
-                let mut conn = strip_ssh_password(connection);
+                let mut conn = prepare_for_storage(connection, &*self.credential_store)?;
                 conn.source_file = None; // Strip before writing to disk
                 save_or_update_in_external_file(&file_path, conn)
             }
@@ -315,7 +348,8 @@ impl ConnectionManager {
         connection.source_file = target_source.clone();
         match &target_source {
             None => {
-                let mut disk_conn = strip_ssh_password(connection.clone());
+                let mut disk_conn =
+                    prepare_for_storage(connection.clone(), &*self.credential_store)?;
                 disk_conn.source_file = None;
                 let mut store = self.store.lock().unwrap();
                 store.connections.push(disk_conn);
@@ -324,7 +358,8 @@ impl ConnectionManager {
                     .context("Failed to persist addition to main store")?;
             }
             Some(file_path) => {
-                let mut disk_conn = strip_ssh_password(connection.clone());
+                let mut disk_conn =
+                    prepare_for_storage(connection.clone(), &*self.credential_store)?;
                 disk_conn.source_file = None;
                 save_or_update_in_external_file(file_path, disk_conn)?;
             }
@@ -373,7 +408,7 @@ pub(crate) fn try_load_external_file(
             }
         }
 
-        connections.push(strip_ssh_password(conn));
+        connections.push(prepare_for_storage(conn, &NullStore)?);
     }
 
     Ok(ExternalSource {
@@ -463,7 +498,10 @@ pub fn save_external_file(
         name: Some(name.to_string()),
         version: "1".to_string(),
         folders,
-        connections: connections.into_iter().map(strip_ssh_password).collect(),
+        connections: connections
+            .into_iter()
+            .map(|c| prepare_for_storage(c, &NullStore))
+            .collect::<Result<Vec<_>>>()?,
     };
     let data = serde_json::to_string_pretty(&store)
         .context("Failed to serialize external connection file")?;
@@ -478,7 +516,7 @@ mod tests {
     use crate::terminal::backend::{LocalShellConfig, SshConfig};
 
     #[test]
-    fn strip_ssh_password_removes_password() {
+    fn prepare_for_storage_strips_password() {
         let conn = SavedConnection {
             id: "test".to_string(),
             name: "SSH".to_string(),
@@ -498,7 +536,7 @@ mod tests {
             terminal_options: None,
             source_file: None,
         };
-        let stripped = strip_ssh_password(conn);
+        let stripped = prepare_for_storage(conn, &NullStore).unwrap();
         if let ConnectionConfig::Ssh(ssh) = &stripped.config {
             assert!(ssh.password.is_none());
         } else {
@@ -507,7 +545,7 @@ mod tests {
     }
 
     #[test]
-    fn strip_ssh_password_leaves_non_ssh_unchanged() {
+    fn prepare_for_storage_leaves_non_ssh_unchanged() {
         let conn = SavedConnection {
             id: "test".to_string(),
             name: "Local".to_string(),
@@ -520,7 +558,7 @@ mod tests {
             terminal_options: None,
             source_file: None,
         };
-        let result = strip_ssh_password(conn.clone());
+        let result = prepare_for_storage(conn, &NullStore).unwrap();
         // Should be unchanged
         if let ConnectionConfig::Local(local) = &result.config {
             assert_eq!(local.shell_type, "bash");
