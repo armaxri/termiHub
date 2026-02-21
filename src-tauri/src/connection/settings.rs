@@ -61,6 +61,12 @@ pub struct AppSettings {
     pub file_browser_enabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub layout: Option<LayoutConfig>,
+    /// Credential storage mode: "keychain", "master_password", or "none".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential_storage_mode: Option<String>,
+    /// Auto-lock timeout in minutes for master password mode. None = never.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential_auto_lock_minutes: Option<u32>,
 }
 
 impl Default for AppSettings {
@@ -81,6 +87,8 @@ impl Default for AppSettings {
             power_monitoring_enabled: true,
             file_browser_enabled: true,
             layout: None,
+            credential_storage_mode: None,
+            credential_auto_lock_minutes: None,
         }
     }
 }
@@ -150,6 +158,8 @@ mod tests {
         assert!(settings.cursor_blink.is_none());
         assert!(settings.power_monitoring_enabled);
         assert!(settings.file_browser_enabled);
+        assert!(settings.credential_storage_mode.is_none());
+        assert!(settings.credential_auto_lock_minutes.is_none());
     }
 
     #[test]
@@ -224,6 +234,55 @@ mod tests {
         let layout = settings.layout.unwrap();
         assert_eq!(layout.activity_bar_position, "right");
         assert!(!layout.status_bar_visible);
+    }
+
+    #[test]
+    fn deserialize_without_credential_fields() {
+        let json = r#"{"version":"1","externalConnectionFiles":[]}"#;
+        let settings: AppSettings = serde_json::from_str(json).unwrap();
+        assert!(settings.credential_storage_mode.is_none());
+        assert!(settings.credential_auto_lock_minutes.is_none());
+    }
+
+    #[test]
+    fn deserialize_with_credential_fields() {
+        let json = r#"{
+            "version": "1",
+            "externalConnectionFiles": [],
+            "credentialStorageMode": "keychain",
+            "credentialAutoLockMinutes": 15
+        }"#;
+        let settings: AppSettings = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            settings.credential_storage_mode.as_deref(),
+            Some("keychain")
+        );
+        assert_eq!(settings.credential_auto_lock_minutes, Some(15));
+    }
+
+    #[test]
+    fn credential_fields_round_trip_all_modes() {
+        for mode in &["keychain", "master_password", "none"] {
+            let settings = AppSettings {
+                credential_storage_mode: Some(mode.to_string()),
+                credential_auto_lock_minutes: Some(30),
+                ..Default::default()
+            };
+
+            let json = serde_json::to_string(&settings).unwrap();
+            let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
+
+            assert_eq!(deserialized.credential_storage_mode.as_deref(), Some(*mode));
+            assert_eq!(deserialized.credential_auto_lock_minutes, Some(30));
+        }
+    }
+
+    #[test]
+    fn credential_none_values_omitted_from_json() {
+        let settings = AppSettings::default();
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(!json.contains("credentialStorageMode"));
+        assert!(!json.contains("credentialAutoLockMinutes"));
     }
 
     #[test]
