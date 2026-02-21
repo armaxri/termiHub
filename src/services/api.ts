@@ -11,10 +11,7 @@ import {
   LogEntry,
 } from "@/types/terminal";
 import { SystemStats } from "@/types/monitoring";
-import {
-  CredentialStoreStatusInfo,
-  SwitchCredentialStoreResult,
-} from "@/types/credential";
+import { CredentialStoreStatusInfo, SwitchCredentialStoreResult } from "@/types/credential";
 import {
   SavedConnection,
   ConnectionFolder,
