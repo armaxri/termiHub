@@ -22,7 +22,11 @@ const TOP_ITEMS: { view: SidebarView; icon: typeof Network; label: string }[] = 
   { view: "tunnels", icon: ArrowLeftRight, label: "SSH Tunnels" },
 ];
 
-export function ActivityBar() {
+interface ActivityBarProps {
+  horizontal?: boolean;
+}
+
+export function ActivityBar({ horizontal }: ActivityBarProps) {
   const sidebarView = useAppStore((s) => s.sidebarView);
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
   const setSidebarView = useAppStore((s) => s.setSidebarView);
@@ -61,7 +65,9 @@ export function ActivityBar() {
   }, [loadFromBackend]);
 
   return (
-    <div className={`activity-bar${activityBarPosition === "right" ? " activity-bar--right" : ""}`}>
+    <div
+      className={`activity-bar${activityBarPosition === "right" ? " activity-bar--right" : ""}${horizontal ? " activity-bar--horizontal" : ""}`}
+    >
       <div className="activity-bar__top">
         {TOP_ITEMS.map((item) => (
           <ActivityBarItem
@@ -97,7 +103,7 @@ export function ActivityBar() {
           <DropdownMenu.Portal>
             <DropdownMenu.Content
               className="settings-menu__content"
-              side="right"
+              side={horizontal ? "bottom" : "right"}
               align="end"
               sideOffset={4}
             >
