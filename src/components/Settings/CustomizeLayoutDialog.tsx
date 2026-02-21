@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useAppStore } from "@/store/appStore";
 import {
@@ -15,8 +16,11 @@ const PRESET_LIST: { key: string; label: string }[] = [
   { key: "zen", label: "Zen" },
 ];
 
-/** Deep-compare a LayoutConfig against each preset to find a match. */
-function detectActivePreset(config: LayoutConfig): string | null {
+/**
+ * Returns the preset key that exactly matches the given config,
+ * or `null` if the config doesn't match any preset.
+ */
+export function getActivePreset(config: LayoutConfig): string | null {
   for (const [key, preset] of Object.entries(LAYOUT_PRESETS)) {
     if (
       config.activityBarPosition === preset.activityBarPosition &&
@@ -78,13 +82,36 @@ export function CustomizeLayoutDialog() {
   const updateLayout = useAppStore((s) => s.updateLayoutConfig);
   const applyPreset = useAppStore((s) => s.applyLayoutPreset);
 
-  const activePreset = detectActivePreset(layoutConfig);
+  // Track the last non-hidden Activity Bar position so unchecking/rechecking
+  // visibility restores it rather than defaulting to "left".
+  const lastNonHiddenPos = useRef<"left" | "right" | "top">(
+    layoutConfig.activityBarPosition !== "hidden" ? layoutConfig.activityBarPosition : "left"
+  );
+
+  // Keep the ref in sync when the user picks a visible position
+  if (layoutConfig.activityBarPosition !== "hidden") {
+    lastNonHiddenPos.current = layoutConfig.activityBarPosition;
+  }
+
+  const activePreset = getActivePreset(layoutConfig);
+  const abHidden = layoutConfig.activityBarPosition === "hidden";
 
   const handlePreset = (key: string) => {
     applyPreset(key as "default" | "focus" | "zen");
   };
 
+  const handleActivityBarVisibilityChange = (visible: boolean) => {
+    if (visible) {
+      updateLayout({ activityBarPosition: lastNonHiddenPos.current });
+    } else {
+      updateLayout({ activityBarPosition: "hidden" });
+    }
+  };
+
   const handleActivityBarPosition = (pos: ActivityBarPosition) => {
+    if (pos !== "hidden") {
+      lastNonHiddenPos.current = pos;
+    }
     updateLayout({ activityBarPosition: pos });
   };
 
@@ -99,8 +126,6 @@ export function CustomizeLayoutDialog() {
   const handleStatusBarVisible = (visible: boolean) => {
     updateLayout({ statusBarVisible: visible });
   };
-
-  const abHidden = layoutConfig.activityBarPosition === "hidden";
 
   return (
     <Dialog.Root open={open} onOpenChange={setOpen}>
@@ -132,7 +157,7 @@ export function CustomizeLayoutDialog() {
                 <input
                   type="checkbox"
                   checked={!abHidden}
-                  onChange={(e) => handleActivityBarPosition(e.target.checked ? "left" : "hidden")}
+                  onChange={(e) => handleActivityBarVisibilityChange(e.target.checked)}
                   data-testid="layout-ab-visible"
                 />
                 Visible
@@ -147,7 +172,7 @@ export function CustomizeLayoutDialog() {
                       type="radio"
                       name="ab-position"
                       value={pos}
-                      checked={!abHidden && layoutConfig.activityBarPosition === pos}
+                      checked={abHidden ? lastNonHiddenPos.current === pos : layoutConfig.activityBarPosition === pos}
                       disabled={abHidden}
                       onChange={() => handleActivityBarPosition(pos)}
                       data-testid={`layout-ab-${pos}`}

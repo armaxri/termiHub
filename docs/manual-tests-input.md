@@ -570,6 +570,26 @@ Each section groups related tests by feature area. Individual test items referen
 - [ ] Verify the sidebar + terminal area fills the remaining vertical space below the Activity Bar
 - [ ] Switch back to `"left"` / `"right"` positions — verify they still work correctly
 
+### Customize Layout dialog (PR #242)
+
+- [ ] Click the Settings gear in the Activity Bar — click "Customize Layout..." — verify the dialog opens with title "Customize Layout"
+- [ ] Verify three preset cards appear (Default, Focus, Zen) with CSS thumbnails showing the layout arrangement
+- [ ] Click "Focus" preset — verify Activity Bar stays visible, Sidebar hides, Status Bar stays visible, and the Focus card shows an accent border
+- [ ] Click "Zen" preset — verify Activity Bar hides, Sidebar hides, Status Bar hides, and the Zen card shows an accent border
+- [ ] Click "Default" preset — verify all elements return to default positions and the Default card shows an accent border
+- [ ] Uncheck "Visible" under Activity Bar — verify the Activity Bar disappears from the app and position radios become disabled
+- [ ] Re-check "Visible" under Activity Bar — verify it reappears at the last selected position (not always "left")
+- [ ] Select "Right" position for Activity Bar — verify it moves to the right side of the main area
+- [ ] Select "Top" position for Activity Bar — verify it renders horizontally above the main content
+- [ ] Uncheck "Visible" under Sidebar — verify the Sidebar disappears and position radios become disabled
+- [ ] Re-check "Visible" under Sidebar — verify it reappears
+- [ ] Select "Right" position for Sidebar — verify it moves to the right side
+- [ ] Uncheck "Visible" under Status Bar — verify the Status Bar disappears
+- [ ] Click "Reset to Default" — verify all settings return to default layout
+- [ ] Click "Close" — verify the dialog closes
+- [ ] Press Escape — verify the dialog closes
+- [ ] Reopen the dialog — verify it reflects the current layout state (changes persisted)
+
 ### Sidebar toggle button and Ctrl+B shortcut (PR #194)
 
 - [ ] Click the PanelLeft icon button in the terminal toolbar (right side) — sidebar hides
