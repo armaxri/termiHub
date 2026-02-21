@@ -54,9 +54,8 @@ pub fn run() {
 
             let credential_store: Arc<dyn credential::CredentialStore> =
                 Arc::new(credential::NullStore);
-            let connection_manager =
-                ConnectionManager::new(app.handle(), credential_store)
-                    .expect("Failed to initialize connection manager");
+            let connection_manager = ConnectionManager::new(app.handle(), credential_store)
+                .expect("Failed to initialize connection manager");
             app.manage(connection_manager);
 
             let agent_manager = Arc::new(AgentConnectionManager::new(app.handle().clone()));

@@ -44,6 +44,7 @@ impl fmt::Display for CredentialKey {
 
 /// The current status of a credential store.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub enum CredentialStoreStatus {
     /// The store is unlocked and ready to read/write credentials.
     Unlocked,
@@ -55,6 +56,7 @@ pub enum CredentialStoreStatus {
 
 /// How credentials are persisted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub enum StorageMode {
     /// Use the OS keychain (e.g., macOS Keychain, Windows Credential Manager).
     Keychain,
