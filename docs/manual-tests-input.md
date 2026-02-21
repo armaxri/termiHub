@@ -737,6 +737,16 @@ Each section groups related tests by feature area. Individual test items referen
 - [ ] On macOS: verify credentials are stored in Keychain Access (search for "termihub" entries)
 - [ ] On Linux: verify credentials are stored via Secret Service / D-Bus (if available)
 
+### Credential store auto-fill on connect (PR #258)
+
+- [ ] Create an SSH connection with `savePassword` enabled, connect once (enter password when prompted) — verify the password is saved to the credential store
+- [ ] Disconnect and reconnect the same SSH connection — verify the stored credential is used automatically without prompting
+- [ ] Change the remote password, then reconnect — verify the stale credential is detected (auth failure), cleared from the store, and the user is re-prompted for the new password
+- [ ] Create an SSH connection using key auth with `savePassword` enabled and a passphrase-protected key — verify the stored passphrase is used automatically on reconnect
+- [ ] Create an SSH connection using agent auth — verify no credential store lookup occurs and connection proceeds normally
+- [ ] Create an SSH connection with `savePassword` disabled — verify no credential store lookup occurs and the user is prompted as before
+- [ ] Connect a remote agent with `savePassword` enabled — verify stored credentials are used automatically, and stale credentials trigger re-prompt after removal
+
 ---
 
 ## Infrastructure
