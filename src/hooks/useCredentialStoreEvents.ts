@@ -13,6 +13,7 @@ import {
 export function useCredentialStoreEvents(): void {
   const setCredentialStoreStatus = useAppStore((s) => s.setCredentialStoreStatus);
   const loadCredentialStoreStatus = useAppStore((s) => s.loadCredentialStoreStatus);
+  const setUnlockDialogOpen = useAppStore((s) => s.setUnlockDialogOpen);
 
   useEffect(() => {
     let unlistenLocked: (() => void) | null = null;
@@ -22,10 +23,12 @@ export function useCredentialStoreEvents(): void {
     const setup = async () => {
       unlistenLocked = await onCredentialStoreLocked(() => {
         loadCredentialStoreStatus();
+        setUnlockDialogOpen(true);
       });
 
       unlistenUnlocked = await onCredentialStoreUnlocked(() => {
         loadCredentialStoreStatus();
+        setUnlockDialogOpen(false);
       });
 
       unlistenStatusChanged = await onCredentialStoreStatusChanged((status) => {
@@ -40,5 +43,5 @@ export function useCredentialStoreEvents(): void {
       unlistenUnlocked?.();
       unlistenStatusChanged?.();
     };
-  }, [setCredentialStoreStatus, loadCredentialStoreStatus]);
+  }, [setCredentialStoreStatus, loadCredentialStoreStatus, setUnlockDialogOpen]);
 }
