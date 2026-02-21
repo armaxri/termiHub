@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Shared core output processing (`OutputCoalescer`, `contains_screen_clear`) in the `termihub-core` crate — unified output coalescing and ANSI screen-clear detection that can replace duplicated logic in the desktop and agent crates (#303)
 - Shared core file types and utilities (`FileEntry`, `list_dir_sync`, `chrono_from_epoch`, `format_permissions`, `normalize_path_separators`) in the `termihub-core` crate — unified file entry struct and utility functions that replace duplicated code across the desktop and agent crates (#300)
 - Encrypted export/import of connections with credentials: optionally encrypt saved passwords with a user-provided password (Argon2id + AES-256-GCM) when exporting, and decrypt them when importing on another machine — includes Export and Import dialogs with password validation, preview, and error handling (#260)
 - Shared core error types (`CoreError`, `SessionError`, `FileError`) in the `termihub-core` crate — unified error definitions that replace duplicated enums across the desktop and agent crates (#297)
