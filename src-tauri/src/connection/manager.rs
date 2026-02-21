@@ -137,7 +137,11 @@ impl ConnectionManager {
     }
 
     /// Delete a remote agent by ID.
+    /// Also removes any stored credentials for this agent.
     pub fn delete_agent(&self, id: &str) -> Result<()> {
+        self.credential_store
+            .remove_all_for_connection(id)
+            .context("Failed to remove agent credentials")?;
         let mut store = self.store.lock().unwrap();
         store.agents.retain(|a| a.id != id);
         self.storage
@@ -163,7 +167,11 @@ impl ConnectionManager {
     }
 
     /// Delete a connection by ID.
+    /// Also removes any stored credentials for this connection.
     pub fn delete_connection(&self, id: &str) -> Result<()> {
+        self.credential_store
+            .remove_all_for_connection(id)
+            .context("Failed to remove connection credentials")?;
         let mut store = self.store.lock().unwrap();
         store.connections.retain(|c| c.id != id);
         self.storage
