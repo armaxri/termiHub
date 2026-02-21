@@ -36,23 +36,16 @@ jobs:
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
 
       - name: Check Rust formatting
-        run: |
-          cd src-tauri
-          cargo fmt --all -- --check
+        run: cargo fmt --all -- --check
 
       - name: Run Clippy (linter)
-        run: |
-          cd src-tauri
-          cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
       - name: Check for security vulnerabilities
         run: |
           cargo install cargo-audit
-          cd src-tauri
           cargo audit
 
   # Frontend Quality Checks
@@ -111,8 +104,6 @@ jobs:
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
@@ -132,9 +123,7 @@ jobs:
             libudev-dev
 
       - name: Run Rust tests
-        run: |
-          cd src-tauri
-          cargo test --all-features
+        run: cargo test --workspace --all-features
 
       - name: Run frontend tests
         run: pnpm test
@@ -166,7 +155,6 @@ jobs:
       - name: Cargo Audit
         run: |
           cargo install cargo-audit
-          cd src-tauri
           cargo audit
 
   # Check conventional commits (PR only)
