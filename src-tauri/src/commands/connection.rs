@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use serde::Serialize;
 use tauri::State;
 use tracing::{debug, info};
@@ -5,6 +7,7 @@ use tracing::{debug, info};
 use crate::connection::config::{ConnectionFolder, SavedConnection, SavedRemoteAgent};
 use crate::connection::manager::{self, ConnectionManager};
 use crate::connection::settings::AppSettings;
+use crate::credential::CredentialStore;
 
 /// Response containing all connections (unified), folders, and agents.
 #[derive(Serialize)]
@@ -152,8 +155,10 @@ pub fn save_external_file(
     name: String,
     folders: Vec<ConnectionFolder>,
     connections: Vec<SavedConnection>,
+    credential_store: State<'_, Arc<dyn CredentialStore>>,
 ) -> Result<(), String> {
-    manager::save_external_file(&file_path, &name, folders, connections).map_err(|e| e.to_string())
+    manager::save_external_file(&file_path, &name, folders, connections, &**credential_store)
+        .map_err(|e| e.to_string())
 }
 
 /// Reload external connection files and return flattened connections.
