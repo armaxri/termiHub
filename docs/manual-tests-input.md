@@ -590,6 +590,19 @@ Each section groups related tests by feature area. Individual test items referen
 - [ ] Press Escape — verify the dialog closes
 - [ ] Reopen the dialog — verify it reflects the current layout state (changes persisted)
 
+### Layout preview in Customize Layout dialog (PR #243)
+
+- [ ] Open the Customize Layout dialog — verify a "Layout Preview" section appears below the Status Bar controls, showing a labeled schematic of the current layout
+- [ ] Verify the preview shows labeled boxes: "AB" (Activity Bar), "Sidebar", "Terminal", "Status Bar" in positions matching the current layout config
+- [ ] Change Activity Bar position to "Right" — verify the AB box moves to the right side in the preview
+- [ ] Change Activity Bar position to "Top" — verify the AB box spans the full width at top with "Activity Bar" label
+- [ ] Uncheck Activity Bar "Visible" — verify the AB box disappears from the preview
+- [ ] Change Sidebar position to "Right" — verify the Sidebar box moves to the right of the Terminal box
+- [ ] Uncheck Sidebar "Visible" — verify the Sidebar box disappears from the preview
+- [ ] Uncheck Status Bar "Visible" — verify the Status Bar strip disappears from the preview
+- [ ] Click "Zen" preset — verify the preview shows only the Terminal box (all other elements hidden)
+- [ ] Click "Default" preset — verify the preview shows all elements in default positions
+
 ### Sidebar toggle button and Ctrl+B shortcut (PR #194)
 
 - [ ] Click the PanelLeft icon button in the terminal toolbar (right side) — sidebar hides
