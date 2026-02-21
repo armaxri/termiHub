@@ -661,7 +661,7 @@ mod tests {
         store.set(&kp_key, "b").unwrap();
 
         let mut keys = store.list_keys().unwrap();
-        keys.sort_by(|a, b| a.to_string().cmp(&b.to_string()));
+        keys.sort_by_key(|a| a.to_string());
 
         assert_eq!(keys.len(), 2);
         assert_eq!(keys[0], pw_key);
