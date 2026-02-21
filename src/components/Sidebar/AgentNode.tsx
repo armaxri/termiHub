@@ -23,8 +23,9 @@ import {
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { RemoteAgentDefinition } from "@/types/connection";
-import { AgentSessionInfo, AgentDefinitionInfo } from "@/services/api";
+import { AgentSessionInfo, AgentDefinitionInfo, removeCredential } from "@/services/api";
 import { classifyAgentError, ClassifiedAgentError } from "@/utils/classifyAgentError";
+import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { AgentSetupDialog } from "./AgentSetupDialog";
 import { ConnectionErrorDialog } from "./ConnectionErrorDialog";
 
@@ -68,7 +69,17 @@ export function AgentNode({ agent }: AgentNodeProps) {
     setConnecting(true);
     try {
       let password: string | undefined;
-      if (agent.config.authMethod === "password" && !agent.config.password) {
+
+      // Try to resolve credential from the store first
+      const resolution = await resolveConnectionCredential(
+        agent.id,
+        agent.config.authMethod,
+        agent.config.savePassword
+      );
+
+      if (resolution.usedStoredCredential && resolution.password) {
+        password = resolution.password;
+      } else if (agent.config.authMethod === "password" && !agent.config.password) {
         const result = await requestPassword(agent.config.host, agent.config.username);
         if (!result) {
           setConnecting(false);
@@ -76,7 +87,24 @@ export function AgentNode({ agent }: AgentNodeProps) {
         }
         password = result;
       }
-      await connectRemoteAgent(agent.id, password);
+
+      try {
+        await connectRemoteAgent(agent.id, password);
+      } catch (err) {
+        // If we used a stored credential and got an auth failure, retry with prompt
+        const classified = classifyAgentError(err);
+        if (resolution.usedStoredCredential && classified.category === "auth-failure") {
+          await removeCredential(agent.id, resolution.credentialType).catch(() => {});
+          const retryPassword = await requestPassword(agent.config.host, agent.config.username);
+          if (!retryPassword) {
+            setConnecting(false);
+            return;
+          }
+          await connectRemoteAgent(agent.id, retryPassword);
+          return;
+        }
+        throw err;
+      }
     } catch (err) {
       const classified = classifyAgentError(err);
       setConnectionError(classified);
