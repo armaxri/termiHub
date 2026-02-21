@@ -737,6 +737,17 @@ Each section groups related tests by feature area. Individual test items referen
 - [ ] On macOS: verify credentials are stored in Keychain Access (search for "termihub" entries)
 - [ ] On Linux: verify credentials are stored via Secret Service / D-Bus (if available)
 
+### Master password unlock dialog and status bar indicator (PR #257)
+
+- [ ] Configure credential store to master_password mode and lock it — on app startup, the unlock dialog should appear automatically
+- [ ] Enter the correct master password in the unlock dialog — dialog closes and credential store becomes unlocked
+- [ ] Enter an incorrect master password — error message "Incorrect master password." is shown, password field is cleared
+- [ ] Click "Skip" on the unlock dialog — dialog closes, credential store remains locked
+- [ ] With master_password mode active, verify the status bar shows a lock icon with "Locked" or "Unlocked" text
+- [ ] Click the "Locked" indicator in the status bar — unlock dialog opens
+- [ ] Click the "Unlocked" indicator in the status bar — credential store locks, indicator changes to "Locked"
+- [ ] With keychain or none mode active — no credential store indicator is shown in the status bar
+
 ### Credential store auto-fill on connect (PR #258)
 
 - [ ] Create an SSH connection with `savePassword` enabled, connect once (enter password when prompted) — verify the password is saved to the credential store

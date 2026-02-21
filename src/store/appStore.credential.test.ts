@@ -24,7 +24,12 @@ describe("appStore credential store state", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // Reset the store to initial state
-    useAppStore.setState({ credentialStoreStatus: null });
+    useAppStore.setState({
+      credentialStoreStatus: null,
+      unlockDialogOpen: false,
+      masterPasswordSetupOpen: false,
+      masterPasswordSetupMode: "setup",
+    });
   });
 
   it("credentialStoreStatus is initially null", () => {
@@ -88,5 +93,46 @@ describe("appStore credential store state", () => {
       expect.any(Error)
     );
     consoleSpy.mockRestore();
+  });
+
+  // Unlock dialog state
+  it("unlockDialogOpen is initially false", () => {
+    expect(useAppStore.getState().unlockDialogOpen).toBe(false);
+  });
+
+  it("setUnlockDialogOpen updates the state", () => {
+    useAppStore.getState().setUnlockDialogOpen(true);
+    expect(useAppStore.getState().unlockDialogOpen).toBe(true);
+
+    useAppStore.getState().setUnlockDialogOpen(false);
+    expect(useAppStore.getState().unlockDialogOpen).toBe(false);
+  });
+
+  // Master password setup state
+  it("masterPasswordSetupOpen is initially false", () => {
+    expect(useAppStore.getState().masterPasswordSetupOpen).toBe(false);
+  });
+
+  it("masterPasswordSetupMode is initially setup", () => {
+    expect(useAppStore.getState().masterPasswordSetupMode).toBe("setup");
+  });
+
+  it("openMasterPasswordSetup sets open and mode", () => {
+    useAppStore.getState().openMasterPasswordSetup("change");
+    expect(useAppStore.getState().masterPasswordSetupOpen).toBe(true);
+    expect(useAppStore.getState().masterPasswordSetupMode).toBe("change");
+
+    useAppStore.getState().closeMasterPasswordSetup();
+    useAppStore.getState().openMasterPasswordSetup("setup");
+    expect(useAppStore.getState().masterPasswordSetupOpen).toBe(true);
+    expect(useAppStore.getState().masterPasswordSetupMode).toBe("setup");
+  });
+
+  it("closeMasterPasswordSetup sets open to false", () => {
+    useAppStore.getState().openMasterPasswordSetup("change");
+    expect(useAppStore.getState().masterPasswordSetupOpen).toBe(true);
+
+    useAppStore.getState().closeMasterPasswordSetup();
+    expect(useAppStore.getState().masterPasswordSetupOpen).toBe(false);
   });
 });
