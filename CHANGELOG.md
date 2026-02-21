@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Shared core monitoring types and parsers (`SystemStats`, `CpuCounters`, `parse_stats`, `parse_cpu_line`, `cpu_percent_from_delta`, `parse_meminfo_value`, `parse_df_output`, `MONITORING_COMMAND`) in the `termihub-core` crate — canonical implementation that replaces duplicated monitoring code in the desktop and agent crates (#301)
 - Auto-lock timeout for master password credential store: automatically locks the store after a configurable period of inactivity, with backend timer thread and frontend settings integration (#263)
 - Shared core output processing (`OutputCoalescer`, `contains_screen_clear`) in the `termihub-core` crate — unified output coalescing and ANSI screen-clear detection that can replace duplicated logic in the desktop and agent crates (#303)
 - Shared core file types and utilities (`FileEntry`, `list_dir_sync`, `chrono_from_epoch`, `format_permissions`, `normalize_path_separators`) in the `termihub-core` crate — unified file entry struct and utility functions that replace duplicated code across the desktop and agent crates (#300)
