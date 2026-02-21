@@ -1,0 +1,94 @@
+.layout-preview {
+  width: 300px;
+  height: 180px;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.layout-preview__main {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+/* Activity Bar */
+.layout-preview__activity-bar {
+  width: 24px;
+  background: var(--accent-color);
+  opacity: 0.6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.layout-preview__activity-bar--top {
+  width: 100%;
+  height: 20px;
+  background: var(--accent-color);
+  opacity: 0.6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Sidebar */
+.layout-preview__sidebar {
+  width: 60px;
+  background: var(--text-secondary);
+  opacity: 0.25;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Terminal */
+.layout-preview__terminal {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-primary);
+}
+
+/* Status Bar */
+.layout-preview__status-bar {
+  width: 100%;
+  height: 16px;
+  background: var(--text-secondary);
+  opacity: 0.2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Labels */
+.layout-preview__label {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  text-align: center;
+  user-select: none;
+  line-height: 1;
+}
+
+.layout-preview__activity-bar .layout-preview__label {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  font-size: 9px;
+}
+
+.layout-preview__sidebar .layout-preview__label {
+  font-size: 10px;
+}
+
+.layout-preview__status-bar .layout-preview__label {
+  font-size: 9px;
+  opacity: 1;
+}
+
+.layout-preview__activity-bar--top .layout-preview__label {
+  font-size: 9px;
+}
