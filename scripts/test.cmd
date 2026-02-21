@@ -18,18 +18,9 @@ call pnpm test
 if errorlevel 1 set FAILED=1
 
 echo.
-echo === Backend: cargo test ===
-pushd src-tauri
-cargo test --all-features
+echo === Rust workspace: cargo test ===
+cargo test --workspace --all-features
 if errorlevel 1 set FAILED=1
-popd
-
-echo.
-echo === Agent: cargo test ===
-pushd agent
-cargo test --all-features
-if errorlevel 1 set FAILED=1
-popd
 
 echo.
 if %FAILED%==1 (

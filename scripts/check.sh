@@ -30,32 +30,16 @@ else
 fi
 
 echo ""
-echo "=== Backend: cargo fmt ==="
-if (cd src-tauri && cargo fmt --check); then
+echo "=== Rust workspace: cargo fmt ==="
+if cargo fmt --all -- --check; then
     echo "PASS"
 else
     FAILED=1
 fi
 
 echo ""
-echo "=== Backend: clippy ==="
-if (cd src-tauri && cargo clippy --all-targets --all-features -- -D warnings); then
-    echo "PASS"
-else
-    FAILED=1
-fi
-
-echo ""
-echo "=== Agent: cargo fmt ==="
-if (cd agent && cargo fmt --check); then
-    echo "PASS"
-else
-    FAILED=1
-fi
-
-echo ""
-echo "=== Agent: clippy ==="
-if (cd agent && cargo clippy --all-targets --all-features -- -D warnings); then
+echo "=== Rust workspace: clippy ==="
+if cargo clippy --workspace --all-targets --all-features -- -D warnings; then
     echo "PASS"
 else
     FAILED=1

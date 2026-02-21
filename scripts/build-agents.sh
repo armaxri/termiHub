@@ -145,13 +145,13 @@ for target in "${SELECTED_TARGETS[@]}"; do
 
             if [ "$linker" = "native" ]; then
                 # Host-native target — no cross-linker needed
-                if cargo build --release --target "$target" --manifest-path agent/Cargo.toml 2>&1; then
+                if cargo build --release --target "$target" -p termihub-agent 2>&1; then
                     success=true
                 fi
             else
                 if env "$linker_env=$linker" \
                     PKG_CONFIG_SYSROOT_DIR="/usr/$( echo "$linker" | sed 's/-gcc$//' )" \
-                    cargo build --release --target "$target" --manifest-path agent/Cargo.toml 2>&1; then
+                    cargo build --release --target "$target" -p termihub-agent 2>&1; then
                     success=true
                 fi
             fi
@@ -167,13 +167,13 @@ for target in "${SELECTED_TARGETS[@]}"; do
         fi
         method="cross"
 
-        if (cd agent && cross build --release --target "$target") 2>&1; then
+        if cross build --release --target "$target" -p termihub-agent 2>&1; then
             success=true
         fi
     fi
 
     # Record result
-    binary="agent/target/$target/release/termihub-agent"
+    binary="target/$target/release/termihub-agent"
     if [ "$success" = true ] && [ -f "$binary" ]; then
         size=$(du -h "$binary" | cut -f1)
         results+=("  OK    $target  ($method, $size)")

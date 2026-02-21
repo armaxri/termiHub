@@ -59,7 +59,6 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
           key: ${{ matrix.platform }}
 
       - name: Install system dependencies (Ubuntu)
@@ -143,7 +142,7 @@ jobs:
         with:
           name: ${{ matrix.artifact_name }}
           path: |
-            src-tauri/target/${{ matrix.rust_target }}/release/bundle/**/*
+            target/${{ matrix.rust_target }}/release/bundle/**/*
           if-no-files-found: error
           retention-days: 7
 

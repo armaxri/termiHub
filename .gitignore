@@ -29,6 +29,9 @@ test-results
 *.sln
 *.sw?
 
+# Cargo workspace target directory
+/target/
+
 # Lock files from other package managers (we use pnpm)
 package-lock.json
 yarn.lock

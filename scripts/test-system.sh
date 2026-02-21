@@ -210,7 +210,7 @@ fi
 # ─── Build the app ──────────────────────────────────────────────────────────
 
 # macOS exits early via run_in_docker() above, so this is always Linux.
-APP_BINARY="./src-tauri/target/release/termihub"
+APP_BINARY="./target/release/termihub"
 
 if [ "$SKIP_BUILD" -eq 0 ]; then
     echo ""

@@ -48,9 +48,9 @@ if [ "$(uname -s)" = "Darwin" ]; then
         echo "  Building agent for $target..."
         linker_env="CARGO_TARGET_$(echo "$target" | tr '[:lower:]' '[:upper:]' | tr '-' '_')_LINKER"
         env "$linker_env=$linker" \
-            cargo build --release --target "$target" --manifest-path agent/Cargo.toml
+            cargo build --release --target "$target" -p termihub-agent
 
-        echo "  -> agent/target/$target/release/termihub-agent"
+        echo "  -> target/$target/release/termihub-agent"
         agent_built=$((agent_built + 1))
     done
 
