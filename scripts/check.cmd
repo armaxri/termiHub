@@ -24,32 +24,14 @@ call pnpm run lint
 if errorlevel 1 set FAILED=1
 
 echo.
-echo === Backend: cargo fmt ===
-pushd src-tauri
-cargo fmt --check
+echo === Rust workspace: cargo fmt ===
+cargo fmt --all -- --check
 if errorlevel 1 set FAILED=1
-popd
 
 echo.
-echo === Backend: clippy ===
-pushd src-tauri
-cargo clippy --all-targets --all-features -- -D warnings
+echo === Rust workspace: clippy ===
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 if errorlevel 1 set FAILED=1
-popd
-
-echo.
-echo === Agent: cargo fmt ===
-pushd agent
-cargo fmt --check
-if errorlevel 1 set FAILED=1
-popd
-
-echo.
-echo === Agent: clippy ===
-pushd agent
-cargo clippy --all-targets --all-features -- -D warnings
-if errorlevel 1 set FAILED=1
-popd
 
 echo.
 if %FAILED%==1 (

@@ -21,16 +21,8 @@ else
 fi
 
 echo ""
-echo "=== Backend: cargo test ==="
-if (cd src-tauri && cargo test --all-features); then
-    echo "PASS"
-else
-    FAILED=1
-fi
-
-echo ""
-echo "=== Agent: cargo test ==="
-if (cd agent && cargo test --all-features); then
+echo "=== Rust workspace: cargo test ==="
+if cargo test --workspace --all-features; then
     echo "PASS"
 else
     FAILED=1

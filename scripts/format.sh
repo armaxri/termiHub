@@ -16,12 +16,8 @@ echo "=== Frontend: Prettier ==="
 pnpm exec prettier --write "src/**/*.{ts,tsx,css}"
 
 echo ""
-echo "=== Backend: cargo fmt ==="
-(cd src-tauri && cargo fmt)
-
-echo ""
-echo "=== Agent: cargo fmt ==="
-(cd agent && cargo fmt)
+echo "=== Rust workspace: cargo fmt ==="
+cargo fmt --all
 
 echo ""
 echo "All formatting applied."

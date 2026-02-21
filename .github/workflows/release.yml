@@ -121,7 +121,6 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
           key: release-${{ matrix.platform }}
 
       - name: Install system dependencies (Ubuntu)
@@ -198,7 +197,7 @@ jobs:
         shell: bash
         run: |
           # Find the built installer/bundle
-          ARTIFACT=$(find src-tauri/target/${{ matrix.rust_target }}/release/bundle/${{ matrix.bundle_path }} -name "*${{ matrix.file_ext }}" | head -n 1)
+          ARTIFACT=$(find target/${{ matrix.rust_target }}/release/bundle/${{ matrix.bundle_path }} -name "*${{ matrix.file_ext }}" | head -n 1)
 
           if [ -z "$ARTIFACT" ]; then
             echo "Error: No artifact found!"
@@ -226,7 +225,7 @@ jobs:
       - name: Upload .deb (Linux only)
         if: matrix.os == 'ubuntu-latest' && matrix.file_ext != '.deb'
         run: |
-          DEB_FILE=$(find src-tauri/target/${{ matrix.rust_target }}/release/bundle/deb -name "*.deb" | head -n 1)
+          DEB_FILE=$(find target/${{ matrix.rust_target }}/release/bundle/deb -name "*.deb" | head -n 1)
           if [ -n "$DEB_FILE" ]; then
             DEB_FILENAME="termiHub-${{ needs.create-release.outputs.version }}-${{ matrix.platform }}.deb"
             mv "$DEB_FILE" "$DEB_FILENAME"
@@ -264,7 +263,6 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: agent
           key: release-agent-${{ matrix.target }}
 
       - name: Install system dependencies
@@ -288,13 +286,11 @@ jobs:
           echo "PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig" >> $GITHUB_ENV
 
       - name: Build agent
-        run: |
-          cd agent
-          cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --target ${{ matrix.target }} -p termihub-agent
 
       - name: Upload agent binary as release asset
         run: |
-          cp agent/target/${{ matrix.target }}/release/termihub-agent ${{ matrix.artifact_name }}
+          cp target/${{ matrix.target }}/release/termihub-agent ${{ matrix.artifact_name }}
           gh release upload v${{ needs.create-release.outputs.version }} "${{ matrix.artifact_name }}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

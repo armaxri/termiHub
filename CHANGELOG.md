@@ -54,6 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Reorganized Rust crates into a Cargo workspace with a new shared `termihub-core` crate (empty scaffolding for future code sharing between desktop and agent) (#283)
 - `ConnectionManager` now routes credentials to the active `CredentialStore` via `prepare_for_storage` before stripping passwords on disk — with `NullStore` as default, behavior is identical to before; credentials are cleaned up when connections or agents are deleted (#249)
 - Split view panels now have a visible 1px border between them, making it easier to distinguish adjacent panels (#189)
 - Active tabs now show a colored top border: bright blue in the focused panel, dimmed in unfocused panels, following VS Code's tab highlight pattern (#190)
