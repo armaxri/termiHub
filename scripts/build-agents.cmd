@@ -78,16 +78,13 @@ REM Ensure Rust target is installed
 rustup target add %1 >nul 2>&1
 
 echo   Building with cross-rs...
-pushd agent
-cross build --release --target %1
+cross build --release --target %1 -p termihub-agent
 if errorlevel 1 (
     echo   FAILED: %1
     set /a FAILED+=1
-    popd
     exit /b 0
 )
-popd
 
-echo   -^> agent\target\%1\release\termihub-agent
+echo   -^> target\%1\release\termihub-agent
 set /a BUILT+=1
 exit /b 0

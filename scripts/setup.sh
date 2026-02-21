@@ -9,12 +9,8 @@ echo "=== Installing frontend dependencies ==="
 pnpm install
 
 echo ""
-echo "=== Building Rust backend (first compile takes a while) ==="
-(cd src-tauri && cargo build)
-
-echo ""
-echo "=== Building Agent ==="
-(cd agent && cargo build)
+echo "=== Building Rust workspace (first compile takes a while) ==="
+cargo build --workspace
 
 echo ""
 echo "Setup complete. Run ./scripts/dev.sh to start the app."

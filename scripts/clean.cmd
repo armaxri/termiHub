@@ -8,15 +8,8 @@ echo === Cleaning frontend ===
 if exist node_modules rmdir /s /q node_modules
 if exist dist rmdir /s /q dist
 
-echo === Cleaning backend ===
-pushd src-tauri
+echo === Cleaning Rust workspace ===
 cargo clean
-popd
-
-echo === Cleaning agent ===
-pushd agent
-cargo clean
-popd
 
 echo.
 echo All build artifacts removed. Run scripts\setup.cmd to reinstall.
