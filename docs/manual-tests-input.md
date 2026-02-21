@@ -728,6 +728,17 @@ Each section groups related tests by feature area. Individual test items referen
 
 ---
 
+## Credential Store
+
+### KeychainStore integration with OS keychain (PR #250)
+
+- [ ] Run `cargo test -p termihub -- --ignored keychain` — verify all 6 ignored integration tests pass (set/get, remove/get, remove_all, nonexistent get, nonexistent remove, is_available)
+- [ ] On Windows: verify credentials are stored in Windows Credential Manager (search for "termihub" entries)
+- [ ] On macOS: verify credentials are stored in Keychain Access (search for "termihub" entries)
+- [ ] On Linux: verify credentials are stored via Secret Service / D-Bus (if available)
+
+---
+
 ## Infrastructure
 
 ### Docker test environment and virtual serial (PR #40)
