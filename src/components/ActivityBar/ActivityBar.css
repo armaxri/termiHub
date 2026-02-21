@@ -56,6 +56,37 @@
   right: 0;
 }
 
+/* Horizontal mode (top position) */
+.activity-bar--horizontal {
+  flex-direction: row;
+  width: 100%;
+  height: var(--activity-bar-width);
+  min-width: unset;
+  min-height: var(--activity-bar-width);
+}
+
+.activity-bar--horizontal .activity-bar__top {
+  flex-direction: row;
+}
+
+.activity-bar--horizontal .activity-bar__bottom {
+  flex-direction: row;
+}
+
+.activity-bar--horizontal .activity-bar__item {
+  width: var(--activity-bar-width);
+  height: 100%;
+}
+
+.activity-bar--horizontal .activity-bar__indicator {
+  left: 0;
+  right: 0;
+  top: auto;
+  bottom: 0;
+  width: auto;
+  height: 2px;
+}
+
 /* Settings dropdown menu */
 .settings-menu__content {
   min-width: 180px;
