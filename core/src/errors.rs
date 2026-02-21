@@ -128,10 +128,7 @@ mod tests {
     fn core_error_from_file_error() {
         let file_err = FileError::NotFound("/missing".into());
         let core_err: CoreError = file_err.into();
-        assert_eq!(
-            core_err.to_string(),
-            "File error: File not found: /missing"
-        );
+        assert_eq!(core_err.to_string(), "File error: File not found: /missing");
     }
 
     #[test]
@@ -150,8 +147,7 @@ mod tests {
 
     #[test]
     fn file_error_from_io_error() {
-        let io_err =
-            std::io::Error::new(std::io::ErrorKind::PermissionDenied, "access denied");
+        let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "access denied");
         let file_err: FileError = io_err.into();
         assert_eq!(file_err.to_string(), "I/O error: access denied");
     }
