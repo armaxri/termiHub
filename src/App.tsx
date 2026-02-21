@@ -6,6 +6,8 @@ import { StatusBar } from "@/components/StatusBar";
 import { TerminalView } from "@/components/Terminal";
 import { PasswordPrompt } from "@/components/PasswordPrompt";
 import { CustomizeLayoutDialog } from "@/components/Settings/CustomizeLayoutDialog";
+import { UnlockDialog } from "@/components/UnlockDialog";
+import { MasterPasswordSetup } from "@/components/MasterPasswordSetup";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useTunnelEvents } from "@/hooks/useTunnelEvents";
 import { useCredentialStoreEvents } from "@/hooks/useCredentialStoreEvents";
@@ -83,6 +85,11 @@ function App() {
   useCredentialStoreEvents();
   const loadFromBackend = useAppStore((s) => s.loadFromBackend);
   const layoutConfig = useAppStore((s) => s.layoutConfig);
+  const unlockDialogOpen = useAppStore((s) => s.unlockDialogOpen);
+  const setUnlockDialogOpen = useAppStore((s) => s.setUnlockDialogOpen);
+  const masterPasswordSetupOpen = useAppStore((s) => s.masterPasswordSetupOpen);
+  const masterPasswordSetupMode = useAppStore((s) => s.masterPasswordSetupMode);
+  const closeMasterPasswordSetup = useAppStore((s) => s.closeMasterPasswordSetup);
 
   useEffect(() => {
     loadFromBackend();
@@ -110,6 +117,14 @@ function App() {
         {layoutConfig.statusBarVisible && <StatusBar />}
         <PasswordPrompt />
         <CustomizeLayoutDialog />
+        <UnlockDialog open={unlockDialogOpen} onOpenChange={setUnlockDialogOpen} />
+        <MasterPasswordSetup
+          open={masterPasswordSetupOpen}
+          onOpenChange={(open) => {
+            if (!open) closeMasterPasswordSetup();
+          }}
+          mode={masterPasswordSetupMode}
+        />
       </div>
     </ErrorBoundary>
   );
