@@ -570,6 +570,39 @@ Each section groups related tests by feature area. Individual test items referen
 - [ ] Verify the sidebar + terminal area fills the remaining vertical space below the Activity Bar
 - [ ] Switch back to `"left"` / `"right"` positions — verify they still work correctly
 
+### Customize Layout dialog (PR #242)
+
+- [ ] Click the Settings gear in the Activity Bar — click "Customize Layout..." — verify the dialog opens with title "Customize Layout"
+- [ ] Verify three preset cards appear (Default, Focus, Zen) with CSS thumbnails showing the layout arrangement
+- [ ] Click "Focus" preset — verify Activity Bar stays visible, Sidebar hides, Status Bar stays visible, and the Focus card shows an accent border
+- [ ] Click "Zen" preset — verify Activity Bar hides, Sidebar hides, Status Bar hides, and the Zen card shows an accent border
+- [ ] Click "Default" preset — verify all elements return to default positions and the Default card shows an accent border
+- [ ] Uncheck "Visible" under Activity Bar — verify the Activity Bar disappears from the app and position radios become disabled
+- [ ] Re-check "Visible" under Activity Bar — verify it reappears at the last selected position (not always "left")
+- [ ] Select "Right" position for Activity Bar — verify it moves to the right side of the main area
+- [ ] Select "Top" position for Activity Bar — verify it renders horizontally above the main content
+- [ ] Uncheck "Visible" under Sidebar — verify the Sidebar disappears and position radios become disabled
+- [ ] Re-check "Visible" under Sidebar — verify it reappears
+- [ ] Select "Right" position for Sidebar — verify it moves to the right side
+- [ ] Uncheck "Visible" under Status Bar — verify the Status Bar disappears
+- [ ] Click "Reset to Default" — verify all settings return to default layout
+- [ ] Click "Close" — verify the dialog closes
+- [ ] Press Escape — verify the dialog closes
+- [ ] Reopen the dialog — verify it reflects the current layout state (changes persisted)
+
+### Layout preview in Customize Layout dialog (PR #243)
+
+- [ ] Open the Customize Layout dialog — verify a "Layout Preview" section appears below the Status Bar controls, showing a labeled schematic of the current layout
+- [ ] Verify the preview shows labeled boxes: "AB" (Activity Bar), "Sidebar", "Terminal", "Status Bar" in positions matching the current layout config
+- [ ] Change Activity Bar position to "Right" — verify the AB box moves to the right side in the preview
+- [ ] Change Activity Bar position to "Top" — verify the AB box spans the full width at top with "Activity Bar" label
+- [ ] Uncheck Activity Bar "Visible" — verify the AB box disappears from the preview
+- [ ] Change Sidebar position to "Right" — verify the Sidebar box moves to the right of the Terminal box
+- [ ] Uncheck Sidebar "Visible" — verify the Sidebar box disappears from the preview
+- [ ] Uncheck Status Bar "Visible" — verify the Status Bar strip disappears from the preview
+- [ ] Click "Zen" preset — verify the preview shows only the Terminal box (all other elements hidden)
+- [ ] Click "Default" preset — verify the preview shows all elements in default positions
+
 ### Sidebar toggle button and Ctrl+B shortcut (PR #194)
 
 - [ ] Click the PanelLeft icon button in the terminal toolbar (right side) — sidebar hides
@@ -692,6 +725,17 @@ Each section groups related tests by feature area. Individual test items referen
 - [ ] Disconnect and reconnect — sessions persist
 - [ ] `kill -TERM <pid>` causes graceful shutdown
 - [ ] `cargo run -- --stdio` still works as before
+
+---
+
+## Credential Store
+
+### KeychainStore integration with OS keychain (PR #250)
+
+- [ ] Run `cargo test -p termihub -- --ignored keychain` — verify all 6 ignored integration tests pass (set/get, remove/get, remove_all, nonexistent get, nonexistent remove, is_available)
+- [ ] On Windows: verify credentials are stored in Windows Credential Manager (search for "termihub" entries)
+- [ ] On macOS: verify credentials are stored in Keychain Access (search for "termihub" entries)
+- [ ] On Linux: verify credentials are stored via Secret Service / D-Bus (if available)
 
 ---
 

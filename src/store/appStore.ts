@@ -87,22 +87,25 @@ import {
 export type SidebarView = "connections" | "files" | "tunnels";
 
 /**
- * Strip password from SSH connection configs before sending to the backend.
- * When `savePassword` is true the password is preserved so the backend can
- * route it to the credential store before stripping it from disk.
+ * Strip password from SSH connection configs so it is never persisted,
+ * unless `savePassword` is true (password will be routed to the backend
+ * credential store).
  */
 function stripPassword(connection: SavedConnection): SavedConnection {
-  if (connection.config.type === "ssh" && connection.config.config.password) {
-    if (connection.config.config.savePassword) {
-      return connection; // Let backend handle credential storage
+  if (connection.config.type === "ssh") {
+    const sshConfig = connection.config.config;
+    if (sshConfig.savePassword) {
+      return connection; // Keep password for backend credential store routing
     }
-    return {
-      ...connection,
-      config: {
-        ...connection.config,
-        config: { ...connection.config.config, password: undefined },
-      },
-    };
+    if (sshConfig.password) {
+      return {
+        ...connection,
+        config: {
+          ...connection.config,
+          config: { ...connection.config.config, password: undefined },
+        },
+      };
+    }
   }
   return connection;
 }

@@ -9,11 +9,14 @@ mod utils;
 
 use std::sync::Arc;
 
-use tauri::{Manager, RunEvent, WindowEvent};
+use tauri::{Emitter, Manager, RunEvent, WindowEvent};
+use tracing::info;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 use connection::manager::ConnectionManager;
+use connection::settings::SettingsStorage;
+use credential::{CredentialManager, StorageMode};
 use files::sftp::SftpManager;
 use monitoring::MonitoringManager;
 use terminal::agent_manager::AgentConnectionManager;
@@ -52,11 +55,54 @@ pub fn run() {
                 *handle = Some(app.handle().clone());
             }
 
-            let credential_store: Arc<dyn credential::CredentialStore> =
-                Arc::new(credential::NullStore);
-            let connection_manager = ConnectionManager::new(app.handle(), credential_store)
-                .expect("Failed to initialize connection manager");
+            // Load settings to determine the credential storage mode
+            let config_dir = match std::env::var("TERMIHUB_CONFIG_DIR") {
+                Ok(dir) => std::path::PathBuf::from(dir),
+                Err(_) => app
+                    .handle()
+                    .path()
+                    .app_config_dir()
+                    .expect("Failed to resolve app config directory"),
+            };
+            std::fs::create_dir_all(&config_dir).expect("Failed to create config directory");
+
+            let settings_storage =
+                SettingsStorage::new(app.handle()).expect("Failed to initialize settings storage");
+            let settings = settings_storage.load().expect("Failed to load settings");
+
+            let storage_mode =
+                StorageMode::from_settings_str(settings.credential_storage_mode.as_deref());
+            info!(
+                mode = storage_mode.to_settings_str(),
+                "Initializing credential store"
+            );
+
+            let credential_manager = CredentialManager::new(storage_mode.clone(), config_dir);
+
+            // If master password mode with an existing credentials file,
+            // the store starts locked — emit an event so the UI can prompt
+            let needs_locked_event = storage_mode == StorageMode::MasterPassword
+                && credential_manager
+                    .with_master_password_store(|s| s.has_credentials_file())
+                    .unwrap_or(false);
+
+            let credential_manager = Arc::new(credential_manager);
+            let connection_manager = ConnectionManager::new(
+                app.handle(),
+                credential_manager.clone() as Arc<dyn credential::CredentialStore>,
+            )
+            .expect("Failed to initialize connection manager");
+            app.manage(credential_manager.clone());
             app.manage(connection_manager);
+
+            if needs_locked_event {
+                let handle = app.handle().clone();
+                // Emit after setup is complete so the frontend can receive it
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    let _ = handle.emit("credential-store-locked", ());
+                });
+            }
 
             let agent_manager = Arc::new(AgentConnectionManager::new(app.handle().clone()));
             app.manage(agent_manager);
@@ -150,6 +196,13 @@ pub fn run() {
             commands::tunnel::get_tunnel_statuses,
             commands::tunnel::start_tunnel,
             commands::tunnel::stop_tunnel,
+            commands::credential::get_credential_store_status,
+            commands::credential::unlock_credential_store,
+            commands::credential::lock_credential_store,
+            commands::credential::setup_master_password,
+            commands::credential::change_master_password,
+            commands::credential::switch_credential_store,
+            commands::credential::check_keychain_available,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

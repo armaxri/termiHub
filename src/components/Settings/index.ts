@@ -11,3 +11,5 @@ export { GeneralSettings } from "./GeneralSettings";
 export { AppearanceSettings } from "./AppearanceSettings";
 export { TerminalSettings } from "./TerminalSettings";
 export { ExternalFilesSettings } from "./ExternalFilesSettings";
+export { CustomizeLayoutDialog } from "./CustomizeLayoutDialog";
+export { LayoutPreview } from "./LayoutPreview";

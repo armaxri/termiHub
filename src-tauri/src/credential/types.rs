@@ -44,7 +44,6 @@ impl fmt::Display for CredentialKey {
 
 /// The current status of a credential store.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[allow(dead_code)]
 pub enum CredentialStoreStatus {
     /// The store is unlocked and ready to read/write credentials.
     Unlocked,
@@ -56,7 +55,6 @@ pub enum CredentialStoreStatus {
 
 /// How credentials are persisted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[allow(dead_code)]
 pub enum StorageMode {
     /// Use the OS keychain (e.g., macOS Keychain, Windows Credential Manager).
     Keychain,
@@ -64,6 +62,29 @@ pub enum StorageMode {
     MasterPassword,
     /// Do not persist credentials (current default behavior).
     None,
+}
+
+impl StorageMode {
+    /// Parse the `credential_storage_mode` setting string into a [`StorageMode`].
+    ///
+    /// Accepts `"keychain"`, `"master_password"`, `"none"`, or `None` (which
+    /// maps to [`StorageMode::None`]).
+    pub fn from_settings_str(s: Option<&str>) -> Self {
+        match s {
+            Some("keychain") => StorageMode::Keychain,
+            Some("master_password") => StorageMode::MasterPassword,
+            _ => StorageMode::None,
+        }
+    }
+
+    /// Return the settings string representation of this storage mode.
+    pub fn to_settings_str(&self) -> &str {
+        match self {
+            StorageMode::Keychain => "keychain",
+            StorageMode::MasterPassword => "master_password",
+            StorageMode::None => "none",
+        }
+    }
 }
 
 #[cfg(test)]
@@ -97,5 +118,55 @@ mod tests {
     fn credential_key_display_key_passphrase() {
         let key = CredentialKey::new("conn-abc123", CredentialType::KeyPassphrase);
         assert_eq!(key.to_string(), "conn-abc123:key_passphrase");
+    }
+
+    #[test]
+    fn storage_mode_from_settings_str_keychain() {
+        assert_eq!(
+            StorageMode::from_settings_str(Some("keychain")),
+            StorageMode::Keychain
+        );
+    }
+
+    #[test]
+    fn storage_mode_from_settings_str_master_password() {
+        assert_eq!(
+            StorageMode::from_settings_str(Some("master_password")),
+            StorageMode::MasterPassword
+        );
+    }
+
+    #[test]
+    fn storage_mode_from_settings_str_none_string() {
+        assert_eq!(
+            StorageMode::from_settings_str(Some("none")),
+            StorageMode::None
+        );
+    }
+
+    #[test]
+    fn storage_mode_from_settings_str_none_option() {
+        assert_eq!(StorageMode::from_settings_str(None), StorageMode::None);
+    }
+
+    #[test]
+    fn storage_mode_from_settings_str_unknown() {
+        assert_eq!(
+            StorageMode::from_settings_str(Some("unknown")),
+            StorageMode::None
+        );
+    }
+
+    #[test]
+    fn storage_mode_to_settings_str_round_trip() {
+        for mode in &[
+            StorageMode::Keychain,
+            StorageMode::MasterPassword,
+            StorageMode::None,
+        ] {
+            let s = mode.to_settings_str();
+            let parsed = StorageMode::from_settings_str(Some(s));
+            assert_eq!(&parsed, mode);
+        }
     }
 }

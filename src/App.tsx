@@ -5,6 +5,7 @@ import { Sidebar } from "@/components/Sidebar";
 import { StatusBar } from "@/components/StatusBar";
 import { TerminalView } from "@/components/Terminal";
 import { PasswordPrompt } from "@/components/PasswordPrompt";
+import { CustomizeLayoutDialog } from "@/components/Settings/CustomizeLayoutDialog";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useTunnelEvents } from "@/hooks/useTunnelEvents";
 import { useAppStore } from "@/store/appStore";
@@ -106,6 +107,7 @@ function App() {
         </div>
         {layoutConfig.statusBarVisible && <StatusBar />}
         <PasswordPrompt />
+        <CustomizeLayoutDialog />
       </div>
     </ErrorBoundary>
   );
