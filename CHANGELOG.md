@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `LayoutConfig` type definitions (TypeScript + Rust) with `DEFAULT_LAYOUT` constant and `LAYOUT_PRESETS` (default, focus, zen) — foundation for customizable UI layout (#237)
 - Layout state and actions in Zustand store: `layoutConfig`, `layoutDialogOpen`, `updateLayoutConfig`, `applyLayoutPreset` — with debounced persistence to backend settings (#238)
 - Layout-aware rendering in `App.tsx`: Activity Bar (left/right/hidden), Sidebar (left/right, toggleable visibility), and Status Bar (toggleable visibility) now render conditionally based on layout config — Activity Bar indicator flips to right edge when positioned right (#239)
+- `savePassword` optional field on `SshConfig` and `RemoteAgentConfig` (Rust + TypeScript) — preparatory for credential encryption (#25, #247)
 - `CredentialStore` trait, credential types (`CredentialKey`, `CredentialType`, `CredentialStoreStatus`, `StorageMode`), `NullStore` implementation, and `create_credential_store` factory function — foundation for pluggable credential storage (#246)
 - Horizontal Activity Bar mode: when `activityBarPosition` is set to `"top"`, the Activity Bar renders horizontally above the main content area with icons in a row, bottom-edge indicator, and downward-opening settings dropdown (#240)
 

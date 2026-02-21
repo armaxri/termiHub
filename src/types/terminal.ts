@@ -60,6 +60,7 @@ export interface SshConfig {
   enableX11Forwarding?: boolean;
   enableMonitoring?: boolean;
   enableFileBrowser?: boolean;
+  savePassword?: boolean;
 }
 
 export interface TelnetConfig {
@@ -84,6 +85,7 @@ export interface RemoteAgentConfig {
   authMethod: "password" | "key" | "agent";
   password?: string;
   keyPath?: string;
+  savePassword?: boolean;
 }
 
 /** Key-value pair for Docker environment variables. */
