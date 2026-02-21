@@ -12,7 +12,8 @@
   transform: translate(-50%, -50%);
   z-index: 1001;
   width: 480px;
-  max-height: 90vh;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 64px);
   overflow-y: auto;
   background: var(--bg-secondary);
   border: 1px solid var(--border-primary);
@@ -30,7 +31,7 @@
   margin: 0;
 }
 
-/* Presets row */
+/* Preset cards */
 .customize-layout-dialog__presets {
   display: flex;
   gap: var(--spacing-sm);
@@ -43,11 +44,13 @@
   align-items: center;
   gap: var(--spacing-xs);
   padding: var(--spacing-sm);
-  background: var(--bg-primary);
-  border: 2px solid var(--border-primary);
-  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+  border: 2px solid transparent;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: border-color var(--transition-fast);
+  transition:
+    border-color var(--transition-fast),
+    background-color var(--transition-fast);
 }
 
 .customize-layout-dialog__preset:hover {
@@ -61,108 +64,115 @@
 .customize-layout-dialog__preset-label {
   font-size: var(--font-size-sm);
   color: var(--text-primary);
+  font-weight: 500;
 }
 
-/* Preset thumbnails */
-.customize-layout-dialog__thumbnail {
-  width: 100%;
-  height: 48px;
-  border-radius: var(--radius-sm);
-  overflow: hidden;
+/* Mini schematic inside preset cards */
+.customize-layout-dialog__schematic {
+  width: 80px;
+  height: 52px;
+  border: 1px solid var(--border-primary);
+  border-radius: 2px;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-primary);
 }
 
-.customize-layout-dialog__thumbnail-main {
+.customize-layout-dialog__schematic-main {
   flex: 1;
   display: flex;
   min-height: 0;
 }
 
-.customize-layout-dialog__thumbnail-ab {
-  background: var(--activity-bar-bg);
-}
-
-.customize-layout-dialog__thumbnail-ab--v {
-  width: 6px;
-}
-
-.customize-layout-dialog__thumbnail-ab--h {
-  height: 6px;
-  width: 100%;
-}
-
-.customize-layout-dialog__thumbnail-sb {
-  width: 16px;
-  background: var(--sidebar-bg);
-}
-
-.customize-layout-dialog__thumbnail-editor {
-  flex: 1;
-  background: var(--bg-tertiary);
-}
-
-.customize-layout-dialog__thumbnail-statusbar {
-  height: 4px;
+.customize-layout-dialog__schematic-ab {
+  width: 8px;
   background: var(--accent-color);
   opacity: 0.6;
 }
 
-/* Separator */
-.customize-layout-dialog__separator {
-  height: 1px;
-  background: var(--border-primary);
-  margin: var(--spacing-xs) 0;
+.customize-layout-dialog__schematic-ab--top {
+  width: 100%;
+  height: 6px;
 }
 
-/* Section */
+.customize-layout-dialog__schematic-ab--hidden {
+  display: none;
+}
+
+.customize-layout-dialog__schematic-sidebar {
+  width: 16px;
+  background: var(--text-secondary);
+  opacity: 0.25;
+}
+
+.customize-layout-dialog__schematic-terminal {
+  flex: 1;
+  background: transparent;
+}
+
+.customize-layout-dialog__schematic-statusbar {
+  height: 4px;
+  background: var(--text-secondary);
+  opacity: 0.2;
+}
+
+/* Sections */
 .customize-layout-dialog__section {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-sm);
+  gap: var(--spacing-xs);
 }
 
 .customize-layout-dialog__section-title {
-  font-size: var(--font-size-sm);
+  font-size: 11px;
   font-weight: 600;
-  color: var(--text-primary);
-  margin: 0;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
-/* Checkbox row */
-.customize-layout-dialog__checkbox-row {
+.customize-layout-dialog__control-row {
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
+  min-height: 28px;
 }
 
-.customize-layout-dialog__checkbox-row input[type="checkbox"] {
-  accent-color: var(--accent-color);
-  cursor: pointer;
-}
-
-.customize-layout-dialog__checkbox-row label {
+.customize-layout-dialog__label {
   font-size: var(--font-size-sm);
   color: var(--text-primary);
   cursor: pointer;
-  user-select: none;
-}
-
-/* Radio group */
-.customize-layout-dialog__radio-group {
-  display: flex;
-  gap: var(--spacing-md);
-  padding-left: var(--spacing-lg);
-}
-
-.customize-layout-dialog__radio-label {
   display: flex;
   align-items: center;
   gap: var(--spacing-xs);
+  user-select: none;
+}
+
+.customize-layout-dialog__label input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+
+.customize-layout-dialog__radio-group {
+  display: flex;
+  gap: var(--spacing-sm);
+  margin-left: var(--spacing-sm);
+}
+
+.customize-layout-dialog__radio-label {
   font-size: var(--font-size-sm);
   color: var(--text-primary);
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
   user-select: none;
+}
+
+.customize-layout-dialog__radio-label input[type="radio"] {
+  margin: 0;
+  cursor: pointer;
 }
 
 .customize-layout-dialog__radio-label--disabled {
@@ -171,20 +181,16 @@
   cursor: default;
 }
 
-.customize-layout-dialog__radio-label input[type="radio"] {
-  accent-color: var(--accent-color);
-  cursor: pointer;
-}
-
 .customize-layout-dialog__radio-label--disabled input[type="radio"] {
   cursor: default;
 }
 
-/* Actions */
+/* Actions row */
 .customize-layout-dialog__actions {
   display: flex;
   justify-content: flex-end;
   gap: var(--spacing-sm);
+  padding-top: var(--spacing-xs);
 }
 
 .customize-layout-dialog__btn {

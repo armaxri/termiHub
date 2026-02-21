@@ -1,9 +1,20 @@
 import { useRef } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useAppStore } from "@/store/appStore";
-import type { LayoutConfig, ActivityBarPosition, SidebarPosition } from "@/types/connection";
-import { LAYOUT_PRESETS } from "@/types/connection";
+import {
+  LayoutConfig,
+  ActivityBarPosition,
+  SidebarPosition,
+  LAYOUT_PRESETS,
+} from "@/types/connection";
 import "./CustomizeLayoutDialog.css";
+
+/** Preset metadata for rendering cards. */
+const PRESET_LIST: { key: string; label: string }[] = [
+  { key: "default", label: "Default" },
+  { key: "focus", label: "Focus" },
+  { key: "zen", label: "Zen" },
+];
 
 /**
  * Returns the preset key that exactly matches the given config,
@@ -23,65 +34,53 @@ export function getActivePreset(config: LayoutConfig): string | null {
   return null;
 }
 
-interface ThumbnailLayout {
-  activityBar: "left" | "right" | "top" | "hidden";
-  sidebar: "left" | "right" | "hidden";
-  statusBar: boolean;
+interface PresetSchematicProps {
+  config: LayoutConfig;
 }
 
-/** CSS-only mini schematic showing a layout arrangement. */
-function PresetThumbnail({ layout }: { layout: ThumbnailLayout }) {
-  const showAbLeft = layout.activityBar === "left";
-  const showAbRight = layout.activityBar === "right";
-  const showAbTop = layout.activityBar === "top";
-  const showSbLeft = layout.sidebar === "left";
-  const showSbRight = layout.sidebar === "right";
+/** Tiny CSS schematic showing the layout arrangement. */
+function PresetSchematic({ config }: PresetSchematicProps) {
+  const abPos = config.activityBarPosition;
+  const sbPos = config.sidebarPosition;
+  const sbVisible = config.sidebarVisible;
+  const statusVisible = config.statusBarVisible;
+
+  const abIsTop = abPos === "top";
+  const abIsHidden = abPos === "hidden";
 
   return (
-    <div className="customize-layout-dialog__thumbnail">
-      {showAbTop && (
-        <div className="customize-layout-dialog__thumbnail-ab customize-layout-dialog__thumbnail-ab--h" />
-      )}
-      <div className="customize-layout-dialog__thumbnail-main">
-        {showAbLeft && (
-          <div className="customize-layout-dialog__thumbnail-ab customize-layout-dialog__thumbnail-ab--v" />
+    <div className="customize-layout-dialog__schematic">
+      {abIsTop && <div className="customize-layout-dialog__schematic-ab--top" />}
+      <div className="customize-layout-dialog__schematic-main">
+        {!abIsTop && !abIsHidden && abPos === "left" && (
+          <div className="customize-layout-dialog__schematic-ab" />
         )}
-        {showSbLeft && <div className="customize-layout-dialog__thumbnail-sb" />}
-        <div className="customize-layout-dialog__thumbnail-editor" />
-        {showSbRight && <div className="customize-layout-dialog__thumbnail-sb" />}
-        {showAbRight && (
-          <div className="customize-layout-dialog__thumbnail-ab customize-layout-dialog__thumbnail-ab--v" />
+        {sbVisible && sbPos === "left" && (
+          <div className="customize-layout-dialog__schematic-sidebar" />
+        )}
+        <div className="customize-layout-dialog__schematic-terminal" />
+        {sbVisible && sbPos === "right" && (
+          <div className="customize-layout-dialog__schematic-sidebar" />
+        )}
+        {!abIsTop && !abIsHidden && abPos === "right" && (
+          <div className="customize-layout-dialog__schematic-ab" />
         )}
       </div>
-      {layout.statusBar && <div className="customize-layout-dialog__thumbnail-statusbar" />}
+      {statusVisible && <div className="customize-layout-dialog__schematic-statusbar" />}
     </div>
   );
 }
 
-function presetToThumbnail(preset: LayoutConfig): ThumbnailLayout {
-  return {
-    activityBar: preset.activityBarPosition,
-    sidebar: preset.sidebarVisible ? preset.sidebarPosition : "hidden",
-    statusBar: preset.statusBarVisible,
-  };
-}
-
-const PRESET_LABELS: Record<string, string> = {
-  default: "Default",
-  focus: "Focus",
-  zen: "Zen",
-};
-
 /**
- * Modal dialog for customizing the app layout — toggling visibility and
- * repositioning the Activity Bar, Sidebar, and Status Bar, plus applying presets.
+ * Global dialog for customizing the application layout.
+ * Reads open state from the Zustand store — no props needed.
  */
 export function CustomizeLayoutDialog() {
   const open = useAppStore((s) => s.layoutDialogOpen);
   const layoutConfig = useAppStore((s) => s.layoutConfig);
-  const setLayoutDialogOpen = useAppStore((s) => s.setLayoutDialogOpen);
-  const updateLayoutConfig = useAppStore((s) => s.updateLayoutConfig);
-  const applyLayoutPreset = useAppStore((s) => s.applyLayoutPreset);
+  const setOpen = useAppStore((s) => s.setLayoutDialogOpen);
+  const updateLayout = useAppStore((s) => s.updateLayoutConfig);
+  const applyPreset = useAppStore((s) => s.applyLayoutPreset);
 
   // Track the last non-hidden Activity Bar position so unchecking/rechecking
   // visibility restores it rather than defaulting to "left".
@@ -95,29 +94,41 @@ export function CustomizeLayoutDialog() {
   }
 
   const activePreset = getActivePreset(layoutConfig);
-  const activityBarVisible = layoutConfig.activityBarPosition !== "hidden";
+  const abHidden = layoutConfig.activityBarPosition === "hidden";
+
+  const handlePreset = (key: string) => {
+    applyPreset(key as "default" | "focus" | "zen");
+  };
 
   const handleActivityBarVisibilityChange = (visible: boolean) => {
     if (visible) {
-      updateLayoutConfig({ activityBarPosition: lastNonHiddenPos.current });
+      updateLayout({ activityBarPosition: lastNonHiddenPos.current });
     } else {
-      updateLayoutConfig({ activityBarPosition: "hidden" });
+      updateLayout({ activityBarPosition: "hidden" });
     }
   };
 
-  const handleActivityBarPositionChange = (pos: ActivityBarPosition) => {
+  const handleActivityBarPosition = (pos: ActivityBarPosition) => {
     if (pos !== "hidden") {
       lastNonHiddenPos.current = pos;
     }
-    updateLayoutConfig({ activityBarPosition: pos });
+    updateLayout({ activityBarPosition: pos });
   };
 
-  const handleSidebarPositionChange = (pos: SidebarPosition) => {
-    updateLayoutConfig({ sidebarPosition: pos });
+  const handleSidebarVisible = (visible: boolean) => {
+    updateLayout({ sidebarVisible: visible });
+  };
+
+  const handleSidebarPosition = (pos: SidebarPosition) => {
+    updateLayout({ sidebarPosition: pos });
+  };
+
+  const handleStatusBarVisible = (visible: boolean) => {
+    updateLayout({ statusBarVisible: visible });
   };
 
   return (
-    <Dialog.Root open={open} onOpenChange={setLayoutDialogOpen}>
+    <Dialog.Root open={open} onOpenChange={setOpen}>
       <Dialog.Portal>
         <Dialog.Overlay className="customize-layout-dialog__overlay" />
         <Dialog.Content className="customize-layout-dialog__content">
@@ -125,113 +136,102 @@ export function CustomizeLayoutDialog() {
 
           {/* Presets */}
           <div className="customize-layout-dialog__presets">
-            {Object.entries(LAYOUT_PRESETS).map(([key, preset]) => (
+            {PRESET_LIST.map(({ key, label }) => (
               <button
                 key={key}
-                className={`customize-layout-dialog__preset${
-                  activePreset === key ? " customize-layout-dialog__preset--active" : ""
-                }`}
-                onClick={() => applyLayoutPreset(key as "default" | "focus" | "zen")}
-                data-testid={`preset-${key}`}
+                className={`customize-layout-dialog__preset${activePreset === key ? " customize-layout-dialog__preset--active" : ""}`}
+                onClick={() => handlePreset(key)}
+                data-testid={`layout-preset-${key}`}
               >
-                <PresetThumbnail layout={presetToThumbnail(preset)} />
-                <span className="customize-layout-dialog__preset-label">
-                  {PRESET_LABELS[key] ?? key}
-                </span>
+                <PresetSchematic config={LAYOUT_PRESETS[key]} />
+                <span className="customize-layout-dialog__preset-label">{label}</span>
               </button>
             ))}
           </div>
 
-          <div className="customize-layout-dialog__separator" />
-
           {/* Activity Bar */}
           <div className="customize-layout-dialog__section">
-            <h3 className="customize-layout-dialog__section-title">Activity Bar</h3>
-            <div className="customize-layout-dialog__checkbox-row">
-              <input
-                type="checkbox"
-                id="ab-visible"
-                checked={activityBarVisible}
-                onChange={(e) => handleActivityBarVisibilityChange(e.target.checked)}
-                data-testid="ab-visible"
-              />
-              <label htmlFor="ab-visible">Visible</label>
-            </div>
-            <div className="customize-layout-dialog__radio-group">
-              {(["left", "right", "top"] as const).map((pos) => (
-                <label
-                  key={pos}
-                  className={`customize-layout-dialog__radio-label${
-                    !activityBarVisible ? " customize-layout-dialog__radio-label--disabled" : ""
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="ab-position"
-                    value={pos}
-                    checked={
-                      activityBarVisible
-                        ? layoutConfig.activityBarPosition === pos
-                        : lastNonHiddenPos.current === pos
-                    }
-                    disabled={!activityBarVisible}
-                    onChange={() => handleActivityBarPositionChange(pos)}
-                  />
-                  {pos.charAt(0).toUpperCase() + pos.slice(1)}
-                </label>
-              ))}
+            <span className="customize-layout-dialog__section-title">Activity Bar</span>
+            <div className="customize-layout-dialog__control-row">
+              <label className="customize-layout-dialog__label">
+                <input
+                  type="checkbox"
+                  checked={!abHidden}
+                  onChange={(e) => handleActivityBarVisibilityChange(e.target.checked)}
+                  data-testid="layout-ab-visible"
+                />
+                Visible
+              </label>
+              <div className="customize-layout-dialog__radio-group">
+                {(["left", "right", "top"] as ActivityBarPosition[]).map((pos) => (
+                  <label
+                    key={pos}
+                    className={`customize-layout-dialog__radio-label${abHidden ? " customize-layout-dialog__radio-label--disabled" : ""}`}
+                  >
+                    <input
+                      type="radio"
+                      name="ab-position"
+                      value={pos}
+                      checked={abHidden ? lastNonHiddenPos.current === pos : layoutConfig.activityBarPosition === pos}
+                      disabled={abHidden}
+                      onChange={() => handleActivityBarPosition(pos)}
+                      data-testid={`layout-ab-${pos}`}
+                    />
+                    {pos.charAt(0).toUpperCase() + pos.slice(1)}
+                  </label>
+                ))}
+              </div>
             </div>
           </div>
 
           {/* Sidebar */}
           <div className="customize-layout-dialog__section">
-            <h3 className="customize-layout-dialog__section-title">Sidebar</h3>
-            <div className="customize-layout-dialog__checkbox-row">
-              <input
-                type="checkbox"
-                id="sb-visible"
-                checked={layoutConfig.sidebarVisible}
-                onChange={(e) => updateLayoutConfig({ sidebarVisible: e.target.checked })}
-                data-testid="sb-visible"
-              />
-              <label htmlFor="sb-visible">Visible</label>
-            </div>
-            <div className="customize-layout-dialog__radio-group">
-              {(["left", "right"] as const).map((pos) => (
-                <label
-                  key={pos}
-                  className={`customize-layout-dialog__radio-label${
-                    !layoutConfig.sidebarVisible
-                      ? " customize-layout-dialog__radio-label--disabled"
-                      : ""
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="sb-position"
-                    value={pos}
-                    checked={layoutConfig.sidebarPosition === pos}
-                    disabled={!layoutConfig.sidebarVisible}
-                    onChange={() => handleSidebarPositionChange(pos)}
-                  />
-                  {pos.charAt(0).toUpperCase() + pos.slice(1)}
-                </label>
-              ))}
+            <span className="customize-layout-dialog__section-title">Sidebar</span>
+            <div className="customize-layout-dialog__control-row">
+              <label className="customize-layout-dialog__label">
+                <input
+                  type="checkbox"
+                  checked={layoutConfig.sidebarVisible}
+                  onChange={(e) => handleSidebarVisible(e.target.checked)}
+                  data-testid="layout-sidebar-visible"
+                />
+                Visible
+              </label>
+              <div className="customize-layout-dialog__radio-group">
+                {(["left", "right"] as SidebarPosition[]).map((pos) => (
+                  <label
+                    key={pos}
+                    className={`customize-layout-dialog__radio-label${!layoutConfig.sidebarVisible ? " customize-layout-dialog__radio-label--disabled" : ""}`}
+                  >
+                    <input
+                      type="radio"
+                      name="sb-position"
+                      value={pos}
+                      checked={layoutConfig.sidebarPosition === pos}
+                      disabled={!layoutConfig.sidebarVisible}
+                      onChange={() => handleSidebarPosition(pos)}
+                      data-testid={`layout-sidebar-${pos}`}
+                    />
+                    {pos.charAt(0).toUpperCase() + pos.slice(1)}
+                  </label>
+                ))}
+              </div>
             </div>
           </div>
 
           {/* Status Bar */}
           <div className="customize-layout-dialog__section">
-            <h3 className="customize-layout-dialog__section-title">Status Bar</h3>
-            <div className="customize-layout-dialog__checkbox-row">
-              <input
-                type="checkbox"
-                id="statusbar-visible"
-                checked={layoutConfig.statusBarVisible}
-                onChange={(e) => updateLayoutConfig({ statusBarVisible: e.target.checked })}
-                data-testid="statusbar-visible"
-              />
-              <label htmlFor="statusbar-visible">Visible</label>
+            <span className="customize-layout-dialog__section-title">Status Bar</span>
+            <div className="customize-layout-dialog__control-row">
+              <label className="customize-layout-dialog__label">
+                <input
+                  type="checkbox"
+                  checked={layoutConfig.statusBarVisible}
+                  onChange={(e) => handleStatusBarVisible(e.target.checked)}
+                  data-testid="layout-statusbar-visible"
+                />
+                Visible
+              </label>
             </div>
           </div>
 
@@ -239,15 +239,15 @@ export function CustomizeLayoutDialog() {
           <div className="customize-layout-dialog__actions">
             <button
               className="customize-layout-dialog__btn customize-layout-dialog__btn--secondary"
-              onClick={() => applyLayoutPreset("default")}
-              data-testid="reset-default"
+              onClick={() => applyPreset("default")}
+              data-testid="layout-reset-default"
             >
               Reset to Default
             </button>
             <Dialog.Close asChild>
               <button
                 className="customize-layout-dialog__btn customize-layout-dialog__btn--primary"
-                data-testid="close-dialog"
+                data-testid="layout-close"
               >
                 Close
               </button>
