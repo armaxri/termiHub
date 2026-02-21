@@ -105,7 +105,7 @@ pub enum ConnectionConfig {
     #[serde(rename = "serial")]
     Serial(SerialConfig),
     #[serde(rename = "remote-session")]
-    RemoteSession(RemoteSessionConfig),
+    RemoteSession(Box<RemoteSessionConfig>),
     #[serde(rename = "docker")]
     Docker(DockerConfig),
 }
@@ -245,7 +245,7 @@ impl ConnectionConfig {
             Self::Ssh(cfg) => Self::Ssh(cfg.expand()),
             Self::Telnet(cfg) => Self::Telnet(cfg.expand()),
             Self::Serial(cfg) => Self::Serial(cfg.expand()),
-            Self::RemoteSession(cfg) => Self::RemoteSession(cfg.expand()),
+            Self::RemoteSession(cfg) => Self::RemoteSession(Box::new(cfg.expand())),
             Self::Docker(cfg) => Self::Docker(cfg.expand()),
         }
     }
@@ -655,7 +655,7 @@ mod tests {
 
     #[test]
     fn remote_session_config_serde_round_trip() {
-        let config = ConnectionConfig::RemoteSession(RemoteSessionConfig {
+        let config = ConnectionConfig::RemoteSession(Box::new(RemoteSessionConfig {
             agent_id: "agent-123".to_string(),
             session_type: "shell".to_string(),
             shell: Some("/bin/bash".to_string()),
@@ -678,7 +678,7 @@ mod tests {
             ssh_auth_method: None,
             ssh_password: None,
             ssh_key_path: None,
-        });
+        }));
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: ConnectionConfig = serde_json::from_str(&json).unwrap();
         if let ConnectionConfig::RemoteSession(session) = deserialized {
@@ -694,7 +694,7 @@ mod tests {
 
     #[test]
     fn remote_session_config_serial_serde_round_trip() {
-        let config = ConnectionConfig::RemoteSession(RemoteSessionConfig {
+        let config = ConnectionConfig::RemoteSession(Box::new(RemoteSessionConfig {
             agent_id: "agent-456".to_string(),
             session_type: "serial".to_string(),
             shell: None,
@@ -717,7 +717,7 @@ mod tests {
             ssh_auth_method: None,
             ssh_password: None,
             ssh_key_path: None,
-        });
+        }));
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: ConnectionConfig = serde_json::from_str(&json).unwrap();
         if let ConnectionConfig::RemoteSession(session) = deserialized {
@@ -732,7 +732,7 @@ mod tests {
 
     #[test]
     fn remote_session_config_json_shape_matches_frontend() {
-        let config = ConnectionConfig::RemoteSession(RemoteSessionConfig {
+        let config = ConnectionConfig::RemoteSession(Box::new(RemoteSessionConfig {
             agent_id: "agent-1".to_string(),
             session_type: "shell".to_string(),
             shell: Some("/bin/zsh".to_string()),
@@ -755,7 +755,7 @@ mod tests {
             ssh_auth_method: None,
             ssh_password: None,
             ssh_key_path: None,
-        });
+        }));
         let json = serde_json::to_string(&config).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["type"], "remote-session");

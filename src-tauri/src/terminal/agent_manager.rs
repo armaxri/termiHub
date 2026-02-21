@@ -95,7 +95,11 @@ struct AgentConnection {
     command_tx: mpsc::Sender<AgentIoCommand>,
     alive: Arc<AtomicBool>,
     capabilities: AgentCapabilities,
+    /// Stored for future version-gated feature checks.
+    #[allow(dead_code)]
     agent_version: String,
+    /// Stored for future protocol negotiation.
+    #[allow(dead_code)]
     protocol_version: String,
 }
 

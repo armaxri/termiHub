@@ -4,9 +4,7 @@ use serde_json::Value;
 use tauri::State;
 use tracing::{debug, info};
 
-use crate::terminal::agent_deploy::{
-    AgentDeployConfig, AgentDeployResult, AgentProbeResult,
-};
+use crate::terminal::agent_deploy::{AgentDeployConfig, AgentDeployResult, AgentProbeResult};
 use crate::terminal::agent_manager::{
     AgentCapabilities, AgentConnectResult, AgentConnectionManager, AgentDefinitionInfo,
     AgentSessionInfo,
@@ -214,13 +212,8 @@ pub async fn deploy_agent(
 ) -> Result<AgentDeployResult, String> {
     info!(agent_id, host = %config.host, "Deploying agent to remote host");
     tauri::async_runtime::spawn_blocking(move || {
-        crate::terminal::agent_deploy::deploy_agent(
-            &agent_id,
-            &config,
-            &deploy_config,
-            &app_handle,
-        )
-        .map_err(|e| e.to_string())
+        crate::terminal::agent_deploy::deploy_agent(&agent_id, &config, &deploy_config, &app_handle)
+            .map_err(|e| e.to_string())
     })
     .await
     .unwrap_or_else(|e| Err(e.to_string()))

@@ -1,9 +1,9 @@
-/// Semantic version parsing and compatibility checking for agent deployment.
-///
-/// Version matching rules (from Phase 7 spec):
-/// - Same major version required
-/// - Agent minor version >= desktop expected minor
-/// - Patch version is ignored
+//! Semantic version parsing and compatibility checking for agent deployment.
+//!
+//! Version matching rules (from Phase 7 spec):
+//! - Same major version required
+//! - Agent minor version >= desktop expected minor
+//! - Patch version is ignored
 
 /// Parse a semver version string into (major, minor, patch).
 ///
