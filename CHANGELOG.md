@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `CredentialStore` trait, `CredentialKey`/`CredentialType` types, and `NullStore` implementation — foundation for credential encryption with pluggable storage backends (#246)
 - `KeychainStore` credential backend using the `keyring` crate — stores credentials in the OS-native keychain (Windows Credential Manager, macOS Keychain, Linux Secret Service) (#250)
 - `credentialStorageMode` and `credentialAutoLockMinutes` settings in `AppSettings` (Rust + TypeScript) — controls which credential store backend is active and master password auto-lock timeout (#248)
+- Credential store integration in `ConnectionManager`: passwords marked with `savePassword` are routed to the credential store before being stripped from disk, and stored credentials are cleaned up on connection/agent delete (#249)
 - `LayoutConfig` type definitions (TypeScript + Rust) with `DEFAULT_LAYOUT` constant and `LAYOUT_PRESETS` (default, focus, zen) — foundation for customizable UI layout (#237)
 - Layout state and actions in Zustand store: `layoutConfig`, `layoutDialogOpen`, `updateLayoutConfig`, `applyLayoutPreset` — with debounced persistence to backend settings (#238)
 - Layout-aware rendering in `App.tsx`: Activity Bar (left/right/hidden), Sidebar (left/right, toggleable visibility), and Status Bar (toggleable visibility) now render conditionally based on layout config — Activity Bar indicator flips to right edge when positioned right (#239)
