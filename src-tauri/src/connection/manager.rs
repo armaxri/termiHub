@@ -521,7 +521,102 @@ pub fn save_external_file(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::terminal::backend::{LocalShellConfig, SshConfig};
+    use crate::credential::types::{CredentialKey, CredentialStoreStatus, CredentialType};
+    use crate::terminal::backend::{LocalShellConfig, RemoteAgentConfig, SshConfig};
+    use std::sync::Mutex;
+
+    /// A mock credential store that records `set` and `remove_all_for_connection` calls.
+    struct MockCredentialStore {
+        stored: Mutex<Vec<(CredentialKey, String)>>,
+        removed_connections: Mutex<Vec<String>>,
+    }
+
+    impl MockCredentialStore {
+        fn new() -> Self {
+            Self {
+                stored: Mutex::new(Vec::new()),
+                removed_connections: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn stored_entries(&self) -> Vec<(CredentialKey, String)> {
+            self.stored.lock().unwrap().clone()
+        }
+    }
+
+    impl CredentialStore for MockCredentialStore {
+        fn get(&self, _key: &CredentialKey) -> Result<Option<String>> {
+            Ok(None)
+        }
+
+        fn set(&self, key: &CredentialKey, value: &str) -> Result<()> {
+            self.stored
+                .lock()
+                .unwrap()
+                .push((key.clone(), value.to_string()));
+            Ok(())
+        }
+
+        fn remove(&self, _key: &CredentialKey) -> Result<()> {
+            Ok(())
+        }
+
+        fn remove_all_for_connection(&self, connection_id: &str) -> Result<()> {
+            self.removed_connections
+                .lock()
+                .unwrap()
+                .push(connection_id.to_string());
+            Ok(())
+        }
+
+        fn list_keys(&self) -> Result<Vec<CredentialKey>> {
+            Ok(Vec::new())
+        }
+
+        fn status(&self) -> CredentialStoreStatus {
+            CredentialStoreStatus::Unlocked
+        }
+    }
+
+    /// Helper to create an SSH SavedConnection with the given save_password flag.
+    fn ssh_conn(id: &str, password: Option<&str>, save_password: Option<bool>) -> SavedConnection {
+        SavedConnection {
+            id: id.to_string(),
+            name: "SSH".to_string(),
+            config: ConnectionConfig::Ssh(SshConfig {
+                host: "host".to_string(),
+                port: 22,
+                username: "user".to_string(),
+                auth_method: "password".to_string(),
+                password: password.map(|s| s.to_string()),
+                key_path: None,
+                enable_x11_forwarding: false,
+                enable_monitoring: None,
+                enable_file_browser: None,
+                save_password,
+            }),
+            folder_id: None,
+            terminal_options: None,
+            source_file: None,
+        }
+    }
+
+    /// Helper to create a SavedRemoteAgent with the given save_password flag.
+    fn agent(id: &str, password: Option<&str>, save_password: Option<bool>) -> SavedRemoteAgent {
+        SavedRemoteAgent {
+            id: id.to_string(),
+            name: "Agent".to_string(),
+            config: RemoteAgentConfig {
+                host: "host".to_string(),
+                port: 22,
+                username: "user".to_string(),
+                auth_method: "password".to_string(),
+                password: password.map(|s| s.to_string()),
+                key_path: None,
+                save_password,
+            },
+        }
+    }
 
     #[test]
     fn prepare_for_storage_strips_password() {
@@ -662,25 +757,7 @@ mod tests {
         let file_path = dir.path().join("pass_test.json");
         let path_str = file_path.to_str().unwrap();
 
-        let connections = vec![SavedConnection {
-            id: "c1".to_string(),
-            name: "SSH".to_string(),
-            config: ConnectionConfig::Ssh(SshConfig {
-                host: "h".to_string(),
-                port: 22,
-                username: "u".to_string(),
-                auth_method: "password".to_string(),
-                password: Some("should_be_removed".to_string()),
-                key_path: None,
-                enable_x11_forwarding: false,
-                enable_monitoring: None,
-                enable_file_browser: None,
-                save_password: None,
-            }),
-            folder_id: None,
-            terminal_options: None,
-            source_file: None,
-        }];
+        let connections = vec![ssh_conn("c1", Some("should_be_removed"), None)];
 
         save_external_file(path_str, "Test", Vec::new(), connections).unwrap();
 
@@ -690,5 +767,103 @@ mod tests {
             !raw.contains("should_be_removed"),
             "Password should not be in saved file"
         );
+    }
+
+    #[test]
+    fn prepare_for_storage_stores_password_when_save_enabled() {
+        let store = MockCredentialStore::new();
+        let conn = ssh_conn("conn-1", Some("secret"), Some(true));
+
+        let result = prepare_for_storage(conn, &store).unwrap();
+
+        // Password should be stripped from the config
+        if let ConnectionConfig::Ssh(ssh) = &result.config {
+            assert!(ssh.password.is_none());
+        } else {
+            panic!("Expected SSH config");
+        }
+
+        // Password should have been sent to the store
+        let entries = store.stored_entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0.connection_id, "conn-1");
+        assert_eq!(entries[0].0.credential_type, CredentialType::Password);
+        assert_eq!(entries[0].1, "secret");
+    }
+
+    #[test]
+    fn prepare_for_storage_strips_without_storing_when_save_disabled() {
+        let store = MockCredentialStore::new();
+        let conn = ssh_conn("conn-1", Some("secret"), Some(false));
+
+        let result = prepare_for_storage(conn, &store).unwrap();
+
+        if let ConnectionConfig::Ssh(ssh) = &result.config {
+            assert!(ssh.password.is_none());
+        } else {
+            panic!("Expected SSH config");
+        }
+
+        // No credentials should have been stored
+        assert!(store.stored_entries().is_empty());
+    }
+
+    #[test]
+    fn prepare_for_storage_strips_when_save_password_none() {
+        let store = MockCredentialStore::new();
+        let conn = ssh_conn("conn-1", Some("secret"), None);
+
+        let result = prepare_for_storage(conn, &store).unwrap();
+
+        if let ConnectionConfig::Ssh(ssh) = &result.config {
+            assert!(ssh.password.is_none());
+        } else {
+            panic!("Expected SSH config");
+        }
+
+        assert!(store.stored_entries().is_empty());
+    }
+
+    #[test]
+    fn prepare_for_storage_no_password_is_noop() {
+        let store = MockCredentialStore::new();
+        let conn = ssh_conn("conn-1", None, Some(true));
+
+        let result = prepare_for_storage(conn, &store).unwrap();
+
+        if let ConnectionConfig::Ssh(ssh) = &result.config {
+            assert!(ssh.password.is_none());
+        } else {
+            panic!("Expected SSH config");
+        }
+
+        assert!(store.stored_entries().is_empty());
+    }
+
+    #[test]
+    fn prepare_agent_for_storage_stores_when_save_enabled() {
+        let store = MockCredentialStore::new();
+        let a = agent("agent-1", Some("agent-pass"), Some(true));
+
+        let result = prepare_agent_for_storage(a, &store).unwrap();
+
+        assert!(result.config.password.is_none());
+
+        let entries = store.stored_entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0.connection_id, "agent-1");
+        assert_eq!(entries[0].0.credential_type, CredentialType::Password);
+        assert_eq!(entries[0].1, "agent-pass");
+    }
+
+    #[test]
+    fn prepare_agent_for_storage_strips_without_storing() {
+        let store = MockCredentialStore::new();
+        let a = agent("agent-1", Some("agent-pass"), None);
+
+        let result = prepare_agent_for_storage(a, &store).unwrap();
+
+        assert!(result.config.password.is_none());
+        assert!(store.stored_entries().is_empty());
     }
 }
