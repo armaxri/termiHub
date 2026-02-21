@@ -7,6 +7,7 @@ import {
   SidebarPosition,
   LAYOUT_PRESETS,
 } from "@/types/connection";
+import { LayoutPreview } from "./LayoutPreview";
 import "./CustomizeLayoutDialog.css";
 
 /** Preset metadata for rendering cards. */
@@ -172,7 +173,11 @@ export function CustomizeLayoutDialog() {
                       type="radio"
                       name="ab-position"
                       value={pos}
-                      checked={abHidden ? lastNonHiddenPos.current === pos : layoutConfig.activityBarPosition === pos}
+                      checked={
+                        abHidden
+                          ? lastNonHiddenPos.current === pos
+                          : layoutConfig.activityBarPosition === pos
+                      }
                       disabled={abHidden}
                       onChange={() => handleActivityBarPosition(pos)}
                       data-testid={`layout-ab-${pos}`}
@@ -233,6 +238,12 @@ export function CustomizeLayoutDialog() {
                 Visible
               </label>
             </div>
+          </div>
+
+          {/* Layout Preview */}
+          <div className="customize-layout-dialog__section">
+            <span className="customize-layout-dialog__section-title">Layout Preview</span>
+            <LayoutPreview layout={layoutConfig} />
           </div>
 
           {/* Actions */}
