@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `CredentialManager` runtime wrapper with `StorageMode` switching, settings-based initialization, and Tauri IPC commands for credential store status, lock/unlock, setup, password change, backend switching with credential migration, and keychain availability check (#252)
 - Frontend credential store integration: TypeScript types, API wrappers for all 7 credential store commands, event listeners for lock/unlock/status-changed, and Zustand state with automatic status loading on startup (#253)
 - "Save password" and "Save passphrase" checkboxes in SSH and Agent connection editors — shown when a credential store is configured (keychain or master password), with mode-dependent hints; when no store is configured, a hint directs users to enable secure storage in Settings (#255)
+- Master password unlock dialog on app startup when credential store is locked, setup/change password dialog with strength indicator and validation, and status bar lock/unlock indicator for the credential store (#257)
 
 ### Fixed
 
