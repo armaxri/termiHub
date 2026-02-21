@@ -27,6 +27,7 @@ import {
   DEFAULT_LAYOUT,
   LAYOUT_PRESETS,
 } from "@/types/connection";
+import { CredentialStoreStatusInfo } from "@/types/credential";
 import {
   loadConnections,
   persistConnection,
@@ -59,6 +60,7 @@ import {
   deleteAgentDefinition,
   AgentSessionInfo,
   AgentDefinitionInfo,
+  getCredentialStoreStatus as apiGetCredentialStoreStatus,
 } from "@/services/api";
 import { RemoteAgentConfig } from "@/types/terminal";
 import { TunnelConfig, TunnelState } from "@/types/tunnel";
@@ -284,6 +286,11 @@ interface AppState {
   stopTunnel: (tunnelId: string) => Promise<void>;
   updateTunnelState: (state: TunnelState) => void;
   openTunnelEditorTab: (tunnelId: string | null) => void;
+
+  // Credential store
+  credentialStoreStatus: CredentialStoreStatusInfo | null;
+  setCredentialStoreStatus: (status: CredentialStoreStatusInfo) => void;
+  loadCredentialStoreStatus: () => Promise<void>;
 }
 
 let tabCounter = 0;
@@ -880,6 +887,8 @@ export const useAppStore = create<AppState>((set, get) => {
       }
       // Load SSH tunnels
       get().loadTunnels();
+      // Load credential store status
+      get().loadCredentialStoreStatus();
       // Check VS Code availability in the background
       get().checkVscodeAvailability();
     },
@@ -1584,6 +1593,18 @@ export const useAppStore = create<AppState>((set, get) => {
         });
         return { rootPanel, activePanelId: targetPanelId };
       }),
+
+    // Credential store
+    credentialStoreStatus: null,
+    setCredentialStoreStatus: (status) => set({ credentialStoreStatus: status }),
+    loadCredentialStoreStatus: async () => {
+      try {
+        const status = await apiGetCredentialStoreStatus();
+        set({ credentialStoreStatus: status });
+      } catch (err) {
+        console.error("Failed to load credential store status:", err);
+      }
+    },
   };
 });
 
