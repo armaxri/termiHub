@@ -1,5 +1,8 @@
 mod commands;
 mod connection;
+// Not yet consumed — foundation for credential storage (#246, #25).
+#[allow(dead_code)]
+mod credential;
 mod files;
 mod monitoring;
 mod terminal;
