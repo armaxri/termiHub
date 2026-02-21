@@ -12,6 +12,10 @@ import {
 } from "@/types/terminal";
 import { SystemStats } from "@/types/monitoring";
 import {
+  CredentialStoreStatusInfo,
+  SwitchCredentialStoreResult,
+} from "@/types/credential";
+import {
   SavedConnection,
   ConnectionFolder,
   FileEntry,
@@ -503,4 +507,50 @@ export async function getLogs(count: number): Promise<LogEntry[]> {
 /** Clear all buffered log entries in the backend. */
 export async function clearLogs(): Promise<void> {
   await invoke("clear_logs");
+}
+
+// --- Credential store commands ---
+
+/** Get the current credential store status. */
+export async function getCredentialStoreStatus(): Promise<CredentialStoreStatusInfo> {
+  return await invoke<CredentialStoreStatusInfo>("get_credential_store_status");
+}
+
+/** Unlock the master password credential store. */
+export async function unlockCredentialStore(password: string): Promise<void> {
+  await invoke("unlock_credential_store", { password });
+}
+
+/** Lock the master password credential store. */
+export async function lockCredentialStore(): Promise<void> {
+  await invoke("lock_credential_store");
+}
+
+/** Set up a new master password for the credential store. */
+export async function setupMasterPassword(password: string): Promise<void> {
+  await invoke("setup_master_password", { password });
+}
+
+/** Change the master password for the credential store. */
+export async function changeMasterPassword(
+  currentPassword: string,
+  newPassword: string
+): Promise<void> {
+  await invoke("change_master_password", { currentPassword, newPassword });
+}
+
+/** Switch the credential storage backend. Optionally migrates existing credentials. */
+export async function switchCredentialStore(
+  newMode: string,
+  masterPassword?: string
+): Promise<SwitchCredentialStoreResult> {
+  return await invoke<SwitchCredentialStoreResult>("switch_credential_store", {
+    newMode,
+    masterPassword: masterPassword ?? null,
+  });
+}
+
+/** Check whether the OS keychain is accessible. */
+export async function checkKeychainAvailable(): Promise<boolean> {
+  return await invoke<boolean>("check_keychain_available");
 }
