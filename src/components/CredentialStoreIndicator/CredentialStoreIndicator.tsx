@@ -34,7 +34,11 @@ export function CredentialStoreIndicator() {
     <button
       className="status-bar__item status-bar__item--interactive credential-indicator"
       onClick={handleClick}
-      title={isLocked ? "Credential store is locked — click to unlock" : "Credential store is unlocked — click to lock"}
+      title={
+        isLocked
+          ? "Credential store is locked — click to unlock"
+          : "Credential store is unlocked — click to lock"
+      }
       data-testid="credential-store-indicator"
     >
       {isLocked ? <Lock size={12} /> : <LockOpen size={12} />}

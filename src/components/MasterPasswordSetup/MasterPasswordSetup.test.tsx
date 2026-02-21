@@ -72,9 +72,7 @@ describe("MasterPasswordSetup", () => {
   describe("setup mode", () => {
     it("shows correct title and warning", () => {
       act(() => {
-        root.render(
-          <MasterPasswordSetup open={true} onOpenChange={vi.fn()} mode="setup" />
-        );
+        root.render(<MasterPasswordSetup open={true} onOpenChange={vi.fn()} mode="setup" />);
       });
 
       expect(document.querySelector(".master-pw__title")?.textContent).toBe("Set Master Password");
@@ -83,9 +81,7 @@ describe("MasterPasswordSetup", () => {
 
     it("does not show current password field", () => {
       act(() => {
-        root.render(
-          <MasterPasswordSetup open={true} onOpenChange={vi.fn()} mode="setup" />
-        );
+        root.render(<MasterPasswordSetup open={true} onOpenChange={vi.fn()} mode="setup" />);
       });
 
       expect(query("master-pw-current")).toBeNull();
@@ -95,9 +91,7 @@ describe("MasterPasswordSetup", () => {
 
     it("submit is disabled when passwords are invalid", () => {
       act(() => {
-        root.render(
-          <MasterPasswordSetup open={true} onOpenChange={vi.fn()} mode="setup" />
-        );
+        root.render(<MasterPasswordSetup open={true} onOpenChange={vi.fn()} mode="setup" />);
       });
 
       const submitBtn = query("master-pw-submit") as HTMLButtonElement;
@@ -106,9 +100,7 @@ describe("MasterPasswordSetup", () => {
 
     it("shows mismatch hint when passwords differ", () => {
       act(() => {
-        root.render(
-          <MasterPasswordSetup open={true} onOpenChange={vi.fn()} mode="setup" />
-        );
+        root.render(<MasterPasswordSetup open={true} onOpenChange={vi.fn()} mode="setup" />);
       });
 
       act(() => {
@@ -125,9 +117,7 @@ describe("MasterPasswordSetup", () => {
       const onOpenChange = vi.fn();
 
       act(() => {
-        root.render(
-          <MasterPasswordSetup open={true} onOpenChange={onOpenChange} mode="setup" />
-        );
+        root.render(<MasterPasswordSetup open={true} onOpenChange={onOpenChange} mode="setup" />);
       });
 
       act(() => {
@@ -148,9 +138,7 @@ describe("MasterPasswordSetup", () => {
   describe("change mode", () => {
     it("shows correct title and current password field", () => {
       act(() => {
-        root.render(
-          <MasterPasswordSetup open={true} onOpenChange={vi.fn()} mode="change" />
-        );
+        root.render(<MasterPasswordSetup open={true} onOpenChange={vi.fn()} mode="change" />);
       });
 
       expect(document.querySelector(".master-pw__title")?.textContent).toBe(
@@ -165,9 +153,7 @@ describe("MasterPasswordSetup", () => {
       const onOpenChange = vi.fn();
 
       act(() => {
-        root.render(
-          <MasterPasswordSetup open={true} onOpenChange={onOpenChange} mode="change" />
-        );
+        root.render(<MasterPasswordSetup open={true} onOpenChange={onOpenChange} mode="change" />);
       });
 
       act(() => {
@@ -190,9 +176,7 @@ describe("MasterPasswordSetup", () => {
       const onOpenChange = vi.fn();
 
       act(() => {
-        root.render(
-          <MasterPasswordSetup open={true} onOpenChange={onOpenChange} mode="change" />
-        );
+        root.render(<MasterPasswordSetup open={true} onOpenChange={onOpenChange} mode="change" />);
       });
 
       act(() => {
@@ -214,9 +198,7 @@ describe("MasterPasswordSetup", () => {
 
   it("shows strength indicator when typing", () => {
     act(() => {
-      root.render(
-        <MasterPasswordSetup open={true} onOpenChange={vi.fn()} mode="setup" />
-      );
+      root.render(<MasterPasswordSetup open={true} onOpenChange={vi.fn()} mode="setup" />);
     });
 
     // No strength indicator initially
@@ -233,9 +215,7 @@ describe("MasterPasswordSetup", () => {
     const onOpenChange = vi.fn();
 
     act(() => {
-      root.render(
-        <MasterPasswordSetup open={true} onOpenChange={onOpenChange} mode="setup" />
-      );
+      root.render(<MasterPasswordSetup open={true} onOpenChange={onOpenChange} mode="setup" />);
     });
 
     const cancelBtn = query("master-pw-cancel") as HTMLButtonElement;

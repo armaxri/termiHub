@@ -147,7 +147,9 @@ export function MasterPasswordSetup({ open, onOpenChange, mode }: MasterPassword
                     className={`master-pw__strength-segment ${strength === "strong" ? "master-pw__strength-segment--filled master-pw__strength-segment--strong" : ""}`}
                   />
                 </div>
-                <span className={`master-pw__strength-label master-pw__strength-label--${strength}`}>
+                <span
+                  className={`master-pw__strength-label master-pw__strength-label--${strength}`}
+                >
                   {strength}
                 </span>
               </div>
