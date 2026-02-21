@@ -8,6 +8,7 @@ import { PasswordPrompt } from "@/components/PasswordPrompt";
 import { CustomizeLayoutDialog } from "@/components/Settings/CustomizeLayoutDialog";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useTunnelEvents } from "@/hooks/useTunnelEvents";
+import { useCredentialStoreEvents } from "@/hooks/useCredentialStoreEvents";
 import { useAppStore } from "@/store/appStore";
 import "./App.css";
 
@@ -79,6 +80,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
 function App() {
   useKeyboardShortcuts();
   useTunnelEvents();
+  useCredentialStoreEvents();
   const loadFromBackend = useAppStore((s) => s.loadFromBackend);
   const layoutConfig = useAppStore((s) => s.layoutConfig);
 

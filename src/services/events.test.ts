@@ -6,6 +6,9 @@ import {
   onVscodeEditComplete,
   onLogEntry,
   TerminalOutputDispatcher,
+  onCredentialStoreLocked,
+  onCredentialStoreUnlocked,
+  onCredentialStoreStatusChanged,
 } from "./events";
 
 vi.mock("@tauri-apps/api/event", () => ({
@@ -560,6 +563,100 @@ describe("events service", () => {
 
       // The callback must have been called exactly once — not doubled
       expect(outputCb).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("onCredentialStoreLocked", () => {
+    it("registers listener on credential-store-locked event", async () => {
+      const unlisten = vi.fn();
+      mockedListen.mockResolvedValue(unlisten);
+
+      const callback = vi.fn();
+      const result = await onCredentialStoreLocked(callback);
+
+      expect(mockedListen).toHaveBeenCalledWith("credential-store-locked", expect.any(Function));
+      expect(result).toBe(unlisten);
+    });
+
+    it("calls callback with no arguments", async () => {
+      let capturedHandler: ((event: unknown) => void) | undefined;
+      mockedListen.mockImplementation((_event, handler) => {
+        capturedHandler = handler as (event: unknown) => void;
+        return Promise.resolve(vi.fn());
+      });
+
+      const callback = vi.fn();
+      await onCredentialStoreLocked(callback);
+
+      capturedHandler!({ payload: null });
+
+      expect(callback).toHaveBeenCalledTimes(1);
+      expect(callback).toHaveBeenCalledWith();
+    });
+  });
+
+  describe("onCredentialStoreUnlocked", () => {
+    it("registers listener on credential-store-unlocked event", async () => {
+      const unlisten = vi.fn();
+      mockedListen.mockResolvedValue(unlisten);
+
+      const callback = vi.fn();
+      const result = await onCredentialStoreUnlocked(callback);
+
+      expect(mockedListen).toHaveBeenCalledWith("credential-store-unlocked", expect.any(Function));
+      expect(result).toBe(unlisten);
+    });
+
+    it("calls callback with no arguments", async () => {
+      let capturedHandler: ((event: unknown) => void) | undefined;
+      mockedListen.mockImplementation((_event, handler) => {
+        capturedHandler = handler as (event: unknown) => void;
+        return Promise.resolve(vi.fn());
+      });
+
+      const callback = vi.fn();
+      await onCredentialStoreUnlocked(callback);
+
+      capturedHandler!({ payload: null });
+
+      expect(callback).toHaveBeenCalledTimes(1);
+      expect(callback).toHaveBeenCalledWith();
+    });
+  });
+
+  describe("onCredentialStoreStatusChanged", () => {
+    it("registers listener on credential-store-status-changed event", async () => {
+      const unlisten = vi.fn();
+      mockedListen.mockResolvedValue(unlisten);
+
+      const callback = vi.fn();
+      const result = await onCredentialStoreStatusChanged(callback);
+
+      expect(mockedListen).toHaveBeenCalledWith(
+        "credential-store-status-changed",
+        expect.any(Function)
+      );
+      expect(result).toBe(unlisten);
+    });
+
+    it("calls callback with status info payload", async () => {
+      let capturedHandler: ((event: unknown) => void) | undefined;
+      mockedListen.mockImplementation((_event, handler) => {
+        capturedHandler = handler as (event: unknown) => void;
+        return Promise.resolve(vi.fn());
+      });
+
+      const callback = vi.fn();
+      await onCredentialStoreStatusChanged(callback);
+
+      const statusInfo = {
+        mode: "keychain",
+        status: "unlocked",
+        keychainAvailable: true,
+      };
+      capturedHandler!({ payload: statusInfo });
+
+      expect(callback).toHaveBeenCalledWith(statusInfo);
     });
   });
 });
