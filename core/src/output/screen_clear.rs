@@ -11,8 +11,7 @@ const ERASE_DISPLAY_SEQ: &[u8] = b"\x1b[2J";
 /// the standalone `ESC[2J` (erase display). The sequence can appear anywhere
 /// in the data — it does not need to be at the start.
 pub fn contains_screen_clear(data: &[u8]) -> bool {
-    contains_subsequence(data, SCREEN_CLEAR_SEQ)
-        || contains_subsequence(data, ERASE_DISPLAY_SEQ)
+    contains_subsequence(data, SCREEN_CLEAR_SEQ) || contains_subsequence(data, ERASE_DISPLAY_SEQ)
 }
 
 /// Check whether `haystack` contains `needle` as a contiguous subsequence.
