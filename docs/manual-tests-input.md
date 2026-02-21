@@ -561,6 +561,15 @@ Each section groups related tests by feature area. Individual test items referen
 - [x] Connections and File Browser icons remain at the top
 - [x] Clicking the settings icon still toggles the sidebar settings view
 
+### Horizontal Activity Bar mode (PR #264)
+
+- [ ] Set `activityBarPosition` to `"top"` — verify the Activity Bar renders horizontally above the main content area
+- [ ] Verify icons display in a row: Connections, File Browser, SSH Tunnels on the left; Log Viewer, Settings on the right
+- [ ] Verify the active indicator bar appears at the bottom edge of the active icon (not the left side)
+- [ ] Click the Settings gear icon — verify the dropdown opens downward (not to the right)
+- [ ] Verify the sidebar + terminal area fills the remaining vertical space below the Activity Bar
+- [ ] Switch back to `"left"` / `"right"` positions — verify they still work correctly
+
 ### Sidebar toggle button and Ctrl+B shortcut (PR #194)
 
 - [ ] Click the PanelLeft icon button in the terminal toolbar (right side) — sidebar hides
