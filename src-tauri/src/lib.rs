@@ -1,7 +1,7 @@
 mod commands;
 mod connection;
 // Not yet consumed — foundation for credential storage (#246, #25).
-#[allow(dead_code)]
+#[allow(dead_code, unused_imports)]
 mod credential;
 mod files;
 mod monitoring;
