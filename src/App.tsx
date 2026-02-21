@@ -79,6 +79,7 @@ function App() {
   useKeyboardShortcuts();
   useTunnelEvents();
   const loadFromBackend = useAppStore((s) => s.loadFromBackend);
+  const layoutConfig = useAppStore((s) => s.layoutConfig);
 
   useEffect(() => {
     loadFromBackend();
@@ -95,12 +96,14 @@ function App() {
   return (
     <ErrorBoundary>
       <div className="app">
-        <div className="app__main">
-          <ActivityBar />
-          <Sidebar />
+        <div className={`app__main app__main--ab-${layoutConfig.activityBarPosition}`}>
+          {layoutConfig.activityBarPosition === "left" && <ActivityBar />}
+          {layoutConfig.sidebarPosition === "left" && layoutConfig.sidebarVisible && <Sidebar />}
           <TerminalView />
+          {layoutConfig.sidebarPosition === "right" && layoutConfig.sidebarVisible && <Sidebar />}
+          {layoutConfig.activityBarPosition === "right" && <ActivityBar />}
         </div>
-        <StatusBar />
+        {layoutConfig.statusBarVisible && <StatusBar />}
         <PasswordPrompt />
       </div>
     </ErrorBoundary>
