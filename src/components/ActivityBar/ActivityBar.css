@@ -51,6 +51,11 @@
   background-color: var(--activity-bar-indicator);
 }
 
+.activity-bar--right .activity-bar__indicator {
+  left: auto;
+  right: 0;
+}
+
 /* Settings dropdown menu */
 .settings-menu__content {
   min-width: 180px;

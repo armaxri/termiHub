@@ -29,6 +29,7 @@ export function ActivityBar() {
   const openSettingsTab = useAppStore((s) => s.openSettingsTab);
   const openLogViewerTab = useAppStore((s) => s.openLogViewerTab);
   const loadFromBackend = useAppStore((s) => s.loadFromBackend);
+  const activityBarPosition = useAppStore((s) => s.layoutConfig.activityBarPosition);
 
   const handleExport = useCallback(async () => {
     try {
@@ -60,7 +61,7 @@ export function ActivityBar() {
   }, [loadFromBackend]);
 
   return (
-    <div className="activity-bar">
+    <div className={`activity-bar${activityBarPosition === "right" ? " activity-bar--right" : ""}`}>
       <div className="activity-bar__top">
         {TOP_ITEMS.map((item) => (
           <ActivityBarItem

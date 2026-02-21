@@ -11,3 +11,16 @@
   flex: 1;
   overflow: hidden;
 }
+
+/* Activity Bar positions - base flex is already row (left is default) */
+.app__main--ab-right {
+  flex-direction: row;
+}
+
+.app__main--ab-hidden {
+  flex-direction: row;
+}
+
+.app__main--ab-top {
+  flex-direction: row;
+}
