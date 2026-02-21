@@ -87,17 +87,25 @@ import {
 export type SidebarView = "connections" | "files" | "tunnels";
 
 /**
- * Strip password from SSH and Remote connection configs so it is never persisted.
+ * Strip password from SSH connection configs so it is never persisted,
+ * unless `savePassword` is true (password will be routed to the backend
+ * credential store).
  */
 function stripPassword(connection: SavedConnection): SavedConnection {
-  if (connection.config.type === "ssh" && connection.config.config.password) {
-    return {
-      ...connection,
-      config: {
-        ...connection.config,
-        config: { ...connection.config.config, password: undefined },
-      },
-    };
+  if (connection.config.type === "ssh") {
+    const sshConfig = connection.config.config;
+    if (sshConfig.savePassword) {
+      return connection; // Keep password for backend credential store routing
+    }
+    if (sshConfig.password) {
+      return {
+        ...connection,
+        config: {
+          ...connection.config,
+          config: { ...connection.config.config, password: undefined },
+        },
+      };
+    }
   }
   return connection;
 }
