@@ -23,6 +23,9 @@ import {
   AppSettings,
   RemoteAgentDefinition,
   AgentCapabilities,
+  LayoutConfig,
+  DEFAULT_LAYOUT,
+  LAYOUT_PRESETS,
 } from "@/types/connection";
 import {
   loadConnections,
@@ -155,6 +158,14 @@ interface AppState {
   folders: ConnectionFolder[];
   connections: SavedConnection[];
   settings: AppSettings;
+
+  // Layout
+  layoutConfig: LayoutConfig;
+  layoutDialogOpen: boolean;
+  setLayoutDialogOpen: (open: boolean) => void;
+  updateLayoutConfig: (partial: Partial<LayoutConfig>) => void;
+  applyLayoutPreset: (preset: "default" | "focus" | "zen") => void;
+
   loadFromBackend: () => Promise<void>;
   updateSettings: (settings: AppSettings) => Promise<void>;
   reloadExternalConnections: () => Promise<void>;
@@ -268,6 +279,7 @@ interface AppState {
 }
 
 let tabCounter = 0;
+let layoutPersistTimer: ReturnType<typeof setTimeout> | null = null;
 
 function createTab(
   title: string,
@@ -789,6 +801,38 @@ export const useAppStore = create<AppState>((set, get) => {
       powerMonitoringEnabled: true,
       fileBrowserEnabled: true,
     },
+
+    // Layout
+    layoutConfig: DEFAULT_LAYOUT,
+    layoutDialogOpen: false,
+
+    setLayoutDialogOpen: (open) => set({ layoutDialogOpen: open }),
+
+    updateLayoutConfig: (partial) => {
+      const updated = { ...get().layoutConfig, ...partial };
+      set({ layoutConfig: updated });
+      if (layoutPersistTimer) clearTimeout(layoutPersistTimer);
+      layoutPersistTimer = setTimeout(() => {
+        const current = get();
+        persistSettings({ ...current.settings, layout: updated }).catch((err) =>
+          console.error("Failed to persist layout config:", err)
+        );
+      }, 300);
+    },
+
+    applyLayoutPreset: (preset) => {
+      const config = LAYOUT_PRESETS[preset];
+      if (!config) return;
+      set({ layoutConfig: config });
+      if (layoutPersistTimer) clearTimeout(layoutPersistTimer);
+      layoutPersistTimer = setTimeout(() => {
+        const current = get();
+        persistSettings({ ...current.settings, layout: config }).catch((err) =>
+          console.error("Failed to persist layout preset:", err)
+        );
+      }, 300);
+    },
+
     loadFromBackend: async () => {
       try {
         const { connections, folders, agents, externalErrors } = await loadConnections();
@@ -804,7 +848,8 @@ export const useAppStore = create<AppState>((set, get) => {
             console.error(`Failed to load external file ${err.filePath}: ${err.error}`);
           }
         }
-        set({ connections, folders, settings, remoteAgents });
+        const layoutConfig = settings.layout ?? DEFAULT_LAYOUT;
+        set({ connections, folders, settings, remoteAgents, layoutConfig });
         applyTheme(settings.theme);
         // Re-render terminals when OS theme changes in system mode
         onThemeChange(() => {
