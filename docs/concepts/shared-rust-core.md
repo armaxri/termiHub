@@ -11,29 +11,69 @@ termiHub currently maintains two independent Rust crates:
 - **`src-tauri/`** (package `termihub`, 13,622 LOC) — the Tauri desktop backend
 - **`agent/`** (package `termihub-agent`, 11,032 LOC) — the remote agent
 
-Both crates evolved in parallel, leading to significant code duplication. The agent's monitoring parser even documents this explicitly: *"Ported from `src-tauri/src/monitoring/session.rs`"*. This concept evaluates whether extracting shared code into a common workspace crate (`termihub-core`) would simplify the project.
+Both crates evolved in parallel. What they do is fundamentally the same: manage terminal sessions (shell, serial, Docker, SSH), browse files, and monitor systems. The only difference is *where they run* and *how they deliver output*:
+
+- Desktop: runs locally, delivers output via Tauri events
+- Agent: runs remotely, delivers output via JSON-RPC notifications
+
+This has led to significant duplication — not just of types and utility functions, but of **core logic**: Docker command building, serial port configuration, local file listing, monitoring parsing, and more. The agent's monitoring parser even documents this explicitly: *"Ported from `src-tauri/src/monitoring/session.rs`"*.
+
+This concept evaluates extracting shared code into a common workspace crate (`termihub-core`) and restructuring both crates so they become thin transport adapters over shared backend logic.
 
 ### Motivation
 
-1. **Duplicated logic** — monitoring parsing, file utilities, and type definitions are copied between crates
-2. **Divergence risk** — bug fixes in one crate may not reach the other (the copies are already subtly different in error handling)
-3. **Protocol alignment** — desktop and agent must agree on JSON-RPC types; sharing ensures they stay in sync
-4. **Maintenance burden** — duplicated tests need updating in two places
+1. **Duplicated backend logic** — Docker arg building, serial config parsing, file listing, and monitoring parsing are implemented twice with near-identical code
+2. **Duplicated types** — `FileEntry`, `SystemStats`, `CpuCounters`, config structs, JSON-RPC types all exist in both crates
+3. **Divergence risk** — bug fixes in one crate may not reach the other (the copies already differ subtly in error handling)
+4. **Maintenance burden** — every new feature that touches both sides requires implementing and testing the same logic twice
 
-### Current Duplication Summary
+### Current Duplication Analysis
+
+#### Tier 1: Backend Logic (the real savings)
+
+These are full function/module duplications where both sides do the same thing:
+
+| Category | Desktop File | Agent File | Duplicated Lines | Similarity |
+| ---------- | ------------- | --------- | ----------------- | ------------ |
+| Serial config parsing (data_bits/stop_bits/parity/flow_control match blocks) | `terminal/serial.rs:25-47` | `serial/backend.rs:27-49` | ~25 | Byte-for-byte identical |
+| Docker command building (env vars, volumes, working dir) | `terminal/docker_shell.rs:35-72` | `docker/backend.rs:44-68` | ~30 | Near-identical |
+| Local file listing (iterate entries, skip `.`/`..`, read metadata, format, build `FileEntry`) | `files/local.rs:22-63` | `files/local.rs:88-130` | ~40 | Structurally identical |
+| Monitoring parsing (`parse_stats`, `parse_cpu_line`, `parse_meminfo_value`, `parse_df_output`) | `monitoring/session.rs:76-290` | `monitoring/parser.rs` + `monitoring/collector.rs:309-323` | ~220 | Explicitly documented copy |
+| CPU delta calculation (`CpuCounters`, `cpu_percent_from_delta`) | `monitoring/session.rs:30-71` | `monitoring/parser.rs:30-71` | ~60 | Byte-for-byte identical |
+| File utilities (`chrono_from_epoch`, `days_to_ymd`, `format_permissions`) | `files/utils.rs` | `files/mod.rs:59-119` | ~60 | Byte-for-byte identical |
+| **Subtotal** | | | **~435** | |
+
+#### Tier 2: Shared Types
 
 | Category | Desktop File | Agent File | Duplicated Lines |
-|----------|-------------|-----------|-----------------|
-| Monitoring parsing | `monitoring/session.rs` | `monitoring/parser.rs` | ~220 (functions + types) |
-| CPU counters & delta | `monitoring/session.rs` | `monitoring/parser.rs` | ~60 |
-| File utilities | `files/utils.rs` | `files/mod.rs` | ~60 |
-| `FileEntry` type | `files/mod.rs` | `protocol/methods.rs` | ~10 |
-| `SystemStats` type | `monitoring/session.rs` | `monitoring/parser.rs` | ~15 |
-| Session config types | `terminal/backend.rs` | `protocol/methods.rs` | ~100 |
+| ---------- | ------------- | --------- | ----------------- |
+| `FileEntry` struct | `files/mod.rs` | `protocol/methods.rs:294-305` | ~10 |
+| `SystemStats` struct | `monitoring/session.rs:15-27` | `monitoring/parser.rs:15-27` | ~15 |
+| `EnvVar` / `DockerEnvVar` + `VolumeMount` / `DockerVolumeMount` | `terminal/backend.rs:52-66` | `protocol/methods.rs:276-288` | ~15 |
+| Session config structs (`ShellConfig`, `SerialConfig`, `DockerConfig`, `SshSessionConfig`) | `terminal/backend.rs` | `protocol/methods.rs:202-288` | ~100 |
+| Default value functions | `terminal/backend.rs` | `protocol/methods.rs:213-274` | ~30 |
+| **Subtotal** | | | **~170** |
+
+#### Tier 3: Protocol Types
+
+| Category | Desktop File | Agent File | Duplicated Lines |
+| ---------- | ------------- | --------- | ----------------- |
+| JSON-RPC message types | `terminal/jsonrpc.rs` | `protocol/messages.rs` | ~80 (conceptually similar, structurally different) |
 | JSON-RPC error codes | *(not extracted)* | `protocol/errors.rs` | ~60 (agent-only, desktop could reuse) |
-| JSON-RPC messages | `terminal/jsonrpc.rs` | `protocol/messages.rs` | ~80 (conceptually similar) |
-| Duplicated tests | across above files | across above files | ~200+ |
-| **Total** | | | **~800+ lines** |
+| **Subtotal** | | | **~140** |
+
+#### Tier 4: Duplicated Tests
+
+| Category | Lines |
+| ---------- | ------- |
+| Monitoring parsing tests (identical test cases in both crates) | ~120 |
+| File utility tests | ~30 |
+| Config serde tests | ~50 |
+| **Subtotal** | **~200** |
+
+### Grand Total
+
+~945 lines of duplicated source + ~200 lines of duplicated tests.
 
 ---
 
@@ -45,7 +85,7 @@ This is an internal infrastructure change with no user-facing UI impact. The "in
 
 **Before (current):**
 
-```
+```bash
 # Build desktop
 cd src-tauri && cargo build
 
@@ -59,7 +99,7 @@ cd agent && cargo test
 
 **After (proposed workspace):**
 
-```
+```bash
 # Build everything from repo root
 cargo build --workspace
 
@@ -78,23 +118,21 @@ cargo build -p termihub-core
 
 ### Import Pattern (Developer Perspective)
 
-In `src-tauri/`:
-```rust
-use termihub_core::monitoring::{SystemStats, CpuCounters, parse_stats};
-use termihub_core::files::{FileEntry, chrono_from_epoch, format_permissions};
-use termihub_core::protocol::{JsonRpcErrorCode, JsonRpcRequest, JsonRpcNotification};
-```
+In both `src-tauri/` and `agent/`:
 
-In `agent/`:
 ```rust
 use termihub_core::monitoring::{SystemStats, CpuCounters, parse_stats};
-use termihub_core::files::{FileEntry, chrono_from_epoch, format_permissions};
-use termihub_core::protocol::{JsonRpcErrorCode, JsonRpcRequest, JsonRpcNotification};
+use termihub_core::files::{FileEntry, chrono_from_epoch, format_permissions, list_dir_sync};
+use termihub_core::serial::parse_serial_config;
+use termihub_core::docker::build_docker_run_args;
+use termihub_core::protocol::{JsonRpcRequest, JsonRpcNotification, errors};
+use termihub_core::config::{SerialConfig, DockerConfig, ShellConfig, EnvVar, VolumeMount};
 ```
 
 ### Script Impact
 
 The existing `scripts/` would need minor updates:
+
 - `test.sh` could use `cargo test --workspace` instead of running three separate commands
 - `check.sh` could use `cargo clippy --workspace` and `cargo fmt --all`
 - `build.sh` and `dev.sh` unchanged (they target specific packages)
@@ -103,122 +141,246 @@ The existing `scripts/` would need minor updates:
 
 ## General Handling
 
-### What Goes in the Shared Core
+### Architecture: Transport-Agnostic Core
 
-The shared crate should contain **pure logic and types** with no framework dependencies (no Tauri, no tokio required). This keeps it lightweight and reusable.
+The key insight is that both crates follow the same pattern:
+
+```text
+[config] → [build command / open port] → [run on PTY] → [read output] → [deliver to user]
+```
+
+Everything up to "deliver to user" is identical. The delivery mechanism is the only difference:
+
+- Desktop: `OutputSender` (mpsc channel → Tauri event → React frontend)
+- Agent: `NotificationSender` (mpsc channel → JSON-RPC notification → desktop via SSH)
+
+The shared core should contain the **transport-agnostic logic** — everything that doesn't depend on *how* output reaches the user.
 
 ```mermaid
 graph TD
     subgraph "termihub-core (shared)"
-        M[monitoring<br/>types + parsing]
-        F[files<br/>types + utilities]
-        P[protocol<br/>JSON-RPC types + error codes]
-        C[config<br/>session config types]
+        direction TB
+        M[monitoring/<br/>types + parsing + df/cpu/mem]
+        F[files/<br/>FileEntry + list_dir_sync +<br/>chrono_from_epoch + format_permissions]
+        P[protocol/<br/>JSON-RPC types + error codes]
+        C[config/<br/>ShellConfig, SerialConfig,<br/>DockerConfig, SshConfig,<br/>EnvVar, VolumeMount]
+        S[serial/<br/>parse_serial_config → DataBits,<br/>StopBits, Parity, FlowControl]
+        D[docker/<br/>build_docker_run_args,<br/>build_docker_exec_args]
     end
 
     subgraph "termihub (desktop)"
-        DM[monitoring/session.rs<br/>SSH-based collection]
-        DF[files/<br/>local + SFTP backends]
-        DT[terminal/<br/>backends + manager]
+        DM[monitoring/session.rs<br/>MonitoringSession — SSH exec +<br/>calls parse_stats from core]
+        DF[files/<br/>local.rs wraps list_dir_sync,<br/>sftp.rs for SFTP]
+        DT[terminal/<br/>LocalShell, DockerShell — PTY +<br/>calls build_docker_run_args from core,<br/>SerialConnection calls<br/>parse_serial_config from core]
         DC[commands/<br/>Tauri IPC handlers]
     end
 
     subgraph "termihub-agent (agent)"
-        AM[monitoring/<br/>local + SSH collectors]
-        AF[files/<br/>local + docker + SSH backends]
-        AS[session/<br/>manager + backends]
+        AM[monitoring/<br/>LocalCollector, SshCollector —<br/>calls parse_stats from core]
+        AF[files/<br/>LocalFileBackend wraps<br/>list_dir_sync from core,<br/>SshFileBackend, DockerFileBackend]
+        AS[session/<br/>ShellBackend, DockerBackend —<br/>daemon spawning +<br/>calls build_docker_run_args from core]
         AH[handler/<br/>JSON-RPC dispatcher]
     end
 
     DM --> M
     DF --> F
     DT --> C
+    DT --> S
+    DT --> D
     DC --> P
 
     AM --> M
     AF --> F
     AS --> C
+    AS --> S
+    AS --> D
     AH --> P
 ```
 
-#### Modules in `termihub-core`
+### What Goes in the Shared Core
 
-**1. `monitoring`** — System stats types and Linux `/proc` parsing
+#### 1. `config` — Session Configuration Types
 
-| Item | Currently In | Lines |
-|------|-------------|-------|
-| `SystemStats` struct | both crates | 15 |
-| `CpuCounters` struct + impl | both crates | 30 |
-| `cpu_percent_from_delta()` | both crates | 10 |
-| `parse_cpu_line()` | both crates | 15 |
-| `parse_stats()` | both crates | 70 |
-| `parse_meminfo_value()` | both crates | 5 |
-| `parse_df_output()` | both crates | 15 |
-| Tests | both crates | ~100 |
+Unified config structs used by both crates. Currently the desktop has `SerialConfig` while the agent has `SerialSessionConfig` — structurally identical, just named differently. Same for `DockerConfig` vs `DockerSessionConfig`, and `EnvVar` vs `DockerEnvVar`.
 
-**2. `files`** — File entry types and date/permission formatting
+```rust
+// termihub-core/src/config.rs
 
-| Item | Currently In | Lines |
-|------|-------------|-------|
-| `FileEntry` struct | both crates | 10 |
-| `chrono_from_epoch()` | both crates | 20 |
-| `days_to_ymd()` | both crates | 15 |
-| `format_permissions()` | both crates | 20 |
-| Tests | both crates | ~30 |
+/// Shell session configuration.
+pub struct ShellConfig {
+    pub shell: Option<String>,
+    pub cols: u16,        // default: 80
+    pub rows: u16,        // default: 24
+    pub env: HashMap<String, String>,
+}
 
-**3. `protocol`** — JSON-RPC 2.0 types and error codes
+/// Serial port configuration.
+pub struct SerialConfig {
+    pub port: String,
+    pub baud_rate: u32,   // default: 115200
+    pub data_bits: u8,    // default: 8
+    pub stop_bits: u8,    // default: 1
+    pub parity: String,   // default: "none"
+    pub flow_control: String, // default: "none"
+}
 
-| Item | Currently In | Lines |
-|------|-------------|-------|
-| `JsonRpcRequest` struct | both crates (different shapes) | 10 |
-| `JsonRpcResponse` struct | agent only | 15 |
-| `JsonRpcErrorResponse` struct | agent only | 20 |
-| `JsonRpcNotification` struct | agent only | 15 |
-| Error code constants | agent only | 60 |
-| `parse_message()` helper | desktop only | 40 |
-| `write_request()` helper | desktop only | 15 |
-| Tests | both crates | ~80 |
+/// Docker container configuration.
+pub struct DockerConfig {
+    pub image: String,
+    pub shell: Option<String>,
+    pub cols: u16,
+    pub rows: u16,
+    pub env_vars: Vec<EnvVar>,
+    pub volumes: Vec<VolumeMount>,
+    pub working_directory: Option<String>,
+    pub remove_on_exit: bool,
+    pub env: HashMap<String, String>,
+}
 
-**4. `config`** — Session configuration types
+pub struct EnvVar { pub key: String, pub value: String }
+pub struct VolumeMount { pub host_path: String, pub container_path: String, pub read_only: bool }
+```
 
-| Item | Currently In | Lines |
-|------|-------------|-------|
-| `ShellConfig` | agent `protocol/methods.rs` | 15 |
-| `SerialConfig` / `SerialSessionConfig` | both crates (different names) | 20 |
-| `DockerConfig` / `DockerSessionConfig` | both crates (different names) | 25 |
-| `SshSessionConfig` | agent `protocol/methods.rs` | 20 |
-| `EnvVar` / `DockerEnvVar` | both crates (identical) | 5 |
-| `VolumeMount` / `DockerVolumeMount` | both crates (identical) | 8 |
-| Default value functions | both crates | 20 |
-| Tests | both crates | ~50 |
+#### 2. `serial` — Serial Port Config Parsing
+
+The match blocks converting string config values to `serialport` crate enums are byte-for-byte identical:
+
+```rust
+// termihub-core/src/serial.rs
+pub struct ParsedSerialConfig {
+    pub port: String,
+    pub baud_rate: u32,
+    pub data_bits: serialport::DataBits,
+    pub stop_bits: serialport::StopBits,
+    pub parity: serialport::Parity,
+    pub flow_control: serialport::FlowControl,
+}
+
+pub fn parse_serial_config(config: &SerialConfig) -> ParsedSerialConfig { ... }
+```
+
+Both `SerialConnection::new()` (desktop) and `SerialPortSettings::from_config()` (agent) would call this instead of duplicating the match blocks.
+
+#### 3. `docker` — Docker Command Building
+
+Both sides build `docker run` commands with identical logic for env vars, volumes, and working directory:
+
+```rust
+// termihub-core/src/docker.rs
+
+/// Build the argument list for `docker run`.
+/// Returns args to append after `docker run`.
+pub fn build_docker_run_args(config: &DockerConfig) -> Vec<String> {
+    let mut args = Vec::new();
+    for env in &config.env_vars {
+        args.push("-e".into());
+        args.push(format!("{}={}", env.key, env.value));
+    }
+    for vol in &config.volumes {
+        args.push("-v".into());
+        let mount = if vol.read_only {
+            format!("{}:{}:ro", vol.host_path, vol.container_path)
+        } else {
+            format!("{}:{}", vol.host_path, vol.container_path)
+        };
+        args.push(mount);
+    }
+    if let Some(ref workdir) = config.working_directory {
+        if !workdir.is_empty() {
+            args.push("-w".into());
+            args.push(workdir.clone());
+        }
+    }
+    args
+}
+```
+
+Desktop's `DockerShell::new()` and agent's `DockerBackend::new()` would both call this helper instead of duplicating the loop logic. Each side then adds its own flags (`-it --rm` for desktop, `-d --init --name` for agent) and spawns the process through its own mechanism (portable-pty vs std::process::Command).
+
+#### 4. `files` — File Types and Listing Logic
+
+`FileEntry`, date formatting, permission formatting, and the core `list_dir` logic:
+
+```rust
+// termihub-core/src/files.rs
+
+pub struct FileEntry { pub name, path, is_directory, size, modified, permissions }
+pub fn chrono_from_epoch(secs: u64) -> String { ... }
+pub fn format_permissions(perm: u32) -> String { ... }
+
+/// Core directory listing logic — iterate entries, skip `.`/`..`,
+/// read metadata, build FileEntry. Pure std::fs, no async.
+pub fn list_dir_sync(path: &str) -> Result<Vec<FileEntry>, std::io::Error> { ... }
+```
+
+Desktop's `files/local.rs` calls `list_dir_sync()` directly. Agent's `LocalFileBackend` wraps it with `tokio::task::spawn_blocking`.
+
+#### 5. `monitoring` — Stats Types and `/proc` Parsing
+
+The entire parsing pipeline:
+
+```rust
+// termihub-core/src/monitoring.rs
+
+pub struct SystemStats { hostname, uptime_seconds, load_average, cpu_usage_percent, ... }
+pub struct CpuCounters { user, nice, system, idle, iowait, irq, softirq, steal }
+
+pub fn parse_stats(output: &str) -> Result<(SystemStats, CpuCounters)> { ... }
+pub fn parse_cpu_line(line: &str) -> CpuCounters { ... }
+pub fn cpu_percent_from_delta(prev: &CpuCounters, curr: &CpuCounters) -> f64 { ... }
+pub fn parse_meminfo_value(line: &str) -> u64 { ... }
+pub fn parse_df_output(output: &str) -> (u64, u64, f64) { ... }
+```
+
+Desktop's `MonitoringSession::fetch_stats()` and agent's `SshCollector::collect()` both call `parse_stats()`. Agent's `LocalCollector` calls individual parsing functions.
+
+#### 6. `protocol` — JSON-RPC 2.0 Types and Error Codes
+
+Message types and error code constants:
+
+```rust
+// termihub-core/src/protocol/messages.rs
+pub struct JsonRpcRequest { jsonrpc, method, params, id }
+pub struct JsonRpcResponse { jsonrpc, result, id }
+pub struct JsonRpcErrorResponse { jsonrpc, error, id }
+pub struct JsonRpcNotification { jsonrpc, method, params }
+
+// termihub-core/src/protocol/errors.rs
+pub const SESSION_NOT_FOUND: i64 = -32001;
+pub const FILE_NOT_FOUND: i64 = -32010;
+// ... etc
+```
 
 ### What Stays in Each Consumer
 
 **Desktop-only (stays in `src-tauri/`):**
-- `ConnectionConfig` tagged enum (includes `Local`, `Telnet`, `RemoteSession` — desktop concepts)
+
+- `ConnectionConfig` tagged enum (includes `Local`, `Telnet`, `RemoteSession` — desktop-only concepts)
 - `LocalShellConfig`, `TelnetConfig`, `RemoteSessionConfig`, `RemoteAgentConfig`
-- `TerminalBackend` trait and all backend implementations
+- `TerminalBackend` trait (sync, uses `TerminalError`)
+- PTY management via `portable-pty` (open pty, spawn command, reader thread)
 - `TerminalManager`, `AgentConnectionManager`
 - Tauri commands, events, app handle integration
-- SFTP session management, credential store, tunnel manager
+- SFTP session management (`ssh2` direct), credential store, tunnel manager
 - SSH auth utilities, key conversion, X11 forwarding
 - Shell detection, Docker detection, VS Code detection
-- All UI-facing event types (`TerminalOutputEvent`, `TerminalExitEvent`)
 
 **Agent-only (stays in `agent/`):**
-- Daemon process and IPC protocol (`daemon/`)
-- `SessionManager` and backend implementations (shell, docker, SSH, serial)
-- `FileBackend` trait and backend implementations
+
+- Daemon process and binary IPC protocol (`daemon/`)
+- `SessionManager` with attach/detach/recover semantics
+- `FileBackend` trait (async) and backend implementations (Docker exec, SSH)
 - `StatsCollector` trait and collector implementations (local, SSH)
 - `ConnectionStore` (agent's own persistence format)
-- JSON-RPC dispatcher and transport layers
-- State persistence (`state.json`)
+- JSON-RPC dispatcher and transport layers (stdio, TCP)
+- Ring buffer for 24/7 serial output capture
+- State persistence (`state.json`) and session recovery
 
 ### Edge Cases and Considerations
 
-**Config type divergence:** The desktop's `SerialConfig` and agent's `SerialSessionConfig` are structurally identical but named differently. The shared crate would unify the name. Similarly, `EnvVar` vs `DockerEnvVar` and `VolumeMount` vs `DockerVolumeMount`.
+**Config type unification:** The desktop's `SerialConfig` and agent's `SerialSessionConfig` are structurally identical but named differently. The shared crate would provide a single `SerialConfig`. Same for `DockerConfig`/`DockerSessionConfig`, `EnvVar`/`DockerEnvVar`, `VolumeMount`/`DockerVolumeMount`. The desktop currently uses `camelCase` serde; the agent uses `snake_case` in some places — the core crate would standardize.
 
-**`SystemStats` vs `MonitoringData`:** The agent's `MonitoringData` adds a `host` field for routing. The shared crate would define the base `SystemStats` struct; the agent's `MonitoringData` would wrap it:
+**`SystemStats` vs `MonitoringData`:** The agent's `MonitoringData` adds a `host` field for routing. The shared crate defines the base `SystemStats` struct; the agent wraps it:
 
 ```rust
 // In termihub-core:
@@ -232,9 +394,11 @@ pub struct MonitoringData {
 }
 ```
 
-**Serde attributes:** Both crates use `#[serde(rename_all = "camelCase")]` on the same types. The shared crate would own the serde configuration, ensuring consistency.
+**`serialport` dependency in core:** The `serial` module needs the `serialport` crate for its enum types (`DataBits`, `StopBits`, etc.). This can be made optional via a Cargo feature flag so the core crate doesn't force `serialport` on consumers that don't need it.
 
-**Error types:** The desktop uses `TerminalError` (domain enum), the agent uses JSON-RPC error codes (constants). The shared crate would provide the error code constants; each consumer maps to its own error handling pattern.
+**Error types:** The desktop uses `TerminalError` (domain enum), the agent uses `anyhow::Error`. The core crate returns `std::io::Error` or its own lightweight error types. Each consumer maps to its own error handling pattern.
+
+**Cross-platform:** The core crate's `files` module would need `#[cfg(unix)]` for permission formatting (just like the current desktop `files/local.rs` does). On Windows, `get_permissions()` returns `None`.
 
 ---
 
@@ -249,7 +413,7 @@ graph LR
         B["termihub-agent<br/>(agent/)<br/>11,032 LOC"]
     end
 
-    A -. "duplicated types<br/>& parsing logic<br/>~800 lines" .-> B
+    A -. "duplicated logic,<br/>types, and parsing<br/>~1,150 lines" .-> B
 
     style A fill:#4a9eff,color:#fff
     style B fill:#ff6b6b,color:#fff
@@ -259,10 +423,10 @@ graph LR
 
 ```mermaid
 graph TD
-    C["termihub-core<br/>(core/)<br/>~500 LOC"]
+    C["termihub-core<br/>(core/)<br/>~700 LOC"]
 
-    A["termihub<br/>(src-tauri/)<br/>~13,200 LOC"]
-    B["termihub-agent<br/>(agent/)<br/>~10,600 LOC"]
+    A["termihub<br/>(src-tauri/)<br/>~13,000 LOC"]
+    B["termihub-agent<br/>(agent/)<br/>~10,400 LOC"]
 
     A --> C
     B --> C
@@ -272,26 +436,94 @@ graph TD
     style B fill:#ff6b6b,color:#fff
 ```
 
+### How a Docker Session Works Today vs Proposed
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Desktop as Desktop (src-tauri)
+    participant Agent as Agent
+
+    Note over Desktop: CURRENT: Desktop builds docker args itself
+    User->>Desktop: Create Docker session
+    Desktop->>Desktop: DockerShell::new()<br/>- build env var args (duplicated)<br/>- build volume args (duplicated)<br/>- build workdir args (duplicated)<br/>- spawn via portable-pty
+    Desktop->>User: Terminal output via Tauri events
+
+    Note over Agent: CURRENT: Agent builds docker args itself
+    User->>Agent: Create Docker session (via JSON-RPC)
+    Agent->>Agent: DockerBackend::new()<br/>- build env var args (duplicated)<br/>- build volume args (duplicated)<br/>- build workdir args (duplicated)<br/>- spawn via daemon
+    Agent->>User: Terminal output via JSON-RPC
+```
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Desktop as Desktop (src-tauri)
+    participant Core as Core (shared)
+    participant Agent as Agent
+
+    Note over Desktop,Agent: PROPOSED: Both call shared core
+    User->>Desktop: Create Docker session
+    Desktop->>Core: build_docker_run_args(&config)
+    Core-->>Desktop: Vec of args
+    Desktop->>Desktop: Add -it/--rm flags<br/>Spawn via portable-pty
+    Desktop->>User: Terminal output via Tauri events
+
+    User->>Agent: Create Docker session (via JSON-RPC)
+    Agent->>Core: build_docker_run_args(&config)
+    Core-->>Agent: Vec of args
+    Agent->>Agent: Add -d/--init/--name flags<br/>Spawn via daemon
+    Agent->>User: Terminal output via JSON-RPC
+```
+
+### How Serial Config Parsing Works Today vs Proposed
+
+```mermaid
+graph LR
+    subgraph "Current: duplicated match blocks"
+        D_IN["SerialConfig<br/>(string fields)"] --> D_MATCH["Desktop: match blocks<br/>in serial.rs:25-47"]
+        D_MATCH --> D_OUT["serialport enums"]
+
+        A_IN["SerialSessionConfig<br/>(identical string fields)"] --> A_MATCH["Agent: match blocks<br/>in serial/backend.rs:27-49"]
+        A_MATCH --> A_OUT["serialport enums"]
+    end
+
+    style D_MATCH fill:#ff6b6b,color:#fff
+    style A_MATCH fill:#ff6b6b,color:#fff
+```
+
+```mermaid
+graph LR
+    subgraph "Proposed: single parse function"
+        IN["SerialConfig<br/>(shared type)"] --> CORE["Core:<br/>parse_serial_config()"]
+        CORE --> OUT["ParsedSerialConfig<br/>(serialport enums)"]
+        OUT --> D["Desktop: open port"]
+        OUT --> A["Agent: open port"]
+    end
+
+    style CORE fill:#50c878,color:#fff
+```
+
 ### Build Dependency Flow
 
 ```mermaid
 graph TD
     subgraph "Cargo Workspace"
-        CORE["termihub-core<br/>Dependencies: serde, serde_json, thiserror"]
-        DESKTOP["termihub<br/>Dependencies: tauri, ssh2, portable-pty, ..."]
-        AGENT["termihub-agent<br/>Dependencies: tokio, ssh2, nix, ..."]
+        CORE["termihub-core<br/>Dependencies: serde, serde_json,<br/>thiserror, serialport (optional)"]
+        DESKTOP["termihub<br/>Dependencies: tauri, ssh2,<br/>portable-pty, ..."]
+        AGENT["termihub-agent<br/>Dependencies: tokio, ssh2,<br/>nix, ..."]
     end
 
     DESKTOP -->|"path dependency"| CORE
     AGENT -->|"path dependency"| CORE
 
-    subgraph "Shared Dependencies (deduplicated by workspace)"
+    subgraph "Shared Dependencies (compiled once)"
         SD[serde + serde_json]
-        TH[thiserror]
+        SP[serialport]
     end
 
     CORE --> SD
-    CORE --> TH
+    CORE -.->|"feature: serial"| SP
     DESKTOP --> SD
     AGENT --> SD
 ```
@@ -310,43 +542,29 @@ sequenceDiagram
     Dev->>WS: 1. Create root Cargo.toml workspace
     Dev->>Core: 2. Create core/ crate with module stubs
 
-    Note over Core,Desktop: Phase 1: File utilities
-    Dev->>Core: 3. Move FileEntry, chrono_from_epoch,<br/>format_permissions to core
-    Dev->>Desktop: 4. Replace with `use termihub_core::files::*`
-    Dev->>Agent: 5. Replace with `use termihub_core::files::*`
+    Note over Core,Desktop: Phase 1: Config types + serial/docker helpers
+    Dev->>Core: 3. Move SerialConfig, DockerConfig, ShellConfig,<br/>EnvVar, VolumeMount, parse_serial_config,<br/>build_docker_run_args to core
+    Dev->>Desktop: 4. Import from core, remove duplicates
+    Dev->>Agent: 5. Import from core, remove duplicates
     Dev->>CI: 6. Verify all tests pass
 
-    Note over Core,Desktop: Phase 2: Monitoring
-    Dev->>Core: 7. Move SystemStats, CpuCounters,<br/>parse_stats, parse_cpu_line to core
-    Dev->>Desktop: 8. Replace monitoring parsing with core imports
-    Dev->>Agent: 9. Replace monitoring parsing with core imports
+    Note over Core,Desktop: Phase 2: File types + listing
+    Dev->>Core: 7. Move FileEntry, chrono_from_epoch,<br/>format_permissions, list_dir_sync to core
+    Dev->>Desktop: 8. Replace file listing with core calls
+    Dev->>Agent: 9. Replace file listing with core calls
     Dev->>CI: 10. Verify all tests pass
 
-    Note over Core,Agent: Phase 3: Protocol types
-    Dev->>Core: 11. Move JSON-RPC types,<br/>error codes to core
-    Dev->>Desktop: 12. Import protocol types from core
-    Dev->>Agent: 13. Import protocol types from core
+    Note over Core,Desktop: Phase 3: Monitoring
+    Dev->>Core: 11. Move SystemStats, CpuCounters,<br/>parse_stats, all parsing functions to core
+    Dev->>Desktop: 12. Replace monitoring parsing with core imports
+    Dev->>Agent: 13. Delete monitoring/parser.rs entirely
     Dev->>CI: 14. Verify all tests pass
 
-    Note over Core,Agent: Phase 4: Config types
-    Dev->>Core: 15. Move shared config structs to core
-    Dev->>Desktop: 16. Import config types from core
-    Dev->>Agent: 17. Import config types from core
+    Note over Core,Agent: Phase 4: Protocol types
+    Dev->>Core: 15. Move JSON-RPC types + error codes to core
+    Dev->>Desktop: 16. Import protocol types from core
+    Dev->>Agent: 17. Import protocol types from core
     Dev->>CI: 18. Final verification
-```
-
-### Workspace Member Lifecycle
-
-```mermaid
-stateDiagram-v2
-    [*] --> Independent: Current state
-    Independent --> WorkspaceCreated: Add root Cargo.toml
-    WorkspaceCreated --> CoreStubbed: Create core/ with empty modules
-    CoreStubbed --> FilesMigrated: Move file types + utils
-    FilesMigrated --> MonitoringMigrated: Move monitoring types + parsing
-    MonitoringMigrated --> ProtocolMigrated: Move JSON-RPC types + errors
-    ProtocolMigrated --> ConfigMigrated: Move shared config types
-    ConfigMigrated --> [*]: Migration complete
 ```
 
 ---
@@ -361,16 +579,20 @@ core/                         # NEW — shared crate
   Cargo.toml
   src/
     lib.rs                    # Re-exports all modules
-    monitoring/
-      mod.rs                  # SystemStats, CpuCounters, parsing functions
+    config/
+      mod.rs                  # ShellConfig, SerialConfig, DockerConfig, EnvVar, VolumeMount
+    serial.rs                 # parse_serial_config() → ParsedSerialConfig
+    docker.rs                 # build_docker_run_args(), build_docker_exec_args()
     files/
       mod.rs                  # FileEntry, chrono_from_epoch, format_permissions
+      local.rs                # list_dir_sync(), stat_sync() — pure std::fs
+    monitoring/
+      mod.rs                  # SystemStats, CpuCounters
+      parser.rs               # parse_stats, parse_cpu_line, parse_meminfo_value, parse_df_output
     protocol/
       mod.rs
-      messages.rs             # JsonRpcRequest, Response, Notification
+      messages.rs             # JsonRpcRequest, Response, ErrorResponse, Notification
       errors.rs               # Error code constants
-    config/
-      mod.rs                  # ShellConfig, SerialConfig, DockerConfig, etc.
 src-tauri/                    # MODIFIED — depends on core
   Cargo.toml                  # Add: termihub-core = { path = "../core" }
 agent/                        # MODIFIED — depends on core
@@ -388,6 +610,7 @@ resolver = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+serialport = "4"
 ```
 
 ### Core `Cargo.toml`
@@ -398,37 +621,49 @@ name = "termihub-core"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["serial"]
+serial = ["dep:serialport"]
+
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+serialport = { workspace = true, optional = true }
 ```
 
-The core crate depends only on `serde`, `serde_json`, and `thiserror` — no async runtime, no platform-specific code, no framework dependencies. This keeps compile times minimal and the crate usable in any context.
+The core crate depends primarily on `serde`, `serde_json`, and `thiserror` — no async runtime, no framework dependencies. `serialport` is an optional feature for the serial config parsing module.
 
 ### Impact Analysis
 
-**Lines saved (net):**
-- ~800 lines of duplicated source code removed from desktop + agent
-- ~200 lines of duplicated tests consolidated
-- ~500 lines added in the core crate (shared code + workspace boilerplate)
-- **Net reduction: ~500 lines** (~2% of total Rust codebase)
+**Lines removed from desktop + agent (duplicated code eliminated):**
 
-**Lines affected (touched/modified):**
-- `src-tauri/src/monitoring/session.rs` — remove ~200 lines of parsing, add imports
-- `src-tauri/src/files/mod.rs` + `utils.rs` — remove ~60 lines, add imports
-- `src-tauri/src/terminal/jsonrpc.rs` — potentially import shared types
-- `src-tauri/src/terminal/backend.rs` — move `EnvVar`, `VolumeMount` to core
-- `agent/src/monitoring/parser.rs` — remove entirely (replaced by core)
-- `agent/src/files/mod.rs` — remove ~60 lines of utils, import from core
-- `agent/src/protocol/methods.rs` — move shared types to core, keep agent-specific params
-- `agent/src/protocol/errors.rs` — move to core
-- `agent/src/protocol/messages.rs` — move to core
+- Serial config parsing: ~50 lines (25 per crate)
+- Docker command building: ~60 lines (30 per crate)
+- File listing logic: ~80 lines (40 per crate)
+- File types + utilities: ~120 lines (60 per crate)
+- Monitoring types + parsing: ~500 lines (250 per crate)
+- Config type definitions: ~170 lines
+- Protocol types: ~140 lines
+- Duplicated tests: ~200 lines
+- **Total removed: ~1,320 lines**
+
+**Lines added in core crate:**
+- Shared code (moved, not new): ~700 lines
+- Workspace boilerplate: ~20 lines
+- **Total added: ~720 lines**
+
+**Net reduction: ~600 lines (~2.5% of total Rust LOC)**
+
+More importantly:
+- `agent/src/monitoring/parser.rs` (389 lines) can be **deleted entirely**
+- `src-tauri/src/monitoring/session.rs` shrinks from 488 to ~200 lines (manager + SSH exec only)
+- Future backend features only need implementing once
 
 **Build time impact:**
 - Workspace builds compile shared dependencies once (serde, serde_json compiled once instead of twice)
-- The core crate is small (~500 LOC) and compiles fast
-- Incremental builds benefit: changing core triggers recompilation of dependents, but changes in desktop don't trigger agent rebuilds (and vice versa)
+- The core crate is small (~700 LOC) and compiles fast
+- Incremental builds benefit: changes in desktop don't trigger agent rebuilds and vice versa
 
 **CI impact:**
 - `cargo test --workspace` replaces three separate test commands
@@ -440,19 +675,24 @@ The core crate depends only on `serde`, `serde_json`, and `thiserror` — no asy
 
 | Risk | Mitigation |
 |------|-----------|
-| Tight coupling between desktop and agent releases | Core crate is versioned independently; use path dependencies during development, publish to registry if needed later |
-| Breaking changes in core affect both consumers | Core has a small, stable API surface; changes require both consumers to compile |
-| Cross-platform issues (core must compile everywhere) | Core contains only pure Rust with serde — no platform-specific code |
-| Migration introduces regressions | Migrate in phases (files → monitoring → protocol → config), test after each phase |
-| Workspace changes break existing scripts | Scripts already use crate-specific paths; add workspace-level commands as alternatives |
+| Tight coupling between desktop and agent releases | Core crate uses path dependencies; both are versioned together in-repo |
+| Breaking changes in core affect both consumers | Core has a stable API surface; CI catches breakage in both consumers |
+| `serialport` dependency bloats core for consumers that don't need it | Feature flag: `serial = ["dep:serialport"]` |
+| Cross-platform file permission handling | `#[cfg(unix)]` in core, same as current desktop code |
+| Migration introduces regressions | Migrate in phases, test after each phase |
+| Workspace changes break existing scripts | Update `scripts/` to use workspace commands; individual crate builds still work |
 
 ### Recommendation
 
-**Proceed with the shared core, but keep the scope narrow.** The strongest candidates for extraction are:
+**Proceed with the shared core.** The analysis shows ~1,150 lines of duplicated code including meaningful backend logic (not just types). The strongest extraction candidates, in priority order:
 
-1. **Monitoring parsing** (highest value — ~280 lines of byte-for-byte identical logic with explicitly documented copy)
-2. **File types and utilities** (clear win — identical `FileEntry` and date formatting)
-3. **Protocol types** (moderate value — unifies JSON-RPC message format and error codes)
-4. **Config types** (lowest priority — requires reconciling naming differences)
+1. **Config types + serial/docker helpers** (highest impact — unifies the type system and eliminates logic duplication in the most-touched backend code)
+2. **Monitoring parsing** (clearest win — explicitly documented copy, entire file can be deleted from agent)
+3. **File types and listing** (moderate win — identical `FileEntry`, `list_dir`, formatting)
+4. **Protocol types** (moderate win — unifies JSON-RPC format, prevents wire protocol drift)
 
-The net code reduction (~500 lines, ~2%) is modest, but the real value is **eliminating drift** between the two codebases and **consolidating tests** for shared logic. Future features that add types or parsing to both crates will automatically benefit from having a single source of truth.
+The net code reduction (~600 lines, ~2.5%) is meaningful, but the greater value is:
+- **Single source of truth** for backend logic — bug fixes apply to both sides
+- **Easier new features** — adding a new config field or backend type happens once
+- **Unified tests** — test the parsing/building logic once, in the core
+- **Workspace ergonomics** — `cargo test --workspace` and `cargo clippy --workspace` from the repo root
