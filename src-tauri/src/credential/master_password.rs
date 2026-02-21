@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::RwLock;
 
 use aes_gcm::aead::Aead;
@@ -450,7 +450,7 @@ fn derive_key(password: &str, salt: &[u8]) -> Result<[u8; 32]> {
         ARGON2_PARALLELISM,
         Some(32),
     )
-    .context("Invalid Argon2 parameters")?;
+    .map_err(|e| anyhow::anyhow!("Invalid Argon2 parameters: {e}"))?;
     let argon2 = Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
 
     let mut key = [0u8; 32];
@@ -473,6 +473,8 @@ fn parse_map_key(s: &str) -> Option<CredentialKey> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
 
     fn make_store(dir: &Path) -> MasterPasswordStore {
