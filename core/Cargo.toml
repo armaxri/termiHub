@@ -1,0 +1,15 @@
+[package]
+name = "termihub-core"
+version = "0.1.0"
+description = "Shared core library for termiHub desktop and agent"
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+serialport = { workspace = true, optional = true }
+
+[features]
+default = []
+serial = ["dep:serialport"]
