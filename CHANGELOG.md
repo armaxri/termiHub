@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `savePassword` optional field on `SshConfig` and `RemoteAgentConfig` (Rust + TypeScript) — preparatory for credential encryption (#25, #247)
 - `CredentialStore` trait, credential types (`CredentialKey`, `CredentialType`, `CredentialStoreStatus`, `StorageMode`), `NullStore` implementation, and `create_credential_store` factory function — foundation for pluggable credential storage (#246)
 - Horizontal Activity Bar mode: when `activityBarPosition` is set to `"top"`, the Activity Bar renders horizontally above the main content area with icons in a row, bottom-edge indicator, and downward-opening settings dropdown (#240)
+- Customize Layout dialog: preset cards (Default, Focus, Zen) with mini schematics, Activity Bar/Sidebar/Status Bar visibility and position controls with immediate-apply changes (#242)
 
 ### Fixed
 
