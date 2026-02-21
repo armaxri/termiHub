@@ -131,6 +131,7 @@ mod tests {
                 enable_x11_forwarding: false,
                 enable_monitoring: None,
                 enable_file_browser: None,
+                save_password: None,
             }),
             folder_id: Some("folder-1".to_string()),
             terminal_options: None,
@@ -208,6 +209,7 @@ mod tests {
                 auth_method: "key".to_string(),
                 password: None,
                 key_path: Some("~/.ssh/id_ed25519".to_string()),
+                save_password: None,
             },
         };
         let json = serde_json::to_string(&agent).unwrap();
@@ -262,6 +264,7 @@ mod tests {
             enable_x11_forwarding: false,
             enable_monitoring: Some(false),
             enable_file_browser: Some(true),
+            save_password: None,
         });
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: ConnectionConfig = serde_json::from_str(&json).unwrap();
@@ -283,6 +286,7 @@ mod tests {
             enable_x11_forwarding: false,
             enable_monitoring: None,
             enable_file_browser: None,
+            save_password: None,
         });
         let json_none = serde_json::to_string(&config_none).unwrap();
         assert!(!json_none.contains("enableMonitoring"));

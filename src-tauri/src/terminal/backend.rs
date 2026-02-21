@@ -135,6 +135,8 @@ pub struct SshConfig {
     pub enable_monitoring: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enable_file_browser: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub save_password: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -166,6 +168,8 @@ pub struct RemoteAgentConfig {
     pub password: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub key_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub save_password: Option<bool>,
 }
 
 /// Session configuration for a session running on a remote agent.
@@ -334,6 +338,7 @@ impl RemoteAgentConfig {
             enable_x11_forwarding: false,
             enable_monitoring: None,
             enable_file_browser: None,
+            save_password: self.save_password,
         }
     }
 }
@@ -404,6 +409,7 @@ mod tests {
             enable_x11_forwarding: true,
             enable_monitoring: None,
             enable_file_browser: None,
+            save_password: None,
         });
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: ConnectionConfig = serde_json::from_str(&json).unwrap();
@@ -451,6 +457,7 @@ mod tests {
             enable_x11_forwarding: false,
             enable_monitoring: None,
             enable_file_browser: None,
+            save_password: None,
         };
         let expanded = config.expand();
         assert_eq!(expanded.host, "192.168.1.100");
@@ -472,6 +479,7 @@ mod tests {
             enable_x11_forwarding: false,
             enable_monitoring: None,
             enable_file_browser: None,
+            save_password: None,
         };
         let expanded = config.expand();
         let key = expanded.key_path.unwrap();
@@ -497,6 +505,7 @@ mod tests {
             enable_x11_forwarding: false,
             enable_monitoring: None,
             enable_file_browser: None,
+            save_password: None,
         };
         let expanded = config.expand();
         let key = expanded.key_path.unwrap();
@@ -600,6 +609,7 @@ mod tests {
             auth_method: "key".to_string(),
             password: None,
             key_path: Some("/home/user/.ssh/id_rsa".to_string()),
+            save_password: None,
         };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: RemoteAgentConfig = serde_json::from_str(&json).unwrap();
@@ -626,6 +636,7 @@ mod tests {
             auth_method: "key".to_string(),
             password: None,
             key_path: Some("${env:HOME}/.ssh/id_rsa".to_string()),
+            save_password: None,
         };
         let expanded = config.expand();
         assert_eq!(expanded.host, "10.0.0.99");
@@ -644,6 +655,7 @@ mod tests {
             auth_method: "key".to_string(),
             password: None,
             key_path: Some("/home/.ssh/id_rsa".to_string()),
+            save_password: None,
         };
         let ssh = agent.to_ssh_config();
         assert_eq!(ssh.host, "pi.local");
@@ -929,6 +941,97 @@ mod tests {
         let deserialized: EnvVar = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.key, "FOO");
         assert_eq!(deserialized.value, "bar");
+    }
+
+    #[test]
+    fn ssh_config_save_password_serde_round_trip() {
+        let config = SshConfig {
+            host: "example.com".to_string(),
+            port: 22,
+            username: "user".to_string(),
+            auth_method: "password".to_string(),
+            password: Some("secret".to_string()),
+            key_path: None,
+            enable_x11_forwarding: false,
+            enable_monitoring: None,
+            enable_file_browser: None,
+            save_password: Some(true),
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: SshConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.save_password, Some(true));
+    }
+
+    #[test]
+    fn ssh_config_save_password_none_omitted_from_json() {
+        let config = SshConfig {
+            host: "example.com".to_string(),
+            port: 22,
+            username: "user".to_string(),
+            auth_method: "key".to_string(),
+            password: None,
+            key_path: None,
+            enable_x11_forwarding: false,
+            enable_monitoring: None,
+            enable_file_browser: None,
+            save_password: None,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(
+            v.get("savePassword").is_none(),
+            "savePassword should be omitted when None, got: {json}"
+        );
+    }
+
+    #[test]
+    fn remote_agent_config_save_password_serde_round_trip() {
+        let config = RemoteAgentConfig {
+            host: "pi.local".to_string(),
+            port: 22,
+            username: "pi".to_string(),
+            auth_method: "password".to_string(),
+            password: Some("secret".to_string()),
+            key_path: None,
+            save_password: Some(true),
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: RemoteAgentConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.save_password, Some(true));
+    }
+
+    #[test]
+    fn remote_agent_config_save_password_none_omitted() {
+        let config = RemoteAgentConfig {
+            host: "pi.local".to_string(),
+            port: 22,
+            username: "pi".to_string(),
+            auth_method: "key".to_string(),
+            password: None,
+            key_path: None,
+            save_password: None,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(
+            v.get("savePassword").is_none(),
+            "savePassword should be omitted when None, got: {json}"
+        );
+    }
+
+    #[test]
+    fn remote_agent_config_to_ssh_config_copies_save_password() {
+        let agent = RemoteAgentConfig {
+            host: "pi.local".to_string(),
+            port: 22,
+            username: "pi".to_string(),
+            auth_method: "password".to_string(),
+            password: Some("secret".to_string()),
+            key_path: None,
+            save_password: Some(true),
+        };
+        let ssh = agent.to_ssh_config();
+        assert_eq!(ssh.save_password, Some(true));
     }
 
     #[test]
