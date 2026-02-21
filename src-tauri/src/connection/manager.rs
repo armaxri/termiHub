@@ -973,11 +973,17 @@ mod tests {
         let stored = mock.stored.lock().unwrap();
         assert_eq!(stored.len(), 2, "Should store exactly 2 credentials");
 
-        let c1_entry = stored.iter().find(|(k, _)| k.connection_id == "c1").unwrap();
+        let c1_entry = stored
+            .iter()
+            .find(|(k, _)| k.connection_id == "c1")
+            .unwrap();
         assert_eq!(c1_entry.0.credential_type, CredentialType::Password);
         assert_eq!(c1_entry.1, "pw1");
 
-        let c3_entry = stored.iter().find(|(k, _)| k.connection_id == "c3").unwrap();
+        let c3_entry = stored
+            .iter()
+            .find(|(k, _)| k.connection_id == "c3")
+            .unwrap();
         assert_eq!(c3_entry.0.credential_type, CredentialType::KeyPassphrase);
         assert_eq!(c3_entry.1, "passphrase3");
 
