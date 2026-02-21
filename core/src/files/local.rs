@@ -35,8 +35,7 @@ pub fn list_dir_sync(path: &str) -> Result<Vec<FileEntry>, std::io::Error> {
 
         let permissions = get_permissions(&metadata);
 
-        let full_path =
-            normalize_path_separators(&entry.path().to_string_lossy());
+        let full_path = normalize_path_separators(&entry.path().to_string_lossy());
 
         result.push(FileEntry {
             name,
