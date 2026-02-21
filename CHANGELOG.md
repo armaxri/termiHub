@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Concept document for cross-platform testing: platform-specific test matrix, CI E2E expansion to Windows, release verification checklists, and platform-aware test infrastructure (#15)
 - Concept document for credential encryption: OS keychain integration, master password portable storage, encrypted import/export, and migration from plaintext (#25)
 - `CredentialStore` trait, `CredentialKey`/`CredentialType` types, and `NullStore` implementation — foundation for credential encryption with pluggable storage backends (#246)
+- `KeychainStore` credential backend using the `keyring` crate — stores credentials in the OS-native keychain (Windows Credential Manager, macOS Keychain, Linux Secret Service) (#250)
 - `credentialStorageMode` and `credentialAutoLockMinutes` settings in `AppSettings` (Rust + TypeScript) — controls which credential store backend is active and master password auto-lock timeout (#248)
 - `LayoutConfig` type definitions (TypeScript + Rust) with `DEFAULT_LAYOUT` constant and `LAYOUT_PRESETS` (default, focus, zen) — foundation for customizable UI layout (#237)
 - Layout state and actions in Zustand store: `layoutConfig`, `layoutDialogOpen`, `updateLayoutConfig`, `applyLayoutPreset` — with debounced persistence to backend settings (#238)

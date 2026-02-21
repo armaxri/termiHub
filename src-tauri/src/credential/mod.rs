@@ -1,8 +1,10 @@
+pub mod keychain;
 pub mod null;
 pub mod types;
 
 use anyhow::Result;
 
+pub use keychain::KeychainStore;
 pub use null::NullStore;
 pub use types::{CredentialKey, CredentialStoreStatus, CredentialType, StorageMode};
 
@@ -34,8 +36,8 @@ pub trait CredentialStore: Send + Sync {
 /// Create a credential store for the given storage mode.
 pub fn create_credential_store(mode: StorageMode) -> Box<dyn CredentialStore> {
     match mode {
+        StorageMode::Keychain => Box::new(KeychainStore),
         StorageMode::None => Box::new(NullStore),
-        // Future: StorageMode::Keychain => Box::new(KeychainStore::new()),
         // Future: StorageMode::MasterPassword => Box::new(MasterPasswordStore::new(...)),
         _ => Box::new(NullStore),
     }
