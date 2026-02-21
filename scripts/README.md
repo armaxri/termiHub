@@ -12,6 +12,8 @@ Helper scripts for common development tasks. Each script has a `.sh` (Unix/macOS
 | `format` | Auto-fix all formatting issues (Prettier + cargo fmt) |
 | `clean` | Remove all build artifacts for a fresh start |
 | `test-system` | Start Docker infra + virtual serial ports and run system-level E2E tests |
+| `setup-agent-cross` | Install cross-compilation toolchains for building the agent for 6 Linux targets |
+| `build-agents` | Cross-compile the remote agent for up to 6 Linux targets (x64/ARM64/ARMv7 × glibc/musl) |
 
 ## Typical workflow
 
@@ -32,4 +34,9 @@ Helper scripts for common development tasks. Each script has a `.sh` (Unix/macOS
 ./scripts/test-system.sh --skip-build # Reuse existing binary
 ./scripts/test-system.sh --skip-serial # SSH/Telnet only, no serial port setup
 ./scripts/test-system.sh --keep-infra  # Keep Docker containers after tests
+
+# Agent cross-compilation (one-time setup + build)
+./scripts/setup-agent-cross.sh        # Install cross-compilation toolchains
+./scripts/build-agents.sh             # Build agent for all 6 Linux targets
+./scripts/build-agents.sh --targets aarch64-unknown-linux-gnu  # Build specific target
 ```

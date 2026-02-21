@@ -1,0 +1,21 @@
+# Cross.toml — cross-rs configuration for agent cross-compilation.
+# Installs libudev-dev inside each Docker container so the `serialport`
+# crate can link against it.
+
+[target.x86_64-unknown-linux-gnu]
+pre-build = ["apt-get update && apt-get install -y libudev-dev"]
+
+[target.aarch64-unknown-linux-gnu]
+pre-build = ["apt-get update && apt-get install -y libudev-dev"]
+
+[target.armv7-unknown-linux-gnueabihf]
+pre-build = ["apt-get update && apt-get install -y libudev-dev"]
+
+[target.x86_64-unknown-linux-musl]
+pre-build = ["apt-get update && apt-get install -y libudev-dev"]
+
+[target.aarch64-unknown-linux-musl]
+pre-build = ["apt-get update && apt-get install -y libudev-dev"]
+
+[target.armv7-unknown-linux-musleabihf]
+pre-build = ["apt-get update && apt-get install -y libudev-dev"]
