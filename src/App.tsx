@@ -96,6 +96,7 @@ function App() {
   return (
     <ErrorBoundary>
       <div className="app">
+        {layoutConfig.activityBarPosition === "top" && <ActivityBar horizontal />}
         <div className={`app__main app__main--ab-${layoutConfig.activityBarPosition}`}>
           {layoutConfig.activityBarPosition === "left" && <ActivityBar />}
           {layoutConfig.sidebarPosition === "left" && layoutConfig.sidebarVisible && <Sidebar />}
