@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Agent cross-build scripts: `build-agents.sh`/`.cmd` and `setup-agent-cross.sh`/`.cmd` for cross-compiling the remote agent to 6 Linux targets (x86_64/aarch64/armv7 × glibc/musl) from Linux, macOS, or Windows (#276)
 - Agent deployment and updates: automatic detection, deployment, and updating of the agent binary when connecting to a remote host — probes for existing agent, deploys if missing, and updates if version is incompatible, with user-visible progress events
 - Agent graceful shutdown: new `agent.shutdown` JSON-RPC method lets the desktop shut down the agent cleanly before deploying an update, detaching active sessions for recovery by the next agent instance
 - Agent binary download: automatically downloads the correct agent binary from GitHub Releases (with local caching in `~/.cache/termihub/agent-binaries/`) when the bundled binary is not available
@@ -40,9 +41,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Layout Preview in Customize Layout dialog: live miniature schematic showing Activity Bar, Sidebar, Terminal Area, and Status Bar positions — updates in real-time as layout settings change (#243)
 - `MasterPasswordStore` credential backend — encrypts all credentials into a single file using Argon2id key derivation and AES-256-GCM authenticated encryption, with setup/unlock/lock/change-password lifecycle and atomic file writes (#251)
 - `CredentialManager` runtime wrapper with `StorageMode` switching, settings-based initialization, and Tauri IPC commands for credential store status, lock/unlock, setup, password change, backend switching with credential migration, and keychain availability check (#252)
+- Frontend credential store integration: TypeScript types, API wrappers for all 7 credential store commands, event listeners for lock/unlock/status-changed, and Zustand state with automatic status loading on startup (#253)
+- "Save password" and "Save passphrase" checkboxes in SSH and Agent connection editors — shown when a credential store is configured (keychain or master password), with mode-dependent hints; when no store is configured, a hint directs users to enable secure storage in Settings (#255)
+- Security settings panel in Settings UI: choose credential storage mode (OS Keychain, Master Password, or None) with radio group, keychain availability indicator, master password setup/change dialogs, auto-lock timeout dropdown, and credential migration feedback (#254)
+- Master password unlock dialog on app startup when credential store is locked, setup/change password dialog with strength indicator and validation, and status bar lock/unlock indicator for the credential store (#257)
 
 ### Fixed
 
+- `credentialStorageMode` TypeScript type now uses `"master_password"` (snake_case) matching the Rust backend's `StorageMode::to_settings_str()` — was incorrectly `"masterPassword"` (camelCase)
 - Theme switching in Settings > Appearance now applies immediately instead of requiring an app restart (#224)
 - Eliminated white flash on startup — window now starts with dark background (#1e1e1e) instead of flashing white before the theme loads (#192)
 - Terminal input not working on new connections: a React StrictMode race condition could route keyboard input to the wrong backend session, making it appear as if typing had no effect; terminals now also auto-focus when created or switched to (#198)
@@ -50,6 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Reorganized Rust crates into a Cargo workspace with a new shared `termihub-core` crate (empty scaffolding for future code sharing between desktop and agent) (#283)
 - `ConnectionManager` now routes credentials to the active `CredentialStore` via `prepare_for_storage` before stripping passwords on disk — with `NullStore` as default, behavior is identical to before; credentials are cleaned up when connections or agents are deleted (#249)
 - Split view panels now have a visible 1px border between them, making it easier to distinguish adjacent panels (#189)
 - Active tabs now show a colored top border: bright blue in the focused panel, dimmed in unfocused panels, following VS Code's tab highlight pattern (#190)

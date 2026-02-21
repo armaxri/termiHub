@@ -17,18 +17,9 @@ call pnpm exec prettier --write "src/**/*.{ts,tsx,css}"
 if errorlevel 1 exit /b 1
 
 echo.
-echo === Backend: cargo fmt ===
-pushd src-tauri
-cargo fmt
-if errorlevel 1 (popd & exit /b 1)
-popd
-
-echo.
-echo === Agent: cargo fmt ===
-pushd agent
-cargo fmt
-if errorlevel 1 (popd & exit /b 1)
-popd
+echo === Rust workspace: cargo fmt ===
+cargo fmt --all
+if errorlevel 1 exit /b 1
 
 echo.
 echo All formatting applied.

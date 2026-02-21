@@ -107,7 +107,7 @@ export interface AppSettings {
   powerMonitoringEnabled: boolean;
   fileBrowserEnabled: boolean;
   layout?: LayoutConfig;
-  credentialStorageMode?: "keychain" | "masterPassword" | "none";
+  credentialStorageMode?: "keychain" | "master_password" | "none";
   credentialAutoLockMinutes?: number;
 }
 

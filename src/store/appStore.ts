@@ -27,6 +27,7 @@ import {
   DEFAULT_LAYOUT,
   LAYOUT_PRESETS,
 } from "@/types/connection";
+import { CredentialStoreStatusInfo } from "@/types/credential";
 import {
   loadConnections,
   persistConnection,
@@ -59,6 +60,7 @@ import {
   deleteAgentDefinition,
   AgentSessionInfo,
   AgentDefinitionInfo,
+  getCredentialStoreStatus as apiGetCredentialStoreStatus,
 } from "@/services/api";
 import { RemoteAgentConfig } from "@/types/terminal";
 import { TunnelConfig, TunnelState } from "@/types/tunnel";
@@ -284,6 +286,17 @@ interface AppState {
   stopTunnel: (tunnelId: string) => Promise<void>;
   updateTunnelState: (state: TunnelState) => void;
   openTunnelEditorTab: (tunnelId: string | null) => void;
+
+  // Credential store
+  credentialStoreStatus: CredentialStoreStatusInfo | null;
+  setCredentialStoreStatus: (status: CredentialStoreStatusInfo) => void;
+  loadCredentialStoreStatus: () => Promise<void>;
+  unlockDialogOpen: boolean;
+  setUnlockDialogOpen: (open: boolean) => void;
+  masterPasswordSetupOpen: boolean;
+  masterPasswordSetupMode: "setup" | "change";
+  openMasterPasswordSetup: (mode: "setup" | "change") => void;
+  closeMasterPasswordSetup: () => void;
 }
 
 let tabCounter = 0;
@@ -880,6 +893,12 @@ export const useAppStore = create<AppState>((set, get) => {
       }
       // Load SSH tunnels
       get().loadTunnels();
+      // Load credential store status and auto-open unlock dialog if locked
+      await get().loadCredentialStoreStatus();
+      const credStatus = get().credentialStoreStatus;
+      if (credStatus?.mode === "master_password" && credStatus?.status === "locked") {
+        set({ unlockDialogOpen: true });
+      }
       // Check VS Code availability in the background
       get().checkVscodeAvailability();
     },
@@ -1584,6 +1603,25 @@ export const useAppStore = create<AppState>((set, get) => {
         });
         return { rootPanel, activePanelId: targetPanelId };
       }),
+
+    // Credential store
+    credentialStoreStatus: null,
+    setCredentialStoreStatus: (status) => set({ credentialStoreStatus: status }),
+    loadCredentialStoreStatus: async () => {
+      try {
+        const status = await apiGetCredentialStoreStatus();
+        set({ credentialStoreStatus: status });
+      } catch (err) {
+        console.error("Failed to load credential store status:", err);
+      }
+    },
+    unlockDialogOpen: false,
+    setUnlockDialogOpen: (open) => set({ unlockDialogOpen: open }),
+    masterPasswordSetupOpen: false,
+    masterPasswordSetupMode: "setup",
+    openMasterPasswordSetup: (mode) =>
+      set({ masterPasswordSetupOpen: true, masterPasswordSetupMode: mode }),
+    closeMasterPasswordSetup: () => set({ masterPasswordSetupOpen: false }),
   };
 });
 

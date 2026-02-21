@@ -55,5 +55,11 @@ describe("settingsRegistry", () => {
       expect(cats.has("appearance")).toBe(true);
       expect(cats.has("terminal")).toBe(false);
     });
+
+    it("returns security category for credential search", () => {
+      const cats = getMatchingCategories("credential");
+      expect(cats.has("security")).toBe(true);
+      expect(cats.has("general")).toBe(false);
+    });
   });
 });

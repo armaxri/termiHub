@@ -8,11 +8,8 @@ cd "$(git rev-parse --show-toplevel)"
 echo "=== Cleaning frontend ==="
 rm -rf node_modules dist
 
-echo "=== Cleaning backend ==="
-(cd src-tauri && cargo clean)
-
-echo "=== Cleaning agent ==="
-(cd agent && cargo clean)
+echo "=== Cleaning Rust workspace ==="
+cargo clean
 
 echo ""
 echo "All build artifacts removed. Run ./scripts/setup.sh to reinstall."

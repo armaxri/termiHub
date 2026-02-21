@@ -1,4 +1,9 @@
-export type SettingsCategory = "general" | "appearance" | "terminal" | "external-files";
+export type SettingsCategory =
+  | "general"
+  | "appearance"
+  | "terminal"
+  | "security"
+  | "external-files";
 
 export interface CategoryDefinition {
   id: SettingsCategory;
@@ -17,6 +22,7 @@ export const CATEGORIES: CategoryDefinition[] = [
   { id: "general", label: "General" },
   { id: "appearance", label: "Appearance" },
   { id: "terminal", label: "Terminal" },
+  { id: "security", label: "Security" },
   { id: "external-files", label: "External Files" },
 ];
 
@@ -90,6 +96,20 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     description: "Whether the terminal cursor blinks",
     category: "terminal",
     keywords: ["cursor", "blink", "animation", "flash"],
+  },
+  {
+    id: "credentialStorageMode",
+    label: "Credential Storage Mode",
+    description: "How connection passwords and keys are stored",
+    category: "security",
+    keywords: ["credential", "keychain", "master password", "security", "encryption", "password"],
+  },
+  {
+    id: "credentialAutoLockMinutes",
+    label: "Auto-Lock Timeout",
+    description: "Lock the master password credential store after inactivity",
+    category: "security",
+    keywords: ["auto-lock", "timeout", "lock", "inactivity", "minutes"],
   },
 ];
 

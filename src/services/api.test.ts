@@ -54,6 +54,13 @@ import {
   setupRemoteAgent,
   getLogs,
   clearLogs,
+  getCredentialStoreStatus,
+  unlockCredentialStore,
+  lockCredentialStore,
+  setupMasterPassword,
+  changeMasterPassword,
+  switchCredentialStore,
+  checkKeychainAvailable,
 } from "./api";
 
 describe("api service", () => {
@@ -652,6 +659,94 @@ describe("api service", () => {
       await clearLogs();
 
       expect(mockedInvoke).toHaveBeenCalledWith("clear_logs");
+    });
+  });
+
+  describe("credential store commands", () => {
+    it("getCredentialStoreStatus returns status info", async () => {
+      const status = {
+        mode: "keychain",
+        status: "unlocked",
+        keychainAvailable: true,
+      };
+      mockedInvoke.mockResolvedValue(status);
+
+      const result = await getCredentialStoreStatus();
+
+      expect(mockedInvoke).toHaveBeenCalledWith("get_credential_store_status");
+      expect(result).toEqual(status);
+    });
+
+    it("unlockCredentialStore invokes with password", async () => {
+      mockedInvoke.mockResolvedValue(undefined);
+
+      await unlockCredentialStore("my-password");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("unlock_credential_store", {
+        password: "my-password",
+      });
+    });
+
+    it("lockCredentialStore invokes correct command", async () => {
+      mockedInvoke.mockResolvedValue(undefined);
+
+      await lockCredentialStore();
+
+      expect(mockedInvoke).toHaveBeenCalledWith("lock_credential_store");
+    });
+
+    it("setupMasterPassword invokes with password", async () => {
+      mockedInvoke.mockResolvedValue(undefined);
+
+      await setupMasterPassword("new-master");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("setup_master_password", {
+        password: "new-master",
+      });
+    });
+
+    it("changeMasterPassword invokes with current and new password", async () => {
+      mockedInvoke.mockResolvedValue(undefined);
+
+      await changeMasterPassword("old-pass", "new-pass");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("change_master_password", {
+        currentPassword: "old-pass",
+        newPassword: "new-pass",
+      });
+    });
+
+    it("switchCredentialStore invokes with mode and optional master password", async () => {
+      const result = { migratedCount: 3, warnings: [] };
+      mockedInvoke.mockResolvedValue(result);
+
+      const switchResult = await switchCredentialStore("master_password", "my-pass");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("switch_credential_store", {
+        newMode: "master_password",
+        masterPassword: "my-pass",
+      });
+      expect(switchResult).toEqual(result);
+    });
+
+    it("switchCredentialStore sends null when no master password", async () => {
+      mockedInvoke.mockResolvedValue({ migratedCount: 0, warnings: [] });
+
+      await switchCredentialStore("keychain");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("switch_credential_store", {
+        newMode: "keychain",
+        masterPassword: null,
+      });
+    });
+
+    it("checkKeychainAvailable returns boolean", async () => {
+      mockedInvoke.mockResolvedValue(true);
+
+      const result = await checkKeychainAvailable();
+
+      expect(mockedInvoke).toHaveBeenCalledWith("check_keychain_available");
+      expect(result).toBe(true);
     });
   });
 });

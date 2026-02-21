@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { SshConfig } from "@/types/terminal";
 import { checkSshAgentStatus, validateSshKey, SshKeyValidation } from "@/services/api";
 import { parseHostPort } from "@/utils/parseHostPort";
+import { useAppStore } from "@/store/appStore";
 import { KeyPathInput } from "./KeyPathInput";
 
 interface SshSettingsProps {
@@ -14,6 +15,9 @@ export function SshSettings({ config, onChange, onSetupAgent }: SshSettingsProps
   const [agentStatus, setAgentStatus] = useState<string | null>(null);
   const [keyValidation, setKeyValidation] = useState<SshKeyValidation | null>(null);
   const validationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const credentialStoreStatus = useAppStore((s) => s.credentialStoreStatus);
+  const credentialStoreAvailable =
+    credentialStoreStatus !== null && credentialStoreStatus.mode !== "none";
 
   useEffect(() => {
     if (config.authMethod === "agent") {
@@ -132,9 +136,31 @@ export function SshSettings({ config, onChange, onSetupAgent }: SshSettingsProps
           Uses keys from your running SSH agent (ssh-agent or Pageant).
         </p>
       )}
-      {config.authMethod === "password" && (
+      {config.authMethod === "password" && credentialStoreAvailable && (
+        <>
+          <label
+            className="settings-form__field settings-form__field--checkbox"
+            data-testid="ssh-settings-save-password-label"
+          >
+            <input
+              type="checkbox"
+              checked={config.savePassword ?? false}
+              onChange={(e) => onChange({ ...config, savePassword: e.target.checked })}
+              data-testid="ssh-settings-save-password-checkbox"
+            />
+            <span className="settings-form__label">Save password</span>
+          </label>
+          <p className="settings-form__hint">
+            {credentialStoreStatus?.mode === "keychain"
+              ? "Password will be stored in the OS keychain."
+              : "Password will be encrypted with your master password."}
+          </p>
+        </>
+      )}
+      {config.authMethod === "password" && !credentialStoreAvailable && (
         <p className="settings-form__hint">
-          You will be prompted for a password each time you connect.
+          You will be prompted for a password each time you connect. Enable secure storage in
+          Settings to save passwords.
         </p>
       )}
       {config.authMethod === "key" && (
@@ -166,6 +192,27 @@ export function SshSettings({ config, onChange, onSetupAgent }: SshSettingsProps
               data-testid="ssh-settings-key-passphrase-input"
             />
           </label>
+          {credentialStoreAvailable && (
+            <>
+              <label
+                className="settings-form__field settings-form__field--checkbox"
+                data-testid="ssh-settings-save-passphrase-label"
+              >
+                <input
+                  type="checkbox"
+                  checked={config.savePassword ?? false}
+                  onChange={(e) => onChange({ ...config, savePassword: e.target.checked })}
+                  data-testid="ssh-settings-save-passphrase-checkbox"
+                />
+                <span className="settings-form__label">Save passphrase</span>
+              </label>
+              <p className="settings-form__hint">
+                {credentialStoreStatus?.mode === "keychain"
+                  ? "Passphrase will be stored in the OS keychain."
+                  : "Passphrase will be encrypted with your master password."}
+              </p>
+            </>
+          )}
         </>
       )}
       <label className="settings-form__field settings-form__field--checkbox">
