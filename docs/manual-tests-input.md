@@ -772,6 +772,14 @@ Each section groups related tests by feature area. Individual test items referen
 - [ ] Create an SSH connection with `savePassword` disabled — verify no credential store lookup occurs and the user is prompted as before
 - [ ] Connect a remote agent with `savePassword` enabled — verify stored credentials are used automatically, and stale credentials trigger re-prompt after removal
 
+### Auto-lock timeout for master password credential store (PR #263)
+
+- [ ] In Settings > Security, set auto-lock timeout to 5 minutes — verify the dropdown saves and the setting persists after restarting the app
+- [ ] With master password mode active and store unlocked, wait for the configured timeout to elapse — verify the store auto-locks and the unlock dialog appears
+- [ ] While the store is unlocked, perform credential operations (connect with saved password, browse credentials) — verify each operation resets the inactivity timer (store does not lock prematurely)
+- [ ] Set auto-lock to "Never" — verify the store does not auto-lock regardless of inactivity
+- [ ] Change the auto-lock timeout while the store is unlocked — verify the new timeout takes effect immediately without requiring a lock/unlock cycle
+
 ---
 
 ## Infrastructure

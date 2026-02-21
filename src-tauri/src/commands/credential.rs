@@ -4,9 +4,9 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 use tracing::{debug, info, warn};
 
+use crate::credential::types::{build_status_info, CredentialStoreStatusInfo};
 use crate::credential::{
-    CredentialKey, CredentialManager, CredentialStore, CredentialStoreStatus, CredentialType,
-    KeychainStore, StorageMode,
+    CredentialKey, CredentialManager, CredentialStore, CredentialType, KeychainStore, StorageMode,
 };
 
 /// Event emitted when the credential store is locked.
@@ -15,18 +15,6 @@ const EVENT_STORE_LOCKED: &str = "credential-store-locked";
 const EVENT_STORE_UNLOCKED: &str = "credential-store-unlocked";
 /// Event emitted when the credential store status changes (mode switch, setup, etc.).
 const EVENT_STORE_STATUS_CHANGED: &str = "credential-store-status-changed";
-
-/// Status information about the credential store, returned to the frontend.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CredentialStoreStatusInfo {
-    /// Current storage mode: `"keychain"`, `"master_password"`, or `"none"`.
-    pub mode: String,
-    /// Current status: `"unlocked"`, `"locked"`, or `"unavailable"`.
-    pub status: String,
-    /// Whether the OS keychain is accessible on this system.
-    pub keychain_available: bool,
-}
 
 /// Result of switching credential stores, returned to the frontend.
 #[derive(Serialize)]
@@ -38,26 +26,10 @@ pub struct SwitchResult {
     pub warnings: Vec<String>,
 }
 
-fn status_to_string(status: &CredentialStoreStatus) -> &'static str {
-    match status {
-        CredentialStoreStatus::Unlocked => "unlocked",
-        CredentialStoreStatus::Locked => "locked",
-        CredentialStoreStatus::Unavailable => "unavailable",
-    }
-}
-
 fn emit_status_changed(app_handle: &AppHandle, manager: &CredentialManager) {
     let info = build_status_info(manager);
     if let Err(e) = app_handle.emit(EVENT_STORE_STATUS_CHANGED, &info) {
         warn!("Failed to emit {}: {}", EVENT_STORE_STATUS_CHANGED, e);
-    }
-}
-
-fn build_status_info(manager: &CredentialManager) -> CredentialStoreStatusInfo {
-    CredentialStoreStatusInfo {
-        mode: manager.get_mode().to_settings_str().to_string(),
-        status: status_to_string(&manager.status()).to_string(),
-        keychain_available: KeychainStore::is_available(),
     }
 }
 
@@ -92,6 +64,8 @@ pub async fn unlock_credential_store(
 
     result?;
 
+    manager.notify_auto_lock_unlocked();
+
     if let Err(e) = app_handle.emit(EVENT_STORE_UNLOCKED, ()) {
         warn!("Failed to emit {}: {}", EVENT_STORE_UNLOCKED, e);
     }
@@ -112,6 +86,8 @@ pub fn lock_credential_store(
             store.lock();
         })
         .ok_or_else(|| "Credential store is not in master password mode".to_string())?;
+
+    manager.notify_auto_lock_locked();
 
     if let Err(e) = app_handle.emit(EVENT_STORE_LOCKED, ()) {
         warn!("Failed to emit {}: {}", EVENT_STORE_LOCKED, e);
@@ -139,6 +115,8 @@ pub async fn setup_master_password(
         .ok_or_else(|| "Credential store is not in master password mode".to_string())?;
 
     result?;
+
+    manager.notify_auto_lock_unlocked();
 
     if let Err(e) = app_handle.emit(EVENT_STORE_UNLOCKED, ()) {
         warn!("Failed to emit {}: {}", EVENT_STORE_UNLOCKED, e);
@@ -213,6 +191,11 @@ pub async fn switch_credential_store(
         }
     }
 
+    // Notify auto-lock timer when leaving master password mode
+    if current_mode == StorageMode::MasterPassword {
+        manager.notify_auto_lock_locked();
+    }
+
     // Switch to the new backend
     manager
         .switch_store(target_mode.clone())
@@ -235,6 +218,9 @@ pub async fn switch_credential_store(
             .ok_or_else(|| "Failed to access master password store after switch".to_string())?;
 
         setup_result?;
+
+        // Notify auto-lock timer when entering master password mode
+        manager.notify_auto_lock_unlocked();
     }
 
     // Migrate credentials to the new store
@@ -271,6 +257,19 @@ pub async fn switch_credential_store(
 #[tauri::command]
 pub fn check_keychain_available() -> bool {
     KeychainStore::is_available()
+}
+
+/// Update the auto-lock timeout for the master password credential store.
+///
+/// Pass `None` or `Some(0)` to disable auto-lock.
+#[tauri::command]
+pub fn set_auto_lock_timeout(
+    minutes: Option<u32>,
+    manager: State<'_, Arc<CredentialManager>>,
+) -> Result<(), String> {
+    info!(minutes = ?minutes, "Setting auto-lock timeout");
+    manager.set_auto_lock_timeout(minutes);
+    Ok(())
 }
 
 /// Parse a credential type string from the frontend into a `CredentialType`.
