@@ -101,6 +101,37 @@ impl StorageMode {
     }
 }
 
+/// Status information about the credential store, returned to the frontend.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialStoreStatusInfo {
+    /// Current storage mode: `"keychain"`, `"master_password"`, or `"none"`.
+    pub mode: String,
+    /// Current status: `"unlocked"`, `"locked"`, or `"unavailable"`.
+    pub status: String,
+    /// Whether the OS keychain is accessible on this system.
+    pub keychain_available: bool,
+}
+
+/// Convert a [`CredentialStoreStatus`] to its string representation.
+pub fn status_to_string(status: &CredentialStoreStatus) -> &'static str {
+    match status {
+        CredentialStoreStatus::Unlocked => "unlocked",
+        CredentialStoreStatus::Locked => "locked",
+        CredentialStoreStatus::Unavailable => "unavailable",
+    }
+}
+
+/// Build a [`CredentialStoreStatusInfo`] from a credential manager.
+pub fn build_status_info(manager: &super::CredentialManager) -> CredentialStoreStatusInfo {
+    use super::CredentialStore;
+    CredentialStoreStatusInfo {
+        mode: manager.get_mode().to_settings_str().to_string(),
+        status: status_to_string(&manager.status()).to_string(),
+        keychain_available: super::KeychainStore::is_available(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

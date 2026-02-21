@@ -1,8 +1,9 @@
 use std::path::{Path, PathBuf};
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use anyhow::Result;
 
+use super::auto_lock::AutoLockTimer;
 use super::types::{CredentialKey, CredentialStoreStatus, StorageMode};
 use super::{CredentialStore, KeychainStore, MasterPasswordStore, NullStore};
 
@@ -23,6 +24,7 @@ enum StoreBackend {
 pub struct CredentialManager {
     inner: RwLock<StoreBackend>,
     config_dir: PathBuf,
+    auto_lock_timer: RwLock<Option<Arc<AutoLockTimer>>>,
 }
 
 impl CredentialManager {
@@ -35,6 +37,7 @@ impl CredentialManager {
         Self {
             inner: RwLock::new(backend),
             config_dir,
+            auto_lock_timer: RwLock::new(None),
         }
     }
 
@@ -83,6 +86,51 @@ impl CredentialManager {
         }
     }
 
+    /// Set the auto-lock timer for this credential manager.
+    pub fn set_auto_lock_timer(&self, timer: Arc<AutoLockTimer>) {
+        let mut guard = self
+            .auto_lock_timer
+            .write()
+            .expect("auto_lock_timer lock poisoned");
+        *guard = Some(timer);
+    }
+
+    /// Notify the auto-lock timer that the store was unlocked.
+    pub fn notify_auto_lock_unlocked(&self) {
+        if let Ok(guard) = self.auto_lock_timer.read() {
+            if let Some(ref timer) = *guard {
+                timer.notify_unlocked();
+            }
+        }
+    }
+
+    /// Notify the auto-lock timer that the store was locked.
+    pub fn notify_auto_lock_locked(&self) {
+        if let Ok(guard) = self.auto_lock_timer.read() {
+            if let Some(ref timer) = *guard {
+                timer.notify_locked();
+            }
+        }
+    }
+
+    /// Update the auto-lock timeout duration.
+    pub fn set_auto_lock_timeout(&self, minutes: Option<u32>) {
+        if let Ok(guard) = self.auto_lock_timer.read() {
+            if let Some(ref timer) = *guard {
+                timer.set_timeout(minutes);
+            }
+        }
+    }
+
+    /// Record credential activity on the auto-lock timer.
+    fn record_activity(&self) {
+        if let Ok(guard) = self.auto_lock_timer.read() {
+            if let Some(ref timer) = *guard {
+                timer.record_activity();
+            }
+        }
+    }
+
     /// Create the appropriate backend for the given mode.
     fn create_backend(mode: &StorageMode, config_dir: &Path) -> StoreBackend {
         match mode {
@@ -99,47 +147,62 @@ impl CredentialManager {
 impl CredentialStore for CredentialManager {
     fn get(&self, key: &CredentialKey) -> Result<Option<String>> {
         let inner = self.inner.read().expect("credential manager lock poisoned");
-        match *inner {
+        let result = match *inner {
             StoreBackend::Null(ref s) => s.get(key),
             StoreBackend::Keychain(ref s) => s.get(key),
             StoreBackend::MasterPassword(ref s) => s.get(key),
-        }
+        };
+        drop(inner);
+        self.record_activity();
+        result
     }
 
     fn set(&self, key: &CredentialKey, value: &str) -> Result<()> {
         let inner = self.inner.read().expect("credential manager lock poisoned");
-        match *inner {
+        let result = match *inner {
             StoreBackend::Null(ref s) => s.set(key, value),
             StoreBackend::Keychain(ref s) => s.set(key, value),
             StoreBackend::MasterPassword(ref s) => s.set(key, value),
-        }
+        };
+        drop(inner);
+        self.record_activity();
+        result
     }
 
     fn remove(&self, key: &CredentialKey) -> Result<()> {
         let inner = self.inner.read().expect("credential manager lock poisoned");
-        match *inner {
+        let result = match *inner {
             StoreBackend::Null(ref s) => s.remove(key),
             StoreBackend::Keychain(ref s) => s.remove(key),
             StoreBackend::MasterPassword(ref s) => s.remove(key),
-        }
+        };
+        drop(inner);
+        self.record_activity();
+        result
     }
 
     fn remove_all_for_connection(&self, connection_id: &str) -> Result<()> {
         let inner = self.inner.read().expect("credential manager lock poisoned");
-        match *inner {
+        let result = match *inner {
             StoreBackend::Null(ref s) => s.remove_all_for_connection(connection_id),
             StoreBackend::Keychain(ref s) => s.remove_all_for_connection(connection_id),
             StoreBackend::MasterPassword(ref s) => s.remove_all_for_connection(connection_id),
-        }
+        };
+        drop(inner);
+        self.record_activity();
+        result
     }
 
     fn list_keys(&self) -> Result<Vec<CredentialKey>> {
         let inner = self.inner.read().expect("credential manager lock poisoned");
-        match *inner {
+        let result = match *inner {
             StoreBackend::Null(ref s) => s.list_keys(),
             StoreBackend::Keychain(ref s) => s.list_keys(),
             StoreBackend::MasterPassword(ref s) => s.list_keys(),
-        }
+        };
+        drop(inner);
+        self.record_activity();
+        result
     }
 
     fn status(&self) -> CredentialStoreStatus {

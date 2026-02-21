@@ -1,3 +1,4 @@
+pub mod auto_lock;
 pub mod crypto;
 pub mod keychain;
 pub mod manager;
@@ -7,6 +8,7 @@ pub mod types;
 
 use anyhow::Result;
 
+pub use auto_lock::AutoLockTimer;
 pub use keychain::KeychainStore;
 pub use manager::CredentialManager;
 pub use master_password::MasterPasswordStore;

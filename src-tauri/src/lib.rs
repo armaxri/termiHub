@@ -16,7 +16,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 use connection::manager::ConnectionManager;
 use connection::settings::SettingsStorage;
-use credential::{CredentialManager, StorageMode};
+use credential::{AutoLockTimer, CredentialManager, StorageMode};
 use files::sftp::SftpManager;
 use monitoring::MonitoringManager;
 use terminal::agent_manager::AgentConnectionManager;
@@ -87,6 +87,15 @@ pub fn run() {
                     .unwrap_or(false);
 
             let credential_manager = Arc::new(credential_manager);
+
+            // Set up auto-lock timer for master password mode
+            let auto_lock_minutes = settings.credential_auto_lock_minutes.or(Some(15));
+            let auto_lock_timer = AutoLockTimer::new(
+                app.handle().clone(),
+                credential_manager.clone(),
+                auto_lock_minutes,
+            );
+            credential_manager.set_auto_lock_timer(auto_lock_timer);
             let connection_manager = ConnectionManager::new(
                 app.handle(),
                 credential_manager.clone() as Arc<dyn credential::CredentialStore>,
@@ -208,6 +217,7 @@ pub fn run() {
             commands::credential::check_keychain_available,
             commands::credential::resolve_credential,
             commands::credential::remove_credential,
+            commands::credential::set_auto_lock_timeout,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
