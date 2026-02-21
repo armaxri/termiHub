@@ -4,7 +4,9 @@ use serde::Serialize;
 use tauri::State;
 use tracing::{debug, info};
 
-use crate::connection::config::{ConnectionFolder, SavedConnection, SavedRemoteAgent};
+use crate::connection::config::{
+    ConnectionFolder, ImportPreview, ImportResult, SavedConnection, SavedRemoteAgent,
+};
 use crate::connection::manager::{self, ConnectionManager};
 use crate::connection::settings::AppSettings;
 use crate::credential::CredentialManager;
@@ -190,4 +192,49 @@ pub fn delete_remote_agent(
     manager: State<'_, ConnectionManager>,
 ) -> Result<(), String> {
     manager.delete_agent(&id).map_err(|e| e.to_string())
+}
+
+/// Export connections with optional encrypted credentials.
+///
+/// If `export_password` is provided, credentials from the store are
+/// encrypted and included in the export. If `connection_ids` is provided,
+/// only those connections are exported.
+#[tauri::command]
+pub fn export_connections_encrypted(
+    export_password: Option<String>,
+    connection_ids: Option<Vec<String>>,
+    manager: State<'_, ConnectionManager>,
+) -> Result<String, String> {
+    info!(
+        "Exporting connections (encrypted={})",
+        export_password.is_some()
+    );
+    manager
+        .export_encrypted_json(export_password.as_deref(), connection_ids.as_deref())
+        .map_err(|e| e.to_string())
+}
+
+/// Preview the contents of an import file without performing the import.
+#[tauri::command]
+pub fn preview_import(json: String) -> Result<ImportPreview, String> {
+    manager::preview_import_json(&json).map_err(|e| e.to_string())
+}
+
+/// Import connections with optional credential decryption.
+///
+/// If the import file contains an `$encrypted` section and
+/// `import_password` is provided, credentials are decrypted and stored.
+#[tauri::command]
+pub fn import_connections_with_credentials(
+    json: String,
+    import_password: Option<String>,
+    manager: State<'_, ConnectionManager>,
+) -> Result<ImportResult, String> {
+    info!(
+        "Importing connections (with_credentials={})",
+        import_password.is_some()
+    );
+    manager
+        .import_encrypted_json(&json, import_password.as_deref())
+        .map_err(|e| e.to_string())
 }

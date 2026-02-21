@@ -176,6 +176,13 @@ interface AppState {
   updateLayoutConfig: (partial: Partial<LayoutConfig>) => void;
   applyLayoutPreset: (preset: "default" | "focus" | "zen") => void;
 
+  // Export/Import dialogs
+  exportDialogOpen: boolean;
+  setExportDialogOpen: (open: boolean) => void;
+  importDialogOpen: boolean;
+  importFileContent: string | undefined;
+  setImportDialog: (open: boolean, content?: string) => void;
+
   loadFromBackend: () => Promise<void>;
   updateSettings: (settings: AppSettings) => Promise<void>;
   reloadExternalConnections: () => Promise<void>;
@@ -822,6 +829,13 @@ export const useAppStore = create<AppState>((set, get) => {
     layoutDialogOpen: false,
 
     setLayoutDialogOpen: (open) => set({ layoutDialogOpen: open }),
+
+    // Export/Import dialogs
+    exportDialogOpen: false,
+    setExportDialogOpen: (open) => set({ exportDialogOpen: open }),
+    importDialogOpen: false,
+    importFileContent: undefined,
+    setImportDialog: (open, content) => set({ importDialogOpen: open, importFileContent: content }),
 
     updateLayoutConfig: (partial) => {
       const updated = { ...get().layoutConfig, ...partial };

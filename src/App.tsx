@@ -6,6 +6,7 @@ import { StatusBar } from "@/components/StatusBar";
 import { TerminalView } from "@/components/Terminal";
 import { PasswordPrompt } from "@/components/PasswordPrompt";
 import { CustomizeLayoutDialog } from "@/components/Settings/CustomizeLayoutDialog";
+import { ExportDialog, ImportDialog } from "@/components/ExportImport";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useTunnelEvents } from "@/hooks/useTunnelEvents";
 import { useCredentialStoreEvents } from "@/hooks/useCredentialStoreEvents";
@@ -110,6 +111,8 @@ function App() {
         {layoutConfig.statusBarVisible && <StatusBar />}
         <PasswordPrompt />
         <CustomizeLayoutDialog />
+        <ExportDialog />
+        <ImportDialog />
       </div>
     </ErrorBoundary>
   );

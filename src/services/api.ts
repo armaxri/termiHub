@@ -161,6 +161,47 @@ export async function importConnections(json: string): Promise<number> {
   return await invoke<number>("import_connections", { json });
 }
 
+/** Preview of an import file before the user confirms. */
+export interface ImportPreview {
+  connectionCount: number;
+  folderCount: number;
+  agentCount: number;
+  hasEncryptedCredentials: boolean;
+}
+
+/** Result of a completed import operation. */
+export interface ImportResult {
+  connectionsImported: number;
+  credentialsImported: number;
+}
+
+/** Preview the contents of an import file without performing the import. */
+export async function previewImport(json: string): Promise<ImportPreview> {
+  return await invoke<ImportPreview>("preview_import", { json });
+}
+
+/** Export connections with optional encrypted credentials. */
+export async function exportConnectionsEncrypted(
+  exportPassword: string | null,
+  connectionIds: string[] | null
+): Promise<string> {
+  return await invoke<string>("export_connections_encrypted", {
+    exportPassword,
+    connectionIds,
+  });
+}
+
+/** Import connections with optional credential decryption. */
+export async function importConnectionsWithCredentials(
+  json: string,
+  importPassword: string | null
+): Promise<ImportResult> {
+  return await invoke<ImportResult>("import_connections_with_credentials", {
+    json,
+    importPassword,
+  });
+}
+
 // --- Settings commands ---
 
 /** Get the current application settings */

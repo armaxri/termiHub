@@ -1,3 +1,4 @@
+pub mod crypto;
 pub mod keychain;
 pub mod manager;
 pub mod master_password;
