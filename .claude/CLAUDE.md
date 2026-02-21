@@ -53,7 +53,22 @@ src-tauri/src/                # Rust backend
   commands/                   # Tauri IPC command handlers
   events/                     # Event emitters
   utils/                      # shell_detect.rs, expand.rs, errors.rs
-agent/                        # Raspberry Pi remote agent (JSON-RPC over SSH)
+agent/                        # Remote agent (JSON-RPC over SSH)
+  src/
+    buffer/                   # Shared ring buffer (1 MiB)
+    daemon/                   # Session daemon process and binary frame protocol
+    shell/                    # ShellBackend (daemon client for shell sessions)
+    docker/                   # DockerBackend (Docker container sessions)
+    ssh/                      # SshBackend (SSH jump host sessions)
+    serial/                   # SerialBackend (direct serial port access)
+    session/                  # SessionManager, types, prepared connection definitions
+    files/                    # File browsing (local, SFTP relay, Docker)
+    monitoring/               # System monitoring (CPU, memory, disk, network)
+    handler/                  # JSON-RPC method dispatcher
+    protocol/                 # Protocol types, methods, error codes
+    state/                    # Session state persistence (state.json)
+    io/                       # Transport layer (stdio, TCP)
+    main.rs                   # Entry point (--stdio, --listen, --daemon)
 scripts/                      # Dev helper scripts (.sh + .cmd variants)
 docs/                         # All documentation
   concepts/                   # Concept documents for "Concept" labeled issues
