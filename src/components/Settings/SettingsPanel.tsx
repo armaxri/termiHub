@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { getVersion } from "@tauri-apps/api/app";
-import { Settings2, Palette, TerminalSquare, FileJson } from "lucide-react";
+import { Settings2, Palette, TerminalSquare, Shield, FileJson } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { applyTheme } from "@/themes/engine";
@@ -13,12 +13,14 @@ import { GeneralSettings } from "./GeneralSettings";
 import { AppearanceSettings } from "./AppearanceSettings";
 import { TerminalSettings } from "./TerminalSettings";
 import { ExternalFilesSettings } from "./ExternalFilesSettings";
+import { SecuritySettings } from "./SecuritySettings";
 import "./SettingsPanel.css";
 
 const SETTINGS_ICONS: Record<SettingsCategory, LucideIcon> = {
   general: Settings2,
   appearance: Palette,
   terminal: TerminalSquare,
+  security: Shield,
   "external-files": FileJson,
 };
 
@@ -32,6 +34,7 @@ function loadSavedCategory(): SettingsCategory {
       saved === "general" ||
       saved === "appearance" ||
       saved === "terminal" ||
+      saved === "security" ||
       saved === "external-files"
     ) {
       return saved;
@@ -179,6 +182,9 @@ export function SettingsPanel({ isVisible }: SettingsPanelProps) {
           />
         );
       }
+      if (highlightedCategories?.has("security")) {
+        sections.push(<SecuritySettings key="security" visibleFields={visibleFields} />);
+      }
       if (sections.length === 0) {
         return <div className="settings-panel__no-results">No settings match your search.</div>;
       }
@@ -192,6 +198,8 @@ export function SettingsPanel({ isVisible }: SettingsPanelProps) {
         return <AppearanceSettings settings={settings} onChange={handleSettingsChange} />;
       case "terminal":
         return <TerminalSettings settings={settings} onChange={handleSettingsChange} />;
+      case "security":
+        return <SecuritySettings />;
       case "external-files":
         return <ExternalFilesSettings />;
     }
