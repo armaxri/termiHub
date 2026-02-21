@@ -1,0 +1,117 @@
+.import-dialog__overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 1000;
+}
+
+.import-dialog__content {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1001;
+  width: 420px;
+  max-width: calc(100vw - 32px);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.import-dialog__title {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.import-dialog__description {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.import-dialog__password-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.import-dialog__hint {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.import-dialog__input {
+  width: 100%;
+  height: 30px;
+  font-size: var(--font-size-sm);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--spacing-sm);
+  outline: none;
+  box-sizing: border-box;
+}
+
+.import-dialog__input:focus {
+  border-color: var(--focus-border);
+}
+
+.import-dialog__error {
+  font-size: var(--font-size-xs);
+  color: var(--color-error);
+  margin: 0;
+}
+
+.import-dialog__success {
+  font-size: var(--font-size-sm);
+  color: var(--color-success, var(--text-primary));
+  margin: 0;
+}
+
+.import-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-sm);
+}
+
+.import-dialog__btn {
+  padding: var(--spacing-xs) var(--spacing-md);
+  font-size: var(--font-size-sm);
+  border-radius: var(--radius-sm);
+  border: none;
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
+}
+
+.import-dialog__btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.import-dialog__btn--primary {
+  background-color: var(--accent-color);
+  color: #ffffff;
+}
+
+.import-dialog__btn--primary:hover:not(:disabled) {
+  background-color: var(--accent-hover);
+}
+
+.import-dialog__btn--secondary {
+  background-color: transparent;
+  color: var(--text-secondary);
+}
+
+.import-dialog__btn--secondary:hover:not(:disabled) {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}

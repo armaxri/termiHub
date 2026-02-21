@@ -34,6 +34,20 @@ impl CredentialKey {
             credential_type,
         }
     }
+
+    /// Parse a map key like `"conn-id:password"` back into a [`CredentialKey`].
+    ///
+    /// Returns `None` if the string format is invalid or the credential type
+    /// is unrecognized.
+    pub fn from_map_key(s: &str) -> Option<Self> {
+        let (conn_id, type_str) = s.rsplit_once(':')?;
+        let credential_type = match type_str {
+            "password" => CredentialType::Password,
+            "key_passphrase" => CredentialType::KeyPassphrase,
+            _ => return None,
+        };
+        Some(Self::new(conn_id, credential_type))
+    }
 }
 
 impl fmt::Display for CredentialKey {
@@ -118,6 +132,38 @@ mod tests {
     fn credential_key_display_key_passphrase() {
         let key = CredentialKey::new("conn-abc123", CredentialType::KeyPassphrase);
         assert_eq!(key.to_string(), "conn-abc123:key_passphrase");
+    }
+
+    #[test]
+    fn credential_key_from_map_key_password() {
+        let key = CredentialKey::from_map_key("conn-abc123:password").unwrap();
+        assert_eq!(key.connection_id, "conn-abc123");
+        assert_eq!(key.credential_type, CredentialType::Password);
+    }
+
+    #[test]
+    fn credential_key_from_map_key_key_passphrase() {
+        let key = CredentialKey::from_map_key("conn-abc123:key_passphrase").unwrap();
+        assert_eq!(key.connection_id, "conn-abc123");
+        assert_eq!(key.credential_type, CredentialType::KeyPassphrase);
+    }
+
+    #[test]
+    fn credential_key_from_map_key_invalid_type() {
+        assert!(CredentialKey::from_map_key("conn:unknown_type").is_none());
+    }
+
+    #[test]
+    fn credential_key_from_map_key_no_colon() {
+        assert!(CredentialKey::from_map_key("nodelimiter").is_none());
+    }
+
+    #[test]
+    fn credential_key_from_map_key_round_trip() {
+        let key = CredentialKey::new("my-conn", CredentialType::Password);
+        let map_key = key.to_string();
+        let parsed = CredentialKey::from_map_key(&map_key).unwrap();
+        assert_eq!(parsed, key);
     }
 
     #[test]

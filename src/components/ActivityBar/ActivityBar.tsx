@@ -10,9 +10,8 @@ import {
   LayoutDashboard,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { save, open } from "@tauri-apps/plugin-dialog";
-import { writeTextFile, readTextFile } from "@tauri-apps/plugin-fs";
-import { exportConnections, importConnections } from "@/services/storage";
+import { open } from "@tauri-apps/plugin-dialog";
+import { readTextFile } from "@tauri-apps/plugin-fs";
 import { useAppStore, SidebarView } from "@/store/appStore";
 import { ActivityBarItem } from "./ActivityBarItem";
 import "./ActivityBar.css";
@@ -33,23 +32,14 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
   const setSidebarView = useAppStore((s) => s.setSidebarView);
   const openSettingsTab = useAppStore((s) => s.openSettingsTab);
   const openLogViewerTab = useAppStore((s) => s.openLogViewerTab);
-  const loadFromBackend = useAppStore((s) => s.loadFromBackend);
   const activityBarPosition = useAppStore((s) => s.layoutConfig.activityBarPosition);
   const setLayoutDialogOpen = useAppStore((s) => s.setLayoutDialogOpen);
+  const setExportDialogOpen = useAppStore((s) => s.setExportDialogOpen);
+  const setImportDialog = useAppStore((s) => s.setImportDialog);
 
-  const handleExport = useCallback(async () => {
-    try {
-      const json = await exportConnections();
-      const filePath = await save({
-        defaultPath: "termihub-connections.json",
-        filters: [{ name: "JSON", extensions: ["json"] }],
-      });
-      if (!filePath) return;
-      await writeTextFile(filePath, json);
-    } catch (err) {
-      console.error("Failed to export connections:", err);
-    }
-  }, []);
+  const handleExport = useCallback(() => {
+    setExportDialogOpen(true);
+  }, [setExportDialogOpen]);
 
   const handleImport = useCallback(async () => {
     try {
@@ -59,12 +49,11 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
       });
       if (!filePath) return;
       const json = await readTextFile(filePath);
-      await importConnections(json);
-      await loadFromBackend();
+      setImportDialog(true, json);
     } catch (err) {
-      console.error("Failed to import connections:", err);
+      console.error("Failed to read import file:", err);
     }
-  }, [loadFromBackend]);
+  }, [setImportDialog]);
 
   return (
     <div
