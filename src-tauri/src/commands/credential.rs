@@ -5,7 +5,8 @@ use tauri::{AppHandle, Emitter, State};
 use tracing::{debug, info, warn};
 
 use crate::credential::{
-    CredentialManager, CredentialStore, CredentialStoreStatus, KeychainStore, StorageMode,
+    CredentialKey, CredentialManager, CredentialStore, CredentialStoreStatus, CredentialType,
+    KeychainStore, StorageMode,
 };
 
 /// Event emitted when the credential store is locked.
@@ -270,4 +271,85 @@ pub async fn switch_credential_store(
 #[tauri::command]
 pub fn check_keychain_available() -> bool {
     KeychainStore::is_available()
+}
+
+/// Parse a credential type string from the frontend into a `CredentialType`.
+fn parse_credential_type(s: &str) -> Result<CredentialType, String> {
+    match s {
+        "password" => Ok(CredentialType::Password),
+        "key_passphrase" => Ok(CredentialType::KeyPassphrase),
+        _ => Err(format!("Unknown credential type: {s}")),
+    }
+}
+
+/// Resolve a stored credential for a connection.
+///
+/// Returns the stored password/passphrase, or `null` if none is found.
+/// Gracefully returns `None` when the store is locked or unavailable.
+#[tauri::command]
+pub fn resolve_credential(
+    connection_id: String,
+    credential_type: String,
+    manager: State<'_, Arc<CredentialManager>>,
+) -> Result<Option<String>, String> {
+    let cred_type = parse_credential_type(&credential_type)?;
+    let key = CredentialKey::new(&connection_id, cred_type);
+    debug!(
+        connection_id = %connection_id,
+        credential_type = %credential_type,
+        "Resolving credential"
+    );
+    match manager.get(&key) {
+        Ok(value) => Ok(value),
+        Err(e) => {
+            warn!("Failed to resolve credential for {}: {}", connection_id, e);
+            Ok(None)
+        }
+    }
+}
+
+/// Remove a stored credential for a connection.
+///
+/// Used to clear stale credentials after an authentication failure.
+#[tauri::command]
+pub fn remove_credential(
+    connection_id: String,
+    credential_type: String,
+    manager: State<'_, Arc<CredentialManager>>,
+) -> Result<(), String> {
+    let cred_type = parse_credential_type(&credential_type)?;
+    let key = CredentialKey::new(&connection_id, cred_type);
+    debug!(
+        connection_id = %connection_id,
+        credential_type = %credential_type,
+        "Removing credential"
+    );
+    manager.remove(&key).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_credential_type_password() {
+        assert_eq!(
+            parse_credential_type("password").unwrap(),
+            CredentialType::Password
+        );
+    }
+
+    #[test]
+    fn parse_credential_type_key_passphrase() {
+        assert_eq!(
+            parse_credential_type("key_passphrase").unwrap(),
+            CredentialType::KeyPassphrase
+        );
+    }
+
+    #[test]
+    fn parse_credential_type_unknown() {
+        let err = parse_credential_type("invalid").unwrap_err();
+        assert!(err.contains("Unknown credential type"));
+    }
 }
