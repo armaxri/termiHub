@@ -6,6 +6,7 @@ import { StatusBar } from "@/components/StatusBar";
 import { TerminalView } from "@/components/Terminal";
 import { PasswordPrompt } from "@/components/PasswordPrompt";
 import { CustomizeLayoutDialog } from "@/components/Settings/CustomizeLayoutDialog";
+import { ExportDialog, ImportDialog } from "@/components/ExportImport";
 import { UnlockDialog } from "@/components/UnlockDialog";
 import { MasterPasswordSetup } from "@/components/MasterPasswordSetup";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
@@ -117,6 +118,8 @@ function App() {
         {layoutConfig.statusBarVisible && <StatusBar />}
         <PasswordPrompt />
         <CustomizeLayoutDialog />
+        <ExportDialog />
+        <ImportDialog />
         <UnlockDialog open={unlockDialogOpen} onOpenChange={setUnlockDialogOpen} />
         <MasterPasswordSetup
           open={masterPasswordSetupOpen}

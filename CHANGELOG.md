@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Encrypted export/import of connections with credentials: optionally encrypt saved passwords with a user-provided password (Argon2id + AES-256-GCM) when exporting, and decrypt them when importing on another machine — includes Export and Import dialogs with password validation, preview, and error handling (#260)
+- Shared core error types (`CoreError`, `SessionError`, `FileError`) in the `termihub-core` crate — unified error definitions that replace duplicated enums across the desktop and agent crates (#297)
 - Agent cross-build scripts: `build-agents.sh`/`.cmd` and `setup-agent-cross.sh`/`.cmd` for cross-compiling the remote agent to 6 Linux targets (x86_64/aarch64/armv7 × glibc/musl) from Linux, macOS, or Windows (#276)
 - Agent deployment and updates: automatic detection, deployment, and updating of the agent binary when connecting to a remote host — probes for existing agent, deploys if missing, and updates if version is incompatible, with user-visible progress events
 - Agent graceful shutdown: new `agent.shutdown` JSON-RPC method lets the desktop shut down the agent cleanly before deploying an update, detaching active sessions for recovery by the next agent instance
@@ -47,6 +49,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Master password unlock dialog on app startup when credential store is locked, setup/change password dialog with strength indicator and validation, and status bar lock/unlock indicator for the credential store (#257)
 - Credential store integration in connection flow: SSH and agent connections now automatically resolve stored credentials before prompting the user, with stale credential detection and cleanup on auth failure (#258)
 - External connection file credential migration: plaintext passwords in external JSON files are now automatically routed to the credential store and stripped from disk on first load, matching the existing migration for the main connections file (#262)
+- Unified configuration types in `termihub-core` crate: `ShellConfig`, `SerialConfig`, `DockerConfig`, `SshConfig`, `PtySize`, `EnvVar`, `VolumeMount` — superset types shared between desktop and agent, with config value expansion utilities (`expand_tilde`, `expand_env_placeholders`, `expand_config_value`) (#295)
+- JSON-RPC 2.0 protocol types and error codes in `termihub-core` crate: `JsonRpcRequest`, `JsonRpcResponse`, `JsonRpcErrorResponse`, `JsonRpcErrorData`, `JsonRpcNotification` message types (all with `Serialize` + `Deserialize`) and standard/application error code constants — shared between desktop and agent (#296)
 
 ### Fixed
 
