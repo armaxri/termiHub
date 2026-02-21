@@ -569,8 +569,29 @@ pub(crate) fn try_load_external_file(
     let data = std::fs::read_to_string(file_path)
         .with_context(|| format!("Failed to read external file: {}", file_path))?;
 
-    let ext_store: ExternalConnectionStore = serde_json::from_str(&data)
+    let mut ext_store: ExternalConnectionStore = serde_json::from_str(&data)
         .with_context(|| format!("Failed to parse external file: {}", file_path))?;
+
+    // Migrate: strip plaintext passwords from external file and route to credential store.
+    // This mirrors the migration in `ConnectionManager::new()` for the main connections.json.
+    let has_plaintext_passwords = ext_store.connections.iter().any(|conn| {
+        matches!(
+            &conn.config,
+            ConnectionConfig::Ssh(ssh) if ssh.password.is_some()
+        )
+    });
+    if has_plaintext_passwords {
+        ext_store.connections = ext_store
+            .connections
+            .into_iter()
+            .map(|c| prepare_for_storage(c, store))
+            .collect::<Result<Vec<_>>>()?;
+
+        let cleaned_data = serde_json::to_string_pretty(&ext_store)
+            .context("Failed to serialize external file during migration")?;
+        std::fs::write(file_path, cleaned_data)
+            .with_context(|| format!("Failed to rewrite external file: {}", file_path))?;
+    }
 
     // Flatten connections: set source_file, validate folder_id
     let mut connections = Vec::new();
@@ -939,6 +960,212 @@ mod tests {
         let main_folders: std::collections::HashSet<&str> = std::collections::HashSet::new();
         let source = try_load_external_file(path_str, &main_folders, &store).unwrap();
         assert_eq!(source.connections[0].folder_id, None);
+    }
+
+    /// Write an external file with raw connections (passwords NOT stripped).
+    /// Used by migration tests to simulate a pre-migration file on disk.
+    fn write_raw_external_file(
+        path: &str,
+        name: &str,
+        folders: Vec<ConnectionFolder>,
+        connections: Vec<SavedConnection>,
+    ) {
+        let store = ExternalConnectionStore {
+            name: Some(name.to_string()),
+            version: "1".to_string(),
+            folders,
+            connections,
+        };
+        let data = serde_json::to_string_pretty(&store).unwrap();
+        std::fs::write(path, data).unwrap();
+    }
+
+    #[test]
+    fn external_file_migration_strips_passwords_from_disk() {
+        let mock = MockStore::new();
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("migrate_strip.json");
+        let path_str = file_path.to_str().unwrap();
+
+        // Write a file with a plaintext password (save_password = true)
+        let conn = make_ssh_conn("c1", "password", Some("secret123"), Some(true));
+        write_raw_external_file(path_str, "Test", Vec::new(), vec![conn]);
+
+        // Load — should trigger migration
+        let main_folders: HashSet<&str> = HashSet::new();
+        let source = try_load_external_file(path_str, &main_folders, &mock).unwrap();
+
+        // In-memory password should be stripped
+        assert_eq!(source.connections.len(), 1);
+        if let ConnectionConfig::Ssh(ssh) = &source.connections[0].config {
+            assert!(ssh.password.is_none(), "In-memory password should be None");
+        } else {
+            panic!("Expected SSH config");
+        }
+
+        // Credential store should have the password
+        let stored = mock.stored.lock().unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].0.connection_id, "c1");
+        assert_eq!(stored[0].0.credential_type, CredentialType::Password);
+        assert_eq!(stored[0].1, "secret123");
+
+        // Re-read the file — password should be gone from disk
+        let raw = std::fs::read_to_string(path_str).unwrap();
+        assert!(
+            !raw.contains("secret123"),
+            "Password should be stripped from disk"
+        );
+    }
+
+    #[test]
+    fn external_file_migration_skips_when_no_passwords() {
+        let mock = MockStore::new();
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("no_pw.json");
+        let path_str = file_path.to_str().unwrap();
+
+        // Write a file with no password
+        let conn = make_ssh_conn("c1", "key", None, None);
+        write_raw_external_file(path_str, "Test", Vec::new(), vec![conn]);
+
+        // Snapshot original file content
+        let original = std::fs::read_to_string(path_str).unwrap();
+
+        // Load
+        let main_folders: HashSet<&str> = HashSet::new();
+        let _source = try_load_external_file(path_str, &main_folders, &mock).unwrap();
+
+        // File content should be unchanged (no rewrite)
+        let after = std::fs::read_to_string(path_str).unwrap();
+        assert_eq!(original, after, "File should not have been rewritten");
+
+        // Credential store should be empty
+        assert!(mock.stored.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn external_file_migration_preserves_folder_structure() {
+        let mock = MockStore::new();
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("folders.json");
+        let path_str = file_path.to_str().unwrap();
+
+        let folders = vec![ConnectionFolder {
+            id: "f1".to_string(),
+            name: "My Folder".to_string(),
+            parent_id: None,
+            is_expanded: true,
+        }];
+
+        let mut conn = make_ssh_conn("c1", "password", Some("pw"), Some(true));
+        conn.folder_id = Some("f1".to_string());
+        write_raw_external_file(path_str, "Named File", folders, vec![conn]);
+
+        // Load with empty main_folder_ids
+        let main_folders: HashSet<&str> = HashSet::new();
+        let _source = try_load_external_file(path_str, &main_folders, &mock).unwrap();
+
+        // Re-read the file and verify structure is preserved on disk
+        let raw = std::fs::read_to_string(path_str).unwrap();
+        let on_disk: ExternalConnectionStore = serde_json::from_str(&raw).unwrap();
+        assert_eq!(on_disk.name, Some("Named File".to_string()));
+        assert_eq!(on_disk.folders.len(), 1);
+        assert_eq!(on_disk.folders[0].id, "f1");
+        assert_eq!(on_disk.folders[0].name, "My Folder");
+        assert_eq!(on_disk.connections.len(), 1);
+        // folder_id should still be on disk (only modified in-memory for display)
+        assert_eq!(
+            on_disk.connections[0].folder_id,
+            Some("f1".to_string()),
+            "folder_id should be preserved on disk"
+        );
+        // Password should be gone
+        if let ConnectionConfig::Ssh(ssh) = &on_disk.connections[0].config {
+            assert!(ssh.password.is_none(), "Password stripped on disk");
+        } else {
+            panic!("Expected SSH config on disk");
+        }
+    }
+
+    #[test]
+    fn external_file_migration_no_store_when_save_false() {
+        let mock = MockStore::new();
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("no_save.json");
+        let path_str = file_path.to_str().unwrap();
+
+        // save_password is None (not true), so password should NOT be stored in credential store
+        let conn = make_ssh_conn("c1", "password", Some("ephemeral"), None);
+        write_raw_external_file(path_str, "Test", Vec::new(), vec![conn]);
+
+        let main_folders: HashSet<&str> = HashSet::new();
+        let _source = try_load_external_file(path_str, &main_folders, &mock).unwrap();
+
+        // Credential store should be empty — password was discarded, not stored
+        assert!(
+            mock.stored.lock().unwrap().is_empty(),
+            "Should not store when save_password is not true"
+        );
+
+        // File should no longer contain the password
+        let raw = std::fs::read_to_string(path_str).unwrap();
+        assert!(
+            !raw.contains("ephemeral"),
+            "Password should be stripped from disk even without save"
+        );
+    }
+
+    #[test]
+    fn external_file_migration_handles_mixed_connections() {
+        let mock = MockStore::new();
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("mixed.json");
+        let path_str = file_path.to_str().unwrap();
+
+        let connections = vec![
+            // SSH with password + save_password=true → should store
+            make_ssh_conn("c1", "password", Some("pw1"), Some(true)),
+            // Local shell → no password to handle
+            make_local_conn("c2"),
+            // SSH key auth with passphrase + save_password=true → should store
+            make_ssh_conn("c3", "key", Some("passphrase3"), Some(true)),
+            // SSH with no password → nothing to do
+            make_ssh_conn("c4", "password", None, Some(true)),
+        ];
+        write_raw_external_file(path_str, "Mixed", Vec::new(), connections);
+
+        let main_folders: HashSet<&str> = HashSet::new();
+        let source = try_load_external_file(path_str, &main_folders, &mock).unwrap();
+
+        // All 4 connections should be returned
+        assert_eq!(source.connections.len(), 4);
+
+        // Exactly 2 credentials stored (c1 password + c3 key passphrase)
+        let stored = mock.stored.lock().unwrap();
+        assert_eq!(stored.len(), 2, "Should store exactly 2 credentials");
+
+        let c1_entry = stored
+            .iter()
+            .find(|(k, _)| k.connection_id == "c1")
+            .unwrap();
+        assert_eq!(c1_entry.0.credential_type, CredentialType::Password);
+        assert_eq!(c1_entry.1, "pw1");
+
+        let c3_entry = stored
+            .iter()
+            .find(|(k, _)| k.connection_id == "c3")
+            .unwrap();
+        assert_eq!(c3_entry.0.credential_type, CredentialType::KeyPassphrase);
+        assert_eq!(c3_entry.1, "passphrase3");
+
+        // File on disk should be clean
+        let raw = std::fs::read_to_string(path_str).unwrap();
+        assert!(!raw.contains("pw1"), "pw1 should be stripped from disk");
+        assert!(
+            !raw.contains("passphrase3"),
+            "passphrase3 should be stripped from disk"
+        );
     }
 
     #[test]
