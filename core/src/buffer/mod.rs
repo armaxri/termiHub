@@ -164,10 +164,10 @@ mod tests {
         rb.write(b"AAAA"); // fill
         rb.write(b"BBBB"); // overwrite all
         rb.write(b"CC"); // partial overwrite
-        // After "AAAA": data=[A,A,A,A], write_pos=0, total=4
-        // After "BBBB": data=[B,B,B,B], write_pos=0, total=8
-        // After "CC":   data=[C,C,B,B], write_pos=2, total=10
-        // read_all: total>capacity, so: data[2..] + data[..2] = [B,B,C,C]
+                         // After "AAAA": data=[A,A,A,A], write_pos=0, total=4
+                         // After "BBBB": data=[B,B,B,B], write_pos=0, total=8
+                         // After "CC":   data=[C,C,B,B], write_pos=2, total=10
+                         // read_all: total>capacity, so: data[2..] + data[..2] = [B,B,C,C]
         assert_eq!(rb.read_all(), b"BBCC");
     }
 
