@@ -38,6 +38,8 @@ uuid = { version = "1", features = ["v4", "serde"] }
 base64 = "0.22"
 anyhow = "1"
 thiserror = "2"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking"] }
+dirs = "6"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["registry", "fmt"] }
 chrono = "0.4"

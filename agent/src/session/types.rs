@@ -1,9 +1,13 @@
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
+#[cfg(unix)]
+use crate::docker::backend::DockerBackend;
 use crate::serial::backend::SerialBackend;
 #[cfg(unix)]
 use crate::shell::backend::ShellBackend;
+#[cfg(unix)]
+use crate::ssh::backend::SshBackend;
 
 /// The type of session running on the agent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -12,6 +16,7 @@ pub enum SessionType {
     Shell,
     Serial,
     Docker,
+    Ssh,
 }
 
 impl SessionType {
@@ -21,6 +26,7 @@ impl SessionType {
             "shell" => Some(Self::Shell),
             "serial" => Some(Self::Serial),
             "docker" => Some(Self::Docker),
+            "ssh" => Some(Self::Ssh),
             _ => None,
         }
     }
@@ -30,6 +36,7 @@ impl SessionType {
             Self::Shell => "shell",
             Self::Serial => "serial",
             Self::Docker => "docker",
+            Self::Ssh => "ssh",
         }
     }
 }
@@ -71,6 +78,12 @@ pub struct SessionInfo {
     /// Handle to the shell backend, if this is a shell session (Unix only).
     #[cfg(unix)]
     pub shell_backend: Option<ShellBackend>,
+    /// Handle to the Docker backend, if this is a Docker session (Unix only).
+    #[cfg(unix)]
+    pub docker_backend: Option<DockerBackend>,
+    /// Handle to the SSH jump host backend, if this is an SSH session (Unix only).
+    #[cfg(unix)]
+    pub ssh_backend: Option<SshBackend>,
 }
 
 /// Read-only snapshot of session state, returned from list/create.
@@ -155,5 +168,24 @@ mod tests {
     fn session_type_docker_serializes_lowercase() {
         let v = serde_json::to_value(SessionType::Docker).unwrap();
         assert_eq!(v, "docker");
+    }
+
+    #[test]
+    fn session_type_ssh_from_str() {
+        assert_eq!(SessionType::from_str("ssh"), Some(SessionType::Ssh));
+    }
+
+    #[test]
+    fn session_type_ssh_as_str_round_trip() {
+        assert_eq!(
+            SessionType::from_str(SessionType::Ssh.as_str()),
+            Some(SessionType::Ssh)
+        );
+    }
+
+    #[test]
+    fn session_type_ssh_serializes_lowercase() {
+        let v = serde_json::to_value(SessionType::Ssh).unwrap();
+        assert_eq!(v, "ssh");
     }
 }

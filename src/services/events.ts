@@ -255,6 +255,27 @@ export async function onAgentSetupProgress(
   });
 }
 
+interface AgentDeployProgressPayload {
+  agent_id: string;
+  step: string;
+  message: string;
+  progress: number;
+}
+
+/** Subscribe to agent deploy progress events. */
+export async function onAgentDeployProgress(
+  callback: (agentId: string, step: string, message: string, progress: number) => void
+): Promise<UnlistenFn> {
+  return await listen<AgentDeployProgressPayload>("agent-deploy-progress", (event) => {
+    callback(
+      event.payload.agent_id,
+      event.payload.step,
+      event.payload.message,
+      event.payload.progress
+    );
+  });
+}
+
 interface VscodeEditCompletePayload {
   remotePath: string;
   success: boolean;

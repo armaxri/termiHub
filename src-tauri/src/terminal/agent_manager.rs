@@ -37,6 +37,8 @@ pub struct AgentCapabilities {
 #[serde(rename_all = "camelCase")]
 pub struct AgentConnectResult {
     pub capabilities: AgentCapabilities,
+    pub agent_version: String,
+    pub protocol_version: String,
 }
 
 /// Info about a remote session on the agent.
@@ -93,6 +95,12 @@ struct AgentConnection {
     command_tx: mpsc::Sender<AgentIoCommand>,
     alive: Arc<AtomicBool>,
     capabilities: AgentCapabilities,
+    /// Stored for future version-gated feature checks.
+    #[allow(dead_code)]
+    agent_version: String,
+    /// Stored for future protocol negotiation.
+    #[allow(dead_code)]
+    protocol_version: String,
 }
 
 /// Manages connections to remote agents.
@@ -179,16 +187,28 @@ impl AgentConnectionManager {
             TerminalError::RemoteError(format!("Parse initialize response: {}", e))
         })?;
 
-        let capabilities = match msg {
+        let (capabilities, agent_version, protocol_version) = match msg {
             jsonrpc::JsonRpcMessage::Response { result, .. } => {
                 let caps = result.get("capabilities").ok_or_else(|| {
                     emit_agent_state(&self.app_handle, agent_id, "disconnected");
                     TerminalError::RemoteError("Missing capabilities in initialize response".into())
                 })?;
-                serde_json::from_value::<AgentCapabilities>(caps.clone()).map_err(|e| {
-                    emit_agent_state(&self.app_handle, agent_id, "disconnected");
-                    TerminalError::RemoteError(format!("Parse capabilities: {}", e))
-                })?
+                let capabilities = serde_json::from_value::<AgentCapabilities>(caps.clone())
+                    .map_err(|e| {
+                        emit_agent_state(&self.app_handle, agent_id, "disconnected");
+                        TerminalError::RemoteError(format!("Parse capabilities: {}", e))
+                    })?;
+                let agent_version = result
+                    .get("agent_version")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+                let protocol_version = result
+                    .get("protocol_version")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+                (capabilities, agent_version, protocol_version)
             }
             jsonrpc::JsonRpcMessage::Error { message, .. } => {
                 emit_agent_state(&self.app_handle, agent_id, "disconnected");
@@ -233,6 +253,8 @@ impl AgentConnectionManager {
 
         let result = AgentConnectResult {
             capabilities: capabilities.clone(),
+            agent_version: agent_version.clone(),
+            protocol_version: protocol_version.clone(),
         };
 
         agents.insert(
@@ -241,6 +263,8 @@ impl AgentConnectionManager {
                 command_tx,
                 alive,
                 capabilities,
+                agent_version,
+                protocol_version,
             },
         );
 
@@ -280,6 +304,32 @@ impl AgentConnectionManager {
     pub fn get_capabilities(&self, agent_id: &str) -> Option<AgentCapabilities> {
         let agents = self.agents.lock().unwrap_or_else(|e| e.into_inner());
         agents.get(agent_id).map(|c| c.capabilities.clone())
+    }
+
+    /// Send `agent.shutdown` to a connected agent and disconnect it.
+    ///
+    /// Returns the number of sessions that were detached (left running)
+    /// on the remote side, or an error if the agent is not connected.
+    pub fn shutdown_agent(
+        &self,
+        agent_id: &str,
+        reason: Option<&str>,
+    ) -> Result<u32, TerminalError> {
+        let mut params = serde_json::json!({});
+        if let Some(r) = reason {
+            params["reason"] = serde_json::Value::String(r.to_string());
+        }
+
+        let result = self.send_request(agent_id, "agent.shutdown", params)?;
+        let detached = result
+            .get("detached_sessions")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
+
+        // Now disconnect the local side
+        let _ = self.disconnect_agent(agent_id);
+
+        Ok(detached)
     }
 
     /// Send a JSON-RPC request to an agent and wait for the response.

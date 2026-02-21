@@ -334,6 +334,9 @@ function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: boolean 
     const slotEl = slotRef.current;
     if (!slotEl) return;
 
+    // Capture ref value so cleanup uses the same node even if the ref changes
+    const parkingEl = parkingRef.current;
+
     const tryAdopt = () => {
       const termEl = getElement(tabId);
       if (termEl && termEl.parentNode !== slotEl) {
@@ -353,7 +356,7 @@ function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: boolean 
       // Park the element back so it's not orphaned
       const termEl = getElement(tabId);
       if (termEl && termEl.parentNode === slotEl) {
-        parkingRef.current?.appendChild(termEl);
+        parkingEl?.appendChild(termEl);
       }
     };
   }, [tabId, getElement, parkingRef]);

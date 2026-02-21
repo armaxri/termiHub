@@ -4,6 +4,7 @@ use serde_json::Value;
 use tauri::State;
 use tracing::{debug, info};
 
+use crate::terminal::agent_deploy::{AgentDeployConfig, AgentDeployResult, AgentProbeResult};
 use crate::terminal::agent_manager::{
     AgentCapabilities, AgentConnectResult, AgentConnectionManager, AgentDefinitionInfo,
     AgentSessionInfo,
@@ -43,6 +44,27 @@ pub fn disconnect_agent(
     agent_manager
         .disconnect_agent(&agent_id)
         .map_err(|e| e.to_string())
+}
+
+/// Gracefully shut down a remote agent and disconnect.
+///
+/// Sends `agent.shutdown` over JSON-RPC, waits for the response, then
+/// disconnects. Returns the number of sessions left running on the remote.
+#[tauri::command]
+pub async fn shutdown_agent(
+    agent_id: String,
+    reason: Option<String>,
+    agent_manager: State<'_, Arc<AgentConnectionManager>>,
+) -> Result<u32, String> {
+    info!(agent_id, "Shutting down remote agent");
+    let manager = agent_manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        manager
+            .shutdown_agent(&agent_id, reason.as_deref())
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .unwrap_or_else(|e| Err(e.to_string()))
 }
 
 #[tauri::command]
@@ -151,6 +173,71 @@ pub async fn setup_remote_agent(
             &setup_config,
             &app_handle,
             &tm,
+        )
+        .map_err(|e| e.to_string())
+    })
+    .await
+    .unwrap_or_else(|e| Err(e.to_string()))
+}
+
+/// Probe a remote host for an existing agent binary.
+///
+/// Checks if `termihub-agent` is installed and what version it is,
+/// without modifying anything on the remote host.
+#[tauri::command]
+pub async fn probe_remote_agent(
+    config: RemoteAgentConfig,
+    expected_version: Option<String>,
+) -> Result<AgentProbeResult, String> {
+    info!(host = %config.host, "Probing remote host for agent");
+    let version = expected_version.unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::terminal::agent_deploy::probe_remote_agent(&config, &version)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .unwrap_or_else(|e| Err(e.to_string()))
+}
+
+/// Deploy the agent binary to a remote host via SFTP.
+///
+/// Resolves the binary (cache → bundled → download), uploads it,
+/// and verifies the installation.
+#[tauri::command]
+pub async fn deploy_agent(
+    agent_id: String,
+    config: RemoteAgentConfig,
+    deploy_config: AgentDeployConfig,
+    app_handle: tauri::AppHandle,
+) -> Result<AgentDeployResult, String> {
+    info!(agent_id, host = %config.host, "Deploying agent to remote host");
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::terminal::agent_deploy::deploy_agent(&agent_id, &config, &deploy_config, &app_handle)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .unwrap_or_else(|e| Err(e.to_string()))
+}
+
+/// Update the agent: shut down the running instance, then deploy a new binary.
+#[tauri::command]
+pub async fn update_agent(
+    agent_id: String,
+    config: RemoteAgentConfig,
+    deploy_config: AgentDeployConfig,
+    app_handle: tauri::AppHandle,
+    agent_manager: State<'_, Arc<AgentConnectionManager>>,
+) -> Result<AgentDeployResult, String> {
+    info!(agent_id, host = %config.host, "Updating agent on remote host");
+    let manager = agent_manager.inner().clone();
+    let aid = agent_id.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::terminal::agent_deploy::update_agent(
+            &agent_id,
+            &config,
+            &deploy_config,
+            &app_handle,
+            || manager.shutdown_agent(&aid, Some("update")),
         )
         .map_err(|e| e.to_string())
     })

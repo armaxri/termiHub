@@ -105,7 +105,7 @@ pub enum ConnectionConfig {
     #[serde(rename = "serial")]
     Serial(SerialConfig),
     #[serde(rename = "remote-session")]
-    RemoteSession(RemoteSessionConfig),
+    RemoteSession(Box<RemoteSessionConfig>),
     #[serde(rename = "docker")]
     Docker(DockerConfig),
 }
@@ -210,6 +210,24 @@ pub struct RemoteSessionConfig {
     /// Remove Docker container on exit (for docker session type).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub docker_remove_on_exit: Option<bool>,
+    /// SSH target host (for ssh session type — jump host).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ssh_host: Option<String>,
+    /// SSH target port (for ssh session type).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ssh_port: Option<u16>,
+    /// SSH username (for ssh session type).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ssh_username: Option<String>,
+    /// SSH auth method: "key", "password", or "agent" (for ssh session type).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ssh_auth_method: Option<String>,
+    /// SSH password (for ssh session type, password auth).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ssh_password: Option<String>,
+    /// SSH private key path (for ssh session type, key auth).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ssh_key_path: Option<String>,
 }
 
 /// Event emitted when a remote connection's state changes.
@@ -227,7 +245,7 @@ impl ConnectionConfig {
             Self::Ssh(cfg) => Self::Ssh(cfg.expand()),
             Self::Telnet(cfg) => Self::Telnet(cfg.expand()),
             Self::Serial(cfg) => Self::Serial(cfg.expand()),
-            Self::RemoteSession(cfg) => Self::RemoteSession(cfg.expand()),
+            Self::RemoteSession(cfg) => Self::RemoteSession(Box::new(cfg.expand())),
             Self::Docker(cfg) => Self::Docker(cfg.expand()),
         }
     }
@@ -328,6 +346,13 @@ impl RemoteSessionConfig {
         self.docker_working_directory = self
             .docker_working_directory
             .map(|s| expand_tilde(&expand_env_placeholders(&s)));
+        self.ssh_host = self.ssh_host.map(|s| expand_env_placeholders(&s));
+        self.ssh_username = self.ssh_username.map(|s| expand_env_placeholders(&s));
+        self.ssh_key_path = self.ssh_key_path.map(|s| {
+            let stripped = s.trim().trim_matches('"').trim_matches('\'');
+            expand_tilde(&expand_env_placeholders(stripped))
+        });
+        self.ssh_password = self.ssh_password.map(|s| expand_env_placeholders(&s));
         self
     }
 }
@@ -630,7 +655,7 @@ mod tests {
 
     #[test]
     fn remote_session_config_serde_round_trip() {
-        let config = ConnectionConfig::RemoteSession(RemoteSessionConfig {
+        let config = ConnectionConfig::RemoteSession(Box::new(RemoteSessionConfig {
             agent_id: "agent-123".to_string(),
             session_type: "shell".to_string(),
             shell: Some("/bin/bash".to_string()),
@@ -647,7 +672,13 @@ mod tests {
             docker_volumes: None,
             docker_working_directory: None,
             docker_remove_on_exit: None,
-        });
+            ssh_host: None,
+            ssh_port: None,
+            ssh_username: None,
+            ssh_auth_method: None,
+            ssh_password: None,
+            ssh_key_path: None,
+        }));
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: ConnectionConfig = serde_json::from_str(&json).unwrap();
         if let ConnectionConfig::RemoteSession(session) = deserialized {
@@ -663,7 +694,7 @@ mod tests {
 
     #[test]
     fn remote_session_config_serial_serde_round_trip() {
-        let config = ConnectionConfig::RemoteSession(RemoteSessionConfig {
+        let config = ConnectionConfig::RemoteSession(Box::new(RemoteSessionConfig {
             agent_id: "agent-456".to_string(),
             session_type: "serial".to_string(),
             shell: None,
@@ -680,7 +711,13 @@ mod tests {
             docker_volumes: None,
             docker_working_directory: None,
             docker_remove_on_exit: None,
-        });
+            ssh_host: None,
+            ssh_port: None,
+            ssh_username: None,
+            ssh_auth_method: None,
+            ssh_password: None,
+            ssh_key_path: None,
+        }));
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: ConnectionConfig = serde_json::from_str(&json).unwrap();
         if let ConnectionConfig::RemoteSession(session) = deserialized {
@@ -695,7 +732,7 @@ mod tests {
 
     #[test]
     fn remote_session_config_json_shape_matches_frontend() {
-        let config = ConnectionConfig::RemoteSession(RemoteSessionConfig {
+        let config = ConnectionConfig::RemoteSession(Box::new(RemoteSessionConfig {
             agent_id: "agent-1".to_string(),
             session_type: "shell".to_string(),
             shell: Some("/bin/zsh".to_string()),
@@ -712,7 +749,13 @@ mod tests {
             docker_volumes: None,
             docker_working_directory: None,
             docker_remove_on_exit: None,
-        });
+            ssh_host: None,
+            ssh_port: None,
+            ssh_username: None,
+            ssh_auth_method: None,
+            ssh_password: None,
+            ssh_key_path: None,
+        }));
         let json = serde_json::to_string(&config).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["type"], "remote-session");
@@ -761,6 +804,12 @@ mod tests {
             docker_volumes: None,
             docker_working_directory: None,
             docker_remove_on_exit: None,
+            ssh_host: None,
+            ssh_port: None,
+            ssh_username: None,
+            ssh_auth_method: None,
+            ssh_password: None,
+            ssh_key_path: None,
         };
         let expanded = config.expand();
         assert_eq!(expanded.shell, Some("/usr/bin/fish".to_string()));

@@ -648,6 +648,22 @@ Each section groups related tests by feature area. Individual test items referen
 - [ ] After setup, right-click agent → "Connect" — verify agent connects successfully
 - [ ] Test error case: select a non-existent binary path — verify error is shown
 
+### Agent Docker container sessions (PR TBD)
+
+- [ ] Start agent in TCP mode: `cargo run -- --listen 127.0.0.1:7685`
+- [ ] Send `initialize` + `session.create` (type "docker", config `{"image":"alpine:latest","shell":"/bin/sh","cols":80,"rows":24}`) — verify session ID returned
+- [ ] Send `session.attach` — verify `session.output` notifications with shell prompt inside the container
+- [ ] Send `session.input` with base64-encoded `echo hello\n` — verify output contains "hello"
+- [ ] Send `session.resize` with cols=120, rows=40 — verify no error
+- [ ] Send `session.detach`, then `session.attach` again — verify buffer replay includes previous output
+- [ ] Run `docker ps` on host — verify `termihub-<session-id>` container exists
+- [ ] Kill the agent process, restart it — verify `session.list` shows the recovered Docker session
+- [ ] Attach to the recovered Docker session — verify container is still functional
+- [ ] Send `session.close` — verify session is removed, daemon exits, and container is stopped/removed
+- [ ] Create a Docker session with `remove_on_exit: false`, close it — verify container is stopped but not removed (`docker ps -a` shows it)
+- [ ] Create a Docker session with env vars `{"env_vars":[{"key":"FOO","value":"bar"}]}` — run `echo $FOO` in container — verify output is "bar"
+- [ ] Create a Docker session with volumes `{"volumes":[{"host_path":"/tmp","container_path":"/mnt/host","read_only":true}]}` — run `ls /mnt/host` in container — verify host files visible
+
 ### Agent shell sessions (PR TBD)
 
 - [ ] Start agent in TCP mode: `cargo run -- --listen 127.0.0.1:7685`

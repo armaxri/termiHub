@@ -108,6 +108,7 @@ graph TB
     SSH_HOST[SSH Servers<br/>Build servers, Raspberry Pi]
     TELNET_HOST[Telnet Servers<br/>Network equipment]
     FS[File Systems<br/>Local and remote via SFTP]
+    AGENT[Remote Agents<br/>Persistent sessions on<br/>remote hosts]
 
     DEV -->|Keyboard / Mouse| APP
     APP -->|PTY| LOCAL
@@ -115,6 +116,7 @@ graph TB
     APP -->|SSH protocol| SSH_HOST
     APP -->|Telnet protocol| TELNET_HOST
     APP -->|SFTP / Local FS| FS
+    APP -->|SSH + JSON-RPC| AGENT
 ```
 
 | Partner | Description |
@@ -125,6 +127,7 @@ graph TB
 | **SSH Servers** | Remote machines (build servers, Raspberry Pi test agents) accessed over SSH |
 | **Telnet Servers** | Legacy network equipment accessed via Telnet |
 | **File Systems** | Local and remote file systems for browsing and transfer |
+| **Remote Agents** | Remote machines running `termihub-agent` for persistent shell sessions, serial proxy, file browsing, and system monitoring |
 
 ### Technical Context
 
@@ -191,7 +194,7 @@ graph TB
         subgraph "Rust Backend"
             TM[Terminal Manager]
             LB[Local Backends]
-            RB[Remote Backend Stub]
+            RB[RemoteBackend]
 
             LB --> PTY[PTY Sessions]
             LB --> SERIAL[Serial Ports]
@@ -200,23 +203,20 @@ graph TB
         end
     end
 
-    subgraph "Future: Raspberry Pi Agent"
-        AGENT[Session Manager]
-        AGENT --> SHELLS[Persistent Shells]
-        AGENT --> SERIAL_PROXY[Serial Proxy]
+    subgraph "Remote Agent (termihub-agent)"
+        SM[Session Manager]
+        SM --> DAEMONS["Session Daemons<br/>(Shell · Docker · SSH)"]
+        SM --> SERIAL_B[Serial Backend]
+        SM --> FILES[File Browsing]
+        SM --> MON[System Monitoring]
     end
 
     UI <--> IPC
     IPC <--> TM
     TM --> LB
-    TM -.-> RB
+    TM --> RB
 
-    RB -.->|SSH Tunnel| AGENT
-
-    style RB stroke-dasharray: 5 5
-    style AGENT stroke-dasharray: 5 5
-    style SHELLS stroke-dasharray: 5 5
-    style SERIAL_PROXY stroke-dasharray: 5 5
+    RB -->|SSH Tunnel + JSON-RPC| SM
 ```
 
 **Contained building blocks:**
@@ -227,8 +227,8 @@ graph TB
 | **Tauri IPC Bridge** | Bidirectional communication layer between frontend and backend |
 | **Terminal Manager** | Orchestrates terminal session lifecycle across all backend types |
 | **Local Backends** | PTY, Serial, SSH, and Telnet implementations |
-| **Remote Backend Stub** | Future proxy to Raspberry Pi agent (dashed = not yet implemented) |
-| **Raspberry Pi Agent** | Future standalone binary for persistent remote sessions |
+| **RemoteBackend** | Proxy to remote agent instances — implements `TerminalBackend` trait, forwarding I/O as JSON-RPC over SSH |
+| **Remote Agent** | Standalone binary (`termihub-agent`) for persistent remote sessions, file browsing, and system monitoring. See [Remote Protocol](remote-protocol.md) for the protocol specification. |
 
 ### Level 2: Frontend Components
 
@@ -291,6 +291,53 @@ graph LR
 | **Events** | `src-tauri/src/events/` | Event emitters for terminal output streaming |
 | **Utils** | `src-tauri/src/utils/` | Shell detection, env expansion, error helpers |
 
+### Level 2: Agent Modules
+
+The remote agent (`termihub-agent`) uses a **session daemon architecture** for shell persistence. Each shell session runs as an independent daemon process (`termihub-agent --daemon <session-id>`) that manages a PTY, a 1 MiB ring buffer for output replay, and a Unix domain socket for IPC. The agent connects to daemons as a client, forwarding I/O between the desktop (JSON-RPC) and the daemon (binary frame protocol).
+
+```mermaid
+graph LR
+    subgraph "Agent Process"
+        JSONRPC[JSON-RPC Transport<br/>stdio or TCP]
+        DISPATCH[Handler / Dispatch]
+        SESSIONS[Session Manager]
+        STATE[State Persistence<br/>state.json]
+    end
+
+    subgraph "Session Daemon (per session)"
+        SOCKET[Unix Domain Socket]
+        PTY_MASTER[PTY Master]
+        RING[Ring Buffer · 1 MiB]
+        CHILD["Child Process<br/>(shell / docker exec / ssh)"]
+    end
+
+    JSONRPC <--> DISPATCH
+    DISPATCH <--> SESSIONS
+    SESSIONS <--> STATE
+    SESSIONS <-->|Binary Frame Protocol| SOCKET
+    SOCKET <--> PTY_MASTER
+    PTY_MASTER <--> RING
+    PTY_MASTER <--> CHILD
+```
+
+| Module | Location | Responsibility |
+|--------|----------|---------------|
+| **Buffer** | `agent/src/buffer/` | Shared 1 MiB ring buffer used by session daemons and serial backend for output replay |
+| **Daemon** | `agent/src/daemon/` | Binary frame protocol (`[type: 1B][length: 4B BE][payload]`) and session daemon process (PTY allocation, poll-based event loop, Unix socket listener) |
+| **Shell** | `agent/src/shell/` | ShellBackend — agent-side daemon client for PTY shell sessions |
+| **Docker** | `agent/src/docker/` | DockerBackend — Docker container sessions via daemon infrastructure |
+| **SSH** | `agent/src/ssh/` | SshBackend — SSH jump host sessions via daemon infrastructure |
+| **Serial** | `agent/src/serial/` | SerialBackend — direct serial port access with ring buffer (no daemon) |
+| **Session** | `agent/src/session/` | SessionManager (create, attach, detach, close, recover), session types and snapshots, prepared connection definitions |
+| **Files** | `agent/src/files/` | Connection-scoped file browsing (local filesystem, SFTP relay for SSH targets, Docker exec) |
+| **Monitoring** | `agent/src/monitoring/` | System stats collection and parsing — CPU, memory, disk, network for agent host and jump targets |
+| **Handler** | `agent/src/handler/` | JSON-RPC method dispatcher — routes requests to session, files, monitoring, and agent lifecycle handlers |
+| **Protocol** | `agent/src/protocol/` | Protocol types (configs, capabilities, results, error codes) for all JSON-RPC methods |
+| **State** | `agent/src/state/` | Session state persistence (`~/.config/termihub-agent/state.json`) for daemon recovery after agent restart |
+| **IO** | `agent/src/io/` | Transport layer — stdio (production SSH mode) and TCP (development/test mode) |
+
+**Planned extensions:** Docker container sessions, SSH jump host sessions, and an enhanced prepared connections model with folder hierarchy are designed but not yet fully integrated. See [Agent Concept](concepts/agent.md) for the complete design vision.
+
 ### Level 3: Terminal Backends
 
 ```mermaid
@@ -332,8 +379,9 @@ classDiagram
     }
 
     class RemoteBackend {
-        -agent_connection: AgentConnection
+        -agent_session: AgentSession
         -session_id: String
+        -config: RemoteSessionConfig
         +new(config) Result~Self~
         +reconnect() Result~()~
     }
@@ -460,6 +508,103 @@ sequenceDiagram
     Store-->>DnD: Re-render layout
 ```
 
+### Remote Session Creation (via Agent)
+
+```mermaid
+sequenceDiagram
+    participant UI as React UI
+    participant Desktop as Desktop Backend
+    participant SSH as SSH Channel
+    participant Agent as termihub-agent
+    participant SD as Session Daemon
+
+    UI->>Desktop: create_terminal(RemoteConfig)
+    Desktop->>SSH: Connect to host
+    Desktop->>SSH: Start termihub-agent --stdio
+
+    Desktop->>Agent: initialize {version, capabilities}
+    Agent-->>Desktop: {agent_version, session_types, shells}
+
+    Desktop->>Agent: session.create {type: shell, config}
+    Agent->>SD: Spawn daemon process (termihub-agent --daemon)
+    SD->>SD: Allocate PTY, start shell
+    SD-->>Agent: Socket ready
+    Agent-->>Desktop: {session_id}
+
+    Desktop->>Agent: session.attach {session_id}
+    Agent->>SD: Connect to Unix socket
+    SD-->>Agent: BufferReplay + Ready
+    Agent-->>Desktop: session.output (buffered data)
+
+    loop Output streaming
+        SD->>Agent: Output frame (binary)
+        Agent-->>Desktop: session.output (base64 JSON-RPC)
+        Desktop-->>UI: Terminal data
+    end
+```
+
+### Session Reconnection
+
+When the desktop reconnects after a disconnect, sessions are recovered from living daemon processes:
+
+```mermaid
+sequenceDiagram
+    participant Desktop as Desktop Backend
+    participant Agent as termihub-agent (new)
+    participant State as state.json
+    participant SD as Session Daemons
+
+    Desktop->>Agent: SSH connect + start agent
+    Agent->>State: Load persisted sessions
+    Agent->>SD: Scan for living daemon sockets
+    SD-->>Agent: 3 daemons alive, 1 dead
+    Agent->>Agent: Reconnect to living daemons, mark dead sessions
+
+    Desktop->>Agent: initialize
+    Agent-->>Desktop: {capabilities}
+
+    Desktop->>Agent: session.list
+    Agent-->>Desktop: [{session1}, {session2}, {session3}]
+
+    loop For each session
+        Desktop->>Agent: session.attach {session_id}
+        Agent->>SD: Connect to daemon socket
+        SD-->>Agent: Ring buffer replay
+        Agent-->>Desktop: session.output (history)
+    end
+
+    Note over Desktop: Tabs restored with buffered output
+```
+
+### Agent Update Flow
+
+```mermaid
+sequenceDiagram
+    participant Desktop as termiHub Desktop
+    participant Agent as Agent (old version)
+    participant SD as Session Daemons
+    participant NewAgent as Agent (new version)
+
+    Desktop->>Agent: initialize
+    Agent-->>Desktop: {version: "0.2.0"}
+    Note over Desktop: Expected 0.3.0 — mismatch
+
+    Desktop->>Agent: agent.shutdown {reason: "update"}
+    Note over Agent: Detach from all daemons, save state
+    Agent-->>Desktop: {detached_sessions: 3}
+    Note over Agent: Process exits
+    Note over SD: Daemons keep running (orphaned)
+
+    Desktop->>Desktop: SFTP upload new binary + chmod +x
+
+    Desktop->>NewAgent: Start termihub-agent --stdio
+    Desktop->>NewAgent: initialize {version: "0.3.0"}
+    NewAgent->>SD: Recover orphaned daemons from state.json
+    NewAgent-->>Desktop: {version: "0.3.0"}
+
+    Note over Desktop: Sessions survived the update seamlessly
+```
+
 ---
 
 ## 7. Deployment View
@@ -509,7 +654,7 @@ See [Releasing](releasing.md) for the full release process.
 
 The `scripts/` directory provides cross-platform helper scripts (`.sh` + `.cmd` variants) for common tasks: setup, dev server, build, test, format, quality checks, and clean. These mirror the CI checks locally. See [scripts/README.md](../scripts/README.md) for the full list.
 
-### Future: Raspberry Pi Agent
+### Remote Agent
 
 ```mermaid
 graph TB
@@ -517,19 +662,38 @@ graph TB
         APP[termiHub Desktop]
     end
 
-    subgraph "Raspberry Pi"
-        AGENT[termihub-agent<br/>systemd service]
-        AGENT --> SHELL[Persistent Shells]
-        AGENT --> SERIAL_P[Serial Port Proxy]
-        AGENT --> DB[(SQLite<br/>Session State)]
+    subgraph "Remote Host (Raspberry Pi / Build Server)"
+        AGENT["termihub-agent binary<br/>(auto-deployed via SSH)"]
+        SD1[Session Daemon 1<br/>PTY + Ring Buffer]
+        SD2[Session Daemon 2<br/>PTY + Ring Buffer]
+        STATE["~/.config/termihub-agent/<br/>state.json"]
+        SOCKETS["/tmp/termihub/&lt;user&gt;/<br/>session-*.sock"]
     end
 
     APP -->|SSH Tunnel + JSON-RPC| AGENT
-
-    style DB stroke-dasharray: 5 5
+    AGENT <-->|Binary Frame Protocol| SD1
+    AGENT <-->|Binary Frame Protocol| SD2
+    AGENT --> STATE
+    SD1 --- SOCKETS
+    SD2 --- SOCKETS
 ```
 
-The remote agent is a standalone Rust binary deployed to Raspberry Pi (ARM64). It maintains persistent terminal sessions that survive desktop disconnects. Communication uses JSON-RPC 2.0 over SSH stdio. See [Remote Protocol](remote-protocol.md) for the protocol specification.
+The remote agent is a standalone Rust binary (`termihub-agent`) that runs on remote hosts — Raspberry Pis, build servers, NAS devices, or any Linux/macOS machine. It maintains persistent terminal sessions that survive desktop disconnects and agent restarts. Communication uses JSON-RPC 2.0 over NDJSON through an SSH stdio channel.
+
+**Auto-deployment:** When the desktop connects to a host via SSH, it checks for `termihub-agent --version`. If the agent is missing or version-incompatible, the desktop detects the target architecture via `uname -m`, downloads the matching binary from GitHub Releases (or uses a bundled binary in development), uploads it via SFTP to `~/.local/bin/termihub-agent`, and starts it.
+
+**Agent binary targets:**
+
+| `uname -m` | Target | Use Case |
+|-------------|--------|----------|
+| `x86_64` | `linux-x86_64` | Linux build servers |
+| `aarch64` | `linux-aarch64` | Raspberry Pi 4/5, ARM servers |
+| `armv7l` | `linux-armv7` | Older Raspberry Pi models |
+| `arm64` | `darwin-aarch64` | macOS ARM hosts |
+
+**Platform constraint:** The session daemon architecture uses PTY, Unix domain sockets, and POSIX process APIs — it is Unix-only (`#[cfg(unix)]`). Windows agent support would require ConPTY + named pipes.
+
+See [Remote Protocol](remote-protocol.md) for the full protocol specification and [Agent Concept](concepts/agent.md) for the complete design vision.
 
 ---
 
@@ -731,9 +895,11 @@ graph TD
 | **WebView rendering differences** | Tauri uses platform WebView (Edge/WebKitGTK/WebKit) with subtle CSS differences | CI builds on all 3 OSes; test matrix for visual regression |
 | **libssh2 limitations** | `ssh2` crate wraps libssh2 which has occasional compatibility issues with newer SSH servers | Monitor upstream issues; consider `russh` migration if needed |
 | **Single-threaded IPC** | Tauri commands run on the main thread by default | Heavy operations use `tauri::async_runtime::spawn` |
-| **Session limit** | Hard cap at 50 concurrent terminals | Sufficient for target use case; can be raised if needed |
+| **Session limit** | Hard cap at 50 concurrent terminals (desktop), 20 concurrent sessions (agent) | Sufficient for target use case; can be raised if needed |
 | **No automated cross-platform tests for serial** | Serial tests require physical hardware | Docker-based virtual serial via socat in `examples/` |
 | **No native macOS E2E tests** | `tauri-driver` does not support macOS (no WKWebView driver exists); E2E tests run in Docker against the Linux build | Manual testing for macOS-specific behavior; evaluate [danielraffel/tauri-webdriver](https://github.com/danielraffel/tauri-webdriver) as it matures (see ADR-5) |
+| **Agent Unix-only daemon architecture** | Session daemons use PTY, Unix domain sockets, and POSIX process APIs — no Windows agent support | Agent targets are Linux/macOS remote hosts; Windows agent would require ConPTY + named pipes |
+| **Agent state.json not crash-safe** | Agent state is persisted as plain JSON; a crash mid-write could corrupt the file | Acceptable trade-off — daemon sockets provide independent recovery path even if state.json is lost |
 
 ---
 
@@ -747,6 +913,7 @@ graph TD
 | **SFTP** | SSH File Transfer Protocol — secure file transfer over an SSH connection |
 | **IPC** | Inter-Process Communication — the mechanism Tauri uses for frontend-backend communication |
 | **JSON-RPC** | JSON-based Remote Procedure Call protocol — used for desktop-to-agent communication |
+| **NDJSON** | Newline-Delimited JSON — the framing format used for JSON-RPC messages between desktop and agent over SSH stdio |
 | **IAC** | Interpret As Command — Telnet protocol escape sequence for control commands |
 | **xterm.js** | Open-source terminal emulator component that renders to HTML5 canvas |
 | **Tauri Command** | A Rust function exposed to the frontend via Tauri's IPC bridge (request-response pattern) |
@@ -754,7 +921,9 @@ graph TD
 | **Zustand** | Lightweight React state management library using hooks |
 | **dnd-kit** | React drag-and-drop toolkit used for tab reordering and panel splitting |
 | **WebView** | Platform-native web rendering component (Edge WebView2 on Windows, WebKitGTK on Linux, WebKit on macOS) |
-| **Ring Buffer** | Fixed-size circular buffer used in the remote agent to store serial data (1 MiB) for replay on client attach |
+| **Session Daemon** | Independent process (`termihub-agent --daemon <id>`) that manages a single PTY session, surviving agent restarts via Unix domain socket reconnection |
+| **Binary Frame Protocol** | Length-prefixed IPC protocol (`[type: 1B][length: 4B BE][payload]`) used between the agent and session daemons over Unix domain sockets |
+| **Ring Buffer** | Fixed-size circular buffer (1 MiB default) used by session daemons and the serial backend to store terminal output for replay on client attach |
 | **Backpressure** | Flow control mechanism where bounded channels prevent fast producers from overwhelming slow consumers |
 
 ---

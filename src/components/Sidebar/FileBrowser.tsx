@@ -324,6 +324,7 @@ function useFileBrowserSync() {
     }
   }, [
     fileBrowserEnabled,
+    activeTab,
     activeTabId,
     activeTabConnectionType,
     activeTabContentType,

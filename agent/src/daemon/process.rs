@@ -43,6 +43,11 @@ struct DaemonConfig {
     rows: u16,
     buffer_size: usize,
     env: HashMap<String, String>,
+    /// When set, run this command instead of a login shell.
+    /// Read from `TERMIHUB_COMMAND`.
+    command: Option<String>,
+    /// Arguments for the command. Read from `TERMIHUB_COMMAND_ARGS` (JSON array).
+    command_args: Vec<String>,
 }
 
 impl DaemonConfig {
@@ -74,6 +79,13 @@ impl DaemonConfig {
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
 
+        let command = std::env::var("TERMIHUB_COMMAND").ok();
+
+        let command_args: Vec<String> = std::env::var("TERMIHUB_COMMAND_ARGS")
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+
         Ok(Self {
             session_id: session_id.to_string(),
             socket_path,
@@ -82,6 +94,8 @@ impl DaemonConfig {
             rows,
             buffer_size,
             env,
+            command,
+            command_args,
         })
     }
 }
@@ -104,10 +118,22 @@ fn ensure_socket_dir(dir: &Path) -> anyhow::Result<()> {
 pub fn run_daemon(session_id: &str) -> anyhow::Result<()> {
     let config = DaemonConfig::from_env(session_id)?;
 
-    info!(
-        "Session daemon starting: id={}, shell={}, size={}x{}, buffer={}",
-        config.session_id, config.shell, config.cols, config.rows, config.buffer_size
-    );
+    if let Some(ref command) = config.command {
+        info!(
+            "Session daemon starting: id={}, command={} {:?}, size={}x{}, buffer={}",
+            config.session_id,
+            command,
+            config.command_args,
+            config.cols,
+            config.rows,
+            config.buffer_size
+        );
+    } else {
+        info!(
+            "Session daemon starting: id={}, shell={}, size={}x{}, buffer={}",
+            config.session_id, config.shell, config.cols, config.rows, config.buffer_size
+        );
+    }
 
     // Ensure socket directory exists
     if let Some(parent) = config.socket_path.parent() {
@@ -137,13 +163,26 @@ pub fn run_daemon(session_id: &str) -> anyhow::Result<()> {
 
     let OpenptyResult { master, slave } = openpty(&winsize, None)?;
 
-    // Spawn shell process
-    let child_pid = spawn_shell(&config.shell, &slave, &config.env)?;
+    // Spawn the child process (shell or arbitrary command)
+    let child_pid = if let Some(ref command) = config.command {
+        spawn_command(command, &config.command_args, &slave, &config.env)?
+    } else {
+        spawn_shell(&config.shell, &slave, &config.env)?
+    };
 
-    // Close slave in the daemon — the shell process owns it now
+    // Close slave in the daemon — the child process owns it now
     drop(slave);
 
-    info!("Shell spawned: pid={}, shell={}", child_pid, config.shell);
+    if config.command.is_some() {
+        info!(
+            "Command spawned: pid={}, command={} {:?}",
+            child_pid,
+            config.command.as_deref().unwrap_or(""),
+            config.command_args
+        );
+    } else {
+        info!("Shell spawned: pid={}, shell={}", child_pid, config.shell);
+    }
 
     // Run the main event loop
     let result = daemon_loop(&master, &listener, child_pid, config.buffer_size);
@@ -205,6 +244,61 @@ fn spawn_shell(shell: &str, slave: &OwnedFd, env: &HashMap<String, String>) -> a
             let c_arg0 = std::ffi::CString::new(login_name).expect("Invalid shell name");
 
             match nix::unistd::execvp(&c_shell, &[c_arg0]) {
+                Ok(infallible) => match infallible {},
+                Err(e) => panic!("execvp failed: {e}"),
+            }
+        }
+        nix::unistd::ForkResult::Parent { child } => Ok(child),
+    }
+}
+
+/// Spawn an arbitrary command as a child process attached to the PTY slave.
+///
+/// Used for Docker sessions where the daemon runs `docker exec -it` instead
+/// of a login shell.
+fn spawn_command(
+    command: &str,
+    args: &[String],
+    slave: &OwnedFd,
+    env: &HashMap<String, String>,
+) -> anyhow::Result<Pid> {
+    let slave_fd = slave.as_raw_fd();
+
+    match unsafe { nix::unistd::fork()? } {
+        nix::unistd::ForkResult::Child => {
+            // Create new session and set controlling terminal
+            setsid().expect("setsid failed");
+
+            unsafe {
+                libc::ioctl(slave_fd, libc::TIOCSCTTY as libc::c_ulong, 0);
+            }
+
+            // Redirect stdio to PTY slave
+            unsafe {
+                libc::dup2(slave_fd, 0);
+                libc::dup2(slave_fd, 1);
+                libc::dup2(slave_fd, 2);
+            }
+
+            if slave_fd > 2 {
+                close(slave_fd).expect("close slave_fd failed");
+            }
+
+            // Set environment
+            std::env::set_var("TERM", "xterm-256color");
+            std::env::set_var("COLORTERM", "truecolor");
+            for (key, value) in env {
+                std::env::set_var(key, value);
+            }
+
+            // Build CString args: [command, arg1, arg2, ...]
+            let c_command = std::ffi::CString::new(command).expect("Invalid command");
+            let mut c_args = vec![c_command.clone()];
+            for arg in args {
+                c_args.push(std::ffi::CString::new(arg.as_str()).expect("Invalid arg"));
+            }
+
+            match nix::unistd::execvp(&c_command, &c_args) {
                 Ok(infallible) => match infallible {},
                 Err(e) => panic!("execvp failed: {e}"),
             }
@@ -528,6 +622,8 @@ mod tests {
         std::env::remove_var("TERMIHUB_ROWS");
         std::env::remove_var("TERMIHUB_BUFFER_SIZE");
         std::env::remove_var("TERMIHUB_ENV");
+        std::env::remove_var("TERMIHUB_COMMAND");
+        std::env::remove_var("TERMIHUB_COMMAND_ARGS");
 
         let config = DaemonConfig::from_env("test-123").unwrap();
         assert_eq!(config.session_id, "test-123");
@@ -536,6 +632,8 @@ mod tests {
         assert_eq!(config.rows, 24);
         assert_eq!(config.buffer_size, DEFAULT_BUFFER_SIZE);
         assert!(config.env.is_empty());
+        assert!(config.command.is_none());
+        assert!(config.command_args.is_empty());
         assert!(config
             .socket_path
             .to_string_lossy()
@@ -558,6 +656,20 @@ mod tests {
         assert_eq!(config.env.get("FOO").unwrap(), "bar");
         assert_eq!(config.env.get("BAZ").unwrap(), "qux");
 
+        // --- Part 3: test command env vars ---
+        std::env::set_var("TERMIHUB_COMMAND", "docker");
+        std::env::set_var(
+            "TERMIHUB_COMMAND_ARGS",
+            r#"["exec","-it","termihub-abc","/bin/sh"]"#,
+        );
+
+        let config = DaemonConfig::from_env("test-789").unwrap();
+        assert_eq!(config.command, Some("docker".to_string()));
+        assert_eq!(
+            config.command_args,
+            vec!["exec", "-it", "termihub-abc", "/bin/sh"]
+        );
+
         // Clean up
         std::env::remove_var("TERMIHUB_SOCKET_PATH");
         std::env::remove_var("TERMIHUB_SHELL");
@@ -565,5 +677,7 @@ mod tests {
         std::env::remove_var("TERMIHUB_ROWS");
         std::env::remove_var("TERMIHUB_BUFFER_SIZE");
         std::env::remove_var("TERMIHUB_ENV");
+        std::env::remove_var("TERMIHUB_COMMAND");
+        std::env::remove_var("TERMIHUB_COMMAND_ARGS");
     }
 }

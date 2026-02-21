@@ -35,7 +35,9 @@ All terminal types implement the `TerminalBackend` trait, which provides a consi
 - Resizing the terminal
 - Closing connections
 
-Current implementations: `LocalShell`, `SshConnection`, `SerialConnection`, `TelnetConnection`.
+Current desktop implementations: `LocalShell`, `SshConnection`, `SerialConnection`, `TelnetConnection`, and `RemoteBackend` (proxy to remote agent via JSON-RPC over SSH).
+
+The remote agent has its own backend architecture: `ShellBackend`, `DockerBackend`, `SshBackend`, and `SerialBackend` — all communicating with session daemons via a binary frame protocol over Unix domain sockets. See [Architecture Documentation](architecture.md#level-2-agent-modules) for details.
 
 Adding a new terminal type means implementing this trait and registering it with the `TerminalManager`. See [Adding a New Terminal Backend](#adding-a-new-terminal-backend) below.
 
@@ -71,7 +73,22 @@ termihub/
 │   │   └── events/       # Event emitters
 │   ├── Cargo.toml
 │   └── tauri.conf.json
-├── agent/                # Raspberry Pi remote agent
+├── agent/                # Remote agent (JSON-RPC over SSH)
+│   └── src/
+│       ├── buffer/       # Shared ring buffer (1 MiB)
+│       ├── daemon/       # Session daemon process and binary frame protocol
+│       ├── shell/        # ShellBackend (daemon client for shell sessions)
+│       ├── docker/       # DockerBackend (Docker container sessions)
+│       ├── ssh/          # SshBackend (SSH jump host sessions)
+│       ├── serial/       # SerialBackend (direct serial port access)
+│       ├── session/      # SessionManager, types, prepared connection definitions
+│       ├── files/        # File browsing (local, SFTP relay, Docker)
+│       ├── monitoring/   # System monitoring (CPU, memory, disk, network)
+│       ├── handler/      # JSON-RPC method dispatcher
+│       ├── protocol/     # Protocol types, methods, error codes
+│       ├── state/        # Session state persistence (state.json)
+│       ├── io/           # Transport layer (stdio, TCP)
+│       └── main.rs       # Entry point (--stdio, --listen, --daemon)
 ├── scripts/              # Dev helper scripts (.sh + .cmd)
 ├── examples/             # Docker test environment, virtual serial
 ├── docs/                 # User and developer documentation
@@ -104,32 +121,31 @@ pnpm tauri dev
 
 All work is tracked in **GitHub Issues**.
 
-### Priority Labels
+### Issue Labels
 
-Issues are prioritized by phase label (highest priority first):
+Issues use these workflow labels:
 
-1. **`phase-5-polish`** — UX improvements, performance, cross-platform testing
-2. **`phase-6-remote-foundation`** — Remote agent protocol and backend
-3. **`phase-7-remote-agent`** — Remote agent implementation
-4. **`future`** — Post-v1 enhancements
+- **`Ready2Implement`** — Ready for implementation work
+- **`Concept`** — Design-only: produce a concept document, no code
 
 ### Finding Work
 
 ```bash
-# List open issues by priority
-gh issue list --label phase-5-polish
-gh issue list --label phase-6-remote-foundation
-gh issue list --label future
+# List issues ready for implementation
+gh issue list --label Ready2Implement
+
+# List concept/design tasks
+gh issue list --label Concept
 ```
 
-Pick the next task from the highest-priority label with open issues.
+Pick the next task from `Ready2Implement` for implementation work or `Concept` for design tasks.
 
 ### Creating Issues
 
 When you discover work during development, create a new issue:
 
 ```bash
-gh issue create --title "Brief description" --label "phase-5-polish"
+gh issue create --title "Brief description" --label "Ready2Implement"
 ```
 
 ---
@@ -336,6 +352,44 @@ See [Manual Test Plan](manual-testing.md) for the full checklist. For UI changes
 - Split views (horizontal and vertical)
 - File browser (local and SFTP)
 - Keyboard shortcuts
+
+---
+
+## Agent Development
+
+The remote agent (`termihub-agent`) is a standalone Rust binary in `agent/` that runs on remote hosts (Raspberry Pis, build servers, etc.). It provides persistent terminal sessions that survive desktop disconnects and agent restarts.
+
+### Operating Modes
+
+| Mode | Flag | Use Case |
+|------|------|----------|
+| Stdio | `--stdio` | Production — NDJSON over stdin/stdout, launched by desktop via SSH |
+| TCP | `--listen [addr]` | Development/test — TCP listener (default `127.0.0.1:7685`) |
+| Daemon | `--daemon <id>` | Internal — session daemon process, not invoked directly |
+
+### Key Architecture Concepts
+
+- **Session daemon architecture** — Each shell session runs as an independent daemon process (`termihub-agent --daemon <session-id>`) that manages a PTY, a 1 MiB ring buffer, and a Unix domain socket. Daemons survive agent restarts.
+- **State persistence** — Active sessions are tracked in `~/.config/termihub-agent/state.json`. On restart, the agent reconnects to living daemons and recovers sessions.
+- **Platform constraint** — Daemon features are Unix-only (`#[cfg(unix)]`) due to PTY, Unix sockets, and POSIX process APIs.
+
+### Running and Testing
+
+```bash
+# Run agent in dev mode (TCP listener)
+cd agent && cargo run -- --listen
+
+# Run agent tests
+cd agent && cargo test
+
+# Clippy
+cd agent && cargo clippy --all-targets --all-features -- -D warnings
+
+# Format check
+cd agent && cargo fmt --check
+```
+
+See [Architecture Documentation](architecture.md#level-2-agent-modules) for the module breakdown and [Remote Protocol](remote-protocol.md) for the JSON-RPC protocol specification.
 
 ---
 

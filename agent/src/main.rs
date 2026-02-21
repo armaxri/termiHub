@@ -1,11 +1,15 @@
 mod buffer;
 mod daemon;
+mod docker;
+mod files;
 mod handler;
 mod io;
+mod monitoring;
 mod protocol;
 mod serial;
 mod session;
 mod shell;
+mod ssh;
 mod state;
 
 use tokio_util::sync::CancellationToken;

@@ -7,15 +7,24 @@ use tracing::{debug, warn};
 
 use base64::Engine;
 
+use crate::files::docker::DockerFileBackend;
+use crate::files::local::LocalFileBackend;
+use crate::files::ssh::SshFileBackend;
+use crate::files::{FileBackend, FileError};
+use crate::monitoring::MonitoringManager;
 use crate::protocol::errors;
 use crate::protocol::messages::{JsonRpcErrorResponse, JsonRpcRequest, JsonRpcResponse};
 use crate::protocol::methods::{
-    Capabilities, HealthCheckResult, InitializeParams, InitializeResult, SessionAttachParams,
-    SessionCloseParams, SessionCreateParams, SessionCreateResult, SessionDefineParams,
-    SessionDefinitionDeleteParams, SessionDetachParams, SessionInputParams, SessionListEntry,
-    SessionListResult, SessionResizeParams,
+    AgentShutdownParams, AgentShutdownResult, Capabilities, ConnectionCreateParams,
+    ConnectionDeleteParams, ConnectionUpdateParams, DockerSessionConfig, FilesDeleteParams,
+    FilesListParams, FilesListResult, FilesReadParams, FilesReadResult, FilesRenameParams,
+    FilesStatParams, FilesWriteParams, FolderCreateParams, FolderDeleteParams, FolderUpdateParams,
+    HealthCheckResult, InitializeParams, InitializeResult, MonitoringSubscribeParams,
+    MonitoringUnsubscribeParams, SessionAttachParams, SessionCloseParams, SessionCreateParams,
+    SessionCreateResult, SessionDetachParams, SessionInputParams, SessionListEntry,
+    SessionListResult, SessionResizeParams, SshSessionConfig,
 };
-use crate::session::definitions::{DefinitionStore, SessionDefinition};
+use crate::session::definitions::{Connection, ConnectionStore, Folder};
 use crate::session::manager::{SessionCreateError, SessionManager, MAX_SESSIONS};
 use crate::session::types::SessionType;
 
@@ -26,7 +35,8 @@ const AGENT_PROTOCOL_VERSION: &str = "0.1.0";
 /// to the appropriate handler function.
 pub struct Dispatcher {
     session_manager: Arc<SessionManager>,
-    definition_store: Arc<DefinitionStore>,
+    connection_store: Arc<ConnectionStore>,
+    monitoring_manager: Arc<MonitoringManager>,
     initialized: bool,
     start_time: Instant,
 }
@@ -35,26 +45,38 @@ pub struct Dispatcher {
 pub enum DispatchResult {
     Success(JsonRpcResponse),
     Error(JsonRpcErrorResponse),
+    /// Send the response, then signal the transport loop to shut down.
+    SuccessAndShutdown(JsonRpcResponse),
 }
 
 impl DispatchResult {
     /// Serialize the result to a JSON `Value`.
     pub fn to_json(&self) -> Value {
         match self {
-            Self::Success(resp) => serde_json::to_value(resp).unwrap(),
+            Self::Success(resp) | Self::SuccessAndShutdown(resp) => {
+                serde_json::to_value(resp).unwrap()
+            }
             Self::Error(resp) => serde_json::to_value(resp).unwrap(),
         }
+    }
+
+    /// Returns `true` if this result signals the agent should shut down
+    /// after sending the response.
+    pub fn is_shutdown(&self) -> bool {
+        matches!(self, Self::SuccessAndShutdown(_))
     }
 }
 
 impl Dispatcher {
     pub fn new(
         session_manager: Arc<SessionManager>,
-        definition_store: Arc<DefinitionStore>,
+        connection_store: Arc<ConnectionStore>,
+        monitoring_manager: Arc<MonitoringManager>,
     ) -> Self {
         Self {
             session_manager,
-            definition_store,
+            connection_store,
+            monitoring_manager,
             initialized: false,
             start_time: Instant::now(),
         }
@@ -89,10 +111,23 @@ impl Dispatcher {
             "session.detach" => self.handle_session_detach(request).await,
             "session.input" => self.handle_session_input(request).await,
             "session.resize" => self.handle_session_resize(request).await,
-            "session.define" => self.handle_session_define(request).await,
-            "session.definitions.list" => self.handle_session_definitions_list(request).await,
-            "session.definitions.delete" => self.handle_session_definitions_delete(request).await,
+            "connections.list" => self.handle_connections_list(request).await,
+            "connections.create" => self.handle_connections_create(request).await,
+            "connections.update" => self.handle_connections_update(request).await,
+            "connections.delete" => self.handle_connections_delete(request).await,
+            "connections.folders.create" => self.handle_connections_folders_create(request).await,
+            "connections.folders.update" => self.handle_connections_folders_update(request).await,
+            "connections.folders.delete" => self.handle_connections_folders_delete(request).await,
+            "files.list" => self.handle_files_list(request).await,
+            "files.read" => self.handle_files_read(request).await,
+            "files.write" => self.handle_files_write(request).await,
+            "files.delete" => self.handle_files_delete(request).await,
+            "files.rename" => self.handle_files_rename(request).await,
+            "files.stat" => self.handle_files_stat(request).await,
+            "monitoring.subscribe" => self.handle_monitoring_subscribe(request).await,
+            "monitoring.unsubscribe" => self.handle_monitoring_unsubscribe(request).await,
             "health.check" => self.handle_health_check(request).await,
+            "agent.shutdown" => self.handle_agent_shutdown(request).await,
             _ => {
                 warn!("Unknown method: {}", method);
                 DispatchResult::Error(JsonRpcErrorResponse::new(
@@ -140,6 +175,8 @@ impl Dispatcher {
         if docker_available {
             session_types.push("docker".to_string());
         }
+        // SSH client is always available on the agent host
+        session_types.push("ssh".to_string());
 
         let result = InitializeResult {
             protocol_version: AGENT_PROTOCOL_VERSION.to_string(),
@@ -296,6 +333,38 @@ impl Dispatcher {
         ))
     }
 
+    async fn handle_agent_shutdown(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+
+        let _params: AgentShutdownParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid agent.shutdown params: {e}"),
+                ));
+            }
+        };
+
+        // Count active sessions before shutdown — they will be detached
+        // (left running in daemons) so the next agent instance can recover them.
+        let detached = self.session_manager.active_count().await;
+
+        // Stop monitoring subscriptions
+        self.monitoring_manager.shutdown().await;
+
+        let result = AgentShutdownResult {
+            detached_sessions: detached,
+        };
+
+        // Use SuccessAndShutdown so the transport loop exits after sending this response.
+        DispatchResult::SuccessAndShutdown(JsonRpcResponse::new(
+            id,
+            serde_json::to_value(result).unwrap(),
+        ))
+    }
+
     async fn handle_session_attach(&self, request: JsonRpcRequest) -> DispatchResult {
         let id = request.id.clone();
 
@@ -408,69 +477,553 @@ impl Dispatcher {
         }
     }
 
-    async fn handle_session_define(&self, request: JsonRpcRequest) -> DispatchResult {
+    // ── connections.* handlers ───────────────────────────────────────
+
+    async fn handle_connections_list(&self, request: JsonRpcRequest) -> DispatchResult {
+        let (connections, folders) = self.connection_store.list().await;
+        DispatchResult::Success(JsonRpcResponse::new(
+            request.id,
+            json!({"connections": connections, "folders": folders}),
+        ))
+    }
+
+    async fn handle_connections_create(&self, request: JsonRpcRequest) -> DispatchResult {
         let id = request.id.clone();
 
-        let params: SessionDefineParams = match serde_json::from_value(request.params) {
+        let params: ConnectionCreateParams = match serde_json::from_value(request.params) {
             Ok(p) => p,
             Err(e) => {
                 return DispatchResult::Error(JsonRpcErrorResponse::new(
                     id,
                     errors::INVALID_PARAMS,
-                    format!("Invalid session.define params: {e}"),
+                    format!("Invalid connections.create params: {e}"),
                 ));
             }
         };
 
-        let def_id = params
-            .id
-            .unwrap_or_else(|| format!("def-{}", uuid::Uuid::new_v4()));
-
-        let definition = SessionDefinition {
-            id: def_id,
+        let conn = Connection {
+            id: format!("conn-{}", uuid::Uuid::new_v4()),
             name: params.name,
             session_type: params.session_type,
             config: params.config,
             persistent: params.persistent,
+            folder_id: params.folder_id,
         };
 
-        let snapshot = self.definition_store.define(definition).await;
+        let snapshot = self.connection_store.create(conn).await;
         DispatchResult::Success(JsonRpcResponse::new(
             id,
             serde_json::to_value(snapshot).unwrap(),
         ))
     }
 
-    async fn handle_session_definitions_list(&self, request: JsonRpcRequest) -> DispatchResult {
-        let list = self.definition_store.list().await;
-        DispatchResult::Success(JsonRpcResponse::new(
-            request.id,
-            json!({"definitions": list}),
-        ))
-    }
-
-    async fn handle_session_definitions_delete(&self, request: JsonRpcRequest) -> DispatchResult {
+    async fn handle_connections_update(&self, request: JsonRpcRequest) -> DispatchResult {
         let id = request.id.clone();
 
-        let params: SessionDefinitionDeleteParams = match serde_json::from_value(request.params) {
+        let params: ConnectionUpdateParams = match serde_json::from_value(request.params) {
             Ok(p) => p,
             Err(e) => {
                 return DispatchResult::Error(JsonRpcErrorResponse::new(
                     id,
                     errors::INVALID_PARAMS,
-                    format!("Invalid session.definitions.delete params: {e}"),
+                    format!("Invalid connections.update params: {e}"),
                 ));
             }
         };
 
-        if self.definition_store.delete(&params.id).await {
+        // Convert folder_id: absent → None, null → Some(None), string → Some(Some(s))
+        let folder_id = params.folder_id.map(|v| {
+            if v.is_null() {
+                None
+            } else {
+                v.as_str().map(|s| s.to_string())
+            }
+        });
+
+        match self
+            .connection_store
+            .update(
+                &params.id,
+                params.name,
+                params.session_type,
+                params.config,
+                params.persistent,
+                folder_id,
+            )
+            .await
+        {
+            Some(snapshot) => DispatchResult::Success(JsonRpcResponse::new(
+                id,
+                serde_json::to_value(snapshot).unwrap(),
+            )),
+            None => DispatchResult::Error(
+                JsonRpcErrorResponse::new(id, errors::CONNECTION_NOT_FOUND, "Connection not found")
+                    .with_data(json!({"id": params.id})),
+            ),
+        }
+    }
+
+    async fn handle_connections_delete(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+
+        let params: ConnectionDeleteParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid connections.delete params: {e}"),
+                ));
+            }
+        };
+
+        if self.connection_store.delete(&params.id).await {
             DispatchResult::Success(JsonRpcResponse::new(id, json!({})))
         } else {
             DispatchResult::Error(
-                JsonRpcErrorResponse::new(id, errors::SESSION_NOT_FOUND, "Definition not found")
+                JsonRpcErrorResponse::new(id, errors::CONNECTION_NOT_FOUND, "Connection not found")
                     .with_data(json!({"id": params.id})),
             )
         }
+    }
+
+    async fn handle_connections_folders_create(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+
+        let params: FolderCreateParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid connections.folders.create params: {e}"),
+                ));
+            }
+        };
+
+        let folder = Folder {
+            id: format!("folder-{}", uuid::Uuid::new_v4()),
+            name: params.name,
+            parent_id: params.parent_id,
+            is_expanded: false,
+        };
+
+        let snapshot = self.connection_store.create_folder(folder).await;
+        DispatchResult::Success(JsonRpcResponse::new(
+            id,
+            serde_json::to_value(snapshot).unwrap(),
+        ))
+    }
+
+    async fn handle_connections_folders_update(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+
+        let params: FolderUpdateParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid connections.folders.update params: {e}"),
+                ));
+            }
+        };
+
+        // Convert parent_id: absent → None, null → Some(None), string → Some(Some(s))
+        let parent_id = params.parent_id.map(|v| {
+            if v.is_null() {
+                None
+            } else {
+                v.as_str().map(|s| s.to_string())
+            }
+        });
+
+        match self
+            .connection_store
+            .update_folder(&params.id, params.name, parent_id, params.is_expanded)
+            .await
+        {
+            Some(snapshot) => DispatchResult::Success(JsonRpcResponse::new(
+                id,
+                serde_json::to_value(snapshot).unwrap(),
+            )),
+            None => DispatchResult::Error(
+                JsonRpcErrorResponse::new(id, errors::FOLDER_NOT_FOUND, "Folder not found")
+                    .with_data(json!({"id": params.id})),
+            ),
+        }
+    }
+
+    async fn handle_connections_folders_delete(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+
+        let params: FolderDeleteParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid connections.folders.delete params: {e}"),
+                ));
+            }
+        };
+
+        if self.connection_store.delete_folder(&params.id).await {
+            DispatchResult::Success(JsonRpcResponse::new(id, json!({})))
+        } else {
+            DispatchResult::Error(
+                JsonRpcErrorResponse::new(id, errors::FOLDER_NOT_FOUND, "Folder not found")
+                    .with_data(json!({"id": params.id})),
+            )
+        }
+    }
+
+    // ── files.* handlers ───────────────────────────────────────────
+
+    async fn handle_files_list(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+
+        let params: FilesListParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid files.list params: {e}"),
+                ));
+            }
+        };
+
+        let backend = match self.resolve_file_backend(params.connection_id).await {
+            Ok(b) => b,
+            Err((code, msg)) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
+            }
+        };
+
+        match backend.list(&params.path).await {
+            Ok(entries) => {
+                let result = FilesListResult { entries };
+                DispatchResult::Success(JsonRpcResponse::new(
+                    id,
+                    serde_json::to_value(result).unwrap(),
+                ))
+            }
+            Err(e) => {
+                let (code, msg) = map_file_error(e);
+                DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
+            }
+        }
+    }
+
+    async fn handle_files_read(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+
+        let params: FilesReadParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid files.read params: {e}"),
+                ));
+            }
+        };
+
+        let backend = match self.resolve_file_backend(params.connection_id).await {
+            Ok(b) => b,
+            Err((code, msg)) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
+            }
+        };
+
+        match backend.read(&params.path).await {
+            Ok(data) => {
+                let b64 = base64::engine::general_purpose::STANDARD;
+                let size = data.len() as u64;
+                let result = FilesReadResult {
+                    data: b64.encode(&data),
+                    size,
+                };
+                DispatchResult::Success(JsonRpcResponse::new(
+                    id,
+                    serde_json::to_value(result).unwrap(),
+                ))
+            }
+            Err(e) => {
+                let (code, msg) = map_file_error(e);
+                DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
+            }
+        }
+    }
+
+    async fn handle_files_write(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+
+        let params: FilesWriteParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid files.write params: {e}"),
+                ));
+            }
+        };
+
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let data = match b64.decode(&params.data) {
+            Ok(d) => d,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid base64 data: {e}"),
+                ));
+            }
+        };
+
+        let backend = match self.resolve_file_backend(params.connection_id).await {
+            Ok(b) => b,
+            Err((code, msg)) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
+            }
+        };
+
+        match backend.write(&params.path, &data).await {
+            Ok(()) => DispatchResult::Success(JsonRpcResponse::new(id, json!({}))),
+            Err(e) => {
+                let (code, msg) = map_file_error(e);
+                DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
+            }
+        }
+    }
+
+    async fn handle_files_delete(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+
+        let params: FilesDeleteParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid files.delete params: {e}"),
+                ));
+            }
+        };
+
+        let backend = match self.resolve_file_backend(params.connection_id).await {
+            Ok(b) => b,
+            Err((code, msg)) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
+            }
+        };
+
+        match backend.delete(&params.path, params.is_directory).await {
+            Ok(()) => DispatchResult::Success(JsonRpcResponse::new(id, json!({}))),
+            Err(e) => {
+                let (code, msg) = map_file_error(e);
+                DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
+            }
+        }
+    }
+
+    async fn handle_files_rename(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+
+        let params: FilesRenameParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid files.rename params: {e}"),
+                ));
+            }
+        };
+
+        let backend = match self.resolve_file_backend(params.connection_id).await {
+            Ok(b) => b,
+            Err((code, msg)) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
+            }
+        };
+
+        match backend.rename(&params.old_path, &params.new_path).await {
+            Ok(()) => DispatchResult::Success(JsonRpcResponse::new(id, json!({}))),
+            Err(e) => {
+                let (code, msg) = map_file_error(e);
+                DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
+            }
+        }
+    }
+
+    async fn handle_files_stat(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+
+        let params: FilesStatParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid files.stat params: {e}"),
+                ));
+            }
+        };
+
+        let backend = match self.resolve_file_backend(params.connection_id).await {
+            Ok(b) => b,
+            Err((code, msg)) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
+            }
+        };
+
+        match backend.stat(&params.path).await {
+            Ok(result) => DispatchResult::Success(JsonRpcResponse::new(
+                id,
+                serde_json::to_value(result).unwrap(),
+            )),
+            Err(e) => {
+                let (code, msg) = map_file_error(e);
+                DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
+            }
+        }
+    }
+
+    // ── monitoring.* handlers ─────────────────────────────────────────
+
+    async fn handle_monitoring_subscribe(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+
+        let params: MonitoringSubscribeParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid monitoring.subscribe params: {e}"),
+                ));
+            }
+        };
+
+        match self
+            .monitoring_manager
+            .subscribe(&params.host, params.interval_ms)
+            .await
+        {
+            Ok(()) => DispatchResult::Success(JsonRpcResponse::new(id, json!({}))),
+            Err(e) => DispatchResult::Error(JsonRpcErrorResponse::new(
+                id,
+                errors::MONITORING_ERROR,
+                format!("Failed to subscribe: {e}"),
+            )),
+        }
+    }
+
+    async fn handle_monitoring_unsubscribe(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+
+        let params: MonitoringUnsubscribeParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid monitoring.unsubscribe params: {e}"),
+                ));
+            }
+        };
+
+        self.monitoring_manager.unsubscribe(&params.host).await;
+        DispatchResult::Success(JsonRpcResponse::new(id, json!({})))
+    }
+
+    /// Resolve the appropriate file backend for a connection.
+    ///
+    /// - `None` → local filesystem
+    /// - `Some(id)` → look up connection, dispatch by session type
+    async fn resolve_file_backend(
+        &self,
+        connection_id: Option<String>,
+    ) -> Result<Box<dyn FileBackend>, (i64, String)> {
+        let connection_id = match connection_id {
+            None => return Ok(Box::new(LocalFileBackend::new())),
+            Some(id) => id,
+        };
+
+        let connection = self.connection_store.get(&connection_id).await.ok_or((
+            errors::CONNECTION_NOT_FOUND,
+            format!("Connection not found: {connection_id}"),
+        ))?;
+
+        match connection.session_type.as_str() {
+            "shell" => Ok(Box::new(LocalFileBackend::new())),
+            "docker" => {
+                let docker_config: DockerSessionConfig = serde_json::from_value(connection.config)
+                    .map_err(|e| {
+                        (
+                            errors::INVALID_CONFIGURATION,
+                            format!("Invalid Docker config: {e}"),
+                        )
+                    })?;
+
+                // Find a running Docker container for this image
+                #[cfg(unix)]
+                {
+                    let container_name = self
+                        .session_manager
+                        .find_docker_container(&docker_config.image)
+                        .await
+                        .ok_or((
+                            errors::FILE_OPERATION_FAILED,
+                            format!(
+                                "No running Docker session for image '{}'. \
+                                 Start a Docker session first to browse its files.",
+                                docker_config.image
+                            ),
+                        ))?;
+                    Ok(Box::new(DockerFileBackend::new(container_name)))
+                }
+                #[cfg(not(unix))]
+                {
+                    let _ = docker_config;
+                    Err((
+                        errors::FILE_BROWSING_NOT_SUPPORTED,
+                        "Docker file browsing is not supported on this platform".to_string(),
+                    ))
+                }
+            }
+            "ssh" => {
+                let ssh_config: SshSessionConfig = serde_json::from_value(connection.config)
+                    .map_err(|e| {
+                        (
+                            errors::INVALID_CONFIGURATION,
+                            format!("Invalid SSH config: {e}"),
+                        )
+                    })?;
+                Ok(Box::new(SshFileBackend::new(ssh_config)))
+            }
+            "serial" => Err((
+                errors::FILE_BROWSING_NOT_SUPPORTED,
+                "File browsing is not supported for serial connections".to_string(),
+            )),
+            other => Err((
+                errors::INVALID_CONFIGURATION,
+                format!("Unknown connection type: {other}"),
+            )),
+        }
+    }
+}
+
+/// Map a `FileError` to a JSON-RPC error code and message.
+fn map_file_error(e: FileError) -> (i64, String) {
+    match e {
+        FileError::NotFound(msg) => (errors::FILE_NOT_FOUND, msg),
+        FileError::PermissionDenied(msg) => (errors::PERMISSION_DENIED, msg),
+        FileError::OperationFailed(msg) => (errors::FILE_OPERATION_FAILED, msg),
+        FileError::NotSupported => (errors::FILE_BROWSING_NOT_SUPPORTED, e.to_string()),
     }
 }
 
@@ -538,10 +1091,18 @@ mod tests {
     use serde_json::json;
 
     fn make_dispatcher() -> Dispatcher {
+        let (mgr, _) = make_dispatcher_with_manager();
+        mgr
+    }
+
+    fn make_dispatcher_with_manager() -> (Dispatcher, Arc<SessionManager>) {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let tmp = std::env::temp_dir().join(format!("termihub-test-{}.json", uuid::Uuid::new_v4()));
-        let def_store = Arc::new(DefinitionStore::new_temp(tmp));
-        Dispatcher::new(Arc::new(SessionManager::new(tx)), def_store)
+        let conn_store = Arc::new(ConnectionStore::new_temp(tmp));
+        let session_manager = Arc::new(SessionManager::new(tx.clone()));
+        let monitoring_manager = Arc::new(MonitoringManager::new(tx, conn_store.clone()));
+        let dispatcher = Dispatcher::new(session_manager.clone(), conn_store, monitoring_manager);
+        (dispatcher, session_manager)
     }
 
     fn make_request(method: &str, params: Value, id: u64) -> JsonRpcRequest {
@@ -589,6 +1150,11 @@ mod tests {
         assert!(json["result"]["capabilities"]["available_serial_ports"]
             .as_array()
             .is_some());
+        // SSH is always available
+        assert!(json["result"]["capabilities"]["session_types"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("ssh")));
     }
 
     #[tokio::test]
@@ -628,6 +1194,8 @@ mod tests {
             "session.list",
             "session.close",
             "health.check",
+            "connections.list",
+            "connections.create",
         ] {
             let req = make_request(method, json!({}), 1);
             let result = d.dispatch(req).await;
@@ -643,7 +1211,7 @@ mod tests {
     // ── Session create tests ────────────────────────────────────────
 
     #[tokio::test]
-    async fn session_create_docker_stub() {
+    async fn session_create_docker_requires_image() {
         let mut d = make_dispatcher();
         init_dispatcher(&mut d).await;
 
@@ -658,15 +1226,11 @@ mod tests {
         );
         let result = d.dispatch(req).await;
         let json = result.to_json();
-        assert!(json["result"]["session_id"].is_string());
-        assert_eq!(json["result"]["type"], "docker");
-        assert_eq!(json["result"]["status"], "running");
-        assert_eq!(json["result"]["title"], "My session");
+        assert_eq!(json["error"]["code"], errors::INVALID_CONFIGURATION);
     }
 
     #[tokio::test]
     async fn session_create_serial_fails_without_port() {
-        // Serial creation now actually opens the port, so it fails in CI
         let mut d = make_dispatcher();
         init_dispatcher(&mut d).await;
 
@@ -680,7 +1244,6 @@ mod tests {
         );
         let result = d.dispatch(req).await;
         let json = result.to_json();
-        // Should get SESSION_CREATION_FAILED because the port doesn't exist
         assert_eq!(
             json["error"]["code"],
             crate::protocol::errors::SESSION_CREATION_FAILED
@@ -695,6 +1258,25 @@ mod tests {
         let req = make_request(
             "session.create",
             json!({"type": "unknown", "config": {}}),
+            2,
+        );
+        let result = d.dispatch(req).await;
+        let json = result.to_json();
+        assert_eq!(json["error"]["code"], errors::INVALID_CONFIGURATION);
+    }
+
+    #[tokio::test]
+    async fn session_create_ssh_requires_host() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request(
+            "session.create",
+            json!({
+                "type": "ssh",
+                "config": {"username": "dev", "auth_method": "agent"},
+                "title": "Jump session"
+            }),
             2,
         );
         let result = d.dispatch(req).await;
@@ -717,18 +1299,13 @@ mod tests {
 
     #[tokio::test]
     async fn session_list_after_create() {
-        let mut d = make_dispatcher();
+        let (mut d, mgr) = make_dispatcher_with_manager();
         init_dispatcher(&mut d).await;
 
-        // Create a session (Docker type to avoid daemon spawn in tests)
-        let req = make_request(
-            "session.create",
-            json!({"type": "docker", "config": {}, "title": "test"}),
-            2,
-        );
-        d.dispatch(req).await;
+        mgr.create_stub_session(SessionType::Shell, "test".to_string(), json!({}))
+            .await
+            .unwrap();
 
-        // List sessions
         let req = make_request("session.list", json!({}), 3);
         let result = d.dispatch(req).await;
         let json = result.to_json();
@@ -741,25 +1318,20 @@ mod tests {
 
     #[tokio::test]
     async fn session_close_success() {
-        let mut d = make_dispatcher();
+        let (mut d, mgr) = make_dispatcher_with_manager();
         init_dispatcher(&mut d).await;
 
-        // Create (Docker type to avoid daemon spawn in tests)
-        let req = make_request(
-            "session.create",
-            json!({"type": "docker", "config": {}, "title": "temp"}),
-            2,
-        );
-        let create_result = d.dispatch(req).await.to_json();
-        let sid = create_result["result"]["session_id"].as_str().unwrap();
+        let snapshot = mgr
+            .create_stub_session(SessionType::Shell, "temp".to_string(), json!({}))
+            .await
+            .unwrap();
+        let sid = snapshot.id;
 
-        // Close
         let req = make_request("session.close", json!({"session_id": sid}), 3);
         let result = d.dispatch(req).await;
         let json = result.to_json();
         assert!(json.get("result").is_some());
 
-        // Verify gone
         let req = make_request("session.list", json!({}), 4);
         let result = d.dispatch(req).await.to_json();
         assert_eq!(result["result"]["sessions"].as_array().unwrap().len(), 0);
@@ -861,17 +1433,14 @@ mod tests {
 
     #[tokio::test]
     async fn session_resize_returns_success() {
-        let mut d = make_dispatcher();
+        let (mut d, mgr) = make_dispatcher_with_manager();
         init_dispatcher(&mut d).await;
 
-        // Create a session first (Docker type to avoid daemon spawn)
-        let req = make_request(
-            "session.create",
-            json!({"type": "docker", "config": {}, "title": "resize-test"}),
-            2,
-        );
-        let create_result = d.dispatch(req).await.to_json();
-        let sid = create_result["result"]["session_id"].as_str().unwrap();
+        let snapshot = mgr
+            .create_stub_session(SessionType::Shell, "resize-test".to_string(), json!({}))
+            .await
+            .unwrap();
+        let sid = snapshot.id;
 
         let req = make_request(
             "session.resize",
@@ -902,26 +1471,19 @@ mod tests {
 
     #[tokio::test]
     async fn full_protocol_flow() {
-        let mut d = make_dispatcher();
+        let (mut d, mgr) = make_dispatcher_with_manager();
 
         // 1. Initialize
         let req = make_request("initialize", init_params(), 1);
         let result = d.dispatch(req).await.to_json();
         assert_eq!(result["result"]["protocol_version"], "0.1.0");
 
-        // 2. Create session (Docker type to avoid daemon spawn in tests)
-        let req = make_request(
-            "session.create",
-            json!({
-                "type": "docker",
-                "config": {},
-                "title": "Build"
-            }),
-            2,
-        );
-        let result = d.dispatch(req).await.to_json();
-        let session_id = result["result"]["session_id"].as_str().unwrap().to_string();
-        assert_eq!(result["result"]["status"], "running");
+        // 2. Create a stub session (avoids spawning real backends)
+        let snapshot = mgr
+            .create_stub_session(SessionType::Shell, "Build".to_string(), json!({}))
+            .await
+            .unwrap();
+        let session_id = snapshot.id;
 
         // 3. Attach to the session
         let req = make_request("session.attach", json!({"session_id": session_id}), 3);
@@ -985,13 +1547,11 @@ mod tests {
     #[test]
     fn detect_shells_returns_existing_paths() {
         let shells = detect_available_shells();
-        // On any Unix-like system, /bin/sh should exist
         #[cfg(unix)]
         assert!(
             shells.contains(&"/bin/sh".to_string()),
             "Expected /bin/sh to be detected, got: {shells:?}"
         );
-        // All returned paths must actually exist
         for shell in &shells {
             assert!(
                 Path::new(shell).exists(),
@@ -1002,24 +1562,21 @@ mod tests {
 
     #[test]
     fn detect_serial_ports_returns_vec() {
-        // We can't assert specific ports exist in CI, but the function should not panic
         let ports = detect_available_serial_ports();
-        // Just verify it returns a valid vector (may be empty in CI)
         assert!(ports.len() < 1000, "Unreasonably many ports detected");
     }
 
-    // ── Session definition tests ──────────────────────────────────────
+    // ── Connection tests ────────────────────────────────────────────
 
     #[tokio::test]
-    async fn session_define_and_list() {
+    async fn connections_create_and_list() {
         let mut d = make_dispatcher();
         init_dispatcher(&mut d).await;
 
-        // Define
+        // Create
         let req = make_request(
-            "session.define",
+            "connections.create",
             json!({
-                "id": "def-1",
                 "name": "Build Shell",
                 "type": "shell",
                 "config": {"shell": "/bin/bash"},
@@ -1028,74 +1585,545 @@ mod tests {
             2,
         );
         let result = d.dispatch(req).await.to_json();
-        assert_eq!(result["result"]["id"], "def-1");
+        let conn_id = result["result"]["id"].as_str().unwrap();
+        assert!(conn_id.starts_with("conn-"));
         assert_eq!(result["result"]["name"], "Build Shell");
         assert!(result["result"]["persistent"].as_bool().unwrap());
 
         // List
-        let req = make_request("session.definitions.list", json!({}), 3);
+        let req = make_request("connections.list", json!({}), 3);
         let result = d.dispatch(req).await.to_json();
-        let defs = result["result"]["definitions"].as_array().unwrap();
-        assert_eq!(defs.len(), 1);
-        assert_eq!(defs[0]["id"], "def-1");
+        let conns = result["result"]["connections"].as_array().unwrap();
+        assert_eq!(conns.len(), 1);
+        assert_eq!(conns[0]["name"], "Build Shell");
+        let folders = result["result"]["folders"].as_array().unwrap();
+        assert!(folders.is_empty());
     }
 
     #[tokio::test]
-    async fn session_define_auto_generates_id() {
+    async fn connections_update() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        // Create
+        let req = make_request(
+            "connections.create",
+            json!({"name": "Old", "type": "shell"}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        let conn_id = result["result"]["id"].as_str().unwrap().to_string();
+
+        // Update
+        let req = make_request(
+            "connections.update",
+            json!({"id": conn_id, "name": "New", "persistent": true}),
+            3,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["result"]["name"], "New");
+        assert!(result["result"]["persistent"].as_bool().unwrap());
+    }
+
+    #[tokio::test]
+    async fn connections_update_not_found() {
         let mut d = make_dispatcher();
         init_dispatcher(&mut d).await;
 
         let req = make_request(
-            "session.define",
-            json!({
-                "name": "Auto ID Shell",
-                "type": "shell"
-            }),
+            "connections.update",
+            json!({"id": "nonexistent", "name": "X"}),
             2,
         );
         let result = d.dispatch(req).await.to_json();
-        let id = result["result"]["id"].as_str().unwrap();
-        assert!(
-            id.starts_with("def-"),
-            "Expected auto-generated id starting with 'def-', got: {id}"
-        );
+        assert_eq!(result["error"]["code"], errors::CONNECTION_NOT_FOUND);
     }
 
     #[tokio::test]
-    async fn session_definitions_delete() {
+    async fn connections_delete() {
         let mut d = make_dispatcher();
         init_dispatcher(&mut d).await;
 
-        // Define
+        // Create
         let req = make_request(
-            "session.define",
-            json!({"id": "def-del", "name": "Temp", "type": "shell"}),
+            "connections.create",
+            json!({"name": "Temp", "type": "shell"}),
             2,
         );
-        d.dispatch(req).await;
+        let result = d.dispatch(req).await.to_json();
+        let conn_id = result["result"]["id"].as_str().unwrap().to_string();
 
         // Delete
-        let req = make_request("session.definitions.delete", json!({"id": "def-del"}), 3);
+        let req = make_request("connections.delete", json!({"id": conn_id}), 3);
         let result = d.dispatch(req).await.to_json();
         assert!(result.get("result").is_some());
 
         // Verify gone
-        let req = make_request("session.definitions.list", json!({}), 4);
+        let req = make_request("connections.list", json!({}), 4);
         let result = d.dispatch(req).await.to_json();
-        assert_eq!(result["result"]["definitions"].as_array().unwrap().len(), 0);
+        assert_eq!(result["result"]["connections"].as_array().unwrap().len(), 0);
     }
 
     #[tokio::test]
-    async fn session_definitions_delete_not_found() {
+    async fn connections_delete_not_found() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request("connections.delete", json!({"id": "nonexistent"}), 2);
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["error"]["code"], errors::CONNECTION_NOT_FOUND);
+    }
+
+    // ── Folder tests ────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn folders_create_and_list() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        // Create folder
+        let req = make_request(
+            "connections.folders.create",
+            json!({"name": "Project A"}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        let folder_id = result["result"]["id"].as_str().unwrap();
+        assert!(folder_id.starts_with("folder-"));
+        assert_eq!(result["result"]["name"], "Project A");
+        assert!(!result["result"]["is_expanded"].as_bool().unwrap());
+
+        // List
+        let req = make_request("connections.list", json!({}), 3);
+        let result = d.dispatch(req).await.to_json();
+        let folders = result["result"]["folders"].as_array().unwrap();
+        assert_eq!(folders.len(), 1);
+        assert_eq!(folders[0]["name"], "Project A");
+    }
+
+    #[tokio::test]
+    async fn folders_update() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        // Create
+        let req = make_request("connections.folders.create", json!({"name": "Old Name"}), 2);
+        let result = d.dispatch(req).await.to_json();
+        let folder_id = result["result"]["id"].as_str().unwrap().to_string();
+
+        // Update
+        let req = make_request(
+            "connections.folders.update",
+            json!({"id": folder_id, "name": "New Name", "is_expanded": true}),
+            3,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["result"]["name"], "New Name");
+        assert!(result["result"]["is_expanded"].as_bool().unwrap());
+    }
+
+    #[tokio::test]
+    async fn folders_update_not_found() {
         let mut d = make_dispatcher();
         init_dispatcher(&mut d).await;
 
         let req = make_request(
-            "session.definitions.delete",
+            "connections.folders.update",
+            json!({"id": "nonexistent", "name": "X"}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["error"]["code"], errors::FOLDER_NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn folders_delete() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        // Create
+        let req = make_request(
+            "connections.folders.create",
+            json!({"name": "Temp Folder"}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        let folder_id = result["result"]["id"].as_str().unwrap().to_string();
+
+        // Delete
+        let req = make_request("connections.folders.delete", json!({"id": folder_id}), 3);
+        let result = d.dispatch(req).await.to_json();
+        assert!(result.get("result").is_some());
+
+        // Verify gone
+        let req = make_request("connections.list", json!({}), 4);
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["result"]["folders"].as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn folders_delete_not_found() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request(
+            "connections.folders.delete",
             json!({"id": "nonexistent"}),
             2,
         );
         let result = d.dispatch(req).await.to_json();
-        assert_eq!(result["error"]["code"], errors::SESSION_NOT_FOUND);
+        assert_eq!(result["error"]["code"], errors::FOLDER_NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn connections_with_folder() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        // Create folder
+        let req = make_request("connections.folders.create", json!({"name": "Project"}), 2);
+        let result = d.dispatch(req).await.to_json();
+        let folder_id = result["result"]["id"].as_str().unwrap().to_string();
+
+        // Create connection in folder
+        let req = make_request(
+            "connections.create",
+            json!({"name": "Shell", "type": "shell", "folder_id": folder_id}),
+            3,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["result"]["folder_id"], folder_id);
+    }
+
+    // ── File browsing tests ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn files_list_local() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("hello.txt"), "world").unwrap();
+
+        let req = make_request(
+            "files.list",
+            json!({"path": dir.path().to_str().unwrap()}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        let entries = result["result"]["entries"].as_array().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["name"], "hello.txt");
+        assert_eq!(entries[0]["isDirectory"], false);
+        assert_eq!(entries[0]["size"], 5);
+    }
+
+    #[tokio::test]
+    async fn files_list_not_found() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request("files.list", json!({"path": "/nonexistent/path/abc123"}), 2);
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["error"]["code"], errors::FILE_NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn files_read_write_round_trip() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("test.txt");
+        let path_str = file_path.to_str().unwrap();
+
+        // Write
+        let data_b64 =
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, b"hello, world!");
+        let req = make_request(
+            "files.write",
+            json!({"path": path_str, "data": data_b64}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert!(result.get("result").is_some());
+
+        // Read
+        let req = make_request("files.read", json!({"path": path_str}), 3);
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["result"]["data"], data_b64);
+        assert_eq!(result["result"]["size"], 13);
+    }
+
+    #[tokio::test]
+    async fn files_stat() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("stat_test.txt");
+        std::fs::write(&file_path, "hello").unwrap();
+
+        let req = make_request(
+            "files.stat",
+            json!({"path": file_path.to_str().unwrap()}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["result"]["name"], "stat_test.txt");
+        assert_eq!(result["result"]["isDirectory"], false);
+        assert_eq!(result["result"]["size"], 5);
+    }
+
+    #[tokio::test]
+    async fn files_delete() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("to_delete.txt");
+        std::fs::write(&file_path, "delete me").unwrap();
+
+        let req = make_request(
+            "files.delete",
+            json!({"path": file_path.to_str().unwrap(), "isDirectory": false}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert!(result.get("result").is_some());
+        assert!(!file_path.exists());
+    }
+
+    #[tokio::test]
+    async fn files_rename() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("old.txt");
+        let new = dir.path().join("new.txt");
+        std::fs::write(&old, "content").unwrap();
+
+        let req = make_request(
+            "files.rename",
+            json!({"old_path": old.to_str().unwrap(), "new_path": new.to_str().unwrap()}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert!(result.get("result").is_some());
+        assert!(!old.exists());
+        assert!(new.exists());
+    }
+
+    #[tokio::test]
+    async fn files_with_connection_id_not_found() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request(
+            "files.list",
+            json!({"connection_id": "nonexistent", "path": "/tmp"}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["error"]["code"], errors::CONNECTION_NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn files_serial_not_supported() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        // Create a serial connection
+        let req = make_request(
+            "connections.create",
+            json!({
+                "name": "Serial",
+                "type": "serial",
+                "config": {"port": "/dev/ttyUSB0"}
+            }),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        let conn_id = result["result"]["id"].as_str().unwrap().to_string();
+
+        // Try to list files via serial connection
+        let req = make_request(
+            "files.list",
+            json!({"connection_id": conn_id, "path": "/tmp"}),
+            3,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["error"]["code"], errors::FILE_BROWSING_NOT_SUPPORTED);
+    }
+
+    #[tokio::test]
+    async fn files_shell_connection_uses_local() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("file.txt"), "data").unwrap();
+
+        // Create a shell connection
+        let req = make_request(
+            "connections.create",
+            json!({"name": "Shell", "type": "shell", "config": {"shell": "/bin/sh"}}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        let conn_id = result["result"]["id"].as_str().unwrap().to_string();
+
+        // List files via shell connection (should use local backend)
+        let req = make_request(
+            "files.list",
+            json!({"connection_id": conn_id, "path": dir.path().to_str().unwrap()}),
+            3,
+        );
+        let result = d.dispatch(req).await.to_json();
+        let entries = result["result"]["entries"].as_array().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["name"], "file.txt");
+    }
+
+    #[tokio::test]
+    async fn files_require_initialization() {
+        let mut d = make_dispatcher();
+
+        let req = make_request("files.list", json!({"path": "/tmp"}), 1);
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["error"]["code"], errors::NOT_INITIALIZED);
+    }
+
+    #[tokio::test]
+    async fn files_write_invalid_base64() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request(
+            "files.write",
+            json!({"path": "/tmp/test.txt", "data": "!!!not-base64!!!"}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["error"]["code"], errors::INVALID_PARAMS);
+    }
+
+    // ── Monitoring tests ────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn monitoring_subscribe_self() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request(
+            "monitoring.subscribe",
+            json!({"host": "self", "interval_ms": 5000}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert!(result.get("result").is_some());
+
+        // Clean up
+        let req = make_request("monitoring.unsubscribe", json!({"host": "self"}), 3);
+        d.dispatch(req).await;
+    }
+
+    #[tokio::test]
+    async fn monitoring_unsubscribe_nonexistent() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request("monitoring.unsubscribe", json!({"host": "nonexistent"}), 2);
+        let result = d.dispatch(req).await.to_json();
+        // Unsubscribe always succeeds (idempotent)
+        assert!(result.get("result").is_some());
+    }
+
+    #[tokio::test]
+    async fn monitoring_subscribe_invalid_params() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request("monitoring.subscribe", json!({}), 2);
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["error"]["code"], errors::INVALID_PARAMS);
+    }
+
+    #[tokio::test]
+    async fn monitoring_requires_initialization() {
+        let mut d = make_dispatcher();
+
+        let req = make_request("monitoring.subscribe", json!({"host": "self"}), 1);
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["error"]["code"], errors::NOT_INITIALIZED);
+    }
+
+    #[tokio::test]
+    async fn monitoring_subscribe_unknown_connection() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request(
+            "monitoring.subscribe",
+            json!({"host": "nonexistent-conn"}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["error"]["code"], errors::MONITORING_ERROR);
+    }
+
+    // ── agent.shutdown tests ─────────────────────────────────────────
+
+    #[tokio::test]
+    async fn agent_shutdown_returns_session_count() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request("agent.shutdown", json!({}), 2);
+        let result = d.dispatch(req).await;
+        assert!(result.is_shutdown());
+        let json = result.to_json();
+        assert_eq!(json["result"]["detached_sessions"], 0);
+    }
+
+    #[tokio::test]
+    async fn agent_shutdown_with_reason() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request("agent.shutdown", json!({"reason": "update"}), 2);
+        let result = d.dispatch(req).await;
+        assert!(result.is_shutdown());
+        let json = result.to_json();
+        assert!(json.get("result").is_some());
+    }
+
+    #[tokio::test]
+    async fn agent_shutdown_with_active_sessions() {
+        let (mut d, mgr) = make_dispatcher_with_manager();
+        init_dispatcher(&mut d).await;
+
+        // Create a stub session
+        mgr.create_stub_session(SessionType::Shell, "test".to_string(), json!({}))
+            .await
+            .unwrap();
+
+        let req = make_request("agent.shutdown", json!({}), 2);
+        let result = d.dispatch(req).await;
+        assert!(result.is_shutdown());
+        let json = result.to_json();
+        assert_eq!(json["result"]["detached_sessions"], 1);
+    }
+
+    #[tokio::test]
+    async fn agent_shutdown_requires_initialization() {
+        let mut d = make_dispatcher();
+
+        let req = make_request("agent.shutdown", json!({}), 1);
+        let result = d.dispatch(req).await;
+        assert!(!result.is_shutdown());
+        let json = result.to_json();
+        assert_eq!(json["error"]["code"], errors::NOT_INITIALIZED);
     }
 }

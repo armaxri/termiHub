@@ -112,7 +112,7 @@ export interface DockerConfig {
 /** Session configuration for a session running on a remote agent. */
 export interface RemoteSessionConfig {
   agentId: string;
-  sessionType: "shell" | "serial" | "docker";
+  sessionType: "shell" | "serial" | "docker" | "ssh";
   shell?: string;
   serialPort?: string;
   baudRate?: number;
@@ -133,6 +133,18 @@ export interface RemoteSessionConfig {
   dockerWorkingDirectory?: string;
   /** Remove Docker container on exit (for docker session type). */
   dockerRemoveOnExit?: boolean;
+  /** SSH target host (for ssh session type — jump host). */
+  sshHost?: string;
+  /** SSH target port (for ssh session type). */
+  sshPort?: number;
+  /** SSH username (for ssh session type). */
+  sshUsername?: string;
+  /** SSH auth method (for ssh session type). */
+  sshAuthMethod?: "key" | "password" | "agent";
+  /** SSH password (for ssh session type, password auth). */
+  sshPassword?: string;
+  /** SSH private key path (for ssh session type, key auth). */
+  sshKeyPath?: string;
 }
 
 export type ConnectionConfig =

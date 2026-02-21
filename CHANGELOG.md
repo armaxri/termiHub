@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Agent deployment and updates: automatic detection, deployment, and updating of the agent binary when connecting to a remote host — probes for existing agent, deploys if missing, and updates if version is incompatible, with user-visible progress events
+- Agent graceful shutdown: new `agent.shutdown` JSON-RPC method lets the desktop shut down the agent cleanly before deploying an update, detaching active sessions for recovery by the next agent instance
+- Agent binary download: automatically downloads the correct agent binary from GitHub Releases (with local caching in `~/.cache/termihub/agent-binaries/`) when the bundled binary is not available
+- Agent version reporting: `connectAgent` now returns `agentVersion` and `protocolVersion` from the agent handshake for version compatibility checking
+- Remote agent file browsing: the agent now supports connection-scoped file browsing via `files.list`, `files.read`, `files.write`, `files.delete`, `files.rename`, and `files.stat` JSON-RPC methods — browse the agent's local filesystem, Docker containers (via `docker exec`), or SSH jump targets (via SFTP relay)
+- Remote agent Docker container sessions: the agent can now create interactive terminal sessions inside Docker containers on the remote host, with container lifecycle management, session persistence, and automatic recovery after agent restart
 - Inline SSH key file validation: selecting a key file in the SSH connection editor now shows immediate feedback — detects public keys, PuTTY PPK files, unrecognized formats, and missing files before you attempt to connect (#204)
 - SSH tunneling with local, remote, and dynamic (SOCKS5) port forwarding — create, edit, start/stop tunnels from a dedicated sidebar panel with live status indicators, traffic stats, and visual tunnel diagrams (#107)
 - Tunnel auto-start on app launch and graceful shutdown on window close

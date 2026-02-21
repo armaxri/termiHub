@@ -336,6 +336,8 @@ export interface AgentDefinitionInfo {
 /** Result of connecting to an agent. */
 interface AgentConnectResult {
   capabilities: AgentCapabilities;
+  agentVersion: string;
+  protocolVersion: string;
 }
 
 /** Connect to a remote agent via SSH. Returns capabilities. */
@@ -349,6 +351,11 @@ export async function connectAgent(
 /** Disconnect from a remote agent. */
 export async function disconnectAgent(agentId: string): Promise<void> {
   await invoke("disconnect_agent", { agentId });
+}
+
+/** Gracefully shut down a remote agent and disconnect. Returns detached session count. */
+export async function shutdownAgent(agentId: string, reason?: string): Promise<number> {
+  return await invoke<number>("shutdown_agent", { agentId, reason: reason ?? null });
 }
 
 /** Get capabilities of a connected agent. */
@@ -404,6 +411,57 @@ export async function setupRemoteAgent(
     config,
     setupConfig,
   });
+}
+
+// --- Agent deployment commands ---
+
+/** Result of probing a remote host for the agent binary. */
+export interface AgentProbeResult {
+  found: boolean;
+  version: string | null;
+  remoteArch: string;
+  remoteOs: string;
+  compatible: boolean;
+}
+
+/** Configuration for deploying the agent to a remote host. */
+export interface AgentDeployConfig {
+  remotePath?: string;
+}
+
+/** Result of deploying the agent to a remote host. */
+export interface AgentDeployResult {
+  success: boolean;
+  installedVersion: string | null;
+}
+
+/** Probe a remote host for an existing agent binary. */
+export async function probeRemoteAgent(
+  config: RemoteAgentConfig,
+  expectedVersion?: string
+): Promise<AgentProbeResult> {
+  return await invoke<AgentProbeResult>("probe_remote_agent", {
+    config,
+    expectedVersion: expectedVersion ?? null,
+  });
+}
+
+/** Deploy the agent binary to a remote host via SFTP. */
+export async function deployAgent(
+  agentId: string,
+  config: RemoteAgentConfig,
+  deployConfig: AgentDeployConfig
+): Promise<AgentDeployResult> {
+  return await invoke<AgentDeployResult>("deploy_agent", { agentId, config, deployConfig });
+}
+
+/** Update the agent: shut down the running instance, then deploy a new binary. */
+export async function updateAgent(
+  agentId: string,
+  config: RemoteAgentConfig,
+  deployConfig: AgentDeployConfig
+): Promise<AgentDeployResult> {
+  return await invoke<AgentDeployResult>("update_agent", { agentId, config, deployConfig });
 }
 
 // --- Agent persistence commands ---

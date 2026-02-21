@@ -20,7 +20,10 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.22"
+async-trait = "0.1"
 serialport = "4"
+ssh2 = "0.9"
+shellexpand = "3"
 tokio-util = { version = "0.7", features = ["rt"] }
 
 [target.'cfg(unix)'.dependencies]

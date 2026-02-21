@@ -41,6 +41,30 @@ pub const SESSION_NOT_RUNNING: i64 = -32006;
 /// The agent has not been initialized yet (must call `initialize` first).
 pub const NOT_INITIALIZED: i64 = -32007;
 
+/// No connection with the given ID.
+pub const CONNECTION_NOT_FOUND: i64 = -32008;
+
+/// No folder with the given ID.
+pub const FOLDER_NOT_FOUND: i64 = -32009;
+
+/// The file or directory was not found.
+pub const FILE_NOT_FOUND: i64 = -32010;
+
+/// Permission denied for the requested file operation.
+pub const PERMISSION_DENIED: i64 = -32011;
+
+/// A file operation failed (I/O error, docker exec failure, etc.).
+pub const FILE_OPERATION_FAILED: i64 = -32012;
+
+/// File browsing is not supported for this connection type (e.g., serial).
+pub const FILE_BROWSING_NOT_SUPPORTED: i64 = -32013;
+
+/// A monitoring operation failed (collection error, SSH failure, etc.).
+pub const MONITORING_ERROR: i64 = -32014;
+
+/// An error occurred during agent shutdown.
+pub const SHUTDOWN_ERROR: i64 = -32015;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -60,6 +84,14 @@ mod tests {
             INVALID_CONFIGURATION,
             SESSION_NOT_RUNNING,
             NOT_INITIALIZED,
+            CONNECTION_NOT_FOUND,
+            FOLDER_NOT_FOUND,
+            FILE_NOT_FOUND,
+            PERMISSION_DENIED,
+            FILE_OPERATION_FAILED,
+            FILE_BROWSING_NOT_SUPPORTED,
+            MONITORING_ERROR,
+            SHUTDOWN_ERROR,
         ];
         for code in codes {
             assert!(code < 0, "Error code {code} should be negative");
@@ -94,6 +126,14 @@ mod tests {
             INVALID_CONFIGURATION,
             SESSION_NOT_RUNNING,
             NOT_INITIALIZED,
+            CONNECTION_NOT_FOUND,
+            FOLDER_NOT_FOUND,
+            FILE_NOT_FOUND,
+            PERMISSION_DENIED,
+            FILE_OPERATION_FAILED,
+            FILE_BROWSING_NOT_SUPPORTED,
+            MONITORING_ERROR,
+            SHUTDOWN_ERROR,
         ];
         for code in app_codes {
             assert!(

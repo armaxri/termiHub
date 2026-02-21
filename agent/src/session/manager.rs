@@ -11,9 +11,17 @@ use crate::serial::backend::SerialBackend;
 use crate::session::types::{SessionInfo, SessionSnapshot, SessionStatus, SessionType};
 
 #[cfg(unix)]
+use crate::docker::backend::DockerBackend;
+#[cfg(unix)]
+use crate::protocol::methods::DockerSessionConfig;
+#[cfg(unix)]
 use crate::protocol::methods::ShellConfig;
 #[cfg(unix)]
+use crate::protocol::methods::SshSessionConfig;
+#[cfg(unix)]
 use crate::shell::backend::ShellBackend;
+#[cfg(unix)]
+use crate::ssh::backend::SshBackend;
 #[cfg(unix)]
 use crate::state::persistence::{AgentState, PersistedSession};
 #[cfg(unix)]
@@ -117,6 +125,67 @@ impl SessionManager {
                     created_at: now.to_rfc3339(),
                     daemon_socket: Some(backend.socket_path().to_string_lossy().to_string()),
                     config: config.clone(),
+                    container_name: None,
+                    remove_on_exit: None,
+                },
+            );
+
+            Some(backend)
+        } else {
+            None
+        };
+
+        // On Unix, create a Docker container session
+        #[cfg(unix)]
+        let docker_backend = if session_type == SessionType::Docker {
+            let docker_config: DockerSessionConfig = serde_json::from_value(config.clone())
+                .map_err(|e| SessionCreateError::InvalidConfig(e.to_string()))?;
+            let backend =
+                DockerBackend::new(id.clone(), &docker_config, self.notification_tx.clone())
+                    .await
+                    .map_err(|e| SessionCreateError::BackendFailed(e.to_string()))?;
+
+            // Persist session to state.json for recovery
+            let mut state = self.state.lock().await;
+            state.add_session(
+                id.clone(),
+                PersistedSession {
+                    session_type: "docker".to_string(),
+                    title: title.clone(),
+                    created_at: now.to_rfc3339(),
+                    daemon_socket: Some(backend.socket_path().to_string_lossy().to_string()),
+                    config: config.clone(),
+                    container_name: Some(backend.container_name().to_string()),
+                    remove_on_exit: Some(backend.remove_on_exit()),
+                },
+            );
+
+            Some(backend)
+        } else {
+            None
+        };
+
+        // On Unix, create an SSH jump host session
+        #[cfg(unix)]
+        let ssh_backend = if session_type == SessionType::Ssh {
+            let ssh_config: SshSessionConfig = serde_json::from_value(config.clone())
+                .map_err(|e| SessionCreateError::InvalidConfig(e.to_string()))?;
+            let backend = SshBackend::new(id.clone(), &ssh_config, self.notification_tx.clone())
+                .await
+                .map_err(|e| SessionCreateError::BackendFailed(e.to_string()))?;
+
+            // Persist session to state.json for recovery
+            let mut state = self.state.lock().await;
+            state.add_session(
+                id.clone(),
+                PersistedSession {
+                    session_type: "ssh".to_string(),
+                    title: title.clone(),
+                    created_at: now.to_rfc3339(),
+                    daemon_socket: Some(backend.socket_path().to_string_lossy().to_string()),
+                    config: config.clone(),
+                    container_name: None,
+                    remove_on_exit: None,
                 },
             );
 
@@ -137,6 +206,10 @@ impl SessionManager {
             serial_backend,
             #[cfg(unix)]
             shell_backend,
+            #[cfg(unix)]
+            docker_backend,
+            #[cfg(unix)]
+            ssh_backend,
         };
 
         let snapshot = info.snapshot();
@@ -162,6 +235,14 @@ impl SessionManager {
             }
             #[cfg(unix)]
             if let Some(ref mut backend) = info.shell_backend {
+                backend.close().await;
+            }
+            #[cfg(unix)]
+            if let Some(ref mut backend) = info.docker_backend {
+                backend.close().await;
+            }
+            #[cfg(unix)]
+            if let Some(ref mut backend) = info.ssh_backend {
                 backend.close().await;
             }
 
@@ -194,6 +275,14 @@ impl SessionManager {
                 if let Some(ref mut backend) = info.shell_backend {
                     backend.detach().await;
                 }
+                #[cfg(unix)]
+                if let Some(ref mut backend) = info.docker_backend {
+                    backend.detach().await;
+                }
+                #[cfg(unix)]
+                if let Some(ref mut backend) = info.ssh_backend {
+                    backend.detach().await;
+                }
             }
         }
     }
@@ -207,6 +296,14 @@ impl SessionManager {
             }
             #[cfg(unix)]
             if let Some(ref mut backend) = info.shell_backend {
+                backend.close().await;
+            }
+            #[cfg(unix)]
+            if let Some(ref mut backend) = info.docker_backend {
+                backend.close().await;
+            }
+            #[cfg(unix)]
+            if let Some(ref mut backend) = info.ssh_backend {
                 backend.close().await;
             }
         }
@@ -238,6 +335,14 @@ impl SessionManager {
         if let Some(ref mut backend) = info.shell_backend {
             backend.attach().await.map_err(|e| e.to_string())?;
         }
+        #[cfg(unix)]
+        if let Some(ref mut backend) = info.docker_backend {
+            backend.attach().await.map_err(|e| e.to_string())?;
+        }
+        #[cfg(unix)]
+        if let Some(ref mut backend) = info.ssh_backend {
+            backend.attach().await.map_err(|e| e.to_string())?;
+        }
 
         Ok(())
     }
@@ -258,6 +363,14 @@ impl SessionManager {
 
         #[cfg(unix)]
         if let Some(ref mut backend) = info.shell_backend {
+            backend.detach().await;
+        }
+        #[cfg(unix)]
+        if let Some(ref mut backend) = info.docker_backend {
+            backend.detach().await;
+        }
+        #[cfg(unix)]
+        if let Some(ref mut backend) = info.ssh_backend {
             backend.detach().await;
         }
 
@@ -281,6 +394,14 @@ impl SessionManager {
         if let Some(ref backend) = info.shell_backend {
             backend.write_input(data).await.map_err(|e| e.to_string())?;
         }
+        #[cfg(unix)]
+        if let Some(ref backend) = info.docker_backend {
+            backend.write_input(data).await.map_err(|e| e.to_string())?;
+        }
+        #[cfg(unix)]
+        if let Some(ref backend) = info.ssh_backend {
+            backend.write_input(data).await.map_err(|e| e.to_string())?;
+        }
 
         Ok(())
     }
@@ -296,6 +417,20 @@ impl SessionManager {
 
         #[cfg(unix)]
         if let Some(ref backend) = info.shell_backend {
+            backend
+                .resize(cols, rows)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        #[cfg(unix)]
+        if let Some(ref backend) = info.docker_backend {
+            backend
+                .resize(cols, rows)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        #[cfg(unix)]
+        if let Some(ref backend) = info.ssh_backend {
             backend
                 .resize(cols, rows)
                 .await
@@ -321,54 +456,185 @@ impl SessionManager {
         let mut recovered = Vec::new();
 
         for (id, session) in &persisted {
-            if session.session_type != "shell" {
-                continue;
-            }
-
-            let socket_path = match &session.daemon_socket {
-                Some(p) => PathBuf::from(p),
-                None => continue,
-            };
-
-            // Check if the socket file still exists
-            if !socket_path.exists() {
-                info!("Daemon socket gone for session {id}, removing from state");
-                let mut state = self.state.lock().await;
-                state.remove_session(id);
-                continue;
-            }
-
-            // Try to reconnect
-            match ShellBackend::reconnect(id.clone(), socket_path, self.notification_tx.clone())
-                .await
-            {
-                Ok(backend) => {
-                    let created_at = chrono::DateTime::parse_from_rfc3339(&session.created_at)
-                        .map(|dt| dt.with_timezone(&Utc))
-                        .unwrap_or_else(|_| Utc::now());
-
-                    let info = SessionInfo {
-                        id: id.clone(),
-                        title: session.title.clone(),
-                        session_type: SessionType::Shell,
-                        status: SessionStatus::Running,
-                        config: session.config.clone(),
-                        created_at,
-                        last_activity: Utc::now(),
-                        attached: false,
-                        serial_backend: None,
-                        shell_backend: Some(backend),
+            match session.session_type.as_str() {
+                "shell" => {
+                    let socket_path = match &session.daemon_socket {
+                        Some(p) => PathBuf::from(p),
+                        None => continue,
                     };
 
-                    let mut sessions = self.sessions.lock().await;
-                    sessions.insert(id.clone(), info);
-                    recovered.push(id.clone());
-                    info!("Recovered shell session {id}");
+                    if !socket_path.exists() {
+                        info!("Daemon socket gone for session {id}, removing from state");
+                        let mut state = self.state.lock().await;
+                        state.remove_session(id);
+                        continue;
+                    }
+
+                    match ShellBackend::reconnect(
+                        id.clone(),
+                        socket_path,
+                        self.notification_tx.clone(),
+                    )
+                    .await
+                    {
+                        Ok(backend) => {
+                            let created_at =
+                                chrono::DateTime::parse_from_rfc3339(&session.created_at)
+                                    .map(|dt| dt.with_timezone(&Utc))
+                                    .unwrap_or_else(|_| Utc::now());
+
+                            let info = SessionInfo {
+                                id: id.clone(),
+                                title: session.title.clone(),
+                                session_type: SessionType::Shell,
+                                status: SessionStatus::Running,
+                                config: session.config.clone(),
+                                created_at,
+                                last_activity: Utc::now(),
+                                attached: false,
+                                serial_backend: None,
+                                shell_backend: Some(backend),
+                                docker_backend: None,
+                                ssh_backend: None,
+                            };
+
+                            let mut sessions = self.sessions.lock().await;
+                            sessions.insert(id.clone(), info);
+                            recovered.push(id.clone());
+                            info!("Recovered shell session {id}");
+                        }
+                        Err(e) => {
+                            warn!("Failed to recover shell session {id}: {e}");
+                            let mut state = self.state.lock().await;
+                            state.remove_session(id);
+                        }
+                    }
                 }
-                Err(e) => {
-                    warn!("Failed to recover session {id}: {e}");
-                    let mut state = self.state.lock().await;
-                    state.remove_session(id);
+                "docker" => {
+                    let container_name = match &session.container_name {
+                        Some(name) => name.clone(),
+                        None => {
+                            warn!("Docker session {id} missing container_name, removing");
+                            let mut state = self.state.lock().await;
+                            state.remove_session(id);
+                            continue;
+                        }
+                    };
+
+                    let remove_on_exit = session.remove_on_exit.unwrap_or(false);
+
+                    // Extract shell and dimensions from persisted config
+                    let docker_config: DockerSessionConfig =
+                        match serde_json::from_value(session.config.clone()) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                warn!("Failed to parse Docker config for session {id}: {e}");
+                                let mut state = self.state.lock().await;
+                                state.remove_session(id);
+                                continue;
+                            }
+                        };
+
+                    let shell = docker_config.shell.unwrap_or_else(|| "/bin/sh".to_string());
+
+                    match DockerBackend::reconnect(
+                        id.clone(),
+                        container_name,
+                        remove_on_exit,
+                        shell,
+                        docker_config.cols,
+                        docker_config.rows,
+                        self.notification_tx.clone(),
+                    )
+                    .await
+                    {
+                        Ok(backend) => {
+                            let created_at =
+                                chrono::DateTime::parse_from_rfc3339(&session.created_at)
+                                    .map(|dt| dt.with_timezone(&Utc))
+                                    .unwrap_or_else(|_| Utc::now());
+
+                            let info = SessionInfo {
+                                id: id.clone(),
+                                title: session.title.clone(),
+                                session_type: SessionType::Docker,
+                                status: SessionStatus::Running,
+                                config: session.config.clone(),
+                                created_at,
+                                last_activity: Utc::now(),
+                                attached: false,
+                                serial_backend: None,
+                                shell_backend: None,
+                                docker_backend: Some(backend),
+                                ssh_backend: None,
+                            };
+
+                            let mut sessions = self.sessions.lock().await;
+                            sessions.insert(id.clone(), info);
+                            recovered.push(id.clone());
+                            info!("Recovered Docker session {id}");
+                        }
+                        Err(e) => {
+                            warn!("Failed to recover Docker session {id}: {e}");
+                            let mut state = self.state.lock().await;
+                            state.remove_session(id);
+                        }
+                    }
+                }
+                "ssh" => {
+                    let ssh_config: SshSessionConfig =
+                        match serde_json::from_value(session.config.clone()) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                warn!("Failed to parse SSH config for session {id}: {e}");
+                                let mut state = self.state.lock().await;
+                                state.remove_session(id);
+                                continue;
+                            }
+                        };
+
+                    match SshBackend::reconnect(
+                        id.clone(),
+                        &ssh_config,
+                        self.notification_tx.clone(),
+                    )
+                    .await
+                    {
+                        Ok(backend) => {
+                            let created_at =
+                                chrono::DateTime::parse_from_rfc3339(&session.created_at)
+                                    .map(|dt| dt.with_timezone(&Utc))
+                                    .unwrap_or_else(|_| Utc::now());
+
+                            let info = SessionInfo {
+                                id: id.clone(),
+                                title: session.title.clone(),
+                                session_type: SessionType::Ssh,
+                                status: SessionStatus::Running,
+                                config: session.config.clone(),
+                                created_at,
+                                last_activity: Utc::now(),
+                                attached: false,
+                                serial_backend: None,
+                                shell_backend: None,
+                                docker_backend: None,
+                                ssh_backend: Some(backend),
+                            };
+
+                            let mut sessions = self.sessions.lock().await;
+                            sessions.insert(id.clone(), info);
+                            recovered.push(id.clone());
+                            info!("Recovered SSH session {id}");
+                        }
+                        Err(e) => {
+                            warn!("Failed to recover SSH session {id}: {e}");
+                            let mut state = self.state.lock().await;
+                            state.remove_session(id);
+                        }
+                    }
+                }
+                other => {
+                    info!("Skipping recovery for unknown session type: {other}");
                 }
             }
         }
@@ -406,10 +672,40 @@ impl SessionManager {
             serial_backend: None,
             #[cfg(unix)]
             shell_backend: None,
+            #[cfg(unix)]
+            docker_backend: None,
+            #[cfg(unix)]
+            ssh_backend: None,
         };
         let snapshot = info.snapshot();
         sessions.insert(id, info);
         Ok(snapshot)
+    }
+
+    /// Find a running Docker container name by image name.
+    ///
+    /// Scans active Docker sessions for one whose config matches the given
+    /// image. Returns the first match's container name, or `None`.
+    #[cfg(unix)]
+    pub async fn find_docker_container(&self, image: &str) -> Option<String> {
+        let sessions = self.sessions.lock().await;
+        for info in sessions.values() {
+            if info.session_type != SessionType::Docker {
+                continue;
+            }
+            if info.status != SessionStatus::Running {
+                continue;
+            }
+            // Check if the session config matches the requested image
+            if let Some(config_image) = info.config.get("image").and_then(|v| v.as_str()) {
+                if config_image == image {
+                    if let Some(ref backend) = info.docker_backend {
+                        return Some(backend.container_name().to_string());
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// Return the number of sessions with status `Running`.
