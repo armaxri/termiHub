@@ -173,7 +173,11 @@ export function CustomizeLayoutDialog() {
                       type="radio"
                       name="ab-position"
                       value={pos}
-                      checked={abHidden ? lastNonHiddenPos.current === pos : layoutConfig.activityBarPosition === pos}
+                      checked={
+                        abHidden
+                          ? lastNonHiddenPos.current === pos
+                          : layoutConfig.activityBarPosition === pos
+                      }
                       disabled={abHidden}
                       onChange={() => handleActivityBarPosition(pos)}
                       data-testid={`layout-ab-${pos}`}
