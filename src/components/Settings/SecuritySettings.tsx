@@ -346,10 +346,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
               <h3 className="settings-panel__section-title">Master Password Options</h3>
 
               <div className="settings-panel__field">
-                <label
-                  className="settings-panel__description"
-                  htmlFor="auto-lock-timeout"
-                >
+                <label className="settings-panel__description" htmlFor="auto-lock-timeout">
                   Lock the credential store after a period of inactivity:
                 </label>
                 <select
@@ -378,10 +375,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
               </div>
 
               {changingPassword && (
-                <div
-                  className="settings-panel__inline-dialog"
-                  data-testid="change-password-dialog"
-                >
+                <div className="settings-panel__inline-dialog" data-testid="change-password-dialog">
                   <h4 className="settings-panel__inline-dialog-title">Change Master Password</h4>
                   <input
                     className="settings-panel__inline-dialog-input"
