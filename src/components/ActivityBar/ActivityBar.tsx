@@ -7,6 +7,7 @@ import {
   Download,
   Upload,
   ScrollText,
+  LayoutDashboard,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { save, open } from "@tauri-apps/plugin-dialog";
@@ -34,6 +35,7 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
   const openLogViewerTab = useAppStore((s) => s.openLogViewerTab);
   const loadFromBackend = useAppStore((s) => s.loadFromBackend);
   const activityBarPosition = useAppStore((s) => s.layoutConfig.activityBarPosition);
+  const setLayoutDialogOpen = useAppStore((s) => s.setLayoutDialogOpen);
 
   const handleExport = useCallback(async () => {
     try {
@@ -114,6 +116,14 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
               >
                 <Settings size={14} />
                 Settings
+              </DropdownMenu.Item>
+              <DropdownMenu.Item
+                className="settings-menu__item"
+                onSelect={() => setLayoutDialogOpen(true)}
+                data-testid="settings-menu-customize-layout"
+              >
+                <LayoutDashboard size={14} />
+                Customize Layout...
               </DropdownMenu.Item>
               <DropdownMenu.Separator className="settings-menu__separator" />
               <DropdownMenu.Item
