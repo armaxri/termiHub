@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::credential::crypto::EncryptedEnvelope;
 use crate::terminal::backend::{ConnectionConfig, RemoteAgentConfig};
 
 /// Per-connection terminal display options.
@@ -87,6 +88,41 @@ pub struct ExternalConnectionStore {
     pub version: String,
     pub folders: Vec<ConnectionFolder>,
     pub connections: Vec<SavedConnection>,
+}
+
+/// Export format that optionally includes an encrypted credentials section.
+///
+/// When the user exports "with credentials", the `$encrypted` field
+/// contains an [`EncryptedEnvelope`] holding a JSON map of
+/// `"connection_id:credential_type" -> "value"`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EncryptedConnectionExport {
+    pub version: String,
+    pub folders: Vec<ConnectionFolder>,
+    pub connections: Vec<SavedConnection>,
+    #[serde(default)]
+    pub agents: Vec<SavedRemoteAgent>,
+    #[serde(rename = "$encrypted", skip_serializing_if = "Option::is_none")]
+    pub encrypted: Option<EncryptedEnvelope>,
+}
+
+/// Summary of an import file before the user confirms the import.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportPreview {
+    pub connection_count: usize,
+    pub folder_count: usize,
+    pub agent_count: usize,
+    pub has_encrypted_credentials: bool,
+}
+
+/// Result of a completed import operation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportResult {
+    pub connections_imported: usize,
+    pub credentials_imported: usize,
 }
 
 #[cfg(test)]

@@ -19,7 +19,11 @@ import {
   SavedRemoteAgent,
   saveRemoteAgent,
   deleteRemoteAgentFromBackend,
+  previewImport,
+  exportConnectionsEncrypted,
+  importConnectionsWithCredentials,
 } from "./api";
+import type { ImportPreview, ImportResult } from "./api";
 
 /** Load all saved connections, folders, and agents from the backend (unified) */
 export async function loadConnections(): Promise<{
@@ -81,3 +85,14 @@ export { saveExternalFile };
 
 /** Reload external connection files */
 export { reloadExternalConnections };
+
+/** Preview import file contents */
+export { previewImport };
+
+/** Export connections with optional encrypted credentials */
+export { exportConnectionsEncrypted };
+
+/** Import connections with optional credential decryption */
+export { importConnectionsWithCredentials };
+
+export type { ImportPreview, ImportResult };

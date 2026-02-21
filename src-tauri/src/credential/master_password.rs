@@ -6,50 +6,18 @@ use std::sync::RwLock;
 use aes_gcm::aead::Aead;
 use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
 use anyhow::{bail, Context, Result};
-use argon2::Argon2;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use rand::rngs::OsRng;
 use rand::RngCore;
-use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
 
-use super::types::{CredentialKey, CredentialStoreStatus, CredentialType};
+use super::crypto::{
+    derive_key, EncryptedEnvelope, KdfParams, AAD, ARGON2_MEMORY_COST, ARGON2_PARALLELISM,
+    ARGON2_TIME_COST, ENVELOPE_VERSION, NONCE_LEN, SALT_LEN,
+};
+use super::types::{CredentialKey, CredentialStoreStatus};
 use super::CredentialStore;
-
-/// Argon2id memory cost in KiB (64 MiB).
-const ARGON2_MEMORY_COST: u32 = 65536;
-/// Argon2id iteration count.
-const ARGON2_TIME_COST: u32 = 3;
-/// Argon2id parallelism degree.
-const ARGON2_PARALLELISM: u32 = 1;
-/// Length of the random salt in bytes.
-const SALT_LEN: usize = 32;
-/// Length of the AES-256-GCM nonce in bytes.
-const NONCE_LEN: usize = 12;
-/// Current envelope format version.
-const ENVELOPE_VERSION: u32 = 1;
-/// Additional authenticated data: single version byte.
-const AAD: &[u8] = &[1];
-
-/// On-disk encrypted envelope format.
-#[derive(Serialize, Deserialize)]
-struct EncryptedEnvelope {
-    version: u32,
-    kdf: KdfParams,
-    nonce: String,
-    data: String,
-}
-
-/// Key derivation function parameters stored alongside the ciphertext.
-#[derive(Serialize, Deserialize)]
-struct KdfParams {
-    algorithm: String,
-    salt: String,
-    memory_cost: u32,
-    time_cost: u32,
-    parallelism: u32,
-}
 
 /// Credential store that encrypts all credentials into a single file
 /// using Argon2id key derivation and AES-256-GCM authenticated encryption.
@@ -371,7 +339,7 @@ impl CredentialStore for MasterPasswordStore {
             .context("Store is locked — unlock before accessing credentials")?;
         let mut keys = Vec::new();
         for map_key in map.keys() {
-            if let Some(ck) = parse_map_key(map_key) {
+            if let Some(ck) = CredentialKey::from_map_key(map_key) {
                 keys.push(ck);
             }
         }
@@ -395,40 +363,12 @@ impl Drop for MasterPasswordStore {
     }
 }
 
-/// Derive a 256-bit key from a password and salt using Argon2id.
-fn derive_key(password: &str, salt: &[u8]) -> Result<[u8; 32]> {
-    let params = argon2::Params::new(
-        ARGON2_MEMORY_COST,
-        ARGON2_TIME_COST,
-        ARGON2_PARALLELISM,
-        Some(32),
-    )
-    .map_err(|e| anyhow::anyhow!("Invalid Argon2 parameters: {e}"))?;
-    let argon2 = Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
-
-    let mut key = [0u8; 32];
-    argon2
-        .hash_password_into(password.as_bytes(), salt, &mut key)
-        .map_err(|e| anyhow::anyhow!("Argon2 key derivation failed: {e}"))?;
-    Ok(key)
-}
-
-/// Parse a map key like `"conn-id:password"` back into a [`CredentialKey`].
-fn parse_map_key(s: &str) -> Option<CredentialKey> {
-    let (conn_id, type_str) = s.rsplit_once(':')?;
-    let credential_type = match type_str {
-        "password" => CredentialType::Password,
-        "key_passphrase" => CredentialType::KeyPassphrase,
-        _ => return None,
-    };
-    Some(CredentialKey::new(conn_id, credential_type))
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::Path;
 
     use super::*;
+    use crate::credential::types::CredentialType;
 
     fn make_store(dir: &Path) -> MasterPasswordStore {
         MasterPasswordStore::new(dir.join("credentials.enc"))
@@ -683,20 +623,20 @@ mod tests {
     }
 
     #[test]
-    fn parse_map_key_roundtrip() {
+    fn from_map_key_roundtrip() {
         let key = CredentialKey::new("my-conn-id", CredentialType::Password);
         let map_key = key.to_string();
-        let parsed = parse_map_key(&map_key).unwrap();
+        let parsed = CredentialKey::from_map_key(&map_key).unwrap();
         assert_eq!(parsed, key);
 
         let key2 = CredentialKey::new("other-conn", CredentialType::KeyPassphrase);
         let map_key2 = key2.to_string();
-        let parsed2 = parse_map_key(&map_key2).unwrap();
+        let parsed2 = CredentialKey::from_map_key(&map_key2).unwrap();
         assert_eq!(parsed2, key2);
 
         // Invalid type string.
-        assert!(parse_map_key("conn:unknown_type").is_none());
+        assert!(CredentialKey::from_map_key("conn:unknown_type").is_none());
         // No colon.
-        assert!(parse_map_key("nodelimiter").is_none());
+        assert!(CredentialKey::from_map_key("nodelimiter").is_none());
     }
 }

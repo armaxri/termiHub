@@ -1,14 +1,16 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use tauri::AppHandle;
 
 use super::config::{
-    ConnectionFolder, ConnectionStore, ExternalConnectionStore, SavedConnection, SavedRemoteAgent,
+    ConnectionFolder, ConnectionStore, EncryptedConnectionExport, ExternalConnectionStore,
+    ImportPreview, ImportResult, SavedConnection, SavedRemoteAgent,
 };
 use super::settings::{AppSettings, SettingsStorage};
 use super::storage::ConnectionStorage;
+use crate::credential::crypto::{decrypt_with_password, encrypt_with_password};
 use crate::credential::{CredentialKey, CredentialStore, CredentialType};
 use crate::terminal::backend::ConnectionConfig;
 
@@ -321,6 +323,162 @@ impl ConnectionManager {
         }
     }
 
+    /// Export connections as JSON with an optional encrypted credentials section.
+    ///
+    /// When `password` is provided, credentials for SSH connections and agents
+    /// are fetched from the credential store, encrypted with the password,
+    /// and included in the `$encrypted` field of the export.
+    pub fn export_encrypted_json(
+        &self,
+        password: Option<&str>,
+        connection_ids: Option<&[String]>,
+    ) -> Result<String> {
+        let store = self.store.lock().unwrap();
+
+        // Select connections to export (all or filtered by IDs)
+        let connections: Vec<SavedConnection> = match connection_ids {
+            Some(ids) => store
+                .connections
+                .iter()
+                .filter(|c| ids.contains(&c.id))
+                .cloned()
+                .collect(),
+            None => store.connections.clone(),
+        };
+
+        let folders = store.folders.clone();
+        let agents = store.agents.clone();
+        drop(store);
+
+        // Strip inline passwords from all connections (they should already be
+        // stripped, but be defensive).
+        let connections: Vec<SavedConnection> = connections
+            .into_iter()
+            .map(|c| prepare_for_storage(c, &*self.credential_store))
+            .collect::<Result<Vec<_>>>()?;
+
+        // Build the encrypted credentials section if a password is provided
+        let encrypted = match password {
+            Some(pw) => {
+                let mut cred_map: HashMap<String, String> = HashMap::new();
+
+                // Gather credentials for SSH connections
+                for conn in &connections {
+                    if let ConnectionConfig::Ssh(ref ssh) = conn.config {
+                        let cred_type = if ssh.auth_method == "key" {
+                            CredentialType::KeyPassphrase
+                        } else {
+                            CredentialType::Password
+                        };
+                        let key = CredentialKey::new(&conn.id, cred_type);
+                        if let Ok(Some(value)) = self.credential_store.get(&key) {
+                            cred_map.insert(key.to_string(), value);
+                        }
+                    }
+                }
+
+                // Gather credentials for agents
+                for agent in &agents {
+                    let cred_type = if agent.config.auth_method == "key" {
+                        CredentialType::KeyPassphrase
+                    } else {
+                        CredentialType::Password
+                    };
+                    let key = CredentialKey::new(&agent.id, cred_type);
+                    if let Ok(Some(value)) = self.credential_store.get(&key) {
+                        cred_map.insert(key.to_string(), value);
+                    }
+                }
+
+                if cred_map.is_empty() {
+                    None
+                } else {
+                    let plaintext = serde_json::to_vec(&cred_map)
+                        .context("Failed to serialize credential map")?;
+                    Some(
+                        encrypt_with_password(pw, &plaintext)
+                            .context("Failed to encrypt credentials")?,
+                    )
+                }
+            }
+            None => None,
+        };
+
+        let export = EncryptedConnectionExport {
+            version: "1".to_string(),
+            folders,
+            connections,
+            agents,
+            encrypted,
+        };
+
+        serde_json::to_string_pretty(&export).context("Failed to serialize encrypted export")
+    }
+
+    /// Import connections from an encrypted export JSON string.
+    ///
+    /// If the JSON contains an `$encrypted` section and `password` is provided,
+    /// credentials are decrypted and stored in the credential store. Without a
+    /// password, the encrypted section is silently skipped.
+    pub fn import_encrypted_json(
+        &self,
+        json: &str,
+        password: Option<&str>,
+    ) -> Result<ImportResult> {
+        let imported: EncryptedConnectionExport =
+            serde_json::from_str(json).context("Failed to parse import data")?;
+
+        let mut credentials_imported = 0;
+
+        // Decrypt and store credentials if available
+        if let (Some(ref envelope), Some(pw)) = (&imported.encrypted, password) {
+            let plaintext = decrypt_with_password(pw, envelope)
+                .context("Failed to decrypt credentials — wrong password?")?;
+            let cred_map: HashMap<String, String> =
+                serde_json::from_slice(&plaintext).context("Invalid credential data format")?;
+
+            for (map_key, value) in &cred_map {
+                if let Some(cred_key) = CredentialKey::from_map_key(map_key) {
+                    self.credential_store.set(&cred_key, value)?;
+                    credentials_imported += 1;
+                }
+            }
+        }
+
+        // Merge connections, folders, and agents
+        let mut store = self.store.lock().unwrap();
+        let connections_imported = imported.connections.len();
+
+        for folder in imported.folders {
+            if !store.folders.iter().any(|f| f.id == folder.id) {
+                store.folders.push(folder);
+            }
+        }
+
+        for conn in imported.connections {
+            if !store.connections.iter().any(|c| c.id == conn.id) {
+                store
+                    .connections
+                    .push(prepare_for_storage(conn, &*self.credential_store)?);
+            }
+        }
+
+        for agent in imported.agents {
+            if !store.agents.iter().any(|a| a.id == agent.id) {
+                store.agents.push(agent);
+            }
+        }
+
+        self.storage
+            .save(&store)
+            .context("Failed to persist after import")?;
+
+        Ok(ImportResult {
+            connections_imported,
+            credentials_imported,
+        })
+    }
+
     /// Move a connection between files. Removes from source, adds to target.
     pub fn move_connection_to_file(
         &self,
@@ -369,6 +527,20 @@ impl ConnectionManager {
 
         Ok(connection)
     }
+}
+
+/// Parse an import JSON string and return a summary of its contents
+/// without actually performing the import.
+pub fn preview_import_json(json: &str) -> Result<ImportPreview> {
+    let export: EncryptedConnectionExport =
+        serde_json::from_str(json).context("Failed to parse import data")?;
+
+    Ok(ImportPreview {
+        connection_count: export.connections.len(),
+        folder_count: export.folders.len(),
+        agent_count: export.agents.len(),
+        has_encrypted_credentials: export.encrypted.is_some(),
+    })
 }
 
 /// Load a single external connection file, flattening connections.
@@ -791,5 +963,171 @@ mod tests {
             !raw.contains("should_be_removed"),
             "Password should not be in saved file"
         );
+    }
+
+    /// Mock credential store that stores and retrieves values.
+    struct MockStoreWithData {
+        data: Mutex<HashMap<String, String>>,
+    }
+
+    impl MockStoreWithData {
+        fn new() -> Self {
+            Self {
+                data: Mutex::new(HashMap::new()),
+            }
+        }
+    }
+
+    impl CredentialStore for MockStoreWithData {
+        fn get(&self, key: &CredentialKey) -> Result<Option<String>> {
+            Ok(self.data.lock().unwrap().get(&key.to_string()).cloned())
+        }
+        fn set(&self, key: &CredentialKey, value: &str) -> Result<()> {
+            self.data
+                .lock()
+                .unwrap()
+                .insert(key.to_string(), value.to_string());
+            Ok(())
+        }
+        fn remove(&self, key: &CredentialKey) -> Result<()> {
+            self.data.lock().unwrap().remove(&key.to_string());
+            Ok(())
+        }
+        fn remove_all_for_connection(&self, connection_id: &str) -> Result<()> {
+            let prefix = format!("{connection_id}:");
+            self.data
+                .lock()
+                .unwrap()
+                .retain(|k, _| !k.starts_with(&prefix));
+            Ok(())
+        }
+        fn list_keys(&self) -> Result<Vec<CredentialKey>> {
+            Ok(self
+                .data
+                .lock()
+                .unwrap()
+                .keys()
+                .filter_map(|k| CredentialKey::from_map_key(k))
+                .collect())
+        }
+        fn status(&self) -> CredentialStoreStatus {
+            CredentialStoreStatus::Unlocked
+        }
+    }
+
+    #[test]
+    fn preview_import_detects_encrypted_section() {
+        let json = r#"{
+            "version": "1",
+            "folders": [],
+            "connections": [
+                {"id": "c1", "name": "SSH", "config": {"type": "ssh", "config": {"host": "h", "port": 22, "username": "u", "authMethod": "password", "enableX11Forwarding": false}}, "folderId": null}
+            ],
+            "agents": [],
+            "$encrypted": {"version": 1, "kdf": {"algorithm": "argon2id", "salt": "AAAA", "memoryCost": 65536, "timeCost": 3, "parallelism": 1}, "nonce": "AAAA", "data": "AAAA"}
+        }"#;
+
+        let preview = preview_import_json(json).unwrap();
+        assert_eq!(preview.connection_count, 1);
+        assert_eq!(preview.folder_count, 0);
+        assert!(preview.has_encrypted_credentials);
+    }
+
+    #[test]
+    fn preview_import_detects_no_encrypted_section() {
+        let json = r#"{
+            "version": "1",
+            "folders": [{"id": "f1", "name": "F", "parentId": null, "isExpanded": true}],
+            "connections": [],
+            "agents": []
+        }"#;
+
+        let preview = preview_import_json(json).unwrap();
+        assert_eq!(preview.connection_count, 0);
+        assert_eq!(preview.folder_count, 1);
+        assert!(!preview.has_encrypted_credentials);
+    }
+
+    #[test]
+    fn preview_import_backward_compat_with_connection_store() {
+        // Old format ConnectionStore (no $encrypted, no agents)
+        let json = r#"{"version": "1", "folders": [], "connections": []}"#;
+        let preview = preview_import_json(json).unwrap();
+        assert_eq!(preview.connection_count, 0);
+        assert!(!preview.has_encrypted_credentials);
+    }
+
+    #[test]
+    fn encrypted_export_import_round_trip() {
+        let cred_store = Arc::new(MockStoreWithData::new());
+
+        // Store a credential
+        let key = CredentialKey::new("c1", CredentialType::Password);
+        cred_store.set(&key, "my-secret-pw").unwrap();
+
+        // Build a store with one SSH connection
+        let store = ConnectionStore {
+            version: "1".to_string(),
+            folders: vec![],
+            connections: vec![make_ssh_conn("c1", "password", None, None)],
+            agents: vec![],
+        };
+
+        // Simulate the export
+        let store_json = serde_json::to_string_pretty(&store).unwrap();
+        let imported_store: ConnectionStore = serde_json::from_str(&store_json).unwrap();
+
+        // Build the encrypted export manually using the crypto module
+        let mut cred_map: HashMap<String, String> = HashMap::new();
+        cred_map.insert(key.to_string(), "my-secret-pw".to_string());
+        let plaintext = serde_json::to_vec(&cred_map).unwrap();
+        let envelope =
+            crate::credential::crypto::encrypt_with_password("export-pw", &plaintext).unwrap();
+
+        let export = EncryptedConnectionExport {
+            version: "1".to_string(),
+            folders: imported_store.folders,
+            connections: imported_store.connections,
+            agents: vec![],
+            encrypted: Some(envelope),
+        };
+
+        let export_json = serde_json::to_string_pretty(&export).unwrap();
+
+        // Verify $encrypted is present
+        assert!(export_json.contains("$encrypted"));
+
+        // Verify preview detects encrypted
+        let preview = preview_import_json(&export_json).unwrap();
+        assert!(preview.has_encrypted_credentials);
+        assert_eq!(preview.connection_count, 1);
+
+        // Decrypt the credentials manually
+        let re_parsed: EncryptedConnectionExport = serde_json::from_str(&export_json).unwrap();
+        let decrypted = crate::credential::crypto::decrypt_with_password(
+            "export-pw",
+            re_parsed.encrypted.as_ref().unwrap(),
+        )
+        .unwrap();
+        let recovered_map: HashMap<String, String> = serde_json::from_slice(&decrypted).unwrap();
+        assert_eq!(
+            recovered_map.get(&key.to_string()),
+            Some(&"my-secret-pw".to_string())
+        );
+    }
+
+    #[test]
+    fn encrypted_export_wrong_password_fails_decrypt() {
+        let cred_map: HashMap<String, String> =
+            vec![("c1:password".to_string(), "secret".to_string())]
+                .into_iter()
+                .collect();
+
+        let plaintext = serde_json::to_vec(&cred_map).unwrap();
+        let envelope =
+            crate::credential::crypto::encrypt_with_password("correct-pw", &plaintext).unwrap();
+
+        let result = crate::credential::crypto::decrypt_with_password("wrong-pw", &envelope);
+        assert!(result.is_err());
     }
 }
