@@ -173,8 +173,7 @@ mod tests {
 
     #[test]
     fn deserialize_success_response() {
-        let json_str =
-            r#"{"jsonrpc":"2.0","result":{"status":"ok","version":"0.1.0"},"id":10}"#;
+        let json_str = r#"{"jsonrpc":"2.0","result":{"status":"ok","version":"0.1.0"},"id":10}"#;
         let resp: JsonRpcResponse = serde_json::from_str(json_str).unwrap();
         assert_eq!(resp.jsonrpc, "2.0");
         assert_eq!(resp.result["status"], "ok");
@@ -184,7 +183,8 @@ mod tests {
 
     #[test]
     fn deserialize_error_response() {
-        let json_str = r#"{"jsonrpc":"2.0","error":{"code":-32601,"message":"Method not found"},"id":7}"#;
+        let json_str =
+            r#"{"jsonrpc":"2.0","error":{"code":-32601,"message":"Method not found"},"id":7}"#;
         let resp: JsonRpcErrorResponse = serde_json::from_str(json_str).unwrap();
         assert_eq!(resp.jsonrpc, "2.0");
         assert_eq!(resp.error.code, -32601);
