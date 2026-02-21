@@ -1,10 +1,14 @@
 pub mod keychain;
+pub mod master_password;
 pub mod null;
 pub mod types;
+
+use std::path::PathBuf;
 
 use anyhow::Result;
 
 pub use keychain::KeychainStore;
+pub use master_password::MasterPasswordStore;
 pub use null::NullStore;
 pub use types::{CredentialKey, CredentialStoreStatus, CredentialType, StorageMode};
 
@@ -34,11 +38,20 @@ pub trait CredentialStore: Send + Sync {
 }
 
 /// Create a credential store for the given storage mode.
-pub fn create_credential_store(mode: StorageMode) -> Box<dyn CredentialStore> {
+///
+/// When `mode` is [`StorageMode::MasterPassword`], a `credentials_file` path
+/// must be provided; it will be used as the encrypted credentials file location.
+/// If `None` is passed, the store falls back to [`NullStore`].
+pub fn create_credential_store(
+    mode: StorageMode,
+    credentials_file: Option<PathBuf>,
+) -> Box<dyn CredentialStore> {
     match mode {
         StorageMode::Keychain => Box::new(KeychainStore),
+        StorageMode::MasterPassword => match credentials_file {
+            Some(path) => Box::new(MasterPasswordStore::new(path)),
+            None => Box::new(NullStore),
+        },
         StorageMode::None => Box::new(NullStore),
-        // Future: StorageMode::MasterPassword => Box::new(MasterPasswordStore::new(...)),
-        _ => Box::new(NullStore),
     }
 }
