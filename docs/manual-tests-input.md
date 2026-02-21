@@ -334,6 +334,20 @@ Each section groups related tests by feature area. Individual test items referen
 - [ ] Click "Export Connections" — file save dialog, saves JSON
 - [x] Connection list toolbar no longer has Import/Export buttons (only New Folder and New Connection remain)
 
+### Encrypted export/import of connections with credentials (PR #322)
+
+- [ ] Click "Export Connections" — Export dialog opens with "Without credentials" selected by default
+- [ ] Select "With credentials (encrypted)" — password and confirm fields appear with warning text
+- [ ] Type a password shorter than 8 characters — verify "Password must be at least 8 characters" error shown
+- [ ] Type mismatched passwords — verify "Passwords do not match" error shown
+- [ ] Enter matching passwords (8+ chars), click Export — file save dialog opens, JSON file is saved with `$encrypted` section
+- [ ] Export "Without credentials" — verify saved JSON has no `$encrypted` section (no regression)
+- [ ] Click "Import Connections", select a file with encrypted credentials — Import dialog shows connection count and password field
+- [ ] Enter correct export password, click "Import with Credentials" — verify success message shows connections and credentials imported
+- [ ] Enter wrong password — verify "Wrong password" error, password field remains for retry
+- [ ] Click "Skip Credentials" on an encrypted import — verify connections imported without credentials
+- [ ] Import a plain (non-encrypted) export file — verify simple Import button shown (no password prompt), connections imported normally
+
 ### SSH key file validation (PR #204)
 
 - [ ] Open connection editor, select SSH type, set auth method to "SSH Key" — select a `.pub` file via browse — verify a warning hint appears: "This looks like a public key (.pub)..."
