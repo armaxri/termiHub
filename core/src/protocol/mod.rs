@@ -1,4 +1,4 @@
-// TODO: migrate from src-tauri and agent
+//! JSON-RPC 2.0 protocol types and error codes.
 
 pub mod errors;
 pub mod messages;
