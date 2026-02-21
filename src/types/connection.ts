@@ -107,6 +107,8 @@ export interface AppSettings {
   powerMonitoringEnabled: boolean;
   fileBrowserEnabled: boolean;
   layout?: LayoutConfig;
+  credentialStorageMode?: "keychain" | "masterPassword" | "none";
+  credentialAutoLockMinutes?: number;
 }
 
 export interface FileEntry {
