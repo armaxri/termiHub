@@ -99,17 +99,11 @@ impl MasterPasswordStore {
             *salt_guard = Some(salt);
         }
         {
-            let mut key_guard = self
-                .derived_key
-                .write()
-                .expect("derived_key lock poisoned");
+            let mut key_guard = self.derived_key.write().expect("derived_key lock poisoned");
             *key_guard = Some(key.to_vec());
         }
         {
-            let mut creds_guard = self
-                .credentials
-                .write()
-                .expect("credentials lock poisoned");
+            let mut creds_guard = self.credentials.write().expect("credentials lock poisoned");
             *creds_guard = Some(HashMap::new());
         }
 
@@ -120,16 +114,12 @@ impl MasterPasswordStore {
     /// Decrypt the credentials file with the given master password and
     /// load credentials into memory.
     pub fn unlock(&self, password: &str) -> Result<()> {
-        let raw = fs::read_to_string(&self.file_path)
-            .context("Failed to read credentials file")?;
+        let raw = fs::read_to_string(&self.file_path).context("Failed to read credentials file")?;
         let envelope: EncryptedEnvelope =
             serde_json::from_str(&raw).context("Invalid credentials file format")?;
 
         if envelope.version != ENVELOPE_VERSION {
-            bail!(
-                "Unsupported credentials file version: {}",
-                envelope.version
-            );
+            bail!("Unsupported credentials file version: {}", envelope.version);
         }
 
         let salt = BASE64
@@ -144,8 +134,7 @@ impl MasterPasswordStore {
 
         let key = derive_key(password, &salt)?;
 
-        let cipher = Aes256Gcm::new_from_slice(&key)
-            .context("Failed to create cipher")?;
+        let cipher = Aes256Gcm::new_from_slice(&key).context("Failed to create cipher")?;
         let nonce = Nonce::from_slice(&nonce_bytes);
 
         let payload = aes_gcm::aead::Payload {
@@ -165,17 +154,11 @@ impl MasterPasswordStore {
             *salt_guard = Some(salt);
         }
         {
-            let mut key_guard = self
-                .derived_key
-                .write()
-                .expect("derived_key lock poisoned");
+            let mut key_guard = self.derived_key.write().expect("derived_key lock poisoned");
             *key_guard = Some(key.to_vec());
         }
         {
-            let mut creds_guard = self
-                .credentials
-                .write()
-                .expect("credentials lock poisoned");
+            let mut creds_guard = self.credentials.write().expect("credentials lock poisoned");
             *creds_guard = Some(credentials);
         }
 
@@ -223,10 +206,7 @@ impl MasterPasswordStore {
         };
         let current_key = derive_key(current_password, &current_salt)?;
         {
-            let key_guard = self
-                .derived_key
-                .read()
-                .expect("derived_key lock poisoned");
+            let key_guard = self.derived_key.read().expect("derived_key lock poisoned");
             let stored_key = key_guard
                 .as_ref()
                 .context("Store is locked — cannot change password")?;
@@ -245,10 +225,7 @@ impl MasterPasswordStore {
             *salt_guard = Some(new_salt);
         }
         {
-            let mut key_guard = self
-                .derived_key
-                .write()
-                .expect("derived_key lock poisoned");
+            let mut key_guard = self.derived_key.write().expect("derived_key lock poisoned");
             if let Some(ref mut old_key) = *key_guard {
                 old_key.zeroize();
             }
@@ -273,19 +250,11 @@ impl MasterPasswordStore {
                 .context("Cannot save — store is locked")?
         };
         let key = {
-            let key_guard = self
-                .derived_key
-                .read()
-                .expect("derived_key lock poisoned");
-            key_guard
-                .clone()
-                .context("Cannot save — store is locked")?
+            let key_guard = self.derived_key.read().expect("derived_key lock poisoned");
+            key_guard.clone().context("Cannot save — store is locked")?
         };
         let creds = {
-            let creds_guard = self
-                .credentials
-                .read()
-                .expect("credentials lock poisoned");
+            let creds_guard = self.credentials.read().expect("credentials lock poisoned");
             creds_guard
                 .clone()
                 .context("Cannot save — store is locked")?
@@ -297,8 +266,7 @@ impl MasterPasswordStore {
         let mut nonce_bytes = [0u8; NONCE_LEN];
         OsRng.fill_bytes(&mut nonce_bytes);
 
-        let cipher =
-            Aes256Gcm::new_from_slice(&key).context("Failed to create cipher")?;
+        let cipher = Aes256Gcm::new_from_slice(&key).context("Failed to create cipher")?;
         let nonce = Nonce::from_slice(&nonce_bytes);
 
         let payload = aes_gcm::aead::Payload {
@@ -339,10 +307,7 @@ impl MasterPasswordStore {
 
 impl CredentialStore for MasterPasswordStore {
     fn get(&self, key: &CredentialKey) -> Result<Option<String>> {
-        let creds_guard = self
-            .credentials
-            .read()
-            .expect("credentials lock poisoned");
+        let creds_guard = self.credentials.read().expect("credentials lock poisoned");
         let map = creds_guard
             .as_ref()
             .context("Store is locked — unlock before accessing credentials")?;
@@ -352,10 +317,7 @@ impl CredentialStore for MasterPasswordStore {
 
     fn set(&self, key: &CredentialKey, value: &str) -> Result<()> {
         {
-            let mut creds_guard = self
-                .credentials
-                .write()
-                .expect("credentials lock poisoned");
+            let mut creds_guard = self.credentials.write().expect("credentials lock poisoned");
             let map = creds_guard
                 .as_mut()
                 .context("Store is locked — unlock before accessing credentials")?;
@@ -366,10 +328,7 @@ impl CredentialStore for MasterPasswordStore {
 
     fn remove(&self, key: &CredentialKey) -> Result<()> {
         let changed = {
-            let mut creds_guard = self
-                .credentials
-                .write()
-                .expect("credentials lock poisoned");
+            let mut creds_guard = self.credentials.write().expect("credentials lock poisoned");
             let map = creds_guard
                 .as_mut()
                 .context("Store is locked — unlock before accessing credentials")?;
@@ -383,10 +342,7 @@ impl CredentialStore for MasterPasswordStore {
 
     fn remove_all_for_connection(&self, connection_id: &str) -> Result<()> {
         let changed = {
-            let mut creds_guard = self
-                .credentials
-                .write()
-                .expect("credentials lock poisoned");
+            let mut creds_guard = self.credentials.write().expect("credentials lock poisoned");
             let map = creds_guard
                 .as_mut()
                 .context("Store is locked — unlock before accessing credentials")?;
@@ -409,10 +365,7 @@ impl CredentialStore for MasterPasswordStore {
     }
 
     fn list_keys(&self) -> Result<Vec<CredentialKey>> {
-        let creds_guard = self
-            .credentials
-            .read()
-            .expect("credentials lock poisoned");
+        let creds_guard = self.credentials.read().expect("credentials lock poisoned");
         let map = creds_guard
             .as_ref()
             .context("Store is locked — unlock before accessing credentials")?;
@@ -726,10 +679,7 @@ mod tests {
         store.lock();
 
         store.unlock("pw").unwrap();
-        assert_eq!(
-            store.get(&key).unwrap(),
-            Some("persistent-val".to_string())
-        );
+        assert_eq!(store.get(&key).unwrap(), Some("persistent-val".to_string()));
     }
 
     #[test]
