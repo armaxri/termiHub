@@ -53,6 +53,44 @@ export interface RemoteAgentDefinition {
   capabilities?: AgentCapabilities;
 }
 
+export type ActivityBarPosition = "left" | "right" | "top" | "hidden";
+export type SidebarPosition = "left" | "right";
+
+export interface LayoutConfig {
+  activityBarPosition: ActivityBarPosition;
+  sidebarPosition: SidebarPosition;
+  sidebarVisible: boolean;
+  statusBarVisible: boolean;
+}
+
+export const DEFAULT_LAYOUT: LayoutConfig = {
+  activityBarPosition: "left",
+  sidebarPosition: "left",
+  sidebarVisible: true,
+  statusBarVisible: true,
+};
+
+export const LAYOUT_PRESETS: Record<string, LayoutConfig> = {
+  default: {
+    activityBarPosition: "left",
+    sidebarPosition: "left",
+    sidebarVisible: true,
+    statusBarVisible: true,
+  },
+  focus: {
+    activityBarPosition: "left",
+    sidebarPosition: "left",
+    sidebarVisible: false,
+    statusBarVisible: true,
+  },
+  zen: {
+    activityBarPosition: "hidden",
+    sidebarPosition: "left",
+    sidebarVisible: false,
+    statusBarVisible: false,
+  },
+};
+
 export interface AppSettings {
   version: string;
   externalConnectionFiles: ExternalFileConfig[];
@@ -68,6 +106,7 @@ export interface AppSettings {
   cursorBlink?: boolean;
   powerMonitoringEnabled: boolean;
   fileBrowserEnabled: boolean;
+  layout?: LayoutConfig;
 }
 
 export interface FileEntry {

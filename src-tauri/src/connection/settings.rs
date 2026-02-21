@@ -19,6 +19,16 @@ fn default_true() -> bool {
     true
 }
 
+/// Layout configuration for UI section positioning and visibility.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LayoutConfig {
+    pub activity_bar_position: String,
+    pub sidebar_position: String,
+    pub sidebar_visible: bool,
+    pub status_bar_visible: bool,
+}
+
 /// Application-wide settings persisted to disk.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -49,6 +59,8 @@ pub struct AppSettings {
     pub power_monitoring_enabled: bool,
     #[serde(default = "default_true")]
     pub file_browser_enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub layout: Option<LayoutConfig>,
 }
 
 impl Default for AppSettings {
@@ -68,6 +80,7 @@ impl Default for AppSettings {
             cursor_blink: None,
             power_monitoring_enabled: true,
             file_browser_enabled: true,
+            layout: None,
         }
     }
 }
@@ -186,6 +199,31 @@ mod tests {
         let settings: AppSettings = serde_json::from_str(json).unwrap();
         assert!(!settings.power_monitoring_enabled);
         assert!(!settings.file_browser_enabled);
+    }
+
+    #[test]
+    fn deserialize_without_layout_field() {
+        let json = r#"{"version":"1","externalConnectionFiles":[]}"#;
+        let settings: AppSettings = serde_json::from_str(json).unwrap();
+        assert!(settings.layout.is_none());
+    }
+
+    #[test]
+    fn deserialize_with_layout_field() {
+        let json = r#"{
+            "version": "1",
+            "externalConnectionFiles": [],
+            "layout": {
+                "activityBarPosition": "right",
+                "sidebarPosition": "left",
+                "sidebarVisible": true,
+                "statusBarVisible": false
+            }
+        }"#;
+        let settings: AppSettings = serde_json::from_str(json).unwrap();
+        let layout = settings.layout.unwrap();
+        assert_eq!(layout.activity_bar_position, "right");
+        assert!(!layout.status_bar_visible);
     }
 
     #[test]
