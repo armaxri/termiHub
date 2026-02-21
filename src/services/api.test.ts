@@ -61,6 +61,8 @@ import {
   changeMasterPassword,
   switchCredentialStore,
   checkKeychainAvailable,
+  resolveCredential,
+  removeCredential,
 } from "./api";
 
 describe("api service", () => {
@@ -747,6 +749,53 @@ describe("api service", () => {
 
       expect(mockedInvoke).toHaveBeenCalledWith("check_keychain_available");
       expect(result).toBe(true);
+    });
+
+    it("resolveCredential returns stored password", async () => {
+      mockedInvoke.mockResolvedValue("my-secret");
+
+      const result = await resolveCredential("conn-1", "password");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("resolve_credential", {
+        connectionId: "conn-1",
+        credentialType: "password",
+      });
+      expect(result).toBe("my-secret");
+    });
+
+    it("resolveCredential returns null when not found", async () => {
+      mockedInvoke.mockResolvedValue(null);
+
+      const result = await resolveCredential("conn-1", "password");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("resolve_credential", {
+        connectionId: "conn-1",
+        credentialType: "password",
+      });
+      expect(result).toBeNull();
+    });
+
+    it("resolveCredential supports key_passphrase type", async () => {
+      mockedInvoke.mockResolvedValue("key-pass");
+
+      const result = await resolveCredential("conn-2", "key_passphrase");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("resolve_credential", {
+        connectionId: "conn-2",
+        credentialType: "key_passphrase",
+      });
+      expect(result).toBe("key-pass");
+    });
+
+    it("removeCredential invokes with correct parameters", async () => {
+      mockedInvoke.mockResolvedValue(undefined);
+
+      await removeCredential("conn-1", "password");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("remove_credential", {
+        connectionId: "conn-1",
+        credentialType: "password",
+      });
     });
   });
 });
