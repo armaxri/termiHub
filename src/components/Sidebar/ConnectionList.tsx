@@ -28,8 +28,9 @@ import {
 import { useAppStore } from "@/store/appStore";
 import { ShellType, SshConfig } from "@/types/terminal";
 import { SavedConnection, ConnectionFolder } from "@/types/connection";
-import { listAvailableShells } from "@/services/api";
+import { listAvailableShells, createTerminal, removeCredential } from "@/services/api";
 import { ConnectionIcon } from "@/utils/connectionIcons";
+import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { AgentNode } from "./AgentNode";
 import "./ConnectionList.css";
 
@@ -347,11 +348,64 @@ export function ConnectionList() {
     async (connection: SavedConnection) => {
       let config = connection.config;
 
-      if (config.type === "ssh" && config.config.authMethod === "password") {
+      if (config.type === "ssh") {
         const sshCfg = config.config as SshConfig;
-        const password = await requestPassword(sshCfg.host, sshCfg.username);
-        if (password === null) return;
-        config = { ...config, config: { ...sshCfg, password } };
+
+        // Try to resolve credential from the store first
+        const resolution = await resolveConnectionCredential(
+          connection.id,
+          sshCfg.authMethod,
+          sshCfg.savePassword
+        );
+
+        if (resolution.usedStoredCredential && resolution.password) {
+          // Pre-connect with stored credential to validate it
+          const preConfig = {
+            ...config,
+            config: { ...sshCfg, password: resolution.password },
+          };
+          try {
+            const sessionId = await createTerminal(preConfig);
+            // Stored credential worked — open tab with existing session
+            addTab(
+              connection.name,
+              connection.config.type,
+              preConfig,
+              undefined,
+              undefined,
+              connection.terminalOptions,
+              sessionId
+            );
+            return;
+          } catch (err) {
+            const errStr = String(err);
+            if (
+              errStr.toLowerCase().includes("auth failed") ||
+              errStr.includes("Authentication failed")
+            ) {
+              // Stale credential — remove it and fall through to prompt
+              await removeCredential(connection.id, resolution.credentialType).catch(() => {});
+            } else {
+              // Non-auth failure — let the Terminal component handle the error
+              addTab(
+                connection.name,
+                connection.config.type,
+                config,
+                undefined,
+                undefined,
+                connection.terminalOptions
+              );
+              return;
+            }
+          }
+        }
+
+        // No stored credential or stale credential was cleared — prompt the user
+        if (sshCfg.authMethod === "password") {
+          const password = await requestPassword(sshCfg.host, sshCfg.username);
+          if (password === null) return;
+          config = { ...config, config: { ...sshCfg, password } };
+        }
       }
 
       addTab(

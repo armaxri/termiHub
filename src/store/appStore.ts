@@ -298,6 +298,12 @@ interface AppState {
   credentialStoreStatus: CredentialStoreStatusInfo | null;
   setCredentialStoreStatus: (status: CredentialStoreStatusInfo) => void;
   loadCredentialStoreStatus: () => Promise<void>;
+  unlockDialogOpen: boolean;
+  setUnlockDialogOpen: (open: boolean) => void;
+  masterPasswordSetupOpen: boolean;
+  masterPasswordSetupMode: "setup" | "change";
+  openMasterPasswordSetup: (mode: "setup" | "change") => void;
+  closeMasterPasswordSetup: () => void;
 }
 
 let tabCounter = 0;
@@ -901,8 +907,12 @@ export const useAppStore = create<AppState>((set, get) => {
       }
       // Load SSH tunnels
       get().loadTunnels();
-      // Load credential store status
-      get().loadCredentialStoreStatus();
+      // Load credential store status and auto-open unlock dialog if locked
+      await get().loadCredentialStoreStatus();
+      const credStatus = get().credentialStoreStatus;
+      if (credStatus?.mode === "master_password" && credStatus?.status === "locked") {
+        set({ unlockDialogOpen: true });
+      }
       // Check VS Code availability in the background
       get().checkVscodeAvailability();
     },
@@ -1619,6 +1629,13 @@ export const useAppStore = create<AppState>((set, get) => {
         console.error("Failed to load credential store status:", err);
       }
     },
+    unlockDialogOpen: false,
+    setUnlockDialogOpen: (open) => set({ unlockDialogOpen: open }),
+    masterPasswordSetupOpen: false,
+    masterPasswordSetupMode: "setup",
+    openMasterPasswordSetup: (mode) =>
+      set({ masterPasswordSetupOpen: true, masterPasswordSetupMode: mode }),
+    closeMasterPasswordSetup: () => set({ masterPasswordSetupOpen: false }),
   };
 });
 

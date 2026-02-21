@@ -592,3 +592,19 @@ export async function switchCredentialStore(
 export async function checkKeychainAvailable(): Promise<boolean> {
   return await invoke<boolean>("check_keychain_available");
 }
+
+/** Resolve a stored credential for a connection. Returns the value or null if not found. */
+export async function resolveCredential(
+  connectionId: string,
+  credentialType: "password" | "key_passphrase"
+): Promise<string | null> {
+  return await invoke<string | null>("resolve_credential", { connectionId, credentialType });
+}
+
+/** Remove a stored credential for a connection (e.g., after auth failure). */
+export async function removeCredential(
+  connectionId: string,
+  credentialType: "password" | "key_passphrase"
+): Promise<void> {
+  await invoke("remove_credential", { connectionId, credentialType });
+}
