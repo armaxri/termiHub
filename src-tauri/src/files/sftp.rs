@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex};
 use ssh2::{Session, Sftp};
 use tracing::{debug, info};
 
-use super::utils::{chrono_from_epoch, format_permissions};
-use super::FileEntry;
+use termihub_core::files::utils::{chrono_from_epoch, format_permissions};
+use termihub_core::files::FileEntry;
 use crate::terminal::backend::SshConfig;
 use crate::utils::errors::TerminalError;
 use crate::utils::ssh_auth::connect_and_authenticate;
