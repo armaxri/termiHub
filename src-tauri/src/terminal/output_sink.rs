@@ -55,14 +55,12 @@ impl OutputSink for TauriOutputSink {
             session_id: session_id.to_string(),
             exit_code,
         };
-        self.app_handle
-            .emit("terminal-exit", &event)
-            .map_err(|_| {
-                SessionError::Io(io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    "Tauri emit failed for terminal-exit",
-                ))
-            })
+        self.app_handle.emit("terminal-exit", &event).map_err(|_| {
+            SessionError::Io(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "Tauri emit failed for terminal-exit",
+            ))
+        })
     }
 
     fn send_error(&self, session_id: &str, message: &str) -> Result<(), SessionError> {
@@ -70,14 +68,12 @@ impl OutputSink for TauriOutputSink {
             session_id: session_id.to_string(),
             message: message.to_string(),
         };
-        self.app_handle
-            .emit("terminal-error", &event)
-            .map_err(|_| {
-                SessionError::Io(io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    "Tauri emit failed for terminal-error",
-                ))
-            })
+        self.app_handle.emit("terminal-error", &event).map_err(|_| {
+            SessionError::Io(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "Tauri emit failed for terminal-error",
+            ))
+        })
     }
 }
 

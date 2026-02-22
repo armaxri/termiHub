@@ -61,9 +61,7 @@ impl PtyHandle {
 impl ProcessHandle for PtyHandle {
     fn write_input(&self, data: &[u8]) -> Result<(), SessionError> {
         let mut writer = self.writer.lock().map_err(|e| {
-            SessionError::Io(std::io::Error::other(format!(
-                "Failed to lock writer: {e}"
-            )))
+            SessionError::Io(std::io::Error::other(format!("Failed to lock writer: {e}")))
         })?;
         writer.write_all(data)?;
         writer.flush()?;
@@ -72,9 +70,7 @@ impl ProcessHandle for PtyHandle {
 
     fn resize(&self, cols: u16, rows: u16) -> Result<(), SessionError> {
         let master = self.master.lock().map_err(|e| {
-            SessionError::Io(std::io::Error::other(format!(
-                "Failed to lock master: {e}"
-            )))
+            SessionError::Io(std::io::Error::other(format!("Failed to lock master: {e}")))
         })?;
         master
             .resize(NativePtySize {
