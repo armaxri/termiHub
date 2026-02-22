@@ -1,4 +1,10 @@
 //! Stats collectors for local and remote hosts.
+//!
+//! Both [`LocalCollector`] and [`SshCollector`] implement the core
+//! [`StatsCollector`](termihub_core::monitoring::StatsCollector) trait,
+//! returning [`SystemStats`](termihub_core::monitoring::SystemStats).
+//! The monitoring task adds the `host` field when building protocol-level
+//! [`MonitoringData`](crate::protocol::methods::MonitoringData).
 
 use std::io::Read;
 use std::net::TcpStream;
@@ -6,25 +12,19 @@ use std::net::TcpStream;
 use anyhow::{bail, Context, Result};
 use tracing::debug;
 
-use crate::protocol::methods::{MonitoringData, SshSessionConfig};
+use crate::protocol::methods::SshSessionConfig;
 
+// Re-export core trait so the monitoring manager can import it from here.
+pub use termihub_core::monitoring::StatsCollector;
+
+use termihub_core::errors::CoreError;
 #[cfg(any(unix, test))]
 use termihub_core::monitoring::parse_df_output;
 use termihub_core::monitoring::{
-    cpu_percent_from_delta, parse_stats, CpuCounters, MONITORING_COMMAND,
+    cpu_percent_from_delta, parse_stats, CpuCounters, SystemStats, MONITORING_COMMAND,
 };
 #[cfg(target_os = "linux")]
 use termihub_core::monitoring::{parse_cpu_line, parse_meminfo_value};
-
-/// Collect system statistics from a host.
-pub trait StatsCollector: Send {
-    /// Collect a snapshot of system statistics.
-    ///
-    /// CPU usage is computed from `/proc/stat` deltas between consecutive
-    /// calls. The first call returns 0% since there is no previous
-    /// snapshot to compare against.
-    fn collect(&mut self, host_label: &str) -> Result<MonitoringData>;
-}
 
 // ── Local collector ─────────────────────────────────────────────────
 
@@ -79,24 +79,26 @@ impl LocalCollector {
 
 impl StatsCollector for LocalCollector {
     #[cfg(target_os = "linux")]
-    fn collect(&mut self, host_label: &str) -> Result<MonitoringData> {
-        collect_linux(self, host_label)
+    fn collect(&mut self, _host_label: &str) -> Result<SystemStats, CoreError> {
+        collect_linux(self).map_err(|e| CoreError::Other(e.to_string()))
     }
 
     #[cfg(target_os = "macos")]
-    fn collect(&mut self, host_label: &str) -> Result<MonitoringData> {
-        collect_macos(self, host_label)
+    fn collect(&mut self, _host_label: &str) -> Result<SystemStats, CoreError> {
+        collect_macos(self).map_err(|e| CoreError::Other(e.to_string()))
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    fn collect(&mut self, _host_label: &str) -> Result<MonitoringData> {
-        bail!("Local monitoring is not supported on this platform")
+    fn collect(&mut self, _host_label: &str) -> Result<SystemStats, CoreError> {
+        Err(CoreError::Other(
+            "Local monitoring is not supported on this platform".to_string(),
+        ))
     }
 }
 
 /// Linux: read `/proc/*` directly and run `df`.
 #[cfg(target_os = "linux")]
-fn collect_linux(collector: &mut LocalCollector, host_label: &str) -> Result<MonitoringData> {
+fn collect_linux(collector: &mut LocalCollector) -> Result<SystemStats> {
     // Read /proc files directly (faster than spawning processes)
     let loadavg =
         std::fs::read_to_string("/proc/loadavg").context("Failed to read /proc/loadavg")?;
@@ -158,8 +160,7 @@ fn collect_linux(collector: &mut LocalCollector, host_label: &str) -> Result<Mon
     // Parse df output
     let (disk_total_kb, disk_used_kb, disk_used_percent) = parse_df_output(&df_output);
 
-    Ok(MonitoringData {
-        host: host_label.to_string(),
+    Ok(SystemStats {
         hostname: collector.hostname(),
         uptime_seconds,
         load_average,
@@ -187,7 +188,7 @@ fn read_first_cpu_line() -> Result<String> {
 
 /// macOS: use sysctl, vm_stat, and df.
 #[cfg(target_os = "macos")]
-fn collect_macos(collector: &mut LocalCollector, host_label: &str) -> Result<MonitoringData> {
+fn collect_macos(collector: &mut LocalCollector) -> Result<SystemStats> {
     // Load average
     let loadavg_str = run_command("sysctl", &["-n", "vm.loadavg"])
         .unwrap_or_else(|_| "{ 0.0 0.0 0.0 }".to_string());
@@ -224,8 +225,7 @@ fn collect_macos(collector: &mut LocalCollector, host_label: &str) -> Result<Mon
     let df_output = run_command("df", &["-Pk", "/"]).unwrap_or_default();
     let (disk_total_kb, disk_used_kb, disk_used_percent) = parse_df_output(&df_output);
 
-    Ok(MonitoringData {
-        host: host_label.to_string(),
+    Ok(SystemStats {
         hostname: collector.hostname(),
         uptime_seconds,
         load_average,
@@ -374,9 +374,12 @@ impl SshCollector {
 }
 
 impl StatsCollector for SshCollector {
-    fn collect(&mut self, host_label: &str) -> Result<MonitoringData> {
-        let output = self.exec(MONITORING_COMMAND)?;
-        let (stats, counters) = parse_stats(&output)?;
+    fn collect(&mut self, _host_label: &str) -> Result<SystemStats, CoreError> {
+        let output = self
+            .exec(MONITORING_COMMAND)
+            .map_err(|e| CoreError::Other(e.to_string()))?;
+        let (stats, counters) =
+            parse_stats(&output).map_err(|e| CoreError::Other(e.to_string()))?;
 
         let cpu_usage_percent = match &self.prev_cpu {
             Some(prev) => cpu_percent_from_delta(prev, &counters),
@@ -384,8 +387,7 @@ impl StatsCollector for SshCollector {
         };
         self.prev_cpu = Some(counters);
 
-        Ok(MonitoringData {
-            host: host_label.to_string(),
+        Ok(SystemStats {
             hostname: stats.hostname,
             uptime_seconds: stats.uptime_seconds,
             load_average: stats.load_average,

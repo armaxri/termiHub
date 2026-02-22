@@ -1,6 +1,6 @@
 //! Docker container filesystem operations via `docker exec`.
 
-use crate::protocol::methods::{FileEntry, FilesStatResult};
+use termihub_core::files::FileEntry;
 
 use super::{chrono_from_epoch, format_permissions, FileBackend, FileError};
 
@@ -57,7 +57,7 @@ impl FileBackend for DockerFileBackend {
         Ok(())
     }
 
-    async fn stat(&self, path: &str) -> Result<FilesStatResult, FileError> {
+    async fn stat(&self, path: &str) -> Result<FileEntry, FileError> {
         let output = docker_exec(
             &self.container_name,
             &["stat", "-c", "%n\t%F\t%s\t%Y\t%a", path],
@@ -209,7 +209,7 @@ fn parse_find_output(output: &str, parent_path: &str) -> Result<Vec<FileEntry>, 
 }
 
 /// Parse `stat -c '%n\t%F\t%s\t%Y\t%a'` output for a single file.
-fn parse_stat_output(output: &str, path: &str) -> Result<FilesStatResult, FileError> {
+fn parse_stat_output(output: &str, path: &str) -> Result<FileEntry, FileError> {
     let line = output.trim();
     let fields: Vec<&str> = line.splitn(5, '\t').collect();
     if fields.len() < 5 {
@@ -228,7 +228,7 @@ fn parse_stat_output(output: &str, path: &str) -> Result<FilesStatResult, FileEr
     let mtime: u64 = fields[3].parse().unwrap_or(0);
     let mode: u32 = u32::from_str_radix(fields[4].trim(), 8).unwrap_or(0);
 
-    Ok(FilesStatResult {
+    Ok(FileEntry {
         name,
         path: path.to_string(),
         is_directory,

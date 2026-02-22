@@ -4,7 +4,7 @@
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
-use crate::protocol::methods::{FileEntry, FilesStatResult};
+use termihub_core::files::FileEntry;
 
 #[cfg(unix)]
 use super::format_permissions;
@@ -70,7 +70,7 @@ impl FileBackend for LocalFileBackend {
         .map_err(|e| FileError::OperationFailed(e.to_string()))?
     }
 
-    async fn stat(&self, path: &str) -> Result<FilesStatResult, FileError> {
+    async fn stat(&self, path: &str) -> Result<FileEntry, FileError> {
         let path = path.to_string();
         tokio::task::spawn_blocking(move || stat_sync(&path))
             .await
@@ -136,7 +136,7 @@ fn list_dir_sync(path: &str) -> Result<Vec<FileEntry>, FileError> {
 }
 
 /// Synchronous stat for a single path.
-fn stat_sync(path: &str) -> Result<FilesStatResult, FileError> {
+fn stat_sync(path: &str) -> Result<FileEntry, FileError> {
     let p = Path::new(path);
     let metadata = std::fs::metadata(p).map_err(|e| map_io_error(e, path))?;
 
@@ -160,7 +160,7 @@ fn stat_sync(path: &str) -> Result<FilesStatResult, FileError> {
     #[cfg(not(unix))]
     let permissions = None;
 
-    Ok(FilesStatResult {
+    Ok(FileEntry {
         name,
         path: path.to_string(),
         is_directory: metadata.is_dir(),

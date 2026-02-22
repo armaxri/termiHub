@@ -15,6 +15,7 @@ mod shell;
 mod ssh;
 #[cfg(unix)]
 mod state;
+mod transport;
 
 use tokio_util::sync::CancellationToken;
 use tracing::info;

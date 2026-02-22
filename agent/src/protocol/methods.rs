@@ -261,16 +261,9 @@ pub struct FilesStatParams {
     pub path: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FilesStatResult {
-    pub name: String,
-    pub path: String,
-    pub is_directory: bool,
-    pub size: u64,
-    pub modified: String,
-    pub permissions: Option<String>,
-}
+/// Type alias for backward compatibility — stat results use the same shape
+/// as [`FileEntry`] from the core crate.
+pub type FilesStatResult = FileEntry;
 
 // ── agent.shutdown ──────────────────────────────────────────────────
 
