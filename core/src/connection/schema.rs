@@ -362,12 +362,12 @@ mod tests {
 
     #[test]
     fn file_path_kind_variants() {
-        let kinds = vec![
+        let kinds = [
             FilePathKind::File,
             FilePathKind::Directory,
             FilePathKind::Any,
         ];
-        let expected = vec!["\"file\"", "\"directory\"", "\"any\""];
+        let expected = ["\"file\"", "\"directory\"", "\"any\""];
         for (kind, exp) in kinds.iter().zip(expected.iter()) {
             let json = serde_json::to_string(kind).unwrap();
             assert_eq!(json, *exp);

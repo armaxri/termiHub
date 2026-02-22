@@ -99,10 +99,8 @@ impl ConnectionTypeRegistry {
         if !self.factories.contains_key(type_id) {
             self.order.push(type_id.to_string());
         }
-        self.factories.insert(
-            type_id.to_string(),
-            RegistryEntry { info, factory },
-        );
+        self.factories
+            .insert(type_id.to_string(), RegistryEntry { info, factory });
     }
 
     /// List all registered connection types with their metadata.
