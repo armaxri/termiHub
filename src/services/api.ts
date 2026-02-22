@@ -10,6 +10,7 @@ import {
   RemoteAgentConfig,
   LogEntry,
 } from "@/types/terminal";
+import { SettingsSchema, Capabilities } from "@/types/schema";
 import { SystemStats } from "@/types/monitoring";
 import { CredentialStoreStatusInfo, SwitchCredentialStoreResult } from "@/types/credential";
 import {
@@ -28,7 +29,8 @@ export interface ConnectionTypeInfo {
   typeId: string;
   displayName: string;
   icon: string;
-  settingsSchema: Record<string, unknown>;
+  schema: SettingsSchema;
+  capabilities: Capabilities;
 }
 
 /** Get the list of available connection types with their schemas. */
