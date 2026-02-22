@@ -209,7 +209,6 @@ mod daemon_spawner {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
