@@ -5026,12 +5026,14 @@ name = "termihub-core"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "portable-pty",
  "serde",
  "serde_json",
  "serialport",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

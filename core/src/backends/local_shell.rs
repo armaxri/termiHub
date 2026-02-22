@@ -128,9 +128,7 @@ impl ConnectionType for LocalShell {
                     SettingsField {
                         key: "initialCommand".to_string(),
                         label: "Initial Command".to_string(),
-                        description: Some(
-                            "Command to run after the shell starts".to_string(),
-                        ),
+                        description: Some("Command to run after the shell starts".to_string()),
                         field_type: FieldType::Text,
                         required: false,
                         default: None,
@@ -155,9 +153,7 @@ impl ConnectionType for LocalShell {
 
     async fn connect(&mut self, settings: serde_json::Value) -> Result<(), SessionError> {
         if self.state.is_some() {
-            return Err(SessionError::AlreadyExists(
-                "Already connected".to_string(),
-            ));
+            return Err(SessionError::AlreadyExists("Already connected".to_string()));
         }
 
         // Parse settings into ShellConfig.
@@ -230,9 +226,10 @@ impl ConnectionType for LocalShell {
         // Set up output channel.
         let (tx, _rx) = tokio::sync::mpsc::channel(OUTPUT_CHANNEL_CAPACITY);
         {
-            let mut guard = self.output_tx.lock().map_err(|e| {
-                SessionError::SpawnFailed(format!("Failed to lock output_tx: {e}"))
-            })?;
+            let mut guard = self
+                .output_tx
+                .lock()
+                .map_err(|e| SessionError::SpawnFailed(format!("Failed to lock output_tx: {e}")))?;
             *guard = Some(tx);
         }
 
@@ -310,10 +307,7 @@ impl ConnectionType for LocalShell {
             .as_ref()
             .ok_or_else(|| SessionError::NotRunning("Not connected".to_string()))?;
         let mut writer = state.writer.lock().map_err(|e| {
-            SessionError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to lock writer: {e}"),
-            ))
+            SessionError::Io(std::io::Error::other(format!("Failed to lock writer: {e}")))
         })?;
         writer.write_all(data).map_err(SessionError::Io)?;
         writer.flush().map_err(SessionError::Io)?;
@@ -326,10 +320,7 @@ impl ConnectionType for LocalShell {
             .as_ref()
             .ok_or_else(|| SessionError::NotRunning("Not connected".to_string()))?;
         let master = state.master.lock().map_err(|e| {
-            SessionError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to lock master: {e}"),
-            ))
+            SessionError::Io(std::io::Error::other(format!("Failed to lock master: {e}")))
         })?;
         master
             .resize(PtySize {
@@ -338,12 +329,7 @@ impl ConnectionType for LocalShell {
                 pixel_width: 0,
                 pixel_height: 0,
             })
-            .map_err(|e| {
-                SessionError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    e.to_string(),
-                ))
-            })?;
+            .map_err(|e| SessionError::Io(std::io::Error::other(e.to_string())))?;
         Ok(())
     }
 
@@ -512,9 +498,7 @@ mod tests {
         let mut rx = shell.subscribe_output();
 
         // Write a command.
-        shell
-            .write(b"echo HELLO_TERMIHUB\n")
-            .expect("write failed");
+        shell.write(b"echo HELLO_TERMIHUB\n").expect("write failed");
 
         // Read output with timeout.
         let mut output = Vec::new();
@@ -574,9 +558,7 @@ mod tests {
         let _rx1 = shell.subscribe_output();
         let mut rx2 = shell.subscribe_output(); // replaces rx1
 
-        shell
-            .write(b"echo TEST_REPLACE\n")
-            .expect("write failed");
+        shell.write(b"echo TEST_REPLACE\n").expect("write failed");
 
         let mut output = Vec::new();
         let deadline = tokio::time::Duration::from_secs(5);
@@ -602,6 +584,9 @@ mod tests {
     async fn disconnect_when_not_connected_is_noop() {
         let mut shell = LocalShell::new();
         // Should not error.
-        shell.disconnect().await.expect("disconnect should not fail");
+        shell
+            .disconnect()
+            .await
+            .expect("disconnect should not fail");
     }
 }
