@@ -33,9 +33,7 @@ function renderForm(
   onChange: (s: Record<string, unknown>) => void
 ) {
   act(() => {
-    root.render(
-      <ConnectionSettingsForm schema={schema} settings={settings} onChange={onChange} />
-    );
+    root.render(<ConnectionSettingsForm schema={schema} settings={settings} onChange={onChange} />);
   });
 }
 
@@ -166,9 +164,7 @@ describe("ConnectionSettingsForm", () => {
       nativeInputValueSetter?.call(portInput, "2222");
       portInput.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({ port: 2222 })
-    );
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ port: 2222 }));
   });
 
   it("renders empty schema without errors", () => {

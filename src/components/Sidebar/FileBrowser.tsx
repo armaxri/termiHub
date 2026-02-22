@@ -304,9 +304,7 @@ function useFileBrowserSync() {
 
   // Extract the WSL distro name (if any) from the active tab's shell type
   const activeTabShellType =
-    activeTab?.config.type === "local"
-      ? activeTab.config.config.shellType
-      : null;
+    activeTab?.config.type === "local" ? activeTab.config.config.shellType : null;
   const wslDistro = activeTabShellType ? getWslDistroName(activeTabShellType) : null;
 
   useEffect(() => {

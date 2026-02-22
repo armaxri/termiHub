@@ -45,10 +45,7 @@ function collectFieldDefaults(fields: SettingsField[], out: Record<string, unkno
  * Returns `true` if the field has no `visibleWhen` condition, or if the
  * condition is satisfied.
  */
-export function isFieldVisible(
-  field: SettingsField,
-  settings: Record<string, unknown>
-): boolean {
+export function isFieldVisible(field: SettingsField, settings: Record<string, unknown>): boolean {
   if (!field.visibleWhen) return true;
   return evaluateCondition(field.visibleWhen, settings);
 }

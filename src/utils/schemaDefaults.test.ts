@@ -239,11 +239,7 @@ describe("findPasswordPromptInfo", () => {
         {
           key: "conn",
           label: "Connection",
-          fields: [
-            textField("host"),
-            textField("username"),
-            passwordField("password"),
-          ],
+          fields: [textField("host"), textField("username"), passwordField("password")],
         },
       ],
     };

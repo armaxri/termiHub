@@ -38,10 +38,7 @@ function extractMonitoringConfig(config: ConnectionConfig): Record<string, unkno
 }
 
 /** Check if a connection type supports monitoring using the registry. */
-function typeSupportsMonitoring(
-  connectionTypes: ConnectionTypeInfo[],
-  typeId: string
-): boolean {
+function typeSupportsMonitoring(connectionTypes: ConnectionTypeInfo[], typeId: string): boolean {
   const typeInfo = connectionTypes.find((ct) => ct.typeId === typeId);
   return typeInfo?.capabilities.monitoring ?? false;
 }

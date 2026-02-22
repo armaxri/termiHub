@@ -36,7 +36,11 @@ function query(testId: string): HTMLElement | null {
   return container.querySelector(`[data-testid="${testId}"]`);
 }
 
-function renderField(field: SettingsField, value: unknown, onChange: (k: string, v: unknown) => void) {
+function renderField(
+  field: SettingsField,
+  value: unknown,
+  onChange: (k: string, v: unknown) => void
+) {
   act(() => {
     root.render(<DynamicField field={field} value={value} onChange={onChange} />);
   });

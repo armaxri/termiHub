@@ -16,10 +16,7 @@ interface DynamicFieldProps {
  * boolean toggle, select, port, file path, key-value list, object list).
  */
 export function DynamicField({ field, value, onChange }: DynamicFieldProps) {
-  const handleChange = useCallback(
-    (v: unknown) => onChange(field.key, v),
-    [field.key, onChange]
-  );
+  const handleChange = useCallback((v: unknown) => onChange(field.key, v), [field.key, onChange]);
 
   return (
     <div className="settings-form__field" data-testid={`dynamic-field-${field.key}`}>
@@ -41,15 +38,11 @@ function renderFieldInput(
     case "password":
       return <PasswordField field={field} value={value} onChange={onChange} />;
     case "number":
-      return (
-        <NumberField field={field} value={value} onChange={onChange} fieldType={fieldType} />
-      );
+      return <NumberField field={field} value={value} onChange={onChange} fieldType={fieldType} />;
     case "boolean":
       return <BooleanField field={field} value={value} onChange={onChange} />;
     case "select":
-      return (
-        <SelectField field={field} value={value} onChange={onChange} fieldType={fieldType} />
-      );
+      return <SelectField field={field} value={value} onChange={onChange} fieldType={fieldType} />;
     case "port":
       return <PortField field={field} value={value} onChange={onChange} />;
     case "filePath":
@@ -371,10 +364,7 @@ function ObjectListField({
                 </label>
               );
             }
-            if (
-              subField.fieldType.type === "filePath" &&
-              subField.fieldType.kind === "directory"
-            ) {
+            if (subField.fieldType.type === "filePath" && subField.fieldType.kind === "directory") {
               return (
                 <span key={subField.key} style={{ display: "contents" }}>
                   <input
