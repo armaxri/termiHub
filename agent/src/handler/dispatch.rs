@@ -7,6 +7,7 @@ use tracing::{debug, warn};
 
 use base64::Engine;
 
+#[cfg(unix)]
 use crate::files::docker::DockerFileBackend;
 use crate::files::local::LocalFileBackend;
 use crate::files::ssh::SshFileBackend;
@@ -1210,6 +1211,7 @@ mod tests {
 
     // ── Session create tests ────────────────────────────────────────
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn session_create_docker_requires_image() {
         let mut d = make_dispatcher();
@@ -1265,6 +1267,7 @@ mod tests {
         assert_eq!(json["error"]["code"], errors::INVALID_CONFIGURATION);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn session_create_ssh_requires_host() {
         let mut d = make_dispatcher();

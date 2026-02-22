@@ -1,11 +1,14 @@
 //! Local filesystem operations for the agent host.
 
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 use crate::protocol::methods::{FileEntry, FilesStatResult};
 
-use super::{chrono_from_epoch, format_permissions, FileBackend, FileError};
+#[cfg(unix)]
+use super::format_permissions;
+use super::{chrono_from_epoch, FileBackend, FileError};
 
 /// File backend that reads the agent host's local filesystem.
 pub struct LocalFileBackend;
@@ -112,7 +115,10 @@ fn list_dir_sync(path: &str) -> Result<Vec<FileEntry>, FileError> {
             })
             .unwrap_or_default();
 
+        #[cfg(unix)]
         let permissions = Some(format_permissions(metadata.permissions().mode()));
+        #[cfg(not(unix))]
+        let permissions = None;
 
         let full_path = entry.path().to_string_lossy().to_string();
 
@@ -149,7 +155,10 @@ fn stat_sync(path: &str) -> Result<FilesStatResult, FileError> {
         })
         .unwrap_or_default();
 
+    #[cfg(unix)]
     let permissions = Some(format_permissions(metadata.permissions().mode()));
+    #[cfg(not(unix))]
+    let permissions = None;
 
     Ok(FilesStatResult {
         name,
@@ -187,7 +196,10 @@ mod tests {
         let file = entries.iter().find(|e| e.name == "hello.txt").unwrap();
         assert!(!file.is_directory);
         assert_eq!(file.size, 5);
+        #[cfg(unix)]
         assert!(file.permissions.is_some());
+        #[cfg(not(unix))]
+        assert!(file.permissions.is_none());
 
         let dir_entry = entries.iter().find(|e| e.name == "subdir").unwrap();
         assert!(dir_entry.is_directory);
@@ -275,7 +287,10 @@ mod tests {
         assert_eq!(result.name, "stat_test.txt");
         assert!(!result.is_directory);
         assert_eq!(result.size, 5);
+        #[cfg(unix)]
         assert!(result.permissions.is_some());
+        #[cfg(not(unix))]
+        assert!(result.permissions.is_none());
         assert!(!result.modified.is_empty());
     }
 
