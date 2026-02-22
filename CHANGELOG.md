@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Desktop crate now imports `FileEntry`, `list_dir_sync`, `chrono_from_epoch`, `format_permissions`, and `normalize_path_separators` from `termihub-core` instead of defining them locally — local `files/utils.rs` module removed entirely (#304)
+- Desktop crate now imports `SystemStats`, `CpuCounters`, `parse_stats`, `parse_cpu_line`, `cpu_percent_from_delta`, `parse_meminfo_value`, and `MONITORING_COMMAND` from `termihub-core` instead of defining them locally (#304)
 - Desktop crate now imports `EnvVar`, `VolumeMount`, `SshConfig`, `SerialConfig`, `DockerConfig` from `termihub-core` instead of defining them locally (#298)
 - Desktop `expand_tilde()` and `expand_env_placeholders()` now delegate to `termihub-core` instead of duplicating the implementation (#298)
 
