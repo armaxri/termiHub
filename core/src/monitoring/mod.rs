@@ -105,7 +105,9 @@ mod tests {
         assert!(tracker.update(first).is_none());
 
         // delta total = 200-100 = 100, delta idle = (110+20)-(70+10) = 50, active = 50
-        let pct = tracker.update(second).expect("should return Some on second call");
+        let pct = tracker
+            .update(second)
+            .expect("should return Some on second call");
         assert!((pct - 50.0).abs() < 0.01);
     }
 
