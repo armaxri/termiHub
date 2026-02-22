@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 use termihub_core::output::coalescer::OutputCoalescer;
 use termihub_core::output::screen_clear::contains_screen_clear;
+use termihub_core::session::shell::osc7_setup_command;
 use tracing::{error, info};
 
 use crate::terminal::agent_manager::AgentConnectionManager;
@@ -20,9 +21,6 @@ use crate::terminal::serial::SerialConnection;
 use crate::terminal::ssh::SshConnection;
 use crate::terminal::telnet::TelnetConnection;
 use crate::utils::errors::TerminalError;
-use crate::utils::shell_detect::ssh_osc7_setup;
-#[cfg(windows)]
-use crate::utils::shell_detect::wsl_osc7_setup;
 
 /// Maximum number of concurrent terminal sessions.
 const MAX_SESSIONS: usize = 50;
@@ -73,20 +71,14 @@ impl TerminalManager {
 
         let initial_command = match &config {
             ConnectionConfig::Local(cfg) => {
-                #[cfg(windows)]
-                if cfg.shell_type.starts_with("wsl:") {
-                    let osc7 = wsl_osc7_setup().to_string();
-                    Some(match &cfg.initial_command {
-                        Some(cmd) => format!("{}\n{}", osc7, cmd),
-                        None => osc7,
-                    })
-                } else {
-                    cfg.initial_command.clone()
+                let osc7 = osc7_setup_command(&cfg.shell_type);
+                match (osc7, &cfg.initial_command) {
+                    (Some(setup), Some(cmd)) => Some(format!("{}\n{}", setup, cmd)),
+                    (Some(setup), None) => Some(setup),
+                    (None, cmd) => cmd.clone(),
                 }
-                #[cfg(not(windows))]
-                cfg.initial_command.clone()
             }
-            ConnectionConfig::Ssh(_) => Some(ssh_osc7_setup().to_string()),
+            ConnectionConfig::Ssh(_) => osc7_setup_command("ssh"),
             _ => None,
         };
 
