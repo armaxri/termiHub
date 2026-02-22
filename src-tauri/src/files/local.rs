@@ -1,66 +1,12 @@
-use std::path::Path;
-
-use super::utils::chrono_from_epoch;
-use super::FileEntry;
 use crate::utils::errors::TerminalError;
-
-/// Normalize path separators to forward slashes for cross-platform consistency.
-/// On Windows, backslashes are replaced with forward slashes so the frontend
-/// can use a single `split("/")` code path for navigate-up and path manipulation.
-#[cfg(windows)]
-fn normalize_separators(path: String) -> String {
-    path.replace('\\', "/")
-}
-
-/// On non-Windows platforms, paths already use forward slashes.
-#[cfg(not(windows))]
-fn normalize_separators(path: String) -> String {
-    path
-}
+use termihub_core::files::FileEntry;
 
 /// List directory contents, filtering out `.` and `..`.
+///
+/// Delegates to `termihub_core::files::local::list_dir_sync()` which also
+/// sorts results (directories first, then by name case-insensitively).
 pub fn list_dir(path: &str) -> Result<Vec<FileEntry>, TerminalError> {
-    let dir = Path::new(path);
-    let entries = std::fs::read_dir(dir)?;
-
-    let mut result = Vec::new();
-    for entry in entries {
-        let entry = entry?;
-        let name = entry.file_name().to_string_lossy().to_string();
-
-        if name == "." || name == ".." {
-            continue;
-        }
-
-        let metadata = entry.metadata()?;
-        let is_directory = metadata.is_dir();
-        let size = metadata.len();
-
-        let modified = metadata
-            .modified()
-            .ok()
-            .and_then(|t| {
-                t.duration_since(std::time::UNIX_EPOCH)
-                    .ok()
-                    .map(|d| chrono_from_epoch(d.as_secs()))
-            })
-            .unwrap_or_default();
-
-        let permissions = get_permissions(&metadata);
-
-        let full_path = normalize_separators(entry.path().to_string_lossy().to_string());
-
-        result.push(FileEntry {
-            name,
-            path: full_path,
-            is_directory,
-            size,
-            modified,
-            permissions,
-        });
-    }
-
-    Ok(result)
+    Ok(termihub_core::files::local::list_dir_sync(path)?)
 }
 
 /// Create a directory.
@@ -85,25 +31,12 @@ pub fn rename(old_path: &str, new_path: &str) -> Result<(), TerminalError> {
     Ok(())
 }
 
-/// Get permission string from metadata (Unix only).
-#[cfg(unix)]
-fn get_permissions(metadata: &std::fs::Metadata) -> Option<String> {
-    use super::utils::format_permissions;
-    use std::os::unix::fs::PermissionsExt;
-    Some(format_permissions(metadata.permissions().mode()))
-}
-
-/// On non-Unix platforms, permissions are not available in rwx format.
-#[cfg(not(unix))]
-fn get_permissions(_metadata: &std::fs::Metadata) -> Option<String> {
-    None
-}
-
 /// Return the current user's home directory.
 pub fn home_dir() -> Result<String, TerminalError> {
+    use termihub_core::files::utils::normalize_path_separators;
     std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
-        .map(normalize_separators)
+        .map(|p| normalize_path_separators(&p))
         .map_err(|e| TerminalError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, e)))
 }
 
@@ -204,31 +137,5 @@ mod tests {
         write_file_content(path, "Hello, World!").unwrap();
         let content = read_file_content(path).unwrap();
         assert_eq!(content, "Hello, World!");
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn normalize_separators_converts_backslashes() {
-        let result = normalize_separators(r"C:\Users\foo".to_string());
-        assert_eq!(result, "C:/Users/foo");
-    }
-
-    #[test]
-    fn normalize_separators_preserves_forward_slashes() {
-        let result = normalize_separators("/unix/path".to_string());
-        assert_eq!(result, "/unix/path");
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn normalize_separators_handles_unc_paths() {
-        let result = normalize_separators(r"\\wsl$\Ubuntu\home".to_string());
-        assert_eq!(result, "//wsl$/Ubuntu/home");
-    }
-
-    #[test]
-    fn normalize_separators_preserves_already_normalized_unc() {
-        let result = normalize_separators("//wsl$/Ubuntu/home".to_string());
-        assert_eq!(result, "//wsl$/Ubuntu/home");
     }
 }
