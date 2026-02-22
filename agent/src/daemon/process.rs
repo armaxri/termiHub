@@ -373,12 +373,7 @@ mod tests {
 
         let result = DaemonConfig::from_env("test-123");
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("TERMIHUB_TYPE_ID")
-        );
+        assert!(result.unwrap_err().to_string().contains("TERMIHUB_TYPE_ID"));
     }
 
     #[test]
@@ -386,10 +381,7 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap();
 
         std::env::set_var("TERMIHUB_TYPE_ID", "ssh");
-        std::env::set_var(
-            "TERMIHUB_SETTINGS",
-            r#"{"host":"192.168.1.1","port":22}"#,
-        );
+        std::env::set_var("TERMIHUB_SETTINGS", r#"{"host":"192.168.1.1","port":22}"#);
         std::env::set_var("TERMIHUB_SOCKET_PATH", "/tmp/test-daemon.sock");
         std::env::set_var("TERMIHUB_BUFFER_SIZE", "2097152");
 
@@ -398,10 +390,7 @@ mod tests {
         assert_eq!(config.type_id, "ssh");
         assert_eq!(config.settings["host"], "192.168.1.1");
         assert_eq!(config.settings["port"], 22);
-        assert_eq!(
-            config.socket_path,
-            PathBuf::from("/tmp/test-daemon.sock")
-        );
+        assert_eq!(config.socket_path, PathBuf::from("/tmp/test-daemon.sock"));
         assert_eq!(config.buffer_size, 2097152);
 
         // Clean up

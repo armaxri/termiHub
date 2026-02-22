@@ -375,12 +375,7 @@ impl SessionManager {
                 continue;
             }
 
-            match DaemonClient::connect(
-                id.clone(),
-                socket_path,
-                self.notification_tx.clone(),
-            )
-            .await
+            match DaemonClient::connect(id.clone(), socket_path, self.notification_tx.clone()).await
             {
                 Ok(client) => {
                     let created_at = chrono::DateTime::parse_from_rfc3339(&session.created_at)

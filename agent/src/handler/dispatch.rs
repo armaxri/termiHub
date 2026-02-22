@@ -16,11 +16,11 @@ use crate::protocol::methods::{
     AgentShutdownParams, AgentShutdownResult, Capabilities, ConnectionCreateParams,
     ConnectionDeleteParams, ConnectionTypesResult, ConnectionUpdateParams, FilesDeleteParams,
     FilesListParams, FilesListResult, FilesReadParams, FilesReadResult, FilesRenameParams,
-    FilesStatParams, FilesWriteParams, FolderCreateParams, FolderDeleteParams,
-    FolderUpdateParams, HealthCheckResult, InitializeParams, InitializeResult,
-    MonitoringSubscribeParams, MonitoringUnsubscribeParams, SessionAttachParams,
-    SessionCloseParams, SessionCreateParams, SessionCreateResult, SessionDetachParams,
-    SessionInputParams, SessionListEntry, SessionListResult, SessionResizeParams,
+    FilesStatParams, FilesWriteParams, FolderCreateParams, FolderDeleteParams, FolderUpdateParams,
+    HealthCheckResult, InitializeParams, InitializeResult, MonitoringSubscribeParams,
+    MonitoringUnsubscribeParams, SessionAttachParams, SessionCloseParams, SessionCreateParams,
+    SessionCreateResult, SessionDetachParams, SessionInputParams, SessionListEntry,
+    SessionListResult, SessionResizeParams,
 };
 use crate::session::definitions::{Connection, ConnectionStore, Folder};
 use crate::session::manager::{SessionCreateError, SessionManager, MAX_SESSIONS};
@@ -131,9 +131,7 @@ impl Dispatcher {
             "connection.files.stat" => self.handle_files_stat(request).await,
 
             // connection.monitoring.* — system monitoring
-            "connection.monitoring.subscribe" => {
-                self.handle_monitoring_subscribe(request).await
-            }
+            "connection.monitoring.subscribe" => self.handle_monitoring_subscribe(request).await,
             "connection.monitoring.unsubscribe" => {
                 self.handle_monitoring_unsubscribe(request).await
             }
@@ -230,9 +228,7 @@ impl Dispatcher {
             ));
         }
 
-        let title = params
-            .title
-            .unwrap_or_else(|| format!("{type_id} session"));
+        let title = params.title.unwrap_or_else(|| format!("{type_id} session"));
 
         let snapshot = match self
             .session_manager
@@ -1128,10 +1124,7 @@ mod tests {
             type_ids.contains(&"local"),
             "Expected 'local' in {type_ids:?}"
         );
-        assert!(
-            type_ids.contains(&"ssh"),
-            "Expected 'ssh' in {type_ids:?}"
-        );
+        assert!(type_ids.contains(&"ssh"), "Expected 'ssh' in {type_ids:?}");
         // available_shells and available_serial_ports must be arrays
         assert!(json["result"]["capabilities"]["available_shells"]
             .as_array()
