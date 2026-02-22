@@ -11,3 +11,4 @@ serialport = "4"
 ssh2 = { version = "0.9", features = ["openssl-on-win32"] }
 ssh-key = { version = "0.6", features = ["encryption", "ed25519", "rsa"] }
 openssl = { version = "0.10", features = ["vendored"] }
+bollard = "0.18"
