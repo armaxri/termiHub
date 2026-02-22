@@ -10,23 +10,7 @@ pub mod local;
 pub mod ssh;
 
 use crate::protocol::methods::{FileEntry, FilesStatResult};
-
-/// Errors from file operations, mapped to JSON-RPC error codes by the dispatcher.
-#[derive(Debug, thiserror::Error)]
-pub enum FileError {
-    #[error("File not found: {0}")]
-    NotFound(String),
-
-    #[error("Permission denied: {0}")]
-    PermissionDenied(String),
-
-    #[error("File operation failed: {0}")]
-    OperationFailed(String),
-
-    #[error("File browsing not supported for this connection type")]
-    #[allow(dead_code)]
-    NotSupported,
-}
+pub use termihub_core::errors::FileError;
 
 /// Trait for connection-scoped file operations.
 ///

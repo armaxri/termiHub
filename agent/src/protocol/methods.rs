@@ -2,9 +2,19 @@
 // are kept for protocol completeness and forward compatibility.
 #![allow(dead_code)]
 
-use std::collections::HashMap;
-
 use serde::{Deserialize, Serialize};
+use termihub_core::config::{DockerConfig, EnvVar, SerialConfig, SshConfig, VolumeMount};
+// Used by shell/session modules on unix; re-exported for test access on all platforms.
+#[allow(unused_imports)]
+pub use termihub_core::config::ShellConfig;
+pub use termihub_core::files::FileEntry;
+
+// Type aliases for renamed types — minimises churn in consumer files.
+pub type SerialSessionConfig = SerialConfig;
+pub type DockerSessionConfig = DockerConfig;
+pub type SshSessionConfig = SshConfig;
+pub type DockerEnvVar = EnvVar;
+pub type DockerVolumeMount = VolumeMount;
 
 // ── initialize ──────────────────────────────────────────────────────
 
@@ -197,113 +207,6 @@ where
     Ok(Some(serde_json::Value::deserialize(deserializer)?))
 }
 
-// ── Shell / Serial config (for validation in the stub) ──────────────
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct ShellConfig {
-    pub shell: Option<String>,
-    #[serde(default = "default_cols")]
-    pub cols: u16,
-    #[serde(default = "default_rows")]
-    pub rows: u16,
-    #[serde(default)]
-    pub env: HashMap<String, String>,
-}
-
-fn default_cols() -> u16 {
-    80
-}
-fn default_rows() -> u16 {
-    24
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct SerialSessionConfig {
-    pub port: String,
-    #[serde(default = "default_baud_rate")]
-    pub baud_rate: u32,
-    #[serde(default = "default_data_bits")]
-    pub data_bits: u8,
-    #[serde(default = "default_stop_bits")]
-    pub stop_bits: u8,
-    #[serde(default = "default_parity")]
-    pub parity: String,
-    #[serde(default = "default_flow_control")]
-    pub flow_control: String,
-}
-
-fn default_baud_rate() -> u32 {
-    115200
-}
-fn default_data_bits() -> u8 {
-    8
-}
-fn default_stop_bits() -> u8 {
-    1
-}
-fn default_parity() -> String {
-    "none".to_string()
-}
-fn default_flow_control() -> String {
-    "none".to_string()
-}
-
-// ── Docker session config ───────────────────────────────────────────
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct DockerSessionConfig {
-    pub image: String,
-    pub shell: Option<String>,
-    #[serde(default = "default_cols")]
-    pub cols: u16,
-    #[serde(default = "default_rows")]
-    pub rows: u16,
-    #[serde(default)]
-    pub env_vars: Vec<DockerEnvVar>,
-    #[serde(default)]
-    pub volumes: Vec<DockerVolumeMount>,
-    pub working_directory: Option<String>,
-    #[serde(default = "default_remove_on_exit")]
-    pub remove_on_exit: bool,
-    #[serde(default)]
-    pub env: HashMap<String, String>,
-}
-
-fn default_remove_on_exit() -> bool {
-    true
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct DockerEnvVar {
-    pub key: String,
-    pub value: String,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct DockerVolumeMount {
-    pub host_path: String,
-    pub container_path: String,
-    #[serde(default)]
-    pub read_only: bool,
-}
-
-// ── files.* types ──────────────────────────────────────────────────
-
-/// A file or directory entry returned by file browsing operations.
-/// Matches the desktop's `FileEntry` format for seamless display.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FileEntry {
-    pub name: String,
-    pub path: String,
-    pub is_directory: bool,
-    pub size: u64,
-    /// ISO 8601 timestamp.
-    pub modified: String,
-    /// Unix "rwxrwxrwx" format, `None` when not available.
-    pub permissions: Option<String>,
-}
-
 #[derive(Debug, Clone, Deserialize)]
 pub struct FilesListParams {
     /// Connection to scope the operation to. If absent, use local filesystem.
@@ -420,30 +323,6 @@ pub struct MonitoringData {
     pub disk_used_kb: u64,
     pub disk_used_percent: f64,
     pub os_info: String,
-}
-
-// ── SSH session config ─────────────────────────────────────────────
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct SshSessionConfig {
-    pub host: String,
-    pub username: String,
-    /// "key", "password", or "agent".
-    pub auth_method: String,
-    /// SSH port (default: 22).
-    pub port: Option<u16>,
-    /// Password for password auth. Requires `sshpass` on the agent host.
-    pub password: Option<String>,
-    /// Path to private key file for key-based auth.
-    pub key_path: Option<String>,
-    /// Remote shell to invoke (default: user's login shell on target).
-    pub shell: Option<String>,
-    #[serde(default = "default_cols")]
-    pub cols: u16,
-    #[serde(default = "default_rows")]
-    pub rows: u16,
-    #[serde(default)]
-    pub env: HashMap<String, String>,
 }
 
 #[cfg(test)]
@@ -815,7 +694,7 @@ mod tests {
         assert_eq!(cfg.host, "build.internal");
         assert_eq!(cfg.username, "dev");
         assert_eq!(cfg.auth_method, "agent");
-        assert!(cfg.port.is_none());
+        assert_eq!(cfg.port, 22);
         assert!(cfg.password.is_none());
         assert!(cfg.key_path.is_none());
         assert!(cfg.shell.is_none());
@@ -842,7 +721,7 @@ mod tests {
         assert_eq!(cfg.host, "build.internal");
         assert_eq!(cfg.username, "deploy");
         assert_eq!(cfg.auth_method, "key");
-        assert_eq!(cfg.port, Some(2222));
+        assert_eq!(cfg.port, 2222);
         assert_eq!(cfg.password.as_deref(), Some("secret"));
         assert_eq!(cfg.key_path.as_deref(), Some("/home/user/.ssh/id_ed25519"));
         assert_eq!(cfg.shell.as_deref(), Some("/bin/bash"));
