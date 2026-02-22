@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+use termihub_core::session::docker::{build_docker_run_args, validate_docker_config};
 
 use crate::terminal::backend::{DockerConfig, OutputSender, TerminalBackend};
 use crate::utils::errors::TerminalError;
@@ -21,6 +22,8 @@ pub struct DockerShell {
 impl DockerShell {
     /// Spawn a new Docker container with an interactive shell.
     pub fn new(config: &DockerConfig, output_tx: OutputSender) -> Result<Self, TerminalError> {
+        validate_docker_config(config).map_err(|e| TerminalError::DockerError(e.to_string()))?;
+
         let pty_system = native_pty_system();
 
         let pty_pair = pty_system
@@ -40,35 +43,11 @@ impl DockerShell {
             command.arg("--rm");
         }
 
-        for env in &config.env_vars {
-            command.arg("-e");
-            command.arg(format!("{}={}", env.key, env.value));
+        for arg in build_docker_run_args(config) {
+            command.arg(arg);
         }
 
-        for vol in &config.volumes {
-            command.arg("-v");
-            if vol.read_only {
-                command.arg(format!("{}:{}:ro", vol.host_path, vol.container_path));
-            } else {
-                command.arg(format!("{}:{}", vol.host_path, vol.container_path));
-            }
-        }
-
-        if let Some(ref workdir) = config.working_directory {
-            if !workdir.is_empty() {
-                command.arg("-w");
-                command.arg(workdir);
-            }
-        }
-
-        command.arg(&config.image);
-
-        if let Some(ref shell) = config.shell {
-            if !shell.is_empty() {
-                command.arg(shell);
-            }
-        }
-
+        // Host-side PTY env vars (not container env vars — those are in config.env_vars)
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
 
