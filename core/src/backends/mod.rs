@@ -18,3 +18,6 @@ pub mod ssh;
 
 #[cfg(feature = "docker")]
 pub mod docker;
+
+#[cfg(all(feature = "wsl", windows))]
+pub mod wsl;
