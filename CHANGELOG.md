@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Desktop terminal backends now delegate to `termihub-core` session helpers instead of duplicating logic inline — shell uses `build_shell_command()`, Docker uses `build_docker_run_args()`/`validate_docker_config()`, serial uses `parse_serial_config()`/`open_serial_port()`, SSH uses `validate_ssh_config()`, manager uses `OutputCoalescer`/`contains_screen_clear()`/`osc7_setup_command()` (#310)
 - Desktop crate now imports `FileEntry`, `list_dir_sync`, `chrono_from_epoch`, `format_permissions`, and `normalize_path_separators` from `termihub-core` instead of defining them locally — local `files/utils.rs` module removed entirely (#304)
 - Desktop crate now imports `SystemStats`, `CpuCounters`, `parse_stats`, `parse_cpu_line`, `cpu_percent_from_delta`, `parse_meminfo_value`, and `MONITORING_COMMAND` from `termihub-core` instead of defining them locally (#304)
 - Agent crate now imports `RingBuffer`, file utilities (`chrono_from_epoch`, `format_permissions`), and monitoring types/parsers (`CpuCounters`, `parse_stats`, `parse_cpu_line`, `cpu_percent_from_delta`, `parse_meminfo_value`, `parse_df_output`, `MONITORING_COMMAND`) from `termihub-core` instead of maintaining local copies — removes ~680 lines of duplicated code (#305)
