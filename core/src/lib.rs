@@ -1,4 +1,4 @@
-#[cfg(feature = "local-shell")]
+#[cfg(any(feature = "local-shell", feature = "serial"))]
 pub mod backends;
 pub mod buffer;
 pub mod config;
