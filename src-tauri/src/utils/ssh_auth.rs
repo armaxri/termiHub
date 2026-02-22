@@ -10,6 +10,11 @@ use crate::utils::errors::TerminalError;
 /// Connect to an SSH server, perform handshake, and authenticate.
 ///
 /// Returns an authenticated `Session` in blocking mode.
+///
+/// The canonical implementation is now
+/// [`termihub_core::backends::ssh::auth::connect_and_authenticate`](termihub_core::backends::ssh).
+/// This function will be removed once all callers are migrated to use
+/// the core SSH backend.
 pub fn connect_and_authenticate(config: &SshConfig) -> Result<Session, TerminalError> {
     let addr = format!("{}:{}", config.host, config.port);
     let tcp = TcpStream::connect(&addr)

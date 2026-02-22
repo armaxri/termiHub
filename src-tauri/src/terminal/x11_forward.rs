@@ -1,4 +1,4 @@
-//! X11 forwarding via SSH reverse port tunnel.
+//! Legacy X11 forwarding via SSH reverse port tunnel.
 //!
 //! Uses a dedicated SSH session (same pattern as SFTP) with
 //! `channel_forward_listen()` to accept X11 connections on the remote
@@ -6,6 +6,11 @@
 //!
 //! All SSH channel I/O runs on a single thread because libssh2
 //! sessions are not thread-safe.
+//!
+//! The canonical implementation is now in
+//! [`termihub_core::backends::ssh::x11`](termihub_core::backends::ssh).
+//! This module will be removed once all callers are migrated to use
+//! the core SSH backend.
 
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};

@@ -6,6 +6,11 @@ use crate::utils::errors::TerminalError;
 const OPENSSH_HEADER: &str = "-----BEGIN OPENSSH PRIVATE KEY-----";
 
 /// Result of preparing an SSH key for libssh2.
+///
+/// The canonical implementation is now in
+/// [`termihub_core::backends::ssh::auth`](termihub_core::backends::ssh).
+/// This enum and related functions will be removed once all callers are
+/// migrated to use the core SSH backend.
 pub enum PreparedKey {
     /// The original key path can be used directly (PEM or PKCS#8 format).
     Original,

@@ -14,9 +14,14 @@ use crate::terminal::backend::SshConfig;
 use crate::utils::errors::TerminalError;
 use crate::utils::ssh_auth::connect_and_authenticate;
 
-/// A monitoring session holding a dedicated SSH connection.
+/// Legacy monitoring session holding a dedicated SSH connection.
 ///
 /// Uses blocking mode, same pattern as `SftpSession`.
+///
+/// The canonical implementation is now
+/// [`termihub_core::backends::ssh::SshMonitoringProvider`](termihub_core::backends::ssh)
+/// which implements the unified `MonitoringProvider` trait. This struct
+/// will be removed once monitoring is migrated to use `ConnectionType`.
 pub struct MonitoringSession {
     session: Session,
     /// Previous `/proc/stat` CPU counters for delta-based CPU% calculation.
