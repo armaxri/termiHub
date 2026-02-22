@@ -6,7 +6,6 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   SessionId,
   ConnectionConfig,
-  SshConfig,
   RemoteAgentConfig,
   LogEntry,
 } from "@/types/terminal";
@@ -38,33 +37,6 @@ export async function getConnectionTypes(): Promise<ConnectionTypeInfo[]> {
   return await invoke<ConnectionTypeInfo[]>("get_connection_types");
 }
 
-// --- Schema conversion helpers ---
-
-/**
- * Convert a backend ConnectionConfig (`{ type, config }`) into
- * the frontend's `{ typeId, settings }` format for schema-driven editing.
- */
-export function fromConnectionConfig(config: ConnectionConfig): {
-  typeId: string;
-  settings: Record<string, unknown>;
-} {
-  return {
-    typeId: config.type,
-    settings: config.config as unknown as Record<string, unknown>,
-  };
-}
-
-/**
- * Convert the frontend's `{ typeId, settings }` back into a backend
- * ConnectionConfig (`{ type, config }`) for persistence and session creation.
- */
-export function toConnectionConfig(
-  typeId: string,
-  settings: Record<string, unknown>
-): ConnectionConfig {
-  return { type: typeId, config: settings } as unknown as ConnectionConfig;
-}
-
 /** Create a new connection session (type-agnostic). */
 export async function createConnection(
   typeId: string,
@@ -79,19 +51,21 @@ export async function createConnection(
 }
 
 /**
- * Create a new terminal session (legacy adapter).
+ * Create a new terminal session from a ConnectionConfig.
  *
- * Converts the old `ConnectionConfig` discriminated union into the new
- * `create_connection(typeId, settings, agentId?)` call.
+ * For `remote-session` type: extracts `agentId` and `sessionType` from config
+ * and forwards the rest as settings. For other types: passes config directly.
  */
 export async function createTerminal(config: ConnectionConfig): Promise<SessionId> {
   if (config.type === "remote-session") {
-    // Extract agentId from the config and forward the rest as settings.
-    const { agentId, sessionType, ...rest } = config.config;
+    const { agentId, sessionType, ...rest } = config.config as {
+      agentId: string;
+      sessionType: string;
+      [key: string]: unknown;
+    };
     return await createConnection(sessionType, rest, agentId);
   }
-  // Local connection types: pass config as settings directly.
-  return await createConnection(config.type, config.config as unknown as Record<string, unknown>);
+  return await createConnection(config.type, config.config);
 }
 
 /** Send input data to a terminal session */
@@ -298,7 +272,7 @@ export async function reloadExternalConnections(): Promise<SavedConnection[]> {
 // --- SFTP commands ---
 
 /** Open a new SFTP session. Returns session ID. */
-export async function sftpOpen(config: SshConfig): Promise<string> {
+export async function sftpOpen(config: Record<string, unknown>): Promise<string> {
   return await invoke<string>("sftp_open", { config });
 }
 
@@ -587,7 +561,7 @@ export async function deleteRemoteAgentFromBackend(id: string): Promise<void> {
 // --- Monitoring commands ---
 
 /** Open a new monitoring session. Returns session ID. */
-export async function monitoringOpen(config: SshConfig): Promise<string> {
+export async function monitoringOpen(config: Record<string, unknown>): Promise<string> {
   return await invoke<string>("monitoring_open", { config });
 }
 

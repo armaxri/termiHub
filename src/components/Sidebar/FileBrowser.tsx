@@ -26,6 +26,7 @@ import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { onVscodeEditComplete } from "@/services/events";
 import { getHomeDir } from "@/services/api";
 import { FileEntry } from "@/types/connection";
+import type { ShellType } from "@/types/terminal";
 import type { ConnectionTypeInfo } from "@/services/api";
 import { getWslDistroName, wslToWindowsPath } from "@/utils/shell-detection";
 import { resolveFeatureEnabled } from "@/utils/featureFlags";
@@ -304,7 +305,7 @@ function useFileBrowserSync() {
 
   // Extract the WSL distro name (if any) from the active tab's shell type
   const activeTabShellType =
-    activeTab?.config.type === "local" ? activeTab.config.config.shellType : null;
+    activeTab?.config.type === "local" ? (activeTab.config.config.shellType as ShellType) : null;
   const wslDistro = activeTabShellType ? getWslDistroName(activeTabShellType) : null;
 
   useEffect(() => {
@@ -407,7 +408,7 @@ function useFileBrowserSync() {
   useEffect(() => {
     if (fileBrowserMode !== "sftp" || !activeTab) return;
 
-    const cfg = activeTab.config.config as unknown as Record<string, unknown>;
+    const cfg = activeTab.config.config;
     const host = (cfg.host as string) ?? "";
     const port = (cfg.port as number) ?? 0;
     const username = (cfg.username as string) ?? "";
@@ -427,19 +428,17 @@ function useFileBrowserSync() {
       if (authMethod === "password" && !cfg.password) {
         // Look for the saved connection to get any config details
         const savedConn = connections.find((c) => {
-          const sc = c.config.config as unknown as Record<string, unknown>;
+          const sc = c.config.config;
           return sc.host === host && sc.port === port && sc.username === username;
         });
-        const baseConfig = savedConn
-          ? (savedConn.config.config as unknown as Record<string, unknown>)
-          : cfg;
+        const baseConfig = savedConn ? savedConn.config.config : cfg;
 
         const password = await requestPassword(host, username);
         if (password === null) return;
         configToUse = { ...baseConfig, password };
       }
 
-      connectSftp(configToUse as unknown as Parameters<typeof connectSftp>[0]);
+      connectSftp(configToUse);
     };
 
     doConnect();
