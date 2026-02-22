@@ -770,15 +770,11 @@ mod tests {
             name: "SSH".to_string(),
             config: ConnectionConfig::Ssh(SshConfig {
                 host: "host".to_string(),
-                port: 22,
                 username: "user".to_string(),
                 auth_method: auth_method.to_string(),
                 password: password.map(|s| s.to_string()),
-                key_path: None,
-                enable_x11_forwarding: false,
-                enable_monitoring: None,
-                enable_file_browser: None,
                 save_password,
+                ..SshConfig::default()
             }),
             folder_id: None,
             terminal_options: None,

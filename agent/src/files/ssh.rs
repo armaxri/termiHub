@@ -121,7 +121,7 @@ impl FileBackend for SshFileBackend {
 
 /// Establish an SSH connection and open the SFTP subsystem.
 fn connect_sftp(config: &SshSessionConfig) -> Result<SftpConnection, FileError> {
-    let port = config.port.unwrap_or(22);
+    let port = config.port;
     let addr = format!("{}:{}", config.host, port);
 
     let tcp = TcpStream::connect(&addr)

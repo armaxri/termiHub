@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Desktop crate now imports `EnvVar`, `VolumeMount`, `SshConfig`, `SerialConfig`, `DockerConfig` from `termihub-core` instead of defining them locally (#298)
+- Desktop `expand_tilde()` and `expand_env_placeholders()` now delegate to `termihub-core` instead of duplicating the implementation (#298)
+
 ### Added
 
 - Shared core `FileBackend` async trait and `LocalFileBackend` implementation in the `termihub-core` crate — defines a unified file operations interface (`list`, `read`, `write`, `delete`, `rename`, `stat`) that can replace duplicated file backend logic in the desktop and agent crates (#313)
