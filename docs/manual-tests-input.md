@@ -422,6 +422,20 @@ Each section groups related tests by feature area. Individual test items referen
 - [ ] Edit an external connection — change storage file to "Default" — save — verify it moved to connections.json
 - [ ] Advanced section does not appear when no external files are configured in Settings
 
+### Schema-driven connection settings (PR #362)
+
+- [ ] Open connection editor → switch between all connection types (Local, SSH, Serial, Telnet, Docker) — verify each type shows the correct settings fields matching the previous hardcoded UI
+- [ ] Create a new SSH connection — verify host, port, username, auth method fields appear; switching auth method toggles key path / password visibility
+- [ ] Create a new Docker connection — verify env vars editor works (add/remove key-value rows) and volumes editor works (add/remove rows with host path, container path, read-only toggle)
+- [ ] SSH key path field shows the combobox with available key files (not a plain text input)
+- [ ] Create a new Serial connection — verify port, baud rate, data bits, stop bits, parity, flow control fields appear with correct dropdown options
+- [ ] Edit an existing connection — verify saved values load correctly into the schema-driven form
+- [ ] "Save & Connect" with SSH password auth (no saved password) — verify password prompt appears
+- [ ] Conditional fields work: SSH auth method "Key" shows key path, "Password" shows password field, "Agent" hides both
+- [ ] Switch connection type in the editor — verify fields reset to defaults for the new type
+- [ ] Monitoring toggle respects capabilities — monitoring panel only appears for connection types that support it (e.g., SSH), not for local/serial/telnet
+- [ ] File browser respects capabilities — SFTP file browser only activates for connection types with file browser capability
+
 ---
 
 ## File Browser
