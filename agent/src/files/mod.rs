@@ -4,6 +4,7 @@
 //! of the [`FileBackend`] trait. The dispatcher resolves which backend to use
 //! based on the connection's `session_type`.
 
+#[cfg(unix)]
 pub mod docker;
 pub mod local;
 pub mod ssh;

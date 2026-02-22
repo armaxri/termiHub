@@ -8,7 +8,9 @@
 
 use std::io::{self, Read, Write};
 
+#[cfg(unix)]
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+#[cfg(unix)]
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 
 // ── Message type constants ──────────────────────────────────────────
@@ -94,11 +96,12 @@ pub fn write_frame(writer: &mut impl Write, msg_type: u8, payload: &[u8]) -> io:
     Ok(())
 }
 
-// ── Async I/O (used by the agent's ShellBackend) ────────────────────
+// ── Async I/O (used by the agent's ShellBackend, Unix only) ─────────
 
 /// Read a single frame from an async Unix socket read half.
 ///
 /// Returns `Ok(None)` on clean EOF.
+#[cfg(unix)]
 pub async fn read_frame_async(reader: &mut OwnedReadHalf) -> io::Result<Option<Frame>> {
     let mut header = [0u8; HEADER_SIZE];
     match reader.read_exact(&mut header).await {
@@ -132,6 +135,7 @@ pub async fn read_frame_async(reader: &mut OwnedReadHalf) -> io::Result<Option<F
 }
 
 /// Write a single frame to an async Unix socket write half.
+#[cfg(unix)]
 pub async fn write_frame_async(
     writer: &mut OwnedWriteHalf,
     msg_type: u8,
@@ -328,6 +332,7 @@ mod tests {
         assert!(decode_exit_code(&[0, 1]).is_none());
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn async_round_trip() {
         let (client, server) = tokio::net::UnixStream::pair().unwrap();
@@ -344,6 +349,7 @@ mod tests {
         assert_eq!(frame.payload, b"async test");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn async_eof_returns_none() {
         let (client, server) = tokio::net::UnixStream::pair().unwrap();

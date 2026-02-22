@@ -1,0 +1,10 @@
+# Cargo audit configuration (workspace level)
+# https://docs.rs/cargo-audit/latest/cargo_audit/
+
+[advisories]
+# RUSTSEC-2023-0071: Marvin Attack timing sidechannel in the `rsa` crate.
+# The `rsa` crate is a transitive dependency of `ssh-key` (used for OpenSSH
+# key format parsing). We only extract raw RSA key components and rebuild
+# them via OpenSSL — we never perform RSA encryption/decryption through
+# this crate, so the timing sidechannel does not apply.
+ignore = ["RUSTSEC-2023-0071"]

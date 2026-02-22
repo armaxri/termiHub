@@ -39,8 +39,10 @@ pub struct LocalCollector {
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     prev_cpu: Option<CpuCounters>,
     /// Cached hostname (doesn't change at runtime).
+    #[cfg_attr(not(unix), allow(dead_code))]
     cached_hostname: Option<String>,
     /// Cached OS info (doesn't change at runtime).
+    #[cfg_attr(not(unix), allow(dead_code))]
     cached_os_info: Option<String>,
 }
 
@@ -53,6 +55,7 @@ impl LocalCollector {
         }
     }
 
+    #[cfg(unix)]
     fn hostname(&mut self) -> String {
         if let Some(ref h) = self.cached_hostname {
             return h.clone();
@@ -63,6 +66,7 @@ impl LocalCollector {
         h
     }
 
+    #[cfg(unix)]
     fn os_info(&mut self) -> String {
         if let Some(ref o) = self.cached_os_info {
             return o.clone();
@@ -306,6 +310,7 @@ fn parse_macos_uptime() -> f64 {
 }
 
 /// Parse df -Pk output to extract disk total, used, and used percent.
+#[cfg(any(unix, test))]
 fn parse_df_output(output: &str) -> (u64, u64, f64) {
     for line in output.lines() {
         if line.starts_with("Filesystem") || line.trim().is_empty() {
@@ -323,6 +328,7 @@ fn parse_df_output(output: &str) -> (u64, u64, f64) {
 }
 
 /// Run a command and capture its stdout as a string.
+#[cfg(unix)]
 fn run_command(cmd: &str, args: &[&str]) -> Result<String> {
     let output = std::process::Command::new(cmd)
         .args(args)
