@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Shared core session/Docker helpers (`build_docker_run_args`, `build_docker_exec_args`, `validate_docker_config`, `DockerContainer`) in the `termihub-core` crate — unified Docker CLI argument building, config validation, and container lifecycle commands that can replace duplicated logic in the desktop and agent crates (#307)
 - Shared core SSH session helpers (`build_ssh_args`, `validate_ssh_config`) in the `termihub-core` crate — unified SSH CLI argument building and config validation that can replace duplicated logic in the desktop and agent crates (#309)
 - Shared `RingBuffer` module in the `termihub-core` crate — circular byte buffer moved from the agent so it can be reused by the desktop for reconnect replay and serial capture (#302)
 - Shared core session/shell helpers (`detect_default_shell`, `shell_to_command`, `build_shell_command`, `osc7_setup_command`, `initial_command_strategy`) in the `termihub-core` crate — unified shell command building, OSC 7 CWD tracking injection, and initial command strategy that can replace duplicated logic in the desktop and agent crates (#306)

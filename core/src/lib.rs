@@ -1,6 +1,5 @@
 pub mod buffer;
 pub mod config;
-pub mod docker;
 pub mod errors;
 pub mod files;
 pub mod monitoring;
