@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Telnet` backend in `termihub-core` implementing the unified `ConnectionType` trait — TCP connection with telnet IAC protocol handling, dynamic settings schema (host + port), async output streaming via tokio channels; `TelnetConfig` moved to core, desktop telnet backend marked for deprecation (#356)
 - `Serial` backend in `termihub-core` implementing the unified `ConnectionType` trait — serial port connection with dynamic settings schema (port, baud rate, data bits, stop bits, parity, flow control), async output streaming via tokio channels, and cross-platform serial port access via the `serialport` crate; desktop and agent serial backends marked for deprecation (#355)
 - `LocalShell` backend in `termihub-core` implementing the unified `ConnectionType` trait — the first concrete backend migration, with dynamic shell detection, settings schema for UI form generation, portable-pty PTY management, and async output streaming via tokio channels; shell detection functions (`detect_available_shells`, `parse_wsl_output`) consolidated from the desktop crate into core (#354)
 - Unified `ConnectionType` trait, `SettingsSchema` types, `Capabilities` struct, `MonitoringProvider` trait, `FileBrowser` trait, and `ConnectionTypeRegistry` in `termihub-core` — the foundation for the architecture redesign where all connection backends implement one trait, the UI renders settings forms generically from schemas, and a runtime registry enables connection type discovery (#353)

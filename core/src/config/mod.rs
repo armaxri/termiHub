@@ -196,7 +196,34 @@ impl Default for SshConfig {
     }
 }
 
+/// Unified telnet session configuration.
+///
+/// Shared between desktop and agent telnet backends.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TelnetConfig {
+    pub host: String,
+    #[serde(default = "default_telnet_port")]
+    pub port: u16,
+}
+
+impl Default for TelnetConfig {
+    fn default() -> Self {
+        Self {
+            host: String::new(),
+            port: default_telnet_port(),
+        }
+    }
+}
+
 // --- Expand methods ---
+
+impl TelnetConfig {
+    /// Return a copy with all `${env:...}` placeholders expanded.
+    pub fn expand(mut self) -> Self {
+        self.host = expand::expand_env_placeholders(&self.host);
+        self
+    }
+}
 
 impl SerialConfig {
     /// Return a copy with all `${env:...}` placeholders expanded.
@@ -279,6 +306,10 @@ fn default_ssh_port() -> u16 {
     22
 }
 
+fn default_telnet_port() -> u16 {
+    23
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -312,6 +343,13 @@ mod tests {
         assert_eq!(cfg.stop_bits, 1);
         assert_eq!(cfg.parity, "none");
         assert_eq!(cfg.flow_control, "none");
+    }
+
+    #[test]
+    fn telnet_config_default() {
+        let cfg = TelnetConfig::default();
+        assert!(cfg.host.is_empty());
+        assert_eq!(cfg.port, 23);
     }
 
     #[test]
@@ -425,6 +463,18 @@ mod tests {
         assert_eq!(back.stop_bits, 2);
         assert_eq!(back.parity, "even");
         assert_eq!(back.flow_control, "hardware");
+    }
+
+    #[test]
+    fn telnet_config_roundtrip() {
+        let cfg = TelnetConfig {
+            host: "example.com".into(),
+            port: 2323,
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: TelnetConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.host, "example.com");
+        assert_eq!(back.port, 2323);
     }
 
     #[test]
@@ -582,6 +632,14 @@ mod tests {
     }
 
     #[test]
+    fn telnet_config_missing_port_uses_default() {
+        let json = r#"{"host": "example.com"}"#;
+        let cfg: TelnetConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.host, "example.com");
+        assert_eq!(cfg.port, 23);
+    }
+
+    #[test]
     fn docker_config_missing_fields_use_defaults() {
         let json = r#"{"image": "nginx"}"#;
         let cfg: DockerConfig = serde_json::from_str(json).unwrap();
@@ -608,6 +666,18 @@ mod tests {
     }
 
     // --- Expand method tests ---
+
+    #[test]
+    fn telnet_config_expand_replaces_host() {
+        std::env::set_var("TERMIHUB_TEST_TELNET_HOST", "10.0.0.1");
+        let cfg = TelnetConfig {
+            host: "${env:TERMIHUB_TEST_TELNET_HOST}".into(),
+            ..TelnetConfig::default()
+        };
+        let expanded = cfg.expand();
+        assert_eq!(expanded.host, "10.0.0.1");
+        std::env::remove_var("TERMIHUB_TEST_TELNET_HOST");
+    }
 
     #[test]
     fn serial_config_expand_replaces_port() {

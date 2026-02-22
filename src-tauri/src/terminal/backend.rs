@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::utils::expand::{expand_env_placeholders, expand_tilde};
 
-pub use termihub_core::config::{DockerConfig, EnvVar, SerialConfig, SshConfig, VolumeMount};
+pub use termihub_core::config::{
+    DockerConfig, EnvVar, SerialConfig, SshConfig, TelnetConfig, VolumeMount,
+};
 
 /// Trait for all terminal backends (PTY, serial, SSH, telnet).
 pub trait TerminalBackend: Send {
@@ -84,12 +86,6 @@ pub struct LocalShellConfig {
     pub initial_command: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub starting_directory: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TelnetConfig {
-    pub host: String,
-    pub port: u16,
 }
 
 /// SSH transport configuration for a remote agent (no session details).
@@ -197,13 +193,6 @@ impl LocalShellConfig {
         self.starting_directory = self
             .starting_directory
             .map(|s| expand_tilde(&expand_env_placeholders(&s)));
-        self
-    }
-}
-
-impl TelnetConfig {
-    pub fn expand(mut self) -> Self {
-        self.host = expand_env_placeholders(&self.host);
         self
     }
 }

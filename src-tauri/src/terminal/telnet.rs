@@ -16,7 +16,12 @@ const WONT: u8 = 252;
 const DO: u8 = 253;
 const DONT: u8 = 254;
 
-/// Telnet connection backend.
+/// Legacy telnet connection backend using the `TerminalBackend` trait.
+///
+/// The canonical implementation is now
+/// [`termihub_core::backends::telnet::Telnet`] which implements the
+/// unified `ConnectionType` trait. This struct will be removed once
+/// `TerminalManager` is migrated to use `ConnectionType`.
 pub struct TelnetConnection {
     stream: Arc<Mutex<TcpStream>>,
     alive: Arc<AtomicBool>,

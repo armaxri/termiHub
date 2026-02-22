@@ -9,3 +9,6 @@ pub mod local_shell;
 
 #[cfg(feature = "serial")]
 pub mod serial;
+
+#[cfg(feature = "telnet")]
+pub mod telnet;
