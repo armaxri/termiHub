@@ -1,4 +1,3 @@
-mod buffer;
 #[cfg(unix)]
 mod daemon;
 #[cfg(unix)]

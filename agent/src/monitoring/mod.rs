@@ -5,7 +5,6 @@
 //! interval and sent as `monitoring.data` JSON-RPC notifications.
 
 pub mod collector;
-pub mod parser;
 
 use std::collections::HashMap;
 use std::sync::Arc;
