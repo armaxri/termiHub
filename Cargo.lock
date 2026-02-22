@@ -5026,10 +5026,14 @@ name = "termihub-core"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "openssl",
  "portable-pty",
+ "rand 0.8.5",
  "serde",
  "serde_json",
  "serialport",
+ "ssh-key",
+ "ssh2",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
