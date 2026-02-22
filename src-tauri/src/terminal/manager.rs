@@ -4,6 +4,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter};
+use termihub_core::output::coalescer::OutputCoalescer;
+use termihub_core::output::screen_clear::contains_screen_clear;
+use termihub_core::session::shell::osc7_setup_command;
 use tracing::{error, info};
 
 use crate::terminal::agent_manager::AgentConnectionManager;
@@ -18,21 +21,12 @@ use crate::terminal::serial::SerialConnection;
 use crate::terminal::ssh::SshConnection;
 use crate::terminal::telnet::TelnetConnection;
 use crate::utils::errors::TerminalError;
-use crate::utils::shell_detect::ssh_osc7_setup;
-#[cfg(windows)]
-use crate::utils::shell_detect::wsl_osc7_setup;
 
 /// Maximum number of concurrent terminal sessions.
 const MAX_SESSIONS: usize = 50;
 
 /// Maximum coalesced output size per emit (32 KB).
 const MAX_COALESCE_BYTES: usize = 32 * 1024;
-
-/// ANSI "erase display + cursor home" sequence emitted by the initial
-/// command's `printf '\033[2J\033[H'`.  The output reader buffers all
-/// output until this sequence appears, then flushes everything in one
-/// event so xterm processes the clear atomically with no visible flash.
-const SCREEN_CLEAR_SEQ: &[u8] = b"\x1b[2J\x1b[H";
 
 /// Maximum time to wait for the screen-clear sequence before flushing
 /// buffered output anyway.
@@ -77,20 +71,14 @@ impl TerminalManager {
 
         let initial_command = match &config {
             ConnectionConfig::Local(cfg) => {
-                #[cfg(windows)]
-                if cfg.shell_type.starts_with("wsl:") {
-                    let osc7 = wsl_osc7_setup().to_string();
-                    Some(match &cfg.initial_command {
-                        Some(cmd) => format!("{}\n{}", osc7, cmd),
-                        None => osc7,
-                    })
-                } else {
-                    cfg.initial_command.clone()
+                let osc7 = osc7_setup_command(&cfg.shell_type);
+                match (osc7, &cfg.initial_command) {
+                    (Some(setup), Some(cmd)) => Some(format!("{}\n{}", setup, cmd)),
+                    (Some(setup), None) => Some(setup),
+                    (None, cmd) => cmd.clone(),
                 }
-                #[cfg(not(windows))]
-                cfg.initial_command.clone()
             }
-            ConnectionConfig::Ssh(_) => Some(ssh_osc7_setup().to_string()),
+            ConnectionConfig::Ssh(_) => osc7_setup_command("ssh"),
             _ => None,
         };
 
@@ -304,7 +292,7 @@ impl TerminalManager {
                 match output_rx.recv_timeout(remaining) {
                     Ok(chunk) => {
                         buffer.extend_from_slice(&chunk);
-                        if contains_seq(&buffer, SCREEN_CLEAR_SEQ) {
+                        if contains_screen_clear(&buffer) {
                             break;
                         }
                     }
@@ -330,22 +318,25 @@ impl TerminalManager {
         }
 
         // Phase 2: normal streaming with coalescing.
+        let mut coalescer = OutputCoalescer::new(MAX_COALESCE_BYTES);
         while let Ok(first_chunk) = output_rx.recv() {
-            let mut coalesced = first_chunk;
-            while coalesced.len() < MAX_COALESCE_BYTES {
+            coalescer.push(&first_chunk);
+            while coalescer.pending_len() < MAX_COALESCE_BYTES {
                 match output_rx.try_recv() {
-                    Ok(chunk) => coalesced.extend_from_slice(&chunk),
+                    Ok(chunk) => coalescer.push(&chunk),
                     Err(_) => break,
                 }
             }
 
-            let event = TerminalOutputEvent {
-                session_id: session_id.clone(),
-                data: coalesced,
-            };
-            if let Err(e) = app_handle.emit("terminal-output", &event) {
-                error!("Failed to emit terminal-output event: {}", e);
-                break;
+            if let Some(data) = coalescer.flush() {
+                let event = TerminalOutputEvent {
+                    session_id: session_id.clone(),
+                    data,
+                };
+                if let Err(e) = app_handle.emit("terminal-output", &event) {
+                    error!("Failed to emit terminal-output event: {}", e);
+                    break;
+                }
             }
         }
 
@@ -379,9 +370,4 @@ impl TerminalManager {
 
         info!("Terminal session ended: {}", session_id);
     }
-}
-
-/// Check whether `haystack` contains the byte subsequence `needle`.
-fn contains_seq(haystack: &[u8], needle: &[u8]) -> bool {
-    haystack.windows(needle.len()).any(|w| w == needle)
 }

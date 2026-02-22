@@ -1,8 +1,8 @@
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
+use termihub_core::session::serial::{open_serial_port, parse_serial_config};
 use tracing::{debug, info};
 
 use crate::terminal::backend::{OutputSender, SerialConfig, TerminalBackend};
@@ -22,38 +22,10 @@ impl SerialConnection {
             baud_rate = config.baud_rate,
             "Opening serial port"
         );
-        let data_bits = match config.data_bits {
-            5 => serialport::DataBits::Five,
-            6 => serialport::DataBits::Six,
-            7 => serialport::DataBits::Seven,
-            _ => serialport::DataBits::Eight,
-        };
-
-        let stop_bits = match config.stop_bits {
-            2 => serialport::StopBits::Two,
-            _ => serialport::StopBits::One,
-        };
-
-        let parity = match config.parity.as_str() {
-            "odd" => serialport::Parity::Odd,
-            "even" => serialport::Parity::Even,
-            _ => serialport::Parity::None,
-        };
-
-        let flow_control = match config.flow_control.as_str() {
-            "hardware" => serialport::FlowControl::Hardware,
-            "software" => serialport::FlowControl::Software,
-            _ => serialport::FlowControl::None,
-        };
-
-        let port = serialport::new(&config.port, config.baud_rate)
-            .data_bits(data_bits)
-            .stop_bits(stop_bits)
-            .parity(parity)
-            .flow_control(flow_control)
-            .timeout(Duration::from_millis(100))
-            .open()
-            .map_err(|e| TerminalError::SerialError(e.to_string()))?;
+        let parsed =
+            parse_serial_config(config).map_err(|e| TerminalError::SerialError(e.to_string()))?;
+        let port =
+            open_serial_port(&parsed).map_err(|e| TerminalError::SerialError(e.to_string()))?;
 
         let alive = Arc::new(AtomicBool::new(true));
 

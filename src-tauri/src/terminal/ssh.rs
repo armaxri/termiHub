@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use ssh2::Session;
+use termihub_core::session::ssh::validate_ssh_config;
 use tracing::{debug, info, warn};
 
 use crate::terminal::backend::{OutputSender, SshConfig, TerminalBackend};
@@ -21,6 +22,8 @@ pub struct SshConnection {
 impl SshConnection {
     /// Connect to an SSH server and open a shell channel.
     pub fn new(config: &SshConfig, output_tx: OutputSender) -> Result<Self, TerminalError> {
+        validate_ssh_config(config).map_err(|e| TerminalError::SshError(e.to_string()))?;
+
         info!(
             host = %config.host,
             port = config.port,
