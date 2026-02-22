@@ -97,6 +97,7 @@ impl OutputSink for JsonRpcOutputSink {
 // ── DaemonSpawner (Unix only) ──────────────────────────────────────
 
 #[cfg(unix)]
+#[allow(dead_code)]
 mod daemon_spawner {
     use std::collections::HashMap;
     use std::path::{Path, PathBuf};
@@ -202,7 +203,6 @@ mod daemon_spawner {
     fn _assert_spawner_send_sync<T: ProcessSpawner>() {}
     fn _assert_handle_send<T: ProcessHandle>() {}
 
-    #[allow(dead_code)]
     fn _static_assertions() {
         _assert_spawner_send_sync::<DaemonSpawner>();
         _assert_handle_send::<DaemonClient>();
