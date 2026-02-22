@@ -1,19 +1,12 @@
 #[cfg(unix)]
 mod daemon;
-#[cfg(unix)]
-mod docker;
 mod files;
 mod handler;
 mod io;
 mod monitoring;
 mod protocol;
 mod registry;
-mod serial;
 mod session;
-#[cfg(unix)]
-mod shell;
-#[cfg(unix)]
-mod ssh;
 #[cfg(unix)]
 mod state;
 mod transport;

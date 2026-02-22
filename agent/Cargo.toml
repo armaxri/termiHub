@@ -30,7 +30,8 @@ chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.22"
 async-trait = { workspace = true }
 tokio-util = { version = "0.7", features = ["rt"] }
-# TODO(#360): Remove these once old backend modules are deleted.
+# Used by monitoring/collector.rs (SshCollector) and capability detection.
+# Will be removed when monitoring is fully delegated to ConnectionType.
 serialport = { workspace = true }
 ssh2 = "0.9"
 shellexpand = "3"
