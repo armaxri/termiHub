@@ -174,6 +174,73 @@ impl DaemonClient {
     }
 }
 
+// ── ProcessHandle trait implementation ──────────────────────────────
+//
+// The core `ProcessHandle` trait is synchronous. These methods are intended
+// to be called from `spawn_blocking` contexts where `Handle::block_on()`
+// is safe (we are on a blocking thread, not inside an async task).
+
+impl termihub_core::session::traits::ProcessHandle for DaemonClient {
+    fn write_input(&self, data: &[u8]) -> Result<(), termihub_core::errors::SessionError> {
+        let handle = tokio::runtime::Handle::current();
+        handle
+            .block_on(async {
+                let mut guard = self.writer.lock().await;
+                let writer = guard.as_mut().ok_or_else(|| {
+                    termihub_core::errors::SessionError::NotRunning(
+                        "not connected to daemon".into(),
+                    )
+                })?;
+                protocol::write_frame_async(writer, MSG_INPUT, data).await
+            })
+            .map_err(|e| {
+                termihub_core::errors::SessionError::Io(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    e.to_string(),
+                ))
+            })
+    }
+
+    fn resize(&self, cols: u16, rows: u16) -> Result<(), termihub_core::errors::SessionError> {
+        let handle = tokio::runtime::Handle::current();
+        handle
+            .block_on(async {
+                let mut guard = self.writer.lock().await;
+                let writer = guard.as_mut().ok_or_else(|| {
+                    termihub_core::errors::SessionError::NotRunning(
+                        "not connected to daemon".into(),
+                    )
+                })?;
+                let payload = protocol::encode_resize(cols, rows);
+                protocol::write_frame_async(writer, MSG_RESIZE, &payload).await
+            })
+            .map_err(|e| {
+                termihub_core::errors::SessionError::Io(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    e.to_string(),
+                ))
+            })
+    }
+
+    fn close(&self) -> Result<(), termihub_core::errors::SessionError> {
+        let handle = tokio::runtime::Handle::current();
+        handle.block_on(async {
+            let mut guard = self.writer.lock().await;
+            if let Some(ref mut writer) = *guard {
+                let _ = protocol::write_frame_async(writer, MSG_KILL, &[]).await;
+            }
+            // Drop the writer half — the reader task will exit on EOF.
+            *guard = None;
+        });
+        self.alive.store(false, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn is_alive(&self) -> bool {
+        self.alive.load(Ordering::SeqCst)
+    }
+}
+
 /// Connect to the daemon socket, wait for the Ready frame, and start the reader task.
 ///
 /// Returns the writer half, the reader task handle, and the alive flag.
