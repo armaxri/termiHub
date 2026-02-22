@@ -201,6 +201,64 @@ impl SftpSession {
             .rename(old, new, None)
             .map_err(|e| TerminalError::SshError(format!("rename failed: {}", e)))
     }
+
+    /// Get metadata for a single file or directory.
+    pub fn stat(&self, path: &str) -> Result<FileEntry, TerminalError> {
+        let p = std::path::Path::new(path);
+        let file_stat = self
+            .sftp
+            .stat(p)
+            .map_err(|e| TerminalError::SshError(format!("stat failed: {}", e)))?;
+
+        let name = p
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let is_directory = file_stat.is_dir();
+        let size = file_stat.size.unwrap_or(0);
+        let modified = file_stat.mtime.map(chrono_from_epoch).unwrap_or_default();
+        let permissions = file_stat.perm.map(format_permissions);
+
+        Ok(FileEntry {
+            name,
+            path: path.to_string(),
+            is_directory,
+            size,
+            modified,
+            permissions,
+        })
+    }
+
+    /// Read a remote file's contents as raw bytes.
+    pub fn read_bytes(&self, remote_path: &str) -> Result<Vec<u8>, TerminalError> {
+        let remote = std::path::Path::new(remote_path);
+        let mut remote_file = self
+            .sftp
+            .open(remote)
+            .map_err(|e| TerminalError::SshError(format!("open remote file failed: {}", e)))?;
+
+        let mut data = Vec::new();
+        remote_file
+            .read_to_end(&mut data)
+            .map_err(|e| TerminalError::SshError(format!("read failed: {}", e)))?;
+
+        Ok(data)
+    }
+
+    /// Write raw bytes to a remote file, creating or overwriting it.
+    pub fn write_bytes(&self, remote_path: &str, data: &[u8]) -> Result<(), TerminalError> {
+        let remote = std::path::Path::new(remote_path);
+        let mut remote_file = self
+            .sftp
+            .create(remote)
+            .map_err(|e| TerminalError::SshError(format!("create remote file failed: {}", e)))?;
+
+        remote_file
+            .write_all(data)
+            .map_err(|e| TerminalError::SshError(format!("write failed: {}", e)))?;
+
+        Ok(())
+    }
 }
 
 /// Manages multiple SFTP sessions keyed by UUID.
