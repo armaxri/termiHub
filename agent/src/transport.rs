@@ -209,6 +209,10 @@ mod daemon_spawner {
     }
 }
 
+#[cfg(unix)]
+#[allow(unused_imports)]
+pub use daemon_spawner::DaemonSpawner;
+
 #[cfg(test)]
 mod tests {
     use super::*;
