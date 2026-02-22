@@ -8,7 +8,9 @@ use std::net::TcpStream;
 
 use ssh2::{Session, Sftp};
 
-use crate::protocol::methods::{FileEntry, FilesStatResult, SshSessionConfig};
+use termihub_core::files::FileEntry;
+
+use crate::protocol::methods::SshSessionConfig;
 
 use super::{chrono_from_epoch, format_permissions, FileBackend, FileError};
 
@@ -107,7 +109,7 @@ impl FileBackend for SshFileBackend {
         .map_err(|e| FileError::OperationFailed(e.to_string()))?
     }
 
-    async fn stat(&self, path: &str) -> Result<FilesStatResult, FileError> {
+    async fn stat(&self, path: &str) -> Result<FileEntry, FileError> {
         let config = self.config.clone();
         let path = path.to_string();
         tokio::task::spawn_blocking(move || {
@@ -252,7 +254,7 @@ fn sftp_write_file(sftp: &Sftp, path: &str, data: &[u8]) -> Result<(), FileError
 }
 
 /// Stat a single file/directory via SFTP.
-fn sftp_stat(sftp: &Sftp, path: &str) -> Result<FilesStatResult, FileError> {
+fn sftp_stat(sftp: &Sftp, path: &str) -> Result<FileEntry, FileError> {
     let stat = sftp
         .stat(std::path::Path::new(path))
         .map_err(|e| map_ssh_error(e, path))?;
@@ -262,7 +264,7 @@ fn sftp_stat(sftp: &Sftp, path: &str) -> Result<FilesStatResult, FileError> {
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| path.to_string());
 
-    Ok(FilesStatResult {
+    Ok(FileEntry {
         name,
         path: path.to_string(),
         is_directory: stat.is_dir(),
