@@ -88,16 +88,10 @@ impl SerialBackend {
                 },
                 move |status: SerialStatus| {
                     let message = match status {
-                        SerialStatus::Connected => {
-                            format!("Serial port reconnected")
-                        }
-                        SerialStatus::Disconnected => {
-                            format!("Serial port disconnected")
-                        }
+                        SerialStatus::Connected => "Serial port reconnected".to_string(),
+                        SerialStatus::Disconnected => "Serial port disconnected".to_string(),
                         SerialStatus::Reconnecting => return,
-                        SerialStatus::Error(ref e) => {
-                            format!("Serial port error: {e}")
-                        }
+                        SerialStatus::Error(ref e) => format!("Serial port error: {e}"),
                     };
                     let notification = JsonRpcNotification::new(
                         "session.error",
