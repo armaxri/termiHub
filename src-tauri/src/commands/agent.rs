@@ -4,6 +4,7 @@ use serde_json::Value;
 use tauri::State;
 use tracing::{debug, info};
 
+use crate::session::manager::SessionManager;
 use crate::terminal::agent_deploy::{AgentDeployConfig, AgentDeployResult, AgentProbeResult};
 use crate::terminal::agent_manager::{
     AgentCapabilities, AgentConnectResult, AgentConnectionManager, AgentDefinitionInfo,
@@ -11,7 +12,6 @@ use crate::terminal::agent_manager::{
 };
 use crate::terminal::agent_setup::{AgentSetupConfig, AgentSetupResult};
 use crate::terminal::backend::RemoteAgentConfig;
-use crate::terminal::manager::TerminalManager;
 
 /// Connect to a remote agent via SSH.
 ///
@@ -162,17 +162,17 @@ pub async fn setup_remote_agent(
     config: RemoteAgentConfig,
     setup_config: AgentSetupConfig,
     app_handle: tauri::AppHandle,
-    manager: State<'_, TerminalManager>,
+    manager: State<'_, SessionManager>,
 ) -> Result<AgentSetupResult, String> {
     info!(agent_id, host = %config.host, "Starting remote agent setup");
-    let tm = manager.inner().clone();
+    let sm = manager.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         crate::terminal::agent_setup::setup_remote_agent(
             &agent_id,
             &config,
             &setup_config,
             &app_handle,
-            &tm,
+            &sm,
         )
         .map_err(|e| e.to_string())
     })

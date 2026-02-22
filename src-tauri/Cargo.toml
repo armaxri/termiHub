@@ -38,7 +38,8 @@ uuid = { version = "1", features = ["v4", "serde"] }
 base64 = "0.22"
 anyhow = "1"
 thiserror = { workspace = true }
-termihub-core = { path = "../core", features = ["serial", "local-shell", "telnet", "ssh", "wsl"] }
+termihub-core = { path = "../core", features = ["serial", "local-shell", "telnet", "ssh", "docker", "wsl"] }
+tokio = { version = "1", features = ["rt", "sync", "macros"] }
 async-trait = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking"] }
 dirs = "6"

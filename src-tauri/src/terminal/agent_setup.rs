@@ -4,14 +4,12 @@
 /// 1. Create a visible SSH terminal session for the user to observe.
 /// 2. Open a separate blocking SSH connection for SFTP upload + arch detection.
 /// 3. Upload a self-contained POSIX setup script and execute it in the terminal.
-use std::sync::Arc;
-
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 use tracing::{error, info};
 
-use crate::terminal::backend::{ConnectionConfig, RemoteAgentConfig};
-use crate::terminal::manager::TerminalManager;
+use crate::session::manager::SessionManager;
+use crate::terminal::backend::RemoteAgentConfig;
 use crate::utils::errors::TerminalError;
 use crate::utils::remote_exec::{
     detect_binary_arch, detect_remote_info, expected_arch_for_uname, upload_bytes_via_sftp,
@@ -71,7 +69,7 @@ pub fn setup_remote_agent(
     agent_config: &RemoteAgentConfig,
     setup_config: &AgentSetupConfig,
     app_handle: &AppHandle,
-    terminal_manager: &TerminalManager,
+    session_manager: &SessionManager,
 ) -> Result<AgentSetupResult, TerminalError> {
     // Validate that the local binary exists
     let binary_path = &setup_config.binary_path;
@@ -82,13 +80,19 @@ pub fn setup_remote_agent(
         )));
     }
 
-    // Create the visible SSH terminal session
+    // Create the visible SSH terminal session via the new SessionManager.
+    // We're in a spawn_blocking context, so use block_on for the async call.
     let ssh_config = agent_config.to_ssh_config();
-    let session_id = terminal_manager.create_session(
-        ConnectionConfig::Ssh(ssh_config.clone()),
-        app_handle.clone(),
+    let settings = serde_json::to_value(&ssh_config)
+        .map_err(|e| TerminalError::SpawnFailed(format!("Failed to serialize SSH config: {e}")))?;
+
+    let handle = tokio::runtime::Handle::current();
+    let session_id = handle.block_on(session_manager.create_connection(
+        "ssh",
+        settings,
         None,
-    )?;
+        app_handle.clone(),
+    ))?;
 
     info!(
         "Agent setup: created SSH terminal session {} for agent {}",
@@ -101,7 +105,7 @@ pub fn setup_remote_agent(
     let ssh_config_clone = ssh_config;
     let setup_config_clone = setup_config.clone();
     let app_handle_clone = app_handle.clone();
-    let tm = terminal_manager.sessions_arc();
+    let sm = session_manager.clone();
 
     // Spawn background thread to do SFTP upload + command injection
     std::thread::spawn(move || {
@@ -111,7 +115,7 @@ pub fn setup_remote_agent(
             &ssh_config_clone,
             &setup_config_clone,
             &app_handle_clone,
-            &tm,
+            &sm,
         );
     });
 
@@ -125,11 +129,7 @@ fn run_setup_background(
     ssh_config: &crate::terminal::backend::SshConfig,
     setup_config: &AgentSetupConfig,
     app_handle: &AppHandle,
-    sessions: &Arc<
-        std::sync::Mutex<
-            std::collections::HashMap<String, crate::terminal::backend::TerminalSession>,
-        >,
-    >,
+    session_manager: &SessionManager,
 ) {
     // Wait for the shell to initialize
     std::thread::sleep(std::time::Duration::from_millis(SHELL_INIT_DELAY_MS));
@@ -155,7 +155,7 @@ fn run_setup_background(
                 "error",
                 &format!("SFTP connection failed: {}", e),
             );
-            inject_error_inline(sessions, session_id, "SFTP connection failed");
+            inject_error_inline(session_manager, session_id, "SFTP connection failed");
             return;
         }
     };
@@ -189,22 +189,20 @@ fn run_setup_background(
                             );
                             error!("Agent setup: {}", msg);
                             emit_progress(app_handle, agent_id, "error", &msg);
-                            inject_error_script(&sftp_session, sessions, session_id, &msg);
+                            inject_error_script(&sftp_session, session_manager, session_id, &msg);
                             return;
                         }
                         info!("Agent setup: binary arch {} matches remote", binary_arch);
                     }
                 }
                 Err(e) => {
-                    // Extract the inner message without the TerminalError variant prefix
-                    // (e.g. "Failed to spawn terminal: ") for cleaner terminal output.
                     let msg = match &e {
                         TerminalError::SpawnFailed(inner) => inner.clone(),
                         other => format!("{}", other),
                     };
                     error!("Agent setup: {}", msg);
                     emit_progress(app_handle, agent_id, "error", &msg);
-                    inject_error_script(&sftp_session, sessions, session_id, &msg);
+                    inject_error_script(&sftp_session, session_manager, session_id, &msg);
                     return;
                 }
             }
@@ -242,7 +240,7 @@ fn run_setup_background(
             );
             inject_error_script(
                 &sftp_session,
-                sessions,
+                session_manager,
                 session_id,
                 &format!("Upload failed: {}", e),
             );
@@ -272,7 +270,7 @@ fn run_setup_background(
             );
             inject_error_script(
                 &sftp_session,
-                sessions,
+                session_manager,
                 session_id,
                 &format!("Script upload failed: {}", e),
             );
@@ -283,7 +281,7 @@ fn run_setup_background(
     // Execute the setup script in the visible terminal
     emit_progress(app_handle, agent_id, "install", "Running setup script...");
     let exec_command = format!("sh {}; rm -f {}\n", TEMP_SCRIPT_PATH, TEMP_SCRIPT_PATH);
-    inject_commands(sessions, session_id, &exec_command);
+    inject_commands(session_manager, session_id, &exec_command);
 
     emit_progress(
         app_handle,
@@ -402,32 +400,10 @@ echo "\360\237\216\211 === Setup Complete ==="
 echo ""
 "#;
 
-/// Inject commands into the visible terminal session.
-fn inject_commands(
-    sessions: &Arc<
-        std::sync::Mutex<
-            std::collections::HashMap<String, crate::terminal::backend::TerminalSession>,
-        >,
-    >,
-    session_id: &str,
-    commands: &str,
-) {
-    let sessions_guard = match sessions.lock() {
-        Ok(g) => g,
-        Err(e) => {
-            error!("Agent setup: failed to lock sessions: {}", e);
-            return;
-        }
-    };
-    if let Some(session) = sessions_guard.get(session_id) {
-        if let Err(e) = session.backend.write_input(commands.as_bytes()) {
-            error!("Agent setup: failed to inject commands: {}", e);
-        }
-    } else {
-        error!(
-            "Agent setup: terminal session {} not found for command injection",
-            session_id
-        );
+/// Inject commands into the visible terminal session via the SessionManager.
+fn inject_commands(session_manager: &SessionManager, session_id: &str, commands: &str) {
+    if let Err(e) = session_manager.send_input(session_id, commands.as_bytes()) {
+        error!("Agent setup: failed to inject commands: {}", e);
     }
 }
 
@@ -438,11 +414,7 @@ fn inject_commands(
 /// flow) followed by the styled error output.
 fn inject_error_script(
     sftp_session: &ssh2::Session,
-    sessions: &Arc<
-        std::sync::Mutex<
-            std::collections::HashMap<String, crate::terminal::backend::TerminalSession>,
-        >,
-    >,
+    session_manager: &SessionManager,
     session_id: &str,
     message: &str,
 ) {
@@ -450,12 +422,12 @@ fn inject_error_script(
     match upload_bytes_via_sftp(sftp_session, script.as_bytes(), TEMP_SCRIPT_PATH) {
         Ok(_) => {
             let cmd = format!("sh {}; rm -f {}\n", TEMP_SCRIPT_PATH, TEMP_SCRIPT_PATH);
-            inject_commands(sessions, session_id, &cmd);
+            inject_commands(session_manager, session_id, &cmd);
         }
         Err(e) => {
             // Fallback: inject commands directly if upload fails
             error!("Agent setup: error script upload failed: {}", e);
-            inject_error_inline(sessions, session_id, message);
+            inject_error_inline(session_manager, session_id, message);
         }
     }
 }
@@ -463,15 +435,7 @@ fn inject_error_script(
 /// Inject a red error banner directly into the terminal (fallback).
 ///
 /// Used only when SFTP is unavailable (e.g. connection failed).
-fn inject_error_inline(
-    sessions: &Arc<
-        std::sync::Mutex<
-            std::collections::HashMap<String, crate::terminal::backend::TerminalSession>,
-        >,
-    >,
-    session_id: &str,
-    message: &str,
-) {
+fn inject_error_inline(session_manager: &SessionManager, session_id: &str, message: &str) {
     let safe_msg = message.replace('\'', "'\\''");
     let cmd = format!(
         "printf '\\033[31m\\342\\235\\214 Error: %s\\033[0m\\n' '{}'\n\
@@ -479,7 +443,7 @@ fn inject_error_inline(
          printf '\\033[31m\\342\\235\\214 === Setup Failed ===\\033[0m\\n'\n",
         safe_msg
     );
-    inject_commands(sessions, session_id, &cmd);
+    inject_commands(session_manager, session_id, &cmd);
 }
 
 /// Generate a small POSIX error script matching the setup script's `fail()` style.
@@ -521,7 +485,6 @@ mod tests {
         assert!(script.contains("=== termiHub Agent Setup ==="));
         assert!(script.contains("=== Setup Complete ==="));
         assert!(script.contains("=== Setup Failed ==="));
-        // Service is disabled at runtime via the INSTALL_SERVICE variable
         assert!(script.contains("INSTALL_SERVICE=false"));
     }
 
@@ -548,11 +511,9 @@ mod tests {
     #[test]
     fn generate_setup_script_sudo_detection() {
         let script = generate_setup_script("/usr/local/bin/termihub-agent", false);
-        // Checks directory writability, not just sudo existence
         assert!(script.contains("id -u"));
         assert!(script.contains("command -v sudo"));
         assert!(script.contains("SUDO=\"sudo\""));
-        // Uses $SUDO variable, not hardcoded sudo
         assert!(script.contains("$SUDO mv"));
         assert!(script.contains("$SUDO chmod"));
     }
@@ -561,27 +522,20 @@ mod tests {
     fn generate_setup_script_tilde_expansion() {
         let script = generate_setup_script("~/.local/bin/termihub-agent", false);
         assert!(script.contains("INSTALL_PATH=\"~/.local/bin/termihub-agent\""));
-        // Script expands ~ at runtime
         assert!(script.contains("$HOME/${INSTALL_PATH#\\~/}"));
     }
 
     #[test]
     fn generate_setup_script_walks_up_to_existing_ancestor() {
         let script = generate_setup_script("~/.local/bin/termihub-agent", false);
-        // The permission check must walk up the directory tree to find the first
-        // existing ancestor, not just check the immediate parent. This handles
-        // cases like ~/.local/bin where ~/.local also doesn't exist yet but ~
-        // is writable (e.g., minimal Docker containers).
         assert!(script.contains("CHECK_DIR=$(dirname \"$CHECK_DIR\")"));
         assert!(script.contains("while"));
-        // Must NOT have the old single-parent check pattern
         assert!(!script.contains("PARENT_DIR=$(dirname \"$TARGET_DIR\")"));
     }
 
     #[test]
     fn generate_setup_script_no_bashisms() {
         let script = generate_setup_script("/usr/local/bin/termihub-agent", true);
-        // Must not use bash-only features
         assert!(!script.contains("[["));
         assert!(!script.contains("local "));
         assert!(!script.contains("declare "));

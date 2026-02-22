@@ -3,6 +3,7 @@ mod connection;
 mod credential;
 mod files;
 mod monitoring;
+mod session;
 mod terminal;
 mod tunnel;
 mod utils;
@@ -19,8 +20,9 @@ use connection::settings::SettingsStorage;
 use credential::{AutoLockTimer, CredentialManager, StorageMode};
 use files::sftp::SftpManager;
 use monitoring::MonitoringManager;
+use session::manager::SessionManager;
+use session::registry::build_desktop_registry;
 use terminal::agent_manager::AgentConnectionManager;
-use terminal::manager::TerminalManager;
 use utils::log_capture::{create_log_buffer, LogCaptureLayer};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -38,7 +40,6 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .manage(TerminalManager::new())
         .manage(SftpManager::new())
         .manage(MonitoringManager::new())
         .manage(log_buffer)
@@ -114,6 +115,11 @@ pub fn run() {
             }
 
             let agent_manager = Arc::new(AgentConnectionManager::new(app.handle().clone()));
+
+            // Build the desktop ConnectionType registry and create the SessionManager.
+            let registry = build_desktop_registry();
+            let session_manager = SessionManager::new(registry, agent_manager.clone());
+            app.manage(session_manager);
             app.manage(agent_manager);
 
             let tunnel_manager = tunnel::tunnel_manager::TunnelManager::new(app.handle())
@@ -136,18 +142,27 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            commands::terminal::create_terminal,
-            commands::terminal::send_input,
-            commands::terminal::resize_terminal,
-            commands::terminal::close_terminal,
-            commands::terminal::list_available_shells,
-            commands::terminal::get_default_shell,
-            commands::terminal::list_serial_ports,
-            commands::terminal::check_x11_available,
-            commands::terminal::check_ssh_agent_status,
-            commands::terminal::check_docker_available,
-            commands::terminal::list_docker_images,
-            commands::terminal::validate_ssh_key,
+            // Session commands (replaces old terminal commands)
+            commands::session::create_connection,
+            commands::session::get_connection_types,
+            commands::session::send_input,
+            commands::session::resize_terminal,
+            commands::session::close_terminal,
+            commands::session::list_available_shells,
+            commands::session::get_default_shell,
+            commands::session::list_serial_ports,
+            commands::session::check_x11_available,
+            commands::session::check_ssh_agent_status,
+            commands::session::check_docker_available,
+            commands::session::list_docker_images,
+            commands::session::validate_ssh_key,
+            // Session-based file browsing (stubs for now)
+            commands::session::session_list_files,
+            commands::session::session_read_file,
+            commands::session::session_write_file,
+            commands::session::session_delete_file,
+            commands::session::session_rename_file,
+            // Connection management
             commands::connection::load_connections_and_folders,
             commands::connection::save_connection,
             commands::connection::delete_connection,
@@ -165,6 +180,7 @@ pub fn run() {
             commands::connection::export_connections_encrypted,
             commands::connection::preview_import,
             commands::connection::import_connections_with_credentials,
+            // SFTP (kept temporarily — will migrate to session-based file browsing)
             commands::files::sftp_open,
             commands::files::sftp_close,
             commands::files::sftp_list_dir,
@@ -185,9 +201,11 @@ pub fn run() {
             commands::files::vscode_available,
             commands::files::vscode_open_local,
             commands::files::vscode_open_remote,
+            // Monitoring (kept temporarily — will migrate to session-based monitoring)
             commands::monitoring::monitoring_open,
             commands::monitoring::monitoring_close,
             commands::monitoring::monitoring_fetch_stats,
+            // Agent management
             commands::agent::connect_agent,
             commands::agent::disconnect_agent,
             commands::agent::shutdown_agent,
@@ -200,14 +218,17 @@ pub fn run() {
             commands::agent::probe_remote_agent,
             commands::agent::deploy_agent,
             commands::agent::update_agent,
+            // Logs
             commands::logs::get_logs,
             commands::logs::clear_logs,
+            // Tunnels
             commands::tunnel::get_tunnels,
             commands::tunnel::save_tunnel,
             commands::tunnel::delete_tunnel,
             commands::tunnel::get_tunnel_statuses,
             commands::tunnel::start_tunnel,
             commands::tunnel::stop_tunnel,
+            // Credentials
             commands::credential::get_credential_store_status,
             commands::credential::unlock_credential_store,
             commands::credential::lock_credential_store,

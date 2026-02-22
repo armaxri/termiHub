@@ -407,6 +407,7 @@ impl AgentConnectionManager {
     }
 
     /// Detach from a session on the agent.
+    #[allow(dead_code)]
     pub fn detach_session(
         &self,
         agent_id: &str,

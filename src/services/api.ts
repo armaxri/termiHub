@@ -21,11 +21,48 @@ import {
   AgentCapabilities,
 } from "@/types/connection";
 
-// --- Terminal commands ---
+// --- Terminal / session commands ---
 
-/** Create a new terminal session */
+/** Info about a connection type from the backend registry. */
+export interface ConnectionTypeInfo {
+  typeId: string;
+  displayName: string;
+  icon: string;
+  settingsSchema: Record<string, unknown>;
+}
+
+/** Get the list of available connection types with their schemas. */
+export async function getConnectionTypes(): Promise<ConnectionTypeInfo[]> {
+  return await invoke<ConnectionTypeInfo[]>("get_connection_types");
+}
+
+/** Create a new connection session (type-agnostic). */
+export async function createConnection(
+  typeId: string,
+  settings: Record<string, unknown>,
+  agentId?: string
+): Promise<SessionId> {
+  return await invoke<string>("create_connection", {
+    typeId,
+    settings,
+    agentId: agentId ?? null,
+  });
+}
+
+/**
+ * Create a new terminal session (legacy adapter).
+ *
+ * Converts the old `ConnectionConfig` discriminated union into the new
+ * `create_connection(typeId, settings, agentId?)` call.
+ */
 export async function createTerminal(config: ConnectionConfig): Promise<SessionId> {
-  return await invoke<string>("create_terminal", { config });
+  if (config.type === "remote-session") {
+    // Extract agentId from the config and forward the rest as settings.
+    const { agentId, sessionType, ...rest } = config.config;
+    return await createConnection(sessionType, rest, agentId);
+  }
+  // Local connection types: pass config as settings directly.
+  return await createConnection(config.type, config.config as unknown as Record<string, unknown>);
 }
 
 /** Send input data to a terminal session */

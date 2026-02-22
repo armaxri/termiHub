@@ -10,6 +10,8 @@ const mockedInvoke = vi.mocked(invoke);
 // Import after mock setup
 import {
   createTerminal,
+  createConnection,
+  getConnectionTypes,
   sendInput,
   resizeTerminal,
   closeTerminal,
@@ -71,14 +73,78 @@ describe("api service", () => {
   });
 
   describe("terminal commands", () => {
-    it("createTerminal invokes with correct command and config", async () => {
+    it("createConnection invokes with type ID and settings", async () => {
+      mockedInvoke.mockResolvedValue("session-456");
+
+      const result = await createConnection("ssh", { host: "pi.local", port: 22 });
+
+      expect(mockedInvoke).toHaveBeenCalledWith("create_connection", {
+        typeId: "ssh",
+        settings: { host: "pi.local", port: 22 },
+        agentId: null,
+      });
+      expect(result).toBe("session-456");
+    });
+
+    it("createConnection passes agentId when provided", async () => {
+      mockedInvoke.mockResolvedValue("session-789");
+
+      const result = await createConnection("local", { shell: "bash" }, "agent-1");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("create_connection", {
+        typeId: "local",
+        settings: { shell: "bash" },
+        agentId: "agent-1",
+      });
+      expect(result).toBe("session-789");
+    });
+
+    it("getConnectionTypes returns available types", async () => {
+      const types = [
+        { typeId: "local", displayName: "Local Shell", icon: "terminal", settingsSchema: {} },
+      ];
+      mockedInvoke.mockResolvedValue(types);
+
+      const result = await getConnectionTypes();
+
+      expect(mockedInvoke).toHaveBeenCalledWith("get_connection_types");
+      expect(result).toEqual(types);
+    });
+
+    it("createTerminal adapter maps local config to create_connection", async () => {
       mockedInvoke.mockResolvedValue("session-123");
       const config = { type: "local" as const, config: { shellType: "bash" as const } };
 
       const result = await createTerminal(config);
 
-      expect(mockedInvoke).toHaveBeenCalledWith("create_terminal", { config });
+      expect(mockedInvoke).toHaveBeenCalledWith("create_connection", {
+        typeId: "local",
+        settings: { shellType: "bash" },
+        agentId: null,
+      });
       expect(result).toBe("session-123");
+    });
+
+    it("createTerminal adapter maps remote-session config to create_connection with agentId", async () => {
+      mockedInvoke.mockResolvedValue("session-remote");
+      const config = {
+        type: "remote-session" as const,
+        config: {
+          agentId: "agent-1",
+          sessionType: "shell" as const,
+          shell: "/bin/bash",
+          persistent: false,
+        },
+      };
+
+      const result = await createTerminal(config);
+
+      expect(mockedInvoke).toHaveBeenCalledWith("create_connection", {
+        typeId: "shell",
+        settings: { shell: "/bin/bash", persistent: false },
+        agentId: "agent-1",
+      });
+      expect(result).toBe("session-remote");
     });
 
     it("sendInput invokes with session ID and data", async () => {
