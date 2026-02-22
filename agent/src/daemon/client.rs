@@ -187,9 +187,7 @@ impl termihub_core::session::traits::ProcessHandle for DaemonClient {
             .block_on(async {
                 let mut guard = self.writer.lock().await;
                 let writer = guard.as_mut().ok_or_else(|| {
-                    termihub_core::errors::SessionError::NotRunning(
-                        "not connected to daemon".into(),
-                    )
+                    std::io::Error::new(std::io::ErrorKind::NotConnected, "not connected to daemon")
                 })?;
                 protocol::write_frame_async(writer, MSG_INPUT, data).await
             })
@@ -207,9 +205,7 @@ impl termihub_core::session::traits::ProcessHandle for DaemonClient {
             .block_on(async {
                 let mut guard = self.writer.lock().await;
                 let writer = guard.as_mut().ok_or_else(|| {
-                    termihub_core::errors::SessionError::NotRunning(
-                        "not connected to daemon".into(),
-                    )
+                    std::io::Error::new(std::io::ErrorKind::NotConnected, "not connected to daemon")
                 })?;
                 let payload = protocol::encode_resize(cols, rows);
                 protocol::write_frame_async(writer, MSG_RESIZE, &payload).await
