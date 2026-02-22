@@ -7,5 +7,7 @@
 //! discovery of available connection types.
 
 pub mod schema;
+pub mod validation;
 
 pub use schema::*;
+pub use validation::{validate_settings, ValidationError};
