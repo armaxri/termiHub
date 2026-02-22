@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Agent SSH backend now delegates to `termihub_core::session::ssh::{build_ssh_args, validate_ssh_config}` instead of maintaining a local `build_ssh_args()` function and tests — removes ~130 lines of duplicated code (#311)
+- Agent Docker backend now delegates to `termihub_core::session::docker::{build_docker_run_args, build_docker_exec_args, validate_docker_config, DockerContainer}` instead of manually building CLI arguments — adds config validation and uses shared container lifecycle helpers (#311)
+- Agent serial backend now delegates to `termihub_core::session::serial::{parse_serial_config, open_serial_port, serial_reader_loop}` instead of maintaining local `SerialPortSettings`, `ReaderContext`, `reader_thread()`, and `reconnect_loop()` — removes ~150 lines of duplicated code (#311)
+- Agent shell backend now delegates to `termihub_core::session::shell::build_shell_command()` for platform-aware shell resolution instead of a local `detect_default_shell()` function, and supports `initial_command` via `initial_command_strategy()` (#311)
 - Desktop crate now imports `FileEntry`, `list_dir_sync`, `chrono_from_epoch`, `format_permissions`, and `normalize_path_separators` from `termihub-core` instead of defining them locally — local `files/utils.rs` module removed entirely (#304)
 - Desktop crate now imports `SystemStats`, `CpuCounters`, `parse_stats`, `parse_cpu_line`, `cpu_percent_from_delta`, `parse_meminfo_value`, and `MONITORING_COMMAND` from `termihub-core` instead of defining them locally (#304)
 - Agent crate now imports `RingBuffer`, file utilities (`chrono_from_epoch`, `format_permissions`), and monitoring types/parsers (`CpuCounters`, `parse_stats`, `parse_cpu_line`, `cpu_percent_from_delta`, `parse_meminfo_value`, `parse_df_output`, `MONITORING_COMMAND`) from `termihub-core` instead of maintaining local copies — removes ~680 lines of duplicated code (#305)
