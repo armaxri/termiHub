@@ -23,6 +23,7 @@ use termihub_core::connection::{ConnectionType, OutputReceiver};
 const DEFAULT_BUFFER_SIZE: usize = 1_048_576;
 
 /// Configuration for the session daemon, read from environment variables.
+#[derive(Debug)]
 struct DaemonConfig {
     session_id: String,
     socket_path: PathBuf,
@@ -350,6 +351,10 @@ async fn send_exited_async(writer: &mut Option<OwnedWriteHalf>, code: i32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// Env var tests mutate the process environment and must run serially.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn socket_dir_contains_user() {
@@ -360,6 +365,8 @@ mod tests {
 
     #[test]
     fn daemon_config_requires_type_id() {
+        let _guard = ENV_LOCK.lock().unwrap();
+
         std::env::remove_var("TERMIHUB_TYPE_ID");
         std::env::remove_var("TERMIHUB_SETTINGS");
         std::env::remove_var("TERMIHUB_SOCKET_PATH");
@@ -377,6 +384,8 @@ mod tests {
 
     #[test]
     fn daemon_config_from_env() {
+        let _guard = ENV_LOCK.lock().unwrap();
+
         std::env::set_var("TERMIHUB_TYPE_ID", "ssh");
         std::env::set_var(
             "TERMIHUB_SETTINGS",
@@ -405,6 +414,8 @@ mod tests {
 
     #[test]
     fn daemon_config_defaults() {
+        let _guard = ENV_LOCK.lock().unwrap();
+
         std::env::set_var("TERMIHUB_TYPE_ID", "local");
         std::env::remove_var("TERMIHUB_SETTINGS");
         std::env::remove_var("TERMIHUB_SOCKET_PATH");

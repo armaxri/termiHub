@@ -430,15 +430,15 @@ impl SessionManager {
         let sessions = self.sessions.lock().await;
         let info = sessions.get(session_id)?;
         match &info.backend {
-            SessionBackend::InProcess { connection, .. } => {
-                // SAFETY: We return a reference that lives as long as the MutexGuard.
-                // Callers must not hold this across await points without the guard.
-                Some(SessionConnectionRef {
-                    type_id: info.type_id.clone(),
-                })
-            }
+            SessionBackend::InProcess { .. } => Some(SessionConnectionRef {
+                type_id: info.type_id.clone(),
+            }),
             #[cfg(unix)]
             SessionBackend::Daemon(_) => Some(SessionConnectionRef {
+                type_id: info.type_id.clone(),
+            }),
+            #[cfg(test)]
+            SessionBackend::Stub => Some(SessionConnectionRef {
                 type_id: info.type_id.clone(),
             }),
         }
@@ -478,6 +478,8 @@ async fn close_backend(backend: &mut SessionBackend) {
                 task.abort();
             }
         }
+        #[cfg(test)]
+        SessionBackend::Stub => {}
     }
 }
 
@@ -490,6 +492,8 @@ async fn attach_backend(backend: &mut SessionBackend) -> Result<(), anyhow::Erro
         SessionBackend::InProcess { .. } => {
             // In-process connections always forward output; no-op.
         }
+        #[cfg(test)]
+        SessionBackend::Stub => {}
     }
     Ok(())
 }
@@ -503,6 +507,8 @@ async fn detach_backend(backend: &mut SessionBackend) {
         SessionBackend::InProcess { .. } => {
             // In-process connections keep forwarding; no-op.
         }
+        #[cfg(test)]
+        SessionBackend::Stub => {}
     }
 }
 
@@ -515,6 +521,8 @@ async fn write_backend(backend: &SessionBackend, data: &[u8]) -> Result<(), anyh
         SessionBackend::InProcess { connection, .. } => {
             connection.write(data).map_err(|e| anyhow::anyhow!("{e}"))?;
         }
+        #[cfg(test)]
+        SessionBackend::Stub => {}
     }
     Ok(())
 }
@@ -534,6 +542,8 @@ async fn resize_backend(
                 .resize(cols, rows)
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
         }
+        #[cfg(test)]
+        SessionBackend::Stub => {}
     }
     Ok(())
 }
@@ -597,6 +607,46 @@ mod tests {
 
     fn test_registry() -> Arc<ConnectionTypeRegistry> {
         Arc::new(crate::registry::build_registry())
+    }
+
+    // ── Stub session helper (for dispatcher tests) ───────────────────
+
+    impl SessionManager {
+        /// Create a lightweight stub session for dispatcher tests.
+        ///
+        /// No real backend is spawned; operations like write/resize are
+        /// no-ops but the session shows up in `list()` and `active_count()`.
+        #[cfg(test)]
+        pub async fn create_stub_session(
+            &self,
+            type_id: &str,
+            title: String,
+            _settings: serde_json::Value,
+        ) -> Result<SessionSnapshot, SessionCreateError> {
+            let mut sessions = self.sessions.lock().await;
+            if sessions.len() >= MAX_SESSIONS as usize {
+                return Err(SessionCreateError::LimitReached);
+            }
+
+            let id = uuid::Uuid::new_v4().to_string();
+            let now = chrono::Utc::now();
+
+            let info = SessionInfo {
+                id: id.clone(),
+                title,
+                type_id: type_id.to_string(),
+                status: SessionStatus::Running,
+                settings: serde_json::json!({}),
+                created_at: now,
+                last_activity: now,
+                attached: false,
+                backend: SessionBackend::Stub,
+            };
+
+            let snapshot = info.snapshot();
+            sessions.insert(id, info);
+            Ok(snapshot)
+        }
     }
 
     #[tokio::test]

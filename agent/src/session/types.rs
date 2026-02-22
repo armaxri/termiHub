@@ -43,6 +43,10 @@ pub enum SessionBackend {
         /// Handle for the background output-forwarding task.
         output_task: Option<tokio::task::JoinHandle<()>>,
     },
+
+    /// No-op stub backend for testing. All operations succeed silently.
+    #[cfg(test)]
+    Stub,
 }
 
 /// Internal session model tracking a single terminal connection.
