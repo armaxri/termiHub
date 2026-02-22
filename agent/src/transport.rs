@@ -209,8 +209,6 @@ mod daemon_spawner {
     }
 }
 
-#[cfg(unix)]
-pub use daemon_spawner::DaemonSpawner;
 
 #[cfg(test)]
 mod tests {
