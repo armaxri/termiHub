@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Desktop crate now imports `EnvVar`, `VolumeMount`, `SshConfig`, `SerialConfig`, `DockerConfig` from `termihub-core` instead of defining them locally (#298)
+- Desktop `expand_tilde()` and `expand_env_placeholders()` now delegate to `termihub-core` instead of duplicating the implementation (#298)
+
 ### Added
 
 - Shared core transport traits (`OutputSink`, `ProcessSpawner`, `ProcessHandle`) in the `termihub-core` crate — abstraction layer that decouples session I/O delivery and process spawning from the desktop (Tauri events, portable-pty) and agent (JSON-RPC, daemon) implementations (#312)
