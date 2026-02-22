@@ -26,7 +26,6 @@ import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { onVscodeEditComplete } from "@/services/events";
 import { getHomeDir } from "@/services/api";
 import { FileEntry } from "@/types/connection";
-import { LocalShellConfig } from "@/types/terminal";
 import type { ConnectionTypeInfo } from "@/services/api";
 import { getWslDistroName, wslToWindowsPath } from "@/utils/shell-detection";
 import { resolveFeatureEnabled } from "@/utils/featureFlags";
@@ -306,7 +305,7 @@ function useFileBrowserSync() {
   // Extract the WSL distro name (if any) from the active tab's shell type
   const activeTabShellType =
     activeTab?.config.type === "local"
-      ? (activeTab.config.config as LocalShellConfig).shellType
+      ? activeTab.config.config.shellType
       : null;
   const wslDistro = activeTabShellType ? getWslDistroName(activeTabShellType) : null;
 

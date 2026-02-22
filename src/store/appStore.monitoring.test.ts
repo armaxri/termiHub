@@ -38,14 +38,13 @@ vi.mock("@/services/api", () => ({
 }));
 
 import { useAppStore } from "./appStore";
-import type { SshConfig } from "@/types/terminal";
 import type { SystemStats } from "@/types/monitoring";
 
-const TEST_SSH_CONFIG: SshConfig = {
+const TEST_SSH_CONFIG = {
   host: "pi.local",
   port: 22,
   username: "pi",
-  authMethod: "key",
+  authMethod: "key" as const,
   keyPath: "/home/.ssh/id_rsa",
 };
 
