@@ -35,7 +35,7 @@ export interface ExternalFileError {
 
 /** Capabilities reported by a connected remote agent. */
 export interface AgentCapabilities {
-  sessionTypes: string[];
+  connectionTypes: string[];
   maxSessions: number;
   availableShells?: string[];
   availableSerialPorts?: string[];

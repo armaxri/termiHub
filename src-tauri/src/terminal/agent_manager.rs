@@ -26,7 +26,7 @@ use crate::utils::ssh_auth::connect_and_authenticate;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentCapabilities {
-    pub session_types: Vec<String>,
+    pub connection_types: Vec<String>,
     pub max_sessions: u32,
     pub available_shells: Vec<String>,
     pub available_serial_ports: Vec<String>,
@@ -168,7 +168,7 @@ impl AgentConnectionManager {
             request_id,
             "initialize",
             serde_json::json!({
-                "protocol_version": "0.1.0",
+                "protocol_version": "0.2.0",
                 "client": "termihub-desktop",
                 "client_version": "0.1.0"
             }),
@@ -382,7 +382,7 @@ impl AgentConnectionManager {
             params["title"] = Value::String(t.to_string());
         }
 
-        let result = self.send_request(agent_id, "session.create", params)?;
+        let result = self.send_request(agent_id, "connection.create", params)?;
         Ok(AgentSessionInfo {
             session_id: result["session_id"].as_str().unwrap_or("").to_string(),
             title: result["title"].as_str().unwrap_or("").to_string(),
@@ -400,7 +400,7 @@ impl AgentConnectionManager {
     ) -> Result<(), TerminalError> {
         self.send_request(
             agent_id,
-            "session.attach",
+            "connection.attach",
             serde_json::json!({ "session_id": remote_session_id }),
         )?;
         Ok(())
@@ -414,7 +414,7 @@ impl AgentConnectionManager {
     ) -> Result<(), TerminalError> {
         self.send_request(
             agent_id,
-            "session.detach",
+            "connection.detach",
             serde_json::json!({ "session_id": remote_session_id }),
         )?;
         Ok(())
@@ -429,7 +429,7 @@ impl AgentConnectionManager {
     ) -> Result<(), TerminalError> {
         self.send_request(
             agent_id,
-            "session.close",
+            "connection.close",
             serde_json::json!({ "session_id": remote_session_id }),
         )?;
         Ok(())
@@ -437,7 +437,7 @@ impl AgentConnectionManager {
 
     /// List sessions on the agent.
     pub fn list_sessions(&self, agent_id: &str) -> Result<Vec<AgentSessionInfo>, TerminalError> {
-        let result = self.send_request(agent_id, "session.list", serde_json::json!({}))?;
+        let result = self.send_request(agent_id, "connection.list", serde_json::json!({}))?;
         let sessions = result["sessions"].as_array().cloned().unwrap_or_default();
         Ok(sessions
             .into_iter()
@@ -450,8 +450,7 @@ impl AgentConnectionManager {
         &self,
         agent_id: &str,
     ) -> Result<Vec<AgentDefinitionInfo>, TerminalError> {
-        let result =
-            self.send_request(agent_id, "session.definitions.list", serde_json::json!({}))?;
+        let result = self.send_request(agent_id, "connections.list", serde_json::json!({}))?;
         let defs = result["definitions"]
             .as_array()
             .cloned()
@@ -468,7 +467,7 @@ impl AgentConnectionManager {
         agent_id: &str,
         definition: Value,
     ) -> Result<AgentDefinitionInfo, TerminalError> {
-        let result = self.send_request(agent_id, "session.define", definition)?;
+        let result = self.send_request(agent_id, "connections.create", definition)?;
         serde_json::from_value(result)
             .map_err(|e| TerminalError::RemoteError(format!("Parse definition result: {}", e)))
     }
@@ -477,7 +476,7 @@ impl AgentConnectionManager {
     pub fn delete_definition(&self, agent_id: &str, def_id: &str) -> Result<(), TerminalError> {
         self.send_request(
             agent_id,
-            "session.definitions.delete",
+            "connections.delete",
             serde_json::json!({ "id": def_id }),
         )?;
         Ok(())
@@ -639,7 +638,7 @@ fn agent_io_thread(
                         let _ = jsonrpc::write_request(
                             &mut channel,
                             request_id,
-                            "session.input",
+                            "connection.write",
                             serde_json::json!({
                                 "session_id": session_id,
                                 "data": encoded,
@@ -655,7 +654,7 @@ fn agent_io_thread(
                         let _ = jsonrpc::write_request(
                             &mut channel,
                             request_id,
-                            "session.resize",
+                            "connection.resize",
                             serde_json::json!({
                                 "session_id": session_id,
                                 "cols": cols,
@@ -773,7 +772,7 @@ fn handle_notification(
     session_outputs: &HashMap<String, OutputSender>,
     b64: &base64::engine::GeneralPurpose,
 ) {
-    if method != "session.output" {
+    if method != "connection.output" {
         return;
     }
     let session_id = match params["session_id"].as_str() {
@@ -836,7 +835,7 @@ fn reconnect_agent(
             *request_id,
             "initialize",
             serde_json::json!({
-                "protocol_version": "0.1.0",
+                "protocol_version": "0.2.0",
                 "client": "termihub-desktop",
                 "client_version": "0.1.0"
             }),

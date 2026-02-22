@@ -169,10 +169,10 @@ mod tests {
 
     #[test]
     fn parse_notification() {
-        let line = r#"{"jsonrpc":"2.0","method":"session.output","params":{"sessionId":"abc","data":"aGVsbG8="}}"#;
+        let line = r#"{"jsonrpc":"2.0","method":"connection.output","params":{"sessionId":"abc","data":"aGVsbG8="}}"#;
         match parse_message(line).unwrap() {
             JsonRpcMessage::Notification { method, params } => {
-                assert_eq!(method, "session.output");
+                assert_eq!(method, "connection.output");
                 assert_eq!(params["sessionId"], "abc");
             }
             _ => panic!("Expected Notification"),
@@ -199,7 +199,7 @@ mod tests {
         write_request(
             &mut buf,
             42,
-            "session.create",
+            "connection.create",
             serde_json::json!({"type": "shell"}),
         )
         .unwrap();
@@ -207,7 +207,7 @@ mod tests {
         assert!(output.ends_with('\n'));
         let parsed: Value = serde_json::from_str(output.trim()).unwrap();
         assert_eq!(parsed["id"], 42);
-        assert_eq!(parsed["method"], "session.create");
+        assert_eq!(parsed["method"], "connection.create");
         assert_eq!(parsed["jsonrpc"], "2.0");
     }
 }
