@@ -13,7 +13,13 @@ use termihub_core::session::serial::{
     open_serial_port, parse_serial_config, serial_reader_loop, SerialStatus,
 };
 
-/// Handle to control a running serial backend.
+/// Legacy serial backend using a custom trait interface.
+///
+/// The canonical implementation is now
+/// [`termihub_core::backends::serial::Serial`] which implements the
+/// unified `ConnectionType` trait. This struct will be migrated to use
+/// the core backend, layering ring-buffer replay and JSON-RPC
+/// notification routing on top.
 ///
 /// The serial port reader runs in a dedicated OS thread (since the
 /// `serialport` crate is blocking). Output is stored in a ring buffer
