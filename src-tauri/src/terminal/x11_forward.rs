@@ -12,6 +12,8 @@
 //! This module will be removed once all callers are migrated to use
 //! the core SSH backend.
 
+#![allow(dead_code)]
+
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

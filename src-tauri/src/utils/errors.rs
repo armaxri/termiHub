@@ -19,15 +19,18 @@ pub enum TerminalError {
     #[error("Connection failed: {0}")]
     ConnectionFailed(String),
 
+    #[allow(dead_code)]
     #[error("Serial port error: {0}")]
     SerialError(String),
 
     #[error("SSH error: {0}")]
     SshError(String),
 
+    #[allow(dead_code)]
     #[error("Telnet error: {0}")]
     TelnetError(String),
 
+    #[allow(dead_code)]
     #[error("Docker error: {0}")]
     DockerError(String),
 

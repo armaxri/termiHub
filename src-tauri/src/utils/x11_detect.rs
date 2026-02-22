@@ -5,6 +5,8 @@
 //! This module will be removed once all callers are migrated to use
 //! the core SSH backend.
 
+#![allow(dead_code)]
+
 /// Describes how to connect to the local X server.
 #[derive(Debug, Clone)]
 pub enum LocalXConnection {
