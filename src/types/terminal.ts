@@ -9,7 +9,8 @@ export type ConnectionType =
   | "serial"
   | "remote"
   | "remote-session"
-  | "docker";
+  | "docker"
+  | (string & {});
 
 export type TabContentType =
   | "terminal"

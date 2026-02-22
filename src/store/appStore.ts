@@ -98,7 +98,7 @@ export type SidebarView = "connections" | "files" | "tunnels";
  * `savePassword` fields in its config.
  */
 function stripPassword(connection: SavedConnection): SavedConnection {
-  const cfg = connection.config.config as Record<string, unknown>;
+  const cfg = connection.config.config as unknown as Record<string, unknown>;
   if (cfg.savePassword) {
     return connection; // Keep password for backend credential store routing
   }

@@ -894,7 +894,14 @@ describe("api service", () => {
     it("round-trip: fromConnectionConfig -> toConnectionConfig preserves data", () => {
       const original = {
         type: "serial" as const,
-        config: { port: "COM3", baudRate: 9600, dataBits: 8, stopBits: 1, parity: "none", flowControl: "none" },
+        config: {
+          port: "COM3",
+          baudRate: 9600,
+          dataBits: 8 as const,
+          stopBits: 1 as const,
+          parity: "none" as const,
+          flowControl: "none" as const,
+        },
       };
       const { typeId, settings } = fromConnectionConfig(original);
       const roundTripped = toConnectionConfig(typeId, settings);

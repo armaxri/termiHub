@@ -62,7 +62,7 @@ export function toConnectionConfig(
   typeId: string,
   settings: Record<string, unknown>
 ): ConnectionConfig {
-  return { type: typeId, config: settings } as ConnectionConfig;
+  return { type: typeId, config: settings } as unknown as ConnectionConfig;
 }
 
 /** Create a new connection session (type-agnostic). */
