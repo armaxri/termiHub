@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Removed redundant quality job from Agent CI workflow — formatting, linting, and tests are already covered by the workspace-wide `code-quality.yml` workflow; updated CLAUDE.md individual commands to use workspace-level Cargo commands (#290)
 - Desktop crate now imports `FileEntry`, `list_dir_sync`, `chrono_from_epoch`, `format_permissions`, and `normalize_path_separators` from `termihub-core` instead of defining them locally — local `files/utils.rs` module removed entirely (#304)
 - Desktop crate now imports `SystemStats`, `CpuCounters`, `parse_stats`, `parse_cpu_line`, `cpu_percent_from_delta`, `parse_meminfo_value`, and `MONITORING_COMMAND` from `termihub-core` instead of defining them locally (#304)
 - Agent crate now imports `RingBuffer`, file utilities (`chrono_from_epoch`, `format_permissions`), and monitoring types/parsers (`CpuCounters`, `parse_stats`, `parse_cpu_line`, `cpu_percent_from_delta`, `parse_meminfo_value`, `parse_df_output`, `MONITORING_COMMAND`) from `termihub-core` instead of maintaining local copies — removes ~680 lines of duplicated code (#305)
