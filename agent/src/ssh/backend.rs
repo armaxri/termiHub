@@ -12,6 +12,7 @@ use tracing::info;
 use crate::daemon::client::DaemonClient;
 use crate::io::transport::NotificationSender;
 use crate::protocol::methods::SshSessionConfig;
+use termihub_core::session::ssh::{build_ssh_args, validate_ssh_config};
 
 /// Agent-side handle for an SSH jump host session.
 ///
@@ -31,6 +32,8 @@ impl SshBackend {
         config: &SshSessionConfig,
         notification_tx: NotificationSender,
     ) -> Result<Self, anyhow::Error> {
+        validate_ssh_config(config).map_err(|e| anyhow::anyhow!("{e}"))?;
+
         let socket_path =
             crate::daemon::process::socket_dir().join(format!("session-{session_id}.sock"));
 
@@ -150,134 +153,5 @@ impl SshBackend {
     /// Get the socket path for state persistence.
     pub fn socket_path(&self) -> &Path {
         self.client.socket_path()
-    }
-}
-
-/// Build the SSH command arguments from the session config.
-///
-/// Produces an argument list for `ssh` that the daemon will exec via
-/// `spawn_command("ssh", args, ...)`.
-fn build_ssh_args(config: &SshSessionConfig) -> Vec<String> {
-    let mut args = vec![
-        // Force TTY allocation for interactive use
-        "-tt".to_string(),
-        // Keep-alive to detect dead connections
-        "-o".to_string(),
-        "ServerAliveInterval=30".to_string(),
-        "-o".to_string(),
-        "ServerAliveCountMax=3".to_string(),
-    ];
-
-    // Port
-    args.push("-p".to_string());
-    args.push(config.port.to_string());
-
-    // Key-based auth
-    if config.auth_method == "key" {
-        if let Some(ref key_path) = config.key_path {
-            args.push("-i".to_string());
-            args.push(key_path.clone());
-        }
-    }
-
-    // Destination: user@host
-    args.push(format!("{}@{}", config.username, config.host));
-
-    // Optional remote shell command
-    if let Some(ref shell) = config.shell {
-        args.push(shell.clone());
-    }
-
-    args
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn build_ssh_args_minimal() {
-        let config = SshSessionConfig {
-            host: "build.internal".to_string(),
-            username: "dev".to_string(),
-            auth_method: "agent".to_string(),
-            port: 22,
-            password: None,
-            key_path: None,
-            shell: None,
-            cols: 80,
-            rows: 24,
-            env: Default::default(),
-            ..Default::default()
-        };
-        let args = build_ssh_args(&config);
-        assert_eq!(
-            args,
-            vec![
-                "-tt",
-                "-o",
-                "ServerAliveInterval=30",
-                "-o",
-                "ServerAliveCountMax=3",
-                "-p",
-                "22",
-                "dev@build.internal",
-            ]
-        );
-    }
-
-    #[test]
-    fn build_ssh_args_full() {
-        let config = SshSessionConfig {
-            host: "10.0.0.5".to_string(),
-            username: "deploy".to_string(),
-            auth_method: "key".to_string(),
-            port: 2222,
-            password: None,
-            key_path: Some("/home/user/.ssh/id_ed25519".to_string()),
-            shell: Some("/bin/bash".to_string()),
-            cols: 120,
-            rows: 40,
-            env: Default::default(),
-            ..Default::default()
-        };
-        let args = build_ssh_args(&config);
-        assert_eq!(
-            args,
-            vec![
-                "-tt",
-                "-o",
-                "ServerAliveInterval=30",
-                "-o",
-                "ServerAliveCountMax=3",
-                "-p",
-                "2222",
-                "-i",
-                "/home/user/.ssh/id_ed25519",
-                "deploy@10.0.0.5",
-                "/bin/bash",
-            ]
-        );
-    }
-
-    #[test]
-    fn build_ssh_args_password_auth_no_key() {
-        let config = SshSessionConfig {
-            host: "server.example.com".to_string(),
-            username: "admin".to_string(),
-            auth_method: "password".to_string(),
-            port: 22,
-            password: Some("secret".to_string()),
-            key_path: Some("/some/key".to_string()),
-            shell: None,
-            cols: 80,
-            rows: 24,
-            env: Default::default(),
-            ..Default::default()
-        };
-        let args = build_ssh_args(&config);
-        // password auth should NOT add -i even when key_path is present
-        assert!(!args.contains(&"-i".to_string()));
-        assert!(args.contains(&"admin@server.example.com".to_string()));
     }
 }

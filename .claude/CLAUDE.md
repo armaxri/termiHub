@@ -192,15 +192,10 @@ pnpm test:coverage       # Vitest with coverage
 pnpm build               # TypeScript check + Vite build
 pnpm test:e2e            # WebdriverIO E2E (requires built app)
 
-# Rust backend
-cd src-tauri && cargo fmt --all -- --check
-cd src-tauri && cargo clippy --all-targets --all-features -- -D warnings
-cd src-tauri && cargo test
-
-# Agent
-cd agent && cargo fmt --check
-cd agent && cargo clippy --all-targets --all-features -- -D warnings
-cd agent && cargo test
+# Rust workspace (all crates)
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features
 
 # Dev server
 pnpm tauri dev
