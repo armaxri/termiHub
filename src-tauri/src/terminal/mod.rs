@@ -7,6 +7,8 @@ pub mod docker_shell;
 pub mod jsonrpc;
 pub mod local_shell;
 pub mod manager;
+pub mod output_sink;
+pub mod pty_spawner;
 pub mod remote_session;
 pub mod serial;
 pub mod ssh;
