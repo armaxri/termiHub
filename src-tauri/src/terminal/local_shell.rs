@@ -5,9 +5,11 @@ use std::sync::{Arc, Mutex};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use tracing::{debug, info};
 
+use termihub_core::config::ShellConfig;
+use termihub_core::session::shell::build_shell_command;
+
 use crate::terminal::backend::{OutputSender, TerminalBackend};
 use crate::utils::errors::TerminalError;
-use crate::utils::shell_detect::shell_to_command;
 
 /// Local shell backend using portable-pty.
 pub struct LocalShell {
@@ -39,32 +41,22 @@ impl LocalShell {
             })
             .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?;
 
-        let (cmd, args) = shell_to_command(shell_type);
-        let mut command = CommandBuilder::new(&cmd);
-        for arg in &args {
+        let shell_config = ShellConfig {
+            shell: Some(shell_type.to_string()),
+            starting_directory: starting_directory.map(String::from),
+            ..ShellConfig::default()
+        };
+        let shell_cmd = build_shell_command(&shell_config);
+
+        let mut command = CommandBuilder::new(&shell_cmd.program);
+        for arg in &shell_cmd.args {
             command.arg(arg);
         }
-
-        // Ensure the PTY advertises proper terminal capabilities
-        command.env("TERM", "xterm-256color");
-        command.env("COLORTERM", "truecolor");
-
-        // Start in the configured directory, or fall back to the user's home directory
-        let cwd = starting_directory
-            .filter(|s| !s.is_empty())
-            .map(String::from)
-            .or_else(|| {
-                #[cfg(unix)]
-                {
-                    std::env::var("HOME").ok()
-                }
-                #[cfg(windows)]
-                {
-                    std::env::var("USERPROFILE").ok()
-                }
-            });
-        if let Some(dir) = cwd {
-            command.cwd(dir);
+        for (key, value) in &shell_cmd.env {
+            command.env(key, value);
+        }
+        if let Some(ref cwd) = shell_cmd.cwd {
+            command.cwd(cwd);
         }
 
         let child = pty_pair
@@ -179,15 +171,20 @@ mod tests {
             })
             .expect("failed to open pty");
 
-        let (cmd, args) = shell_to_command("powershell");
-        let mut command = CommandBuilder::new(&cmd);
-        for arg in &args {
+        let shell_config = ShellConfig {
+            shell: Some("powershell".to_string()),
+            ..ShellConfig::default()
+        };
+        let shell_cmd = build_shell_command(&shell_config);
+        let mut command = CommandBuilder::new(&shell_cmd.program);
+        for arg in &shell_cmd.args {
             command.arg(arg);
         }
-        command.env("TERM", "xterm-256color");
-        command.env("COLORTERM", "truecolor");
-        if let Ok(home) = std::env::var("USERPROFILE") {
-            command.cwd(home);
+        for (key, value) in &shell_cmd.env {
+            command.env(key, value);
+        }
+        if let Some(ref cwd) = shell_cmd.cwd {
+            command.cwd(cwd);
         }
 
         let mut child = pair

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Desktop terminal backends now delegate to `termihub-core` session helpers instead of duplicating logic inline — shell uses `build_shell_command()`, Docker uses `build_docker_run_args()`/`validate_docker_config()`, serial uses `parse_serial_config()`/`open_serial_port()`, SSH uses `validate_ssh_config()`, manager uses `OutputCoalescer`/`contains_screen_clear()`/`osc7_setup_command()` (#310)
 - Agent SSH backend now delegates to `termihub_core::session::ssh::{build_ssh_args, validate_ssh_config}` instead of maintaining a local `build_ssh_args()` function and tests — removes ~130 lines of duplicated code (#311)
 - Agent Docker backend now delegates to `termihub_core::session::docker::{build_docker_run_args, build_docker_exec_args, validate_docker_config, DockerContainer}` instead of manually building CLI arguments — adds config validation and uses shared container lifecycle helpers (#311)
 - Agent serial backend now delegates to `termihub_core::session::serial::{parse_serial_config, open_serial_port, serial_reader_loop}` instead of maintaining local `SerialPortSettings`, `ReaderContext`, `reader_thread()`, and `reconnect_loop()` — removes ~150 lines of duplicated code (#311)
