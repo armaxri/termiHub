@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::utils::expand::{expand_env_placeholders, expand_tilde};
 
+pub use termihub_core::config::{DockerConfig, EnvVar, SerialConfig, SshConfig, VolumeMount};
+
 /// Trait for all terminal backends (PTY, serial, SSH, telnet).
 pub trait TerminalBackend: Send {
     /// Write user input to the terminal.
@@ -48,50 +50,6 @@ pub struct TerminalExitEvent {
     pub exit_code: Option<i32>,
 }
 
-/// Key-value pair for Docker environment variables.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EnvVar {
-    pub key: String,
-    pub value: String,
-}
-
-/// Host-to-container volume mount.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct VolumeMount {
-    pub host_path: String,
-    pub container_path: String,
-    #[serde(default)]
-    pub read_only: bool,
-}
-
-/// Configuration for a Docker container shell.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DockerConfig {
-    /// Docker image name (e.g., "ubuntu:22.04").
-    pub image: String,
-    /// Shell command to run inside the container (e.g., "/bin/bash").
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub shell: Option<String>,
-    /// Environment variables to pass to the container.
-    #[serde(default)]
-    pub env_vars: Vec<EnvVar>,
-    /// Volume mounts (host:container mappings).
-    #[serde(default)]
-    pub volumes: Vec<VolumeMount>,
-    /// Working directory inside the container.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub working_directory: Option<String>,
-    /// Remove container on exit (--rm flag). Default: true.
-    #[serde(default = "default_remove_on_exit")]
-    pub remove_on_exit: bool,
-}
-
-fn default_remove_on_exit() -> bool {
-    true
-}
-
 /// Connection configuration matching the frontend TypeScript types.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "config")]
@@ -121,39 +79,9 @@ pub struct LocalShellConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SshConfig {
-    pub host: String,
-    pub port: u16,
-    pub username: String,
-    pub auth_method: String,
-    pub password: Option<String>,
-    pub key_path: Option<String>,
-    #[serde(default)]
-    pub enable_x11_forwarding: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub enable_monitoring: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub enable_file_browser: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub save_password: Option<bool>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TelnetConfig {
     pub host: String,
     pub port: u16,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SerialConfig {
-    pub port: String,
-    pub baud_rate: u32,
-    pub data_bits: u8,
-    pub stop_bits: u8,
-    pub parity: String,
-    pub flow_control: String,
 }
 
 /// SSH transport configuration for a remote agent (no session details).
@@ -265,49 +193,9 @@ impl LocalShellConfig {
     }
 }
 
-impl SshConfig {
-    pub fn expand(mut self) -> Self {
-        self.host = expand_env_placeholders(&self.host);
-        self.username = expand_env_placeholders(&self.username);
-        self.key_path = self.key_path.map(|s| {
-            // Strip surrounding quotes — users often paste paths like "C:\...\key"
-            let stripped = s.trim().trim_matches('"').trim_matches('\'');
-            expand_tilde(&expand_env_placeholders(stripped))
-        });
-        self.password = self.password.map(|s| expand_env_placeholders(&s));
-        self
-    }
-}
-
 impl TelnetConfig {
     pub fn expand(mut self) -> Self {
         self.host = expand_env_placeholders(&self.host);
-        self
-    }
-}
-
-impl SerialConfig {
-    pub fn expand(mut self) -> Self {
-        self.port = expand_env_placeholders(&self.port);
-        self
-    }
-}
-
-impl DockerConfig {
-    pub fn expand(mut self) -> Self {
-        self.image = expand_env_placeholders(&self.image);
-        self.shell = self.shell.map(|s| expand_env_placeholders(&s));
-        self.working_directory = self
-            .working_directory
-            .map(|s| expand_tilde(&expand_env_placeholders(&s)));
-        for env in &mut self.env_vars {
-            env.key = expand_env_placeholders(&env.key);
-            env.value = expand_env_placeholders(&env.value);
-        }
-        for vol in &mut self.volumes {
-            vol.host_path = expand_tilde(&expand_env_placeholders(&vol.host_path));
-            vol.container_path = expand_env_placeholders(&vol.container_path);
-        }
         self
     }
 }
@@ -335,10 +223,8 @@ impl RemoteAgentConfig {
             auth_method: self.auth_method.clone(),
             password: self.password.clone(),
             key_path: self.key_path.clone(),
-            enable_x11_forwarding: false,
-            enable_monitoring: None,
-            enable_file_browser: None,
             save_password: self.save_password,
+            ..SshConfig::default()
         }
     }
 }
@@ -404,12 +290,9 @@ mod tests {
             port: 2222,
             username: "root".to_string(),
             auth_method: "key".to_string(),
-            password: None,
             key_path: Some("/home/user/.ssh/id_rsa".to_string()),
             enable_x11_forwarding: true,
-            enable_monitoring: None,
-            enable_file_browser: None,
-            save_password: None,
+            ..SshConfig::default()
         });
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: ConnectionConfig = serde_json::from_str(&json).unwrap();
@@ -449,15 +332,10 @@ mod tests {
 
         let config = SshConfig {
             host: "${env:TERMIHUB_TEST_SSH_HOST}".to_string(),
-            port: 22,
             username: "${env:TERMIHUB_TEST_SSH_USER}".to_string(),
             auth_method: "key".to_string(),
-            password: None,
             key_path: Some("${env:HOME}/.ssh/id_rsa".to_string()),
-            enable_x11_forwarding: false,
-            enable_monitoring: None,
-            enable_file_browser: None,
-            save_password: None,
+            ..SshConfig::default()
         };
         let expanded = config.expand();
         assert_eq!(expanded.host, "192.168.1.100");
@@ -471,15 +349,10 @@ mod tests {
     fn ssh_config_expand_expands_tilde_in_key_path() {
         let config = SshConfig {
             host: "example.com".to_string(),
-            port: 22,
             username: "user".to_string(),
             auth_method: "key".to_string(),
-            password: None,
             key_path: Some("~/.ssh/id_ed25519".to_string()),
-            enable_x11_forwarding: false,
-            enable_monitoring: None,
-            enable_file_browser: None,
-            save_password: None,
+            ..SshConfig::default()
         };
         let expanded = config.expand();
         let key = expanded.key_path.unwrap();
@@ -497,15 +370,10 @@ mod tests {
     fn ssh_config_expand_strips_quotes_from_key_path() {
         let config = SshConfig {
             host: "example.com".to_string(),
-            port: 22,
             username: "user".to_string(),
             auth_method: "key".to_string(),
-            password: None,
             key_path: Some(r#""C:\Users\me\.ssh\id_ed25519""#.to_string()),
-            enable_x11_forwarding: false,
-            enable_monitoring: None,
-            enable_file_browser: None,
-            save_password: None,
+            ..SshConfig::default()
         };
         let expanded = config.expand();
         let key = expanded.key_path.unwrap();
@@ -844,7 +712,7 @@ mod tests {
                 read_only: false,
             }],
             working_directory: Some("/workspace".to_string()),
-            remove_on_exit: true,
+            ..DockerConfig::default()
         });
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: ConnectionConfig = serde_json::from_str(&json).unwrap();
@@ -887,9 +755,8 @@ mod tests {
                 key: "ENV".to_string(),
                 value: "${env:TERMIHUB_TEST_DOCKER_VAL}".to_string(),
             }],
-            volumes: vec![],
             working_directory: Some("${env:TERMIHUB_TEST_DOCKER_VAL}".to_string()),
-            remove_on_exit: true,
+            ..DockerConfig::default()
         };
         let expanded = config.expand();
         assert_eq!(expanded.image, "myapp:latest");
@@ -905,8 +772,6 @@ mod tests {
     fn docker_config_expand_tilde_in_volumes() {
         let config = DockerConfig {
             image: "ubuntu".to_string(),
-            shell: None,
-            env_vars: vec![],
             volumes: vec![VolumeMount {
                 host_path: "~/projects".to_string(),
                 container_path: "/workspace".to_string(),
@@ -914,6 +779,7 @@ mod tests {
             }],
             working_directory: Some("~/work".to_string()),
             remove_on_exit: false,
+            ..DockerConfig::default()
         };
         let expanded = config.expand();
         assert!(
@@ -947,15 +813,11 @@ mod tests {
     fn ssh_config_save_password_serde_round_trip() {
         let config = SshConfig {
             host: "example.com".to_string(),
-            port: 22,
             username: "user".to_string(),
             auth_method: "password".to_string(),
             password: Some("secret".to_string()),
-            key_path: None,
-            enable_x11_forwarding: false,
-            enable_monitoring: None,
-            enable_file_browser: None,
             save_password: Some(true),
+            ..SshConfig::default()
         };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: SshConfig = serde_json::from_str(&json).unwrap();
@@ -966,15 +828,9 @@ mod tests {
     fn ssh_config_save_password_none_omitted_from_json() {
         let config = SshConfig {
             host: "example.com".to_string(),
-            port: 22,
             username: "user".to_string(),
             auth_method: "key".to_string(),
-            password: None,
-            key_path: None,
-            enable_x11_forwarding: false,
-            enable_monitoring: None,
-            enable_file_browser: None,
-            save_password: None,
+            ..SshConfig::default()
         };
         let json = serde_json::to_string(&config).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();

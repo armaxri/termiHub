@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Desktop crate now imports `EnvVar`, `VolumeMount`, `SshConfig`, `SerialConfig`, `DockerConfig` from `termihub-core` instead of defining them locally (#298)
+- Desktop `expand_tilde()` and `expand_env_placeholders()` now delegate to `termihub-core` instead of duplicating the implementation (#298)
+
 ### Added
 
 - Shared core serial session helpers (`parse_serial_config`, `open_serial_port`, `list_serial_ports`, `serial_reader_loop`, `ParsedSerialConfig`, `SerialStatus`) in the `termihub-core` crate — unified serial config parsing, port opening, port listing, and reconnect-capable reader loop that can replace duplicated logic in the desktop and agent crates (#308)

@@ -30,6 +30,7 @@ pub struct EnvVar {
 
 /// A Docker volume mount definition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VolumeMount {
     pub host_path: String,
     pub container_path: String,
@@ -73,6 +74,7 @@ impl Default for ShellConfig {
 ///
 /// Shared between desktop and agent serial backends.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SerialConfig {
     pub port: String,
     #[serde(default = "default_baud_rate")]
@@ -104,8 +106,10 @@ impl Default for SerialConfig {
 ///
 /// Superset of desktop `DockerConfig` and agent `DockerSessionConfig`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DockerConfig {
     pub image: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub shell: Option<String>,
     #[serde(default = "default_cols")]
     pub cols: u16,
@@ -115,6 +119,7 @@ pub struct DockerConfig {
     pub env_vars: Vec<EnvVar>,
     #[serde(default)]
     pub volumes: Vec<VolumeMount>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub working_directory: Option<String>,
     #[serde(default = "default_remove_on_exit")]
     pub remove_on_exit: bool,
@@ -144,6 +149,7 @@ impl Default for DockerConfig {
 /// - `port`: defaults to 22.
 /// - `cols`/`rows`: terminal dimensions (defaults 80x24).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SshConfig {
     pub host: String,
     #[serde(default = "default_ssh_port")]
@@ -161,8 +167,11 @@ pub struct SshConfig {
     pub env: HashMap<String, String>,
     #[serde(default)]
     pub enable_x11_forwarding: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enable_monitoring: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enable_file_browser: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub save_password: Option<bool>,
 }
 
@@ -184,6 +193,51 @@ impl Default for SshConfig {
             enable_file_browser: None,
             save_password: None,
         }
+    }
+}
+
+// --- Expand methods ---
+
+impl SerialConfig {
+    /// Return a copy with all `${env:...}` placeholders expanded.
+    pub fn expand(mut self) -> Self {
+        self.port = expand::expand_env_placeholders(&self.port);
+        self
+    }
+}
+
+impl SshConfig {
+    /// Return a copy with all `${env:...}` placeholders and `~` expanded.
+    pub fn expand(mut self) -> Self {
+        self.host = expand::expand_env_placeholders(&self.host);
+        self.username = expand::expand_env_placeholders(&self.username);
+        self.key_path = self.key_path.map(|s| {
+            // Strip surrounding quotes — users often paste paths like "C:\...\key"
+            let stripped = s.trim().trim_matches('"').trim_matches('\'');
+            expand::expand_tilde(&expand::expand_env_placeholders(stripped))
+        });
+        self.password = self.password.map(|s| expand::expand_env_placeholders(&s));
+        self
+    }
+}
+
+impl DockerConfig {
+    /// Return a copy with all `${env:...}` placeholders and `~` expanded.
+    pub fn expand(mut self) -> Self {
+        self.image = expand::expand_env_placeholders(&self.image);
+        self.shell = self.shell.map(|s| expand::expand_env_placeholders(&s));
+        self.working_directory = self
+            .working_directory
+            .map(|s| expand::expand_tilde(&expand::expand_env_placeholders(&s)));
+        for env in &mut self.env_vars {
+            env.key = expand::expand_env_placeholders(&env.key);
+            env.value = expand::expand_env_placeholders(&env.value);
+        }
+        for vol in &mut self.volumes {
+            vol.host_path = expand::expand_tilde(&expand::expand_env_placeholders(&vol.host_path));
+            vol.container_path = expand::expand_env_placeholders(&vol.container_path);
+        }
+        self
     }
 }
 
@@ -438,7 +492,7 @@ mod tests {
         assert!(back.save_password.is_none());
     }
 
-    // --- Snake_case field name tests ---
+    // --- camelCase field name tests ---
 
     #[test]
     fn shell_config_snake_case_fields() {
@@ -456,14 +510,14 @@ mod tests {
     }
 
     #[test]
-    fn serial_config_snake_case_fields() {
+    fn serial_config_camel_case_fields() {
         let json = r#"{
             "port": "COM3",
-            "baud_rate": 9600,
-            "data_bits": 8,
-            "stop_bits": 1,
+            "baudRate": 9600,
+            "dataBits": 8,
+            "stopBits": 1,
             "parity": "none",
-            "flow_control": "none"
+            "flowControl": "none"
         }"#;
         let cfg: SerialConfig = serde_json::from_str(json).unwrap();
         assert_eq!(cfg.port, "COM3");
@@ -471,13 +525,13 @@ mod tests {
     }
 
     #[test]
-    fn docker_config_snake_case_fields() {
+    fn docker_config_camel_case_fields() {
         let json = r#"{
             "image": "alpine",
-            "env_vars": [],
+            "envVars": [],
             "volumes": [],
-            "working_directory": "/opt",
-            "remove_on_exit": false
+            "workingDirectory": "/opt",
+            "removeOnExit": false
         }"#;
         let cfg: DockerConfig = serde_json::from_str(json).unwrap();
         assert_eq!(cfg.working_directory.as_deref(), Some("/opt"));
@@ -485,17 +539,17 @@ mod tests {
     }
 
     #[test]
-    fn ssh_config_snake_case_fields() {
+    fn ssh_config_camel_case_fields() {
         let json = r#"{
             "host": "server",
             "port": 22,
             "username": "root",
-            "auth_method": "password",
-            "key_path": null,
-            "enable_x11_forwarding": true,
-            "enable_monitoring": true,
-            "enable_file_browser": false,
-            "save_password": true
+            "authMethod": "password",
+            "keyPath": null,
+            "enableX11Forwarding": true,
+            "enableMonitoring": true,
+            "enableFileBrowser": false,
+            "savePassword": true
         }"#;
         let cfg: SshConfig = serde_json::from_str(json).unwrap();
         assert!(cfg.enable_x11_forwarding);
@@ -543,7 +597,7 @@ mod tests {
         let json = r#"{
             "host": "h",
             "username": "u",
-            "auth_method": "password"
+            "authMethod": "password"
         }"#;
         let cfg: SshConfig = serde_json::from_str(json).unwrap();
         assert_eq!(cfg.port, 22);
@@ -551,5 +605,127 @@ mod tests {
         assert_eq!(cfg.rows, 24);
         assert!(!cfg.enable_x11_forwarding);
         assert!(cfg.env.is_empty());
+    }
+
+    // --- Expand method tests ---
+
+    #[test]
+    fn serial_config_expand_replaces_port() {
+        std::env::set_var("TERMIHUB_TEST_SERIAL_PORT", "/dev/ttyACM0");
+        let cfg = SerialConfig {
+            port: "${env:TERMIHUB_TEST_SERIAL_PORT}".into(),
+            ..SerialConfig::default()
+        };
+        let expanded = cfg.expand();
+        assert_eq!(expanded.port, "/dev/ttyACM0");
+        std::env::remove_var("TERMIHUB_TEST_SERIAL_PORT");
+    }
+
+    #[test]
+    fn ssh_config_expand_replaces_placeholders() {
+        std::env::set_var("TERMIHUB_TEST_SSH_HOST", "192.168.1.100");
+        std::env::set_var("TERMIHUB_TEST_SSH_USER", "deploy");
+        let cfg = SshConfig {
+            host: "${env:TERMIHUB_TEST_SSH_HOST}".into(),
+            username: "${env:TERMIHUB_TEST_SSH_USER}".into(),
+            auth_method: "key".into(),
+            key_path: Some("${env:HOME}/.ssh/id_rsa".into()),
+            ..SshConfig::default()
+        };
+        let expanded = cfg.expand();
+        assert_eq!(expanded.host, "192.168.1.100");
+        assert_eq!(expanded.username, "deploy");
+        std::env::remove_var("TERMIHUB_TEST_SSH_HOST");
+        std::env::remove_var("TERMIHUB_TEST_SSH_USER");
+    }
+
+    #[test]
+    fn ssh_config_expand_tilde_in_key_path() {
+        let cfg = SshConfig {
+            host: "example.com".into(),
+            username: "user".into(),
+            auth_method: "key".into(),
+            key_path: Some("~/.ssh/id_ed25519".into()),
+            ..SshConfig::default()
+        };
+        let expanded = cfg.expand();
+        let key = expanded.key_path.unwrap();
+        assert!(
+            !key.starts_with('~'),
+            "tilde should be expanded, got: {key}"
+        );
+        assert!(
+            key.ends_with(".ssh/id_ed25519") || key.ends_with(r".ssh\id_ed25519"),
+            "expected path ending in .ssh/id_ed25519, got: {key}"
+        );
+    }
+
+    #[test]
+    fn ssh_config_expand_strips_quotes_from_key_path() {
+        let cfg = SshConfig {
+            host: "example.com".into(),
+            username: "user".into(),
+            auth_method: "key".into(),
+            key_path: Some(r#""C:\Users\me\.ssh\id_ed25519""#.into()),
+            ..SshConfig::default()
+        };
+        let expanded = cfg.expand();
+        let key = expanded.key_path.unwrap();
+        assert!(!key.contains('"'), "quotes should be stripped, got: {key}");
+        assert!(
+            key.starts_with("C:"),
+            "expected Windows path after stripping, got: {key}"
+        );
+    }
+
+    #[test]
+    fn docker_config_expand_replaces_placeholders() {
+        std::env::set_var("TERMIHUB_TEST_DOCKER_IMAGE", "myapp");
+        std::env::set_var("TERMIHUB_TEST_DOCKER_VAL", "production");
+        let cfg = DockerConfig {
+            image: "${env:TERMIHUB_TEST_DOCKER_IMAGE}:latest".into(),
+            shell: Some("${env:TERMIHUB_TEST_DOCKER_IMAGE}".into()),
+            env_vars: vec![EnvVar {
+                key: "ENV".into(),
+                value: "${env:TERMIHUB_TEST_DOCKER_VAL}".into(),
+            }],
+            working_directory: Some("${env:TERMIHUB_TEST_DOCKER_VAL}".into()),
+            ..DockerConfig::default()
+        };
+        let expanded = cfg.expand();
+        assert_eq!(expanded.image, "myapp:latest");
+        assert_eq!(expanded.shell, Some("myapp".into()));
+        assert_eq!(expanded.env_vars[0].value, "production");
+        assert_eq!(expanded.working_directory, Some("production".into()));
+        std::env::remove_var("TERMIHUB_TEST_DOCKER_IMAGE");
+        std::env::remove_var("TERMIHUB_TEST_DOCKER_VAL");
+    }
+
+    #[test]
+    fn docker_config_expand_tilde_in_volumes() {
+        let cfg = DockerConfig {
+            image: "ubuntu".into(),
+            volumes: vec![VolumeMount {
+                host_path: "~/projects".into(),
+                container_path: "/workspace".into(),
+                read_only: true,
+            }],
+            working_directory: Some("~/work".into()),
+            ..DockerConfig::default()
+        };
+        let expanded = cfg.expand();
+        assert!(
+            !expanded.volumes[0].host_path.starts_with('~'),
+            "tilde should be expanded in volume host path, got: {}",
+            expanded.volumes[0].host_path
+        );
+        assert!(
+            !expanded
+                .working_directory
+                .as_ref()
+                .unwrap()
+                .starts_with('~'),
+            "tilde should be expanded in working directory"
+        );
     }
 }
