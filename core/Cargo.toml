@@ -16,6 +16,8 @@ tracing = { version = "0.1", optional = true }
 ssh2 = { workspace = true, optional = true }
 ssh-key = { workspace = true, optional = true }
 openssl = { workspace = true, optional = true }
+bollard = { workspace = true, optional = true }
+futures-util = { version = "0.3", optional = true }
 
 [dev-dependencies]
 tempfile = "3"
@@ -28,3 +30,4 @@ serial = ["dep:serialport", "dep:tracing"]
 local-shell = ["dep:portable-pty", "dep:tracing"]
 telnet = ["dep:tracing"]
 ssh = ["dep:ssh2", "dep:ssh-key", "dep:openssl", "dep:tracing"]
+docker = ["dep:bollard", "dep:futures-util", "dep:tracing"]

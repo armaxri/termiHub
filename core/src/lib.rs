@@ -2,7 +2,8 @@
     feature = "local-shell",
     feature = "serial",
     feature = "telnet",
-    feature = "ssh"
+    feature = "ssh",
+    feature = "docker"
 ))]
 pub mod backends;
 pub mod buffer;

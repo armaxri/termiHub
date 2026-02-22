@@ -15,3 +15,6 @@ pub mod telnet;
 
 #[cfg(feature = "ssh")]
 pub mod ssh;
+
+#[cfg(feature = "docker")]
+pub mod docker;
