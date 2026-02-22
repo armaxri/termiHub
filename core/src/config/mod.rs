@@ -196,6 +196,52 @@ impl Default for SshConfig {
     }
 }
 
+// --- Expand methods ---
+
+impl SerialConfig {
+    /// Return a copy with all `${env:...}` placeholders expanded.
+    pub fn expand(mut self) -> Self {
+        self.port = expand::expand_env_placeholders(&self.port);
+        self
+    }
+}
+
+impl SshConfig {
+    /// Return a copy with all `${env:...}` placeholders and `~` expanded.
+    pub fn expand(mut self) -> Self {
+        self.host = expand::expand_env_placeholders(&self.host);
+        self.username = expand::expand_env_placeholders(&self.username);
+        self.key_path = self.key_path.map(|s| {
+            // Strip surrounding quotes — users often paste paths like "C:\...\key"
+            let stripped = s.trim().trim_matches('"').trim_matches('\'');
+            expand::expand_tilde(&expand::expand_env_placeholders(stripped))
+        });
+        self.password = self.password.map(|s| expand::expand_env_placeholders(&s));
+        self
+    }
+}
+
+impl DockerConfig {
+    /// Return a copy with all `${env:...}` placeholders and `~` expanded.
+    pub fn expand(mut self) -> Self {
+        self.image = expand::expand_env_placeholders(&self.image);
+        self.shell = self.shell.map(|s| expand::expand_env_placeholders(&s));
+        self.working_directory = self
+            .working_directory
+            .map(|s| expand::expand_tilde(&expand::expand_env_placeholders(&s)));
+        for env in &mut self.env_vars {
+            env.key = expand::expand_env_placeholders(&env.key);
+            env.value = expand::expand_env_placeholders(&env.value);
+        }
+        for vol in &mut self.volumes {
+            vol.host_path =
+                expand::expand_tilde(&expand::expand_env_placeholders(&vol.host_path));
+            vol.container_path = expand::expand_env_placeholders(&vol.container_path);
+        }
+        self
+    }
+}
+
 // --- Default value functions ---
 
 fn default_cols() -> u16 {
@@ -560,5 +606,127 @@ mod tests {
         assert_eq!(cfg.rows, 24);
         assert!(!cfg.enable_x11_forwarding);
         assert!(cfg.env.is_empty());
+    }
+
+    // --- Expand method tests ---
+
+    #[test]
+    fn serial_config_expand_replaces_port() {
+        std::env::set_var("TERMIHUB_TEST_SERIAL_PORT", "/dev/ttyACM0");
+        let cfg = SerialConfig {
+            port: "${env:TERMIHUB_TEST_SERIAL_PORT}".into(),
+            ..SerialConfig::default()
+        };
+        let expanded = cfg.expand();
+        assert_eq!(expanded.port, "/dev/ttyACM0");
+        std::env::remove_var("TERMIHUB_TEST_SERIAL_PORT");
+    }
+
+    #[test]
+    fn ssh_config_expand_replaces_placeholders() {
+        std::env::set_var("TERMIHUB_TEST_SSH_HOST", "192.168.1.100");
+        std::env::set_var("TERMIHUB_TEST_SSH_USER", "deploy");
+        let cfg = SshConfig {
+            host: "${env:TERMIHUB_TEST_SSH_HOST}".into(),
+            username: "${env:TERMIHUB_TEST_SSH_USER}".into(),
+            auth_method: "key".into(),
+            key_path: Some("${env:HOME}/.ssh/id_rsa".into()),
+            ..SshConfig::default()
+        };
+        let expanded = cfg.expand();
+        assert_eq!(expanded.host, "192.168.1.100");
+        assert_eq!(expanded.username, "deploy");
+        std::env::remove_var("TERMIHUB_TEST_SSH_HOST");
+        std::env::remove_var("TERMIHUB_TEST_SSH_USER");
+    }
+
+    #[test]
+    fn ssh_config_expand_tilde_in_key_path() {
+        let cfg = SshConfig {
+            host: "example.com".into(),
+            username: "user".into(),
+            auth_method: "key".into(),
+            key_path: Some("~/.ssh/id_ed25519".into()),
+            ..SshConfig::default()
+        };
+        let expanded = cfg.expand();
+        let key = expanded.key_path.unwrap();
+        assert!(
+            !key.starts_with('~'),
+            "tilde should be expanded, got: {key}"
+        );
+        assert!(
+            key.ends_with(".ssh/id_ed25519") || key.ends_with(r".ssh\id_ed25519"),
+            "expected path ending in .ssh/id_ed25519, got: {key}"
+        );
+    }
+
+    #[test]
+    fn ssh_config_expand_strips_quotes_from_key_path() {
+        let cfg = SshConfig {
+            host: "example.com".into(),
+            username: "user".into(),
+            auth_method: "key".into(),
+            key_path: Some(r#""C:\Users\me\.ssh\id_ed25519""#.into()),
+            ..SshConfig::default()
+        };
+        let expanded = cfg.expand();
+        let key = expanded.key_path.unwrap();
+        assert!(!key.contains('"'), "quotes should be stripped, got: {key}");
+        assert!(
+            key.starts_with("C:"),
+            "expected Windows path after stripping, got: {key}"
+        );
+    }
+
+    #[test]
+    fn docker_config_expand_replaces_placeholders() {
+        std::env::set_var("TERMIHUB_TEST_DOCKER_IMAGE", "myapp");
+        std::env::set_var("TERMIHUB_TEST_DOCKER_VAL", "production");
+        let cfg = DockerConfig {
+            image: "${env:TERMIHUB_TEST_DOCKER_IMAGE}:latest".into(),
+            shell: Some("${env:TERMIHUB_TEST_DOCKER_IMAGE}".into()),
+            env_vars: vec![EnvVar {
+                key: "ENV".into(),
+                value: "${env:TERMIHUB_TEST_DOCKER_VAL}".into(),
+            }],
+            working_directory: Some("${env:TERMIHUB_TEST_DOCKER_VAL}".into()),
+            ..DockerConfig::default()
+        };
+        let expanded = cfg.expand();
+        assert_eq!(expanded.image, "myapp:latest");
+        assert_eq!(expanded.shell, Some("myapp".into()));
+        assert_eq!(expanded.env_vars[0].value, "production");
+        assert_eq!(expanded.working_directory, Some("production".into()));
+        std::env::remove_var("TERMIHUB_TEST_DOCKER_IMAGE");
+        std::env::remove_var("TERMIHUB_TEST_DOCKER_VAL");
+    }
+
+    #[test]
+    fn docker_config_expand_tilde_in_volumes() {
+        let cfg = DockerConfig {
+            image: "ubuntu".into(),
+            volumes: vec![VolumeMount {
+                host_path: "~/projects".into(),
+                container_path: "/workspace".into(),
+                read_only: true,
+            }],
+            working_directory: Some("~/work".into()),
+            ..DockerConfig::default()
+        };
+        let expanded = cfg.expand();
+        assert!(
+            !expanded.volumes[0].host_path.starts_with('~'),
+            "tilde should be expanded in volume host path, got: {}",
+            expanded.volumes[0].host_path
+        );
+        assert!(
+            !expanded
+                .working_directory
+                .as_ref()
+                .unwrap()
+                .starts_with('~'),
+            "tilde should be expanded in working directory"
+        );
     }
 }
