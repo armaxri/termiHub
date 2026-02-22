@@ -196,6 +196,45 @@ impl Default for SshConfig {
     }
 }
 
+/// Unified WSL (Windows Subsystem for Linux) session configuration.
+///
+/// Windows-only. Configures a WSL distribution session with optional
+/// starting directory and initial command.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WslConfig {
+    /// WSL distribution name (e.g., `"Ubuntu"`, `"Debian"`).
+    pub distribution: String,
+    /// Directory to start the shell in (within the WSL filesystem).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub starting_directory: Option<String>,
+    /// Command to run after the shell starts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub initial_command: Option<String>,
+    /// Terminal column count.
+    #[serde(default = "default_cols")]
+    pub cols: u16,
+    /// Terminal row count.
+    #[serde(default = "default_rows")]
+    pub rows: u16,
+    /// Additional environment variables for the shell process.
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+}
+
+impl Default for WslConfig {
+    fn default() -> Self {
+        Self {
+            distribution: String::new(),
+            starting_directory: None,
+            initial_command: None,
+            cols: default_cols(),
+            rows: default_rows(),
+            env: HashMap::new(),
+        }
+    }
+}
+
 /// Unified telnet session configuration.
 ///
 /// Shared between desktop and agent telnet backends.
@@ -216,6 +255,20 @@ impl Default for TelnetConfig {
 }
 
 // --- Expand methods ---
+
+impl WslConfig {
+    /// Return a copy with all `${env:...}` placeholders and `~` expanded.
+    pub fn expand(mut self) -> Self {
+        self.distribution = expand::expand_env_placeholders(&self.distribution);
+        self.starting_directory = self
+            .starting_directory
+            .map(|s| expand::expand_tilde(&expand::expand_env_placeholders(&s)));
+        self.initial_command = self
+            .initial_command
+            .map(|s| expand::expand_env_placeholders(&s));
+        self
+    }
+}
 
 impl TelnetConfig {
     /// Return a copy with all `${env:...}` placeholders expanded.
@@ -367,6 +420,17 @@ mod tests {
     }
 
     #[test]
+    fn wsl_config_default() {
+        let cfg = WslConfig::default();
+        assert!(cfg.distribution.is_empty());
+        assert!(cfg.starting_directory.is_none());
+        assert!(cfg.initial_command.is_none());
+        assert_eq!(cfg.cols, 80);
+        assert_eq!(cfg.rows, 24);
+        assert!(cfg.env.is_empty());
+    }
+
+    #[test]
     fn ssh_config_default() {
         let cfg = SshConfig::default();
         assert!(cfg.host.is_empty());
@@ -508,6 +572,26 @@ mod tests {
     }
 
     #[test]
+    fn wsl_config_roundtrip() {
+        let cfg = WslConfig {
+            distribution: "Ubuntu".into(),
+            starting_directory: Some("/home/user".into()),
+            initial_command: Some("ls".into()),
+            cols: 100,
+            rows: 30,
+            env: HashMap::from([("MY_VAR".into(), "hello".into())]),
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: WslConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.distribution, "Ubuntu");
+        assert_eq!(back.starting_directory.as_deref(), Some("/home/user"));
+        assert_eq!(back.initial_command.as_deref(), Some("ls"));
+        assert_eq!(back.cols, 100);
+        assert_eq!(back.rows, 30);
+        assert_eq!(back.env.get("MY_VAR").unwrap(), "hello");
+    }
+
+    #[test]
     fn ssh_config_roundtrip() {
         let cfg = SshConfig {
             host: "example.com".into(),
@@ -589,6 +673,19 @@ mod tests {
     }
 
     #[test]
+    fn wsl_config_camel_case_fields() {
+        let json = r#"{
+            "distribution": "Ubuntu",
+            "startingDirectory": "/home/user",
+            "initialCommand": "echo hi"
+        }"#;
+        let cfg: WslConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.distribution, "Ubuntu");
+        assert_eq!(cfg.starting_directory.as_deref(), Some("/home/user"));
+        assert_eq!(cfg.initial_command.as_deref(), Some("echo hi"));
+    }
+
+    #[test]
     fn ssh_config_camel_case_fields() {
         let json = r#"{
             "host": "server",
@@ -648,6 +745,18 @@ mod tests {
         assert!(cfg.env_vars.is_empty());
         assert!(cfg.volumes.is_empty());
         assert!(cfg.remove_on_exit);
+    }
+
+    #[test]
+    fn wsl_config_missing_fields_use_defaults() {
+        let json = r#"{"distribution": "Debian"}"#;
+        let cfg: WslConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.distribution, "Debian");
+        assert!(cfg.starting_directory.is_none());
+        assert!(cfg.initial_command.is_none());
+        assert_eq!(cfg.cols, 80);
+        assert_eq!(cfg.rows, 24);
+        assert!(cfg.env.is_empty());
     }
 
     #[test]
@@ -797,5 +906,30 @@ mod tests {
                 .starts_with('~'),
             "tilde should be expanded in working directory"
         );
+    }
+
+    #[test]
+    fn wsl_config_expand_replaces_placeholders() {
+        std::env::set_var("TERMIHUB_TEST_WSL_DISTRO", "Ubuntu");
+        std::env::set_var("TERMIHUB_TEST_WSL_CMD", "echo hello");
+        let cfg = WslConfig {
+            distribution: "${env:TERMIHUB_TEST_WSL_DISTRO}".into(),
+            starting_directory: Some("~/projects".into()),
+            initial_command: Some("${env:TERMIHUB_TEST_WSL_CMD}".into()),
+            ..WslConfig::default()
+        };
+        let expanded = cfg.expand();
+        assert_eq!(expanded.distribution, "Ubuntu");
+        assert!(
+            !expanded
+                .starting_directory
+                .as_ref()
+                .unwrap()
+                .starts_with('~'),
+            "tilde should be expanded in starting directory"
+        );
+        assert_eq!(expanded.initial_command, Some("echo hello".into()));
+        std::env::remove_var("TERMIHUB_TEST_WSL_DISTRO");
+        std::env::remove_var("TERMIHUB_TEST_WSL_CMD");
     }
 }
