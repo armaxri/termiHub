@@ -169,10 +169,8 @@ fn build_ssh_args(config: &SshSessionConfig) -> Vec<String> {
     ];
 
     // Port
-    if let Some(port) = config.port {
-        args.push("-p".to_string());
-        args.push(port.to_string());
-    }
+    args.push("-p".to_string());
+    args.push(config.port.to_string());
 
     // Key-based auth
     if config.auth_method == "key" {
@@ -203,13 +201,14 @@ mod tests {
             host: "build.internal".to_string(),
             username: "dev".to_string(),
             auth_method: "agent".to_string(),
-            port: None,
+            port: 22,
             password: None,
             key_path: None,
             shell: None,
             cols: 80,
             rows: 24,
             env: Default::default(),
+            ..Default::default()
         };
         let args = build_ssh_args(&config);
         assert_eq!(
@@ -220,6 +219,8 @@ mod tests {
                 "ServerAliveInterval=30",
                 "-o",
                 "ServerAliveCountMax=3",
+                "-p",
+                "22",
                 "dev@build.internal",
             ]
         );
@@ -231,13 +232,14 @@ mod tests {
             host: "10.0.0.5".to_string(),
             username: "deploy".to_string(),
             auth_method: "key".to_string(),
-            port: Some(2222),
+            port: 2222,
             password: None,
             key_path: Some("/home/user/.ssh/id_ed25519".to_string()),
             shell: Some("/bin/bash".to_string()),
             cols: 120,
             rows: 40,
             env: Default::default(),
+            ..Default::default()
         };
         let args = build_ssh_args(&config);
         assert_eq!(
@@ -264,13 +266,14 @@ mod tests {
             host: "server.example.com".to_string(),
             username: "admin".to_string(),
             auth_method: "password".to_string(),
-            port: None,
+            port: 22,
             password: Some("secret".to_string()),
             key_path: Some("/some/key".to_string()),
             shell: None,
             cols: 80,
             rows: 24,
             env: Default::default(),
+            ..Default::default()
         };
         let args = build_ssh_args(&config);
         // password auth should NOT add -i even when key_path is present

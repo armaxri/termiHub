@@ -1,91 +1,6 @@
-// Notification type is not used in the stub but will be needed for
-// session.output, session.exit, and session.error notifications in phase 7.
-#![allow(dead_code)]
+//! JSON-RPC 2.0 message types for the termiHub protocol.
 
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-
-/// A JSON-RPC 2.0 request (Desktop -> Agent).
-#[derive(Debug, Clone, Deserialize)]
-pub struct JsonRpcRequest {
-    pub jsonrpc: String,
-    pub method: String,
-    #[serde(default)]
-    pub params: Value,
-    pub id: Value,
-}
-
-/// A successful JSON-RPC 2.0 response (Agent -> Desktop).
-#[derive(Debug, Clone, Serialize)]
-pub struct JsonRpcResponse {
-    pub jsonrpc: &'static str,
-    pub result: Value,
-    pub id: Value,
-}
-
-impl JsonRpcResponse {
-    pub fn new(id: Value, result: Value) -> Self {
-        Self {
-            jsonrpc: "2.0",
-            result,
-            id,
-        }
-    }
-}
-
-/// A JSON-RPC 2.0 error object.
-#[derive(Debug, Clone, Serialize)]
-pub struct JsonRpcErrorData {
-    pub code: i64,
-    pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<Value>,
-}
-
-/// A JSON-RPC 2.0 error response (Agent -> Desktop).
-#[derive(Debug, Clone, Serialize)]
-pub struct JsonRpcErrorResponse {
-    pub jsonrpc: &'static str,
-    pub error: JsonRpcErrorData,
-    pub id: Value,
-}
-
-impl JsonRpcErrorResponse {
-    pub fn new(id: Value, code: i64, message: impl Into<String>) -> Self {
-        Self {
-            jsonrpc: "2.0",
-            error: JsonRpcErrorData {
-                code,
-                message: message.into(),
-                data: None,
-            },
-            id,
-        }
-    }
-
-    pub fn with_data(mut self, data: Value) -> Self {
-        self.error.data = Some(data);
-        self
-    }
-}
-
-/// A JSON-RPC 2.0 notification (Agent -> Desktop, no id).
-#[derive(Debug, Clone, Serialize)]
-pub struct JsonRpcNotification {
-    pub jsonrpc: &'static str,
-    pub method: String,
-    pub params: Value,
-}
-
-impl JsonRpcNotification {
-    pub fn new(method: impl Into<String>, params: Value) -> Self {
-        Self {
-            jsonrpc: "2.0",
-            method: method.into(),
-            params,
-        }
-    }
-}
+pub use termihub_core::protocol::messages::*;
 
 #[cfg(test)]
 mod tests {
@@ -114,7 +29,7 @@ mod tests {
     fn serialize_success_response() {
         let resp = JsonRpcResponse::new(json!(1), json!({"status": "ok"}));
         let json_str = serde_json::to_string(&resp).unwrap();
-        let parsed: Value = serde_json::from_str(&json_str).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
         assert_eq!(parsed["jsonrpc"], "2.0");
         assert_eq!(parsed["result"]["status"], "ok");
         assert_eq!(parsed["id"], 1);
@@ -126,7 +41,7 @@ mod tests {
     fn serialize_error_response() {
         let resp = JsonRpcErrorResponse::new(json!(2), -32601, "Method not found");
         let json_str = serde_json::to_string(&resp).unwrap();
-        let parsed: Value = serde_json::from_str(&json_str).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
         assert_eq!(parsed["jsonrpc"], "2.0");
         assert_eq!(parsed["error"]["code"], -32601);
         assert_eq!(parsed["error"]["message"], "Method not found");
@@ -139,7 +54,7 @@ mod tests {
         let resp = JsonRpcErrorResponse::new(json!(3), -32001, "Session not found")
             .with_data(json!({"session_id": "abc-123"}));
         let json_str = serde_json::to_string(&resp).unwrap();
-        let parsed: Value = serde_json::from_str(&json_str).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
         assert_eq!(parsed["error"]["data"]["session_id"], "abc-123");
     }
 
@@ -150,7 +65,7 @@ mod tests {
             json!({"session_id": "abc", "data": "aGVsbG8="}),
         );
         let json_str = serde_json::to_string(&notif).unwrap();
-        let parsed: Value = serde_json::from_str(&json_str).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
         assert_eq!(parsed["jsonrpc"], "2.0");
         assert_eq!(parsed["method"], "session.output");
         assert_eq!(parsed["params"]["session_id"], "abc");
@@ -163,13 +78,13 @@ mod tests {
         // Integer id
         let resp = JsonRpcResponse::new(json!(42), json!({}));
         let s = serde_json::to_string(&resp).unwrap();
-        let v: Value = serde_json::from_str(&s).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
         assert_eq!(v["id"], 42);
 
         // String id
         let resp = JsonRpcResponse::new(json!("req-1"), json!({}));
         let s = serde_json::to_string(&resp).unwrap();
-        let v: Value = serde_json::from_str(&s).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
         assert_eq!(v["id"], "req-1");
     }
 }

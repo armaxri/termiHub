@@ -1025,6 +1025,7 @@ fn map_file_error(e: FileError) -> (i64, String) {
         FileError::PermissionDenied(msg) => (errors::PERMISSION_DENIED, msg),
         FileError::OperationFailed(msg) => (errors::FILE_OPERATION_FAILED, msg),
         FileError::NotSupported => (errors::FILE_BROWSING_NOT_SUPPORTED, e.to_string()),
+        FileError::Io(e) => (errors::FILE_OPERATION_FAILED, e.to_string()),
     }
 }
 
