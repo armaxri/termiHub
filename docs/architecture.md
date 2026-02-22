@@ -203,6 +203,8 @@ graph TB
         end
     end
 
+    CORE["termihub-core<br/>(Shared Library)"]
+
     subgraph "Remote Agent (termihub-agent)"
         SM[Session Manager]
         SM --> DAEMONS["Session Daemons<br/>(Shell · Docker · SSH)"]
@@ -217,6 +219,9 @@ graph TB
     TM --> RB
 
     RB -->|SSH Tunnel + JSON-RPC| SM
+
+    TM -.->|uses| CORE
+    SM -.->|uses| CORE
 ```
 
 **Contained building blocks:**
@@ -228,6 +233,7 @@ graph TB
 | **Terminal Manager** | Orchestrates terminal session lifecycle across all backend types |
 | **Local Backends** | PTY, Serial, SSH, and Telnet implementations |
 | **RemoteBackend** | Proxy to remote agent instances — implements `TerminalBackend` trait, forwarding I/O as JSON-RPC over SSH |
+| **Shared Core (termihub-core)** | Shared Rust library containing config types, error types, protocol types, session helpers, file operations, monitoring parsers, transport traits, and output processing — used by both desktop and agent |
 | **Remote Agent** | Standalone binary (`termihub-agent`) for persistent remote sessions, file browsing, and system monitoring. See [Remote Protocol](remote-protocol.md) for the protocol specification. |
 
 ### Level 2: Frontend Components
@@ -290,6 +296,21 @@ graph LR
 | **Commands** | `src-tauri/src/commands/` | Tauri IPC command handlers |
 | **Events** | `src-tauri/src/events/` | Event emitters for terminal output streaming |
 | **Utils** | `src-tauri/src/utils/` | Shell detection, env expansion, error helpers |
+
+### Level 2: Shared Core Modules
+
+The `termihub-core` crate is a shared Rust library that contains all types, traits, and logic common to both the desktop backend and the remote agent. Both crates depend on core and delegate to it instead of duplicating logic.
+
+| Module | Location | Responsibility |
+|--------|----------|---------------|
+| **Buffer** | `core/src/buffer/` | `RingBuffer` — 1 MiB circular byte buffer for output replay and serial capture |
+| **Config** | `core/src/config/` | Unified configuration types (`ShellConfig`, `SshConfig`, `DockerConfig`, `SerialConfig`, `PtySize`, `EnvVar`, `VolumeMount`) with config value expansion utilities |
+| **Errors** | `core/src/errors.rs` | Shared error types (`CoreError`, `SessionError`, `FileError`) with `From` conversions for `std::io::Error` |
+| **Files** | `core/src/files/` | `FileBackend` async trait, `LocalFileBackend` implementation, `FileEntry` struct, and utilities (`chrono_from_epoch`, `format_permissions`, `normalize_path_separators`, `list_dir_sync`) |
+| **Monitoring** | `core/src/monitoring/` | `SystemStats`, `CpuCounters`, `StatsCollector` trait, and parsers (`parse_stats`, `parse_cpu_line`, `cpu_percent_from_delta`, `parse_meminfo_value`, `parse_df_output`, `MONITORING_COMMAND`) |
+| **Output** | `core/src/output/` | `OutputCoalescer` for batching terminal output and `contains_screen_clear` for ANSI screen-clear detection |
+| **Protocol** | `core/src/protocol/` | JSON-RPC 2.0 message types (`JsonRpcRequest`, `JsonRpcResponse`, `JsonRpcNotification`) and standard/application error code constants |
+| **Session** | `core/src/session/` | Transport traits (`OutputSink`, `ProcessSpawner`, `ProcessHandle`) and session helpers — shell command building, SSH argument building, Docker CLI argument building, serial config parsing and port management |
 
 ### Level 2: Agent Modules
 

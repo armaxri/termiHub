@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Completed shared-rust-core migration (#317): final verification (238 core + 179 agent + 383 frontend tests passing), cleanup, and documentation updates for the `termihub-core` crate — 5,624 lines across 23 source files and 8 modules, 32 public types/traits shared between desktop and agent, spanning 19 issues (#298–#317) across 5 phases
 - Agent now implements core transport traits (`OutputSink`, `ProcessSpawner`, `ProcessHandle`, `FileBackend`, `StatsCollector`) via `JsonRpcOutputSink`, `DaemonSpawner`, `DaemonClient`, and updated file/monitoring backends — completing the shared-core architecture where the agent becomes a thin transport adapter (#316)
 - Agent file backends (`DockerFileBackend`, `SshFileBackend`, `LocalFileBackend`) now implement the core `FileBackend` trait directly, replacing the agent's own trait definition; `FilesStatResult` is now a type alias for `FileEntry` (#316)
 - Agent monitoring collectors (`LocalCollector`, `SshCollector`) now implement the core `StatsCollector` trait, returning `SystemStats`; the monitoring task adds the `host` field when building `MonitoringData` (#316)
