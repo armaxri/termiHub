@@ -13,9 +13,11 @@
 //! and agent (`agent/`) crates, which register their backends with a
 //! [`ConnectionTypeRegistry`] at startup.
 
+pub mod registry;
 pub mod schema;
 pub mod validation;
 
+pub use registry::{ConnectionFactory, ConnectionTypeInfo, ConnectionTypeRegistry};
 pub use schema::*;
 pub use validation::{validate_settings, ValidationError};
 
