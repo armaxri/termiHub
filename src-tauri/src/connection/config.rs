@@ -159,15 +159,10 @@ mod tests {
             name: "SSH Server".to_string(),
             config: ConnectionConfig::Ssh(SshConfig {
                 host: "example.com".to_string(),
-                port: 22,
                 username: "admin".to_string(),
                 auth_method: "password".to_string(),
                 password: Some("secret".to_string()),
-                key_path: None,
-                enable_x11_forwarding: false,
-                enable_monitoring: None,
-                enable_file_browser: None,
-                save_password: None,
+                ..SshConfig::default()
             }),
             folder_id: Some("folder-1".to_string()),
             terminal_options: None,
@@ -292,15 +287,11 @@ mod tests {
     fn ssh_config_feature_fields_round_trip() {
         let config = ConnectionConfig::Ssh(SshConfig {
             host: "example.com".to_string(),
-            port: 22,
             username: "admin".to_string(),
             auth_method: "password".to_string(),
-            password: None,
-            key_path: None,
-            enable_x11_forwarding: false,
             enable_monitoring: Some(false),
             enable_file_browser: Some(true),
-            save_password: None,
+            ..SshConfig::default()
         });
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: ConnectionConfig = serde_json::from_str(&json).unwrap();
@@ -314,15 +305,9 @@ mod tests {
         // Verify None values are omitted from JSON
         let config_none = ConnectionConfig::Ssh(SshConfig {
             host: "example.com".to_string(),
-            port: 22,
             username: "admin".to_string(),
             auth_method: "password".to_string(),
-            password: None,
-            key_path: None,
-            enable_x11_forwarding: false,
-            enable_monitoring: None,
-            enable_file_browser: None,
-            save_password: None,
+            ..SshConfig::default()
         });
         let json_none = serde_json::to_string(&config_none).unwrap();
         assert!(!json_none.contains("enableMonitoring"));
