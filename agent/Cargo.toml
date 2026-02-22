@@ -16,16 +16,24 @@ serde_json = { workspace = true }
 uuid = { version = "1", features = ["v4", "serde"] }
 anyhow = "1"
 thiserror = { workspace = true }
-termihub-core = { path = "../core", features = ["serial"] }
+termihub-core = { path = "../core", features = [
+    "local-shell",
+    "serial",
+    "ssh",
+    "telnet",
+    "docker",
+    "wsl",
+] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.22"
 async-trait = { workspace = true }
+tokio-util = { version = "0.7", features = ["rt"] }
+# TODO(#360): Remove these once old backend modules are deleted.
 serialport = { workspace = true }
 ssh2 = "0.9"
 shellexpand = "3"
-tokio-util = { version = "0.7", features = ["rt"] }
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.29", features = ["signal", "process", "term", "poll", "fs"] }

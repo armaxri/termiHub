@@ -7,6 +7,7 @@ mod handler;
 mod io;
 mod monitoring;
 mod protocol;
+mod registry;
 mod serial;
 mod session;
 #[cfg(unix)]
