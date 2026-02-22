@@ -8,8 +8,9 @@ use tracing::{debug, info};
 use crate::terminal::backend::SshConfig;
 use crate::utils::errors::TerminalError;
 use crate::utils::ssh_auth::connect_and_authenticate;
+use termihub_core::errors::FileError;
 use termihub_core::files::utils::{chrono_from_epoch, format_permissions};
-use termihub_core::files::FileEntry;
+use termihub_core::files::{FileBackend, FileEntry};
 
 /// An SFTP session wrapping a dedicated SSH connection.
 ///
@@ -258,6 +259,118 @@ impl SftpSession {
             .map_err(|e| TerminalError::SshError(format!("write failed: {}", e)))?;
 
         Ok(())
+    }
+}
+
+/// Map a `TerminalError` to a `FileError::OperationFailed`.
+fn terminal_error_to_file_error(e: TerminalError) -> FileError {
+    FileError::OperationFailed(e.to_string())
+}
+
+/// Async file backend implementation backed by an SFTP session.
+///
+/// Wraps an `Arc<Mutex<SftpSession>>` and implements the core [`FileBackend`]
+/// trait. Each async method offloads the blocking SFTP call to
+/// `tauri::async_runtime::spawn_blocking` to avoid blocking the async
+/// executor.
+pub struct SftpFileBackend {
+    session: Arc<Mutex<SftpSession>>,
+}
+
+impl SftpFileBackend {
+    /// Create a new file backend from an existing SFTP session.
+    pub fn new(session: Arc<Mutex<SftpSession>>) -> Self {
+        Self { session }
+    }
+}
+
+#[async_trait::async_trait]
+impl FileBackend for SftpFileBackend {
+    async fn list(&self, path: &str) -> Result<Vec<FileEntry>, FileError> {
+        let session = self.session.clone();
+        let path = path.to_string();
+        tauri::async_runtime::spawn_blocking(move || {
+            let sftp = session.lock().map_err(|e| {
+                FileError::OperationFailed(format!("Failed to lock SFTP session: {e}"))
+            })?;
+            sftp.list_dir(&path).map_err(terminal_error_to_file_error)
+        })
+        .await
+        .map_err(|e| FileError::OperationFailed(format!("Task join failed: {e}")))?
+    }
+
+    async fn read(&self, path: &str) -> Result<Vec<u8>, FileError> {
+        let session = self.session.clone();
+        let path = path.to_string();
+        tauri::async_runtime::spawn_blocking(move || {
+            let sftp = session.lock().map_err(|e| {
+                FileError::OperationFailed(format!("Failed to lock SFTP session: {e}"))
+            })?;
+            sftp.read_bytes(&path).map_err(terminal_error_to_file_error)
+        })
+        .await
+        .map_err(|e| FileError::OperationFailed(format!("Task join failed: {e}")))?
+    }
+
+    async fn write(&self, path: &str, data: &[u8]) -> Result<(), FileError> {
+        let session = self.session.clone();
+        let path = path.to_string();
+        let data = data.to_vec();
+        tauri::async_runtime::spawn_blocking(move || {
+            let sftp = session.lock().map_err(|e| {
+                FileError::OperationFailed(format!("Failed to lock SFTP session: {e}"))
+            })?;
+            sftp.write_bytes(&path, &data)
+                .map_err(terminal_error_to_file_error)
+        })
+        .await
+        .map_err(|e| FileError::OperationFailed(format!("Task join failed: {e}")))?
+    }
+
+    async fn delete(&self, path: &str, is_directory: bool) -> Result<(), FileError> {
+        let session = self.session.clone();
+        let path = path.to_string();
+        tauri::async_runtime::spawn_blocking(move || {
+            let sftp = session.lock().map_err(|e| {
+                FileError::OperationFailed(format!("Failed to lock SFTP session: {e}"))
+            })?;
+            if is_directory {
+                sftp.remove_dir(&path)
+            } else {
+                sftp.remove_file(&path)
+            }
+            .map_err(terminal_error_to_file_error)
+        })
+        .await
+        .map_err(|e| FileError::OperationFailed(format!("Task join failed: {e}")))?
+    }
+
+    async fn rename(&self, old_path: &str, new_path: &str) -> Result<(), FileError> {
+        let session = self.session.clone();
+        let old_path = old_path.to_string();
+        let new_path = new_path.to_string();
+        tauri::async_runtime::spawn_blocking(move || {
+            let sftp = session.lock().map_err(|e| {
+                FileError::OperationFailed(format!("Failed to lock SFTP session: {e}"))
+            })?;
+            sftp.rename(&old_path, &new_path)
+                .map_err(terminal_error_to_file_error)
+        })
+        .await
+        .map_err(|e| FileError::OperationFailed(format!("Task join failed: {e}")))?
+    }
+
+    async fn stat(&self, path: &str) -> Result<FileEntry, FileError> {
+        let session = self.session.clone();
+        let path = path.to_string();
+        tauri::async_runtime::spawn_blocking(move || {
+            let sftp = session.lock().map_err(|e| {
+                FileError::OperationFailed(format!("Failed to lock SFTP session: {e}"))
+            })?;
+            sftp.stat(&path).map_err(terminal_error_to_file_error)
+        })
+        .await
+        .map_err(|e| FileError::OperationFailed(format!("Task join failed: {e}")))?
     }
 }
 
