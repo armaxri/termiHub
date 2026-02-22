@@ -1,4 +1,9 @@
 //! Docker container filesystem operations via `docker exec`.
+//!
+//! **Deprecated**: This file backend is superseded by the unified
+//! [`termihub_core::backends::docker::file_browser::DockerFileBrowser`]
+//! implementation (see #358). It will be removed once the agent is
+//! migrated to the core backend.
 
 use termihub_core::files::FileEntry;
 

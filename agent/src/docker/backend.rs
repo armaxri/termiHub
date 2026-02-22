@@ -3,6 +3,10 @@
 //! Creates a persistent detached container and spawns a session daemon
 //! that runs `docker exec -it` on its PTY. The container outlives the
 //! daemon, enabling recovery after agent restart.
+//!
+//! **Deprecated**: This backend is superseded by the unified
+//! [`termihub_core::backends::docker::Docker`] implementation (see #358).
+//! It will be removed once the agent is migrated to the core backend.
 
 use std::path::Path;
 
