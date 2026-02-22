@@ -5,7 +5,7 @@
 
 use std::io;
 
-use tauri::{Emitter, Manager};
+use tauri::Emitter;
 
 use termihub_core::errors::SessionError;
 use termihub_core::session::traits::OutputSink;
@@ -21,10 +21,12 @@ use crate::terminal::backend::{TerminalErrorEvent, TerminalExitEvent, TerminalOu
 ///
 /// Emit failures are mapped to `SessionError::Io(BrokenPipe)` since a Tauri
 /// emit failure typically means the webview is no longer reachable.
+#[allow(dead_code)]
 pub struct TauriOutputSink {
     app_handle: tauri::AppHandle,
 }
 
+#[allow(dead_code)]
 impl TauriOutputSink {
     /// Create a new output sink backed by the given Tauri app handle.
     pub fn new(app_handle: tauri::AppHandle) -> Self {

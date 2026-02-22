@@ -52,6 +52,7 @@ pub struct TerminalExitEvent {
 
 /// Error event emitted when a session-level error occurs after establishment.
 #[derive(Debug, Clone, Serialize)]
+#[allow(dead_code)]
 pub struct TerminalErrorEvent {
     pub session_id: String,
     pub message: String,

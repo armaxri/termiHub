@@ -204,6 +204,7 @@ impl SftpSession {
     }
 
     /// Get metadata for a single file or directory.
+    #[allow(dead_code)]
     pub fn stat(&self, path: &str) -> Result<FileEntry, TerminalError> {
         let p = std::path::Path::new(path);
         let file_stat = self
@@ -231,6 +232,7 @@ impl SftpSession {
     }
 
     /// Read a remote file's contents as raw bytes.
+    #[allow(dead_code)]
     pub fn read_bytes(&self, remote_path: &str) -> Result<Vec<u8>, TerminalError> {
         let remote = std::path::Path::new(remote_path);
         let mut remote_file = self
@@ -247,6 +249,7 @@ impl SftpSession {
     }
 
     /// Write raw bytes to a remote file, creating or overwriting it.
+    #[allow(dead_code)]
     pub fn write_bytes(&self, remote_path: &str, data: &[u8]) -> Result<(), TerminalError> {
         let remote = std::path::Path::new(remote_path);
         let mut remote_file = self
@@ -263,6 +266,7 @@ impl SftpSession {
 }
 
 /// Map a `TerminalError` to a `FileError::OperationFailed`.
+#[allow(dead_code)]
 fn terminal_error_to_file_error(e: TerminalError) -> FileError {
     FileError::OperationFailed(e.to_string())
 }
@@ -273,10 +277,12 @@ fn terminal_error_to_file_error(e: TerminalError) -> FileError {
 /// trait. Each async method offloads the blocking SFTP call to
 /// `tauri::async_runtime::spawn_blocking` to avoid blocking the async
 /// executor.
+#[allow(dead_code)]
 pub struct SftpFileBackend {
     session: Arc<Mutex<SftpSession>>,
 }
 
+#[allow(dead_code)]
 impl SftpFileBackend {
     /// Create a new file backend from an existing SFTP session.
     pub fn new(session: Arc<Mutex<SftpSession>>) -> Self {

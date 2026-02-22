@@ -24,6 +24,7 @@ use termihub_core::session::traits::{ProcessHandle, ProcessSpawner};
 /// Wraps `portable-pty` primitives and exposes the [`ProcessHandle`] trait
 /// for the core session engine. Also provides non-trait methods for output
 /// pipeline setup (`try_clone_reader`, `alive_flag`).
+#[allow(dead_code)]
 pub struct PtyHandle {
     master: Arc<Mutex<Box<dyn MasterPty + Send>>>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
@@ -31,6 +32,7 @@ pub struct PtyHandle {
     alive: Arc<AtomicBool>,
 }
 
+#[allow(dead_code)]
 impl PtyHandle {
     /// Clone the PTY reader for output pipeline setup.
     ///
@@ -59,10 +61,9 @@ impl PtyHandle {
 impl ProcessHandle for PtyHandle {
     fn write_input(&self, data: &[u8]) -> Result<(), SessionError> {
         let mut writer = self.writer.lock().map_err(|e| {
-            SessionError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to lock writer: {e}"),
-            ))
+            SessionError::Io(std::io::Error::other(format!(
+                "Failed to lock writer: {e}"
+            )))
         })?;
         writer.write_all(data)?;
         writer.flush()?;
@@ -71,10 +72,9 @@ impl ProcessHandle for PtyHandle {
 
     fn resize(&self, cols: u16, rows: u16) -> Result<(), SessionError> {
         let master = self.master.lock().map_err(|e| {
-            SessionError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to lock master: {e}"),
-            ))
+            SessionError::Io(std::io::Error::other(format!(
+                "Failed to lock master: {e}"
+            )))
         })?;
         master
             .resize(NativePtySize {
@@ -83,12 +83,7 @@ impl ProcessHandle for PtyHandle {
                 pixel_width: 0,
                 pixel_height: 0,
             })
-            .map_err(|e| {
-                SessionError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Resize failed: {e}"),
-                ))
-            })
+            .map_err(|e| SessionError::Io(std::io::Error::other(format!("Resize failed: {e}"))))
     }
 
     fn close(&self) -> Result<(), SessionError> {
@@ -111,6 +106,7 @@ impl ProcessHandle for PtyHandle {
 /// thread — the caller is responsible for calling `PtyHandle::try_clone_reader()`
 /// and driving the output pipeline.
 #[derive(Default)]
+#[allow(dead_code)]
 pub struct PtySpawner;
 
 impl PtySpawner {
