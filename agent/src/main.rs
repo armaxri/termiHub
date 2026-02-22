@@ -1,5 +1,7 @@
 mod buffer;
+#[cfg(unix)]
 mod daemon;
+#[cfg(unix)]
 mod docker;
 mod files;
 mod handler;
@@ -8,8 +10,11 @@ mod monitoring;
 mod protocol;
 mod serial;
 mod session;
+#[cfg(unix)]
 mod shell;
+#[cfg(unix)]
 mod ssh;
+#[cfg(unix)]
 mod state;
 
 use tokio_util::sync::CancellationToken;

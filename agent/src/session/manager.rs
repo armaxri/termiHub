@@ -3,6 +3,7 @@ use std::fmt;
 
 use chrono::Utc;
 use tokio::sync::Mutex;
+#[cfg(unix)]
 use tracing::info;
 
 use crate::io::transport::NotificationSender;
