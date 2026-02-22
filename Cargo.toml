@@ -8,3 +8,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 serialport = "4"
+ssh2 = { version = "0.9", features = ["openssl-on-win32"] }
+ssh-key = { version = "0.6", features = ["encryption", "ed25519", "rsa"] }
+openssl = { version = "0.10", features = ["vendored"] }

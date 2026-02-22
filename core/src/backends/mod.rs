@@ -12,3 +12,6 @@ pub mod serial;
 
 #[cfg(feature = "telnet")]
 pub mod telnet;
+
+#[cfg(feature = "ssh")]
+pub mod ssh;
