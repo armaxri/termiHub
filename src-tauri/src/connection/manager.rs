@@ -12,25 +12,29 @@ use super::settings::{AppSettings, SettingsStorage};
 use super::storage::ConnectionStorage;
 use crate::credential::crypto::{decrypt_with_password, encrypt_with_password};
 use crate::credential::{CredentialKey, CredentialStore, CredentialType};
-use crate::terminal::backend::ConnectionConfig;
 
-/// Route credentials to the active store (if `save_password` is set),
+/// Route credentials to the active store (if `savePassword` is set),
 /// then strip the password field so it is never written to disk.
 pub(crate) fn prepare_for_storage(
     mut connection: SavedConnection,
     store: &dyn CredentialStore,
 ) -> Result<SavedConnection> {
-    if let ConnectionConfig::Ssh(ref mut ssh_cfg) = connection.config {
-        if let Some(ref password) = ssh_cfg.password {
-            if ssh_cfg.save_password == Some(true) {
-                let cred_type = if ssh_cfg.auth_method == "key" {
-                    CredentialType::KeyPassphrase
-                } else {
-                    CredentialType::Password
-                };
-                store.set(&CredentialKey::new(&connection.id, cred_type), password)?;
-            }
-            ssh_cfg.password = None;
+    let settings = &mut connection.config.settings;
+    if let Some(password) = settings.get("password").and_then(|v| v.as_str()).map(String::from) {
+        if settings.get("savePassword").and_then(|v| v.as_bool()) == Some(true) {
+            let auth_method = settings
+                .get("authMethod")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let cred_type = if auth_method == "key" {
+                CredentialType::KeyPassphrase
+            } else {
+                CredentialType::Password
+            };
+            store.set(&CredentialKey::new(&connection.id, cred_type), &password)?;
+        }
+        if let Some(obj) = settings.as_object_mut() {
+            obj.remove("password");
         }
     }
     Ok(connection)
@@ -81,9 +85,9 @@ impl ConnectionManager {
         // Migrate: strip any existing stored passwords
         let mut needs_save = false;
         for conn in &mut store.connections {
-            if let ConnectionConfig::Ssh(ref mut ssh_cfg) = conn.config {
-                if ssh_cfg.password.is_some() {
-                    ssh_cfg.password = None;
+            if let Some(obj) = conn.config.settings.as_object_mut() {
+                if obj.get("password").and_then(|v| v.as_str()).is_some() {
+                    obj.remove("password");
                     needs_save = true;
                 }
             }
@@ -362,10 +366,11 @@ impl ConnectionManager {
             Some(pw) => {
                 let mut cred_map: HashMap<String, String> = HashMap::new();
 
-                // Gather credentials for SSH connections
+                // Gather credentials for connections that have auth settings
                 for conn in &connections {
-                    if let ConnectionConfig::Ssh(ref ssh) = conn.config {
-                        let cred_type = if ssh.auth_method == "key" {
+                    let settings = &conn.config.settings;
+                    if let Some(auth_method) = settings.get("authMethod").and_then(|v| v.as_str()) {
+                        let cred_type = if auth_method == "key" {
                             CredentialType::KeyPassphrase
                         } else {
                             CredentialType::Password
@@ -575,10 +580,11 @@ pub(crate) fn try_load_external_file(
     // Migrate: strip plaintext passwords from external file and route to credential store.
     // This mirrors the migration in `ConnectionManager::new()` for the main connections.json.
     let has_plaintext_passwords = ext_store.connections.iter().any(|conn| {
-        matches!(
-            &conn.config,
-            ConnectionConfig::Ssh(ssh) if ssh.password.is_some()
-        )
+        conn.config
+            .settings
+            .get("password")
+            .and_then(|v| v.as_str())
+            .is_some()
     });
     if has_plaintext_passwords {
         ext_store.connections = ext_store
@@ -712,7 +718,7 @@ pub fn save_external_file(
 mod tests {
     use super::*;
     use crate::credential::{CredentialKey, CredentialStoreStatus, CredentialType};
-    use crate::terminal::backend::{LocalShellConfig, RemoteAgentConfig, SshConfig};
+    use crate::terminal::backend::{ConnectionConfig, RemoteAgentConfig};
     use std::sync::Mutex;
 
     /// Simple mock credential store that records `set` and `remove_all_for_connection` calls.
@@ -765,17 +771,26 @@ mod tests {
         password: Option<&str>,
         save_password: Option<bool>,
     ) -> SavedConnection {
+        let mut settings = serde_json::json!({
+            "host": "host",
+            "port": 22,
+            "username": "user",
+            "authMethod": auth_method,
+            "enableX11Forwarding": false
+        });
+        if let Some(pw) = password {
+            settings["password"] = serde_json::Value::String(pw.to_string());
+        }
+        if let Some(sp) = save_password {
+            settings["savePassword"] = serde_json::Value::Bool(sp);
+        }
         SavedConnection {
             id: id.to_string(),
             name: "SSH".to_string(),
-            config: ConnectionConfig::Ssh(SshConfig {
-                host: "host".to_string(),
-                username: "user".to_string(),
-                auth_method: auth_method.to_string(),
-                password: password.map(|s| s.to_string()),
-                save_password,
-                ..SshConfig::default()
-            }),
+            config: ConnectionConfig {
+                type_id: "ssh".to_string(),
+                settings,
+            },
             folder_id: None,
             terminal_options: None,
             source_file: None,
@@ -786,11 +801,10 @@ mod tests {
         SavedConnection {
             id: id.to_string(),
             name: "Local".to_string(),
-            config: ConnectionConfig::Local(LocalShellConfig {
-                shell_type: "bash".to_string(),
-                initial_command: None,
-                starting_directory: None,
-            }),
+            config: ConnectionConfig {
+                type_id: "local".to_string(),
+                settings: serde_json::json!({"shellType": "bash"}),
+            },
             folder_id: None,
             terminal_options: None,
             source_file: None,
@@ -823,11 +837,7 @@ mod tests {
         let store = MockStore::new();
         let conn = make_ssh_conn("c1", "password", Some("secret"), None);
         let result = prepare_for_storage(conn, &store).unwrap();
-        if let ConnectionConfig::Ssh(ssh) = &result.config {
-            assert!(ssh.password.is_none());
-        } else {
-            panic!("Expected SSH config");
-        }
+        assert!(result.config.settings.get("password").is_none());
         assert!(store.stored.lock().unwrap().is_empty());
     }
 
@@ -836,11 +846,10 @@ mod tests {
         let store = MockStore::new();
         let conn = make_ssh_conn("c1", "password", Some("secret"), Some(true));
         let result = prepare_for_storage(conn, &store).unwrap();
-        if let ConnectionConfig::Ssh(ssh) = &result.config {
-            assert!(ssh.password.is_none(), "Password should be stripped");
-        } else {
-            panic!("Expected SSH config");
-        }
+        assert!(
+            result.config.settings.get("password").is_none(),
+            "Password should be stripped"
+        );
         let stored = store.stored.lock().unwrap();
         assert_eq!(stored.len(), 1);
         assert_eq!(stored[0].0.connection_id, "c1");
@@ -864,11 +873,8 @@ mod tests {
         let store = MockStore::new();
         let conn = make_local_conn("c3");
         let result = prepare_for_storage(conn, &store).unwrap();
-        if let ConnectionConfig::Local(local) = &result.config {
-            assert_eq!(local.shell_type, "bash");
-        } else {
-            panic!("Expected Local config");
-        }
+        assert_eq!(result.config.type_id, "local");
+        assert_eq!(result.config.settings["shellType"], "bash");
         assert!(store.stored.lock().unwrap().is_empty());
     }
 
@@ -933,11 +939,10 @@ mod tests {
         assert_eq!(conn.id, "conn-1");
         assert_eq!(conn.source_file.as_deref(), Some(path_str));
         assert_eq!(conn.folder_id.as_deref(), Some("folder-1"));
-        if let ConnectionConfig::Ssh(ssh) = &conn.config {
-            assert!(ssh.password.is_none(), "Password should be stripped");
-        } else {
-            panic!("Expected SSH config");
-        }
+        assert!(
+            conn.config.settings.get("password").is_none(),
+            "Password should be stripped"
+        );
     }
 
     #[test]
@@ -993,11 +998,10 @@ mod tests {
 
         // In-memory password should be stripped
         assert_eq!(source.connections.len(), 1);
-        if let ConnectionConfig::Ssh(ssh) = &source.connections[0].config {
-            assert!(ssh.password.is_none(), "In-memory password should be None");
-        } else {
-            panic!("Expected SSH config");
-        }
+        assert!(
+            source.connections[0].config.settings.get("password").is_none(),
+            "In-memory password should be None"
+        );
 
         // Credential store should have the password
         let stored = mock.stored.lock().unwrap();
@@ -1077,11 +1081,10 @@ mod tests {
             "folder_id should be preserved on disk"
         );
         // Password should be gone
-        if let ConnectionConfig::Ssh(ssh) = &on_disk.connections[0].config {
-            assert!(ssh.password.is_none(), "Password stripped on disk");
-        } else {
-            panic!("Expected SSH config on disk");
-        }
+        assert!(
+            on_disk.connections[0].config.settings.get("password").is_none(),
+            "Password stripped on disk"
+        );
     }
 
     #[test]

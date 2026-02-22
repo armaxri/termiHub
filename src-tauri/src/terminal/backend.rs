@@ -5,7 +5,8 @@
 //! `termihub_core` and the unified `SessionManager` in `crate::session`.
 //!
 //! What remains here are the agent SSH transport config, channel constants,
-//! and re-exports of core config types used across the desktop crate.
+//! the generic `ConnectionConfig` persistence struct, and re-exports of core
+//! config types used across the desktop crate.
 
 use std::sync::mpsc;
 
@@ -13,9 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::utils::expand::{expand_env_placeholders, expand_tilde};
 
-pub use termihub_core::config::{
-    DockerConfig, EnvVar, SerialConfig, SshConfig, TelnetConfig, VolumeMount,
-};
+pub use termihub_core::config::SshConfig;
 
 /// SSH transport configuration for a remote agent (no session details).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,98 +61,17 @@ impl RemoteAgentConfig {
     }
 }
 
-/// Connection configuration for saved connections (persistence format).
+/// Generic connection configuration for saved connections (persistence format).
 ///
-/// This tagged enum defines the on-disk JSON shape for saved connections.
-/// It is no longer used at runtime for creating sessions — the new
-/// `SessionManager` uses `type_id` + settings JSON via `ConnectionType`.
+/// Stores the connection type as a plain string and the settings as
+/// unstructured JSON. The on-disk format is `{"type": "<id>", "config": {...}}`
+/// which is backward-compatible with the previous tagged-enum format.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", content = "config")]
-pub enum ConnectionConfig {
-    #[serde(rename = "local")]
-    Local(LocalShellConfig),
-    #[serde(rename = "ssh")]
-    Ssh(SshConfig),
-    #[serde(rename = "telnet")]
-    Telnet(TelnetConfig),
-    #[serde(rename = "serial")]
-    Serial(SerialConfig),
-    #[serde(rename = "remote-session")]
-    RemoteSession(Box<RemoteSessionConfig>),
-    #[serde(rename = "docker")]
-    Docker(DockerConfig),
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LocalShellConfig {
-    pub shell_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub initial_command: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub starting_directory: Option<String>,
-}
-
-/// Session configuration for a session running on a remote agent.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RemoteSessionConfig {
-    /// ID of the parent remote agent.
-    pub agent_id: String,
-    /// "shell" or "serial".
-    pub session_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub shell: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub serial_port: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub baud_rate: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data_bits: Option<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stop_bits: Option<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub parity: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub flow_control: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    /// Whether this session survives reconnection (re-attach vs recreate).
-    #[serde(default)]
-    pub persistent: bool,
-    /// Docker image name (for docker session type).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub docker_image: Option<String>,
-    /// Docker environment variables (for docker session type).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub docker_env_vars: Option<Vec<EnvVar>>,
-    /// Docker volume mounts (for docker session type).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub docker_volumes: Option<Vec<VolumeMount>>,
-    /// Docker working directory (for docker session type).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub docker_working_directory: Option<String>,
-    /// Remove Docker container on exit (for docker session type).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub docker_remove_on_exit: Option<bool>,
-    /// SSH target host (for ssh session type — jump host).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ssh_host: Option<String>,
-    /// SSH target port (for ssh session type).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ssh_port: Option<u16>,
-    /// SSH username (for ssh session type).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ssh_username: Option<String>,
-    /// SSH auth method: "key", "password", or "agent" (for ssh session type).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ssh_auth_method: Option<String>,
-    /// SSH password (for ssh session type, password auth).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ssh_password: Option<String>,
-    /// SSH private key path (for ssh session type, key auth).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ssh_key_path: Option<String>,
+pub struct ConnectionConfig {
+    #[serde(rename = "type")]
+    pub type_id: String,
+    #[serde(rename = "config")]
+    pub settings: serde_json::Value,
 }
 
 /// Event emitted when a remote connection's state changes.
@@ -161,52 +79,6 @@ pub struct RemoteSessionConfig {
 pub struct RemoteStateChangeEvent {
     pub session_id: String,
     pub state: String,
-}
-
-impl ConnectionConfig {
-    /// Return a copy with all `${env:...}` placeholders expanded.
-    #[allow(dead_code)]
-    pub fn expand(self) -> Self {
-        match self {
-            Self::Local(cfg) => Self::Local(cfg.expand()),
-            Self::Ssh(cfg) => Self::Ssh(cfg.expand()),
-            Self::Telnet(cfg) => Self::Telnet(cfg.expand()),
-            Self::Serial(cfg) => Self::Serial(cfg.expand()),
-            Self::RemoteSession(cfg) => Self::RemoteSession(Box::new(cfg.expand())),
-            Self::Docker(cfg) => Self::Docker(cfg.expand()),
-        }
-    }
-}
-
-impl LocalShellConfig {
-    #[allow(dead_code)]
-    pub fn expand(mut self) -> Self {
-        self.initial_command = self.initial_command.map(|s| expand_env_placeholders(&s));
-        self.starting_directory = self
-            .starting_directory
-            .map(|s| expand_tilde(&expand_env_placeholders(&s)));
-        self
-    }
-}
-
-impl RemoteSessionConfig {
-    #[allow(dead_code)]
-    pub fn expand(mut self) -> Self {
-        self.shell = self.shell.map(|s| expand_env_placeholders(&s));
-        self.serial_port = self.serial_port.map(|s| expand_env_placeholders(&s));
-        self.docker_image = self.docker_image.map(|s| expand_env_placeholders(&s));
-        self.docker_working_directory = self
-            .docker_working_directory
-            .map(|s| expand_tilde(&expand_env_placeholders(&s)));
-        self.ssh_host = self.ssh_host.map(|s| expand_env_placeholders(&s));
-        self.ssh_username = self.ssh_username.map(|s| expand_env_placeholders(&s));
-        self.ssh_key_path = self.ssh_key_path.map(|s| {
-            let stripped = s.trim().trim_matches('"').trim_matches('\'');
-            expand_tilde(&expand_env_placeholders(stripped))
-        });
-        self.ssh_password = self.ssh_password.map(|s| expand_env_placeholders(&s));
-        self
-    }
 }
 
 /// Bounded channel capacity for output data from backends.
@@ -333,5 +205,67 @@ mod tests {
         };
         let ssh = agent.to_ssh_config();
         assert_eq!(ssh.save_password, Some(true));
+    }
+
+    #[test]
+    fn connection_config_backward_compat_local() {
+        let json = r#"{"type": "local", "config": {"shellType": "bash"}}"#;
+        let config: ConnectionConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.type_id, "local");
+        assert_eq!(config.settings["shellType"], "bash");
+    }
+
+    #[test]
+    fn connection_config_backward_compat_ssh() {
+        let json = r#"{
+            "type": "ssh",
+            "config": {
+                "host": "example.com",
+                "port": 22,
+                "username": "admin",
+                "authMethod": "password",
+                "enableX11Forwarding": false
+            }
+        }"#;
+        let config: ConnectionConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.type_id, "ssh");
+        assert_eq!(config.settings["host"], "example.com");
+        assert_eq!(config.settings["port"], 22);
+        assert_eq!(config.settings["username"], "admin");
+    }
+
+    #[test]
+    fn connection_config_backward_compat_serial() {
+        let json = r#"{
+            "type": "serial",
+            "config": {
+                "port": "/dev/ttyUSB0",
+                "baudRate": 115200,
+                "dataBits": 8,
+                "stopBits": 1,
+                "parity": "none",
+                "flowControl": "none"
+            }
+        }"#;
+        let config: ConnectionConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.type_id, "serial");
+        assert_eq!(config.settings["baudRate"], 115200);
+    }
+
+    #[test]
+    fn connection_config_round_trip() {
+        let config = ConnectionConfig {
+            type_id: "ssh".to_string(),
+            settings: serde_json::json!({
+                "host": "pi.local",
+                "port": 22,
+                "username": "pi",
+                "authMethod": "key"
+            }),
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: ConnectionConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.type_id, "ssh");
+        assert_eq!(deserialized.settings["host"], "pi.local");
     }
 }
