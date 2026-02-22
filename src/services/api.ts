@@ -38,6 +38,33 @@ export async function getConnectionTypes(): Promise<ConnectionTypeInfo[]> {
   return await invoke<ConnectionTypeInfo[]>("get_connection_types");
 }
 
+// --- Schema conversion helpers ---
+
+/**
+ * Convert a backend ConnectionConfig (`{ type, config }`) into
+ * the frontend's `{ typeId, settings }` format for schema-driven editing.
+ */
+export function fromConnectionConfig(config: ConnectionConfig): {
+  typeId: string;
+  settings: Record<string, unknown>;
+} {
+  return {
+    typeId: config.type,
+    settings: config.config as unknown as Record<string, unknown>,
+  };
+}
+
+/**
+ * Convert the frontend's `{ typeId, settings }` back into a backend
+ * ConnectionConfig (`{ type, config }`) for persistence and session creation.
+ */
+export function toConnectionConfig(
+  typeId: string,
+  settings: Record<string, unknown>
+): ConnectionConfig {
+  return { type: typeId, config: settings } as ConnectionConfig;
+}
+
 /** Create a new connection session (type-agnostic). */
 export async function createConnection(
   typeId: string,
