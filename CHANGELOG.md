@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Shared core SSH session helpers (`build_ssh_args`, `validate_ssh_config`) in the `termihub-core` crate — unified SSH CLI argument building and config validation that can replace duplicated logic in the desktop and agent crates (#309)
 - Shared `RingBuffer` module in the `termihub-core` crate — circular byte buffer moved from the agent so it can be reused by the desktop for reconnect replay and serial capture (#302)
 - Shared core session/shell helpers (`detect_default_shell`, `shell_to_command`, `build_shell_command`, `osc7_setup_command`, `initial_command_strategy`) in the `termihub-core` crate — unified shell command building, OSC 7 CWD tracking injection, and initial command strategy that can replace duplicated logic in the desktop and agent crates (#306)
 - Shared core monitoring types and parsers (`SystemStats`, `CpuCounters`, `parse_stats`, `parse_cpu_line`, `cpu_percent_from_delta`, `parse_meminfo_value`, `parse_df_output`, `MONITORING_COMMAND`) in the `termihub-core` crate — canonical implementation that replaces duplicated monitoring code in the desktop and agent crates (#301)
