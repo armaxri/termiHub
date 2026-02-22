@@ -401,7 +401,7 @@ mod tests {
             "type": "serial",
             "config": {
                 "port": "/dev/ttyUSB0",
-                "baud_rate": 9600
+                "baudRate": 9600
             },
             "title": "Serial monitor"
         });
@@ -642,10 +642,10 @@ mod tests {
             "shell": "/bin/bash",
             "cols": 120,
             "rows": 40,
-            "env_vars": [{"key": "FOO", "value": "bar"}],
-            "volumes": [{"host_path": "/host", "container_path": "/mnt", "read_only": true}],
-            "working_directory": "/app",
-            "remove_on_exit": false,
+            "envVars": [{"key": "FOO", "value": "bar"}],
+            "volumes": [{"hostPath": "/host", "containerPath": "/mnt", "readOnly": true}],
+            "workingDirectory": "/app",
+            "removeOnExit": false,
             "env": {"TERM": "xterm-256color"}
         });
         let cfg: DockerSessionConfig = serde_json::from_value(json).unwrap();
@@ -682,14 +682,14 @@ mod tests {
             read_only: false,
         };
         let v = serde_json::to_value(&vol).unwrap();
-        assert_eq!(v["host_path"], "/host");
-        assert_eq!(v["container_path"], "/container");
-        assert!(!v["read_only"].as_bool().unwrap());
+        assert_eq!(v["hostPath"], "/host");
+        assert_eq!(v["containerPath"], "/container");
+        assert!(!v["readOnly"].as_bool().unwrap());
     }
 
     #[test]
     fn ssh_session_config_defaults() {
-        let json = json!({"host": "build.internal", "username": "dev", "auth_method": "agent"});
+        let json = json!({"host": "build.internal", "username": "dev", "authMethod": "agent"});
         let cfg: SshSessionConfig = serde_json::from_value(json).unwrap();
         assert_eq!(cfg.host, "build.internal");
         assert_eq!(cfg.username, "dev");
@@ -708,10 +708,10 @@ mod tests {
         let json = json!({
             "host": "build.internal",
             "username": "deploy",
-            "auth_method": "key",
+            "authMethod": "key",
             "port": 2222,
             "password": "secret",
-            "key_path": "/home/user/.ssh/id_ed25519",
+            "keyPath": "/home/user/.ssh/id_ed25519",
             "shell": "/bin/bash",
             "cols": 120,
             "rows": 40,
