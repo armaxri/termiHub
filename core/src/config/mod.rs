@@ -30,6 +30,7 @@ pub struct EnvVar {
 
 /// A Docker volume mount definition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VolumeMount {
     pub host_path: String,
     pub container_path: String,
@@ -73,6 +74,7 @@ impl Default for ShellConfig {
 ///
 /// Shared between desktop and agent serial backends.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SerialConfig {
     pub port: String,
     #[serde(default = "default_baud_rate")]
@@ -104,8 +106,10 @@ impl Default for SerialConfig {
 ///
 /// Superset of desktop `DockerConfig` and agent `DockerSessionConfig`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DockerConfig {
     pub image: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub shell: Option<String>,
     #[serde(default = "default_cols")]
     pub cols: u16,
@@ -115,6 +119,7 @@ pub struct DockerConfig {
     pub env_vars: Vec<EnvVar>,
     #[serde(default)]
     pub volumes: Vec<VolumeMount>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub working_directory: Option<String>,
     #[serde(default = "default_remove_on_exit")]
     pub remove_on_exit: bool,
@@ -144,6 +149,7 @@ impl Default for DockerConfig {
 /// - `port`: defaults to 22.
 /// - `cols`/`rows`: terminal dimensions (defaults 80x24).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SshConfig {
     pub host: String,
     #[serde(default = "default_ssh_port")]
@@ -161,8 +167,11 @@ pub struct SshConfig {
     pub env: HashMap<String, String>,
     #[serde(default)]
     pub enable_x11_forwarding: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enable_monitoring: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enable_file_browser: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub save_password: Option<bool>,
 }
 
@@ -438,7 +447,7 @@ mod tests {
         assert!(back.save_password.is_none());
     }
 
-    // --- Snake_case field name tests ---
+    // --- camelCase field name tests ---
 
     #[test]
     fn shell_config_snake_case_fields() {
@@ -456,14 +465,14 @@ mod tests {
     }
 
     #[test]
-    fn serial_config_snake_case_fields() {
+    fn serial_config_camel_case_fields() {
         let json = r#"{
             "port": "COM3",
-            "baud_rate": 9600,
-            "data_bits": 8,
-            "stop_bits": 1,
+            "baudRate": 9600,
+            "dataBits": 8,
+            "stopBits": 1,
             "parity": "none",
-            "flow_control": "none"
+            "flowControl": "none"
         }"#;
         let cfg: SerialConfig = serde_json::from_str(json).unwrap();
         assert_eq!(cfg.port, "COM3");
@@ -471,13 +480,13 @@ mod tests {
     }
 
     #[test]
-    fn docker_config_snake_case_fields() {
+    fn docker_config_camel_case_fields() {
         let json = r#"{
             "image": "alpine",
-            "env_vars": [],
+            "envVars": [],
             "volumes": [],
-            "working_directory": "/opt",
-            "remove_on_exit": false
+            "workingDirectory": "/opt",
+            "removeOnExit": false
         }"#;
         let cfg: DockerConfig = serde_json::from_str(json).unwrap();
         assert_eq!(cfg.working_directory.as_deref(), Some("/opt"));
@@ -485,17 +494,17 @@ mod tests {
     }
 
     #[test]
-    fn ssh_config_snake_case_fields() {
+    fn ssh_config_camel_case_fields() {
         let json = r#"{
             "host": "server",
             "port": 22,
             "username": "root",
-            "auth_method": "password",
-            "key_path": null,
-            "enable_x11_forwarding": true,
-            "enable_monitoring": true,
-            "enable_file_browser": false,
-            "save_password": true
+            "authMethod": "password",
+            "keyPath": null,
+            "enableX11Forwarding": true,
+            "enableMonitoring": true,
+            "enableFileBrowser": false,
+            "savePassword": true
         }"#;
         let cfg: SshConfig = serde_json::from_str(json).unwrap();
         assert!(cfg.enable_x11_forwarding);
@@ -543,7 +552,7 @@ mod tests {
         let json = r#"{
             "host": "h",
             "username": "u",
-            "auth_method": "password"
+            "authMethod": "password"
         }"#;
         let cfg: SshConfig = serde_json::from_str(json).unwrap();
         assert_eq!(cfg.port, 22);
