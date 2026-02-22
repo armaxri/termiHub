@@ -2,91 +2,15 @@ use std::collections::HashMap;
 use std::io::Read;
 use std::sync::{Arc, Mutex};
 
-use serde::Serialize;
 use ssh2::Session;
+
+use termihub_core::monitoring::{
+    cpu_percent_from_delta, parse_stats, CpuCounters, SystemStats, MONITORING_COMMAND,
+};
 
 use crate::terminal::backend::SshConfig;
 use crate::utils::errors::TerminalError;
 use crate::utils::ssh_auth::connect_and_authenticate;
-
-/// System statistics retrieved from a remote Linux host.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SystemStats {
-    pub hostname: String,
-    pub uptime_seconds: f64,
-    pub load_average: [f64; 3],
-    pub cpu_usage_percent: f64,
-    pub memory_total_kb: u64,
-    pub memory_available_kb: u64,
-    pub memory_used_percent: f64,
-    pub disk_total_kb: u64,
-    pub disk_used_kb: u64,
-    pub disk_used_percent: f64,
-    pub os_info: String,
-}
-
-/// Cumulative CPU time counters parsed from the aggregate `cpu` line in `/proc/stat`.
-#[derive(Debug, Clone, Default)]
-struct CpuCounters {
-    user: u64,
-    nice: u64,
-    system: u64,
-    idle: u64,
-    iowait: u64,
-    irq: u64,
-    softirq: u64,
-    steal: u64,
-}
-
-impl CpuCounters {
-    /// Total CPU time across all fields.
-    fn total(&self) -> u64 {
-        self.user
-            + self.nice
-            + self.system
-            + self.idle
-            + self.iowait
-            + self.irq
-            + self.softirq
-            + self.steal
-    }
-
-    /// Idle CPU time (idle + iowait).
-    fn idle_total(&self) -> u64 {
-        self.idle + self.iowait
-    }
-}
-
-/// Compute CPU usage percentage from the delta between two counter snapshots.
-/// Returns a value between 0.0 and 100.0.
-fn cpu_percent_from_delta(prev: &CpuCounters, curr: &CpuCounters) -> f64 {
-    let total_delta = curr.total().saturating_sub(prev.total());
-    if total_delta == 0 {
-        return 0.0;
-    }
-    let idle_delta = curr.idle_total().saturating_sub(prev.idle_total());
-    let active_delta = total_delta.saturating_sub(idle_delta);
-    (active_delta as f64 / total_delta as f64) * 100.0
-}
-
-/// Parse the aggregate `cpu` line from `/proc/stat`.
-///
-/// Format: `cpu  user nice system idle iowait irq softirq steal [guest guest_nice]`
-fn parse_cpu_line(line: &str) -> CpuCounters {
-    let parts: Vec<&str> = line.split_whitespace().collect();
-    // parts[0] is "cpu", values start at parts[1]
-    CpuCounters {
-        user: parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0),
-        nice: parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0),
-        system: parts.get(3).and_then(|s| s.parse().ok()).unwrap_or(0),
-        idle: parts.get(4).and_then(|s| s.parse().ok()).unwrap_or(0),
-        iowait: parts.get(5).and_then(|s| s.parse().ok()).unwrap_or(0),
-        irq: parts.get(6).and_then(|s| s.parse().ok()).unwrap_or(0),
-        softirq: parts.get(7).and_then(|s| s.parse().ok()).unwrap_or(0),
-        steal: parts.get(8).and_then(|s| s.parse().ok()).unwrap_or(0),
-    }
-}
 
 /// A monitoring session holding a dedicated SSH connection.
 ///
@@ -135,11 +59,10 @@ impl MonitoringSession {
     /// CPU usage is computed from `/proc/stat` deltas between consecutive calls.
     /// The first call returns 0% since there is no previous snapshot to compare against.
     pub fn fetch_stats(&mut self) -> Result<SystemStats, TerminalError> {
-        let output = self.exec(
-            "hostname && cat /proc/loadavg && head -1 /proc/stat && cat /proc/meminfo && cat /proc/uptime && df -Pk / && uname -sr",
-        )?;
+        let output = self.exec(MONITORING_COMMAND)?;
 
-        let (mut stats, counters) = parse_stats(&output)?;
+        let (mut stats, counters) =
+            parse_stats(&output).map_err(|e| TerminalError::SshError(e.to_string()))?;
 
         // Compute CPU% from the delta with the previous snapshot.
         if let Some(prev) = &self.prev_cpu {
@@ -149,144 +72,6 @@ impl MonitoringSession {
 
         Ok(stats)
     }
-}
-
-/// Intermediate parse result containing both displayable stats and raw CPU counters.
-type ParseResult = (SystemStats, CpuCounters);
-
-/// Parse the combined command output into `SystemStats` and raw `CpuCounters`.
-///
-/// `cpu_usage_percent` in the returned `SystemStats` is set to 0.0; the caller
-/// is responsible for computing the actual value from counter deltas.
-fn parse_stats(output: &str) -> Result<ParseResult, TerminalError> {
-    let lines: Vec<&str> = output.lines().collect();
-    if lines.len() < 6 {
-        return Err(TerminalError::SshError(
-            "Unexpected monitoring output format".to_string(),
-        ));
-    }
-
-    // Line 0: hostname
-    let hostname = lines[0].trim().to_string();
-
-    // Line 1: /proc/loadavg — "0.15 0.10 0.05 1/234 5678"
-    let load_parts: Vec<&str> = lines[1].split_whitespace().collect();
-    let load_average = [
-        load_parts
-            .first()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0.0),
-        load_parts
-            .get(1)
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0.0),
-        load_parts
-            .get(2)
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0.0),
-    ];
-
-    // Line 2: aggregate cpu line from /proc/stat
-    let cpu_counters = parse_cpu_line(lines[2]);
-
-    // Lines 3+: /proc/meminfo — find MemTotal and MemAvailable
-    let mut mem_total_kb: u64 = 0;
-    let mut mem_available_kb: u64 = 0;
-    let mut meminfo_end = 3;
-
-    for (i, line) in lines.iter().enumerate().skip(3) {
-        if line.starts_with("MemTotal:") {
-            mem_total_kb = parse_meminfo_value(line);
-        } else if line.starts_with("MemAvailable:") {
-            mem_available_kb = parse_meminfo_value(line);
-        }
-        // /proc/uptime line starts with a digit — signals end of meminfo
-        if !line.contains(':') && line.chars().next().is_some_and(|c| c.is_ascii_digit()) {
-            // Check if this looks like uptime (two floats)
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() == 2 && parts[0].contains('.') && parts[1].contains('.') {
-                meminfo_end = i;
-                break;
-            }
-        }
-    }
-
-    // uptime line: "12345.67 89012.34"
-    let uptime_line = lines.get(meminfo_end).unwrap_or(&"0 0");
-    let uptime_parts: Vec<&str> = uptime_line.split_whitespace().collect();
-    let uptime_seconds: f64 = uptime_parts
-        .first()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0.0);
-
-    let memory_used_percent = if mem_total_kb > 0 {
-        let used = mem_total_kb.saturating_sub(mem_available_kb);
-        (used as f64 / mem_total_kb as f64) * 100.0
-    } else {
-        0.0
-    };
-
-    // df output: find the data line (skip header)
-    let mut disk_total_kb: u64 = 0;
-    let mut disk_used_kb: u64 = 0;
-    let mut disk_used_percent: f64 = 0.0;
-
-    for line in lines.iter().skip(meminfo_end + 1) {
-        if line.starts_with("Filesystem") || line.trim().is_empty() {
-            continue;
-        }
-        // uname line — skip it
-        if !line.starts_with('/')
-            && (line.starts_with("Linux")
-                || line.starts_with("Darwin")
-                || line.starts_with("FreeBSD"))
-        {
-            continue;
-        }
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() >= 5 {
-            disk_total_kb = parts[1].parse().unwrap_or(0);
-            disk_used_kb = parts[2].parse().unwrap_or(0);
-            // parts[4] is like "42%"
-            disk_used_percent = parts[4].trim_end_matches('%').parse().unwrap_or(0.0);
-            break;
-        }
-    }
-
-    // uname -sr: last non-empty line
-    let os_info = lines
-        .iter()
-        .rev()
-        .find(|l| {
-            let trimmed = l.trim();
-            !trimmed.is_empty() && !trimmed.starts_with('/')
-        })
-        .map(|s| s.trim().to_string())
-        .unwrap_or_default();
-
-    let stats = SystemStats {
-        hostname,
-        uptime_seconds,
-        load_average,
-        cpu_usage_percent: 0.0,
-        memory_total_kb: mem_total_kb,
-        memory_available_kb: mem_available_kb,
-        memory_used_percent,
-        disk_total_kb,
-        disk_used_kb,
-        disk_used_percent,
-        os_info,
-    };
-
-    Ok((stats, cpu_counters))
-}
-
-/// Extract the numeric kB value from a `/proc/meminfo` line like "MemTotal:       16384000 kB".
-fn parse_meminfo_value(line: &str) -> u64 {
-    line.split_whitespace()
-        .nth(1)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0)
 }
 
 /// Manages multiple monitoring sessions keyed by UUID.
@@ -329,6 +114,7 @@ impl MonitoringManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use termihub_core::monitoring::{parse_cpu_line, parse_meminfo_value};
 
     /// Helper: build sample output with the given cpu line.
     fn sample_output(cpu_line: &str) -> String {
