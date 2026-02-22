@@ -6,7 +6,9 @@
 //! overhead on the local Unix socket path. JSON-RPC encoding only happens
 //! at the agent-to-desktop boundary.
 
-use std::io::{self, Read, Write};
+use std::io;
+#[cfg(test)]
+use std::io::{Read, Write};
 
 #[cfg(unix)]
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -55,6 +57,7 @@ pub struct Frame {
 /// Read a single frame from a blocking reader.
 ///
 /// Returns `Ok(None)` on clean EOF (0 bytes read for the header).
+#[cfg(test)]
 pub fn read_frame(reader: &mut impl Read) -> io::Result<Option<Frame>> {
     let mut header = [0u8; HEADER_SIZE];
     match reader.read_exact(&mut header) {
@@ -82,6 +85,7 @@ pub fn read_frame(reader: &mut impl Read) -> io::Result<Option<Frame>> {
 }
 
 /// Write a single frame to a blocking writer.
+#[cfg(test)]
 pub fn write_frame(writer: &mut impl Write, msg_type: u8, payload: &[u8]) -> io::Result<()> {
     let length = payload.len() as u32;
     let mut header = [0u8; HEADER_SIZE];

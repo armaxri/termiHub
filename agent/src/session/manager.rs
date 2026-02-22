@@ -419,31 +419,6 @@ impl SessionManager {
         recovered
     }
 
-    /// Get the connection for a session (for monitoring/file browsing).
-    ///
-    /// Returns a reference to the in-process ConnectionType, if available.
-    /// Daemon-hosted sessions don't expose the ConnectionType directly.
-    pub async fn get_connection(
-        &self,
-        session_id: &str,
-    ) -> Option<SessionConnectionRef> {
-        let sessions = self.sessions.lock().await;
-        let info = sessions.get(session_id)?;
-        match &info.backend {
-            SessionBackend::InProcess { .. } => Some(SessionConnectionRef {
-                type_id: info.type_id.clone(),
-            }),
-            #[cfg(unix)]
-            SessionBackend::Daemon(_) => Some(SessionConnectionRef {
-                type_id: info.type_id.clone(),
-            }),
-            #[cfg(test)]
-            SessionBackend::Stub => Some(SessionConnectionRef {
-                type_id: info.type_id.clone(),
-            }),
-        }
-    }
-
     /// Return the number of sessions with status `Running`.
     pub async fn active_count(&self) -> u32 {
         let sessions = self.sessions.lock().await;
@@ -452,11 +427,6 @@ impl SessionManager {
             .filter(|s| s.status == SessionStatus::Running)
             .count() as u32
     }
-}
-
-/// Lightweight reference to a session's connection for capability queries.
-pub struct SessionConnectionRef {
-    pub type_id: String,
 }
 
 // ── Backend operations ─────────────────────────────────────────────

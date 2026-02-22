@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::UnixListener;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 use crate::daemon::protocol::{self, *};
 use termihub_core::buffer::RingBuffer;
@@ -214,18 +214,17 @@ async fn daemon_loop(
 
                         // Send buffer replay
                         let buffered = ring_buffer.read_all();
-                        if !buffered.is_empty() {
-                            if protocol::write_frame_async(
+                        if !buffered.is_empty()
+                            && protocol::write_frame_async(
                                 &mut write_half,
                                 MSG_BUFFER_REPLAY,
                                 &buffered,
                             )
                             .await
                             .is_err()
-                            {
-                                warn!("Failed to send buffer replay");
-                                continue;
-                            }
+                        {
+                            warn!("Failed to send buffer replay");
+                            continue;
                         }
 
                         // Send ready signal

@@ -56,6 +56,8 @@ pub struct SessionInfo {
     /// Connection type identifier (e.g., `"local"`, `"ssh"`, `"serial"`).
     pub type_id: String,
     pub status: SessionStatus,
+    /// Stored for session recovery and state persistence.
+    #[allow(dead_code)]
     pub settings: serde_json::Value,
     pub created_at: DateTime<Utc>,
     pub last_activity: DateTime<Utc>,
