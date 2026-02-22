@@ -246,8 +246,12 @@ mod tests {
     #[test]
     fn is_expired_returns_true_when_elapsed() {
         let mut inner = make_inner(Some(1), true);
-        // Simulate activity 2 minutes ago
-        inner.last_activity = Instant::now() - Duration::from_secs(120);
+        // Simulate activity 2 minutes ago.
+        // Use checked_sub to avoid panic on Windows when system uptime < 2 min.
+        let Some(past) = Instant::now().checked_sub(Duration::from_secs(120)) else {
+            return; // system uptime too short; skip
+        };
+        inner.last_activity = past;
         assert!(inner.is_expired());
     }
 
@@ -266,7 +270,11 @@ mod tests {
     #[test]
     fn remaining_duration_returns_none_when_expired() {
         let mut inner = make_inner(Some(1), true);
-        inner.last_activity = Instant::now() - Duration::from_secs(120);
+        // Use checked_sub to avoid panic on Windows when system uptime < 2 min.
+        let Some(past) = Instant::now().checked_sub(Duration::from_secs(120)) else {
+            return; // system uptime too short; skip
+        };
+        inner.last_activity = past;
         assert!(inner.remaining_duration().is_none());
     }
 
@@ -282,8 +290,12 @@ mod tests {
     #[test]
     fn remaining_duration_decreases_over_time() {
         let mut inner = make_inner(Some(15), true);
-        // Simulate activity 5 minutes ago
-        inner.last_activity = Instant::now() - Duration::from_secs(5 * 60);
+        // Simulate activity 5 minutes ago.
+        // Use checked_sub to avoid panic on Windows when system uptime < 5 min.
+        let Some(past) = Instant::now().checked_sub(Duration::from_secs(5 * 60)) else {
+            return; // system uptime too short; skip
+        };
+        inner.last_activity = past;
         let remaining = inner.remaining_duration().unwrap();
         // Should be close to 10 minutes
         assert!(remaining > Duration::from_secs(9 * 60));
