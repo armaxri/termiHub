@@ -320,8 +320,7 @@ impl ConnectionType for Ssh {
                             key: "env".to_string(),
                             label: "Environment Variables".to_string(),
                             description: Some(
-                                "Additional environment variables for the remote shell"
-                                    .to_string(),
+                                "Additional environment variables for the remote shell".to_string(),
                             ),
                             field_type: FieldType::KeyValueList,
                             required: false,
@@ -402,7 +401,11 @@ impl ConnectionType for Ssh {
         }
 
         channel
-            .request_pty("xterm-256color", None, Some((config.cols as u32, config.rows as u32, 0, 0)))
+            .request_pty(
+                "xterm-256color",
+                None,
+                Some((config.cols as u32, config.rows as u32, 0, 0)),
+            )
             .map_err(|e| SessionError::SpawnFailed(format!("PTY request failed: {e}")))?;
 
         channel
@@ -432,9 +435,10 @@ impl ConnectionType for Ssh {
         // Set up output channel.
         let (tx, _rx) = tokio::sync::mpsc::channel(OUTPUT_CHANNEL_CAPACITY);
         {
-            let mut guard = self.output_tx.lock().map_err(|e| {
-                SessionError::SpawnFailed(format!("Failed to lock output_tx: {e}"))
-            })?;
+            let mut guard = self
+                .output_tx
+                .lock()
+                .map_err(|e| SessionError::SpawnFailed(format!("Failed to lock output_tx: {e}")))?;
             *guard = Some(tx);
         }
 
@@ -555,9 +559,8 @@ impl ConnectionType for Ssh {
         let result = channel.request_pty_size(cols as u32, rows as u32, None, None);
         state.session.set_blocking(false);
         drop(channel);
-        result.map_err(|e| {
-            SessionError::Io(std::io::Error::other(format!("PTY resize failed: {e}")))
-        })
+        result
+            .map_err(|e| SessionError::Io(std::io::Error::other(format!("PTY resize failed: {e}"))))
     }
 
     fn subscribe_output(&self) -> OutputReceiver {
@@ -673,7 +676,10 @@ mod tests {
         let schema = ssh.settings_schema();
         let group = &schema.groups[1];
         let keys: Vec<&str> = group.fields.iter().map(|f| f.key.as_str()).collect();
-        assert_eq!(keys, vec!["authMethod", "password", "keyPath", "savePassword"]);
+        assert_eq!(
+            keys,
+            vec!["authMethod", "password", "keyPath", "savePassword"]
+        );
     }
 
     #[test]
@@ -1010,8 +1016,6 @@ mod tests {
     #[tokio::test]
     async fn disconnect_when_not_connected_is_noop() {
         let mut ssh = Ssh::new();
-        ssh.disconnect()
-            .await
-            .expect("disconnect should not fail");
+        ssh.disconnect().await.expect("disconnect should not fail");
     }
 }

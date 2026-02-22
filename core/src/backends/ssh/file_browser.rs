@@ -78,9 +78,9 @@ impl FileBrowser for SftpFileBrowser {
             let guard = state
                 .lock()
                 .map_err(|e| FileError::OperationFailed(format!("Lock failed: {e}")))?;
-            let sftp_state = guard.as_ref().ok_or(FileError::OperationFailed(
-                "SFTP not connected".to_string(),
-            ))?;
+            let sftp_state = guard
+                .as_ref()
+                .ok_or(FileError::OperationFailed("SFTP not connected".to_string()))?;
 
             let dir = std::path::Path::new(&path);
             let entries = sftp_state
@@ -123,9 +123,9 @@ impl FileBrowser for SftpFileBrowser {
             let guard = state
                 .lock()
                 .map_err(|e| FileError::OperationFailed(format!("Lock failed: {e}")))?;
-            let sftp_state = guard.as_ref().ok_or(FileError::OperationFailed(
-                "SFTP not connected".to_string(),
-            ))?;
+            let sftp_state = guard
+                .as_ref()
+                .ok_or(FileError::OperationFailed("SFTP not connected".to_string()))?;
 
             let remote = std::path::Path::new(&path);
             let mut remote_file = sftp_state
@@ -154,9 +154,9 @@ impl FileBrowser for SftpFileBrowser {
             let guard = state
                 .lock()
                 .map_err(|e| FileError::OperationFailed(format!("Lock failed: {e}")))?;
-            let sftp_state = guard.as_ref().ok_or(FileError::OperationFailed(
-                "SFTP not connected".to_string(),
-            ))?;
+            let sftp_state = guard
+                .as_ref()
+                .ok_or(FileError::OperationFailed("SFTP not connected".to_string()))?;
 
             let remote = std::path::Path::new(&path);
             let mut remote_file = sftp_state
@@ -183,9 +183,9 @@ impl FileBrowser for SftpFileBrowser {
             let guard = state
                 .lock()
                 .map_err(|e| FileError::OperationFailed(format!("Lock failed: {e}")))?;
-            let sftp_state = guard.as_ref().ok_or(FileError::OperationFailed(
-                "SFTP not connected".to_string(),
-            ))?;
+            let sftp_state = guard
+                .as_ref()
+                .ok_or(FileError::OperationFailed("SFTP not connected".to_string()))?;
 
             let p = std::path::Path::new(&path);
             // Try stat to determine if it's a directory.
@@ -221,9 +221,9 @@ impl FileBrowser for SftpFileBrowser {
             let guard = state
                 .lock()
                 .map_err(|e| FileError::OperationFailed(format!("Lock failed: {e}")))?;
-            let sftp_state = guard.as_ref().ok_or(FileError::OperationFailed(
-                "SFTP not connected".to_string(),
-            ))?;
+            let sftp_state = guard
+                .as_ref()
+                .ok_or(FileError::OperationFailed("SFTP not connected".to_string()))?;
 
             let old = std::path::Path::new(&from);
             let new = std::path::Path::new(&to);
@@ -246,9 +246,9 @@ impl FileBrowser for SftpFileBrowser {
             let guard = state
                 .lock()
                 .map_err(|e| FileError::OperationFailed(format!("Lock failed: {e}")))?;
-            let sftp_state = guard.as_ref().ok_or(FileError::OperationFailed(
-                "SFTP not connected".to_string(),
-            ))?;
+            let sftp_state = guard
+                .as_ref()
+                .ok_or(FileError::OperationFailed("SFTP not connected".to_string()))?;
 
             let p = std::path::Path::new(&path);
             let file_stat = sftp_state
