@@ -11,6 +11,7 @@ use tracing::info;
 use crate::daemon::client::DaemonClient;
 use crate::io::transport::NotificationSender;
 use crate::protocol::methods::ShellConfig;
+use termihub_core::session::shell::{build_shell_command, initial_command_strategy, InitialCommandStrategy};
 
 /// Agent-side handle for a shell session backed by a daemon process.
 ///
@@ -32,7 +33,7 @@ impl ShellBackend {
 
         // Build environment for the daemon
         let env_json = serde_json::to_string(&config.env)?;
-        let shell = config.shell.clone().unwrap_or_else(detect_default_shell);
+        let shell_cmd = build_shell_command(config);
 
         let agent_exe = std::env::current_exe()?;
 
@@ -41,7 +42,7 @@ impl ShellBackend {
             .arg("--daemon")
             .arg(&session_id)
             .env("TERMIHUB_SOCKET_PATH", &socket_path)
-            .env("TERMIHUB_SHELL", &shell)
+            .env("TERMIHUB_SHELL", &shell_cmd.program)
             .env("TERMIHUB_COLS", config.cols.to_string())
             .env("TERMIHUB_ROWS", config.rows.to_string())
             .env("TERMIHUB_ENV", &env_json)
@@ -52,8 +53,8 @@ impl ShellBackend {
             .map_err(|e| anyhow::anyhow!("Failed to spawn daemon: {e}"))?;
 
         info!(
-            "Daemon spawned for session {session_id}: shell={shell}, size={}x{}",
-            config.cols, config.rows
+            "Daemon spawned for session {session_id}: shell={}, size={}x{}",
+            shell_cmd.program, config.cols, config.rows
         );
 
         // Wait for socket to appear
@@ -61,6 +62,21 @@ impl ShellBackend {
 
         // Connect and set up reader
         let client = DaemonClient::connect(session_id, socket_path, notification_tx).await?;
+
+        // Handle initial command if configured
+        let strategy = initial_command_strategy(config.initial_command.as_deref(), false);
+        match strategy {
+            InitialCommandStrategy::Delayed(cmd, delay) => {
+                tokio::time::sleep(delay).await;
+                let input = format!("{cmd}\n");
+                client.write_input(input.as_bytes()).await?;
+            }
+            InitialCommandStrategy::Immediate(cmd) => {
+                let input = format!("{cmd}\n");
+                client.write_input(input.as_bytes()).await?;
+            }
+            InitialCommandStrategy::None | InitialCommandStrategy::WaitForClear(_) => {}
+        }
 
         Ok(Self { client })
     }
@@ -116,9 +132,4 @@ impl ShellBackend {
     pub fn socket_path(&self) -> &Path {
         self.client.socket_path()
     }
-}
-
-/// Detect the default shell for the current user.
-fn detect_default_shell() -> String {
-    std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())
 }
