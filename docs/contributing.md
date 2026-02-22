@@ -73,9 +73,18 @@ termihub/
 │   │   └── events/       # Event emitters
 │   ├── Cargo.toml
 │   └── tauri.conf.json
+├── core/                 # Shared Rust core library (termihub-core)
+│   └── src/
+│       ├── buffer/       # RingBuffer (1 MiB circular byte buffer)
+│       ├── config/       # ShellConfig, SshConfig, DockerConfig, SerialConfig, PtySize
+│       ├── errors.rs     # CoreError, SessionError, FileError
+│       ├── files/        # FileBackend trait, LocalFileBackend, FileEntry, utilities
+│       ├── monitoring/   # SystemStats, CpuCounters, StatsCollector trait, parsers
+│       ├── output/       # OutputCoalescer, screen-clear detection
+│       ├── protocol/     # JSON-RPC message types and error codes
+│       └── session/      # Transport traits, shell/SSH/Docker/serial helpers
 ├── agent/                # Remote agent (JSON-RPC over SSH)
 │   └── src/
-│       ├── buffer/       # Shared ring buffer (1 MiB)
 │       ├── daemon/       # Session daemon process and binary frame protocol
 │       ├── shell/        # ShellBackend (daemon client for shell sessions)
 │       ├── docker/       # DockerBackend (Docker container sessions)
@@ -83,7 +92,7 @@ termihub/
 │       ├── serial/       # SerialBackend (direct serial port access)
 │       ├── session/      # SessionManager, types, prepared connection definitions
 │       ├── files/        # File browsing (local, SFTP relay, Docker)
-│       ├── monitoring/   # System monitoring (CPU, memory, disk, network)
+│       ├── monitoring/   # System monitoring (delegates to core parsers)
 │       ├── handler/      # JSON-RPC method dispatcher
 │       ├── protocol/     # Protocol types, methods, error codes
 │       ├── state/        # Session state persistence (state.json)
@@ -311,17 +320,18 @@ pnpm test              # single run
 pnpm test:watch        # watch mode
 pnpm test:coverage     # with coverage report
 
-# Rust backend tests
-cd src-tauri && cargo test
+# Rust workspace tests (core + agent + desktop)
+cargo test --workspace
 
-# Agent tests
-cd agent && cargo test
+# Individual crate tests
+cargo test -p termihub-core
+cargo test -p termihub-agent
 
 # TypeScript type checking
 pnpm build
 
-# Rust linting
-cd src-tauri && cargo clippy
+# Rust linting (workspace-wide)
+cargo clippy --workspace --all-targets -- -D warnings
 
 # E2E tests (requires built app — see docs/testing.md for setup)
 pnpm test:e2e

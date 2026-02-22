@@ -45,7 +45,7 @@ src/                          # React frontend
   store/                      # appStore.ts (Zustand)
   types/                      # terminal.ts, connection.ts, events.ts
   utils/                      # formatters, shell detection, panelTree
-src-tauri/src/                # Rust backend
+src-tauri/src/                # Rust backend (desktop)
   terminal/                   # backend.rs (trait), manager.rs, local_shell.rs, serial.rs, ssh.rs, telnet.rs
   connection/                 # config.rs, manager.rs, storage.rs
   files/                      # sftp.rs, local.rs, browser.rs, utils.rs
@@ -53,9 +53,18 @@ src-tauri/src/                # Rust backend
   commands/                   # Tauri IPC command handlers
   events/                     # Event emitters
   utils/                      # shell_detect.rs, expand.rs, errors.rs
+core/src/                     # Shared Rust core library (termihub-core)
+  buffer/                     # RingBuffer (1 MiB circular byte buffer)
+  config/                     # ShellConfig, SshConfig, DockerConfig, SerialConfig, PtySize
+  errors.rs                   # CoreError, SessionError, FileError
+  files/                      # FileBackend trait, LocalFileBackend, FileEntry, utilities
+  monitoring/                 # SystemStats, CpuCounters, StatsCollector trait, parsers
+  output/                     # OutputCoalescer, screen-clear detection
+  protocol/                   # JSON-RPC message types and error codes
+  session/                    # Transport traits (OutputSink, ProcessSpawner, ProcessHandle),
+                              # shell/SSH/Docker/serial command builders and validators
 agent/                        # Remote agent (JSON-RPC over SSH)
   src/
-    buffer/                   # Shared ring buffer (1 MiB)
     daemon/                   # Session daemon process and binary frame protocol
     shell/                    # ShellBackend (daemon client for shell sessions)
     docker/                   # DockerBackend (Docker container sessions)
@@ -63,11 +72,12 @@ agent/                        # Remote agent (JSON-RPC over SSH)
     serial/                   # SerialBackend (direct serial port access)
     session/                  # SessionManager, types, prepared connection definitions
     files/                    # File browsing (local, SFTP relay, Docker)
-    monitoring/               # System monitoring (CPU, memory, disk, network)
+    monitoring/               # System monitoring (delegates to core parsers)
     handler/                  # JSON-RPC method dispatcher
     protocol/                 # Protocol types, methods, error codes
     state/                    # Session state persistence (state.json)
     io/                       # Transport layer (stdio, TCP)
+    transport.rs              # Core trait adapters (OutputSink, ProcessSpawner, etc.)
     main.rs                   # Entry point (--stdio, --listen, --daemon)
 scripts/                      # Dev helper scripts (.sh + .cmd variants)
 docs/                         # All documentation
