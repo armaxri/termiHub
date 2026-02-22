@@ -11,11 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Desktop crate now imports `FileEntry`, `list_dir_sync`, `chrono_from_epoch`, `format_permissions`, and `normalize_path_separators` from `termihub-core` instead of defining them locally — local `files/utils.rs` module removed entirely (#304)
 - Desktop crate now imports `SystemStats`, `CpuCounters`, `parse_stats`, `parse_cpu_line`, `cpu_percent_from_delta`, `parse_meminfo_value`, and `MONITORING_COMMAND` from `termihub-core` instead of defining them locally (#304)
+- Agent crate now imports `RingBuffer`, file utilities (`chrono_from_epoch`, `format_permissions`), and monitoring types/parsers (`CpuCounters`, `parse_stats`, `parse_cpu_line`, `cpu_percent_from_delta`, `parse_meminfo_value`, `parse_df_output`, `MONITORING_COMMAND`) from `termihub-core` instead of maintaining local copies — removes ~680 lines of duplicated code (#305)
 - Desktop crate now imports `EnvVar`, `VolumeMount`, `SshConfig`, `SerialConfig`, `DockerConfig` from `termihub-core` instead of defining them locally (#298)
 - Desktop `expand_tilde()` and `expand_env_placeholders()` now delegate to `termihub-core` instead of duplicating the implementation (#298)
 
 ### Added
 
+- Shared core `FileBackend` async trait and `LocalFileBackend` implementation in the `termihub-core` crate — defines a unified file operations interface (`list`, `read`, `write`, `delete`, `rename`, `stat`) that can replace duplicated file backend logic in the desktop and agent crates (#313)
 - Shared core serial session helpers (`parse_serial_config`, `open_serial_port`, `list_serial_ports`, `serial_reader_loop`, `ParsedSerialConfig`, `SerialStatus`) in the `termihub-core` crate — unified serial config parsing, port opening, port listing, and reconnect-capable reader loop that can replace duplicated logic in the desktop and agent crates (#308)
 - Shared core transport traits (`OutputSink`, `ProcessSpawner`, `ProcessHandle`) in the `termihub-core` crate — abstraction layer that decouples session I/O delivery and process spawning from the desktop (Tauri events, portable-pty) and agent (JSON-RPC, daemon) implementations (#312)
 - Shared core session/Docker helpers (`build_docker_run_args`, `build_docker_exec_args`, `validate_docker_config`, `DockerContainer`) in the `termihub-core` crate — unified Docker CLI argument building, config validation, and container lifecycle commands that can replace duplicated logic in the desktop and agent crates (#307)
