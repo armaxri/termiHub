@@ -422,7 +422,7 @@ impl StatsCollector for SshCollector {
 
 /// Establish an SSH connection using the given config.
 fn connect_ssh(config: &SshSessionConfig) -> Result<ssh2::Session> {
-    let port = config.port.unwrap_or(22);
+    let port = config.port;
     let addr = format!("{}:{}", config.host, port);
 
     let tcp = TcpStream::connect(&addr).with_context(|| format!("TCP connect to {addr} failed"))?;
