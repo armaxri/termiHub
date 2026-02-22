@@ -1,4 +1,4 @@
-#[cfg(any(feature = "local-shell", feature = "serial"))]
+#[cfg(any(feature = "local-shell", feature = "serial", feature = "telnet"))]
 pub mod backends;
 pub mod buffer;
 pub mod config;
