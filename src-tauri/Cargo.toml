@@ -30,15 +30,15 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 portable-pty = "0.8"
 serialport = { workspace = true }
-ssh2 = { version = "0.9", features = ["openssl-on-win32"] }
-ssh-key = { version = "0.6", features = ["encryption", "ed25519", "rsa"] }
-openssl = { version = "0.10", features = ["vendored"] }
+ssh2 = { workspace = true }
+ssh-key = { workspace = true }
+openssl = { workspace = true }
 tempfile = "3"
 uuid = { version = "1", features = ["v4", "serde"] }
 base64 = "0.22"
 anyhow = "1"
 thiserror = { workspace = true }
-termihub-core = { path = "../core", features = ["serial", "local-shell", "telnet"] }
+termihub-core = { path = "../core", features = ["serial", "local-shell", "telnet", "ssh"] }
 async-trait = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking"] }
 dirs = "6"

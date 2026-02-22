@@ -12,10 +12,15 @@ use termihub_core::errors::FileError;
 use termihub_core::files::utils::{chrono_from_epoch, format_permissions};
 use termihub_core::files::{FileBackend, FileEntry};
 
-/// An SFTP session wrapping a dedicated SSH connection.
+/// Legacy SFTP session wrapping a dedicated SSH connection.
 ///
 /// Uses blocking mode — each SFTP session opens its own SSH connection
 /// to avoid conflicts with the terminal session's non-blocking mode.
+///
+/// The canonical implementation is now
+/// [`termihub_core::backends::ssh::SftpFileBrowser`](termihub_core::backends::ssh)
+/// which implements the unified `FileBrowser` trait. This struct will be
+/// removed once file browsing is migrated to use `ConnectionType`.
 pub struct SftpSession {
     _session: Session,
     sftp: Sftp,

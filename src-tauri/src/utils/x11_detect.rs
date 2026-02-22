@@ -1,4 +1,9 @@
-//! X11 server detection and DISPLAY parsing utilities.
+//! Legacy X11 server detection and DISPLAY parsing utilities.
+//!
+//! The canonical implementation is now in
+//! [`termihub_core::backends::ssh::x11`](termihub_core::backends::ssh).
+//! This module will be removed once all callers are migrated to use
+//! the core SSH backend.
 
 /// Describes how to connect to the local X server.
 #[derive(Debug, Clone)]

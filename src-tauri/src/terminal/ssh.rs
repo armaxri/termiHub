@@ -11,7 +11,12 @@ use crate::terminal::x11_forward::X11Forwarder;
 use crate::utils::errors::TerminalError;
 use crate::utils::ssh_auth::connect_and_authenticate;
 
-/// SSH connection backend.
+/// Legacy SSH connection backend using the `TerminalBackend` trait.
+///
+/// The canonical implementation is now
+/// [`termihub_core::backends::ssh::Ssh`] which implements the
+/// unified `ConnectionType` trait. This struct will be removed once
+/// `TerminalManager` is migrated to use `ConnectionType`.
 pub struct SshConnection {
     session: Arc<Session>,
     channel: Arc<Mutex<ssh2::Channel>>,

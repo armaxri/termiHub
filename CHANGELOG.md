@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Desktop SSH, SFTP, monitoring, X11 forwarding, and SSH auth/key-convert code marked as deprecated — canonical implementations now live in `termihub_core::backends::ssh` (#357)
 - Completed shared-rust-core migration (#317): final verification (238 core + 179 agent + 383 frontend tests passing), cleanup, and documentation updates for the `termihub-core` crate — 5,624 lines across 23 source files and 8 modules, 32 public types/traits shared between desktop and agent, spanning 19 issues (#298–#317) across 5 phases
 - Agent now implements core transport traits (`OutputSink`, `ProcessSpawner`, `ProcessHandle`, `FileBackend`, `StatsCollector`) via `JsonRpcOutputSink`, `DaemonSpawner`, `DaemonClient`, and updated file/monitoring backends — completing the shared-core architecture where the agent becomes a thin transport adapter (#316)
 - Agent file backends (`DockerFileBackend`, `SshFileBackend`, `LocalFileBackend`) now implement the core `FileBackend` trait directly, replacing the agent's own trait definition; `FilesStatResult` is now a type alias for `FileEntry` (#316)
@@ -27,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Ssh` backend in `termihub-core` implementing the unified `ConnectionType` trait — full SSH connection with three authentication methods (agent, key, password), OpenSSH key conversion, X11 forwarding, SFTP file browsing via `FileBrowser` trait, system monitoring via `MonitoringProvider` trait, dynamic settings schema with conditional visibility for auth fields, and async output streaming; uses separate SSH sessions for terminal (non-blocking), SFTP (blocking), and monitoring (blocking) (#357)
 - `Telnet` backend in `termihub-core` implementing the unified `ConnectionType` trait — TCP connection with telnet IAC protocol handling, dynamic settings schema (host + port), async output streaming via tokio channels; `TelnetConfig` moved to core, desktop telnet backend marked for deprecation (#356)
 - `Serial` backend in `termihub-core` implementing the unified `ConnectionType` trait — serial port connection with dynamic settings schema (port, baud rate, data bits, stop bits, parity, flow control), async output streaming via tokio channels, and cross-platform serial port access via the `serialport` crate; desktop and agent serial backends marked for deprecation (#355)
 - `LocalShell` backend in `termihub-core` implementing the unified `ConnectionType` trait — the first concrete backend migration, with dynamic shell detection, settings schema for UI form generation, portable-pty PTY management, and async output streaming via tokio channels; shell detection functions (`detect_available_shells`, `parse_wsl_output`) consolidated from the desktop crate into core (#354)
