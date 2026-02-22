@@ -234,8 +234,7 @@ impl DockerConfig {
             env.value = expand::expand_env_placeholders(&env.value);
         }
         for vol in &mut self.volumes {
-            vol.host_path =
-                expand::expand_tilde(&expand::expand_env_placeholders(&vol.host_path));
+            vol.host_path = expand::expand_tilde(&expand::expand_env_placeholders(&vol.host_path));
             vol.container_path = expand::expand_env_placeholders(&vol.container_path);
         }
         self
