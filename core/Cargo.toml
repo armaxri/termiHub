@@ -20,5 +20,5 @@ tokio = { version = "1", features = ["rt", "macros", "time"] }
 
 [features]
 default = []
-serial = ["dep:serialport"]
+serial = ["dep:serialport", "dep:tracing"]
 local-shell = ["dep:portable-pty", "dep:tracing"]

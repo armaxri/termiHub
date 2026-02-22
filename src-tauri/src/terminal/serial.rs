@@ -8,7 +8,12 @@ use tracing::{debug, info};
 use crate::terminal::backend::{OutputSender, SerialConfig, TerminalBackend};
 use crate::utils::errors::TerminalError;
 
-/// Serial port connection backend.
+/// Legacy serial port connection backend using the `TerminalBackend` trait.
+///
+/// The canonical implementation is now
+/// [`termihub_core::backends::serial::Serial`] which implements the
+/// unified `ConnectionType` trait. This struct will be removed once
+/// `TerminalManager` is migrated to use `ConnectionType`.
 pub struct SerialConnection {
     port: Arc<Mutex<Box<dyn serialport::SerialPort>>>,
     alive: Arc<AtomicBool>,
@@ -89,6 +94,8 @@ impl TerminalBackend for SerialConnection {
 }
 
 /// List available serial ports on the system.
+///
+/// **Deprecated:** Use [`termihub_core::session::serial::list_serial_ports`] instead.
 pub fn list_serial_ports() -> Vec<String> {
     serialport::available_ports()
         .unwrap_or_default()
