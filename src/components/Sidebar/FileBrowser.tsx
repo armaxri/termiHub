@@ -26,7 +26,7 @@ import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { onVscodeEditComplete } from "@/services/events";
 import { getHomeDir } from "@/services/api";
 import { FileEntry } from "@/types/connection";
-import { LocalShellConfig, SshConfig } from "@/types/terminal";
+import type { ConnectionTypeInfo } from "@/services/api";
 import { getWslDistroName, wslToWindowsPath } from "@/utils/shell-detection";
 import { resolveFeatureEnabled } from "@/utils/featureFlags";
 import "./FileBrowser.css";
@@ -287,18 +287,24 @@ function useFileBrowserSync() {
   const activeTabContentType = activeTab?.contentType ?? null;
   const activeTabConfig = activeTab?.config ?? undefined;
 
+  const connectionTypes = useAppStore((s) => s.connectionTypes);
+
+  // Determine if the active tab's connection type supports file browsing
+  const typeSupportsFileBrowser = (typeId: string, types: ConnectionTypeInfo[]): boolean => {
+    const info = types.find((ct) => ct.typeId === typeId);
+    return info?.capabilities.fileBrowser ?? false;
+  };
+
   const fileBrowserEnabled =
-    activeTabConnectionType === "ssh"
+    activeTabConnectionType && typeSupportsFileBrowser(activeTabConnectionType, connectionTypes)
       ? resolveFeatureEnabled(activeTabConfig, "enableFileBrowser", globalFileBrowserEnabled)
-      : true; // Local tabs always have file browser
+      : activeTabConnectionType === "local";
 
   const activeTabEditorMeta = activeTab?.editorMeta ?? null;
 
   // Extract the WSL distro name (if any) from the active tab's shell type
   const activeTabShellType =
-    activeTab?.config.type === "local"
-      ? (activeTab.config.config as LocalShellConfig).shellType
-      : null;
+    activeTab?.config.type === "local" ? activeTab.config.config.shellType : null;
   const wslDistro = activeTabShellType ? getWslDistroName(activeTabShellType) : null;
 
   useEffect(() => {
@@ -317,7 +323,10 @@ function useFileBrowserSync() {
     }
     if (activeTabConnectionType === "local") {
       setFileBrowserMode("local");
-    } else if (activeTabConnectionType === "ssh") {
+    } else if (
+      activeTabConnectionType &&
+      typeSupportsFileBrowser(activeTabConnectionType, connectionTypes)
+    ) {
       setFileBrowserMode(fileBrowserEnabled ? "sftp" : "none");
     } else {
       setFileBrowserMode("none");
@@ -330,6 +339,7 @@ function useFileBrowserSync() {
     activeTabContentType,
     activeTabEditorMeta,
     setFileBrowserMode,
+    connectionTypes,
   ]);
 
   // Auto-navigate on tab switch or CWD change
@@ -393,13 +403,15 @@ function useFileBrowserSync() {
     }
   }, [fileBrowserMode, navigateLocal, cwd, wslDistro]);
 
-  // Auto-connect SFTP for SSH tabs
+  // Auto-connect SFTP for tabs with file browser capability
   useEffect(() => {
     if (fileBrowserMode !== "sftp" || !activeTab) return;
-    if (activeTab.config.type !== "ssh") return;
 
-    const sshConfig = activeTab.config.config as SshConfig;
-    const hostKey = `${sshConfig.username}@${sshConfig.host}:${sshConfig.port}`;
+    const cfg = activeTab.config.config as unknown as Record<string, unknown>;
+    const host = (cfg.host as string) ?? "";
+    const port = (cfg.port as number) ?? 0;
+    const username = (cfg.username as string) ?? "";
+    const hostKey = `${username}@${host}:${port}`;
 
     // Already connected to the right host
     if (sftpSessionId && sftpConnectedHost === hostKey) return;
@@ -410,26 +422,24 @@ function useFileBrowserSync() {
         await disconnectSftp();
       }
 
-      let configToUse = sshConfig;
-      if (sshConfig.authMethod === "password" && !sshConfig.password) {
+      let configToUse = cfg;
+      const authMethod = cfg.authMethod as string | undefined;
+      if (authMethod === "password" && !cfg.password) {
         // Look for the saved connection to get any config details
         const savedConn = connections.find((c) => {
-          if (c.config.type !== "ssh") return false;
-          const sc = c.config.config as SshConfig;
-          return (
-            sc.host === sshConfig.host &&
-            sc.port === sshConfig.port &&
-            sc.username === sshConfig.username
-          );
+          const sc = c.config.config as unknown as Record<string, unknown>;
+          return sc.host === host && sc.port === port && sc.username === username;
         });
-        const baseConfig = savedConn ? (savedConn.config.config as SshConfig) : sshConfig;
+        const baseConfig = savedConn
+          ? (savedConn.config.config as unknown as Record<string, unknown>)
+          : cfg;
 
-        const password = await requestPassword(sshConfig.host, sshConfig.username);
+        const password = await requestPassword(host, username);
         if (password === null) return;
         configToUse = { ...baseConfig, password };
       }
 
-      connectSftp(configToUse);
+      connectSftp(configToUse as unknown as Parameters<typeof connectSftp>[0]);
     };
 
     doConnect();

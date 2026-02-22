@@ -35,32 +35,26 @@ describe("resolveFeatureEnabled", () => {
     ).toBe(false);
   });
 
-  it("falls back to global default when override is undefined", () => {
+  it("falls back to global default when no explicit override is set", () => {
     expect(resolveFeatureEnabled(sshConfig({}), "enableMonitoring", true)).toBe(true);
     expect(resolveFeatureEnabled(sshConfig({}), "enableMonitoring", false)).toBe(false);
     expect(resolveFeatureEnabled(sshConfig({}), "enableFileBrowser", true)).toBe(true);
     expect(resolveFeatureEnabled(sshConfig({}), "enableFileBrowser", false)).toBe(false);
   });
 
-  it("returns false for non-SSH config", () => {
+  it("falls back to global default for any config type without explicit override", () => {
     const localConfig: ConnectionConfig = {
       type: "local",
       config: { shellType: "bash" },
     };
-    expect(resolveFeatureEnabled(localConfig, "enableMonitoring", true)).toBe(false);
-    expect(resolveFeatureEnabled(localConfig, "enableFileBrowser", true)).toBe(false);
+    // Without explicit override, falls back to globalDefault.
+    // Callers are responsible for checking capabilities before calling.
+    expect(resolveFeatureEnabled(localConfig, "enableMonitoring", true)).toBe(true);
+    expect(resolveFeatureEnabled(localConfig, "enableMonitoring", false)).toBe(false);
   });
 
   it("returns false for undefined config", () => {
     expect(resolveFeatureEnabled(undefined, "enableMonitoring", true)).toBe(false);
     expect(resolveFeatureEnabled(undefined, "enableFileBrowser", true)).toBe(false);
-  });
-
-  it("returns false for telnet config", () => {
-    const telnetConfig: ConnectionConfig = {
-      type: "telnet",
-      config: { host: "example.com", port: 23 },
-    };
-    expect(resolveFeatureEnabled(telnetConfig, "enableMonitoring", true)).toBe(false);
   });
 });

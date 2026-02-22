@@ -2,8 +2,9 @@ import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Activity, RefreshCw, Unplug, Loader2 } from "lucide-react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
-import { SshConfig, ConnectionConfig } from "@/types/terminal";
+import { ConnectionConfig } from "@/types/terminal";
 import { SavedConnection } from "@/types/connection";
+import type { ConnectionTypeInfo } from "@/services/api";
 import { SystemStats } from "@/types/monitoring";
 import { resolveFeatureEnabled } from "@/utils/featureFlags";
 import { CredentialStoreIndicator } from "@/components/CredentialStoreIndicator";
@@ -29,10 +30,17 @@ function formatKb(kb: number): string {
   return `${(kb / (1024 * 1024)).toFixed(1)} GB`;
 }
 
-/** Extract SshConfig from a saved connection, if it's SSH type. */
-function extractSshConfig(config: ConnectionConfig): SshConfig | null {
-  if (config.type === "ssh") return config.config;
+/** Extract monitoring-relevant connection settings (host, port, username, authMethod, password). */
+function extractMonitoringConfig(config: ConnectionConfig): Record<string, unknown> | null {
+  const cfg = config.config as unknown as Record<string, unknown>;
+  if (cfg.host && cfg.username) return cfg;
   return null;
+}
+
+/** Check if a connection type supports monitoring using the registry. */
+function typeSupportsMonitoring(connectionTypes: ConnectionTypeInfo[], typeId: string): boolean {
+  const typeInfo = connectionTypes.find((ct) => ct.typeId === typeId);
+  return typeInfo?.capabilities.monitoring ?? false;
 }
 
 /** Get severity level for a percentage value. */
@@ -153,22 +161,25 @@ function MonitoringStatus() {
   const refreshMonitoring = useAppStore((s) => s.refreshMonitoring);
 
   const connections = useAppStore((s) => s.connections);
+  const connectionTypes = useAppStore((s) => s.connectionTypes);
   const activeTabId = useAppStore((s) => getActiveTab(s)?.id ?? null);
   const activeTabConnectionType = useAppStore((s) => getActiveTab(s)?.connectionType ?? null);
   const activeTabConfig = useAppStore((s) => getActiveTab(s)?.config ?? undefined);
 
-  const monitoringEnabled = resolveFeatureEnabled(
-    activeTabConfig,
-    "enableMonitoring",
-    globalMonitoringEnabled
+  const activeTabSupportsMonitoring = typeSupportsMonitoring(
+    connectionTypes,
+    activeTabConnectionType ?? ""
   );
+  const monitoringEnabled = activeTabSupportsMonitoring
+    ? resolveFeatureEnabled(activeTabConfig, "enableMonitoring", globalMonitoringEnabled)
+    : false;
 
   /** Tracks which host key already failed auto-connect to prevent retry loops. */
   const autoConnectFailedRef = useRef<string | null>(null);
 
-  const sshConnections = useMemo(() => {
-    return connections.filter((c) => c.config.type === "ssh");
-  }, [connections]);
+  const monitorableConnections = useMemo(() => {
+    return connections.filter((c) => typeSupportsMonitoring(connectionTypes, c.config.type));
+  }, [connections, connectionTypes]);
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -187,16 +198,21 @@ function MonitoringStatus() {
     };
   }, [monitoringSessionId, refreshMonitoring]);
 
-  // Auto-connect monitoring when active tab is an SSH session
+  // Auto-connect monitoring when active tab supports monitoring
   useEffect(() => {
     if (!monitoringEnabled) return;
 
     // Read the active tab from the store (avoids subscribing to the full object)
     const activeTab = getActiveTab(useAppStore.getState());
-    if (!activeTab || activeTab.config.type !== "ssh") return;
+    if (!activeTab) return;
+    const { connectionTypes: types } = useAppStore.getState();
+    if (!typeSupportsMonitoring(types, activeTab.config.type)) return;
 
-    const sshConfig = activeTab.config.config as SshConfig;
-    const hostKey = `${sshConfig.username}@${sshConfig.host}:${sshConfig.port}`;
+    const cfg = activeTab.config.config as unknown as Record<string, unknown>;
+    const host = (cfg.host as string) ?? "";
+    const port = (cfg.port as number) ?? 0;
+    const username = (cfg.username as string) ?? "";
+    const hostKey = `${username}@${host}:${port}`;
 
     // Already monitoring the right host
     if (monitoringSessionId && monitoringHost === hostKey) return;
@@ -222,24 +238,23 @@ function MonitoringStatus() {
       }
 
       // Handle password-based auth: prompt if password is missing
-      let configToUse = sshConfig;
-      if (sshConfig.authMethod === "password" && !sshConfig.password) {
+      let configToUse = cfg;
+      const authMethod = cfg.authMethod as string | undefined;
+      if (authMethod === "password" && !cfg.password) {
         const savedConn = conns.find((c) => {
-          if (c.config.type !== "ssh") return false;
-          const sc = c.config.config as SshConfig;
-          return (
-            sc.host === sshConfig.host &&
-            sc.port === sshConfig.port &&
-            sc.username === sshConfig.username
-          );
+          const sc = c.config.config as unknown as Record<string, unknown>;
+          return sc.host === host && sc.port === port && sc.username === username;
         });
-        const baseConfig = savedConn ? (savedConn.config.config as SshConfig) : sshConfig;
-        const password = await requestPassword(sshConfig.host, sshConfig.username);
+        const baseConfig = savedConn
+          ? (savedConn.config.config as unknown as Record<string, unknown>)
+          : cfg;
+        const password = await requestPassword(host, username);
         if (password === null) return;
         configToUse = { ...baseConfig, password };
       }
 
-      await connect(configToUse);
+      // connectMonitoring expects SshConfig shape — pass the generic settings
+      await connect(configToUse as unknown as Parameters<typeof connect>[0]);
 
       // On success, clear the guard so switching away and back works
       if (useAppStore.getState().monitoringSessionId) {
@@ -252,21 +267,22 @@ function MonitoringStatus() {
 
   const handleConnect = useCallback(
     (connection: SavedConnection) => {
-      const sshConfig = extractSshConfig(connection.config);
-      if (sshConfig) {
-        connectMonitoring(sshConfig);
+      const monitorConfig = extractMonitoringConfig(connection.config);
+      if (monitorConfig) {
+        connectMonitoring(monitorConfig as unknown as Parameters<typeof connectMonitoring>[0]);
       }
     },
     [connectMonitoring]
   );
 
-  // Hide monitoring UI when disabled or when active tab is not SSH
+  // Hide monitoring UI when disabled or when active tab doesn't support monitoring
   if (!monitoringEnabled) return null;
-  if (activeTabConnectionType !== "ssh") return null;
+  if (!activeTabConnectionType || !typeSupportsMonitoring(connectionTypes, activeTabConnectionType))
+    return null;
 
   // Not connected: show connect button (or loading/error state)
   if (!monitoringSessionId) {
-    if (sshConnections.length === 0) return null;
+    if (monitorableConnections.length === 0) return null;
 
     return (
       <>
@@ -312,7 +328,7 @@ function MonitoringStatus() {
                 <DropdownMenu.Label className="monitoring-picker__label">
                   Connect Monitoring
                 </DropdownMenu.Label>
-                {sshConnections.map((conn) => (
+                {monitorableConnections.map((conn) => (
                   <DropdownMenu.Item
                     key={conn.id}
                     className="monitoring-picker__item"

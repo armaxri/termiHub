@@ -1,34 +1,22 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { PlugZap, TerminalSquare, Palette } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import {
-  ConnectionType,
   ConnectionConfig,
-  LocalShellConfig,
-  SshConfig,
-  TelnetConfig,
-  SerialConfig,
-  DockerConfig,
   RemoteAgentConfig,
   ShellType,
   TerminalOptions,
   ConnectionEditorMeta,
 } from "@/types/terminal";
-import { listAvailableShells } from "@/services/api";
+import { listAvailableShells, fromConnectionConfig, toConnectionConfig } from "@/services/api";
+import type { ConnectionTypeInfo } from "@/services/api";
 import { SavedConnection, RemoteAgentDefinition } from "@/types/connection";
-import {
-  ConnectionSettings,
-  SshSettings,
-  SerialSettings,
-  TelnetSettings,
-  DockerSettings,
-  AgentSettings,
-  SettingsNav,
-} from "@/components/Settings";
+import { SettingsNav } from "@/components/Settings";
+import { ConnectionSettingsForm, AGENT_SCHEMA } from "@/components/DynamicForm";
+import { buildDefaults, findPasswordPromptInfo } from "@/utils/schemaDefaults";
 import { ConnectionTerminalSettings } from "./ConnectionTerminalSettings";
 import { ConnectionAppearanceSettings } from "./ConnectionAppearanceSettings";
-import { getDefaultConfigs, getDefaultAgentConfig } from "./defaultConfigs";
 import { findLeafByTab } from "@/utils/panelTree";
 import "./ConnectionEditor.css";
 
@@ -62,18 +50,58 @@ function loadSavedCategory(): EditorCategory {
   return "connection";
 }
 
-const TYPE_OPTIONS: { value: ConnectionType; label: string }[] = [
-  { value: "local", label: "Local Shell" },
-  { value: "ssh", label: "SSH" },
-  { value: "serial", label: "Serial" },
-  { value: "telnet", label: "Telnet" },
-  { value: "docker", label: "Docker" },
-  { value: "remote", label: "Remote Agent" },
-];
-
 /** Check whether any field in TerminalOptions has a non-undefined value. */
 function hasTerminalOptions(opts: TerminalOptions): boolean {
   return Object.values(opts).some((v) => v !== undefined);
+}
+
+/** Build type options from the registry, plus a "Remote Agent" entry. */
+function buildTypeOptions(
+  connectionTypes: ConnectionTypeInfo[]
+): { value: string; label: string }[] {
+  const options = connectionTypes.map((ct) => ({
+    value: ct.typeId,
+    label: ct.displayName,
+  }));
+  options.push({ value: "remote", label: "Remote Agent" });
+  return options;
+}
+
+/** Find schema for a type ID in the connection types registry. */
+function findSchema(connectionTypes: ConnectionTypeInfo[], typeId: string) {
+  return connectionTypes.find((ct) => ct.typeId === typeId);
+}
+
+/** Build default settings for a type, applying app settings defaults. */
+function buildTypeDefaults(
+  typeInfo: ConnectionTypeInfo | undefined,
+  appSettings: { defaultUser?: string; defaultSshKeyPath?: string }
+): Record<string, unknown> {
+  if (!typeInfo) return {};
+  const defaults = buildDefaults(typeInfo.schema);
+
+  // Apply app-level SSH defaults for types that have these fields
+  if (appSettings.defaultUser && defaults.username === undefined) {
+    // Check if schema has a username field
+    for (const group of typeInfo.schema.groups) {
+      if (group.fields.some((f) => f.key === "username")) {
+        defaults.username = appSettings.defaultUser;
+        break;
+      }
+    }
+  }
+  if (appSettings.defaultSshKeyPath) {
+    for (const group of typeInfo.schema.groups) {
+      if (group.fields.some((f) => f.key === "keyPath")) {
+        defaults.keyPath = appSettings.defaultSshKeyPath;
+        if (defaults.authMethod === "password") {
+          defaults.authMethod = "key";
+        }
+        break;
+      }
+    }
+  }
+  return defaults;
 }
 
 interface ConnectionEditorProps {
@@ -84,6 +112,7 @@ interface ConnectionEditorProps {
 
 export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorProps) {
   const connections = useAppStore((s) => s.connections);
+  const connectionTypes = useAppStore((s) => s.connectionTypes);
   const addConnection = useAppStore((s) => s.addConnection);
   const updateConnection = useAppStore((s) => s.updateConnection);
   const moveConnectionToFile = useAppStore((s) => s.moveConnectionToFile);
@@ -111,18 +140,30 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
 
   const defaultShell = useAppStore((s) => s.defaultShell);
 
-  const defaultConfigs = getDefaultConfigs(defaultShell, settings);
+  // Derive initial typeId and settings from existing connection or defaults
+  const initialTypeAndSettings = useMemo(() => {
+    if (existingAgent) {
+      return {
+        typeId: "remote",
+        settings: existingAgent.config as unknown as Record<string, unknown>,
+      };
+    }
+    if (existingConnection) {
+      return fromConnectionConfig(existingConnection.config);
+    }
+    // New connection defaults to local shell
+    const localType = findSchema(connectionTypes, "local");
+    const defaults = localType
+      ? buildTypeDefaults(localType, settings)
+      : { shellType: defaultShell };
+    return { typeId: "local", settings: defaults };
+  }, [existingConnection, existingAgent, connectionTypes, settings, defaultShell]);
 
   const [name, setName] = useState(existingConnection?.name ?? existingAgent?.name ?? "");
   const folderId = existingConnection?.folderId ?? editingConnectionFolderId ?? null;
-  const [selectedType, setSelectedType] = useState<ConnectionType>(
-    existingAgent ? "remote" : (existingConnection?.config.type ?? "local")
-  );
-  const [connectionConfig, setConnectionConfig] = useState<ConnectionConfig>(
-    existingConnection?.config ?? defaultConfigs.local!
-  );
-  const [agentConfig, setAgentConfig] = useState<RemoteAgentConfig>(
-    existingAgent?.config ?? getDefaultAgentConfig(settings)
+  const [selectedType, setSelectedType] = useState(initialTypeAndSettings.typeId);
+  const [connSettings, setConnSettings] = useState<Record<string, unknown>>(
+    initialTypeAndSettings.settings
   );
 
   /** Agent mode: editing an existing agent, or creating new with "remote" type selected. */
@@ -139,6 +180,15 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const [activeCategory, setActiveCategory] = useState<EditorCategory>(loadSavedCategory);
   const [isCompact, setIsCompact] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Build type options from registry
+  const typeOptions = useMemo(() => buildTypeOptions(connectionTypes), [connectionTypes]);
+
+  // Get the current schema
+  const currentTypeInfo = useMemo(
+    () => findSchema(connectionTypes, selectedType),
+    [connectionTypes, selectedType]
+  );
 
   // ResizeObserver for compact mode
   useEffect(() => {
@@ -171,12 +221,13 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   }, []);
 
   const handleTypeChange = useCallback(
-    (type: ConnectionType) => {
-      setSelectedType(type);
-      const config = getDefaultConfigs(defaultShell, settings)[type];
-      if (config) setConnectionConfig(config);
+    (typeId: string) => {
+      setSelectedType(typeId);
+      const typeInfo = findSchema(connectionTypes, typeId);
+      const defaults = buildTypeDefaults(typeInfo, settings);
+      setConnSettings(defaults);
     },
-    [defaultShell, settings]
+    [connectionTypes, settings]
   );
 
   const closeThisTab = useCallback(() => {
@@ -191,6 +242,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     if (!name.trim()) return null;
 
     if (isAgentMode) {
+      const agentConfig = connSettings as unknown as RemoteAgentConfig;
       if (existingAgent) {
         const updated: RemoteAgentDefinition = { ...existingAgent, name, config: agentConfig };
         updateRemoteAgent(updated);
@@ -208,6 +260,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       }
     }
 
+    const connectionConfig = toConnectionConfig(selectedType, connSettings);
     const opts = hasTerminalOptions(terminalOptions) ? terminalOptions : undefined;
 
     if (existingConnection) {
@@ -244,14 +297,14 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     }
   }, [
     name,
-    connectionConfig,
+    connSettings,
+    selectedType,
     terminalOptions,
     icon,
     sourceFile,
     existingConnection,
     existingAgent,
     isAgentMode,
-    agentConfig,
     folderId,
     addConnection,
     updateConnection,
@@ -283,24 +336,46 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     const saved = saveConnection();
     if (!saved || "connectionState" in saved) return;
 
-    let config = saved.config;
+    let config: ConnectionConfig = saved.config;
 
-    if (config.type === "ssh" && config.config.authMethod === "password") {
-      const sshCfg = config.config as SshConfig;
-      const password = await requestPassword(sshCfg.host, sshCfg.username);
-      if (password === null) return;
-      config = { ...config, config: { ...sshCfg, password } };
+    // Use schema to detect if a password prompt is needed
+    const schema = isAgentMode ? AGENT_SCHEMA : currentTypeInfo?.schema;
+    if (schema) {
+      const promptInfo = findPasswordPromptInfo(schema, connSettings);
+      if (promptInfo) {
+        const host = (connSettings[promptInfo.hostKey] as string) ?? "";
+        const username = (connSettings[promptInfo.usernameKey] as string) ?? "";
+        const password = await requestPassword(host, username);
+        if (password === null) return;
+        config = {
+          ...config,
+          config: { ...config.config, [promptInfo.passwordKey]: password },
+        } as ConnectionConfig;
+      }
     }
 
     addTab(saved.name, saved.config.type, config, undefined, undefined, saved.terminalOptions);
     closeThisTab();
-  }, [saveConnection, requestPassword, addTab, closeThisTab]);
+  }, [
+    saveConnection,
+    requestPassword,
+    addTab,
+    closeThisTab,
+    isAgentMode,
+    currentTypeInfo,
+    connSettings,
+  ]);
 
   const handleCancel = useCallback(() => {
     closeThisTab();
   }, [closeThisTab]);
 
+  // Suppress the SSH agent setup handler reference so it can be attached to a button outside the form
+  void handleSetupSshAgent;
+
   const enabledExternalFiles = settings.externalConnectionFiles.filter((f) => f.enabled);
+
+  const currentSchema = isAgentMode ? AGENT_SCHEMA : currentTypeInfo?.schema;
 
   const renderConnectionContent = () => (
     <div className="connection-editor__form">
@@ -319,11 +394,11 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         <span className="settings-form__label">Type</span>
         <select
           value={selectedType}
-          onChange={(e) => handleTypeChange(e.target.value as ConnectionType)}
+          onChange={(e) => handleTypeChange(e.target.value)}
           disabled={!!existingAgent}
           data-testid="connection-editor-type-select"
         >
-          {TYPE_OPTIONS.map((opt) => (
+          {typeOptions.map((opt) => (
             <option key={opt.value} value={opt.value}>
               {opt.label}
             </option>
@@ -331,39 +406,12 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         </select>
       </label>
 
-      {connectionConfig.type === "local" && (
-        <ConnectionSettings
-          config={connectionConfig.config}
-          onChange={(config: LocalShellConfig) => setConnectionConfig({ type: "local", config })}
+      {currentSchema && (
+        <ConnectionSettingsForm
+          schema={currentSchema}
+          settings={connSettings}
+          onChange={setConnSettings}
         />
-      )}
-      {connectionConfig.type === "ssh" && (
-        <SshSettings
-          config={connectionConfig.config}
-          onChange={(config: SshConfig) => setConnectionConfig({ type: "ssh", config })}
-          onSetupAgent={handleSetupSshAgent}
-        />
-      )}
-      {connectionConfig.type === "serial" && (
-        <SerialSettings
-          config={connectionConfig.config}
-          onChange={(config: SerialConfig) => setConnectionConfig({ type: "serial", config })}
-        />
-      )}
-      {connectionConfig.type === "telnet" && (
-        <TelnetSettings
-          config={connectionConfig.config}
-          onChange={(config: TelnetConfig) => setConnectionConfig({ type: "telnet", config })}
-        />
-      )}
-      {connectionConfig.type === "docker" && (
-        <DockerSettings
-          config={connectionConfig.config}
-          onChange={(config: DockerConfig) => setConnectionConfig({ type: "docker", config })}
-        />
-      )}
-      {selectedType === "remote" && (
-        <AgentSettings config={agentConfig} onChange={setAgentConfig} />
       )}
 
       {!isAgentMode && (

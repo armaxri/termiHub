@@ -3,7 +3,6 @@ import {
   TerminalTab,
   LeafPanel,
   PanelNode,
-  ConnectionType,
   ConnectionConfig,
   ShellType,
   SshConfig,
@@ -61,7 +60,9 @@ import {
   AgentSessionInfo,
   AgentDefinitionInfo,
   getCredentialStoreStatus as apiGetCredentialStoreStatus,
+  getConnectionTypes,
 } from "@/services/api";
+import type { ConnectionTypeInfo } from "@/services/api";
 import { RemoteAgentConfig } from "@/types/terminal";
 import { TunnelConfig, TunnelState } from "@/types/tunnel";
 import {
@@ -89,30 +90,34 @@ import {
 export type SidebarView = "connections" | "files" | "tunnels";
 
 /**
- * Strip password from SSH connection configs so it is never persisted,
+ * Strip password from connection configs so it is never persisted,
  * unless `savePassword` is true (password will be routed to the backend
  * credential store).
+ *
+ * Works generically with any connection type that has `password` and
+ * `savePassword` fields in its config.
  */
 function stripPassword(connection: SavedConnection): SavedConnection {
-  if (connection.config.type === "ssh") {
-    const sshConfig = connection.config.config;
-    if (sshConfig.savePassword) {
-      return connection; // Keep password for backend credential store routing
-    }
-    if (sshConfig.password) {
-      return {
-        ...connection,
-        config: {
-          ...connection.config,
-          config: { ...connection.config.config, password: undefined },
-        },
-      };
-    }
+  const cfg = connection.config.config as unknown as Record<string, unknown>;
+  if (cfg.savePassword) {
+    return connection; // Keep password for backend credential store routing
+  }
+  if (cfg.password) {
+    return {
+      ...connection,
+      config: {
+        ...connection.config,
+        config: { ...cfg, password: undefined },
+      } as ConnectionConfig,
+    };
   }
   return connection;
 }
 
 interface AppState {
+  // Connection type registry (loaded from backend at startup)
+  connectionTypes: ConnectionTypeInfo[];
+
   // Platform default shell (detected from backend at startup)
   defaultShell: ShellType;
 
@@ -136,7 +141,7 @@ interface AppState {
   activePanelId: string | null;
   addTab: (
     title: string,
-    connectionType: ConnectionType,
+    connectionType: string,
     config?: ConnectionConfig,
     panelId?: string,
     contentType?: TabContentType,
@@ -311,7 +316,7 @@ let layoutPersistTimer: ReturnType<typeof setTimeout> | null = null;
 
 function createTab(
   title: string,
-  connectionType: ConnectionType,
+  connectionType: string,
   config: ConnectionConfig,
   panelId: string,
   contentType: TabContentType = "terminal",
@@ -358,6 +363,9 @@ export const useAppStore = create<AppState>((set, get) => {
   const initialPanel = createLeafPanel();
 
   return {
+    // Connection type registry — updated by loadFromBackend()
+    connectionTypes: [],
+
     // Platform default shell — updated by loadFromBackend()
     defaultShell: "bash",
 
@@ -893,6 +901,13 @@ export const useAppStore = create<AppState>((set, get) => {
       } catch (err) {
         console.error("Failed to load connections from backend:", err);
       }
+      // Load connection type registry
+      try {
+        const connectionTypes = await getConnectionTypes();
+        set({ connectionTypes });
+      } catch (err) {
+        console.error("Failed to load connection types:", err);
+      }
       // Detect platform default shell
       try {
         const shells = await listAvailableShells();
@@ -931,18 +946,16 @@ export const useAppStore = create<AppState>((set, get) => {
         // Only disconnect if the active tab doesn't have an explicit override.
         if (oldSettings.powerMonitoringEnabled && !newSettings.powerMonitoringEnabled) {
           const activeTab = getActiveTab(get());
-          const hasOverride =
-            activeTab?.config.type === "ssh" &&
-            (activeTab.config.config as SshConfig).enableMonitoring === true;
+          const tabCfg = activeTab?.config.config as unknown as Record<string, unknown> | undefined;
+          const hasOverride = tabCfg?.enableMonitoring === true;
           if (!hasOverride) {
             get().disconnectMonitoring();
           }
         }
         if (oldSettings.fileBrowserEnabled && !newSettings.fileBrowserEnabled) {
           const activeTab = getActiveTab(get());
-          const hasOverride =
-            activeTab?.config.type === "ssh" &&
-            (activeTab.config.config as SshConfig).enableFileBrowser === true;
+          const tabCfg = activeTab?.config.config as unknown as Record<string, unknown> | undefined;
+          const hasOverride = tabCfg?.enableFileBrowser === true;
           if (!hasOverride) {
             get().disconnectSftp();
             if (get().sidebarView === "files") {

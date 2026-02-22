@@ -10,6 +10,7 @@ import {
   RemoteAgentConfig,
   LogEntry,
 } from "@/types/terminal";
+import { SettingsSchema, Capabilities } from "@/types/schema";
 import { SystemStats } from "@/types/monitoring";
 import { CredentialStoreStatusInfo, SwitchCredentialStoreResult } from "@/types/credential";
 import {
@@ -28,12 +29,40 @@ export interface ConnectionTypeInfo {
   typeId: string;
   displayName: string;
   icon: string;
-  settingsSchema: Record<string, unknown>;
+  schema: SettingsSchema;
+  capabilities: Capabilities;
 }
 
 /** Get the list of available connection types with their schemas. */
 export async function getConnectionTypes(): Promise<ConnectionTypeInfo[]> {
   return await invoke<ConnectionTypeInfo[]>("get_connection_types");
+}
+
+// --- Schema conversion helpers ---
+
+/**
+ * Convert a backend ConnectionConfig (`{ type, config }`) into
+ * the frontend's `{ typeId, settings }` format for schema-driven editing.
+ */
+export function fromConnectionConfig(config: ConnectionConfig): {
+  typeId: string;
+  settings: Record<string, unknown>;
+} {
+  return {
+    typeId: config.type,
+    settings: config.config as unknown as Record<string, unknown>,
+  };
+}
+
+/**
+ * Convert the frontend's `{ typeId, settings }` back into a backend
+ * ConnectionConfig (`{ type, config }`) for persistence and session creation.
+ */
+export function toConnectionConfig(
+  typeId: string,
+  settings: Record<string, unknown>
+): ConnectionConfig {
+  return { type: typeId, config: settings } as unknown as ConnectionConfig;
 }
 
 /** Create a new connection session (type-agnostic). */

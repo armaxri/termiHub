@@ -12,6 +12,8 @@ import {
   createTerminal,
   createConnection,
   getConnectionTypes,
+  fromConnectionConfig,
+  toConnectionConfig,
   sendInput,
   resizeTerminal,
   closeTerminal,
@@ -862,6 +864,48 @@ describe("api service", () => {
         connectionId: "conn-1",
         credentialType: "password",
       });
+    });
+  });
+
+  describe("schema conversion helpers", () => {
+    it("fromConnectionConfig extracts typeId and settings", () => {
+      const config = {
+        type: "ssh" as const,
+        config: { host: "pi.local", port: 22, username: "pi", authMethod: "key" as const },
+      };
+      const result = fromConnectionConfig(config);
+      expect(result.typeId).toBe("ssh");
+      expect(result.settings).toEqual({
+        host: "pi.local",
+        port: 22,
+        username: "pi",
+        authMethod: "key",
+      });
+    });
+
+    it("toConnectionConfig builds ConnectionConfig from typeId and settings", () => {
+      const result = toConnectionConfig("telnet", { host: "192.168.1.1", port: 23 });
+      expect(result).toEqual({
+        type: "telnet",
+        config: { host: "192.168.1.1", port: 23 },
+      });
+    });
+
+    it("round-trip: fromConnectionConfig -> toConnectionConfig preserves data", () => {
+      const original = {
+        type: "serial" as const,
+        config: {
+          port: "COM3",
+          baudRate: 9600,
+          dataBits: 8 as const,
+          stopBits: 1 as const,
+          parity: "none" as const,
+          flowControl: "none" as const,
+        },
+      };
+      const { typeId, settings } = fromConnectionConfig(original);
+      const roundTripped = toConnectionConfig(typeId, settings);
+      expect(roundTripped).toEqual(original);
     });
   });
 });
