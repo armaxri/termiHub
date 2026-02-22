@@ -22,8 +22,8 @@ impl SerialConnection {
             baud_rate = config.baud_rate,
             "Opening serial port"
         );
-        let parsed = parse_serial_config(config)
-            .map_err(|e| TerminalError::SerialError(e.to_string()))?;
+        let parsed =
+            parse_serial_config(config).map_err(|e| TerminalError::SerialError(e.to_string()))?;
         let port =
             open_serial_port(&parsed).map_err(|e| TerminalError::SerialError(e.to_string()))?;
 
