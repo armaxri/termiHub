@@ -11,7 +11,9 @@ use tracing::info;
 use crate::daemon::client::DaemonClient;
 use crate::io::transport::NotificationSender;
 use crate::protocol::methods::ShellConfig;
-use termihub_core::session::shell::{build_shell_command, initial_command_strategy, InitialCommandStrategy};
+use termihub_core::session::shell::{
+    build_shell_command, initial_command_strategy, InitialCommandStrategy,
+};
 
 /// Agent-side handle for a shell session backed by a daemon process.
 ///

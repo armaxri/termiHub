@@ -133,11 +133,7 @@ impl DockerBackend {
         notification_tx: NotificationSender,
     ) -> Result<Self, anyhow::Error> {
         // Check if container is still running
-        let container = DockerContainer::new(
-            container_name.clone(),
-            String::new(),
-            remove_on_exit,
-        );
+        let container = DockerContainer::new(container_name.clone(), String::new(), remove_on_exit);
 
         let status = std::process::Command::new("docker")
             .args(container.is_running_command())
