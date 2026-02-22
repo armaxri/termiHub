@@ -4,8 +4,10 @@ use std::sync::{Arc, Mutex};
 
 use ssh2::Session;
 
+use termihub_core::errors::CoreError;
 use termihub_core::monitoring::{
-    cpu_percent_from_delta, parse_stats, CpuCounters, SystemStats, MONITORING_COMMAND,
+    cpu_percent_from_delta, parse_stats, CpuCounters, StatsCollector, SystemStats,
+    MONITORING_COMMAND,
 };
 
 use crate::terminal::backend::SshConfig;
@@ -74,6 +76,17 @@ impl MonitoringSession {
     }
 }
 
+impl StatsCollector for MonitoringSession {
+    /// Collect system stats from the remote host.
+    ///
+    /// The `_host_label` parameter is unused — the desktop monitoring session
+    /// already targets a specific host established at session creation time.
+    fn collect(&mut self, _host_label: &str) -> Result<SystemStats, CoreError> {
+        self.fetch_stats()
+            .map_err(|e| CoreError::Other(e.to_string()))
+    }
+}
+
 /// Manages multiple monitoring sessions keyed by UUID.
 pub struct MonitoringManager {
     sessions: Mutex<HashMap<String, Arc<Mutex<MonitoringSession>>>>,
@@ -115,6 +128,14 @@ impl MonitoringManager {
 mod tests {
     use super::*;
     use termihub_core::monitoring::{parse_cpu_line, parse_meminfo_value};
+
+    /// Compile-time verification that `MonitoringSession` satisfies `StatsCollector`.
+    fn _assert_stats_collector<T: StatsCollector>() {}
+
+    #[test]
+    fn monitoring_session_satisfies_stats_collector() {
+        _assert_stats_collector::<MonitoringSession>();
+    }
 
     /// Helper: build sample output with the given cpu line.
     fn sample_output(cpu_line: &str) -> String {

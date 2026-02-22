@@ -39,6 +39,7 @@ base64 = "0.22"
 anyhow = "1"
 thiserror = { workspace = true }
 termihub-core = { path = "../core", features = ["serial"] }
+async-trait = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking"] }
 dirs = "6"
 tracing = "0.1"
