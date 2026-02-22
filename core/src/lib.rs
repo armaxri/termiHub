@@ -1,3 +1,5 @@
+#[cfg(feature = "local-shell")]
+pub mod backends;
 pub mod buffer;
 pub mod config;
 pub mod connection;
