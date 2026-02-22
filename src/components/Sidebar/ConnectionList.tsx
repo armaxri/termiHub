@@ -26,7 +26,7 @@ import {
   Activity,
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { ShellType, SshConfig } from "@/types/terminal";
+import { ShellType } from "@/types/terminal";
 import { SavedConnection, ConnectionFolder } from "@/types/connection";
 import { listAvailableShells, createTerminal, removeCredential } from "@/services/api";
 import { ConnectionIcon } from "@/utils/connectionIcons";
@@ -285,7 +285,7 @@ function ConnectionItem({
           >
             <Play size={14} /> Connect
           </ContextMenu.Item>
-          {(connection.config.type === "ssh" || connection.config.type === "telnet") && (
+          {!!(connection.config.config as unknown as Record<string, unknown>).host && (
             <ContextMenu.Item
               className="context-menu__item"
               onSelect={() => onPingHost(connection)}
@@ -347,23 +347,26 @@ export function ConnectionList() {
   const handleConnect = useCallback(
     async (connection: SavedConnection) => {
       let config = connection.config;
+      const cfg = config.config as unknown as Record<string, unknown>;
 
-      if (config.type === "ssh") {
-        const sshCfg = config.config as SshConfig;
+      // Connections with authMethod and password support credential store resolution
+      if (cfg.authMethod && cfg.host) {
+        const authMethod = cfg.authMethod as string;
+        const savePassword = cfg.savePassword as boolean | undefined;
 
         // Try to resolve credential from the store first
         const resolution = await resolveConnectionCredential(
           connection.id,
-          sshCfg.authMethod,
-          sshCfg.savePassword
+          authMethod,
+          savePassword
         );
 
         if (resolution.usedStoredCredential && resolution.password) {
           // Pre-connect with stored credential to validate it
           const preConfig = {
             ...config,
-            config: { ...sshCfg, password: resolution.password },
-          };
+            config: { ...cfg, password: resolution.password },
+          } as typeof config;
           try {
             const sessionId = await createTerminal(preConfig);
             // Stored credential worked — open tab with existing session
@@ -401,10 +404,12 @@ export function ConnectionList() {
         }
 
         // No stored credential or stale credential was cleared — prompt the user
-        if (sshCfg.authMethod === "password") {
-          const password = await requestPassword(sshCfg.host, sshCfg.username);
+        if (authMethod === "password") {
+          const host = cfg.host as string;
+          const username = (cfg.username as string) ?? "";
+          const password = await requestPassword(host, username);
           if (password === null) return;
-          config = { ...config, config: { ...sshCfg, password } };
+          config = { ...config, config: { ...cfg, password } } as typeof config;
         }
       }
 
@@ -473,9 +478,9 @@ export function ConnectionList() {
 
   const handlePingHost = useCallback(
     async (connection: SavedConnection) => {
-      const config = connection.config;
-      if (config.type !== "ssh" && config.type !== "telnet") return;
-      const host = config.config.host;
+      const cfg = connection.config.config as unknown as Record<string, unknown>;
+      const host = cfg.host as string | undefined;
+      if (!host) return;
       const shells = await listAvailableShells();
       if (shells.length === 0) return;
       addTab(`Ping ${host}`, "local", {

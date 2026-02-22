@@ -946,18 +946,16 @@ export const useAppStore = create<AppState>((set, get) => {
         // Only disconnect if the active tab doesn't have an explicit override.
         if (oldSettings.powerMonitoringEnabled && !newSettings.powerMonitoringEnabled) {
           const activeTab = getActiveTab(get());
-          const hasOverride =
-            activeTab?.config.type === "ssh" &&
-            (activeTab.config.config as SshConfig).enableMonitoring === true;
+          const tabCfg = activeTab?.config.config as unknown as Record<string, unknown> | undefined;
+          const hasOverride = tabCfg?.enableMonitoring === true;
           if (!hasOverride) {
             get().disconnectMonitoring();
           }
         }
         if (oldSettings.fileBrowserEnabled && !newSettings.fileBrowserEnabled) {
           const activeTab = getActiveTab(get());
-          const hasOverride =
-            activeTab?.config.type === "ssh" &&
-            (activeTab.config.config as SshConfig).enableFileBrowser === true;
+          const tabCfg = activeTab?.config.config as unknown as Record<string, unknown> | undefined;
+          const hasOverride = tabCfg?.enableFileBrowser === true;
           if (!hasOverride) {
             get().disconnectSftp();
             if (get().sidebarView === "files") {
