@@ -2,7 +2,7 @@
 //!
 //! Supports monitoring the agent's own host ("self") and remote SSH
 //! jump targets (by connection ID). Stats are collected at a configurable
-//! interval and sent as `monitoring.data` JSON-RPC notifications.
+//! interval and sent as `connection.monitoring.data` JSON-RPC notifications.
 
 pub mod collector;
 
@@ -32,7 +32,7 @@ const MIN_INTERVAL_MS: u64 = 500;
 /// Manages active monitoring subscriptions.
 ///
 /// Each subscription spawns a background tokio task that periodically
-/// collects system stats and sends `monitoring.data` notifications.
+/// collects system stats and sends `connection.monitoring.data` notifications.
 pub struct MonitoringManager {
     subscriptions: Mutex<HashMap<String, Subscription>>,
     notification_tx: NotificationSender,
@@ -206,7 +206,7 @@ async fn monitoring_task(
                             os_info: stats.os_info,
                         };
                         let notification = JsonRpcNotification::new(
-                            "monitoring.data",
+                            "connection.monitoring.data",
                             serde_json::to_value(&data).unwrap(),
                         );
                         if tx.send(notification).is_err() {

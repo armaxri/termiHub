@@ -1,18 +1,12 @@
 #[cfg(unix)]
 mod daemon;
-#[cfg(unix)]
-mod docker;
 mod files;
 mod handler;
 mod io;
 mod monitoring;
 mod protocol;
-mod serial;
+mod registry;
 mod session;
-#[cfg(unix)]
-mod shell;
-#[cfg(unix)]
-mod ssh;
 #[cfg(unix)]
 mod state;
 mod transport;
@@ -85,7 +79,7 @@ async fn main() -> anyhow::Result<()> {
                 eprintln!("--daemon requires a session ID argument");
                 std::process::exit(1);
             });
-            daemon::process::run_daemon(session_id)
+            daemon::process::run_daemon(session_id).await
         }
         other => {
             eprintln!("Unknown option: {}", other);

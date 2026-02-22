@@ -4,6 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 use termihub_core::config::{DockerConfig, EnvVar, SerialConfig, SshConfig, VolumeMount};
+pub use termihub_core::connection::ConnectionTypeInfo;
 // Used by shell/session modules on unix; re-exported for test access on all platforms.
 #[allow(unused_imports)]
 pub use termihub_core::config::ShellConfig;
@@ -27,7 +28,8 @@ pub struct InitializeParams {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Capabilities {
-    pub session_types: Vec<String>,
+    /// Available connection types from the registry.
+    pub connection_types: Vec<ConnectionTypeInfo>,
     pub max_sessions: u32,
     pub available_shells: Vec<String>,
     pub available_serial_ports: Vec<String>,
@@ -40,6 +42,14 @@ pub struct InitializeResult {
     pub protocol_version: String,
     pub agent_version: String,
     pub capabilities: Capabilities,
+}
+
+// ── connection.types ────────────────────────────────────────────────
+
+/// Result for the `connection.types` method.
+#[derive(Debug, Clone, Serialize)]
+pub struct ConnectionTypesResult {
+    pub types: Vec<ConnectionTypeInfo>,
 }
 
 // ── session.create ──────────────────────────────────────────────────
@@ -337,11 +347,25 @@ mod tests {
 
     #[test]
     fn initialize_result_serializes() {
+        use termihub_core::connection::schema::SettingsSchema;
+        use termihub_core::connection::Capabilities as CoreCapabilities;
+
         let result = InitializeResult {
-            protocol_version: "0.1.0".to_string(),
+            protocol_version: "0.2.0".to_string(),
             agent_version: "0.1.0".to_string(),
             capabilities: Capabilities {
-                session_types: vec!["shell".to_string(), "serial".to_string()],
+                connection_types: vec![ConnectionTypeInfo {
+                    type_id: "local".to_string(),
+                    display_name: "Local Shell".to_string(),
+                    icon: "terminal".to_string(),
+                    schema: SettingsSchema { groups: vec![] },
+                    capabilities: CoreCapabilities {
+                        monitoring: false,
+                        file_browser: false,
+                        resize: true,
+                        persistent: false,
+                    },
+                }],
                 max_sessions: 20,
                 available_shells: vec!["/bin/bash".to_string(), "/bin/zsh".to_string()],
                 available_serial_ports: vec!["/dev/ttyUSB0".to_string()],
@@ -350,9 +374,9 @@ mod tests {
             },
         };
         let v = serde_json::to_value(&result).unwrap();
-        assert_eq!(v["protocol_version"], "0.1.0");
+        assert_eq!(v["protocol_version"], "0.2.0");
         assert_eq!(v["capabilities"]["max_sessions"], 20);
-        assert_eq!(v["capabilities"]["session_types"][0], "shell");
+        assert_eq!(v["capabilities"]["connection_types"][0]["typeId"], "local");
         assert_eq!(v["capabilities"]["available_shells"][0], "/bin/bash");
         assert_eq!(
             v["capabilities"]["available_serial_ports"][0],

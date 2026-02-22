@@ -272,7 +272,7 @@ async fn connect_and_start_reader(
         match tokio::time::timeout(remaining, protocol::read_frame_async(&mut reader)).await {
             Ok(Ok(Some(frame))) => match frame.msg_type {
                 MSG_BUFFER_REPLAY => {
-                    // Send as session.output if non-empty
+                    // Send as connection.output if non-empty
                     if !frame.payload.is_empty() {
                         send_output_notification(&notification_tx, session_id, &frame.payload);
                     }
@@ -342,7 +342,7 @@ async fn reader_loop(
                     alive.store(false, Ordering::SeqCst);
 
                     let notification = JsonRpcNotification::new(
-                        "session.exit",
+                        "connection.exit",
                         serde_json::json!({
                             "session_id": session_id,
                             "exit_code": code,
@@ -356,7 +356,7 @@ async fn reader_loop(
                     warn!("Daemon error for session {session_id}: {msg}");
 
                     let notification = JsonRpcNotification::new(
-                        "session.error",
+                        "connection.error",
                         serde_json::json!({
                             "session_id": session_id,
                             "message": msg.to_string(),
@@ -387,7 +387,7 @@ async fn reader_loop(
     }
 }
 
-/// Send output data as a base64-encoded `session.output` notification.
+/// Send output data as a base64-encoded `connection.output` notification.
 ///
 /// Chunks large payloads to stay under the 1 MiB NDJSON line limit.
 fn send_output_notification(tx: &NotificationSender, session_id: &str, data: &[u8]) {
@@ -395,7 +395,7 @@ fn send_output_notification(tx: &NotificationSender, session_id: &str, data: &[u
     for chunk in data.chunks(65536) {
         let encoded = b64.encode(chunk);
         let notification = JsonRpcNotification::new(
-            "session.output",
+            "connection.output",
             serde_json::json!({
                 "session_id": session_id,
                 "data": encoded,

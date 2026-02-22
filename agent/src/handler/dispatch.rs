@@ -7,30 +7,28 @@ use tracing::{debug, warn};
 
 use base64::Engine;
 
-#[cfg(unix)]
-use crate::files::docker::DockerFileBackend;
 use crate::files::local::LocalFileBackend;
-use crate::files::ssh::SshFileBackend;
 use crate::files::{FileBackend, FileError};
 use crate::monitoring::MonitoringManager;
 use crate::protocol::errors;
 use crate::protocol::messages::{JsonRpcErrorResponse, JsonRpcRequest, JsonRpcResponse};
 use crate::protocol::methods::{
     AgentShutdownParams, AgentShutdownResult, Capabilities, ConnectionCreateParams,
-    ConnectionDeleteParams, ConnectionUpdateParams, DockerSessionConfig, FilesDeleteParams,
+    ConnectionDeleteParams, ConnectionTypesResult, ConnectionUpdateParams, FilesDeleteParams,
     FilesListParams, FilesListResult, FilesReadParams, FilesReadResult, FilesRenameParams,
     FilesStatParams, FilesWriteParams, FolderCreateParams, FolderDeleteParams, FolderUpdateParams,
     HealthCheckResult, InitializeParams, InitializeResult, MonitoringSubscribeParams,
     MonitoringUnsubscribeParams, SessionAttachParams, SessionCloseParams, SessionCreateParams,
     SessionCreateResult, SessionDetachParams, SessionInputParams, SessionListEntry,
-    SessionListResult, SessionResizeParams, SshSessionConfig,
+    SessionListResult, SessionResizeParams,
 };
 use crate::session::definitions::{Connection, ConnectionStore, Folder};
 use crate::session::manager::{SessionCreateError, SessionManager, MAX_SESSIONS};
-use crate::session::types::SessionType;
 
 /// The agent's protocol version.
-const AGENT_PROTOCOL_VERSION: &str = "0.1.0";
+///
+/// Bumped to 0.2.0 for the connection.* protocol migration (#360).
+const AGENT_PROTOCOL_VERSION: &str = "0.2.0";
 
 /// Dispatcher handles incoming JSON-RPC requests and routes them
 /// to the appropriate handler function.
@@ -105,13 +103,17 @@ impl Dispatcher {
         }
 
         match method {
-            "session.create" => self.handle_session_create(request).await,
-            "session.list" => self.handle_session_list(request).await,
-            "session.close" => self.handle_session_close(request).await,
-            "session.attach" => self.handle_session_attach(request).await,
-            "session.detach" => self.handle_session_detach(request).await,
-            "session.input" => self.handle_session_input(request).await,
-            "session.resize" => self.handle_session_resize(request).await,
+            // connection.* — active terminal sessions
+            "connection.create" => self.handle_session_create(request).await,
+            "connection.list" => self.handle_session_list(request).await,
+            "connection.close" => self.handle_session_close(request).await,
+            "connection.attach" => self.handle_session_attach(request).await,
+            "connection.detach" => self.handle_session_detach(request).await,
+            "connection.write" => self.handle_session_input(request).await,
+            "connection.resize" => self.handle_session_resize(request).await,
+            "connection.types" => self.handle_connection_types(request).await,
+
+            // connections.* — saved connection presets
             "connections.list" => self.handle_connections_list(request).await,
             "connections.create" => self.handle_connections_create(request).await,
             "connections.update" => self.handle_connections_update(request).await,
@@ -119,14 +121,22 @@ impl Dispatcher {
             "connections.folders.create" => self.handle_connections_folders_create(request).await,
             "connections.folders.update" => self.handle_connections_folders_update(request).await,
             "connections.folders.delete" => self.handle_connections_folders_delete(request).await,
-            "files.list" => self.handle_files_list(request).await,
-            "files.read" => self.handle_files_read(request).await,
-            "files.write" => self.handle_files_write(request).await,
-            "files.delete" => self.handle_files_delete(request).await,
-            "files.rename" => self.handle_files_rename(request).await,
-            "files.stat" => self.handle_files_stat(request).await,
-            "monitoring.subscribe" => self.handle_monitoring_subscribe(request).await,
-            "monitoring.unsubscribe" => self.handle_monitoring_unsubscribe(request).await,
+
+            // connection.files.* — file browsing scoped to connections
+            "connection.files.list" => self.handle_files_list(request).await,
+            "connection.files.read" => self.handle_files_read(request).await,
+            "connection.files.write" => self.handle_files_write(request).await,
+            "connection.files.delete" => self.handle_files_delete(request).await,
+            "connection.files.rename" => self.handle_files_rename(request).await,
+            "connection.files.stat" => self.handle_files_stat(request).await,
+
+            // connection.monitoring.* — system monitoring
+            "connection.monitoring.subscribe" => self.handle_monitoring_subscribe(request).await,
+            "connection.monitoring.unsubscribe" => {
+                self.handle_monitoring_unsubscribe(request).await
+            }
+
+            // Utility
             "health.check" => self.handle_health_check(request).await,
             "agent.shutdown" => self.handle_agent_shutdown(request).await,
             _ => {
@@ -172,18 +182,13 @@ impl Dispatcher {
         self.initialized = true;
 
         let docker_available = detect_docker_available();
-        let mut session_types = vec!["shell".to_string(), "serial".to_string()];
-        if docker_available {
-            session_types.push("docker".to_string());
-        }
-        // SSH client is always available on the agent host
-        session_types.push("ssh".to_string());
+        let connection_types = self.session_manager.registry().available_types();
 
         let result = InitializeResult {
             protocol_version: AGENT_PROTOCOL_VERSION.to_string(),
             agent_version: env!("CARGO_PKG_VERSION").to_string(),
             capabilities: Capabilities {
-                session_types,
+                connection_types,
                 max_sessions: MAX_SESSIONS,
                 available_shells: detect_available_shells(),
                 available_serial_ports: detect_available_serial_ports(),
@@ -212,24 +217,22 @@ impl Dispatcher {
             }
         };
 
-        let session_type = match SessionType::from_str(&params.session_type) {
-            Some(t) => t,
-            None => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(
-                    id,
-                    errors::INVALID_CONFIGURATION,
-                    format!("Unsupported session type: {}", params.session_type),
-                ));
-            }
-        };
+        let type_id = &params.session_type;
 
-        let title = params
-            .title
-            .unwrap_or_else(|| format!("{} session", session_type.as_str()));
+        // Validate that the type exists in the registry.
+        if !self.session_manager.registry().has_type(type_id) {
+            return DispatchResult::Error(JsonRpcErrorResponse::new(
+                id,
+                errors::INVALID_CONFIGURATION,
+                format!("Unsupported connection type: {type_id}"),
+            ));
+        }
+
+        let title = params.title.unwrap_or_else(|| format!("{type_id} session"));
 
         let snapshot = match self
             .session_manager
-            .create(session_type, title, params.config)
+            .create(type_id, title, params.config)
             .await
         {
             Ok(snapshot) => snapshot,
@@ -259,7 +262,7 @@ impl Dispatcher {
         let result = SessionCreateResult {
             session_id: snapshot.id,
             title: snapshot.title,
-            session_type: snapshot.session_type.as_str().to_string(),
+            session_type: snapshot.type_id,
             status: snapshot.status.as_str().to_string(),
             created_at: snapshot.created_at.to_rfc3339(),
         };
@@ -278,7 +281,7 @@ impl Dispatcher {
             .map(|s| SessionListEntry {
                 session_id: s.id,
                 title: s.title,
-                session_type: s.session_type.as_str().to_string(),
+                session_type: s.type_id,
                 status: s.status.as_str().to_string(),
                 created_at: s.created_at.to_rfc3339(),
                 last_activity: s.last_activity.to_rfc3339(),
@@ -476,6 +479,15 @@ impl Dispatcher {
                     .with_data(json!({"session_id": params.session_id})),
             ),
         }
+    }
+
+    async fn handle_connection_types(&self, request: JsonRpcRequest) -> DispatchResult {
+        let types = self.session_manager.registry().available_types();
+        let result = ConnectionTypesResult { types };
+        DispatchResult::Success(JsonRpcResponse::new(
+            request.id,
+            serde_json::to_value(result).unwrap(),
+        ))
     }
 
     // ── connections.* handlers ───────────────────────────────────────
@@ -944,7 +956,11 @@ impl Dispatcher {
     /// Resolve the appropriate file backend for a connection.
     ///
     /// - `None` → local filesystem
-    /// - `Some(id)` → look up connection, dispatch by session type
+    /// - `Some(id)` → look up connection preset and resolve by type
+    ///
+    /// For "local" connections, uses the local filesystem backend.
+    /// Other connection types currently fall back to "not supported"
+    /// until ConnectionType::file_browser() is wired up.
     async fn resolve_file_backend(
         &self,
         connection_id: Option<String>,
@@ -960,59 +976,13 @@ impl Dispatcher {
         ))?;
 
         match connection.session_type.as_str() {
-            "shell" => Ok(Box::new(LocalFileBackend::new())),
-            "docker" => {
-                let docker_config: DockerSessionConfig = serde_json::from_value(connection.config)
-                    .map_err(|e| {
-                        (
-                            errors::INVALID_CONFIGURATION,
-                            format!("Invalid Docker config: {e}"),
-                        )
-                    })?;
-
-                // Find a running Docker container for this image
-                #[cfg(unix)]
-                {
-                    let container_name = self
-                        .session_manager
-                        .find_docker_container(&docker_config.image)
-                        .await
-                        .ok_or((
-                            errors::FILE_OPERATION_FAILED,
-                            format!(
-                                "No running Docker session for image '{}'. \
-                                 Start a Docker session first to browse its files.",
-                                docker_config.image
-                            ),
-                        ))?;
-                    Ok(Box::new(DockerFileBackend::new(container_name)))
-                }
-                #[cfg(not(unix))]
-                {
-                    let _ = docker_config;
-                    Err((
-                        errors::FILE_BROWSING_NOT_SUPPORTED,
-                        "Docker file browsing is not supported on this platform".to_string(),
-                    ))
-                }
-            }
-            "ssh" => {
-                let ssh_config: SshSessionConfig = serde_json::from_value(connection.config)
-                    .map_err(|e| {
-                        (
-                            errors::INVALID_CONFIGURATION,
-                            format!("Invalid SSH config: {e}"),
-                        )
-                    })?;
-                Ok(Box::new(SshFileBackend::new(ssh_config)))
-            }
-            "serial" => Err((
-                errors::FILE_BROWSING_NOT_SUPPORTED,
-                "File browsing is not supported for serial connections".to_string(),
-            )),
+            // Local shell connections use the local filesystem.
+            "local" | "shell" => Ok(Box::new(LocalFileBackend::new())),
+            // Other types: file browsing via ConnectionType::file_browser()
+            // will be wired up once old backends are removed.
             other => Err((
-                errors::INVALID_CONFIGURATION,
-                format!("Unknown connection type: {other}"),
+                errors::FILE_BROWSING_NOT_SUPPORTED,
+                format!("File browsing is not yet supported for '{other}' connections"),
             )),
         }
     }
@@ -1101,7 +1071,8 @@ mod tests {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let tmp = std::env::temp_dir().join(format!("termihub-test-{}.json", uuid::Uuid::new_v4()));
         let conn_store = Arc::new(ConnectionStore::new_temp(tmp));
-        let session_manager = Arc::new(SessionManager::new(tx.clone()));
+        let registry = Arc::new(crate::registry::build_registry());
+        let session_manager = Arc::new(SessionManager::new(tx.clone(), registry));
         let monitoring_manager = Arc::new(MonitoringManager::new(tx, conn_store.clone()));
         let dispatcher = Dispatcher::new(session_manager.clone(), conn_store, monitoring_manager);
         (dispatcher, session_manager)
@@ -1139,12 +1110,21 @@ mod tests {
         let result = d.dispatch(req).await;
 
         let json = result.to_json();
-        assert_eq!(json["result"]["protocol_version"], "0.1.0");
+        assert_eq!(json["result"]["protocol_version"], AGENT_PROTOCOL_VERSION);
         assert_eq!(json["result"]["capabilities"]["max_sessions"], 20);
-        assert!(json["result"]["capabilities"]["session_types"]
+        // connection_types is an array of objects with type_id fields
+        let conn_types = json["result"]["capabilities"]["connection_types"]
             .as_array()
-            .unwrap()
-            .contains(&json!("shell")));
+            .expect("connection_types should be an array");
+        let type_ids: Vec<&str> = conn_types
+            .iter()
+            .map(|t| t["typeId"].as_str().unwrap())
+            .collect();
+        assert!(
+            type_ids.contains(&"local"),
+            "Expected 'local' in {type_ids:?}"
+        );
+        assert!(type_ids.contains(&"ssh"), "Expected 'ssh' in {type_ids:?}");
         // available_shells and available_serial_ports must be arrays
         assert!(json["result"]["capabilities"]["available_shells"]
             .as_array()
@@ -1152,11 +1132,6 @@ mod tests {
         assert!(json["result"]["capabilities"]["available_serial_ports"]
             .as_array()
             .is_some());
-        // SSH is always available
-        assert!(json["result"]["capabilities"]["session_types"]
-            .as_array()
-            .unwrap()
-            .contains(&json!("ssh")));
     }
 
     #[tokio::test]
@@ -1192,9 +1167,9 @@ mod tests {
         let mut d = make_dispatcher();
 
         for method in &[
-            "session.create",
-            "session.list",
-            "session.close",
+            "connection.create",
+            "connection.list",
+            "connection.close",
             "health.check",
             "connections.list",
             "connections.create",
@@ -1212,75 +1187,14 @@ mod tests {
 
     // ── Session create tests ────────────────────────────────────────
 
-    #[cfg(unix)]
     #[tokio::test]
-    async fn session_create_docker_requires_image() {
+    async fn connection_create_unsupported_type() {
         let mut d = make_dispatcher();
         init_dispatcher(&mut d).await;
 
         let req = make_request(
-            "session.create",
-            json!({
-                "type": "docker",
-                "config": {},
-                "title": "My session"
-            }),
-            2,
-        );
-        let result = d.dispatch(req).await;
-        let json = result.to_json();
-        assert_eq!(json["error"]["code"], errors::INVALID_CONFIGURATION);
-    }
-
-    #[tokio::test]
-    async fn session_create_serial_fails_without_port() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
-
-        let req = make_request(
-            "session.create",
-            json!({
-                "type": "serial",
-                "config": {"port": "/dev/ttyUSB0"}
-            }),
-            2,
-        );
-        let result = d.dispatch(req).await;
-        let json = result.to_json();
-        assert_eq!(
-            json["error"]["code"],
-            crate::protocol::errors::SESSION_CREATION_FAILED
-        );
-    }
-
-    #[tokio::test]
-    async fn session_create_unsupported_type() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
-
-        let req = make_request(
-            "session.create",
+            "connection.create",
             json!({"type": "unknown", "config": {}}),
-            2,
-        );
-        let result = d.dispatch(req).await;
-        let json = result.to_json();
-        assert_eq!(json["error"]["code"], errors::INVALID_CONFIGURATION);
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn session_create_ssh_requires_host() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
-
-        let req = make_request(
-            "session.create",
-            json!({
-                "type": "ssh",
-                "config": {"username": "dev", "auth_method": "agent"},
-                "title": "Jump session"
-            }),
             2,
         );
         let result = d.dispatch(req).await;
@@ -1295,7 +1209,7 @@ mod tests {
         let mut d = make_dispatcher();
         init_dispatcher(&mut d).await;
 
-        let req = make_request("session.list", json!({}), 2);
+        let req = make_request("connection.list", json!({}), 2);
         let result = d.dispatch(req).await;
         let json = result.to_json();
         assert_eq!(json["result"]["sessions"].as_array().unwrap().len(), 0);
@@ -1306,11 +1220,11 @@ mod tests {
         let (mut d, mgr) = make_dispatcher_with_manager();
         init_dispatcher(&mut d).await;
 
-        mgr.create_stub_session(SessionType::Shell, "test".to_string(), json!({}))
+        mgr.create_stub_session("local", "test".to_string(), json!({}))
             .await
             .unwrap();
 
-        let req = make_request("session.list", json!({}), 3);
+        let req = make_request("connection.list", json!({}), 3);
         let result = d.dispatch(req).await;
         let json = result.to_json();
         let sessions = json["result"]["sessions"].as_array().unwrap();
@@ -1326,17 +1240,17 @@ mod tests {
         init_dispatcher(&mut d).await;
 
         let snapshot = mgr
-            .create_stub_session(SessionType::Shell, "temp".to_string(), json!({}))
+            .create_stub_session("local", "temp".to_string(), json!({}))
             .await
             .unwrap();
         let sid = snapshot.id;
 
-        let req = make_request("session.close", json!({"session_id": sid}), 3);
+        let req = make_request("connection.close", json!({"session_id": sid}), 3);
         let result = d.dispatch(req).await;
         let json = result.to_json();
         assert!(json.get("result").is_some());
 
-        let req = make_request("session.list", json!({}), 4);
+        let req = make_request("connection.list", json!({}), 4);
         let result = d.dispatch(req).await.to_json();
         assert_eq!(result["result"]["sessions"].as_array().unwrap().len(), 0);
     }
@@ -1346,7 +1260,7 @@ mod tests {
         let mut d = make_dispatcher();
         init_dispatcher(&mut d).await;
 
-        let req = make_request("session.close", json!({"session_id": "nonexistent"}), 2);
+        let req = make_request("connection.close", json!({"session_id": "nonexistent"}), 2);
         let result = d.dispatch(req).await;
         let json = result.to_json();
         assert_eq!(json["error"]["code"], errors::SESSION_NOT_FOUND);
@@ -1388,7 +1302,7 @@ mod tests {
         let mut d = make_dispatcher();
         init_dispatcher(&mut d).await;
 
-        let req = make_request("session.attach", json!({"session_id": "nonexistent"}), 2);
+        let req = make_request("connection.attach", json!({"session_id": "nonexistent"}), 2);
         let result = d.dispatch(req).await;
         let json = result.to_json();
         assert_eq!(json["error"]["code"], errors::SESSION_NOT_FOUND);
@@ -1399,7 +1313,7 @@ mod tests {
         let mut d = make_dispatcher();
         init_dispatcher(&mut d).await;
 
-        let req = make_request("session.detach", json!({"session_id": "nonexistent"}), 2);
+        let req = make_request("connection.detach", json!({"session_id": "nonexistent"}), 2);
         let result = d.dispatch(req).await;
         let json = result.to_json();
         assert_eq!(json["error"]["code"], errors::SESSION_NOT_FOUND);
@@ -1411,7 +1325,7 @@ mod tests {
         init_dispatcher(&mut d).await;
 
         let req = make_request(
-            "session.input",
+            "connection.write",
             json!({"session_id": "nonexistent", "data": "aGVsbG8="}),
             2,
         );
@@ -1426,7 +1340,7 @@ mod tests {
         init_dispatcher(&mut d).await;
 
         let req = make_request(
-            "session.input",
+            "connection.write",
             json!({"session_id": "any", "data": "!!!not-base64!!!"}),
             2,
         );
@@ -1441,13 +1355,13 @@ mod tests {
         init_dispatcher(&mut d).await;
 
         let snapshot = mgr
-            .create_stub_session(SessionType::Shell, "resize-test".to_string(), json!({}))
+            .create_stub_session("local", "resize-test".to_string(), json!({}))
             .await
             .unwrap();
         let sid = snapshot.id;
 
         let req = make_request(
-            "session.resize",
+            "connection.resize",
             json!({"session_id": sid, "cols": 120, "rows": 40}),
             3,
         );
@@ -1462,7 +1376,7 @@ mod tests {
         init_dispatcher(&mut d).await;
 
         let req = make_request(
-            "session.resize",
+            "connection.resize",
             json!({"session_id": "nonexistent", "cols": 120, "rows": 40}),
             2,
         );
@@ -1480,23 +1394,23 @@ mod tests {
         // 1. Initialize
         let req = make_request("initialize", init_params(), 1);
         let result = d.dispatch(req).await.to_json();
-        assert_eq!(result["result"]["protocol_version"], "0.1.0");
+        assert_eq!(result["result"]["protocol_version"], AGENT_PROTOCOL_VERSION);
 
         // 2. Create a stub session (avoids spawning real backends)
         let snapshot = mgr
-            .create_stub_session(SessionType::Shell, "Build".to_string(), json!({}))
+            .create_stub_session("local", "Build".to_string(), json!({}))
             .await
             .unwrap();
         let session_id = snapshot.id;
 
         // 3. Attach to the session
-        let req = make_request("session.attach", json!({"session_id": session_id}), 3);
+        let req = make_request("connection.attach", json!({"session_id": session_id}), 3);
         let result = d.dispatch(req).await.to_json();
         assert!(result.get("result").is_some());
 
         // 4. Send input (no-op for stub, but protocol should succeed)
         let req = make_request(
-            "session.input",
+            "connection.write",
             json!({"session_id": session_id, "data": "aGVsbG8="}),
             4,
         );
@@ -1505,7 +1419,7 @@ mod tests {
 
         // 5. Resize (no-op for stub sessions)
         let req = make_request(
-            "session.resize",
+            "connection.resize",
             json!({"session_id": session_id, "cols": 120, "rows": 40}),
             5,
         );
@@ -1513,19 +1427,19 @@ mod tests {
         assert!(result.get("result").is_some());
 
         // 6. List shows attached
-        let req = make_request("session.list", json!({}), 6);
+        let req = make_request("connection.list", json!({}), 6);
         let result = d.dispatch(req).await.to_json();
         let sessions = result["result"]["sessions"].as_array().unwrap();
         assert_eq!(sessions.len(), 1);
         assert!(sessions[0]["attached"].as_bool().unwrap());
 
         // 7. Detach
-        let req = make_request("session.detach", json!({"session_id": session_id}), 7);
+        let req = make_request("connection.detach", json!({"session_id": session_id}), 7);
         let result = d.dispatch(req).await.to_json();
         assert!(result.get("result").is_some());
 
         // 8. List shows detached
-        let req = make_request("session.list", json!({}), 8);
+        let req = make_request("connection.list", json!({}), 8);
         let result = d.dispatch(req).await.to_json();
         let sessions = result["result"]["sessions"].as_array().unwrap();
         assert!(!sessions[0]["attached"].as_bool().unwrap());
@@ -1536,7 +1450,7 @@ mod tests {
         assert_eq!(result["result"]["active_sessions"], 1);
 
         // 10. Close session
-        let req = make_request("session.close", json!({"session_id": session_id}), 10);
+        let req = make_request("connection.close", json!({"session_id": session_id}), 10);
         let result = d.dispatch(req).await.to_json();
         assert!(result.get("result").is_some());
 
@@ -1810,7 +1724,7 @@ mod tests {
         std::fs::write(dir.path().join("hello.txt"), "world").unwrap();
 
         let req = make_request(
-            "files.list",
+            "connection.files.list",
             json!({"path": dir.path().to_str().unwrap()}),
             2,
         );
@@ -1827,7 +1741,11 @@ mod tests {
         let mut d = make_dispatcher();
         init_dispatcher(&mut d).await;
 
-        let req = make_request("files.list", json!({"path": "/nonexistent/path/abc123"}), 2);
+        let req = make_request(
+            "connection.files.list",
+            json!({"path": "/nonexistent/path/abc123"}),
+            2,
+        );
         let result = d.dispatch(req).await.to_json();
         assert_eq!(result["error"]["code"], errors::FILE_NOT_FOUND);
     }
@@ -1845,7 +1763,7 @@ mod tests {
         let data_b64 =
             base64::Engine::encode(&base64::engine::general_purpose::STANDARD, b"hello, world!");
         let req = make_request(
-            "files.write",
+            "connection.files.write",
             json!({"path": path_str, "data": data_b64}),
             2,
         );
@@ -1853,7 +1771,7 @@ mod tests {
         assert!(result.get("result").is_some());
 
         // Read
-        let req = make_request("files.read", json!({"path": path_str}), 3);
+        let req = make_request("connection.files.read", json!({"path": path_str}), 3);
         let result = d.dispatch(req).await.to_json();
         assert_eq!(result["result"]["data"], data_b64);
         assert_eq!(result["result"]["size"], 13);
@@ -1869,7 +1787,7 @@ mod tests {
         std::fs::write(&file_path, "hello").unwrap();
 
         let req = make_request(
-            "files.stat",
+            "connection.files.stat",
             json!({"path": file_path.to_str().unwrap()}),
             2,
         );
@@ -1889,7 +1807,7 @@ mod tests {
         std::fs::write(&file_path, "delete me").unwrap();
 
         let req = make_request(
-            "files.delete",
+            "connection.files.delete",
             json!({"path": file_path.to_str().unwrap(), "isDirectory": false}),
             2,
         );
@@ -1909,7 +1827,7 @@ mod tests {
         std::fs::write(&old, "content").unwrap();
 
         let req = make_request(
-            "files.rename",
+            "connection.files.rename",
             json!({"old_path": old.to_str().unwrap(), "new_path": new.to_str().unwrap()}),
             2,
         );
@@ -1925,7 +1843,7 @@ mod tests {
         init_dispatcher(&mut d).await;
 
         let req = make_request(
-            "files.list",
+            "connection.files.list",
             json!({"connection_id": "nonexistent", "path": "/tmp"}),
             2,
         );
@@ -1938,7 +1856,7 @@ mod tests {
         let mut d = make_dispatcher();
         init_dispatcher(&mut d).await;
 
-        // Create a serial connection
+        // Create a serial connection preset
         let req = make_request(
             "connections.create",
             json!({
@@ -1953,7 +1871,7 @@ mod tests {
 
         // Try to list files via serial connection
         let req = make_request(
-            "files.list",
+            "connection.files.list",
             json!({"connection_id": conn_id, "path": "/tmp"}),
             3,
         );
@@ -1969,7 +1887,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("file.txt"), "data").unwrap();
 
-        // Create a shell connection
+        // Create a shell connection preset
         let req = make_request(
             "connections.create",
             json!({"name": "Shell", "type": "shell", "config": {"shell": "/bin/sh"}}),
@@ -1980,7 +1898,7 @@ mod tests {
 
         // List files via shell connection (should use local backend)
         let req = make_request(
-            "files.list",
+            "connection.files.list",
             json!({"connection_id": conn_id, "path": dir.path().to_str().unwrap()}),
             3,
         );
@@ -1994,7 +1912,7 @@ mod tests {
     async fn files_require_initialization() {
         let mut d = make_dispatcher();
 
-        let req = make_request("files.list", json!({"path": "/tmp"}), 1);
+        let req = make_request("connection.files.list", json!({"path": "/tmp"}), 1);
         let result = d.dispatch(req).await.to_json();
         assert_eq!(result["error"]["code"], errors::NOT_INITIALIZED);
     }
@@ -2005,7 +1923,7 @@ mod tests {
         init_dispatcher(&mut d).await;
 
         let req = make_request(
-            "files.write",
+            "connection.files.write",
             json!({"path": "/tmp/test.txt", "data": "!!!not-base64!!!"}),
             2,
         );
@@ -2021,7 +1939,7 @@ mod tests {
         init_dispatcher(&mut d).await;
 
         let req = make_request(
-            "monitoring.subscribe",
+            "connection.monitoring.subscribe",
             json!({"host": "self", "interval_ms": 5000}),
             2,
         );
@@ -2029,7 +1947,11 @@ mod tests {
         assert!(result.get("result").is_some());
 
         // Clean up
-        let req = make_request("monitoring.unsubscribe", json!({"host": "self"}), 3);
+        let req = make_request(
+            "connection.monitoring.unsubscribe",
+            json!({"host": "self"}),
+            3,
+        );
         d.dispatch(req).await;
     }
 
@@ -2038,7 +1960,11 @@ mod tests {
         let mut d = make_dispatcher();
         init_dispatcher(&mut d).await;
 
-        let req = make_request("monitoring.unsubscribe", json!({"host": "nonexistent"}), 2);
+        let req = make_request(
+            "connection.monitoring.unsubscribe",
+            json!({"host": "nonexistent"}),
+            2,
+        );
         let result = d.dispatch(req).await.to_json();
         // Unsubscribe always succeeds (idempotent)
         assert!(result.get("result").is_some());
@@ -2049,7 +1975,7 @@ mod tests {
         let mut d = make_dispatcher();
         init_dispatcher(&mut d).await;
 
-        let req = make_request("monitoring.subscribe", json!({}), 2);
+        let req = make_request("connection.monitoring.subscribe", json!({}), 2);
         let result = d.dispatch(req).await.to_json();
         assert_eq!(result["error"]["code"], errors::INVALID_PARAMS);
     }
@@ -2058,7 +1984,11 @@ mod tests {
     async fn monitoring_requires_initialization() {
         let mut d = make_dispatcher();
 
-        let req = make_request("monitoring.subscribe", json!({"host": "self"}), 1);
+        let req = make_request(
+            "connection.monitoring.subscribe",
+            json!({"host": "self"}),
+            1,
+        );
         let result = d.dispatch(req).await.to_json();
         assert_eq!(result["error"]["code"], errors::NOT_INITIALIZED);
     }
@@ -2069,7 +1999,7 @@ mod tests {
         init_dispatcher(&mut d).await;
 
         let req = make_request(
-            "monitoring.subscribe",
+            "connection.monitoring.subscribe",
             json!({"host": "nonexistent-conn"}),
             2,
         );
@@ -2109,7 +2039,7 @@ mod tests {
         init_dispatcher(&mut d).await;
 
         // Create a stub session
-        mgr.create_stub_session(SessionType::Shell, "test".to_string(), json!({}))
+        mgr.create_stub_session("local", "test".to_string(), json!({}))
             .await
             .unwrap();
 

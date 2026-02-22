@@ -2,9 +2,9 @@
 
 Protocol specification for communication between the termiHub desktop app and remote Raspberry Pi agents.
 
-**Version**: 0.1.0
+**Version**: 0.2.0
 **Status**: Draft
-**Issue**: #17
+**Issue**: #17, #360
 
 ---
 
@@ -37,7 +37,7 @@ The remote session management protocol enables the termiHub desktop app to manag
 
 ### Non-Goals
 
-- File transfer (handled by `files.*` RPC methods and existing SFTP infrastructure)
+- File transfer (handled by `connection.files.*` RPC methods and existing SFTP infrastructure)
 - Agent discovery (the user configures the SSH host manually)
 - Multi-user access to the same agent (single-user assumed)
 
@@ -112,7 +112,7 @@ Messages are **newline-delimited JSON** (NDJSON). Each message is a single line 
 ```
 {"jsonrpc":"2.0","method":"initialize","params":{...},"id":1}\n
 {"jsonrpc":"2.0","result":{...},"id":1}\n
-{"jsonrpc":"2.0","method":"session.output","params":{...}}\n
+{"jsonrpc":"2.0","method":"connection.output","params":{...}}\n
 ```
 
 **Rules:**
@@ -127,7 +127,7 @@ Messages are **newline-delimited JSON** (NDJSON). Each message is a single line 
 2. **Initialize**: Desktop sends `initialize` request; agent responds with capabilities
 3. **Operate**: Desktop sends requests; agent sends responses and notifications
 4. **Disconnect**: Desktop closes the SSH channel (sessions keep running on agent)
-5. **Reconnect**: Desktop opens a new channel, sends `initialize`, then `session.list` + `session.attach`
+5. **Reconnect**: Desktop opens a new channel, sends `initialize`, then `connection.list` + `connection.attach` to reattach to existing sessions
 
 ---
 
@@ -140,7 +140,7 @@ The protocol uses [JSON-RPC 2.0](https://www.jsonrpc.org/specification).
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "session.create",
+  "method": "connection.create",
   "params": { ... },
   "id": 1
 }
@@ -191,7 +191,7 @@ Notifications have **no `id` field** and do not expect a response.
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "session.output",
+  "method": "connection.output",
   "params": { ... }
 }
 ```
@@ -215,10 +215,10 @@ The desktop sends its supported protocol version in the `initialize` request. Th
 
 | Desktop Version | Agent Version | Compatible? |
 |----------------|---------------|-------------|
-| 0.1.0 | 0.1.0 | Yes |
-| 0.1.0 | 0.2.0 | Yes (agent uses 0.1.x features only) |
-| 0.2.0 | 0.1.0 | Yes (desktop degrades gracefully) |
-| 1.0.0 | 0.1.0 | No (major mismatch) |
+| 0.2.0 | 0.2.0 | Yes |
+| 0.2.0 | 0.1.0 | No (`connection.*` methods not recognized) |
+| 0.1.0 | 0.2.0 | No (old `session.*` methods removed) |
+| 1.0.0 | 0.2.0 | No (major mismatch) |
 
 ---
 
@@ -234,7 +234,7 @@ Handshake that establishes the protocol version and exchanges capabilities.
   "jsonrpc": "2.0",
   "method": "initialize",
   "params": {
-    "protocol_version": "0.1.0",
+    "protocol_version": "0.2.0",
     "client": "termihub-desktop",
     "client_version": "0.1.0"
   },
@@ -247,10 +247,10 @@ Handshake that establishes the protocol version and exchanges capabilities.
 {
   "jsonrpc": "2.0",
   "result": {
-    "protocol_version": "0.1.0",
+    "protocol_version": "0.2.0",
     "agent_version": "0.1.0",
     "capabilities": {
-      "session_types": ["shell", "serial"],
+      "connection_types": ["local", "ssh", "serial", "docker", "telnet", "wsl"],
       "max_sessions": 20
     }
   },
@@ -268,7 +268,7 @@ Handshake that establishes the protocol version and exchanges capabilities.
 |-------------|------|-------------|
 | `protocol_version` | `string` | Negotiated protocol version |
 | `agent_version` | `string` | Agent binary version |
-| `capabilities.session_types` | `string[]` | Supported session types |
+| `capabilities.connection_types` | `string[]` | Supported connection type IDs |
 | `capabilities.max_sessions` | `integer` | Maximum concurrent sessions |
 
 **Errors:**
@@ -276,17 +276,17 @@ Handshake that establishes the protocol version and exchanges capabilities.
 
 ---
 
-### `session.create`
+### `connection.create`
 
-Create a new persistent session on the agent.
+Create a new session on the agent. The `type` field selects the connection backend. Persistent types (e.g., `"local"`, `"ssh"`, `"docker"`) run in a daemon process and survive desktop disconnects.
 
 **Request:**
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "session.create",
+  "method": "connection.create",
   "params": {
-    "type": "shell",
+    "type": "local",
     "config": {
       "shell": "/bin/bash",
       "cols": 80,
@@ -305,7 +305,7 @@ For serial sessions:
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "session.create",
+  "method": "connection.create",
   "params": {
     "type": "serial",
     "config": {
@@ -329,7 +329,7 @@ For serial sessions:
   "result": {
     "session_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
     "title": "Build session",
-    "type": "shell",
+    "type": "local",
     "status": "running",
     "created_at": "2026-02-14T10:30:00Z"
   },
@@ -339,11 +339,11 @@ For serial sessions:
 
 | Param | Type | Description |
 |-------|------|-------------|
-| `type` | `"shell" \| "serial"` | Session type |
+| `type` | `string` | Connection type ID (e.g., `"local"`, `"ssh"`, `"serial"`, `"docker"`, `"telnet"`, `"wsl"`) |
 | `config` | `object` | Type-specific configuration (see below) |
 | `title` | `string?` | Optional display title |
 
-**Shell config fields:**
+**Local shell config fields:**
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -370,7 +370,7 @@ For serial sessions:
 
 ---
 
-### `session.list`
+### `connection.list`
 
 List all sessions on the agent.
 
@@ -378,7 +378,7 @@ List all sessions on the agent.
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "session.list",
+  "method": "connection.list",
   "params": {},
   "id": 3
 }
@@ -410,7 +410,7 @@ List all sessions on the agent.
 | `sessions` | `SessionInfo[]` | List of all sessions |
 | `sessions[].session_id` | `string` | UUID session identifier |
 | `sessions[].title` | `string` | Display title |
-| `sessions[].type` | `string` | `"shell"` or `"serial"` |
+| `sessions[].type` | `string` | Connection type ID |
 | `sessions[].status` | `string` | `"running"` or `"exited"` |
 | `sessions[].created_at` | `string` | ISO 8601 creation timestamp |
 | `sessions[].last_activity` | `string` | ISO 8601 last I/O timestamp |
@@ -418,15 +418,15 @@ List all sessions on the agent.
 
 ---
 
-### `session.attach`
+### `connection.attach`
 
-Attach to a session to receive its output stream. The agent begins sending `session.output` notifications for this session.
+Attach to a session to receive its output stream. The agent begins sending `connection.output` notifications for this session.
 
 **Request:**
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "session.attach",
+  "method": "connection.attach",
   "params": {
     "session_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
   },
@@ -446,14 +446,14 @@ Attach to a session to receive its output stream. The agent begins sending `sess
 }
 ```
 
-After a successful attach, the agent immediately begins streaming output via `session.output` notifications.
+After a successful attach, the agent immediately begins streaming output via `connection.output` notifications.
 
 **Errors:**
 - `-32001` Session not found
 
 ---
 
-### `session.detach`
+### `connection.detach`
 
 Stop receiving output for a session without closing it. The session keeps running.
 
@@ -461,7 +461,7 @@ Stop receiving output for a session without closing it. The session keeps runnin
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "session.detach",
+  "method": "connection.detach",
   "params": {
     "session_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
   },
@@ -483,7 +483,7 @@ Stop receiving output for a session without closing it. The session keeps runnin
 
 ---
 
-### `session.input`
+### `connection.write`
 
 Send input data to a session (keystrokes, pasted text).
 
@@ -491,7 +491,7 @@ Send input data to a session (keystrokes, pasted text).
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "session.input",
+  "method": "connection.write",
   "params": {
     "session_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
     "data": "bHMgLWxhCg=="
@@ -520,7 +520,7 @@ Send input data to a session (keystrokes, pasted text).
 
 ---
 
-### `session.resize`
+### `connection.resize`
 
 Resize the PTY for a shell session.
 
@@ -528,7 +528,7 @@ Resize the PTY for a shell session.
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "session.resize",
+  "method": "connection.resize",
   "params": {
     "session_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
     "cols": 120,
@@ -560,7 +560,7 @@ Resize the PTY for a shell session.
 
 ---
 
-### `session.close`
+### `connection.close`
 
 Terminate a session and release its resources.
 
@@ -568,7 +568,7 @@ Terminate a session and release its resources.
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "session.close",
+  "method": "connection.close",
   "params": {
     "session_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
   },
@@ -585,7 +585,7 @@ Terminate a session and release its resources.
 }
 ```
 
-The agent sends a `session.exit` notification before the response if the session was still running.
+The agent sends a `connection.exit` notification before the response if the session was still running.
 
 **Errors:**
 - `-32001` Session not found
@@ -940,7 +940,7 @@ Delete a folder. Connections and subfolders inside it are moved to the root leve
 
 ---
 
-### `files.list`
+### `connection.files.list`
 
 List directory contents, scoped to a connection. When `connection_id` is omitted the agent's local filesystem is used.
 
@@ -948,7 +948,7 @@ List directory contents, scoped to a connection. When `connection_id` is omitted
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "files.list",
+  "method": "connection.files.list",
   "params": {
     "connection_id": "conn-a1b2c3d4",
     "path": "/home/user"
@@ -1008,7 +1008,7 @@ List directory contents, scoped to a connection. When `connection_id` is omitted
 
 ---
 
-### `files.read`
+### `connection.files.read`
 
 Read a file's content, returned as base64-encoded data.
 
@@ -1016,7 +1016,7 @@ Read a file's content, returned as base64-encoded data.
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "files.read",
+  "method": "connection.files.read",
   "params": {
     "connection_id": null,
     "path": "/home/user/readme.md"
@@ -1055,7 +1055,7 @@ Read a file's content, returned as base64-encoded data.
 
 ---
 
-### `files.write`
+### `connection.files.write`
 
 Write content to a file. Content is base64-encoded.
 
@@ -1063,7 +1063,7 @@ Write content to a file. Content is base64-encoded.
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "files.write",
+  "method": "connection.files.write",
   "params": {
     "path": "/home/user/output.txt",
     "data": "SGVsbG8gV29ybGQh"
@@ -1094,7 +1094,7 @@ Write content to a file. Content is base64-encoded.
 
 ---
 
-### `files.delete`
+### `connection.files.delete`
 
 Delete a file or directory.
 
@@ -1102,7 +1102,7 @@ Delete a file or directory.
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "files.delete",
+  "method": "connection.files.delete",
   "params": {
     "path": "/home/user/old-file.txt",
     "isDirectory": false
@@ -1134,7 +1134,7 @@ Delete a file or directory.
 
 ---
 
-### `files.rename`
+### `connection.files.rename`
 
 Rename or move a file or directory.
 
@@ -1142,7 +1142,7 @@ Rename or move a file or directory.
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "files.rename",
+  "method": "connection.files.rename",
   "params": {
     "old_path": "/home/user/old-name.txt",
     "new_path": "/home/user/new-name.txt"
@@ -1174,7 +1174,7 @@ Rename or move a file or directory.
 
 ---
 
-### `files.stat`
+### `connection.files.stat`
 
 Get metadata for a single file or directory.
 
@@ -1182,7 +1182,7 @@ Get metadata for a single file or directory.
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "files.stat",
+  "method": "connection.files.stat",
   "params": {
     "connection_id": "conn-a1b2c3d4",
     "path": "/var/log"
@@ -1229,16 +1229,16 @@ Get metadata for a single file or directory.
 
 ---
 
-### `monitoring.subscribe`
+### `connection.monitoring.subscribe`
 
-Start periodic system monitoring for a host. The agent will send `monitoring.data` notifications at the specified interval.
+Start periodic system monitoring for a host. The agent will send `connection.monitoring.data` notifications at the specified interval.
 
 **Request:**
 
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "monitoring.subscribe",
+  "method": "connection.monitoring.subscribe",
   "params": {
     "host": "self",
     "interval_ms": 2000
@@ -1273,7 +1273,7 @@ Start periodic system monitoring for a host. The agent will send `monitoring.dat
 
 ---
 
-### `monitoring.unsubscribe`
+### `connection.monitoring.unsubscribe`
 
 Stop periodic monitoring for a host.
 
@@ -1282,7 +1282,7 @@ Stop periodic monitoring for a host.
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "monitoring.unsubscribe",
+  "method": "connection.monitoring.unsubscribe",
   "params": {
     "host": "self"
   },
@@ -1313,14 +1313,14 @@ Stop periodic monitoring for a host.
 
 Notifications are messages from the agent to the desktop with **no `id` field**. The desktop MUST NOT send a response.
 
-### `session.output`
+### `connection.output`
 
 Terminal output data from a session the desktop is attached to.
 
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "session.output",
+  "method": "connection.output",
   "params": {
     "session_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
     "data": "dG90YWwgMTYKZHJ3eHIteHIteCA..."
@@ -1338,14 +1338,14 @@ Terminal output data from a session the desktop is attached to.
 - If the desktop disconnects while a session produces output, that output is lost (the agent does not buffer indefinitely)
 - A future protocol version may add a scrollback buffer or replay mechanism
 
-### `session.exit`
+### `connection.exit`
 
 A session's process has exited.
 
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "session.exit",
+  "method": "connection.exit",
   "params": {
     "session_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
     "exit_code": 0
@@ -1358,14 +1358,14 @@ A session's process has exited.
 | `session_id` | `string` | Exited session UUID |
 | `exit_code` | `integer?` | Exit code if available (`null` for signals or serial disconnects) |
 
-### `session.error`
+### `connection.error`
 
 A session-level error that does not necessarily terminate the session.
 
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "session.error",
+  "method": "connection.error",
   "params": {
     "session_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
     "message": "Serial port /dev/ttyUSB0 temporarily unavailable"
@@ -1378,14 +1378,14 @@ A session-level error that does not necessarily terminate the session.
 | `session_id` | `string` | Affected session UUID |
 | `message` | `string` | Human-readable error description |
 
-### `monitoring.data`
+### `connection.monitoring.data`
 
-Periodic system statistics for a monitored host. Sent at the interval specified in `monitoring.subscribe`.
+Periodic system statistics for a monitored host. Sent at the interval specified in `connection.monitoring.subscribe`.
 
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "monitoring.data",
+  "method": "connection.monitoring.data",
   "params": {
     "host": "self",
     "hostname": "raspberrypi",
@@ -1429,7 +1429,7 @@ The agent persists session metadata in a SQLite database so sessions survive age
 ```sql
 CREATE TABLE sessions (
     id          TEXT PRIMARY KEY,           -- UUID v4
-    type        TEXT NOT NULL,              -- "shell" or "serial"
+    type        TEXT NOT NULL,              -- connection type ID (e.g., "local", "ssh", "serial")
     title       TEXT NOT NULL,              -- Display title
     status      TEXT NOT NULL DEFAULT 'running', -- "running" or "exited"
     config      TEXT NOT NULL,              -- JSON blob of session config
@@ -1467,11 +1467,11 @@ For serial sessions:
 
 ### Lifecycle
 
-1. **On `session.create`**: Insert row with `status = "running"`
+1. **On `connection.create`**: Insert row with `status = "running"`
 2. **On I/O activity**: Update `last_activity` timestamp
 3. **On process exit**: Update `status = "exited"`, set `exit_code`
-4. **On `session.close`**: Delete the row
-5. **On agent restart**: Mark all `status = "running"` rows as `status = "exited"` (processes were lost), then report them in `session.list` so the desktop can show what happened
+4. **On `connection.close`**: Delete the row
+5. **On agent restart**: Persistent sessions (daemon-based) are recovered automatically; non-persistent sessions are marked `status = "exited"` and reported in `connection.list`
 
 ---
 
@@ -1515,69 +1515,69 @@ For serial sessions:
 
 ```
 Desktop → Agent:
-{"jsonrpc":"2.0","method":"initialize","params":{"protocol_version":"0.1.0","client":"termihub-desktop","client_version":"0.1.0"},"id":1}
+{"jsonrpc":"2.0","method":"initialize","params":{"protocol_version":"0.2.0","client":"termihub-desktop","client_version":"0.1.0"},"id":1}
 
 Agent → Desktop:
-{"jsonrpc":"2.0","result":{"protocol_version":"0.1.0","agent_version":"0.1.0","capabilities":{"session_types":["shell","serial"],"max_sessions":20}},"id":1}
+{"jsonrpc":"2.0","result":{"protocol_version":"0.2.0","agent_version":"0.1.0","capabilities":{"connection_types":["local","ssh","serial","docker","telnet","wsl"],"max_sessions":20}},"id":1}
 
 Desktop → Agent:
-{"jsonrpc":"2.0","method":"session.create","params":{"type":"shell","config":{"shell":"/bin/bash","cols":80,"rows":24,"env":{"TERM":"xterm-256color"}},"title":"Build session"},"id":2}
+{"jsonrpc":"2.0","method":"connection.create","params":{"type":"local","config":{"shell":"/bin/bash","cols":80,"rows":24,"env":{"TERM":"xterm-256color"}},"title":"Build session"},"id":2}
 
 Agent → Desktop:
-{"jsonrpc":"2.0","result":{"session_id":"a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d","title":"Build session","type":"shell","status":"running","created_at":"2026-02-14T10:30:00Z"},"id":2}
+{"jsonrpc":"2.0","result":{"session_id":"a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d","title":"Build session","type":"local","status":"running","created_at":"2026-02-14T10:30:00Z"},"id":2}
 
 Desktop → Agent:
-{"jsonrpc":"2.0","method":"session.attach","params":{"session_id":"a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"},"id":3}
+{"jsonrpc":"2.0","method":"connection.attach","params":{"session_id":"a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"},"id":3}
 
 Agent → Desktop:
 {"jsonrpc":"2.0","result":{"session_id":"a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d","status":"running"},"id":3}
 
 Agent → Desktop (notification — shell prompt):
-{"jsonrpc":"2.0","method":"session.output","params":{"session_id":"a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d","data":"dXNlckBwaSA6fiAkIA=="}}
+{"jsonrpc":"2.0","method":"connection.output","params":{"session_id":"a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d","data":"dXNlckBwaSA6fiAkIA=="}}
 
 Desktop → Agent (user types "ls -la\n"):
-{"jsonrpc":"2.0","method":"session.input","params":{"session_id":"a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d","data":"bHMgLWxhCg=="},"id":4}
+{"jsonrpc":"2.0","method":"connection.write","params":{"session_id":"a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d","data":"bHMgLWxhCg=="},"id":4}
 
 Agent → Desktop:
 {"jsonrpc":"2.0","result":{},"id":4}
 
 Agent → Desktop (notification — command output):
-{"jsonrpc":"2.0","method":"session.output","params":{"session_id":"a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d","data":"dG90YWwgMTYKZHJ3eHIteHIteCAyIHVzZXIgdXNlciA0MDk2IEZlYiAxNCAxMDozMCAuCg=="}}
+{"jsonrpc":"2.0","method":"connection.output","params":{"session_id":"a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d","data":"dG90YWwgMTYKZHJ3eHIteHIteCAyIHVzZXIgdXNlciA0MDk2IEZlYiAxNCAxMDozMCAuCg=="}}
 ```
 
 ### Workflow: Reconnect After Disconnect
 
 ```
 Desktop → Agent (new SSH channel):
-{"jsonrpc":"2.0","method":"initialize","params":{"protocol_version":"0.1.0","client":"termihub-desktop","client_version":"0.1.0"},"id":1}
+{"jsonrpc":"2.0","method":"initialize","params":{"protocol_version":"0.2.0","client":"termihub-desktop","client_version":"0.1.0"},"id":1}
 
 Agent → Desktop:
-{"jsonrpc":"2.0","result":{"protocol_version":"0.1.0","agent_version":"0.1.0","capabilities":{"session_types":["shell","serial"],"max_sessions":20}},"id":1}
+{"jsonrpc":"2.0","result":{"protocol_version":"0.2.0","agent_version":"0.1.0","capabilities":{"connection_types":["local","ssh","serial","docker","telnet","wsl"],"max_sessions":20}},"id":1}
 
 Desktop → Agent:
-{"jsonrpc":"2.0","method":"session.list","params":{},"id":2}
+{"jsonrpc":"2.0","method":"connection.list","params":{},"id":2}
 
 Agent → Desktop:
-{"jsonrpc":"2.0","result":{"sessions":[{"session_id":"a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d","title":"Build session","type":"shell","status":"running","created_at":"2026-02-14T10:30:00Z","last_activity":"2026-02-14T12:45:30Z","attached":false}]},"id":2}
+{"jsonrpc":"2.0","result":{"sessions":[{"session_id":"a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d","title":"Build session","type":"local","status":"running","created_at":"2026-02-14T10:30:00Z","last_activity":"2026-02-14T12:45:30Z","attached":false}]},"id":2}
 
 Desktop → Agent (reattach to existing session):
-{"jsonrpc":"2.0","method":"session.attach","params":{"session_id":"a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"},"id":3}
+{"jsonrpc":"2.0","method":"connection.attach","params":{"session_id":"a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"},"id":3}
 
 Agent → Desktop:
 {"jsonrpc":"2.0","result":{"session_id":"a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d","status":"running"},"id":3}
 
 Agent → Desktop (notification — live output resumes):
-{"jsonrpc":"2.0","method":"session.output","params":{"session_id":"a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d","data":"dXNlckBwaSA6fiAkIA=="}}
+{"jsonrpc":"2.0","method":"connection.output","params":{"session_id":"a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d","data":"dXNlckBwaSA6fiAkIA=="}}
 ```
 
 ### Workflow: Session Process Exits
 
 ```
 Agent → Desktop (notification — process exited):
-{"jsonrpc":"2.0","method":"session.exit","params":{"session_id":"a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d","exit_code":0}}
+{"jsonrpc":"2.0","method":"connection.exit","params":{"session_id":"a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d","exit_code":0}}
 
 Desktop → Agent (clean up):
-{"jsonrpc":"2.0","method":"session.close","params":{"session_id":"a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"},"id":10}
+{"jsonrpc":"2.0","method":"connection.close","params":{"session_id":"a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"},"id":10}
 
 Agent → Desktop:
 {"jsonrpc":"2.0","result":{},"id":10}

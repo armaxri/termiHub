@@ -61,13 +61,13 @@ mod tests {
     #[test]
     fn serialize_notification() {
         let notif = JsonRpcNotification::new(
-            "session.output",
+            "connection.output",
             json!({"session_id": "abc", "data": "aGVsbG8="}),
         );
         let json_str = serde_json::to_string(&notif).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
         assert_eq!(parsed["jsonrpc"], "2.0");
-        assert_eq!(parsed["method"], "session.output");
+        assert_eq!(parsed["method"], "connection.output");
         assert_eq!(parsed["params"]["session_id"], "abc");
         // Notifications must NOT have an "id" field
         assert!(parsed.get("id").is_none());

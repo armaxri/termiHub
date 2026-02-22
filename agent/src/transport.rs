@@ -43,7 +43,7 @@ impl OutputSink for JsonRpcOutputSink {
         for chunk in data.chunks(65536) {
             let encoded = b64.encode(chunk);
             let notification = JsonRpcNotification::new(
-                "session.output",
+                "connection.output",
                 serde_json::json!({
                     "session_id": session_id,
                     "data": encoded,
@@ -61,7 +61,7 @@ impl OutputSink for JsonRpcOutputSink {
 
     fn send_exit(&self, session_id: &str, exit_code: Option<i32>) -> Result<(), SessionError> {
         let notification = JsonRpcNotification::new(
-            "session.exit",
+            "connection.exit",
             serde_json::json!({
                 "session_id": session_id,
                 "exit_code": exit_code,
@@ -78,7 +78,7 @@ impl OutputSink for JsonRpcOutputSink {
 
     fn send_error(&self, session_id: &str, message: &str) -> Result<(), SessionError> {
         let notification = JsonRpcNotification::new(
-            "session.error",
+            "connection.error",
             serde_json::json!({
                 "session_id": session_id,
                 "message": message,
@@ -227,7 +227,7 @@ mod tests {
         sink.send_output("s1", b"hello".to_vec()).unwrap();
 
         let notification = rx.try_recv().unwrap();
-        assert_eq!(notification.method, "session.output");
+        assert_eq!(notification.method, "connection.output");
         assert_eq!(notification.params["session_id"], "s1");
         // Output should be base64-encoded
         let decoded = base64::engine::general_purpose::STANDARD
@@ -268,7 +268,7 @@ mod tests {
         sink.send_exit("s1", Some(0)).unwrap();
 
         let notification = rx.try_recv().unwrap();
-        assert_eq!(notification.method, "session.exit");
+        assert_eq!(notification.method, "connection.exit");
         assert_eq!(notification.params["session_id"], "s1");
         assert_eq!(notification.params["exit_code"], 0);
     }
@@ -281,7 +281,7 @@ mod tests {
         sink.send_exit("s1", None).unwrap();
 
         let notification = rx.try_recv().unwrap();
-        assert_eq!(notification.method, "session.exit");
+        assert_eq!(notification.method, "connection.exit");
         assert_eq!(notification.params["session_id"], "s1");
         assert!(notification.params["exit_code"].is_null());
     }
@@ -294,7 +294,7 @@ mod tests {
         sink.send_error("s1", "read failed").unwrap();
 
         let notification = rx.try_recv().unwrap();
-        assert_eq!(notification.method, "session.error");
+        assert_eq!(notification.method, "connection.error");
         assert_eq!(notification.params["session_id"], "s1");
         assert_eq!(notification.params["message"], "read failed");
     }

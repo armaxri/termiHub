@@ -1,101 +1,71 @@
-//! Session daemon process — manages a single PTY + ring buffer.
+//! Session daemon process — hosts a [`ConnectionType`] instance.
 //!
 //! Invoked as `termihub-agent --daemon <session-id>` by the agent.
 //! Communicates with the agent via a Unix domain socket using the
 //! length-prefixed binary frame protocol defined in `protocol.rs`.
 //!
-//! The daemon is intentionally single-threaded and does NOT use tokio.
-//! It uses `nix::poll::poll()` to multiplex between the PTY master,
-//! the Unix socket listener, and the agent connection. This keeps the
-//! daemon lightweight and simple.
+//! The daemon keeps the connection alive independently of the agent
+//! process. When the agent disconnects and reconnects, the daemon
+//! replays the ring buffer to bring the agent up to date.
 
-use std::collections::HashMap;
-use std::io::Write;
-use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
-use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 
-use nix::libc;
-use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
-use nix::pty::{openpty, OpenptyResult, Winsize};
-use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
-use nix::unistd::{close, setsid, Pid};
-use tracing::{debug, error, info, warn};
+use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::net::UnixListener;
+use tokio::sync::mpsc;
+use tracing::{debug, info, warn};
 
 use crate::daemon::protocol::{self, *};
 use termihub_core::buffer::RingBuffer;
+use termihub_core::connection::{ConnectionType, OutputReceiver};
 
 /// Default ring buffer size: 1 MiB.
 const DEFAULT_BUFFER_SIZE: usize = 1_048_576;
 
-/// PTY read buffer size.
-const PTY_READ_BUF: usize = 4096;
-
-/// Poll timeout in milliseconds.
-const POLL_TIMEOUT_MS: u16 = 100;
-
 /// Configuration for the session daemon, read from environment variables.
+#[derive(Debug)]
 struct DaemonConfig {
     session_id: String,
     socket_path: PathBuf,
-    shell: String,
-    cols: u16,
-    rows: u16,
+    type_id: String,
+    settings: serde_json::Value,
     buffer_size: usize,
-    env: HashMap<String, String>,
-    /// When set, run this command instead of a login shell.
-    /// Read from `TERMIHUB_COMMAND`.
-    command: Option<String>,
-    /// Arguments for the command. Read from `TERMIHUB_COMMAND_ARGS` (JSON array).
-    command_args: Vec<String>,
 }
 
 impl DaemonConfig {
     /// Read configuration from environment variables.
+    ///
+    /// Required env vars:
+    /// - `TERMIHUB_TYPE_ID` — connection type identifier (e.g., `"local"`, `"ssh"`)
+    /// - `TERMIHUB_SETTINGS` — JSON settings for `ConnectionType::connect()`
+    ///
+    /// Optional env vars:
+    /// - `TERMIHUB_SOCKET_PATH` — Unix socket path (default: auto-generated)
+    /// - `TERMIHUB_BUFFER_SIZE` — ring buffer size in bytes (default: 1 MiB)
     fn from_env(session_id: &str) -> anyhow::Result<Self> {
         let socket_path = std::env::var("TERMIHUB_SOCKET_PATH")
             .map(PathBuf::from)
             .unwrap_or_else(|_| socket_dir().join(format!("session-{session_id}.sock")));
 
-        let shell = std::env::var("TERMIHUB_SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+        let type_id = std::env::var("TERMIHUB_TYPE_ID")
+            .map_err(|_| anyhow::anyhow!("TERMIHUB_TYPE_ID env var is required"))?;
 
-        let cols = std::env::var("TERMIHUB_COLS")
+        let settings: serde_json::Value = std::env::var("TERMIHUB_SETTINGS")
             .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(80);
-
-        let rows = std::env::var("TERMIHUB_ROWS")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(24);
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
 
         let buffer_size = std::env::var("TERMIHUB_BUFFER_SIZE")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(DEFAULT_BUFFER_SIZE);
 
-        let env: HashMap<String, String> = std::env::var("TERMIHUB_ENV")
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default();
-
-        let command = std::env::var("TERMIHUB_COMMAND").ok();
-
-        let command_args: Vec<String> = std::env::var("TERMIHUB_COMMAND_ARGS")
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default();
-
         Ok(Self {
             session_id: session_id.to_string(),
             socket_path,
-            shell,
-            cols,
-            rows,
+            type_id,
+            settings,
             buffer_size,
-            env,
-            command,
-            command_args,
         })
     }
 }
@@ -115,37 +85,28 @@ fn ensure_socket_dir(dir: &Path) -> anyhow::Result<()> {
 }
 
 /// Entry point for the session daemon process.
-pub fn run_daemon(session_id: &str) -> anyhow::Result<()> {
+///
+/// Creates a [`ConnectionType`] instance from the registry, connects it
+/// using the settings from environment variables, and runs the event loop
+/// that bridges the connection to the agent via the Unix socket.
+pub async fn run_daemon(session_id: &str) -> anyhow::Result<()> {
     let config = DaemonConfig::from_env(session_id)?;
 
-    if let Some(ref command) = config.command {
-        info!(
-            "Session daemon starting: id={}, command={} {:?}, size={}x{}, buffer={}",
-            config.session_id,
-            command,
-            config.command_args,
-            config.cols,
-            config.rows,
-            config.buffer_size
-        );
-    } else {
-        info!(
-            "Session daemon starting: id={}, shell={}, size={}x{}, buffer={}",
-            config.session_id, config.shell, config.cols, config.rows, config.buffer_size
-        );
-    }
+    info!(
+        "Session daemon starting: id={}, type={}, buffer={}",
+        config.session_id, config.type_id, config.buffer_size
+    );
 
     // Ensure socket directory exists
     if let Some(parent) = config.socket_path.parent() {
         ensure_socket_dir(parent)?;
     }
 
-    // Remove stale socket file if it exists
+    // Remove stale socket file
     let _ = std::fs::remove_file(&config.socket_path);
 
     // Bind the Unix listener
     let listener = UnixListener::bind(&config.socket_path)?;
-    listener.set_nonblocking(true)?;
 
     // Set socket file permissions to 0700
     use std::os::unix::fs::PermissionsExt;
@@ -153,39 +114,24 @@ pub fn run_daemon(session_id: &str) -> anyhow::Result<()> {
 
     info!("Listening on socket: {}", config.socket_path.display());
 
-    // Allocate PTY
-    let winsize = Winsize {
-        ws_row: config.rows,
-        ws_col: config.cols,
-        ws_xpixel: 0,
-        ws_ypixel: 0,
-    };
+    // Create and connect the ConnectionType
+    let registry = crate::registry::build_registry();
+    let mut connection = registry.create(&config.type_id).map_err(|e| {
+        anyhow::anyhow!("Failed to create connection type '{}': {e}", config.type_id)
+    })?;
 
-    let OpenptyResult { master, slave } = openpty(&winsize, None)?;
+    connection
+        .connect(config.settings.clone())
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to connect: {e}"))?;
 
-    // Spawn the child process (shell or arbitrary command)
-    let child_pid = if let Some(ref command) = config.command {
-        spawn_command(command, &config.command_args, &slave, &config.env)?
-    } else {
-        spawn_shell(&config.shell, &slave, &config.env)?
-    };
+    info!("Connection established: type={}", config.type_id);
 
-    // Close slave in the daemon — the child process owns it now
-    drop(slave);
-
-    if config.command.is_some() {
-        info!(
-            "Command spawned: pid={}, command={} {:?}",
-            child_pid,
-            config.command.as_deref().unwrap_or(""),
-            config.command_args
-        );
-    } else {
-        info!("Shell spawned: pid={}, shell={}", child_pid, config.shell);
-    }
+    // Subscribe to output
+    let output_rx = connection.subscribe_output();
 
     // Run the main event loop
-    let result = daemon_loop(&master, &listener, child_pid, config.buffer_size);
+    let result = daemon_loop(connection, output_rx, &listener, config.buffer_size).await;
 
     // Cleanup socket file
     let _ = std::fs::remove_file(&config.socket_path);
@@ -194,415 +140,220 @@ pub fn run_daemon(session_id: &str) -> anyhow::Result<()> {
     result
 }
 
-/// Spawn the shell as a child process attached to the PTY slave.
-fn spawn_shell(shell: &str, slave: &OwnedFd, env: &HashMap<String, String>) -> anyhow::Result<Pid> {
-    let slave_fd = slave.as_raw_fd();
-
-    // Use fork + exec pattern for proper PTY setup
-    match unsafe { nix::unistd::fork()? } {
-        nix::unistd::ForkResult::Child => {
-            // Create new session and set controlling terminal
-            setsid().expect("setsid failed");
-
-            // Set controlling terminal
-            unsafe {
-                libc::ioctl(slave_fd, libc::TIOCSCTTY as libc::c_ulong, 0);
-            }
-
-            // Redirect stdio to PTY slave
-            unsafe {
-                libc::dup2(slave_fd, 0);
-                libc::dup2(slave_fd, 1);
-                libc::dup2(slave_fd, 2);
-            }
-
-            if slave_fd > 2 {
-                close(slave_fd).expect("close slave_fd failed");
-            }
-
-            // Set environment
-            std::env::set_var("TERM", "xterm-256color");
-            std::env::set_var("COLORTERM", "truecolor");
-            for (key, value) in env {
-                std::env::set_var(key, value);
-            }
-
-            // Determine home directory for working directory
-            if let Ok(home) = std::env::var("HOME") {
-                let _ = std::env::set_current_dir(&home);
-            }
-
-            // Execute the shell as a login shell
-            let shell_name = Path::new(shell)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("sh");
-            let login_name = format!("-{shell_name}");
-
-            // exec replaces this process
-            let c_shell = std::ffi::CString::new(shell).expect("Invalid shell path");
-            let c_arg0 = std::ffi::CString::new(login_name).expect("Invalid shell name");
-
-            match nix::unistd::execvp(&c_shell, &[c_arg0]) {
-                Ok(infallible) => match infallible {},
-                Err(e) => panic!("execvp failed: {e}"),
-            }
-        }
-        nix::unistd::ForkResult::Parent { child } => Ok(child),
-    }
-}
-
-/// Spawn an arbitrary command as a child process attached to the PTY slave.
-///
-/// Used for Docker sessions where the daemon runs `docker exec -it` instead
-/// of a login shell.
-fn spawn_command(
-    command: &str,
-    args: &[String],
-    slave: &OwnedFd,
-    env: &HashMap<String, String>,
-) -> anyhow::Result<Pid> {
-    let slave_fd = slave.as_raw_fd();
-
-    match unsafe { nix::unistd::fork()? } {
-        nix::unistd::ForkResult::Child => {
-            // Create new session and set controlling terminal
-            setsid().expect("setsid failed");
-
-            unsafe {
-                libc::ioctl(slave_fd, libc::TIOCSCTTY as libc::c_ulong, 0);
-            }
-
-            // Redirect stdio to PTY slave
-            unsafe {
-                libc::dup2(slave_fd, 0);
-                libc::dup2(slave_fd, 1);
-                libc::dup2(slave_fd, 2);
-            }
-
-            if slave_fd > 2 {
-                close(slave_fd).expect("close slave_fd failed");
-            }
-
-            // Set environment
-            std::env::set_var("TERM", "xterm-256color");
-            std::env::set_var("COLORTERM", "truecolor");
-            for (key, value) in env {
-                std::env::set_var(key, value);
-            }
-
-            // Build CString args: [command, arg1, arg2, ...]
-            let c_command = std::ffi::CString::new(command).expect("Invalid command");
-            let mut c_args = vec![c_command.clone()];
-            for arg in args {
-                c_args.push(std::ffi::CString::new(arg.as_str()).expect("Invalid arg"));
-            }
-
-            match nix::unistd::execvp(&c_command, &c_args) {
-                Ok(infallible) => match infallible {},
-                Err(e) => panic!("execvp failed: {e}"),
-            }
-        }
-        nix::unistd::ForkResult::Parent { child } => Ok(child),
-    }
-}
-
-/// Resize the PTY master.
-fn resize_pty(master_fd: i32, cols: u16, rows: u16) {
-    let winsize = Winsize {
-        ws_row: rows,
-        ws_col: cols,
-        ws_xpixel: 0,
-        ws_ypixel: 0,
-    };
-    unsafe {
-        libc::ioctl(
-            master_fd,
-            libc::TIOCSWINSZ as libc::c_ulong,
-            &winsize as *const Winsize,
-        );
-    }
+/// Commands sent from the agent reader task to the main loop.
+enum AgentCommand {
+    /// Raw input bytes for the connection.
+    Input(Vec<u8>),
+    /// Resize the terminal.
+    Resize(u16, u16),
+    /// Agent requested detach.
+    Detach,
+    /// Agent requested kill.
+    Kill,
+    /// Agent disconnected (EOF or error).
+    Disconnected,
 }
 
 /// Main daemon event loop.
 ///
-/// Multiplexes between PTY output, socket listener, and agent connection
-/// using `poll()`.
-fn daemon_loop(
-    master: &OwnedFd,
+/// Multiplexes between connection output, new agent connections, and
+/// agent commands using `tokio::select!`.
+async fn daemon_loop(
+    mut connection: Box<dyn ConnectionType>,
+    mut output_rx: OutputReceiver,
     listener: &UnixListener,
-    child_pid: Pid,
     buffer_size: usize,
 ) -> anyhow::Result<()> {
-    let master_fd = master.as_raw_fd();
-
     let mut ring_buffer = RingBuffer::new(buffer_size);
-    let mut agent_conn: Option<UnixStream> = None;
-    let mut pty_buf = [0u8; PTY_READ_BUF];
+    let mut agent_writer: Option<OwnedWriteHalf> = None;
+    let mut reader_task: Option<tokio::task::JoinHandle<()>> = None;
 
-    // Make PTY master non-blocking for poll
-    set_nonblocking(master_fd)?;
-
-    let timeout = PollTimeout::from(POLL_TIMEOUT_MS);
+    // Channel for receiving commands from the agent reader task.
+    let (agent_cmd_tx, mut agent_cmd_rx) = mpsc::channel::<AgentCommand>(64);
 
     loop {
-        // Check if child has exited (non-blocking)
-        match waitpid(child_pid, Some(WaitPidFlag::WNOHANG)) {
-            Ok(WaitStatus::Exited(_, code)) => {
-                info!("Shell exited with code {code}");
-                send_exited(&mut agent_conn, code);
-                return Ok(());
-            }
-            Ok(WaitStatus::Signaled(_, signal, _)) => {
-                info!("Shell killed by signal {signal}");
-                send_exited(&mut agent_conn, 128 + signal as i32);
-                return Ok(());
-            }
-            Ok(_) => {} // still running
-            Err(nix::errno::Errno::ECHILD) => {
-                // Child already reaped
-                info!("Shell process no longer exists");
-                send_exited(&mut agent_conn, -1);
-                return Ok(());
-            }
-            Err(e) => {
-                warn!("waitpid error: {e}");
-            }
-        }
-
-        // Build poll fds using BorrowedFd
-        let master_bfd = unsafe { BorrowedFd::borrow_raw(master_fd) };
-        let listener_bfd = listener.as_fd();
-
-        let mut poll_fds = vec![
-            PollFd::new(master_bfd, PollFlags::POLLIN),
-            PollFd::new(listener_bfd, PollFlags::POLLIN),
-        ];
-
-        if let Some(ref conn) = agent_conn {
-            let conn_bfd = unsafe { BorrowedFd::borrow_raw(conn.as_raw_fd()) };
-            poll_fds.push(PollFd::new(conn_bfd, PollFlags::POLLIN));
-        }
-
-        // Poll with timeout
-        match poll(&mut poll_fds, timeout) {
-            Ok(0) => continue, // timeout
-            Ok(_) => {}
-            Err(nix::errno::Errno::EINTR) => continue,
-            Err(e) => {
-                error!("poll error: {e}");
-                return Err(e.into());
-            }
-        }
-
-        // Check PTY master for output
-        if let Some(revents) = poll_fds[0].revents() {
-            if revents.contains(PollFlags::POLLIN) {
-                match nix::unistd::read(master_fd, &mut pty_buf) {
-                    Ok(0) => {
-                        debug!("PTY master EOF");
-                        let code = wait_for_child(child_pid);
-                        send_exited(&mut agent_conn, code);
-                        return Ok(());
-                    }
-                    Ok(n) => {
-                        let data = &pty_buf[..n];
-                        ring_buffer.write(data);
+        tokio::select! {
+            // Output from the ConnectionType
+            output = output_rx.recv() => {
+                match output {
+                    Some(data) => {
+                        ring_buffer.write(&data);
 
                         // Forward to agent if connected
-                        if let Some(ref mut conn) = agent_conn {
-                            if let Err(e) = protocol::write_frame(conn, MSG_OUTPUT, data) {
-                                debug!("Agent connection lost on write: {e}");
-                                agent_conn = None;
+                        if let Some(ref mut writer) = agent_writer {
+                            if protocol::write_frame_async(writer, MSG_OUTPUT, &data)
+                                .await
+                                .is_err()
+                            {
+                                debug!("Agent connection lost on write");
+                                agent_writer = None;
+                                abort_reader(&mut reader_task);
                             }
                         }
                     }
-                    Err(nix::errno::Errno::EAGAIN) => {}
-                    Err(nix::errno::Errno::EIO) => {
-                        debug!("PTY master EIO — shell likely exited");
-                        let code = wait_for_child(child_pid);
-                        send_exited(&mut agent_conn, code);
+                    None => {
+                        // Connection output channel closed — connection ended
+                        info!("Connection output channel closed");
+                        send_exited_async(&mut agent_writer, 0).await;
                         return Ok(());
-                    }
-                    Err(e) => {
-                        warn!("PTY read error: {e}");
                     }
                 }
             }
-            if revents.contains(PollFlags::POLLHUP) || revents.contains(PollFlags::POLLERR) {
-                debug!("PTY master HUP/ERR");
-                let code = wait_for_child(child_pid);
-                send_exited(&mut agent_conn, code);
-                return Ok(());
-            }
-        }
 
-        // Check listener for new agent connections
-        if let Some(revents) = poll_fds[1].revents() {
-            if revents.contains(PollFlags::POLLIN) {
-                match listener.accept() {
-                    Ok((mut stream, _)) => {
+            // New agent connection
+            conn = listener.accept() => {
+                match conn {
+                    Ok((stream, _)) => {
                         info!("Agent connected");
-                        // Replace any existing connection
-                        agent_conn = None;
+
+                        // Drop the old connection
+                        agent_writer = None;
+                        abort_reader(&mut reader_task);
+
+                        let (read_half, mut write_half) = stream.into_split();
 
                         // Send buffer replay
                         let buffered = ring_buffer.read_all();
-                        if protocol::write_frame(&mut stream, MSG_BUFFER_REPLAY, &buffered).is_err()
+                        if !buffered.is_empty()
+                            && protocol::write_frame_async(
+                                &mut write_half,
+                                MSG_BUFFER_REPLAY,
+                                &buffered,
+                            )
+                            .await
+                            .is_err()
                         {
                             warn!("Failed to send buffer replay");
                             continue;
                         }
 
                         // Send ready signal
-                        if protocol::write_frame(&mut stream, MSG_READY, &[]).is_err() {
+                        if protocol::write_frame_async(&mut write_half, MSG_READY, &[])
+                            .await
+                            .is_err()
+                        {
                             warn!("Failed to send ready");
                             continue;
                         }
 
-                        stream.set_nonblocking(true)?;
-                        agent_conn = Some(stream);
+                        agent_writer = Some(write_half);
+
+                        // Spawn reader task for agent commands
+                        let tx = agent_cmd_tx.clone();
+                        reader_task = Some(tokio::spawn(async move {
+                            agent_reader_loop(read_half, tx).await;
+                        }));
                     }
-                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
                     Err(e) => {
                         warn!("Listener accept error: {e}");
                     }
                 }
             }
-        }
 
-        // Check agent connection for incoming frames
-        if agent_conn.is_some() && poll_fds.len() > 2 {
-            if let Some(revents) = poll_fds[2].revents() {
-                if revents.contains(PollFlags::POLLIN) {
-                    let should_disconnect =
-                        handle_agent_input(agent_conn.as_mut().unwrap(), master_fd, child_pid);
-                    if let Some(should_exit) = should_disconnect {
-                        if should_exit {
-                            // Kill was requested
-                            let _ = nix::sys::signal::kill(
-                                child_pid,
-                                nix::sys::signal::Signal::SIGTERM,
-                            );
-                            let code = wait_for_child(child_pid);
-                            send_exited(&mut agent_conn, code);
-                            return Ok(());
+            // Commands from the agent reader task
+            cmd = agent_cmd_rx.recv() => {
+                match cmd {
+                    Some(AgentCommand::Input(data)) => {
+                        if let Err(e) = connection.write(&data) {
+                            warn!("Connection write error: {e}");
                         }
-                        // Agent disconnected
+                    }
+                    Some(AgentCommand::Resize(cols, rows)) => {
+                        if let Err(e) = connection.resize(cols, rows) {
+                            warn!("Connection resize error: {e}");
+                        }
+                    }
+                    Some(AgentCommand::Detach) => {
+                        info!("Agent requested detach");
+                        agent_writer = None;
+                        abort_reader(&mut reader_task);
+                    }
+                    Some(AgentCommand::Kill) => {
+                        info!("Agent requested kill");
+                        if let Err(e) = connection.disconnect().await {
+                            warn!("Disconnect error: {e}");
+                        }
+                        send_exited_async(&mut agent_writer, 0).await;
+                        return Ok(());
+                    }
+                    Some(AgentCommand::Disconnected) => {
                         info!("Agent disconnected");
-                        agent_conn = None;
+                        agent_writer = None;
+                        abort_reader(&mut reader_task);
+                    }
+                    None => {
+                        // All senders dropped — shouldn't happen since we hold one
+                        debug!("Agent command channel closed");
                     }
                 }
-                if revents.contains(PollFlags::POLLHUP) || revents.contains(PollFlags::POLLERR) {
-                    info!("Agent connection HUP/ERR");
-                    agent_conn = None;
+            }
+        }
+    }
+}
+
+/// Background task that reads frames from the agent and sends commands
+/// to the main loop via a channel.
+async fn agent_reader_loop(mut reader: OwnedReadHalf, tx: mpsc::Sender<AgentCommand>) {
+    loop {
+        match protocol::read_frame_async(&mut reader).await {
+            Ok(Some(frame)) => {
+                let cmd = match frame.msg_type {
+                    MSG_INPUT => AgentCommand::Input(frame.payload),
+                    MSG_RESIZE => {
+                        if let Some((cols, rows)) = protocol::decode_resize(&frame.payload) {
+                            debug!("Resize to {cols}x{rows}");
+                            AgentCommand::Resize(cols, rows)
+                        } else {
+                            continue;
+                        }
+                    }
+                    MSG_DETACH => AgentCommand::Detach,
+                    MSG_KILL => AgentCommand::Kill,
+                    other => {
+                        debug!("Unknown frame type from agent: 0x{other:02x}");
+                        continue;
+                    }
+                };
+                if tx.send(cmd).await.is_err() {
+                    return; // main loop dropped the receiver
                 }
             }
+            Ok(None) => {
+                // EOF
+                let _ = tx.send(AgentCommand::Disconnected).await;
+                return;
+            }
+            Err(e) => {
+                debug!("Agent frame read error: {e}");
+                let _ = tx.send(AgentCommand::Disconnected).await;
+                return;
+            }
         }
     }
 }
 
-/// Handle a readable event on the agent connection.
-///
-/// Returns:
-/// - `None` — frame processed normally
-/// - `Some(false)` — agent disconnected (EOF or error)
-/// - `Some(true)` — kill requested, daemon should exit
-fn handle_agent_input(conn: &mut UnixStream, master_fd: i32, child_pid: Pid) -> Option<bool> {
-    // Temporarily set blocking for frame read with a short timeout
-    let _ = conn.set_nonblocking(false);
-    let _ = conn.set_read_timeout(Some(std::time::Duration::from_millis(100)));
-
-    let frame = match protocol::read_frame(conn) {
-        Ok(Some(f)) => f,
-        Ok(None) => {
-            let _ = conn.set_nonblocking(true);
-            return Some(false); // EOF
-        }
-        Err(ref e)
-            if e.kind() == std::io::ErrorKind::WouldBlock
-                || e.kind() == std::io::ErrorKind::TimedOut =>
-        {
-            let _ = conn.set_nonblocking(true);
-            return None; // no data yet
-        }
-        Err(e) => {
-            debug!("Agent frame read error: {e}");
-            let _ = conn.set_nonblocking(true);
-            return Some(false);
-        }
-    };
-
-    let _ = conn.set_nonblocking(true);
-
-    match frame.msg_type {
-        MSG_INPUT => {
-            if let Err(e) = write_to_pty(master_fd, &frame.payload) {
-                warn!("PTY write error: {e}");
-            }
-            None
-        }
-        MSG_RESIZE => {
-            if let Some((cols, rows)) = protocol::decode_resize(&frame.payload) {
-                resize_pty(master_fd, cols, rows);
-                debug!("PTY resized to {cols}x{rows}");
-            }
-            None
-        }
-        MSG_DETACH => {
-            info!("Agent requested detach");
-            Some(false)
-        }
-        MSG_KILL => {
-            info!("Agent requested kill");
-            let _ = nix::sys::signal::kill(child_pid, nix::sys::signal::Signal::SIGTERM);
-            Some(true)
-        }
-        other => {
-            debug!("Unknown frame type from agent: 0x{other:02x}");
-            None
-        }
-    }
-}
-
-/// Write data to the PTY master fd.
-fn write_to_pty(master_fd: i32, data: &[u8]) -> anyhow::Result<()> {
-    let master_file = unsafe { std::fs::File::from_raw_fd(master_fd) };
-    let result = (&master_file).write_all(data);
-    // Don't drop — we don't own this fd
-    std::mem::forget(master_file);
-    result.map_err(|e| anyhow::anyhow!("PTY write failed: {e}"))
-}
-
-/// Set a file descriptor to non-blocking mode.
-fn set_nonblocking(fd: i32) -> anyhow::Result<()> {
-    let flags = nix::fcntl::fcntl(fd, nix::fcntl::FcntlArg::F_GETFL)?;
-    let mut oflags = nix::fcntl::OFlag::from_bits_truncate(flags);
-    oflags |= nix::fcntl::OFlag::O_NONBLOCK;
-    nix::fcntl::fcntl(fd, nix::fcntl::FcntlArg::F_SETFL(oflags))?;
-    Ok(())
-}
-
-/// Wait for the child process to exit and return its exit code.
-fn wait_for_child(pid: Pid) -> i32 {
-    match waitpid(pid, None) {
-        Ok(WaitStatus::Exited(_, code)) => code,
-        Ok(WaitStatus::Signaled(_, signal, _)) => 128 + signal as i32,
-        _ => -1,
+/// Abort a running reader task if there is one.
+fn abort_reader(task: &mut Option<tokio::task::JoinHandle<()>>) {
+    if let Some(t) = task.take() {
+        t.abort();
     }
 }
 
 /// Send an Exited frame to the agent if connected.
-fn send_exited(conn: &mut Option<UnixStream>, code: i32) {
-    if let Some(ref mut stream) = conn {
+async fn send_exited_async(writer: &mut Option<OwnedWriteHalf>, code: i32) {
+    if let Some(ref mut w) = writer {
         let payload = protocol::encode_exit_code(code);
-        let _ = protocol::write_frame(stream, MSG_EXITED, &payload);
+        let _ = protocol::write_frame_async(w, MSG_EXITED, &payload).await;
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// Env var tests mutate the process environment and must run serially.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn socket_dir_contains_user() {
@@ -611,73 +362,63 @@ mod tests {
         assert!(dir_str.starts_with("/tmp/termihub/"));
     }
 
-    /// Test both defaults and env-var overrides sequentially to avoid
-    /// race conditions from parallel tests sharing the process environment.
     #[test]
-    fn daemon_config_defaults_and_env_overrides() {
-        // --- Part 1: test defaults ---
-        std::env::remove_var("TERMIHUB_SOCKET_PATH");
-        std::env::remove_var("TERMIHUB_SHELL");
-        std::env::remove_var("TERMIHUB_COLS");
-        std::env::remove_var("TERMIHUB_ROWS");
-        std::env::remove_var("TERMIHUB_BUFFER_SIZE");
-        std::env::remove_var("TERMIHUB_ENV");
-        std::env::remove_var("TERMIHUB_COMMAND");
-        std::env::remove_var("TERMIHUB_COMMAND_ARGS");
+    fn daemon_config_requires_type_id() {
+        let _guard = ENV_LOCK.lock().unwrap();
 
-        let config = DaemonConfig::from_env("test-123").unwrap();
-        assert_eq!(config.session_id, "test-123");
-        assert_eq!(config.shell, "/bin/sh");
-        assert_eq!(config.cols, 80);
-        assert_eq!(config.rows, 24);
+        std::env::remove_var("TERMIHUB_TYPE_ID");
+        std::env::remove_var("TERMIHUB_SETTINGS");
+        std::env::remove_var("TERMIHUB_SOCKET_PATH");
+        std::env::remove_var("TERMIHUB_BUFFER_SIZE");
+
+        let result = DaemonConfig::from_env("test-123");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("TERMIHUB_TYPE_ID"));
+    }
+
+    #[test]
+    fn daemon_config_from_env() {
+        let _guard = ENV_LOCK.lock().unwrap();
+
+        std::env::set_var("TERMIHUB_TYPE_ID", "ssh");
+        std::env::set_var("TERMIHUB_SETTINGS", r#"{"host":"192.168.1.1","port":22}"#);
+        std::env::set_var("TERMIHUB_SOCKET_PATH", "/tmp/test-daemon.sock");
+        std::env::set_var("TERMIHUB_BUFFER_SIZE", "2097152");
+
+        let config = DaemonConfig::from_env("test-456").unwrap();
+        assert_eq!(config.session_id, "test-456");
+        assert_eq!(config.type_id, "ssh");
+        assert_eq!(config.settings["host"], "192.168.1.1");
+        assert_eq!(config.settings["port"], 22);
+        assert_eq!(config.socket_path, PathBuf::from("/tmp/test-daemon.sock"));
+        assert_eq!(config.buffer_size, 2097152);
+
+        // Clean up
+        std::env::remove_var("TERMIHUB_TYPE_ID");
+        std::env::remove_var("TERMIHUB_SETTINGS");
+        std::env::remove_var("TERMIHUB_SOCKET_PATH");
+        std::env::remove_var("TERMIHUB_BUFFER_SIZE");
+    }
+
+    #[test]
+    fn daemon_config_defaults() {
+        let _guard = ENV_LOCK.lock().unwrap();
+
+        std::env::set_var("TERMIHUB_TYPE_ID", "local");
+        std::env::remove_var("TERMIHUB_SETTINGS");
+        std::env::remove_var("TERMIHUB_SOCKET_PATH");
+        std::env::remove_var("TERMIHUB_BUFFER_SIZE");
+
+        let config = DaemonConfig::from_env("test-789").unwrap();
+        assert_eq!(config.type_id, "local");
+        assert_eq!(config.settings, serde_json::json!({}));
         assert_eq!(config.buffer_size, DEFAULT_BUFFER_SIZE);
-        assert!(config.env.is_empty());
-        assert!(config.command.is_none());
-        assert!(config.command_args.is_empty());
         assert!(config
             .socket_path
             .to_string_lossy()
-            .contains("session-test-123.sock"));
-
-        // --- Part 2: test env var overrides ---
-        std::env::set_var("TERMIHUB_SOCKET_PATH", "/tmp/test.sock");
-        std::env::set_var("TERMIHUB_SHELL", "/bin/zsh");
-        std::env::set_var("TERMIHUB_COLS", "120");
-        std::env::set_var("TERMIHUB_ROWS", "40");
-        std::env::set_var("TERMIHUB_BUFFER_SIZE", "2097152");
-        std::env::set_var("TERMIHUB_ENV", r#"{"FOO":"bar","BAZ":"qux"}"#);
-
-        let config = DaemonConfig::from_env("test-456").unwrap();
-        assert_eq!(config.socket_path, PathBuf::from("/tmp/test.sock"));
-        assert_eq!(config.shell, "/bin/zsh");
-        assert_eq!(config.cols, 120);
-        assert_eq!(config.rows, 40);
-        assert_eq!(config.buffer_size, 2097152);
-        assert_eq!(config.env.get("FOO").unwrap(), "bar");
-        assert_eq!(config.env.get("BAZ").unwrap(), "qux");
-
-        // --- Part 3: test command env vars ---
-        std::env::set_var("TERMIHUB_COMMAND", "docker");
-        std::env::set_var(
-            "TERMIHUB_COMMAND_ARGS",
-            r#"["exec","-it","termihub-abc","/bin/sh"]"#,
-        );
-
-        let config = DaemonConfig::from_env("test-789").unwrap();
-        assert_eq!(config.command, Some("docker".to_string()));
-        assert_eq!(
-            config.command_args,
-            vec!["exec", "-it", "termihub-abc", "/bin/sh"]
-        );
+            .contains("session-test-789.sock"));
 
         // Clean up
-        std::env::remove_var("TERMIHUB_SOCKET_PATH");
-        std::env::remove_var("TERMIHUB_SHELL");
-        std::env::remove_var("TERMIHUB_COLS");
-        std::env::remove_var("TERMIHUB_ROWS");
-        std::env::remove_var("TERMIHUB_BUFFER_SIZE");
-        std::env::remove_var("TERMIHUB_ENV");
-        std::env::remove_var("TERMIHUB_COMMAND");
-        std::env::remove_var("TERMIHUB_COMMAND_ARGS");
+        std::env::remove_var("TERMIHUB_TYPE_ID");
     }
 }

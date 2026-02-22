@@ -6,9 +6,10 @@ use std::path::Path;
 
 use termihub_core::files::FileEntry;
 
+use super::{FileBackend, FileError};
+use termihub_core::files::utils::chrono_from_epoch;
 #[cfg(unix)]
-use super::format_permissions;
-use super::{chrono_from_epoch, FileBackend, FileError};
+use termihub_core::files::utils::format_permissions;
 
 /// File backend that reads the agent host's local filesystem.
 pub struct LocalFileBackend;
