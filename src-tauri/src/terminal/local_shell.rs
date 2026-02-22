@@ -11,7 +11,12 @@ use termihub_core::session::shell::build_shell_command;
 use crate::terminal::backend::{OutputSender, TerminalBackend};
 use crate::utils::errors::TerminalError;
 
-/// Local shell backend using portable-pty.
+/// Legacy local shell backend using the `TerminalBackend` trait.
+///
+/// The canonical implementation is now
+/// [`termihub_core::backends::local_shell::LocalShell`] which implements the
+/// unified `ConnectionType` trait. This struct will be removed once
+/// `TerminalManager` is migrated to use `ConnectionType`.
 pub struct LocalShell {
     master: Arc<Mutex<Box<dyn MasterPty + Send>>>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,

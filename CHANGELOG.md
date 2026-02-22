@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `LocalShell` backend in `termihub-core` implementing the unified `ConnectionType` trait — the first concrete backend migration, with dynamic shell detection, settings schema for UI form generation, portable-pty PTY management, and async output streaming via tokio channels; shell detection functions (`detect_available_shells`, `parse_wsl_output`) consolidated from the desktop crate into core (#354)
 - Unified `ConnectionType` trait, `SettingsSchema` types, `Capabilities` struct, `MonitoringProvider` trait, `FileBrowser` trait, and `ConnectionTypeRegistry` in `termihub-core` — the foundation for the architecture redesign where all connection backends implement one trait, the UI renders settings forms generically from schemas, and a runtime registry enables connection type discovery (#353)
 - Desktop transport trait adapters: `TauriOutputSink` (delivers terminal output/exit/error via Tauri events), `PtySpawner`/`PtyHandle` (spawns shells via `portable-pty`), `SftpFileBackend` (implements `FileBackend` for SFTP), and `MonitoringSession` `StatsCollector` — completes the transport injection pattern where the desktop becomes a thin adapter over the shared core engine (#315)
 - Shared core `FileBackend` async trait and `LocalFileBackend` implementation in the `termihub-core` crate — defines a unified file operations interface (`list`, `read`, `write`, `delete`, `rename`, `stat`) that can replace duplicated file backend logic in the desktop and agent crates (#313)
