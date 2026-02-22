@@ -1,5 +1,6 @@
 pub mod buffer;
 pub mod config;
+pub mod connection;
 pub mod errors;
 pub mod files;
 pub mod monitoring;

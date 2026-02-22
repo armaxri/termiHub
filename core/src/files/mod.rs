@@ -1,6 +1,8 @@
+pub mod browser;
 pub mod local;
 pub mod utils;
 
+pub use browser::FileBrowser;
 pub use local::LocalFileBackend;
 
 use crate::errors::FileError;
