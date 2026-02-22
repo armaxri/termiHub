@@ -8,14 +8,13 @@ use tracing::debug;
 
 use crate::protocol::methods::{MonitoringData, SshSessionConfig};
 
+#[cfg(any(unix, test))]
+use termihub_core::monitoring::parse_df_output;
+use termihub_core::monitoring::{
+    cpu_percent_from_delta, parse_stats, CpuCounters, MONITORING_COMMAND,
+};
 #[cfg(target_os = "linux")]
-use super::parser::parse_cpu_line;
-use super::parser::{cpu_percent_from_delta, parse_stats, CpuCounters};
-
-/// The compound command executed on Linux hosts to gather all metrics
-/// in a single round-trip.
-const LINUX_MONITORING_COMMAND: &str =
-    "hostname && cat /proc/loadavg && head -1 /proc/stat && cat /proc/meminfo && cat /proc/uptime && df -Pk / && uname -sr";
+use termihub_core::monitoring::{parse_cpu_line, parse_meminfo_value};
 
 /// Collect system statistics from a host.
 pub trait StatsCollector: Send {
@@ -137,9 +136,9 @@ fn collect_linux(collector: &mut LocalCollector, host_label: &str) -> Result<Mon
     let mut mem_available_kb: u64 = 0;
     for line in meminfo.lines() {
         if line.starts_with("MemTotal:") {
-            mem_total_kb = super::parser::parse_meminfo_value(line);
+            mem_total_kb = parse_meminfo_value(line);
         } else if line.starts_with("MemAvailable:") {
-            mem_available_kb = super::parser::parse_meminfo_value(line);
+            mem_available_kb = parse_meminfo_value(line);
         }
     }
     let memory_used_percent = if mem_total_kb > 0 {
@@ -309,24 +308,6 @@ fn parse_macos_uptime() -> f64 {
     }
 }
 
-/// Parse df -Pk output to extract disk total, used, and used percent.
-#[cfg(any(unix, test))]
-fn parse_df_output(output: &str) -> (u64, u64, f64) {
-    for line in output.lines() {
-        if line.starts_with("Filesystem") || line.trim().is_empty() {
-            continue;
-        }
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() >= 5 {
-            let total: u64 = parts[1].parse().unwrap_or(0);
-            let used: u64 = parts[2].parse().unwrap_or(0);
-            let percent: f64 = parts[4].trim_end_matches('%').parse().unwrap_or(0.0);
-            return (total, used, percent);
-        }
-    }
-    (0, 0, 0.0)
-}
-
 /// Run a command and capture its stdout as a string.
 #[cfg(unix)]
 fn run_command(cmd: &str, args: &[&str]) -> Result<String> {
@@ -394,7 +375,7 @@ impl SshCollector {
 
 impl StatsCollector for SshCollector {
     fn collect(&mut self, host_label: &str) -> Result<MonitoringData> {
-        let output = self.exec(LINUX_MONITORING_COMMAND)?;
+        let output = self.exec(MONITORING_COMMAND)?;
         let (stats, counters) = parse_stats(&output)?;
 
         let cpu_usage_percent = match &self.prev_cpu {

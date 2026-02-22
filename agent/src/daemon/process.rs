@@ -22,8 +22,8 @@ use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::{close, setsid, Pid};
 use tracing::{debug, error, info, warn};
 
-use crate::buffer::ring_buffer::RingBuffer;
 use crate::daemon::protocol::{self, *};
+use termihub_core::buffer::RingBuffer;
 
 /// Default ring buffer size: 1 MiB.
 const DEFAULT_BUFFER_SIZE: usize = 1_048_576;
