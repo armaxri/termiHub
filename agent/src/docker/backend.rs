@@ -12,6 +12,9 @@ use tracing::info;
 use crate::daemon::client::DaemonClient;
 use crate::io::transport::NotificationSender;
 use crate::protocol::methods::DockerSessionConfig;
+use termihub_core::session::docker::{
+    build_docker_exec_args, build_docker_run_args, validate_docker_config, DockerContainer,
+};
 
 /// Agent-side handle for a Docker container session.
 ///
@@ -34,6 +37,8 @@ impl DockerBackend {
         config: &DockerSessionConfig,
         notification_tx: NotificationSender,
     ) -> Result<Self, anyhow::Error> {
+        validate_docker_config(config).map_err(|e| anyhow::anyhow!("{e}"))?;
+
         let container_name = format!("termihub-{session_id}");
         let shell = config
             .shell
@@ -41,34 +46,26 @@ impl DockerBackend {
             .unwrap_or_else(|| "/bin/sh".to_string());
 
         // Phase 1: Create the detached container
+        //
+        // build_docker_run_args returns shared args: env vars, volumes, workdir,
+        // image, and optional shell. The agent prepends `-d --init --name <name>`
+        // and replaces the trailing shell with `tail -f /dev/null`.
+        let mut shared_args = build_docker_run_args(config);
+
+        // If config.shell is set, core appends it as the last element.
+        // The agent uses `tail -f /dev/null` instead, so pop the shell.
+        if config.shell.is_some() {
+            shared_args.pop();
+        }
+
         let mut docker_run = std::process::Command::new("docker");
         docker_run
             .arg("run")
             .arg("-d")
             .arg("--init")
             .arg("--name")
-            .arg(&container_name);
-
-        for env_var in &config.env_vars {
-            docker_run
-                .arg("-e")
-                .arg(format!("{}={}", env_var.key, env_var.value));
-        }
-
-        for vol in &config.volumes {
-            let mut mount = format!("{}:{}", vol.host_path, vol.container_path);
-            if vol.read_only {
-                mount.push_str(":ro");
-            }
-            docker_run.arg("-v").arg(mount);
-        }
-
-        if let Some(ref workdir) = config.working_directory {
-            docker_run.arg("-w").arg(workdir);
-        }
-
-        docker_run
-            .arg(&config.image)
+            .arg(&container_name)
+            .args(&shared_args)
             .arg("tail")
             .arg("-f")
             .arg("/dev/null");
@@ -92,12 +89,7 @@ impl DockerBackend {
 
         let env_json = serde_json::to_string(&config.env)?;
 
-        let command_args = vec![
-            "exec".to_string(),
-            "-it".to_string(),
-            container_name.clone(),
-            shell,
-        ];
+        let command_args = build_docker_exec_args(&container_name, &shell);
         let command_args_json = serde_json::to_string(&command_args)?;
 
         let agent_exe = std::env::current_exe()?;
@@ -141,8 +133,10 @@ impl DockerBackend {
         notification_tx: NotificationSender,
     ) -> Result<Self, anyhow::Error> {
         // Check if container is still running
+        let container = DockerContainer::new(container_name.clone(), String::new(), remove_on_exit);
+
         let status = std::process::Command::new("docker")
-            .args(["inspect", "-f", "{{.State.Running}}", &container_name])
+            .args(container.is_running_command())
             .output()
             .context("Failed to run docker inspect")?;
 
@@ -170,12 +164,7 @@ impl DockerBackend {
         // Remove stale socket if it exists from a previous daemon
         let _ = std::fs::remove_file(&socket_path);
 
-        let command_args = vec![
-            "exec".to_string(),
-            "-it".to_string(),
-            container_name.clone(),
-            shell,
-        ];
+        let command_args = build_docker_exec_args(&container_name, &shell);
         let command_args_json = serde_json::to_string(&command_args)?;
 
         let agent_exe = std::env::current_exe()?;
@@ -228,16 +217,15 @@ impl DockerBackend {
     pub async fn close(&mut self) {
         self.client.close().await;
 
-        info!("Stopping Docker container: {}", self.container_name);
-        let _ = std::process::Command::new("docker")
-            .args(["stop", "-t", "5", &self.container_name])
-            .output();
+        let container = DockerContainer::new(
+            self.container_name.clone(),
+            String::new(),
+            self.remove_on_exit,
+        );
 
-        if self.remove_on_exit {
-            info!("Removing Docker container: {}", self.container_name);
-            let _ = std::process::Command::new("docker")
-                .args(["rm", "-f", &self.container_name])
-                .output();
+        for args in container.cleanup_args() {
+            info!("Docker cleanup: docker {}", args.join(" "));
+            let _ = std::process::Command::new("docker").args(&args).output();
         }
     }
 

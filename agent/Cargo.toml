@@ -16,7 +16,7 @@ serde_json = { workspace = true }
 uuid = { version = "1", features = ["v4", "serde"] }
 anyhow = "1"
 thiserror = { workspace = true }
-termihub-core = { path = "../core" }
+termihub-core = { path = "../core", features = ["serial"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = { version = "0.4", features = ["serde"] }
