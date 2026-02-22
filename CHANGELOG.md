@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking**: Agent refactored as thin proxy over `termihub_core::ConnectionType` — the agent no longer contains its own shell/SSH/Docker/serial backend implementations; instead it instantiates `ConnectionType` implementations from core and forwards all calls via JSON-RPC. JSON-RPC protocol migrated from `session.*` to `connection.*` namespace (`session.create` → `connection.create`, `session.input` → `connection.write`, etc.), notifications renamed (`session.output` → `connection.output`), file methods renamed (`files.*` → `connection.files.*`), monitoring renamed (`monitoring.*` → `connection.monitoring.*`), protocol version bumped to 0.2.0. Desktop client updated to match new protocol. (#360)
 - Agent Docker backend and Docker file backend marked as deprecated — canonical implementations now live in `termihub_core::backends::docker` (#358)
 - Desktop SSH, SFTP, monitoring, X11 forwarding, and SSH auth/key-convert code marked as deprecated — canonical implementations now live in `termihub_core::backends::ssh` (#357)
 - Completed shared-rust-core migration (#317): final verification (238 core + 179 agent + 383 frontend tests passing), cleanup, and documentation updates for the `termihub-core` crate — 5,624 lines across 23 source files and 8 modules, 32 public types/traits shared between desktop and agent, spanning 19 issues (#298–#317) across 5 phases
