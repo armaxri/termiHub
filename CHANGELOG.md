@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Shared core `FileBackend` async trait and `LocalFileBackend` implementation in the `termihub-core` crate — defines a unified file operations interface (`list`, `read`, `write`, `delete`, `rename`, `stat`) that can replace duplicated file backend logic in the desktop and agent crates (#313)
 - Shared core serial session helpers (`parse_serial_config`, `open_serial_port`, `list_serial_ports`, `serial_reader_loop`, `ParsedSerialConfig`, `SerialStatus`) in the `termihub-core` crate — unified serial config parsing, port opening, port listing, and reconnect-capable reader loop that can replace duplicated logic in the desktop and agent crates (#308)
 - Shared core transport traits (`OutputSink`, `ProcessSpawner`, `ProcessHandle`) in the `termihub-core` crate — abstraction layer that decouples session I/O delivery and process spawning from the desktop (Tauri events, portable-pty) and agent (JSON-RPC, daemon) implementations (#312)
 - Shared core session/Docker helpers (`build_docker_run_args`, `build_docker_exec_args`, `validate_docker_config`, `DockerContainer`) in the `termihub-core` crate — unified Docker CLI argument building, config validation, and container lifecycle commands that can replace duplicated logic in the desktop and agent crates (#307)
