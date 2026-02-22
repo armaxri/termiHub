@@ -50,6 +50,13 @@ pub struct TerminalExitEvent {
     pub exit_code: Option<i32>,
 }
 
+/// Error event emitted when a session-level error occurs after establishment.
+#[derive(Debug, Clone, Serialize)]
+pub struct TerminalErrorEvent {
+    pub session_id: String,
+    pub message: String,
+}
+
 /// Connection configuration matching the frontend TypeScript types.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "config")]
