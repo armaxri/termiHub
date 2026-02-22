@@ -16,21 +16,19 @@ pub struct AgentState {
 }
 
 /// Minimal session info stored for recovery.
+///
+/// Stores the connection type ID and settings JSON so the session can
+/// be reconnected by spawning a new daemon or recreating the connection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistedSession {
-    pub session_type: String,
+    /// Connection type identifier (e.g., `"local"`, `"ssh"`, `"docker"`).
+    pub type_id: String,
     pub title: String,
     pub created_at: String,
-    /// Path to the daemon Unix socket (shell and Docker sessions).
+    /// Path to the daemon Unix socket.
     pub daemon_socket: Option<String>,
-    /// Original session config (for display/metadata).
-    pub config: serde_json::Value,
-    /// Docker container name (Docker sessions only).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub container_name: Option<String>,
-    /// Whether to remove the Docker container on exit (Docker sessions only).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub remove_on_exit: Option<bool>,
+    /// Full connection settings for reconnection.
+    pub settings: serde_json::Value,
 }
 
 impl AgentState {
@@ -137,15 +135,13 @@ mod tests {
     use serde_json::json;
     use tempfile::TempDir;
 
-    fn make_session(session_type: &str, socket: Option<&str>) -> PersistedSession {
+    fn make_session(type_id: &str, socket: Option<&str>) -> PersistedSession {
         PersistedSession {
-            session_type: session_type.to_string(),
+            type_id: type_id.to_string(),
             title: "Test".to_string(),
             created_at: "2026-02-20T10:00:00Z".to_string(),
             daemon_socket: socket.map(|s| s.to_string()),
-            config: json!({}),
-            container_name: None,
-            remove_on_exit: None,
+            settings: json!({}),
         }
     }
 
@@ -157,7 +153,7 @@ mod tests {
         let mut state = AgentState::default();
         state.sessions.insert(
             "sess-1".to_string(),
-            make_session("shell", Some("/tmp/test.sock")),
+            make_session("local", Some("/tmp/test.sock")),
         );
         state
             .sessions
@@ -170,7 +166,7 @@ mod tests {
         assert!(loaded.sessions.contains_key("sess-2"));
 
         let s1 = &loaded.sessions["sess-1"];
-        assert_eq!(s1.session_type, "shell");
+        assert_eq!(s1.type_id, "local");
         assert_eq!(s1.daemon_socket.as_deref(), Some("/tmp/test.sock"));
     }
 
@@ -201,13 +197,11 @@ mod tests {
         state.sessions.insert(
             "docker-1".to_string(),
             PersistedSession {
-                session_type: "docker".to_string(),
+                type_id: "docker".to_string(),
                 title: "Docker test".to_string(),
                 created_at: "2026-02-20T10:00:00Z".to_string(),
                 daemon_socket: Some("/tmp/docker.sock".to_string()),
-                config: json!({"image": "ubuntu:22.04", "shell": "/bin/bash"}),
-                container_name: Some("termihub-docker-1".to_string()),
-                remove_on_exit: Some(true),
+                settings: json!({"image": "ubuntu:22.04", "shell": "/bin/bash"}),
             },
         );
         state.save_to(&path);
@@ -216,63 +210,9 @@ mod tests {
         assert_eq!(loaded.sessions.len(), 1);
 
         let s = &loaded.sessions["docker-1"];
-        assert_eq!(s.session_type, "docker");
-        assert_eq!(s.container_name.as_deref(), Some("termihub-docker-1"));
-        assert_eq!(s.remove_on_exit, Some(true));
+        assert_eq!(s.type_id, "docker");
         assert_eq!(s.daemon_socket.as_deref(), Some("/tmp/docker.sock"));
-    }
-
-    #[test]
-    fn backward_compatible_load_without_docker_fields() {
-        let tmp = TempDir::new().unwrap();
-        let path = tmp.path().join("state.json");
-
-        // Write JSON without container_name or remove_on_exit fields
-        // (simulating state saved before Docker support was added)
-        let json = r#"{
-            "sessions": {
-                "old-shell": {
-                    "session_type": "shell",
-                    "title": "Old shell",
-                    "created_at": "2026-02-20T10:00:00Z",
-                    "daemon_socket": "/tmp/old.sock",
-                    "config": {}
-                }
-            }
-        }"#;
-        std::fs::write(&path, json).unwrap();
-
-        let loaded = AgentState::load_from(&path);
-        assert_eq!(loaded.sessions.len(), 1);
-
-        let s = &loaded.sessions["old-shell"];
-        assert_eq!(s.session_type, "shell");
-        assert!(s.container_name.is_none());
-        assert!(s.remove_on_exit.is_none());
-    }
-
-    #[test]
-    fn docker_fields_skipped_when_none() {
-        let tmp = TempDir::new().unwrap();
-        let path = tmp.path().join("state.json");
-
-        let mut state = AgentState::default();
-        state.sessions.insert(
-            "shell-1".to_string(),
-            make_session("shell", Some("/tmp/test.sock")),
-        );
-        state.save_to(&path);
-
-        // Read the raw JSON and verify Docker fields are absent
-        let raw = std::fs::read_to_string(&path).unwrap();
-        assert!(
-            !raw.contains("container_name"),
-            "container_name should be skipped when None"
-        );
-        assert!(
-            !raw.contains("remove_on_exit"),
-            "remove_on_exit should be skipped when None"
-        );
+        assert_eq!(s.settings["image"], "ubuntu:22.04");
     }
 
     #[test]
@@ -280,19 +220,16 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("state.json");
 
-        // Override save to use our test path
         let mut state = AgentState::default();
         state.sessions.insert(
             "sess-1".to_string(),
-            make_session("shell", Some("/tmp/s1.sock")),
+            make_session("local", Some("/tmp/s1.sock")),
         );
         state.save_to(&path);
 
-        // Verify it persisted
         let loaded = AgentState::load_from(&path);
         assert_eq!(loaded.sessions.len(), 1);
 
-        // Remove and verify
         let mut state = loaded;
         state.sessions.remove("sess-1");
         state.save_to(&path);

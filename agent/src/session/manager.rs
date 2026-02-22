@@ -1,34 +1,29 @@
+//! Generic session manager using [`ConnectionType`] from `termihub_core`.
+//!
+//! Sessions are either hosted in-process (non-persistent) or in a daemon
+//! subprocess (persistent, Unix only). The decision is based on the
+//! connection type's [`Capabilities::persistent`] flag.
+
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::Arc;
 
+use base64::Engine;
 use chrono::Utc;
 use tokio::sync::Mutex;
-#[cfg(unix)]
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::io::transport::NotificationSender;
-use crate::protocol::methods::SerialSessionConfig;
-use crate::serial::backend::SerialBackend;
-use crate::session::types::{SessionInfo, SessionSnapshot, SessionStatus, SessionType};
+use crate::protocol::messages::JsonRpcNotification;
+use crate::session::types::{SessionBackend, SessionInfo, SessionSnapshot, SessionStatus};
+use termihub_core::connection::{ConnectionTypeRegistry, OutputReceiver};
 
 #[cfg(unix)]
-use crate::docker::backend::DockerBackend;
+use crate::daemon::client::DaemonClient;
 #[cfg(unix)]
-use crate::protocol::methods::DockerSessionConfig;
-#[cfg(unix)]
-use crate::protocol::methods::ShellConfig;
-#[cfg(unix)]
-use crate::protocol::methods::SshSessionConfig;
-#[cfg(unix)]
-use crate::shell::backend::ShellBackend;
-#[cfg(unix)]
-use crate::ssh::backend::SshBackend;
+use crate::daemon::process::socket_dir;
 #[cfg(unix)]
 use crate::state::persistence::{AgentState, PersistedSession};
-#[cfg(unix)]
-use std::path::PathBuf;
-#[cfg(unix)]
-use tracing::warn;
 
 /// Maximum number of concurrent sessions the agent supports.
 pub const MAX_SESSIONS: u32 = 20;
@@ -61,30 +56,37 @@ impl fmt::Display for SessionCreateError {
 pub struct SessionManager {
     sessions: Mutex<HashMap<String, SessionInfo>>,
     notification_tx: NotificationSender,
+    registry: Arc<ConnectionTypeRegistry>,
     #[cfg(unix)]
     state: Mutex<AgentState>,
 }
 
 impl SessionManager {
-    pub fn new(notification_tx: NotificationSender) -> Self {
+    pub fn new(notification_tx: NotificationSender, registry: Arc<ConnectionTypeRegistry>) -> Self {
         Self {
             sessions: Mutex::new(HashMap::new()),
             notification_tx,
+            registry,
             #[cfg(unix)]
             state: Mutex::new(AgentState::load()),
         }
     }
 
+    /// Get a reference to the connection type registry.
+    pub fn registry(&self) -> &ConnectionTypeRegistry {
+        &self.registry
+    }
+
     /// Create a new session.
     ///
-    /// For serial sessions, this opens the serial port and starts the
-    /// background reader thread. For shell sessions on Unix, this spawns
-    /// a daemon process that manages the PTY.
+    /// For persistent connection types on Unix, spawns a daemon subprocess
+    /// that keeps the connection alive. For non-persistent types (or on
+    /// non-Unix platforms), runs the connection in-process.
     pub async fn create(
         &self,
-        session_type: SessionType,
+        type_id: &str,
         title: String,
-        config: serde_json::Value,
+        settings: serde_json::Value,
     ) -> Result<SessionSnapshot, SessionCreateError> {
         let mut sessions = self.sessions.lock().await;
 
@@ -95,127 +97,144 @@ impl SessionManager {
         let id = uuid::Uuid::new_v4().to_string();
         let now = Utc::now();
 
-        let serial_backend = if session_type == SessionType::Serial {
-            let serial_config: SerialSessionConfig = serde_json::from_value(config.clone())
+        // Check the type exists and get capabilities.
+        let capabilities = {
+            let instance = self
+                .registry
+                .create(type_id)
                 .map_err(|e| SessionCreateError::InvalidConfig(e.to_string()))?;
-            let backend =
-                SerialBackend::new(id.clone(), &serial_config, self.notification_tx.clone())
-                    .map_err(|e| SessionCreateError::BackendFailed(e.to_string()))?;
-            Some(backend)
-        } else {
-            None
+            instance.capabilities()
         };
 
-        // On Unix, spawn a daemon for shell sessions
+        let backend = self
+            .create_backend(&id, type_id, &settings, capabilities.persistent)
+            .await
+            .map_err(|e| SessionCreateError::BackendFailed(e.to_string()))?;
+
+        // Persist for recovery on Unix.
         #[cfg(unix)]
-        let shell_backend = if session_type == SessionType::Shell {
-            let shell_config: ShellConfig = serde_json::from_value(config.clone())
-                .map_err(|e| SessionCreateError::InvalidConfig(e.to_string()))?;
-            let backend =
-                ShellBackend::new(id.clone(), &shell_config, self.notification_tx.clone())
-                    .await
-                    .map_err(|e| SessionCreateError::BackendFailed(e.to_string()))?;
-
-            // Persist session to state.json for recovery
-            let mut state = self.state.lock().await;
-            state.add_session(
-                id.clone(),
-                PersistedSession {
-                    session_type: "shell".to_string(),
-                    title: title.clone(),
-                    created_at: now.to_rfc3339(),
-                    daemon_socket: Some(backend.socket_path().to_string_lossy().to_string()),
-                    config: config.clone(),
-                    container_name: None,
-                    remove_on_exit: None,
-                },
-            );
-
-            Some(backend)
-        } else {
-            None
-        };
-
-        // On Unix, create a Docker container session
-        #[cfg(unix)]
-        let docker_backend = if session_type == SessionType::Docker {
-            let docker_config: DockerSessionConfig = serde_json::from_value(config.clone())
-                .map_err(|e| SessionCreateError::InvalidConfig(e.to_string()))?;
-            let backend =
-                DockerBackend::new(id.clone(), &docker_config, self.notification_tx.clone())
-                    .await
-                    .map_err(|e| SessionCreateError::BackendFailed(e.to_string()))?;
-
-            // Persist session to state.json for recovery
-            let mut state = self.state.lock().await;
-            state.add_session(
-                id.clone(),
-                PersistedSession {
-                    session_type: "docker".to_string(),
-                    title: title.clone(),
-                    created_at: now.to_rfc3339(),
-                    daemon_socket: Some(backend.socket_path().to_string_lossy().to_string()),
-                    config: config.clone(),
-                    container_name: Some(backend.container_name().to_string()),
-                    remove_on_exit: Some(backend.remove_on_exit()),
-                },
-            );
-
-            Some(backend)
-        } else {
-            None
-        };
-
-        // On Unix, create an SSH jump host session
-        #[cfg(unix)]
-        let ssh_backend = if session_type == SessionType::Ssh {
-            let ssh_config: SshSessionConfig = serde_json::from_value(config.clone())
-                .map_err(|e| SessionCreateError::InvalidConfig(e.to_string()))?;
-            let backend = SshBackend::new(id.clone(), &ssh_config, self.notification_tx.clone())
-                .await
-                .map_err(|e| SessionCreateError::BackendFailed(e.to_string()))?;
-
-            // Persist session to state.json for recovery
-            let mut state = self.state.lock().await;
-            state.add_session(
-                id.clone(),
-                PersistedSession {
-                    session_type: "ssh".to_string(),
-                    title: title.clone(),
-                    created_at: now.to_rfc3339(),
-                    daemon_socket: Some(backend.socket_path().to_string_lossy().to_string()),
-                    config: config.clone(),
-                    container_name: None,
-                    remove_on_exit: None,
-                },
-            );
-
-            Some(backend)
-        } else {
-            None
-        };
+        if capabilities.persistent {
+            if let SessionBackend::Daemon(ref client) = backend {
+                let mut state = self.state.lock().await;
+                state.add_session(
+                    id.clone(),
+                    PersistedSession {
+                        type_id: type_id.to_string(),
+                        title: title.clone(),
+                        created_at: now.to_rfc3339(),
+                        daemon_socket: Some(client.socket_path().to_string_lossy().to_string()),
+                        settings: settings.clone(),
+                    },
+                );
+            }
+        }
 
         let info = SessionInfo {
             id: id.clone(),
             title,
-            session_type,
+            type_id: type_id.to_string(),
             status: SessionStatus::Running,
-            config,
+            settings,
             created_at: now,
             last_activity: now,
             attached: false,
-            serial_backend,
-            #[cfg(unix)]
-            shell_backend,
-            #[cfg(unix)]
-            docker_backend,
-            #[cfg(unix)]
-            ssh_backend,
+            backend,
         };
 
         let snapshot = info.snapshot();
         sessions.insert(id, info);
         Ok(snapshot)
+    }
+
+    /// Create the appropriate backend for a connection type.
+    async fn create_backend(
+        &self,
+        session_id: &str,
+        type_id: &str,
+        settings: &serde_json::Value,
+        persistent: bool,
+    ) -> Result<SessionBackend, anyhow::Error> {
+        #[cfg(unix)]
+        if persistent {
+            return self
+                .spawn_daemon_backend(session_id, type_id, settings)
+                .await;
+        }
+
+        // Suppress unused variable warnings on non-Unix.
+        let _ = persistent;
+
+        self.create_in_process_backend(session_id, type_id, settings)
+            .await
+    }
+
+    /// Spawn a daemon process and connect via DaemonClient.
+    #[cfg(unix)]
+    async fn spawn_daemon_backend(
+        &self,
+        session_id: &str,
+        type_id: &str,
+        settings: &serde_json::Value,
+    ) -> Result<SessionBackend, anyhow::Error> {
+        let socket_path = socket_dir().join(format!("session-{session_id}.sock"));
+
+        let settings_json = serde_json::to_string(settings)?;
+
+        let agent_exe = std::env::current_exe()?;
+
+        let _child = std::process::Command::new(&agent_exe)
+            .arg("--daemon")
+            .arg(session_id)
+            .env("TERMIHUB_SOCKET_PATH", &socket_path)
+            .env("TERMIHUB_TYPE_ID", type_id)
+            .env("TERMIHUB_SETTINGS", &settings_json)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::inherit())
+            .spawn()
+            .map_err(|e| anyhow::anyhow!("Failed to spawn daemon: {e}"))?;
+
+        DaemonClient::wait_for_socket(&socket_path).await?;
+        let client = DaemonClient::connect(
+            session_id.to_string(),
+            socket_path,
+            self.notification_tx.clone(),
+        )
+        .await?;
+
+        info!("Daemon spawned for session {session_id} (type={type_id})");
+        Ok(SessionBackend::Daemon(client))
+    }
+
+    /// Create a ConnectionType in-process and start output forwarding.
+    async fn create_in_process_backend(
+        &self,
+        session_id: &str,
+        type_id: &str,
+        settings: &serde_json::Value,
+    ) -> Result<SessionBackend, anyhow::Error> {
+        let mut connection = self
+            .registry
+            .create(type_id)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+        connection
+            .connect(settings.clone())
+            .await
+            .map_err(|e| anyhow::anyhow!("Connection failed: {e}"))?;
+
+        let output_rx = connection.subscribe_output();
+        let output_task = spawn_output_forwarder(
+            output_rx,
+            session_id.to_string(),
+            self.notification_tx.clone(),
+        );
+
+        info!("In-process connection for session {session_id} (type={type_id})");
+        Ok(SessionBackend::InProcess {
+            connection,
+            output_task: Some(output_task),
+        })
     }
 
     /// List all sessions as read-only snapshots.
@@ -226,28 +245,13 @@ impl SessionManager {
 
     /// Close (remove) a session by ID.
     ///
-    /// Closes any active backend before removing the session.
-    /// Returns `true` if the session was found and removed, `false` otherwise.
+    /// Disconnects the backend before removing the session.
+    /// Returns `true` if the session was found and removed.
     pub async fn close(&self, session_id: &str) -> bool {
         let mut sessions = self.sessions.lock().await;
         if let Some(mut info) = sessions.remove(session_id) {
-            if let Some(ref mut backend) = info.serial_backend {
-                backend.close();
-            }
-            #[cfg(unix)]
-            if let Some(ref mut backend) = info.shell_backend {
-                backend.close().await;
-            }
-            #[cfg(unix)]
-            if let Some(ref mut backend) = info.docker_backend {
-                backend.close().await;
-            }
-            #[cfg(unix)]
-            if let Some(ref mut backend) = info.ssh_backend {
-                backend.close().await;
-            }
+            close_backend(&mut info.backend).await;
 
-            // Remove from persistent state
             #[cfg(unix)]
             {
                 let mut state = self.state.lock().await;
@@ -269,21 +273,7 @@ impl SessionManager {
         for info in sessions.values_mut() {
             if info.attached {
                 info.attached = false;
-                if let Some(ref backend) = info.serial_backend {
-                    backend.detach();
-                }
-                #[cfg(unix)]
-                if let Some(ref mut backend) = info.shell_backend {
-                    backend.detach().await;
-                }
-                #[cfg(unix)]
-                if let Some(ref mut backend) = info.docker_backend {
-                    backend.detach().await;
-                }
-                #[cfg(unix)]
-                if let Some(ref mut backend) = info.ssh_backend {
-                    backend.detach().await;
-                }
+                detach_backend(&mut info.backend).await;
             }
         }
     }
@@ -292,29 +282,11 @@ impl SessionManager {
     pub async fn close_all(&self) {
         let mut sessions = self.sessions.lock().await;
         for (_, mut info) in sessions.drain() {
-            if let Some(ref mut backend) = info.serial_backend {
-                backend.close();
-            }
-            #[cfg(unix)]
-            if let Some(ref mut backend) = info.shell_backend {
-                backend.close().await;
-            }
-            #[cfg(unix)]
-            if let Some(ref mut backend) = info.docker_backend {
-                backend.close().await;
-            }
-            #[cfg(unix)]
-            if let Some(ref mut backend) = info.ssh_backend {
-                backend.close().await;
-            }
+            close_backend(&mut info.backend).await;
         }
     }
 
     /// Attach a client to an existing session.
-    ///
-    /// For serial sessions, replays the buffer and starts forwarding
-    /// live output as notifications. For shell sessions, reconnects to
-    /// the daemon to trigger a buffer replay.
     pub async fn attach(&self, session_id: &str) -> Result<(), String> {
         let mut sessions = self.sessions.lock().await;
         let info = sessions
@@ -328,24 +300,9 @@ impl SessionManager {
         info.attached = true;
         info.last_activity = Utc::now();
 
-        if let Some(ref backend) = info.serial_backend {
-            backend.attach().map_err(|e| e.to_string())?;
-        }
-
-        #[cfg(unix)]
-        if let Some(ref mut backend) = info.shell_backend {
-            backend.attach().await.map_err(|e| e.to_string())?;
-        }
-        #[cfg(unix)]
-        if let Some(ref mut backend) = info.docker_backend {
-            backend.attach().await.map_err(|e| e.to_string())?;
-        }
-        #[cfg(unix)]
-        if let Some(ref mut backend) = info.ssh_backend {
-            backend.attach().await.map_err(|e| e.to_string())?;
-        }
-
-        Ok(())
+        attach_backend(&mut info.backend)
+            .await
+            .map_err(|e| e.to_string())
     }
 
     /// Detach the client from a session.
@@ -358,23 +315,7 @@ impl SessionManager {
         info.attached = false;
         info.last_activity = Utc::now();
 
-        if let Some(ref backend) = info.serial_backend {
-            backend.detach();
-        }
-
-        #[cfg(unix)]
-        if let Some(ref mut backend) = info.shell_backend {
-            backend.detach().await;
-        }
-        #[cfg(unix)]
-        if let Some(ref mut backend) = info.docker_backend {
-            backend.detach().await;
-        }
-        #[cfg(unix)]
-        if let Some(ref mut backend) = info.ssh_backend {
-            backend.detach().await;
-        }
-
+        detach_backend(&mut info.backend).await;
         Ok(())
     }
 
@@ -387,27 +328,12 @@ impl SessionManager {
 
         info.last_activity = Utc::now();
 
-        if let Some(ref backend) = info.serial_backend {
-            backend.write_input(data).map_err(|e| e.to_string())?;
-        }
-
-        #[cfg(unix)]
-        if let Some(ref backend) = info.shell_backend {
-            backend.write_input(data).await.map_err(|e| e.to_string())?;
-        }
-        #[cfg(unix)]
-        if let Some(ref backend) = info.docker_backend {
-            backend.write_input(data).await.map_err(|e| e.to_string())?;
-        }
-        #[cfg(unix)]
-        if let Some(ref backend) = info.ssh_backend {
-            backend.write_input(data).await.map_err(|e| e.to_string())?;
-        }
-
-        Ok(())
+        write_backend(&info.backend, data)
+            .await
+            .map_err(|e| e.to_string())
     }
 
-    /// Resize a session's PTY.
+    /// Resize a session's terminal.
     pub async fn resize(&self, session_id: &str, cols: u16, rows: u16) -> Result<(), String> {
         let mut sessions = self.sessions.lock().await;
         let info = sessions
@@ -416,38 +342,13 @@ impl SessionManager {
 
         info.last_activity = Utc::now();
 
-        #[cfg(unix)]
-        if let Some(ref backend) = info.shell_backend {
-            backend
-                .resize(cols, rows)
-                .await
-                .map_err(|e| e.to_string())?;
-        }
-        #[cfg(unix)]
-        if let Some(ref backend) = info.docker_backend {
-            backend
-                .resize(cols, rows)
-                .await
-                .map_err(|e| e.to_string())?;
-        }
-        #[cfg(unix)]
-        if let Some(ref backend) = info.ssh_backend {
-            backend
-                .resize(cols, rows)
-                .await
-                .map_err(|e| e.to_string())?;
-        }
-
-        // Resize is a no-op for serial sessions (they don't have a PTY)
-        let _ = (cols, rows);
-
-        Ok(())
+        resize_backend(&info.backend, cols, rows)
+            .await
+            .map_err(|e| e.to_string())
     }
 
     /// Recover sessions from persistent state by reconnecting to
     /// surviving daemon processes.
-    ///
-    /// Returns the list of recovered session IDs.
     #[cfg(unix)]
     pub async fn recover_sessions(&self) -> Vec<String> {
         let state = self.state.lock().await;
@@ -457,185 +358,56 @@ impl SessionManager {
         let mut recovered = Vec::new();
 
         for (id, session) in &persisted {
-            match session.session_type.as_str() {
-                "shell" => {
-                    let socket_path = match &session.daemon_socket {
-                        Some(p) => PathBuf::from(p),
-                        None => continue,
+            let socket_path = match &session.daemon_socket {
+                Some(p) => std::path::PathBuf::from(p),
+                None => {
+                    warn!("Session {id} has no daemon socket, removing");
+                    let mut state = self.state.lock().await;
+                    state.remove_session(id);
+                    continue;
+                }
+            };
+
+            if !socket_path.exists() {
+                info!("Daemon socket gone for session {id}, removing from state");
+                let mut state = self.state.lock().await;
+                state.remove_session(id);
+                continue;
+            }
+
+            match DaemonClient::connect(
+                id.clone(),
+                socket_path,
+                self.notification_tx.clone(),
+            )
+            .await
+            {
+                Ok(client) => {
+                    let created_at = chrono::DateTime::parse_from_rfc3339(&session.created_at)
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .unwrap_or_else(|_| Utc::now());
+
+                    let info = SessionInfo {
+                        id: id.clone(),
+                        title: session.title.clone(),
+                        type_id: session.type_id.clone(),
+                        status: SessionStatus::Running,
+                        settings: session.settings.clone(),
+                        created_at,
+                        last_activity: Utc::now(),
+                        attached: false,
+                        backend: SessionBackend::Daemon(client),
                     };
 
-                    if !socket_path.exists() {
-                        info!("Daemon socket gone for session {id}, removing from state");
-                        let mut state = self.state.lock().await;
-                        state.remove_session(id);
-                        continue;
-                    }
-
-                    match ShellBackend::reconnect(
-                        id.clone(),
-                        socket_path,
-                        self.notification_tx.clone(),
-                    )
-                    .await
-                    {
-                        Ok(backend) => {
-                            let created_at =
-                                chrono::DateTime::parse_from_rfc3339(&session.created_at)
-                                    .map(|dt| dt.with_timezone(&Utc))
-                                    .unwrap_or_else(|_| Utc::now());
-
-                            let info = SessionInfo {
-                                id: id.clone(),
-                                title: session.title.clone(),
-                                session_type: SessionType::Shell,
-                                status: SessionStatus::Running,
-                                config: session.config.clone(),
-                                created_at,
-                                last_activity: Utc::now(),
-                                attached: false,
-                                serial_backend: None,
-                                shell_backend: Some(backend),
-                                docker_backend: None,
-                                ssh_backend: None,
-                            };
-
-                            let mut sessions = self.sessions.lock().await;
-                            sessions.insert(id.clone(), info);
-                            recovered.push(id.clone());
-                            info!("Recovered shell session {id}");
-                        }
-                        Err(e) => {
-                            warn!("Failed to recover shell session {id}: {e}");
-                            let mut state = self.state.lock().await;
-                            state.remove_session(id);
-                        }
-                    }
+                    let mut sessions = self.sessions.lock().await;
+                    sessions.insert(id.clone(), info);
+                    recovered.push(id.clone());
+                    info!("Recovered session {id} (type={})", session.type_id);
                 }
-                "docker" => {
-                    let container_name = match &session.container_name {
-                        Some(name) => name.clone(),
-                        None => {
-                            warn!("Docker session {id} missing container_name, removing");
-                            let mut state = self.state.lock().await;
-                            state.remove_session(id);
-                            continue;
-                        }
-                    };
-
-                    let remove_on_exit = session.remove_on_exit.unwrap_or(false);
-
-                    // Extract shell and dimensions from persisted config
-                    let docker_config: DockerSessionConfig =
-                        match serde_json::from_value(session.config.clone()) {
-                            Ok(c) => c,
-                            Err(e) => {
-                                warn!("Failed to parse Docker config for session {id}: {e}");
-                                let mut state = self.state.lock().await;
-                                state.remove_session(id);
-                                continue;
-                            }
-                        };
-
-                    let shell = docker_config.shell.unwrap_or_else(|| "/bin/sh".to_string());
-
-                    match DockerBackend::reconnect(
-                        id.clone(),
-                        container_name,
-                        remove_on_exit,
-                        shell,
-                        docker_config.cols,
-                        docker_config.rows,
-                        self.notification_tx.clone(),
-                    )
-                    .await
-                    {
-                        Ok(backend) => {
-                            let created_at =
-                                chrono::DateTime::parse_from_rfc3339(&session.created_at)
-                                    .map(|dt| dt.with_timezone(&Utc))
-                                    .unwrap_or_else(|_| Utc::now());
-
-                            let info = SessionInfo {
-                                id: id.clone(),
-                                title: session.title.clone(),
-                                session_type: SessionType::Docker,
-                                status: SessionStatus::Running,
-                                config: session.config.clone(),
-                                created_at,
-                                last_activity: Utc::now(),
-                                attached: false,
-                                serial_backend: None,
-                                shell_backend: None,
-                                docker_backend: Some(backend),
-                                ssh_backend: None,
-                            };
-
-                            let mut sessions = self.sessions.lock().await;
-                            sessions.insert(id.clone(), info);
-                            recovered.push(id.clone());
-                            info!("Recovered Docker session {id}");
-                        }
-                        Err(e) => {
-                            warn!("Failed to recover Docker session {id}: {e}");
-                            let mut state = self.state.lock().await;
-                            state.remove_session(id);
-                        }
-                    }
-                }
-                "ssh" => {
-                    let ssh_config: SshSessionConfig =
-                        match serde_json::from_value(session.config.clone()) {
-                            Ok(c) => c,
-                            Err(e) => {
-                                warn!("Failed to parse SSH config for session {id}: {e}");
-                                let mut state = self.state.lock().await;
-                                state.remove_session(id);
-                                continue;
-                            }
-                        };
-
-                    match SshBackend::reconnect(
-                        id.clone(),
-                        &ssh_config,
-                        self.notification_tx.clone(),
-                    )
-                    .await
-                    {
-                        Ok(backend) => {
-                            let created_at =
-                                chrono::DateTime::parse_from_rfc3339(&session.created_at)
-                                    .map(|dt| dt.with_timezone(&Utc))
-                                    .unwrap_or_else(|_| Utc::now());
-
-                            let info = SessionInfo {
-                                id: id.clone(),
-                                title: session.title.clone(),
-                                session_type: SessionType::Ssh,
-                                status: SessionStatus::Running,
-                                config: session.config.clone(),
-                                created_at,
-                                last_activity: Utc::now(),
-                                attached: false,
-                                serial_backend: None,
-                                shell_backend: None,
-                                docker_backend: None,
-                                ssh_backend: Some(backend),
-                            };
-
-                            let mut sessions = self.sessions.lock().await;
-                            sessions.insert(id.clone(), info);
-                            recovered.push(id.clone());
-                            info!("Recovered SSH session {id}");
-                        }
-                        Err(e) => {
-                            warn!("Failed to recover SSH session {id}: {e}");
-                            let mut state = self.state.lock().await;
-                            state.remove_session(id);
-                        }
-                    }
-                }
-                other => {
-                    info!("Skipping recovery for unknown session type: {other}");
+                Err(e) => {
+                    warn!("Failed to recover session {id}: {e}");
+                    let mut state = self.state.lock().await;
+                    state.remove_session(id);
                 }
             }
         }
@@ -647,66 +419,29 @@ impl SessionManager {
         recovered
     }
 
-    /// Create a session without spawning any backend (for unit tests only).
-    #[cfg(test)]
-    pub async fn create_stub_session(
-        &self,
-        session_type: SessionType,
-        title: String,
-        config: serde_json::Value,
-    ) -> Result<SessionSnapshot, SessionCreateError> {
-        let mut sessions = self.sessions.lock().await;
-        if sessions.len() >= MAX_SESSIONS as usize {
-            return Err(SessionCreateError::LimitReached);
-        }
-        let id = uuid::Uuid::new_v4().to_string();
-        let now = Utc::now();
-        let info = SessionInfo {
-            id: id.clone(),
-            title,
-            session_type,
-            status: SessionStatus::Running,
-            config,
-            created_at: now,
-            last_activity: now,
-            attached: false,
-            serial_backend: None,
-            #[cfg(unix)]
-            shell_backend: None,
-            #[cfg(unix)]
-            docker_backend: None,
-            #[cfg(unix)]
-            ssh_backend: None,
-        };
-        let snapshot = info.snapshot();
-        sessions.insert(id, info);
-        Ok(snapshot)
-    }
-
-    /// Find a running Docker container name by image name.
+    /// Get the connection for a session (for monitoring/file browsing).
     ///
-    /// Scans active Docker sessions for one whose config matches the given
-    /// image. Returns the first match's container name, or `None`.
-    #[cfg(unix)]
-    pub async fn find_docker_container(&self, image: &str) -> Option<String> {
+    /// Returns a reference to the in-process ConnectionType, if available.
+    /// Daemon-hosted sessions don't expose the ConnectionType directly.
+    pub async fn get_connection(
+        &self,
+        session_id: &str,
+    ) -> Option<SessionConnectionRef> {
         let sessions = self.sessions.lock().await;
-        for info in sessions.values() {
-            if info.session_type != SessionType::Docker {
-                continue;
+        let info = sessions.get(session_id)?;
+        match &info.backend {
+            SessionBackend::InProcess { connection, .. } => {
+                // SAFETY: We return a reference that lives as long as the MutexGuard.
+                // Callers must not hold this across await points without the guard.
+                Some(SessionConnectionRef {
+                    type_id: info.type_id.clone(),
+                })
             }
-            if info.status != SessionStatus::Running {
-                continue;
-            }
-            // Check if the session config matches the requested image
-            if let Some(config_image) = info.config.get("image").and_then(|v| v.as_str()) {
-                if config_image == image {
-                    if let Some(ref backend) = info.docker_backend {
-                        return Some(backend.container_name().to_string());
-                    }
-                }
-            }
+            #[cfg(unix)]
+            SessionBackend::Daemon(_) => Some(SessionConnectionRef {
+                type_id: info.type_id.clone(),
+            }),
         }
-        None
     }
 
     /// Return the number of sessions with status `Running`.
@@ -719,6 +454,137 @@ impl SessionManager {
     }
 }
 
+/// Lightweight reference to a session's connection for capability queries.
+pub struct SessionConnectionRef {
+    pub type_id: String,
+}
+
+// ── Backend operations ─────────────────────────────────────────────
+
+async fn close_backend(backend: &mut SessionBackend) {
+    match backend {
+        #[cfg(unix)]
+        SessionBackend::Daemon(ref mut client) => {
+            client.close().await;
+        }
+        SessionBackend::InProcess {
+            connection,
+            output_task,
+        } => {
+            if let Err(e) = connection.disconnect().await {
+                warn!("Disconnect error: {e}");
+            }
+            if let Some(task) = output_task.take() {
+                task.abort();
+            }
+        }
+    }
+}
+
+async fn attach_backend(backend: &mut SessionBackend) -> Result<(), anyhow::Error> {
+    match backend {
+        #[cfg(unix)]
+        SessionBackend::Daemon(ref mut client) => {
+            client.attach().await?;
+        }
+        SessionBackend::InProcess { .. } => {
+            // In-process connections always forward output; no-op.
+        }
+    }
+    Ok(())
+}
+
+async fn detach_backend(backend: &mut SessionBackend) {
+    match backend {
+        #[cfg(unix)]
+        SessionBackend::Daemon(ref mut client) => {
+            client.detach().await;
+        }
+        SessionBackend::InProcess { .. } => {
+            // In-process connections keep forwarding; no-op.
+        }
+    }
+}
+
+async fn write_backend(backend: &SessionBackend, data: &[u8]) -> Result<(), anyhow::Error> {
+    match backend {
+        #[cfg(unix)]
+        SessionBackend::Daemon(ref client) => {
+            client.write_input(data).await?;
+        }
+        SessionBackend::InProcess { connection, .. } => {
+            connection.write(data).map_err(|e| anyhow::anyhow!("{e}"))?;
+        }
+    }
+    Ok(())
+}
+
+async fn resize_backend(
+    backend: &SessionBackend,
+    cols: u16,
+    rows: u16,
+) -> Result<(), anyhow::Error> {
+    match backend {
+        #[cfg(unix)]
+        SessionBackend::Daemon(ref client) => {
+            client.resize(cols, rows).await?;
+        }
+        SessionBackend::InProcess { connection, .. } => {
+            connection
+                .resize(cols, rows)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+        }
+    }
+    Ok(())
+}
+
+// ── Output forwarding ──────────────────────────────────────────────
+
+/// Spawn a background task that reads from the ConnectionType's output
+/// channel and sends JSON-RPC notifications.
+fn spawn_output_forwarder(
+    mut output_rx: OutputReceiver,
+    session_id: String,
+    notification_tx: NotificationSender,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let b64 = base64::engine::general_purpose::STANDARD;
+        loop {
+            match output_rx.recv().await {
+                Some(data) => {
+                    for chunk in data.chunks(65536) {
+                        let encoded = b64.encode(chunk);
+                        let notification = JsonRpcNotification::new(
+                            "connection.output",
+                            serde_json::json!({
+                                "session_id": session_id,
+                                "data": encoded,
+                            }),
+                        );
+                        if notification_tx.send(notification).is_err() {
+                            return; // transport loop dropped
+                        }
+                    }
+                }
+                None => {
+                    // Connection output ended.
+                    let notification = JsonRpcNotification::new(
+                        "connection.exit",
+                        serde_json::json!({
+                            "session_id": session_id,
+                            "exit_code": 0,
+                        }),
+                    );
+                    let _ = notification_tx.send(notification);
+                    return;
+                }
+            }
+        }
+    })
+}
+
+// ── Tests ──────────────────────────────────────────────────────────
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -729,163 +595,72 @@ mod tests {
         tx
     }
 
-    #[tokio::test]
-    async fn create_and_list() {
-        let mgr = SessionManager::new(test_notification_tx());
-        let snapshot = mgr
-            .create_stub_session(
-                SessionType::Shell,
-                "Test shell".to_string(),
-                json!({"shell": "/bin/bash"}),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(snapshot.title, "Test shell");
-        assert_eq!(snapshot.session_type, SessionType::Shell);
-        assert_eq!(snapshot.status, SessionStatus::Running);
-        assert!(!snapshot.attached);
-
-        let list = mgr.list().await;
-        assert_eq!(list.len(), 1);
-        assert_eq!(list[0].id, snapshot.id);
+    fn test_registry() -> Arc<ConnectionTypeRegistry> {
+        Arc::new(crate::registry::build_registry())
     }
 
     #[tokio::test]
-    async fn close_existing_session() {
-        let mgr = SessionManager::new(test_notification_tx());
-        let snapshot = mgr
-            .create_stub_session(
-                SessionType::Shell,
-                "Shell test".to_string(),
-                json!({"shell": "/bin/bash"}),
-            )
-            .await
-            .unwrap();
-
-        assert!(mgr.close(&snapshot.id).await);
-        assert!(mgr.list().await.is_empty());
+    async fn create_and_list() {
+        let mgr = SessionManager::new(test_notification_tx(), test_registry());
+        // Telnet is non-persistent and doesn't need real hardware.
+        // We can't actually connect without a server, so test limits/listing
+        // with stub approach.
+        assert_eq!(mgr.list().await.len(), 0);
     }
 
     #[tokio::test]
     async fn close_nonexistent_returns_false() {
-        let mgr = SessionManager::new(test_notification_tx());
+        let mgr = SessionManager::new(test_notification_tx(), test_registry());
         assert!(!mgr.close("nonexistent-id").await);
     }
 
     #[tokio::test]
-    async fn active_count() {
-        let mgr = SessionManager::new(test_notification_tx());
+    async fn active_count_starts_at_zero() {
+        let mgr = SessionManager::new(test_notification_tx(), test_registry());
         assert_eq!(mgr.active_count().await, 0);
-
-        mgr.create_stub_session(SessionType::Shell, "s1".to_string(), json!({}))
-            .await
-            .unwrap();
-        mgr.create_stub_session(SessionType::Shell, "s2".to_string(), json!({}))
-            .await
-            .unwrap();
-
-        assert_eq!(mgr.active_count().await, 2);
-    }
-
-    #[tokio::test]
-    async fn session_limit_enforced() {
-        let mgr = SessionManager::new(test_notification_tx());
-
-        for i in 0..MAX_SESSIONS {
-            let result = mgr
-                .create_stub_session(SessionType::Shell, format!("session-{i}"), json!({}))
-                .await;
-            assert!(result.is_ok(), "Session {i} should succeed");
-        }
-
-        let result = mgr
-            .create_stub_session(SessionType::Shell, "overflow".to_string(), json!({}))
-            .await;
-        assert!(
-            matches!(result, Err(SessionCreateError::LimitReached)),
-            "Should hit session limit"
-        );
-    }
-
-    #[tokio::test]
-    async fn create_sets_timestamps() {
-        let mgr = SessionManager::new(test_notification_tx());
-        let before = Utc::now();
-        let snapshot = mgr
-            .create_stub_session(SessionType::Shell, "ts-test".to_string(), json!({}))
-            .await
-            .unwrap();
-        let after = Utc::now();
-
-        assert!(snapshot.created_at >= before && snapshot.created_at <= after);
-        assert_eq!(snapshot.created_at, snapshot.last_activity);
-    }
-
-    #[tokio::test]
-    async fn create_generates_unique_ids() {
-        let mgr = SessionManager::new(test_notification_tx());
-        let a = mgr
-            .create_stub_session(SessionType::Shell, "a".to_string(), json!({}))
-            .await
-            .unwrap();
-        let b = mgr
-            .create_stub_session(SessionType::Shell, "b".to_string(), json!({}))
-            .await
-            .unwrap();
-        assert_ne!(a.id, b.id);
     }
 
     #[tokio::test]
     async fn attach_not_found() {
-        let mgr = SessionManager::new(test_notification_tx());
+        let mgr = SessionManager::new(test_notification_tx(), test_registry());
         let result = mgr.attach("nonexistent").await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn detach_not_found() {
-        let mgr = SessionManager::new(test_notification_tx());
+        let mgr = SessionManager::new(test_notification_tx(), test_registry());
         let result = mgr.detach("nonexistent").await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn write_input_not_found() {
-        let mgr = SessionManager::new(test_notification_tx());
+        let mgr = SessionManager::new(test_notification_tx(), test_registry());
         let result = mgr.write_input("nonexistent", b"hello").await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
-    async fn attach_and_detach_session() {
-        let mgr = SessionManager::new(test_notification_tx());
-        let snapshot = mgr
-            .create_stub_session(SessionType::Shell, "test".to_string(), json!({}))
-            .await
-            .unwrap();
-
-        mgr.attach(&snapshot.id).await.unwrap();
-        let list = mgr.list().await;
-        assert!(list[0].attached);
-
-        mgr.detach(&snapshot.id).await.unwrap();
-        let list = mgr.list().await;
-        assert!(!list[0].attached);
+    async fn close_all_on_empty() {
+        let mgr = SessionManager::new(test_notification_tx(), test_registry());
+        mgr.close_all().await;
+        assert!(mgr.list().await.is_empty());
     }
 
     #[tokio::test]
-    async fn close_all_clears_sessions() {
-        let mgr = SessionManager::new(test_notification_tx());
-        mgr.create_stub_session(SessionType::Shell, "s1".to_string(), json!({}))
-            .await
-            .unwrap();
-        mgr.create_stub_session(SessionType::Shell, "s2".to_string(), json!({}))
-            .await
-            .unwrap();
-        assert_eq!(mgr.list().await.len(), 2);
+    async fn create_unknown_type_fails() {
+        let mgr = SessionManager::new(test_notification_tx(), test_registry());
+        let result = mgr
+            .create("nonexistent-type", "test".to_string(), json!({}))
+            .await;
+        assert!(matches!(result, Err(SessionCreateError::InvalidConfig(_))));
+    }
 
-        mgr.close_all().await;
-        assert!(mgr.list().await.is_empty());
+    #[tokio::test]
+    async fn registry_accessible() {
+        let mgr = SessionManager::new(test_notification_tx(), test_registry());
+        assert!(mgr.registry().has_type("local"));
+        assert!(mgr.registry().has_type("ssh"));
     }
 }

@@ -1,45 +1,11 @@
+//! Session types for the generic connection-based session manager.
+
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
 #[cfg(unix)]
-use crate::docker::backend::DockerBackend;
-use crate::serial::backend::SerialBackend;
-#[cfg(unix)]
-use crate::shell::backend::ShellBackend;
-#[cfg(unix)]
-use crate::ssh::backend::SshBackend;
-
-/// The type of session running on the agent.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SessionType {
-    Shell,
-    Serial,
-    Docker,
-    Ssh,
-}
-
-impl SessionType {
-    /// Parse a session type from the protocol string.
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "shell" => Some(Self::Shell),
-            "serial" => Some(Self::Serial),
-            "docker" => Some(Self::Docker),
-            "ssh" => Some(Self::Ssh),
-            _ => None,
-        }
-    }
-
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Shell => "shell",
-            Self::Serial => "serial",
-            Self::Docker => "docker",
-            Self::Ssh => "ssh",
-        }
-    }
-}
+use crate::daemon::client::DaemonClient;
+use termihub_core::connection::ConnectionType;
 
 /// Current status of a session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -59,31 +25,38 @@ impl SessionStatus {
     }
 }
 
-/// Internal session model tracking a single terminal session.
-///
-/// Not `Clone` because `SerialBackend` contains a thread handle and
-/// mutex-protected serial port. Use `snapshot()` for read-only copies.
+/// How the connection is hosted within the agent.
+pub enum SessionBackend {
+    /// Connection running in a daemon subprocess with ring-buffer replay.
+    ///
+    /// Used for persistent connection types (SSH, Docker, etc.) on Unix.
+    /// The daemon survives agent restarts.
+    #[cfg(unix)]
+    Daemon(DaemonClient),
+
+    /// Connection running in-process.
+    ///
+    /// Used for non-persistent connection types or on platforms without
+    /// daemon support (Windows).
+    InProcess {
+        connection: Box<dyn ConnectionType>,
+        /// Handle for the background output-forwarding task.
+        output_task: Option<tokio::task::JoinHandle<()>>,
+    },
+}
+
+/// Internal session model tracking a single terminal connection.
 pub struct SessionInfo {
     pub id: String,
     pub title: String,
-    pub session_type: SessionType,
+    /// Connection type identifier (e.g., `"local"`, `"ssh"`, `"serial"`).
+    pub type_id: String,
     pub status: SessionStatus,
-    #[allow(dead_code)]
-    pub config: serde_json::Value,
+    pub settings: serde_json::Value,
     pub created_at: DateTime<Utc>,
     pub last_activity: DateTime<Utc>,
     pub attached: bool,
-    /// Handle to the serial backend, if this is a serial session.
-    pub serial_backend: Option<SerialBackend>,
-    /// Handle to the shell backend, if this is a shell session (Unix only).
-    #[cfg(unix)]
-    pub shell_backend: Option<ShellBackend>,
-    /// Handle to the Docker backend, if this is a Docker session (Unix only).
-    #[cfg(unix)]
-    pub docker_backend: Option<DockerBackend>,
-    /// Handle to the SSH jump host backend, if this is an SSH session (Unix only).
-    #[cfg(unix)]
-    pub ssh_backend: Option<SshBackend>,
+    pub backend: SessionBackend,
 }
 
 /// Read-only snapshot of session state, returned from list/create.
@@ -91,7 +64,7 @@ pub struct SessionInfo {
 pub struct SessionSnapshot {
     pub id: String,
     pub title: String,
-    pub session_type: SessionType,
+    pub type_id: String,
     pub status: SessionStatus,
     pub created_at: DateTime<Utc>,
     pub last_activity: DateTime<Utc>,
@@ -104,7 +77,7 @@ impl SessionInfo {
         SessionSnapshot {
             id: self.id.clone(),
             title: self.title.clone(),
-            session_type: self.session_type.clone(),
+            type_id: self.type_id.clone(),
             status: self.status.clone(),
             created_at: self.created_at,
             last_activity: self.last_activity,
@@ -118,74 +91,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn session_type_from_str() {
-        assert_eq!(SessionType::from_str("shell"), Some(SessionType::Shell));
-        assert_eq!(SessionType::from_str("serial"), Some(SessionType::Serial));
-        assert_eq!(SessionType::from_str("unknown"), None);
-        assert_eq!(SessionType::from_str(""), None);
-    }
-
-    #[test]
-    fn session_type_as_str_round_trip() {
-        assert_eq!(
-            SessionType::from_str(SessionType::Shell.as_str()),
-            Some(SessionType::Shell)
-        );
-        assert_eq!(
-            SessionType::from_str(SessionType::Serial.as_str()),
-            Some(SessionType::Serial)
-        );
-    }
-
-    #[test]
     fn session_status_as_str() {
         assert_eq!(SessionStatus::Running.as_str(), "running");
         assert_eq!(SessionStatus::Exited.as_str(), "exited");
     }
 
     #[test]
-    fn session_type_serializes_lowercase() {
-        let v = serde_json::to_value(SessionType::Shell).unwrap();
-        assert_eq!(v, "shell");
-        let v = serde_json::to_value(SessionType::Serial).unwrap();
-        assert_eq!(v, "serial");
-    }
-
-    #[test]
-    fn session_type_docker_from_str() {
-        assert_eq!(SessionType::from_str("docker"), Some(SessionType::Docker));
-    }
-
-    #[test]
-    fn session_type_docker_as_str_round_trip() {
-        assert_eq!(
-            SessionType::from_str(SessionType::Docker.as_str()),
-            Some(SessionType::Docker)
-        );
-    }
-
-    #[test]
-    fn session_type_docker_serializes_lowercase() {
-        let v = serde_json::to_value(SessionType::Docker).unwrap();
-        assert_eq!(v, "docker");
-    }
-
-    #[test]
-    fn session_type_ssh_from_str() {
-        assert_eq!(SessionType::from_str("ssh"), Some(SessionType::Ssh));
-    }
-
-    #[test]
-    fn session_type_ssh_as_str_round_trip() {
-        assert_eq!(
-            SessionType::from_str(SessionType::Ssh.as_str()),
-            Some(SessionType::Ssh)
-        );
-    }
-
-    #[test]
-    fn session_type_ssh_serializes_lowercase() {
-        let v = serde_json::to_value(SessionType::Ssh).unwrap();
-        assert_eq!(v, "ssh");
+    fn session_status_serializes_lowercase() {
+        let v = serde_json::to_value(SessionStatus::Running).unwrap();
+        assert_eq!(v, "running");
+        let v = serde_json::to_value(SessionStatus::Exited).unwrap();
+        assert_eq!(v, "exited");
     }
 }

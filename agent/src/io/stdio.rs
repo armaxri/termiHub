@@ -8,6 +8,7 @@ use crate::handler::dispatch::Dispatcher;
 use crate::io::transport::run_transport_loop;
 use crate::monitoring::MonitoringManager;
 use crate::protocol::messages::JsonRpcNotification;
+use crate::registry::build_registry;
 use crate::session::definitions::ConnectionStore;
 use crate::session::manager::SessionManager;
 
@@ -20,7 +21,8 @@ pub async fn run_stdio_loop(shutdown: CancellationToken) -> anyhow::Result<()> {
     let (notification_tx, mut notification_rx) =
         tokio::sync::mpsc::unbounded_channel::<JsonRpcNotification>();
 
-    let session_manager = Arc::new(SessionManager::new(notification_tx.clone()));
+    let registry = Arc::new(build_registry());
+    let session_manager = Arc::new(SessionManager::new(notification_tx.clone(), registry));
     let connection_store = Arc::new(ConnectionStore::new(ConnectionStore::default_path()));
     let monitoring_manager = Arc::new(MonitoringManager::new(
         notification_tx,
