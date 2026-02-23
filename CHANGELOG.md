@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking**: Replaced typed `ConnectionConfig` enum (Rust) and discriminated union (TypeScript) with a generic `{type, config}` struct/interface — removes `LocalShellConfig`, `RemoteSessionConfig`, `SshConfig` (TS), `TelnetConfig`, `SerialConfig`, `DockerConfig` type definitions and per-type `expand()` impls; on-disk JSON format is preserved (no data migration required); removes `fromConnectionConfig()`/`toConnectionConfig()` helper functions (#363)
 - Connection editor settings UI is now schema-driven — the six hardcoded settings components (SshSettings, SerialSettings, TelnetSettings, DockerSettings, ConnectionSettings, AgentSettings) are replaced by a single generic `ConnectionSettingsForm` that renders fields dynamically from the backend's `SettingsSchema`; connection type capabilities (monitoring, file browser) are now resolved from the backend registry instead of hardcoded type checks (#362)
 
 - **Breaking**: Desktop `SessionManager` replaced legacy `TerminalManager` — sessions now use `Box<dyn ConnectionType>` from `termihub-core` instead of the old `TerminalBackend` trait; per-type desktop backends (local_shell.rs, ssh.rs, serial.rs, telnet.rs, docker_shell.rs, remote_session.rs) removed in favor of core backends; `RemoteProxy` implements `ConnectionType` by forwarding to agents via JSON-RPC; frontend `createTerminal` now maps to the new `create_connection` Tauri command (#361)

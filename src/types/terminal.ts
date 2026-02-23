@@ -45,39 +45,6 @@ export interface TerminalOptions {
   cursorBlink?: boolean;
 }
 
-export interface LocalShellConfig {
-  shellType: ShellType;
-  initialCommand?: string;
-  startingDirectory?: string;
-}
-
-export interface SshConfig {
-  host: string;
-  port: number;
-  username: string;
-  authMethod: "password" | "key" | "agent";
-  password?: string;
-  keyPath?: string;
-  enableX11Forwarding?: boolean;
-  enableMonitoring?: boolean;
-  enableFileBrowser?: boolean;
-  savePassword?: boolean;
-}
-
-export interface TelnetConfig {
-  host: string;
-  port: number;
-}
-
-export interface SerialConfig {
-  port: string;
-  baudRate: number;
-  dataBits: 5 | 6 | 7 | 8;
-  stopBits: 1 | 2;
-  parity: "none" | "odd" | "even";
-  flowControl: "none" | "hardware" | "software";
-}
-
 /** SSH transport configuration for a remote agent (no session details). */
 export interface RemoteAgentConfig {
   host: string;
@@ -102,61 +69,15 @@ export interface VolumeMount {
   readOnly?: boolean;
 }
 
-/** Configuration for a Docker container shell. */
-export interface DockerConfig {
-  image: string;
-  shell?: string;
-  envVars: EnvVar[];
-  volumes: VolumeMount[];
-  workingDirectory?: string;
-  removeOnExit: boolean;
+/**
+ * Generic connection configuration for saved connections.
+ * The `type` field identifies the connection type (e.g. "ssh", "local"),
+ * and `config` holds type-specific settings as unstructured key-value pairs.
+ */
+export interface ConnectionConfig {
+  type: string;
+  config: Record<string, unknown>;
 }
-
-/** Session configuration for a session running on a remote agent. */
-export interface RemoteSessionConfig {
-  agentId: string;
-  sessionType: "shell" | "serial" | "docker" | "ssh";
-  shell?: string;
-  serialPort?: string;
-  baudRate?: number;
-  dataBits?: 5 | 6 | 7 | 8;
-  stopBits?: 1 | 2;
-  parity?: "none" | "odd" | "even";
-  flowControl?: "none" | "hardware" | "software";
-  title?: string;
-  /** Whether this session survives reconnection (re-attach vs recreate). */
-  persistent: boolean;
-  /** Docker image name (for docker session type). */
-  dockerImage?: string;
-  /** Docker environment variables (for docker session type). */
-  dockerEnvVars?: EnvVar[];
-  /** Docker volume mounts (for docker session type). */
-  dockerVolumes?: VolumeMount[];
-  /** Docker working directory (for docker session type). */
-  dockerWorkingDirectory?: string;
-  /** Remove Docker container on exit (for docker session type). */
-  dockerRemoveOnExit?: boolean;
-  /** SSH target host (for ssh session type — jump host). */
-  sshHost?: string;
-  /** SSH target port (for ssh session type). */
-  sshPort?: number;
-  /** SSH username (for ssh session type). */
-  sshUsername?: string;
-  /** SSH auth method (for ssh session type). */
-  sshAuthMethod?: "key" | "password" | "agent";
-  /** SSH password (for ssh session type, password auth). */
-  sshPassword?: string;
-  /** SSH private key path (for ssh session type, key auth). */
-  sshKeyPath?: string;
-}
-
-export type ConnectionConfig =
-  | { type: "local"; config: LocalShellConfig }
-  | { type: "ssh"; config: SshConfig }
-  | { type: "telnet"; config: TelnetConfig }
-  | { type: "serial"; config: SerialConfig }
-  | { type: "remote-session"; config: RemoteSessionConfig }
-  | { type: "docker"; config: DockerConfig };
 
 export interface TerminalTab {
   id: string;

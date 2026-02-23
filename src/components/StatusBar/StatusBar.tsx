@@ -32,7 +32,7 @@ function formatKb(kb: number): string {
 
 /** Extract monitoring-relevant connection settings (host, port, username, authMethod, password). */
 function extractMonitoringConfig(config: ConnectionConfig): Record<string, unknown> | null {
-  const cfg = config.config as unknown as Record<string, unknown>;
+  const cfg = config.config;
   if (cfg.host && cfg.username) return cfg;
   return null;
 }
@@ -208,7 +208,7 @@ function MonitoringStatus() {
     const { connectionTypes: types } = useAppStore.getState();
     if (!typeSupportsMonitoring(types, activeTab.config.type)) return;
 
-    const cfg = activeTab.config.config as unknown as Record<string, unknown>;
+    const cfg = activeTab.config.config;
     const host = (cfg.host as string) ?? "";
     const port = (cfg.port as number) ?? 0;
     const username = (cfg.username as string) ?? "";
@@ -242,19 +242,16 @@ function MonitoringStatus() {
       const authMethod = cfg.authMethod as string | undefined;
       if (authMethod === "password" && !cfg.password) {
         const savedConn = conns.find((c) => {
-          const sc = c.config.config as unknown as Record<string, unknown>;
+          const sc = c.config.config;
           return sc.host === host && sc.port === port && sc.username === username;
         });
-        const baseConfig = savedConn
-          ? (savedConn.config.config as unknown as Record<string, unknown>)
-          : cfg;
+        const baseConfig = savedConn ? savedConn.config.config : cfg;
         const password = await requestPassword(host, username);
         if (password === null) return;
         configToUse = { ...baseConfig, password };
       }
 
-      // connectMonitoring expects SshConfig shape — pass the generic settings
-      await connect(configToUse as unknown as Parameters<typeof connect>[0]);
+      await connect(configToUse);
 
       // On success, clear the guard so switching away and back works
       if (useAppStore.getState().monitoringSessionId) {
@@ -269,7 +266,7 @@ function MonitoringStatus() {
     (connection: SavedConnection) => {
       const monitorConfig = extractMonitoringConfig(connection.config);
       if (monitorConfig) {
-        connectMonitoring(monitorConfig as unknown as Parameters<typeof connectMonitoring>[0]);
+        connectMonitoring(monitorConfig);
       }
     },
     [connectMonitoring]

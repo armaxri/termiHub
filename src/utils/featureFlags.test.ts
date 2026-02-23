@@ -11,7 +11,7 @@ const sshConfig = (overrides: {
     host: "example.com",
     port: 22,
     username: "admin",
-    authMethod: "password" as const,
+    authMethod: "password",
     ...overrides,
   },
 });

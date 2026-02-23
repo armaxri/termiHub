@@ -13,7 +13,6 @@ use super::remote_forward::RemoteForwarder;
 use super::session_pool::SshSessionPool;
 use super::storage::TunnelStorage;
 use crate::connection::manager::ConnectionManager;
-use crate::terminal::backend::ConnectionConfig;
 use crate::utils::errors::TerminalError;
 
 /// An active tunnel with its forwarder.
@@ -330,13 +329,19 @@ impl TunnelManager {
                 TerminalError::TunnelError(format!("SSH connection not found: {}", connection_id))
             })?;
 
-        match &conn.config {
-            ConnectionConfig::Ssh(ssh_config) => Ok(ssh_config.clone()),
-            _ => Err(TerminalError::TunnelError(format!(
+        if conn.config.type_id != "ssh" {
+            return Err(TerminalError::TunnelError(format!(
                 "Connection {} is not an SSH connection",
                 connection_id
-            ))),
+            )));
         }
+
+        serde_json::from_value(conn.config.settings.clone()).map_err(|e| {
+            TerminalError::TunnelError(format!(
+                "Failed to parse SSH config for connection {}: {}",
+                connection_id, e
+            ))
+        })
     }
 
     /// Emit a tunnel status change event to the frontend.

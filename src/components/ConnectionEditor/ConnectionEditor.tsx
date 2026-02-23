@@ -9,7 +9,7 @@ import {
   TerminalOptions,
   ConnectionEditorMeta,
 } from "@/types/terminal";
-import { listAvailableShells, fromConnectionConfig, toConnectionConfig } from "@/services/api";
+import { listAvailableShells } from "@/services/api";
 import type { ConnectionTypeInfo } from "@/services/api";
 import { SavedConnection, RemoteAgentDefinition } from "@/types/connection";
 import { SettingsNav } from "@/components/Settings";
@@ -149,7 +149,10 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       };
     }
     if (existingConnection) {
-      return fromConnectionConfig(existingConnection.config);
+      return {
+        typeId: existingConnection.config.type,
+        settings: existingConnection.config.config,
+      };
     }
     // New connection defaults to local shell
     const localType = findSchema(connectionTypes, "local");
@@ -260,7 +263,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       }
     }
 
-    const connectionConfig = toConnectionConfig(selectedType, connSettings);
+    const connectionConfig: ConnectionConfig = { type: selectedType, config: connSettings };
     const opts = hasTerminalOptions(terminalOptions) ? terminalOptions : undefined;
 
     if (existingConnection) {

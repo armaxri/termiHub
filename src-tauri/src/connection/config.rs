@@ -128,20 +128,34 @@ pub struct ImportResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::terminal::backend::{
-        LocalShellConfig, RemoteAgentConfig, SerialConfig, SshConfig, TelnetConfig,
-    };
+    use crate::terminal::backend::RemoteAgentConfig;
+
+    fn make_local_config() -> ConnectionConfig {
+        ConnectionConfig {
+            type_id: "local".to_string(),
+            settings: serde_json::json!({"shellType": "bash"}),
+        }
+    }
+
+    fn make_ssh_config() -> ConnectionConfig {
+        ConnectionConfig {
+            type_id: "ssh".to_string(),
+            settings: serde_json::json!({
+                "host": "example.com",
+                "port": 22,
+                "username": "admin",
+                "authMethod": "password",
+                "enableX11Forwarding": false
+            }),
+        }
+    }
 
     #[test]
     fn saved_connection_local_serde_round_trip() {
         let conn = SavedConnection {
             id: "conn-1".to_string(),
             name: "My Shell".to_string(),
-            config: ConnectionConfig::Local(LocalShellConfig {
-                shell_type: "zsh".to_string(),
-                initial_command: Some("ls".to_string()),
-                starting_directory: None,
-            }),
+            config: make_local_config(),
             folder_id: None,
             terminal_options: None,
             source_file: None,
@@ -150,6 +164,7 @@ mod tests {
         let deserialized: SavedConnection = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.id, "conn-1");
         assert_eq!(deserialized.name, "My Shell");
+        assert_eq!(deserialized.config.type_id, "local");
     }
 
     #[test]
@@ -157,13 +172,7 @@ mod tests {
         let conn = SavedConnection {
             id: "conn-2".to_string(),
             name: "SSH Server".to_string(),
-            config: ConnectionConfig::Ssh(SshConfig {
-                host: "example.com".to_string(),
-                username: "admin".to_string(),
-                auth_method: "password".to_string(),
-                password: Some("secret".to_string()),
-                ..SshConfig::default()
-            }),
+            config: make_ssh_config(),
             folder_id: Some("folder-1".to_string()),
             terminal_options: None,
             source_file: None,
@@ -171,12 +180,9 @@ mod tests {
         let json = serde_json::to_string(&conn).unwrap();
         let deserialized: SavedConnection = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.id, "conn-2");
-        if let ConnectionConfig::Ssh(ssh) = &deserialized.config {
-            assert_eq!(ssh.host, "example.com");
-            assert_eq!(ssh.port, 22);
-        } else {
-            panic!("Expected SSH config");
-        }
+        assert_eq!(deserialized.config.type_id, "ssh");
+        assert_eq!(deserialized.config.settings["host"], "example.com");
+        assert_eq!(deserialized.config.settings["port"], 22);
     }
 
     #[test]
@@ -184,25 +190,25 @@ mod tests {
         let conn = SavedConnection {
             id: "conn-3".to_string(),
             name: "Serial Port".to_string(),
-            config: ConnectionConfig::Serial(SerialConfig {
-                port: "/dev/ttyUSB0".to_string(),
-                baud_rate: 115200,
-                data_bits: 8,
-                stop_bits: 1,
-                parity: "none".to_string(),
-                flow_control: "none".to_string(),
-            }),
+            config: ConnectionConfig {
+                type_id: "serial".to_string(),
+                settings: serde_json::json!({
+                    "port": "/dev/ttyUSB0",
+                    "baudRate": 115200,
+                    "dataBits": 8,
+                    "stopBits": 1,
+                    "parity": "none",
+                    "flowControl": "none"
+                }),
+            },
             folder_id: None,
             terminal_options: None,
             source_file: None,
         };
         let json = serde_json::to_string(&conn).unwrap();
         let deserialized: SavedConnection = serde_json::from_str(&json).unwrap();
-        if let ConnectionConfig::Serial(serial) = &deserialized.config {
-            assert_eq!(serial.baud_rate, 115200);
-        } else {
-            panic!("Expected Serial config");
-        }
+        assert_eq!(deserialized.config.type_id, "serial");
+        assert_eq!(deserialized.config.settings["baudRate"], 115200);
     }
 
     #[test]
@@ -210,22 +216,22 @@ mod tests {
         let conn = SavedConnection {
             id: "conn-4".to_string(),
             name: "Telnet Server".to_string(),
-            config: ConnectionConfig::Telnet(TelnetConfig {
-                host: "telnet.example.com".to_string(),
-                port: 23,
-            }),
+            config: ConnectionConfig {
+                type_id: "telnet".to_string(),
+                settings: serde_json::json!({
+                    "host": "telnet.example.com",
+                    "port": 23
+                }),
+            },
             folder_id: None,
             terminal_options: None,
             source_file: None,
         };
         let json = serde_json::to_string(&conn).unwrap();
         let deserialized: SavedConnection = serde_json::from_str(&json).unwrap();
-        if let ConnectionConfig::Telnet(telnet) = &deserialized.config {
-            assert_eq!(telnet.host, "telnet.example.com");
-            assert_eq!(telnet.port, 23);
-        } else {
-            panic!("Expected Telnet config");
-        }
+        assert_eq!(deserialized.config.type_id, "telnet");
+        assert_eq!(deserialized.config.settings["host"], "telnet.example.com");
+        assert_eq!(deserialized.config.settings["port"], 23);
     }
 
     #[test]
@@ -253,7 +259,6 @@ mod tests {
 
     #[test]
     fn connection_store_with_agents_backward_compat() {
-        // Existing JSON without "agents" field should deserialize with empty agents vec
         let json = r#"{"version":"1","folders":[],"connections":[]}"#;
         let store: ConnectionStore = serde_json::from_str(json).unwrap();
         assert!(store.agents.is_empty());
@@ -261,7 +266,7 @@ mod tests {
 
     #[test]
     fn ssh_config_backward_compat_missing_feature_fields() {
-        // Old JSON without enableMonitoring/enableFileBrowser should deserialize with None
+        // Old JSON without enableMonitoring/enableFileBrowser should still parse
         let json = r#"{
             "type": "ssh",
             "config": {
@@ -274,44 +279,29 @@ mod tests {
             }
         }"#;
         let config: ConnectionConfig = serde_json::from_str(json).unwrap();
-        if let ConnectionConfig::Ssh(ssh) = &config {
-            assert_eq!(ssh.host, "example.com");
-            assert!(ssh.enable_monitoring.is_none());
-            assert!(ssh.enable_file_browser.is_none());
-        } else {
-            panic!("Expected SSH config");
-        }
+        assert_eq!(config.type_id, "ssh");
+        assert_eq!(config.settings["host"], "example.com");
+        // Feature fields simply don't exist in the JSON value
+        assert!(config.settings.get("enableMonitoring").is_none());
+        assert!(config.settings.get("enableFileBrowser").is_none());
     }
 
     #[test]
     fn ssh_config_feature_fields_round_trip() {
-        let config = ConnectionConfig::Ssh(SshConfig {
-            host: "example.com".to_string(),
-            username: "admin".to_string(),
-            auth_method: "password".to_string(),
-            enable_monitoring: Some(false),
-            enable_file_browser: Some(true),
-            ..SshConfig::default()
-        });
+        let config = ConnectionConfig {
+            type_id: "ssh".to_string(),
+            settings: serde_json::json!({
+                "host": "example.com",
+                "username": "admin",
+                "authMethod": "password",
+                "enableMonitoring": false,
+                "enableFileBrowser": true
+            }),
+        };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: ConnectionConfig = serde_json::from_str(&json).unwrap();
-        if let ConnectionConfig::Ssh(ssh) = &deserialized {
-            assert_eq!(ssh.enable_monitoring, Some(false));
-            assert_eq!(ssh.enable_file_browser, Some(true));
-        } else {
-            panic!("Expected SSH config");
-        }
-
-        // Verify None values are omitted from JSON
-        let config_none = ConnectionConfig::Ssh(SshConfig {
-            host: "example.com".to_string(),
-            username: "admin".to_string(),
-            auth_method: "password".to_string(),
-            ..SshConfig::default()
-        });
-        let json_none = serde_json::to_string(&config_none).unwrap();
-        assert!(!json_none.contains("enableMonitoring"));
-        assert!(!json_none.contains("enableFileBrowser"));
+        assert_eq!(deserialized.settings["enableMonitoring"], false);
+        assert_eq!(deserialized.settings["enableFileBrowser"], true);
     }
 
     #[test]
@@ -319,11 +309,7 @@ mod tests {
         let conn = SavedConnection {
             id: "test".to_string(),
             name: "Test".to_string(),
-            config: ConnectionConfig::Local(LocalShellConfig {
-                shell_type: "bash".to_string(),
-                initial_command: None,
-                starting_directory: None,
-            }),
+            config: make_local_config(),
             folder_id: None,
             terminal_options: Some(TerminalOptions {
                 horizontal_scrolling: Some(true),
@@ -333,14 +319,11 @@ mod tests {
             source_file: None,
         };
         let json: serde_json::Value = serde_json::to_value(&conn).unwrap();
-        // Check camelCase renaming
         assert!(json.get("folderId").is_some());
         assert!(json.get("terminalOptions").is_some());
-        // Check tagged enum format
         let config = json.get("config").unwrap();
         assert_eq!(config.get("type").unwrap(), "local");
         assert!(config.get("config").is_some());
-        // source_file: None should be omitted from JSON
         assert!(json.get("sourceFile").is_none());
     }
 
@@ -349,11 +332,7 @@ mod tests {
         let conn = SavedConnection {
             id: "test".to_string(),
             name: "Test".to_string(),
-            config: ConnectionConfig::Local(LocalShellConfig {
-                shell_type: "bash".to_string(),
-                initial_command: None,
-                starting_directory: None,
-            }),
+            config: make_local_config(),
             folder_id: None,
             terminal_options: None,
             source_file: Some("/path/to/external.json".to_string()),
@@ -367,7 +346,6 @@ mod tests {
 
     #[test]
     fn source_file_defaults_to_none_on_deserialize() {
-        // JSON without sourceFile should deserialize with source_file = None
         let json = r#"{
             "id": "test",
             "name": "Test",

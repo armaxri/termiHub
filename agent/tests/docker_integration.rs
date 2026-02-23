@@ -142,47 +142,6 @@ fn docker_available() -> bool {
         .unwrap_or(false)
 }
 
-/// A running Docker container that is cleaned up on drop.
-struct ContainerHandle {
-    name: String,
-}
-
-impl Drop for ContainerHandle {
-    fn drop(&mut self) {
-        let _ = Command::new("docker")
-            .args(["rm", "-f", &self.name])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
-    }
-}
-
-/// Create a detached Docker container using `alpine:latest`.
-fn create_container(name: &str) -> ContainerHandle {
-    let status = Command::new("docker")
-        .args([
-            "run",
-            "-d",
-            "--init",
-            "--name",
-            name,
-            "alpine:latest",
-            "tail",
-            "-f",
-            "/dev/null",
-        ])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::piped())
-        .status()
-        .expect("Failed to run docker");
-
-    assert!(status.success(), "docker run failed for container {name}");
-
-    ContainerHandle {
-        name: name.to_string(),
-    }
-}
-
 // ── Test helpers ────────────────────────────────────────────────────
 
 fn agent_binary() -> &'static str {
@@ -202,18 +161,21 @@ impl Drop for DaemonHandle {
     }
 }
 
-/// Spawn a daemon process configured to run `docker exec` on the given container.
-fn spawn_docker_daemon(session_id: &str, socket_path: &Path, container_name: &str) -> DaemonHandle {
-    let command_args = serde_json::to_string(&["exec", "-it", container_name, "/bin/sh"]).unwrap();
+/// Spawn a daemon process configured as a Docker session.
+///
+/// Uses the Docker `ConnectionType` backend which creates and manages
+/// its own container from the given image.
+fn spawn_docker_daemon(session_id: &str, socket_path: &Path, image: &str) -> DaemonHandle {
+    let settings = serde_json::json!({
+        "image": image,
+    });
 
     let child = Command::new(agent_binary())
         .arg("--daemon")
         .arg(session_id)
         .env("TERMIHUB_SOCKET_PATH", socket_path)
-        .env("TERMIHUB_COMMAND", "docker")
-        .env("TERMIHUB_COMMAND_ARGS", &command_args)
-        .env("TERMIHUB_COLS", "80")
-        .env("TERMIHUB_ROWS", "24")
+        .env("TERMIHUB_TYPE_ID", "docker")
+        .env("TERMIHUB_SETTINGS", settings.to_string())
         .env("TERMIHUB_BUFFER_SIZE", "65536")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -313,7 +275,7 @@ fn temp_socket_path(label: &str) -> (tempfile::TempDir, PathBuf) {
 
 // ── Tests ───────────────────────────────────────────────────────────
 
-/// Test basic Docker session: create container, spawn daemon, connect,
+/// Test basic Docker session: spawn daemon with Docker backend, connect,
 /// send input, verify output from inside the container.
 #[tokio::test]
 async fn test_docker_session_basic() {
@@ -322,13 +284,11 @@ async fn test_docker_session_basic() {
         return;
     }
 
-    let container_name = "termihub-test-basic";
-    let _container = create_container(container_name);
     let (_dir, socket_path) = temp_socket_path("docker-basic");
-    let _daemon = spawn_docker_daemon("docker-basic", &socket_path, container_name);
+    let _daemon = spawn_docker_daemon("docker-basic", &socket_path, "alpine:latest");
 
     assert!(
-        wait_for_socket(&socket_path, Duration::from_secs(10)).await,
+        wait_for_socket(&socket_path, Duration::from_secs(30)).await,
         "Daemon socket did not appear"
     );
 
@@ -354,8 +314,10 @@ async fn test_docker_session_basic() {
     assert!(found, "Expected output from hostname command");
 }
 
-/// Test Docker session recovery: create session, kill daemon, verify
-/// container still running, spawn new daemon, verify functional.
+/// Test Docker daemon recovery: kill daemon, spawn a new one, verify functional.
+///
+/// Each daemon creates its own container via the Docker backend, so this
+/// tests that a new session can be started after the first one is killed.
 #[tokio::test]
 async fn test_docker_session_recovery() {
     if !docker_available() {
@@ -363,16 +325,13 @@ async fn test_docker_session_recovery() {
         return;
     }
 
-    let container_name = "termihub-test-recovery";
-    let _container = create_container(container_name);
-    let (_dir, socket_path) = temp_socket_path("docker-recovery");
-
     // Phase 1: Create initial session, send data, then kill daemon.
+    let (_dir, socket_path) = temp_socket_path("docker-recovery");
     {
-        let mut daemon = spawn_docker_daemon("docker-recovery", &socket_path, container_name);
+        let mut daemon = spawn_docker_daemon("docker-recovery", &socket_path, "alpine:latest");
 
         assert!(
-            wait_for_socket(&socket_path, Duration::from_secs(10)).await,
+            wait_for_socket(&socket_path, Duration::from_secs(30)).await,
             "Daemon socket did not appear"
         );
 
@@ -386,7 +345,7 @@ async fn test_docker_session_recovery() {
             read_until_output_contains(&mut reader, b"BEFORE_KILL", Duration::from_secs(10)).await;
         assert!(found, "Expected BEFORE_KILL in output");
 
-        // Kill the daemon (not the container).
+        // Kill the daemon.
         let _ = daemon.child.kill();
         let _ = daemon.child.wait();
 
@@ -399,25 +358,12 @@ async fn test_docker_session_recovery() {
         std::mem::forget(daemon);
     }
 
-    // Verify the container is still running.
-    let inspect = Command::new("docker")
-        .args(["inspect", "-f", "{{.State.Running}}", container_name])
-        .output()
-        .expect("Failed to inspect container");
-    let running = String::from_utf8_lossy(&inspect.stdout)
-        .trim()
-        .eq_ignore_ascii_case("true");
-    assert!(
-        running,
-        "Container should still be running after daemon kill"
-    );
-
-    // Phase 2: Spawn a new daemon on the same container.
+    // Phase 2: Spawn a new daemon (creates a new container).
     let (_dir2, socket_path2) = temp_socket_path("docker-recovery2");
-    let _daemon2 = spawn_docker_daemon("docker-recovery2", &socket_path2, container_name);
+    let _daemon2 = spawn_docker_daemon("docker-recovery2", &socket_path2, "alpine:latest");
 
     assert!(
-        wait_for_socket(&socket_path2, Duration::from_secs(10)).await,
+        wait_for_socket(&socket_path2, Duration::from_secs(30)).await,
         "Second daemon socket did not appear"
     );
 
@@ -444,13 +390,11 @@ async fn test_docker_resize() {
         return;
     }
 
-    let container_name = "termihub-test-resize";
-    let _container = create_container(container_name);
     let (_dir, socket_path) = temp_socket_path("docker-resize");
-    let _daemon = spawn_docker_daemon("docker-resize", &socket_path, container_name);
+    let _daemon = spawn_docker_daemon("docker-resize", &socket_path, "alpine:latest");
 
     assert!(
-        wait_for_socket(&socket_path, Duration::from_secs(10)).await,
+        wait_for_socket(&socket_path, Duration::from_secs(30)).await,
         "Daemon socket did not appear"
     );
 
@@ -481,13 +425,11 @@ async fn test_docker_kill() {
         return;
     }
 
-    let container_name = "termihub-test-kill";
-    let _container = create_container(container_name);
     let (_dir, socket_path) = temp_socket_path("docker-kill");
-    let mut daemon = spawn_docker_daemon("docker-kill", &socket_path, container_name);
+    let mut daemon = spawn_docker_daemon("docker-kill", &socket_path, "alpine:latest");
 
     assert!(
-        wait_for_socket(&socket_path, Duration::from_secs(10)).await,
+        wait_for_socket(&socket_path, Duration::from_secs(30)).await,
         "Daemon socket did not appear"
     );
 

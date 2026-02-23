@@ -5,7 +5,6 @@ import {
   PanelNode,
   ConnectionConfig,
   ShellType,
-  SshConfig,
   DropEdge,
   TabContentType,
   TerminalOptions,
@@ -210,7 +209,7 @@ interface AppState {
   sftpConnectedHost: string | null;
   setCurrentPath: (path: string) => void;
   setFileEntries: (entries: FileEntry[]) => void;
-  connectSftp: (config: SshConfig) => Promise<void>;
+  connectSftp: (config: Record<string, unknown>) => Promise<void>;
   disconnectSftp: () => Promise<void>;
   navigateSftp: (path: string) => Promise<void>;
   refreshSftp: () => Promise<void>;
@@ -284,7 +283,7 @@ interface AppState {
   monitoringStats: SystemStats | null;
   monitoringLoading: boolean;
   monitoringError: string | null;
-  connectMonitoring: (config: SshConfig) => Promise<void>;
+  connectMonitoring: (config: Record<string, unknown>) => Promise<void>;
   disconnectMonitoring: () => Promise<void>;
   refreshMonitoring: () => Promise<void>;
 
@@ -1117,11 +1116,11 @@ export const useAppStore = create<AppState>((set, get) => {
     setCurrentPath: (path) => set({ currentPath: path }),
     setFileEntries: (entries) => set({ fileEntries: entries }),
 
-    connectSftp: async (config: SshConfig) => {
+    connectSftp: async (config: Record<string, unknown>) => {
       set({ sftpLoading: true, sftpError: null });
       try {
         const sessionId = await sftpOpen(config);
-        const homePath = `/home/${config.username}`;
+        const homePath = `/home/${config.username as string}`;
         let entries: FileEntry[];
         let activePath = homePath;
         try {
@@ -1136,7 +1135,7 @@ export const useAppStore = create<AppState>((set, get) => {
           sftpLoading: false,
           currentPath: activePath,
           fileEntries: entries,
-          sftpConnectedHost: `${config.username}@${config.host}:${config.port}`,
+          sftpConnectedHost: `${config.username as string}@${config.host as string}:${config.port as number}`,
         });
       } catch (err) {
         set({
@@ -1466,14 +1465,14 @@ export const useAppStore = create<AppState>((set, get) => {
     monitoringLoading: false,
     monitoringError: null,
 
-    connectMonitoring: async (config: SshConfig) => {
+    connectMonitoring: async (config: Record<string, unknown>) => {
       set({ monitoringLoading: true, monitoringError: null });
       try {
         const sessionId = await monitoringOpen(config);
         const stats = await monitoringFetchStats(sessionId);
         set({
           monitoringSessionId: sessionId,
-          monitoringHost: `${config.username}@${config.host}:${config.port}`,
+          monitoringHost: `${config.username as string}@${config.host as string}:${config.port as number}`,
           monitoringStats: stats,
           monitoringLoading: false,
         });

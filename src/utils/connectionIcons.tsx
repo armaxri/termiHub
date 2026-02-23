@@ -40,7 +40,7 @@ export function getDefaultIconInfo(config: ConnectionConfig): {
   iconNode?: IconNode;
 } {
   if (config.type === "local") {
-    return getShellIconInfo(config.config.shellType);
+    return getShellIconInfo(config.config.shellType as ShellType);
   }
   return { component: TYPE_ICONS[config.type] };
 }

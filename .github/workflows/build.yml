@@ -103,6 +103,11 @@ jobs:
           EOF'
 
           sudo apt-get update
+          # Upgrade amd64 packages so their versions stay in sync with the
+          # arm64 ports repository.  Without this, Multi-Arch: same packages
+          # (e.g. libglib2.0-dev-bin) can have a version mismatch that makes
+          # the arm64 install un-satisfiable.
+          sudo apt-get upgrade -y
           # Use -o to allow overwriting shared arch-independent files (e.g. GIR files)
           # that conflict between amd64 and arm64 dev packages.
           sudo apt-get install -y -o Dpkg::Options::="--force-overwrite" \

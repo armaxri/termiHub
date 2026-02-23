@@ -13,6 +13,7 @@ use bollard::container::{
     Config, CreateContainerOptions, RemoveContainerOptions, StopContainerOptions,
 };
 use bollard::exec::{CreateExecOptions, ResizeExecOptions, StartExecOptions, StartExecResults};
+use bollard::image::CreateImageOptions;
 use bollard::models::HostConfig;
 use futures_util::StreamExt;
 use tokio::io::AsyncWriteExt;
@@ -166,13 +167,17 @@ fn parse_docker_settings(settings: &serde_json::Value) -> DockerConfig {
 }
 
 /// Generate a unique container name for this session.
+///
+/// Uses millisecond timestamp plus PID to avoid name collisions when
+/// multiple daemon processes create containers concurrently.
 fn generate_container_name() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis();
-    format!("{CONTAINER_PREFIX}-{ts}")
+    let pid = std::process::id();
+    format!("{CONTAINER_PREFIX}-{ts}-{pid}")
 }
 
 #[async_trait::async_trait]
@@ -354,6 +359,28 @@ impl ConnectionType for Docker {
             SessionError::SpawnFailed(format!("Failed to connect to Docker daemon: {e}"))
         })?;
 
+        // Pull the image if it's not already available locally.
+        info!(image = %config.image, "Pulling Docker image");
+        let pull_opts = CreateImageOptions {
+            from_image: config.image.as_str(),
+            ..Default::default()
+        };
+        let mut pull_stream = client.create_image(Some(pull_opts), None, None);
+        while let Some(result) = pull_stream.next().await {
+            match result {
+                Ok(info) => {
+                    debug!(?info, "Image pull progress");
+                }
+                Err(e) => {
+                    return Err(SessionError::SpawnFailed(format!(
+                        "Failed to pull image '{}': {e}",
+                        config.image
+                    )));
+                }
+            }
+        }
+        info!(image = %config.image, "Image ready");
+
         let container_name = generate_container_name();
         let shell = config
             .shell
@@ -453,16 +480,6 @@ impl ConnectionType for Docker {
 
         let alive = Arc::new(AtomicBool::new(true));
 
-        // Set up output channel.
-        let (tx, _rx) = tokio::sync::mpsc::channel(OUTPUT_CHANNEL_CAPACITY);
-        {
-            let mut guard = self
-                .output_tx
-                .lock()
-                .map_err(|e| SessionError::SpawnFailed(format!("Failed to lock output_tx: {e}")))?;
-            *guard = Some(tx);
-        }
-
         // Set up stdin channel.
         let (stdin_tx, mut stdin_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
 
@@ -486,9 +503,8 @@ impl ConnectionType for Docker {
                                     if sender.send(bytes.to_vec()).await.is_err() {
                                         break;
                                     }
-                                } else {
-                                    break;
                                 }
+                                // No subscriber yet — discard output and keep reading.
                             }
                             Some(Err(e)) => {
                                 warn!("Docker exec output error: {e}");

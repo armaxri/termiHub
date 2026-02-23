@@ -268,6 +268,11 @@ impl ConnectionType for LocalShell {
                 }
             }
             alive_clone.store(false, Ordering::SeqCst);
+            // Drop the sender so the output channel closes, signaling
+            // consumers (e.g. the session daemon) that the shell exited.
+            if let Ok(mut guard) = output_tx_clone.lock() {
+                *guard = None;
+            }
         });
 
         self.state = Some(ConnectedState {
