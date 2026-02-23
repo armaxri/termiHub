@@ -367,7 +367,7 @@ See [Manual Test Plan](manual-testing.md) for the full checklist. For UI changes
 
 ## Agent Development
 
-The remote agent (`termihub-agent`) is a standalone Rust binary in `agent/` that runs on remote hosts (Raspberry Pis, build servers, etc.). It provides persistent terminal sessions that survive desktop disconnects and agent restarts.
+The remote agent (`termihub-agent`) is a standalone Rust binary in `agent/` that runs on remote hosts (build servers, ARM devices, NAS boxes, etc.). It provides persistent terminal sessions that survive desktop disconnects and agent restarts.
 
 ### Operating Modes
 

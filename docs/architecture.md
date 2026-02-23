@@ -25,7 +25,7 @@
 
 ### Requirements Overview
 
-**termiHub** is a modern, cross-platform terminal hub designed for embedded development workflows. It provides a VS Code-like interface for managing multiple terminal connections with support for split views, drag-and-drop tabs, and organized connection management.
+**termiHub** is a modern, cross-platform terminal hub for managing multiple terminal connections. It provides a VS Code-like interface with support for split views, drag-and-drop tabs, and organized connection management.
 
 **Core capabilities:**
 
@@ -42,7 +42,7 @@
 - **Schema-driven connection settings** — Connection types declare their configuration as schemas; the UI renders forms dynamically without hardcoded knowledge of any backend
 - **Cross-platform** — Windows, Linux, macOS
 
-**Target use case:** Embedded development where local shells build the product, serial connections interface with test targets, remote Raspberry Pi agents maintain persistent sessions overnight, SSH tunnels expose remote services, and file transfer between development machine and test targets is seamless.
+**Example use case:** A developer uses local shells for builds, serial connections to interface with hardware, remote agents on headless servers for persistent sessions, SSH tunnels to expose remote services, and SFTP for seamless file transfer — all from a single window.
 
 ### Quality Goals
 
@@ -58,8 +58,8 @@
 
 | Role | Contact | Expectations |
 |------|---------|-------------|
-| Creator / Lead Developer | Arne Maximilian Richter | Full-featured terminal hub for embedded development workflows |
-| Embedded Developers | (Target users) | Reliable multi-protocol terminal with organized connections and file transfer |
+| Creator / Lead Developer | Arne Maximilian Richter | Full-featured terminal hub for multi-protocol workflows |
+| Developers / DevOps / Sysadmins | (Target users) | Reliable multi-protocol terminal with organized connections and file transfer |
 | Contributors | (Open source) | Clear architecture, coding standards, and contribution workflow |
 
 ---
@@ -98,7 +98,7 @@
 
 ### Business Context
 
-The following diagram shows termiHub in its operational environment — an embedded development workflow where a developer interacts with multiple systems simultaneously.
+The following diagram shows termiHub in its operational environment — a developer interacting with multiple systems simultaneously.
 
 ```mermaid
 graph TB
@@ -110,8 +110,8 @@ graph TB
 
     LOCAL[Local OS<br/>Build tools, shells]
     WSL_ENV[WSL Distros<br/>Linux on Windows]
-    SERIAL[Serial Devices<br/>Test targets, MCUs]
-    SSH_HOST[SSH Servers<br/>Build servers, Raspberry Pi]
+    SERIAL[Serial Devices<br/>Hardware, IoT, MCUs]
+    SSH_HOST[SSH Servers<br/>Build servers, remote hosts]
     TELNET_HOST[Telnet Servers<br/>Network equipment]
     DOCKER[Docker Containers<br/>Isolated environments]
     FS[File Systems<br/>Local and remote via SFTP]
@@ -135,8 +135,8 @@ graph TB
 | **Developer** | Primary user interacting via keyboard and mouse |
 | **Local OS** | Host operating system providing shells (bash, zsh, PowerShell, cmd, Git Bash) via PTY |
 | **WSL Distros** | Windows Subsystem for Linux distributions accessible on Windows hosts |
-| **Serial Devices** | Embedded targets connected via USB-to-serial adapters |
-| **SSH Servers** | Remote machines (build servers, Raspberry Pi test agents) accessed over SSH; also used for tunneling and X11 forwarding |
+| **Serial Devices** | Hardware connected via USB-to-serial adapters (IoT devices, networking equipment, microcontrollers) |
+| **SSH Servers** | Remote machines (build servers, cloud instances, ARM devices) accessed over SSH; also used for tunneling and X11 forwarding |
 | **Telnet Servers** | Legacy network equipment accessed via Telnet |
 | **Docker Containers** | Isolated container environments for development, testing, and CI workflows |
 | **File Systems** | Local and remote file systems for browsing and transfer |
@@ -854,7 +854,7 @@ graph TB
         APP[termiHub Desktop]
     end
 
-    subgraph "Remote Host (Raspberry Pi / Build Server)"
+    subgraph "Remote Host (Server / ARM device)"
         AGENT["termihub-agent binary<br/>(auto-deployed via SSH)"]
         SD1[Session Daemon 1<br/>PTY + Ring Buffer]
         SD2[Session Daemon 2<br/>PTY + Ring Buffer]
@@ -870,7 +870,7 @@ graph TB
     SD2 --- SOCKETS
 ```
 
-The remote agent is a standalone Rust binary (`termihub-agent`) that runs on remote hosts — Raspberry Pis, build servers, NAS devices, or any Linux/macOS machine. It maintains persistent terminal sessions that survive desktop disconnects and agent restarts. Communication uses JSON-RPC 2.0 over NDJSON through an SSH stdio channel.
+The remote agent is a standalone Rust binary (`termihub-agent`) that runs on remote hosts — build servers, NAS devices, ARM boards, or any Linux/macOS machine. It maintains persistent terminal sessions that survive desktop disconnects and agent restarts. Communication uses JSON-RPC 2.0 over NDJSON through an SSH stdio channel.
 
 **Auto-deployment:** When the desktop connects to a host via SSH, it checks for `termihub-agent --version`. If the agent is missing or version-incompatible, the desktop detects the target architecture via `uname -m`, downloads the matching binary from GitHub Releases (or uses a bundled binary in development), uploads it via SFTP to `~/.local/bin/termihub-agent`, and starts it.
 
@@ -879,8 +879,8 @@ The remote agent is a standalone Rust binary (`termihub-agent`) that runs on rem
 | `uname -m` | Target | Use Case |
 |-------------|--------|----------|
 | `x86_64` | `linux-x86_64` | Linux build servers |
-| `aarch64` | `linux-aarch64` | Raspberry Pi 4/5, ARM servers |
-| `armv7l` | `linux-armv7` | Older Raspberry Pi models |
+| `aarch64` | `linux-aarch64` | ARM64 servers, Raspberry Pi 4/5 |
+| `armv7l` | `linux-armv7` | ARMv7 devices, older Raspberry Pi |
 | `arm64` | `darwin-aarch64` | macOS ARM hosts |
 
 **Platform constraint:** The session daemon architecture uses PTY, Unix domain sockets, and POSIX process APIs — it is Unix-only (`#[cfg(unix)]`). Windows agent support would require ConPTY + named pipes.

@@ -62,7 +62,7 @@ sudo apt-get install -y \
 
 ### Running as the Remote Agent
 
-For the embedded development use case (Raspberry Pi as a persistent remote agent):
+To use the Raspberry Pi as a persistent remote agent:
 
 1. **Build the agent** (on the Pi or cross-compile):
 

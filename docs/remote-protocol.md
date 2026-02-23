@@ -1,6 +1,6 @@
 # Remote Session Management Protocol
 
-Protocol specification for communication between the termiHub desktop app and remote Raspberry Pi agents.
+Protocol specification for communication between the termiHub desktop app and remote agents.
 
 **Version**: 0.2.0
 **Status**: Draft
@@ -26,7 +26,7 @@ Protocol specification for communication between the termiHub desktop app and re
 
 ## Overview
 
-The remote session management protocol enables the termiHub desktop app to manage persistent terminal sessions on a remote Raspberry Pi agent. Sessions survive desktop disconnects, allowing users to reconnect to long-running processes (overnight test runs, serial monitoring) without losing state.
+The remote session management protocol enables the termiHub desktop app to manage persistent terminal sessions on a remote agent. Sessions survive desktop disconnects, allowing users to reconnect to long-running processes (build jobs, monitoring tasks) without losing state.
 
 ### Goals
 
@@ -64,7 +64,7 @@ The remote session management protocol enables the termiHub desktop app to manag
                                    │ SSH tunnel
                                    │
 ┌──────────────────────────────────┼───────────────┐
-│               Raspberry Pi Agent │               │
+│               Remote Agent       │               │
 │                       ┌──────────▼───────────┐   │
 │                       │ Protocol Handler     │   │
 │                       │ (JSON-RPC dispatch)  │   │
@@ -100,7 +100,7 @@ The remote session management protocol enables the termiHub desktop app to manag
 
 ### Connection Setup
 
-1. The desktop opens an SSH connection to the Raspberry Pi using the configured credentials (reusing the existing `ssh2` crate infrastructure)
+1. The desktop opens an SSH connection to the remote host using the configured credentials (reusing the existing `ssh2` crate infrastructure)
 2. The desktop opens an exec channel running the agent binary: `termihub-agent --stdio`
 3. The agent reads JSON-RPC messages from **stdin** and writes responses/notifications to **stdout**
 4. The agent writes diagnostic logs to **stderr** (not part of the protocol)

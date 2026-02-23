@@ -5,7 +5,7 @@
 <h1 align="center">termiHub</h1>
 
 <p align="center">
-A modern, cross-platform terminal hub for embedded development workflows.
+A modern, cross-platform terminal hub for managing multiple connections.
 </p>
 
 <p align="center">
@@ -23,7 +23,7 @@ termiHub provides a VS Code-like interface for managing multiple terminal connec
 ### Connection Types
 - **Local shells** — zsh, bash, PowerShell, cmd, Git Bash with automatic shell detection
 - **SSH** — Remote terminal sessions with key-based and password authentication
-- **Serial** — Direct serial port connections for embedded development
+- **Serial** — Direct serial port connections for hardware debugging and IoT devices
 - **Telnet** — Classic telnet connections with IAC protocol support
 - **Docker** — Connect to running containers or start new ones
 - **WSL** — Windows Subsystem for Linux distribution sessions (Windows only)
@@ -68,7 +68,7 @@ termiHub provides a VS Code-like interface for managing multiple terminal connec
 - **[Architecture](docs/architecture.md)** — Full arc42 architecture documentation
 - **[Remote Protocol](docs/remote-protocol.md)** — Desktop-to-agent JSON-RPC specification
 - **[Performance](docs/performance.md)** — Profiling guide and baseline metrics
-- **[Raspberry Pi](docs/raspberry-pi.md)** — ARM64 deployment and remote agent setup
+- **[Raspberry Pi](docs/raspberry-pi.md)** — ARM device deployment and remote agent setup
 - **[Releasing](docs/releasing.md)** — Release process and version management
 
 ## Built With

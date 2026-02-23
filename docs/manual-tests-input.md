@@ -691,7 +691,7 @@ Each section groups related tests by feature area. Individual test items referen
 
 ### RemoteBackend and session reconnect (PR #87)
 
-- [ ] Connect to Raspberry Pi running `termihub-agent --stdio`
+- [ ] Connect to a remote host running `termihub-agent --stdio`
 - [ ] Verify terminal output appears for shell and serial sessions
 - [ ] Kill SSH connection, verify "reconnecting" indicator and auto-reconnect
 - [ ] Close tab, verify cleanup (no orphan threads)

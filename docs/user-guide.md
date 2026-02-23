@@ -153,7 +153,7 @@ Connects to a remote server via the Telnet protocol.
 
 ### Serial
 
-Connects to a serial device (USB-to-serial adapters, microcontrollers, etc.). See [Serial Setup](serial-setup.md) for platform-specific instructions.
+Connects to a serial device (USB-to-serial adapters, IoT devices, networking equipment, etc.). See [Serial Setup](serial-setup.md) for platform-specific instructions.
 
 **Settings:**
 - **Port** — Serial port path (auto-detected or manual entry)

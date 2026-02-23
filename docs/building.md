@@ -181,15 +181,15 @@ pnpm tauri build
 
 ## Agent Cross-Compilation
 
-The remote agent (`termihub-agent`) runs on Linux hosts (Raspberry Pi, servers, embedded devices). You can cross-compile it for 6 Linux targets from any host OS.
+The remote agent (`termihub-agent`) runs on Linux hosts (servers, ARM devices, NAS boxes). You can cross-compile it for 6 Linux targets from any host OS.
 
 ### Targets
 
 | Triple | Arch | libc | Use Case |
 |--------|------|------|----------|
 | `x86_64-unknown-linux-gnu` | x64 | glibc | Standard servers |
-| `aarch64-unknown-linux-gnu` | ARM64 | glibc | Raspberry Pi 3/4/5, ARM servers |
-| `armv7-unknown-linux-gnueabihf` | ARMv7 | glibc | Raspberry Pi 2, older ARM |
+| `aarch64-unknown-linux-gnu` | ARM64 | glibc | ARM64 servers, Raspberry Pi 3/4/5 |
+| `armv7-unknown-linux-gnueabihf` | ARMv7 | glibc | ARMv7 devices, older Raspberry Pi |
 | `x86_64-unknown-linux-musl` | x64 | musl | Static x64 binaries |
 | `aarch64-unknown-linux-musl` | ARM64 | musl | Static ARM64 binaries |
 | `armv7-unknown-linux-musleabihf` | ARMv7 | musl | Static ARMv7 binaries |
@@ -323,7 +323,7 @@ termihub/
 │   │   └── events/       # Event emitters
 │   ├── Cargo.toml
 │   └── tauri.conf.json
-├── agent/                # Raspberry Pi remote agent
+├── agent/                # Remote agent (headless servers, ARM devices)
 ├── scripts/              # Dev helper scripts (.sh + .cmd)
 ├── examples/             # Test environment (Docker, virtual serial)
 ├── docs/                 # Documentation (this directory)

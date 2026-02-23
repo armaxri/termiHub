@@ -6,7 +6,7 @@
 
 ## Overview
 
-The termiHub agent is a standalone daemon that runs on remote hosts (Raspberry Pis, build servers, NAS devices, any Linux/macOS machine) and acts as **termiHub's persistent backend on that machine**. It provides the same capabilities as the local termiHub desktop — shells, serial ports, Docker containers, SSH connections to other hosts — but keeps sessions alive independently of the desktop app.
+The termiHub agent is a standalone daemon that runs on remote hosts (build servers, NAS devices, ARM boards, any Linux/macOS machine) and acts as **termiHub's persistent backend on that machine**. It provides the same capabilities as the local termiHub desktop — shells, serial ports, Docker containers, SSH connections to other hosts — but keeps sessions alive independently of the desktop app.
 
 The agent has the **full capabilities of the local machine** in terms of connections: local shells, serial ports, SSH to other hosts, Docker containers, and file browsing. The only restriction is that **an agent cannot deploy another agent** — there is no recursive agent chaining.
 
@@ -27,11 +27,11 @@ graph LR
         ShellA2[bash: htop]
     end
 
-    subgraph "Raspberry Pi"
+    subgraph "ARM Device"
         AgentB[Agent]
         SerialB1["/dev/ttyUSB0"]
         ShellB1["bash: journalctl -f"]
-        SSHTarget["SSH → Sensor Node"]
+        SSHTarget["SSH → Other Host"]
     end
 
     Desktop -- SSH --> AgentA
