@@ -3,12 +3,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import {
-  SessionId,
-  ConnectionConfig,
-  RemoteAgentConfig,
-  LogEntry,
-} from "@/types/terminal";
+import { SessionId, ConnectionConfig, RemoteAgentConfig, LogEntry } from "@/types/terminal";
 import { SettingsSchema, Capabilities } from "@/types/schema";
 import { SystemStats } from "@/types/monitoring";
 import { CredentialStoreStatusInfo, SwitchCredentialStoreResult } from "@/types/credential";

@@ -20,7 +20,11 @@ pub(crate) fn prepare_for_storage(
     store: &dyn CredentialStore,
 ) -> Result<SavedConnection> {
     let settings = &mut connection.config.settings;
-    if let Some(password) = settings.get("password").and_then(|v| v.as_str()).map(String::from) {
+    if let Some(password) = settings
+        .get("password")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+    {
         if settings.get("savePassword").and_then(|v| v.as_bool()) == Some(true) {
             let auth_method = settings
                 .get("authMethod")
@@ -999,7 +1003,11 @@ mod tests {
         // In-memory password should be stripped
         assert_eq!(source.connections.len(), 1);
         assert!(
-            source.connections[0].config.settings.get("password").is_none(),
+            source.connections[0]
+                .config
+                .settings
+                .get("password")
+                .is_none(),
             "In-memory password should be None"
         );
 
@@ -1082,7 +1090,11 @@ mod tests {
         );
         // Password should be gone
         assert!(
-            on_disk.connections[0].config.settings.get("password").is_none(),
+            on_disk.connections[0]
+                .config
+                .settings
+                .get("password")
+                .is_none(),
             "Password stripped on disk"
         );
     }
