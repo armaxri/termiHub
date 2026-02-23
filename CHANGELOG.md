@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Default local shell no longer labeled with "(default)" in the connection editor after schema-driven form refactor — the shell option label in the backend schema now includes the suffix again
+
 ### Changed
 
 - **Breaking**: Replaced typed `ConnectionConfig` enum (Rust) and discriminated union (TypeScript) with a generic `{type, config}` struct/interface — removes `LocalShellConfig`, `RemoteSessionConfig`, `SshConfig` (TS), `TelnetConfig`, `SerialConfig`, `DockerConfig` type definitions and per-type `expand()` impls; on-disk JSON format is preserved (no data migration required); removes `fromConnectionConfig()`/`toConnectionConfig()` helper functions (#363)
