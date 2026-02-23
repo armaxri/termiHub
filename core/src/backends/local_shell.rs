@@ -84,9 +84,16 @@ impl ConnectionType for LocalShell {
 
         let shell_options: Vec<SelectOption> = shells
             .iter()
-            .map(|s| SelectOption {
-                value: s.clone(),
-                label: s.clone(),
+            .map(|s| {
+                let label = if default_shell.as_deref() == Some(s.as_str()) {
+                    format!("{s} (default)")
+                } else {
+                    s.clone()
+                };
+                SelectOption {
+                    value: s.clone(),
+                    label,
+                }
             })
             .collect();
 
@@ -408,6 +415,41 @@ mod tests {
             .unwrap();
         if let FieldType::Select { options } = &shell_field.field_type {
             assert!(!options.is_empty(), "shell options should not be empty");
+        } else {
+            panic!("expected Select field type for shell");
+        }
+    }
+
+    #[test]
+    fn schema_default_shell_has_default_label() {
+        let shell = LocalShell::new();
+        let schema = shell.settings_schema();
+        let shell_field = schema.groups[0]
+            .fields
+            .iter()
+            .find(|f| f.key == "shell")
+            .unwrap();
+        if let FieldType::Select { options } = &shell_field.field_type {
+            let default_shell = detect_default_shell();
+            if let Some(ref ds) = default_shell {
+                let default_opt = options.iter().find(|o| o.value == *ds);
+                assert!(default_opt.is_some(), "default shell should be in options");
+                assert!(
+                    default_opt.unwrap().label.ends_with("(default)"),
+                    "default shell label should end with '(default)', got: {}",
+                    default_opt.unwrap().label
+                );
+            }
+            // Non-default shells should NOT have the suffix
+            for opt in options {
+                if Some(opt.value.as_str()) != default_shell.as_deref() {
+                    assert!(
+                        !opt.label.contains("(default)"),
+                        "non-default shell '{}' should not have '(default)' in label",
+                        opt.value
+                    );
+                }
+            }
         } else {
             panic!("expected Select field type for shell");
         }
