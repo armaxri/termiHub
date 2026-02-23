@@ -328,8 +328,7 @@ async fn test_docker_session_recovery() {
     // Phase 1: Create initial session, send data, then kill daemon.
     let (_dir, socket_path) = temp_socket_path("docker-recovery");
     {
-        let mut daemon =
-            spawn_docker_daemon("docker-recovery", &socket_path, "alpine:latest");
+        let mut daemon = spawn_docker_daemon("docker-recovery", &socket_path, "alpine:latest");
 
         assert!(
             wait_for_socket(&socket_path, Duration::from_secs(30)).await,
@@ -361,8 +360,7 @@ async fn test_docker_session_recovery() {
 
     // Phase 2: Spawn a new daemon (creates a new container).
     let (_dir2, socket_path2) = temp_socket_path("docker-recovery2");
-    let _daemon2 =
-        spawn_docker_daemon("docker-recovery2", &socket_path2, "alpine:latest");
+    let _daemon2 = spawn_docker_daemon("docker-recovery2", &socket_path2, "alpine:latest");
 
     assert!(
         wait_for_socket(&socket_path2, Duration::from_secs(30)).await,
