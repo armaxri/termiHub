@@ -97,24 +97,10 @@ pub async fn run_daemon(session_id: &str) -> anyhow::Result<()> {
         config.session_id, config.type_id, config.buffer_size
     );
 
-    // Ensure socket directory exists
-    if let Some(parent) = config.socket_path.parent() {
-        ensure_socket_dir(parent)?;
-    }
-
-    // Remove stale socket file
-    let _ = std::fs::remove_file(&config.socket_path);
-
-    // Bind the Unix listener
-    let listener = UnixListener::bind(&config.socket_path)?;
-
-    // Set socket file permissions to 0700
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&config.socket_path, std::fs::Permissions::from_mode(0o700))?;
-
-    info!("Listening on socket: {}", config.socket_path.display());
-
-    // Create and connect the ConnectionType
+    // Create and connect the ConnectionType *before* binding the socket.
+    // The socket appearing on disk signals to callers that the daemon is
+    // ready to accept connections, so we must finish slow operations
+    // (e.g. Docker image pull / container creation) first.
     let registry = crate::registry::build_registry();
     let mut connection = registry.create(&config.type_id).map_err(|e| {
         anyhow::anyhow!("Failed to create connection type '{}': {e}", config.type_id)
@@ -126,6 +112,24 @@ pub async fn run_daemon(session_id: &str) -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("Failed to connect: {e}"))?;
 
     info!("Connection established: type={}", config.type_id);
+
+    // Ensure socket directory exists
+    if let Some(parent) = config.socket_path.parent() {
+        ensure_socket_dir(parent)?;
+    }
+
+    // Remove stale socket file
+    let _ = std::fs::remove_file(&config.socket_path);
+
+    // Bind the Unix listener — this creates the socket file, signalling
+    // to callers that the daemon is ready.
+    let listener = UnixListener::bind(&config.socket_path)?;
+
+    // Set socket file permissions to 0700
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&config.socket_path, std::fs::Permissions::from_mode(0o700))?;
+
+    info!("Listening on socket: {}", config.socket_path.display());
 
     // Subscribe to output
     let output_rx = connection.subscribe_output();
