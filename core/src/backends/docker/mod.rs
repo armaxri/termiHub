@@ -13,6 +13,7 @@ use bollard::container::{
     Config, CreateContainerOptions, RemoveContainerOptions, StopContainerOptions,
 };
 use bollard::exec::{CreateExecOptions, ResizeExecOptions, StartExecOptions, StartExecResults};
+use bollard::image::CreateImageOptions;
 use bollard::models::HostConfig;
 use futures_util::StreamExt;
 use tokio::io::AsyncWriteExt;
@@ -353,6 +354,28 @@ impl ConnectionType for Docker {
         let client = bollard::Docker::connect_with_local_defaults().map_err(|e| {
             SessionError::SpawnFailed(format!("Failed to connect to Docker daemon: {e}"))
         })?;
+
+        // Pull the image if it's not already available locally.
+        info!(image = %config.image, "Pulling Docker image");
+        let pull_opts = CreateImageOptions {
+            from_image: config.image.as_str(),
+            ..Default::default()
+        };
+        let mut pull_stream = client.create_image(Some(pull_opts), None, None);
+        while let Some(result) = pull_stream.next().await {
+            match result {
+                Ok(info) => {
+                    debug!(?info, "Image pull progress");
+                }
+                Err(e) => {
+                    return Err(SessionError::SpawnFailed(format!(
+                        "Failed to pull image '{}': {e}",
+                        config.image
+                    )));
+                }
+            }
+        }
+        info!(image = %config.image, "Image ready");
 
         let container_name = generate_container_name();
         let shell = config
