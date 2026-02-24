@@ -314,4 +314,139 @@ describe("appStore — settings toggles", () => {
 
     expect(mockApplyTheme).not.toHaveBeenCalled();
   });
+
+  it("calls applyTheme('system') when switching to system mode", async () => {
+    useAppStore.setState({
+      settings: {
+        version: "1",
+        externalConnectionFiles: [],
+        powerMonitoringEnabled: true,
+        fileBrowserEnabled: true,
+        theme: "dark",
+      },
+    });
+
+    await useAppStore.getState().updateSettings({
+      version: "1",
+      externalConnectionFiles: [],
+      powerMonitoringEnabled: true,
+      fileBrowserEnabled: true,
+      theme: "system",
+    });
+
+    expect(mockApplyTheme).toHaveBeenCalledWith("system");
+  });
+
+  it("calls applyTheme when switching from system to light", async () => {
+    useAppStore.setState({
+      settings: {
+        version: "1",
+        externalConnectionFiles: [],
+        powerMonitoringEnabled: true,
+        fileBrowserEnabled: true,
+        theme: "system",
+      },
+    });
+
+    await useAppStore.getState().updateSettings({
+      version: "1",
+      externalConnectionFiles: [],
+      powerMonitoringEnabled: true,
+      fileBrowserEnabled: true,
+      theme: "light",
+    });
+
+    expect(mockApplyTheme).toHaveBeenCalledWith("light");
+  });
+
+  it("persists theme setting via saveSettings", async () => {
+    const { saveSettings } = await import("@/services/storage");
+
+    useAppStore.setState({
+      settings: {
+        version: "1",
+        externalConnectionFiles: [],
+        powerMonitoringEnabled: true,
+        fileBrowserEnabled: true,
+        theme: "dark",
+      },
+    });
+
+    await useAppStore.getState().updateSettings({
+      version: "1",
+      externalConnectionFiles: [],
+      powerMonitoringEnabled: true,
+      fileBrowserEnabled: true,
+      theme: "light",
+    });
+
+    expect(saveSettings).toHaveBeenCalledWith(expect.objectContaining({ theme: "light" }));
+  });
+});
+
+describe("appStore — theme initialization on loadFromBackend", () => {
+  beforeEach(() => {
+    useAppStore.setState(useAppStore.getInitialState());
+    vi.clearAllMocks();
+  });
+
+  it("applies theme from settings on initial load", async () => {
+    const { getSettings } = await import("@/services/storage");
+    vi.mocked(getSettings).mockResolvedValueOnce({
+      version: "1",
+      externalConnectionFiles: [],
+      powerMonitoringEnabled: true,
+      fileBrowserEnabled: true,
+      theme: "light",
+    });
+
+    await useAppStore.getState().loadFromBackend();
+
+    expect(mockApplyTheme).toHaveBeenCalledWith("light");
+  });
+
+  it("applies undefined theme when settings have no theme field", async () => {
+    const { getSettings } = await import("@/services/storage");
+    vi.mocked(getSettings).mockResolvedValueOnce({
+      version: "1",
+      externalConnectionFiles: [],
+      powerMonitoringEnabled: true,
+      fileBrowserEnabled: true,
+    });
+
+    await useAppStore.getState().loadFromBackend();
+
+    expect(mockApplyTheme).toHaveBeenCalledWith(undefined);
+  });
+
+  it("registers onThemeChange callback on initial load", async () => {
+    const { getSettings } = await import("@/services/storage");
+    vi.mocked(getSettings).mockResolvedValueOnce({
+      version: "1",
+      externalConnectionFiles: [],
+      powerMonitoringEnabled: true,
+      fileBrowserEnabled: true,
+      theme: "system",
+    });
+
+    await useAppStore.getState().loadFromBackend();
+
+    expect(mockOnThemeChange).toHaveBeenCalledTimes(1);
+    expect(mockOnThemeChange).toHaveBeenCalledWith(expect.any(Function));
+  });
+
+  it("stores theme setting in store state after load", async () => {
+    const { getSettings } = await import("@/services/storage");
+    vi.mocked(getSettings).mockResolvedValueOnce({
+      version: "1",
+      externalConnectionFiles: [],
+      powerMonitoringEnabled: true,
+      fileBrowserEnabled: true,
+      theme: "light",
+    });
+
+    await useAppStore.getState().loadFromBackend();
+
+    expect(useAppStore.getState().settings.theme).toBe("light");
+  });
 });
