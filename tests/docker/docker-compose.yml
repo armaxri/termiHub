@@ -10,6 +10,7 @@
 #
 # Profiles:
 #   (default)  - Core test containers (SSH, telnet, serial)
+#   agent      - Remote agent test container
 #   fault      - Network fault injection proxy
 #   stress     - SFTP stress test container
 #   all        - Everything
@@ -161,6 +162,26 @@ services:
       - "127.0.0.1:2208:22"
     networks:
       - test-net
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo | nc -w1 localhost 22"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Remote agent test container (for agent E2E tests)
+  remote-agent:
+    build:
+      context: ./remote-agent
+      additional_contexts:
+        keys: ../fixtures/ssh-keys
+    container_name: termihub-remote-agent
+    ports:
+      - "127.0.0.1:2211:22"
+    networks:
+      - test-net
+    profiles:
+      - agent
+      - all
     healthcheck:
       test: ["CMD", "bash", "-c", "echo | nc -w1 localhost 22"]
       interval: 5s
