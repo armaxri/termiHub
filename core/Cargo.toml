@@ -21,8 +21,10 @@ futures-util = { version = "0.3", optional = true }
 
 [dev-dependencies]
 tempfile = "3"
-tokio = { version = "1", features = ["rt", "macros", "time"] }
+tokio = { version = "1", features = ["rt", "macros", "time", "sync"] }
 rand = "0.8"
+serde_json = { workspace = true }
+ssh2 = { workspace = true }
 
 [features]
 default = []
