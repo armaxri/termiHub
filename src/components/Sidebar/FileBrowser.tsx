@@ -576,7 +576,7 @@ export function FileBrowser() {
   if (mode === "none") {
     return (
       <div className="file-browser">
-        <div className="file-browser__placeholder">
+        <div className="file-browser__placeholder" data-testid="file-browser-placeholder">
           <MonitorOff size={32} />
           <span>No filesystem available for this connection type</span>
         </div>
@@ -588,7 +588,7 @@ export function FileBrowser() {
   if (mode === "sftp" && !isConnected) {
     return (
       <div className="file-browser">
-        <div className="file-browser__placeholder">
+        <div className="file-browser__placeholder" data-testid="file-browser-sftp-connecting">
           {isLoading ? (
             <>
               <Loader2 size={20} className="file-browser__spinner" />
