@@ -156,14 +156,17 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   }, [rootPanel, tabId, closeTab]);
 
   return (
-    <div className={`tunnel-editor ${isVisible ? "" : "tunnel-editor--hidden"}`}>
+    <div
+      className={`tunnel-editor ${isVisible ? "" : "tunnel-editor--hidden"}`}
+      data-testid="tunnel-editor"
+    >
       <div className="tunnel-editor__header">
-        <span className="tunnel-editor__title">
+        <span className="tunnel-editor__title" data-testid="tunnel-editor-title">
           {existingTunnel ? `Edit Tunnel: ${existingTunnel.name}` : "New SSH Tunnel"}
         </span>
       </div>
 
-      <div className="tunnel-editor__form">
+      <div className="tunnel-editor__form" data-testid="tunnel-editor-form">
         <div className="tunnel-editor__field">
           <label className="tunnel-editor__label">Name</label>
           <input
@@ -172,6 +175,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. Dev Database"
+            data-testid="tunnel-editor-name"
           />
         </div>
 
@@ -181,6 +185,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
             className="tunnel-editor__select"
             value={sshConnectionId}
             onChange={(e) => setSshConnectionId(e.target.value)}
+            data-testid="tunnel-editor-ssh-connection"
           >
             {sshConnections.length === 0 && <option value="">No SSH connections available</option>}
             {sshConnections.map((c) => (
@@ -193,10 +198,11 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
 
         <div className="tunnel-editor__field">
           <label className="tunnel-editor__label">Tunnel Type</label>
-          <div className="tunnel-editor__type-selector">
+          <div className="tunnel-editor__type-selector" data-testid="tunnel-editor-type-selector">
             <button
               className={`tunnel-editor__type-btn ${tunnelType.type === "local" ? "tunnel-editor__type-btn--active" : ""}`}
               onClick={() => handleTypeChange("local")}
+              data-testid="tunnel-type-local"
             >
               <span className="tunnel-editor__type-btn-title">Local</span>
               <span className="tunnel-editor__type-btn-desc">ssh -L</span>
@@ -204,6 +210,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
             <button
               className={`tunnel-editor__type-btn ${tunnelType.type === "remote" ? "tunnel-editor__type-btn--active" : ""}`}
               onClick={() => handleTypeChange("remote")}
+              data-testid="tunnel-type-remote"
             >
               <span className="tunnel-editor__type-btn-title">Remote</span>
               <span className="tunnel-editor__type-btn-desc">ssh -R</span>
@@ -211,6 +218,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
             <button
               className={`tunnel-editor__type-btn ${tunnelType.type === "dynamic" ? "tunnel-editor__type-btn--active" : ""}`}
               onClick={() => handleTypeChange("dynamic")}
+              data-testid="tunnel-type-dynamic"
             >
               <span className="tunnel-editor__type-btn-title">Dynamic</span>
               <span className="tunnel-editor__type-btn-desc">ssh -D (SOCKS5)</span>
@@ -371,6 +379,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
             className="tunnel-editor__btn tunnel-editor__btn--primary"
             onClick={() => handleSave(false)}
             disabled={!sshConnectionId}
+            data-testid="tunnel-editor-save"
           >
             Save
           </button>
@@ -378,10 +387,15 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
             className="tunnel-editor__btn tunnel-editor__btn--primary"
             onClick={() => handleSave(true)}
             disabled={!sshConnectionId}
+            data-testid="tunnel-editor-save-start"
           >
             Save &amp; Start
           </button>
-          <button className="tunnel-editor__btn" onClick={handleCancel}>
+          <button
+            className="tunnel-editor__btn"
+            onClick={handleCancel}
+            data-testid="tunnel-editor-cancel"
+          >
             Cancel
           </button>
         </div>

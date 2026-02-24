@@ -48,20 +48,25 @@ export function TunnelSidebar() {
   );
 
   return (
-    <div className="tunnel-sidebar">
+    <div className="tunnel-sidebar" data-testid="tunnel-sidebar">
       <div className="tunnel-sidebar__actions">
-        <button className="tunnel-sidebar__add-btn" onClick={handleNew} title="New Tunnel">
+        <button
+          className="tunnel-sidebar__add-btn"
+          onClick={handleNew}
+          title="New Tunnel"
+          data-testid="tunnel-new-btn"
+        >
           <Plus size={14} />
           New Tunnel
         </button>
       </div>
       {tunnels.length === 0 ? (
-        <div className="tunnel-sidebar__empty">
+        <div className="tunnel-sidebar__empty" data-testid="tunnel-empty-message">
           <span>No SSH tunnels configured.</span>
           <span>Click &quot;+ New Tunnel&quot; to create one.</span>
         </div>
       ) : (
-        <div className="tunnel-sidebar__list">
+        <div className="tunnel-sidebar__list" data-testid="tunnel-list">
           {tunnels.map((tunnel) => (
             <TunnelListItem
               key={tunnel.id}

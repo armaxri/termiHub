@@ -44,16 +44,28 @@ export function TunnelListItem({
     tunnel.tunnelType.type.charAt(0).toUpperCase() + tunnel.tunnelType.type.slice(1);
 
   return (
-    <div className="tunnel-item" onDoubleClick={() => onEdit(tunnel.id)}>
+    <div
+      className="tunnel-item"
+      data-testid={`tunnel-item-${tunnel.id}`}
+      onDoubleClick={() => onEdit(tunnel.id)}
+    >
       <div className="tunnel-item__header">
-        <span className={`tunnel-item__status tunnel-item__status--${status}`} />
-        <span className="tunnel-item__name">{tunnel.name}</span>
-        <span className="tunnel-item__type-badge">{typeLabel}</span>
+        <span
+          className={`tunnel-item__status tunnel-item__status--${status}`}
+          data-testid={`tunnel-status-${tunnel.id}`}
+        />
+        <span className="tunnel-item__name" data-testid={`tunnel-name-${tunnel.id}`}>
+          {tunnel.name}
+        </span>
+        <span className="tunnel-item__type-badge" data-testid={`tunnel-type-${tunnel.id}`}>
+          {typeLabel}
+        </span>
         <div className="tunnel-item__actions">
           {isActive ? (
             <button
               className="tunnel-item__action"
               title="Stop"
+              data-testid={`tunnel-stop-${tunnel.id}`}
               onClick={(e) => {
                 e.stopPropagation();
                 onStop(tunnel.id);
@@ -65,6 +77,7 @@ export function TunnelListItem({
             <button
               className="tunnel-item__action"
               title="Start"
+              data-testid={`tunnel-start-${tunnel.id}`}
               onClick={(e) => {
                 e.stopPropagation();
                 onStart(tunnel.id);
@@ -76,6 +89,7 @@ export function TunnelListItem({
           <button
             className="tunnel-item__action"
             title="Edit"
+            data-testid={`tunnel-edit-${tunnel.id}`}
             onClick={(e) => {
               e.stopPropagation();
               onEdit(tunnel.id);
@@ -86,6 +100,7 @@ export function TunnelListItem({
           <button
             className="tunnel-item__action"
             title="Duplicate"
+            data-testid={`tunnel-duplicate-${tunnel.id}`}
             onClick={(e) => {
               e.stopPropagation();
               onDuplicate(tunnel.id);
@@ -96,6 +111,7 @@ export function TunnelListItem({
           <button
             className="tunnel-item__action"
             title="Delete"
+            data-testid={`tunnel-delete-${tunnel.id}`}
             onClick={(e) => {
               e.stopPropagation();
               onDelete(tunnel.id);

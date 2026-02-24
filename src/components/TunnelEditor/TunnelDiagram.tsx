@@ -13,7 +13,7 @@ export function TunnelDiagram({ tunnelType }: TunnelDiagramProps) {
   switch (tunnelType.type) {
     case "local":
       return (
-        <div className="tunnel-diagram">
+        <div className="tunnel-diagram" data-testid="tunnel-diagram">
           <div className="tunnel-diagram__box tunnel-diagram__box--highlight">
             <span className="tunnel-diagram__box-title">Your PC</span>
             <span className="tunnel-diagram__box-detail">
@@ -42,7 +42,7 @@ export function TunnelDiagram({ tunnelType }: TunnelDiagramProps) {
       );
     case "remote":
       return (
-        <div className="tunnel-diagram">
+        <div className="tunnel-diagram" data-testid="tunnel-diagram">
           <div className="tunnel-diagram__box tunnel-diagram__box--highlight">
             <span className="tunnel-diagram__box-title">Local Target</span>
             <span className="tunnel-diagram__box-detail">
@@ -71,7 +71,7 @@ export function TunnelDiagram({ tunnelType }: TunnelDiagramProps) {
       );
     case "dynamic":
       return (
-        <div className="tunnel-diagram">
+        <div className="tunnel-diagram" data-testid="tunnel-diagram">
           <div className="tunnel-diagram__box tunnel-diagram__box--highlight">
             <span className="tunnel-diagram__box-title">Your PC</span>
             <span className="tunnel-diagram__box-detail">
