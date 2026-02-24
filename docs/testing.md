@@ -665,24 +665,24 @@ Analysis of which manual test items can be covered by WebdriverIO E2E tests (tau
 
 #### Summary
 
-| Area                  | E2E     | E2E/infra | Partial | Manual | Total   |
-| --------------------- | ------- | --------- | ------- | ------ | ------- |
-| Local Shell           | 13      | 1         | 1       | 21     | 36      |
-| SSH                   | 15      | 46        | 4       | 20     | 85      |
-| Serial                | 0       | 5         | 0       | 2      | 7       |
-| Telnet                | 0       | 3         | 0       | 0      | 3       |
-| Tab Management        | 9       | 0         | 6       | 5      | 20      |
-| Connection Management | 72      | 0         | 8       | 13     | 93      |
-| Split Views           | 4       | 0         | 2       | 0      | 6       |
-| File Browser          | 24      | 7         | 0       | 11     | 42      |
-| Editor                | 21      | 1         | 1       | 0      | 23      |
-| UI / Layout           | 27      | 0         | 6       | 12     | 45      |
-| Remote Agent          | 0       | 17        | 3       | 5      | 25      |
-| Credential Store      | 9       | 6         | 3       | 5      | 23      |
-| Cross-Platform        | 0       | 0         | 0       | 3      | 3       |
-| **Total**             | **194** | **86**    | **34**  | **97** | **411** |
+| Area                  | Automated | Pending E2E | E2E/infra | Partial | Manual | Total   |
+| --------------------- | --------- | ----------- | --------- | ------- | ------ | ------- |
+| Local Shell           | 14        | 0           | 1         | 0       | 21     | 36      |
+| SSH                   | 12        | 3           | 46        | 4       | 20     | 85      |
+| Serial                | 0         | 0           | 5         | 0       | 2      | 7       |
+| Telnet                | 0         | 0           | 3         | 0       | 0      | 3       |
+| Tab Management        | 8         | 1           | 0         | 6       | 5      | 20      |
+| Connection Management | 54        | 18          | 0         | 8       | 13     | 93      |
+| Split Views           | 4         | 0           | 0         | 2       | 0      | 6       |
+| File Browser          | 24        | 0           | 7         | 0       | 11     | 42      |
+| Editor                | 21        | 0           | 1         | 1       | 0      | 23      |
+| UI / Layout           | 27        | 0           | 0         | 6       | 12     | 45      |
+| Remote Agent          | 0         | 0           | 17        | 3       | 5      | 25      |
+| Credential Store      | 9         | 0           | 6         | 3       | 5      | 23      |
+| Cross-Platform        | 0         | 0           | 0         | 0       | 3      | 3       |
+| **Total**             | **173**   | **22**      | **86**    | **33**  | **97** | **411** |
 
-**68% of manual tests (280 items) are fully E2E-automatable.** Including partial coverage, 76% (314 items) can benefit from E2E automation. The remaining 24% (97 items) require manual testing.
+**173 test items (42%) are now covered by automated E2E tests** across 16 test files. An additional 108 items are fully automatable (22 pending E2E, 86 requiring Docker infrastructure). The remaining 97 items (24%) require manual testing.
 
 #### Manual-Only Reasons Breakdown
 
@@ -694,15 +694,14 @@ Analysis of which manual test items can be covered by WebdriverIO E2E tests (tau
 | External app integration              | ~4    | Open in VS Code                                                         |
 | OS-level features                     | ~5    | Keychain integration, custom app icon, key repeat accent picker         |
 
-#### Highest-Value Automation Targets
+#### Highest-Value Remaining Automation Targets
 
-These areas have the most automatable items and would yield the greatest reduction in manual testing burden:
+These areas have the most remaining automatable items:
 
-1. **Connection Management** (72 E2E items) — SSH key suggestions, default user/key, port extraction, schema-driven forms, storage file selector, folder handling
-2. **UI / Layout** (27 E2E items) — Horizontal activity bar, theme switching, customize layout dialog, tab accent borders, sidebar toggle, split resize handles
-3. **File Browser** (24 E2E + 7 infra items) — CWD tracking, context menus, new file creation, double-click editing, stuck-at-root fix
-4. **Editor** (21 E2E items) — Monaco editor lifecycle, status bar fields, indent/language selectors
-5. **SSH with infrastructure** (46 E2E/infra items) — Monitoring, SFTP CWD, optional settings, tunneling UI, env var expansion
+1. **SSH with infrastructure** (46 E2E/infra items) — Monitoring, SFTP CWD, optional settings, tunneling start/stop, env var expansion
+2. **Connection Management** (18 pending E2E items) — External connection files, storage file selector
+3. **Remote Agent** (17 E2E/infra items) — Agent connect, shell sessions, reconnect, setup wizard, error feedback
+4. **Credential Store** (6 E2E/infra items) — Save+auto-fill, stale credential, passphrase, no-lookup cases
 
 ### Test Environment Setup
 
@@ -718,22 +717,15 @@ These areas have the most automatable items and would yield the greatest reducti
 
 #### Baseline
 
-> **E2E coverage:** 3 E2E, 1 partial (resize visual), 0 manual
-
-- [ ] Open connection editor, select Local type — shell dropdown shows shells available on current OS (zsh/bash/sh on macOS/Linux; PowerShell/cmd on Windows)
-- [ ] Create and connect a local shell connection — terminal opens, shell prompt appears, commands execute
-- [ ] Resize the app window or drag a split divider with a running local shell — terminal re-renders correctly, no garbled output, `tput cols`/`tput lines` reports new size
-- [ ] Type `exit` in a running local shell — terminal shows "[Process exited with code 0]"
+> **Automated** in `local-shell-extended.test.js` (4 tests: shell dropdown, connect/execute, resize, exit message)
 
 #### Terminal input works on new connections (PR #198)
 
-> **E2E coverage:** 3 E2E, 1 E2E/infra (SSH), 1 manual (PowerShell-only)
+> **Automated** in `local-shell-extended.test.js` (3 tests: rapid creation, tab switching, split panel input)
+> **Remaining:** 1 E2E/infra (SSH), 1 manual (PowerShell-only)
 
 - [ ] Open a new local PowerShell terminal — verify keyboard input works immediately without needing to click the terminal area
-- [ ] Rapidly create 3–4 local terminals in a row — verify all accept keyboard input when switched to
-- [ ] Switch between multiple terminal tabs — verify the active terminal receives keyboard input each time
 - [ ] Create an SSH connection to a remote host — verify keyboard input works immediately
-- [ ] Split the panel and create a terminal in each split — verify input works in both
 
 #### No initial output flash for WSL/SSH terminals (PR #175)
 
@@ -746,20 +738,13 @@ These areas have the most automatable items and would yield the greatest reducti
 
 #### Configurable starting directory (PR #148)
 
-> **E2E coverage:** 5/5 E2E (set dir, verify pwd output)
-
-- [ ] Create a local shell with no starting directory — verify it opens in home directory
-- [ ] Create a local shell with starting directory set to `/tmp` — verify it opens in `/tmp`
-- [ ] Create a local shell with `~/work` — verify tilde expansion works
-- [ ] Create a local shell with `${env:HOME}/Desktop` — verify env var expansion works
-- [ ] Edit an existing connection, add a starting directory, save and connect — verify it uses the new directory
+> **Automated** in `local-shell-extended.test.js` (5 tests: default dir, /tmp, tilde, env var, edit existing)
 
 #### New tabs open in home directory (PR #66)
 
-> **E2E coverage:** 2 E2E, 1 manual (multi-OS verification)
+> **Automated** in `local-shell-extended.test.js` (2 tests: shell tab, file browser)
+> **Remaining:** 1 manual (multi-OS verification)
 
-- [ ] Open the app and create a new local shell tab — verify it starts in `~`
-- [ ] Verify the file browser shows the home directory after the first prompt
 - [ ] Test on macOS/Linux (uses `$HOME`) and Windows (uses `%USERPROFILE%`) if possible
 
 #### macOS key repeat fix (PR #48)
@@ -852,11 +837,11 @@ These areas have the most automatable items and would yield the greatest reducti
 
 #### Password prompt at connect (PR #38)
 
-> **E2E coverage:** 1 E2E (no password in JSON), 2 E2E/infra (key no dialog, SFTP dialog), 2 manual (native export dialog, startup strip)
+> **Partially automated** in `connection-forms.test.js` (1 test: no password field for SSH password auth)
+> **Remaining:** 2 E2E/infra (key no dialog, SFTP dialog), 2 manual (native export dialog, startup strip)
 
 - [ ] SSH key-auth connections — no password dialog, connects directly
 - [ ] SFTP connect to password-auth SSH — password dialog appears
-- [ ] Inspect `connections.json` — no `password` field present for any SSH connection
 - [ ] Export connections — no passwords in exported JSON
 - [ ] Existing connections with stored passwords — passwords stripped on app startup
 
@@ -917,13 +902,13 @@ These areas have the most automatable items and would yield the greatest reducti
 
 #### SSH monitoring in status bar (PR #114, #115)
 
-> **E2E coverage:** 1 E2E (sidebar check), 7 E2E/infra (stats, buttons, dropdown), 1 partial (high-value colors need specific load)
+> **Partially automated** in `settings.test.js` (1 test: sidebar no longer has monitoring view)
+> **Remaining:** 7 E2E/infra (stats, buttons, dropdown), 1 partial (high-value colors need specific load)
 
 - [ ] Selecting a connection connects monitoring, shows inline stats
 - [ ] Stats auto-refresh every 5 seconds
 - [ ] Refresh and disconnect icon buttons work
 - [ ] High values show warning (yellow >= 70%) and critical (red >= 90%) colors
-- [ ] Sidebar no longer has monitoring view
 - [ ] Save & Connect button saves and opens terminal in one action
 - [ ] After connecting, status bar displays: hostname, CPU%, Mem%, Disk%
 - [ ] Clicking hostname opens detail dropdown with system info, refresh, and disconnect
@@ -940,24 +925,15 @@ These areas have the most automatable items and would yield the greatest reducti
 
 #### SSH tunneling (PR #225)
 
-> **E2E coverage:** 10 E2E (tunnel UI CRUD, type selector, diagram, duplicate, delete), 5 E2E/infra (start/stop, traffic, actual forwarding), 2 partial (app restart persistence), 1 manual (auto-start on launch)
+> **Automated** in `ssh-tunnels.test.js` (10 tests: sidebar panel, editor, Local/Remote/Dynamic types with diagrams, reactive ports, save, edit, duplicate, delete)
+> **Remaining:** 5 E2E/infra (start/stop, traffic, forwarding), 2 partial (app restart persistence), 1 manual (auto-start on launch)
 
-- [ ] Click "SSH Tunnels" in the activity bar — verify the tunnels sidebar panel opens with "No SSH tunnels configured" message and a "+ New Tunnel" button
-- [ ] Click "+ New Tunnel" — verify a tunnel editor tab opens with name field, SSH connection dropdown, type selector (Local/Remote/Dynamic), and visual diagram
-- [ ] Select "Local" type — verify the diagram shows "Your PC → SSH → SSH Server → Target" and local/remote host/port fields appear
-- [ ] Select "Remote" type — verify the diagram shows "Local Target ← SSH ← SSH Server ← Remote Clients" and corresponding fields appear
-- [ ] Select "Dynamic" type — verify the diagram shows "Your PC → SSH → SSH Server → Internet" and only local host/port fields appear
-- [ ] Change port numbers — verify the visual diagram updates reactively with the new values
-- [ ] Fill in name, select an SSH connection, configure ports, click "Save" — verify the tunnel appears in the sidebar list and the editor tab closes
 - [ ] Verify the tunnel config persists across app restarts (check `tunnels.json` in the config directory)
-- [ ] Double-click a tunnel in the sidebar — verify the editor tab opens with the saved configuration pre-filled
 - [ ] Edit a tunnel and click "Save" — verify changes are persisted
 - [ ] Click the Play button on a tunnel in the sidebar — verify the status indicator turns green (connected)
 - [ ] Click the Stop button on an active tunnel — verify the status indicator turns grey (disconnected)
 - [ ] Click "Save & Start" in the tunnel editor — verify the tunnel is saved and started in one action
 - [ ] Create a local forward tunnel (e.g., local port 18080 → remote localhost:80) — start it — verify `curl http://127.0.0.1:18080` reaches the remote service
-- [ ] Click the Duplicate button on a tunnel — verify a "Copy of ..." tunnel appears in the sidebar
-- [ ] Click the Delete button on a tunnel — verify it is removed from the sidebar
 - [ ] Enable "Auto-start when app launches" on a tunnel — restart the app — verify the tunnel starts automatically
 - [ ] Verify traffic stats (bytes sent/received, active connections) update in the sidebar for active tunnels
 
@@ -1000,14 +976,10 @@ These areas have the most automatable items and would yield the greatest reducti
 
 #### Baseline
 
-> **E2E coverage:** 5 E2E (new tabs, close, switch, context menu, close last in split), 2 partial (drag reorder limited in WebDriver)
+> **Automated** in `tab-management.test.js` (5 tests: create tabs, close tab, switch tab, context menu) + `split-views.test.js` (close panel)
+> **Remaining:** 2 partial (drag reorder limited in WebDriver)
 
-- [ ] Click New Terminal multiple times — multiple tabs appear in tab bar, most recent is active
-- [ ] Click X on a tab or use Ctrl+W with multiple tabs open — tab removed, adjacent tab becomes active
 - [ ] Drag a tab to a new position in the tab bar with multiple tabs open — tab moves to new position, order persists
-- [ ] Click different tabs, use Ctrl+Tab / Ctrl+Shift+Tab — correct terminal displayed for each tab
-- [ ] Right-click a tab — context menu with Close, Copy, Save, Clear options
-- [ ] Close the last tab in a split panel — panel removed (if other panels exist) or empty panel remains
 - [ ] Drag-and-drop tabs still works correctly
 
 #### Save terminal content to file (PR #35)
@@ -1020,13 +992,12 @@ These areas have the most automatable items and would yield the greatest reducti
 
 #### Suppress browser default context menu (PR #150)
 
-> **E2E coverage:** 1 E2E (context menu verification)
-
-- [ ] Right-click on empty areas (sidebar whitespace, terminal, activity bar) — no menu appears
+> **Automated** in `tab-management.test.js` (3 tests: right-click sidebar, terminal, activity bar — no browser context menu)
 
 #### Per-connection horizontal scrolling (PR #45)
 
-> **E2E coverage:** 2 E2E (toggle, persistence), 2 partial (visual scroll check), 1 manual (key repeat timing)
+> **Automated** in `tab-management.test.js` (2 tests: toggle horizontal scrolling, persistence)
+> **Remaining:** 2 partial (visual scroll check), 1 manual (key repeat timing)
 
 - [ ] Create connection with horizontal scrolling enabled — connect — run `echo $(python3 -c "print('A'*300)")` — line should not wrap, horizontal scrollbar appears
 - [ ] Create connection without horizontal scrolling — same command — line wraps normally
@@ -1049,21 +1020,14 @@ These areas have the most automatable items and would yield the greatest reducti
 
 #### Baseline
 
-> **E2E coverage:** 4 E2E (create, edit, delete, duplicate — all UI interactions)
-
-- [ ] Click + in connection list, fill form, save — connection appears in list
-- [ ] Right-click a connection > Edit, modify fields, save — changes persisted, visible on next app restart
-- [ ] Right-click a connection > Delete — connection removed from list
-- [ ] Right-click a connection > Duplicate — "Copy of <name>" appears in same folder
+> **Automated** in `connection-crud.test.js` (4 tests: create, edit, delete, duplicate — all UI interactions)
 
 #### Remove folder selector from editor (PR #146)
 
-> **E2E coverage:** 3 E2E (no dropdown, folder right-click, in-folder edit), 1 partial (drag onto folder)
+> **Automated** in `connection-editor-extended.test.js` (3 tests: no dropdown, folder right-click, in-folder edit)
+> **Remaining:** 1 partial (drag onto folder)
 
-- [ ] Open connection editor — verify no "Folder" dropdown is shown
-- [ ] Right-click a folder — "New Connection" — save — verify connection is placed in that folder
 - [ ] Drag a connection onto a folder in the sidebar — verify it moves correctly
-- [ ] Edit an existing connection in a folder — save — verify it stays in the same folder
 
 #### Shell-specific icons and icon picker (PR #157)
 
@@ -1078,10 +1042,7 @@ These areas have the most automatable items and would yield the greatest reducti
 
 #### Save & Connect button (PR #112)
 
-> **E2E coverage:** 2 E2E (save+connect flow, separate save/cancel)
-
-- [ ] Edit existing SSH connection — click "Save & Connect" — password prompt appears — connection opens after password entry
-- [ ] Click "Save & Connect" with password auth, cancel password prompt — editor tab stays open (connect aborted, but save already completed)
+> **Automated** in `connection-crud.test.js` (2 tests: save+connect flow, separate save/cancel)
 
 #### Import/export connections (PR #33)
 
@@ -1092,12 +1053,9 @@ These areas have the most automatable items and would yield the greatest reducti
 
 #### Encrypted export/import of connections with credentials (PR #322)
 
-> **E2E coverage:** 4 E2E (in-app dialog UI: default selection, password/confirm fields, validation errors), 7 manual (native file picker for actual export/import)
+> **Automated** in `encrypted-export-import.test.js` (4 tests: default selection, password/confirm fields, validation errors)
+> **Remaining:** 7 manual (native file picker for actual export/import)
 
-- [ ] Click "Export Connections" — Export dialog opens with "Without credentials" selected by default
-- [ ] Select "With credentials (encrypted)" — password and confirm fields appear with warning text
-- [ ] Type a password shorter than 8 characters — verify "Password must be at least 8 characters" error shown
-- [ ] Type mismatched passwords — verify "Passwords do not match" error shown
 - [ ] Enter matching passwords (8+ chars), click Export — file save dialog opens, JSON file is saved with `$encrypted` section
 - [ ] Export "Without credentials" — verify saved JSON has no `$encrypted` section (no regression)
 - [ ] Click "Import Connections", select a file with encrypted credentials — Import dialog shows connection count and password field
@@ -1108,16 +1066,7 @@ These areas have the most automatable items and would yield the greatest reducti
 
 #### SSH key file validation (PR #204)
 
-> **E2E coverage:** 8 E2E (type paths, verify hint text, debounce behavior — all UI interactions on connection editor)
-
-- [ ] Open connection editor, select SSH type, set auth method to "SSH Key" — select a `.pub` file via browse — verify a warning hint appears: "This looks like a public key (.pub)..."
-- [ ] Type or paste a path to a valid OpenSSH private key — verify a green success hint appears: "OpenSSH private key detected."
-- [ ] Type or paste a path to a valid RSA PEM private key — verify a green success hint appears: "RSA (PEM) private key detected."
-- [ ] Type a nonexistent path (e.g., `/no/such/key`) — verify a red error hint appears: "File not found."
-- [ ] Select a PuTTY PPK file — verify a warning hint appears mentioning `puttygen` conversion
-- [ ] Select a random non-key file (e.g., a `.txt` file) — verify a warning hint appears: "Not a recognized SSH private key format."
-- [ ] Clear the key path field — verify the hint disappears
-- [ ] Type a path character by character — verify the hint updates after a short debounce delay (no flickering on every keystroke)
+> **Automated** in `connection-editor-extended.test.js` (8 tests: .pub warning, OpenSSH/RSA success, nonexistent error, PPK warning, random file warning, clear hint, debounce)
 
 #### SSH key path browse button (PR #205)
 
@@ -1131,40 +1080,15 @@ These areas have the most automatable items and would yield the greatest reducti
 
 #### SSH key path file suggestions (PR #118)
 
-> **E2E coverage:** 10 E2E (dropdown display, filtering, keyboard nav, Tab/Enter/Escape, browse fallback, agent field)
-
-- [ ] Open connection editor, select SSH type, set auth method to "SSH Key" — focus the Key Path field — verify a dropdown appears listing private key files from `~/.ssh/`
-- [ ] Verify `.pub` files, `known_hosts`, `authorized_keys`, and `config` are NOT shown in the dropdown
-- [ ] Type part of a key name to filter — verify the dropdown filters in real time (case-insensitive)
-- [ ] Use arrow keys to navigate the dropdown — verify the highlighted item changes
-- [ ] Press Tab or Enter on a highlighted item — verify the path is accepted and the dropdown closes
-- [ ] Press Tab with no highlight but exactly one match — verify it auto-accepts that match
-- [ ] Press Escape — verify the dropdown closes without changing the value
-- [ ] Click the "..." browse button — verify the native file dialog still works
-- [ ] Repeat all of the above for the Agent settings Key Path field
-- [ ] Test with no `~/.ssh/` directory (or empty directory) — verify no dropdown appears and no error occurs
+> **Automated** in `connection-editor-extended.test.js` (10 tests: dropdown display, .pub filtering, real-time filter, arrow keys, Tab/Enter accept, auto-accept, Escape, browse button, Agent field, empty dir)
 
 #### Default user and SSH key applied to new connections (PR #201)
 
-> **E2E coverage:** 7 E2E (settings defaults, form pre-fill, auth method, edit preserves values, suggestion dropdown)
-
-- [ ] Open Settings > General — set "Default User" to `admin` and "Default SSH Key Path" to a valid path — save
-- [ ] Create a new SSH connection — verify the username is pre-filled with `admin`, auth method is set to "Key", and key path is pre-filled
-- [ ] Clear "Default SSH Key Path" in settings — create a new SSH connection — verify auth method defaults to "Password" and key path is empty
-- [ ] Set only "Default User" — create a new SSH connection — verify username is pre-filled but auth method is "Password"
-- [ ] Create a new Remote Agent — verify username and key path are pre-filled from settings
-- [ ] Edit an existing SSH connection — verify it retains its own values (not overwritten by defaults)
-- [ ] Verify the "Default SSH Key Path" field in General Settings shows the `~/.ssh/` file suggestion dropdown
+> **Automated** in `connection-editor-extended.test.js` (7 tests: settings defaults, SSH pre-fill, password fallback, username-only, Remote Agent, edit preserves values, suggestion dropdown)
 
 #### Auto-extract port from host field (PR #195)
 
-> **E2E coverage:** 5 E2E (type host:port, verify field splitting — pure UI interaction)
-
-- [ ] Enter `192.168.0.2:2222` in the SSH host field, tab out — verify host becomes `192.168.0.2` and port becomes `2222`
-- [ ] Enter `[::1]:22` in the host field, tab out — verify host becomes `::1` and port becomes `22`
-- [ ] Enter `myhost.example.com` (no port) — verify host stays unchanged and port is not modified
-- [ ] Enter a bare IPv6 address `::1` — verify it is left untouched
-- [ ] Verify the same behavior works in Telnet and Agent settings
+> **Automated** in `connection-editor-extended.test.js` (5 tests: IPv4:port, [IPv6]:port, plain hostname, bare IPv6, Telnet/Agent)
 
 #### External connection file support (PR #50, redesigned in PR #210)
 
@@ -1196,19 +1120,7 @@ These areas have the most automatable items and would yield the greatest reducti
 
 #### Schema-driven connection settings (PR #362)
 
-> **E2E coverage:** 11 E2E (form rendering per type, field switching, conditional fields, capabilities — all UI verification)
-
-- [ ] Open connection editor → switch between all connection types (Local, SSH, Serial, Telnet, Docker) — verify each type shows the correct settings fields matching the previous hardcoded UI
-- [ ] Create a new SSH connection — verify host, port, username, auth method fields appear; switching auth method toggles key path / password visibility
-- [ ] Create a new Docker connection — verify env vars editor works (add/remove key-value rows) and volumes editor works (add/remove rows with host path, container path, read-only toggle)
-- [ ] SSH key path field shows the combobox with available key files (not a plain text input)
-- [ ] Create a new Serial connection — verify port, baud rate, data bits, stop bits, parity, flow control fields appear with correct dropdown options
-- [ ] Edit an existing connection — verify saved values load correctly into the schema-driven form
-- [ ] "Save & Connect" with SSH password auth (no saved password) — verify password prompt appears
-- [ ] Conditional fields work: SSH auth method "Key" shows key path, "Password" shows password field, "Agent" hides both
-- [ ] Switch connection type in the editor — verify fields reset to defaults for the new type
-- [ ] Monitoring toggle respects capabilities — monitoring panel only appears for connection types that support it (e.g., SSH), not for local/serial/telnet
-- [ ] File browser respects capabilities — SFTP file browser only activates for connection types with file browser capability
+> **Automated** in `connection-editor-extended.test.js` (11 tests: type switching, SSH fields+auth toggle, Docker env/volumes, SSH combobox, Serial dropdowns, edit loading, Save & Connect, conditional fields, type reset, monitoring toggle, file browser toggle)
 
 ---
 
@@ -1216,14 +1128,12 @@ These areas have the most automatable items and would yield the greatest reducti
 
 #### Baseline
 
-> **E2E coverage:** 4 E2E (split, close, nested), 2 partial (drag divider, drag tab to edge — limited in WebDriver)
+> **Automated** in `split-views.test.js` (3 tests: horizontal split, close panel, nested splits)
+> **Remaining:** 2 partial (drag divider, drag tab to edge — limited in WebDriver)
 
-- [ ] Click split button or use toolbar with a terminal open — panel splits horizontally, new empty panel appears
 - [ ] Hold Shift + click split (or toolbar option) — panel splits vertically
-- [ ] Close all tabs in one panel with multiple panels — panel removed, remaining panels resize
 - [ ] Drag the divider between split panels — panels resize, terminals re-fit
 - [ ] Drag a tab to the edge of another panel — new split created, tab moves to new panel
-- [ ] Create horizontal split, then split one panel vertically — both horizontal and vertical splits coexist
 
 ---
 
@@ -1231,26 +1141,21 @@ These areas have the most automatable items and would yield the greatest reducti
 
 #### Baseline
 
-> **E2E coverage:** 2 E2E (files view switch, double-click edit), 1 E2E/infra (SFTP connect), 3 manual (upload/OS drag, download dialog, VS Code)
+> **Partially automated** in `file-browser-local.test.js` (2 tests: files view switch, file entries display)
+> **Remaining:** 1 E2E/infra (SFTP connect), 3 manual (upload/OS drag, download dialog, VS Code)
 
-- [ ] Switch to Files view, select Local mode — local filesystem tree displayed
 - [ ] Connect SFTP via picker with an SSH connection — remote filesystem tree displayed
 - [ ] Right-click remote file > Upload or drag file from OS in SFTP mode — file appears in remote listing
 - [ ] Right-click remote file > Download in SFTP mode — file saved to local filesystem
-- [ ] Open in editor: double-click a text file in the browser — file opens in built-in editor tab
 - [ ] Right-click file > Open in VS Code (when VS Code installed) — file opens in VS Code
 
 #### CWD-aware file browser (PR #39)
 
-> **E2E coverage:** 5 E2E (local cd tracking, tab switch, sidebar switch, rename/delete, create dir), 2 E2E/infra (SSH SFTP auto-connect)
+> **Automated** in `file-browser-extended.test.js` (5 tests: cd tracking, tab switch, sidebar switch, rename/delete, create dir)
+> **Remaining:** 2 E2E/infra (SSH SFTP auto-connect)
 
-- [ ] Open a local zsh terminal — `cd /tmp` — sidebar file browser shows `/tmp` contents
-- [ ] Open a second local shell tab — switch between tabs — file browser follows each tab's CWD
 - [ ] Open an SSH terminal — file browser auto-connects SFTP (with password prompt) and shows remote CWD
 - [ ] Open a serial terminal — file browser shows "no filesystem" placeholder
-- [ ] Switch sidebar to connections view — switch tabs — switch back to files — correct CWD shown
-- [ ] Right-click rename/delete on local files — operations work and list refreshes
-- [ ] Create directory via toolbar button — works for both local and SFTP modes
 
 #### File browser follows tab switch from WSL to PowerShell (PR #167)
 
@@ -1263,41 +1168,28 @@ These areas have the most automatable items and would yield the greatest reducti
 
 #### Local file explorer stuck at root fix (PR #110)
 
-> **E2E coverage:** 3 E2E (home dir on open, bash fallback, navigation caching)
-
-- [ ] Open a local terminal, click Files sidebar — file list shows home directory contents
-- [ ] Test with bash (no OSC 7) — still loads home directory
-- [ ] Navigate away and back — does not re-navigate if entries already loaded
+> **Automated** in `file-browser-extended.test.js` (3 tests: home dir on open, bash fallback, navigation caching)
 
 #### File browser stays active when editing (PR #57)
 
-> **E2E coverage:** 3 E2E (local file, tab switch, settings), 1 E2E/infra (remote SFTP file)
+> **Automated** in `file-browser-extended.test.js` (3 tests: parent directory, tab switch, settings placeholder)
+> **Remaining:** 1 E2E/infra (remote SFTP file)
 
-- [ ] Open a local file for editing — file browser shows the file's parent directory
 - [ ] Open a remote (SFTP) file for editing — file browser shows the remote parent directory
-- [ ] Switch between editor and terminal tabs — file browser updates correctly
-- [ ] Settings tab still shows "No filesystem available" as before
 
 #### New File button (PR #58)
 
-> **E2E coverage:** 4 E2E (create, escape cancel, local mode, new folder), 1 E2E/infra (SFTP mode)
+> **Automated** in `file-browser-extended.test.js` (4 tests: create via Enter, Escape cancel, local mode, new folder)
+> **Remaining:** 1 E2E/infra (SFTP mode)
 
-- [ ] Click "New File" button — inline input appears — type name — Enter — file created and list refreshes
-- [ ] Press Escape in the input — cancels without creating
-- [ ] Works in local file browser mode
 - [ ] Works in SFTP file browser mode
-- [ ] "New Folder" still works as before
 
 #### Right-click context menu (PR #59)
 
-> **E2E coverage:** 5 E2E (file menu, dir menu, three-dots, actions, styling), 1 E2E/infra (SFTP download option)
+> **Automated** in `file-browser-extended.test.js` (5 tests: file menu, dir menu, three-dots, delete action, styling)
+> **Remaining:** 1 E2E/infra (SFTP download option)
 
-- [ ] Right-click a file — context menu appears with Edit, Open in VS Code, Rename, Delete
-- [ ] Right-click a directory — context menu appears with Open, Rename, Delete
 - [ ] Right-click in SFTP mode — Download option appears for files
-- [ ] Three-dots menu still works as before
-- [ ] Context menu actions (edit, rename, delete, etc.) all function correctly
-- [ ] Menu styling matches connection list context menus
 
 #### Open in VS Code (PR #51)
 
@@ -1310,11 +1202,10 @@ These areas have the most automatable items and would yield the greatest reducti
 
 #### Double-click file to open in editor (PR #61)
 
-> **E2E coverage:** 2 E2E (local file, directory), 1 E2E/infra (SFTP file)
+> **Automated** in `file-browser-extended.test.js` (2 tests: open file, navigate directory)
+> **Remaining:** 1 E2E/infra (SFTP file)
 
-- [ ] Double-click a file in local file browser — opens in editor tab
 - [ ] Double-click a file in SFTP file browser — opens in editor tab
-- [ ] Double-click a directory — navigates into it (unchanged behavior)
 
 ---
 
@@ -1322,46 +1213,23 @@ These areas have the most automatable items and would yield the greatest reducti
 
 #### Built-in file editor with Monaco (PR #54)
 
-> **E2E coverage:** 7 E2E (open, edit+save, toolbar save, dirty/clean close, reuse tab, binary error), 1 E2E/infra (SFTP edit), 1 partial (drag between panels)
+> **Automated** in `editor.test.js` (7 tests: open, edit+save, toolbar save, dirty/clean close, reuse tab, binary error)
+> **Remaining:** 1 E2E/infra (SFTP edit), 1 partial (drag between panels)
 
-- [ ] Right-click a file in the local file browser — "Edit" — file opens in editor tab with syntax highlighting
-- [ ] Edit content — tab shows dirty dot — Ctrl+S — saves — dirty dot clears
-- [ ] Click Save button in toolbar — same behavior as Ctrl+S
-- [ ] Close dirty tab — confirmation dialog appears — Cancel keeps tab open, OK closes it
-- [ ] Close clean tab — no confirmation dialog
-- [ ] Open same file twice — reuses existing editor tab instead of creating a new one
 - [ ] SFTP file browser — right-click file — "Edit" — remote file loads with [Remote] badge — edit + save works
-- [ ] Binary/non-UTF-8 file — graceful error message displayed
 - [ ] Editor tab drag-and-drop between panels works correctly
 
 #### Editor status bar (PR #65)
 
-> **E2E coverage:** 7 E2E (all status bar fields: Ln/Col, Spaces, encoding, EOL, language, show/hide on tab switch)
-
-- [ ] Open a `.ts` file — status bar shows: `Ln 1, Col 1  Spaces: 4  UTF-8  LF  typescript`
-- [ ] Move cursor — Ln/Col updates in real-time
-- [ ] Click "Spaces: 4" — changes to "Spaces: 2", editor indentation updates
-- [ ] Click "LF" — changes to "CRLF"
-- [ ] Switch to a terminal tab — status bar items disappear
-- [ ] Switch back to editor tab — items reappear with correct values
-- [ ] Close editor tab — status bar clears
+> **Automated** in `editor.test.js` (7 tests: Ln/Col/Spaces/UTF-8/LF/language display, cursor update, indent change, EOL toggle, hide on terminal, show on editor, clear on close)
 
 #### Indent selection in status bar (PR #111)
 
-> **E2E coverage:** 3 E2E (dropdown, option selection, label update)
-
-- [ ] Open a file in the editor, click the indent indicator in the status bar — dropdown appears with "Indent Using Spaces" (1/2/4/8) and "Indent Using Tabs" (1/2/4/8)
-- [ ] Selecting an option updates the editor behavior and the status bar label
-- [ ] Label correctly shows "Spaces: N" or "Tab Size: N"
+> **Automated** in `editor.test.js` (3 tests: dropdown, option selection, label format)
 
 #### Language mode selector (PR #113)
 
-> **E2E coverage:** 4 E2E (dropdown, search filter, language selection, close behavior)
-
-- [ ] Open a file in the editor, click the language name in the status bar — dropdown appears with search input and all available languages
-- [ ] Typing filters the list in real-time
-- [ ] Selecting a language updates syntax highlighting and the status bar label
-- [ ] Dropdown closes on selection or clicking outside
+> **Automated** in `editor.test.js` (4 tests: dropdown with search, filter, language change, dismiss)
 
 ---
 
@@ -1369,35 +1237,30 @@ These areas have the most automatable items and would yield the greatest reducti
 
 #### No white flash on startup (PR #192)
 
-> **E2E coverage:** 1 E2E (theme switching works), 3 manual (visual startup timing, app restart)
+> **Partially automated** — theme switching covered by `theme-layout.test.js`
+> **Remaining:** 3 manual (visual startup timing, app restart)
 
 - [ ] Launch the app — verify the window starts with a dark background (#1e1e1e) instead of flashing white
 - [ ] Observe the full startup sequence — there should be no white → dark → white transitions
-- [ ] Open Settings > Appearance > Theme — switch to Light, then back to Dark — verify theming still works correctly
 - [ ] Restart the app with Dark theme selected — verify no white flash on launch
 
 #### Color theme switching (PR #220)
 
-> **E2E coverage:** 4 E2E (select Light/Dark, terminal re-theme, activity bar dark), 2 partial (System mode, state dots), 3 manual (OS toggle, app restart, ErrorBoundary)
+> **Automated** in `theme-layout.test.js` (4 tests: Light theme, Dark revert, terminal re-theme, activity bar dark)
+> **Remaining:** 2 partial (System mode, state dots), 3 manual (OS toggle, app restart, ErrorBoundary)
 
-- [ ] Open Settings > Appearance > Theme — select "Light" — verify all UI elements update: sidebar becomes light gray, tabs become light, text becomes dark, borders lighten
-- [ ] Select "Dark" — verify all UI elements revert to the dark color scheme
 - [ ] Select "System" — verify the app follows the current OS dark/light mode preference
 - [ ] In "System" mode, toggle OS dark/light mode — verify the app switches themes automatically without a restart
-- [ ] Open multiple terminal tabs — switch theme — verify all terminal instances re-theme live (background, foreground, ANSI colors all change)
-- [ ] Verify the activity bar stays dark in both Light and Dark themes (visual anchor)
 - [ ] Verify state dots (connected/connecting/disconnected) are visible in both themes on terminal tabs and agent sidebar nodes
 - [ ] Close and reopen the app — verify the selected theme persists across restarts
 - [ ] Trigger an error (e.g., throw in a component) to see the ErrorBoundary — verify it renders with theme-appropriate colors
 
 #### Theme switching applies immediately (PR #224)
 
-> **E2E coverage:** 3 E2E (Dark-to-Light, Light-to-Dark, rapid toggle), 1 partial (System mode follows OS)
+> **Automated** in `theme-layout.test.js` (3 tests: Dark-to-Light, Light-to-Dark, rapid toggle)
+> **Remaining:** 1 partial (System mode follows OS)
 
-- [ ] Open Settings > Appearance > Theme — switch from Dark to Light — verify the UI changes immediately without needing an app restart
-- [ ] Switch from Light to Dark — verify immediate visual change
 - [ ] Switch to System — verify the theme matches the current OS preference immediately
-- [ ] Rapidly toggle between Dark and Light several times — verify each switch is applied instantly with no delay
 
 #### Settings as tab (PR #32)
 
@@ -1407,46 +1270,26 @@ These areas have the most automatable items and would yield the greatest reducti
 
 #### Horizontal Activity Bar mode (PR #264)
 
-> **E2E coverage:** 6 E2E (position, icon layout, active indicator, dropdown direction, space fill, position switch)
-
-- [ ] Set `activityBarPosition` to `"top"` — verify the Activity Bar renders horizontally above the main content area
-- [ ] Verify icons display in a row: Connections, File Browser, SSH Tunnels on the left; Log Viewer, Settings on the right
-- [ ] Verify the active indicator bar appears at the bottom edge of the active icon (not the left side)
-- [ ] Click the Settings gear icon — verify the dropdown opens downward (not to the right)
-- [ ] Verify the sidebar + terminal area fills the remaining vertical space below the Activity Bar
-- [ ] Switch back to `"left"` / `"right"` positions — verify they still work correctly
+> **Automated** in `theme-layout.test.js` (6 tests: horizontal rendering, icon row, active indicator, dropdown direction, space filling, position switching)
 
 #### Customize Layout dialog (PR #242)
 
-> **E2E coverage:** 2 E2E (dialog open via gear, Escape closes)
-
-- [ ] Click the Settings gear in the Activity Bar — click "Customize Layout..." — verify the dialog opens with title "Customize Layout"
-- [ ] Press Escape — verify the dialog closes
+> **Automated** in `theme-layout.test.js` (2 tests: dialog open via gear, Escape closes)
 
 #### Sidebar toggle button and Ctrl+B shortcut (PR #194)
 
-> **E2E coverage:** 2 E2E (Ctrl+B/Cmd+B shortcut, tooltip text)
-
-- [ ] Press Ctrl+B (Cmd+B on Mac) — sidebar toggles
-- [ ] Hover the button — tooltip shows "Toggle Sidebar (Ctrl+B)" (or "Cmd+B" on Mac)
+> **Automated** in `sidebar-toggle.test.js` (2 tests: Ctrl+B/Cmd+B shortcut, tooltip text)
 
 #### Highlight selected tab with top border accent (PR #190)
 
-> **E2E coverage:** 4 E2E (active border, focus/unfocus dimming, panel switch, close panel — via CSS class checks)
-
-- [ ] Open multiple tabs in a single panel — active tab should have a blue top border, inactive tabs should have no top border
-- [ ] Split the view into two panels — focused panel's active tab has a bright blue border, unfocused panel's active tab has a dimmer (gray) border
-- [ ] Click between panels to switch focus — borders update: focused panel gets bright blue, previously focused panel dims
-- [ ] Close all tabs in one panel — remaining panel's active tab still shows bright blue border
+> **Automated** in `theme-layout.test.js` (4 tests: active border, focus/unfocus dimming, panel switch, close panel)
 
 #### Vertical split resize handle (PR #213)
 
-> **E2E coverage:** 3 E2E (handle visibility for vertical, horizontal, nested), 1 partial (drag to resize)
+> **Automated** in `theme-layout.test.js` (3 tests: vertical, horizontal, nested handle visibility)
+> **Remaining:** 1 partial (drag to resize)
 
-- [ ] Split a terminal vertically (top/bottom) — verify the resize handle between panels is visible
 - [ ] Drag the vertical resize handle — verify panels resize smoothly
-- [ ] Split a terminal horizontally (left/right) — verify no regression, resize handle still works
-- [ ] Create nested splits (horizontal inside vertical and vice versa) — verify all resize handles are visible and draggable
 
 #### Clear separation between split view panels (PR #189)
 
@@ -1540,16 +1383,10 @@ These areas have the most automatable items and would yield the greatest reducti
 
 #### Master password unlock dialog and status bar indicator (PR #257)
 
-> **E2E coverage:** 7 E2E (correct/incorrect password, skip, status bar indicator, lock/unlock, no indicator in other modes), 1 manual (startup auto-open requires pre-config)
+> **Automated** in `credential-store.test.js` (8 tests: startup detection, correct/incorrect password, skip, status bar indicator, lock/unlock click, no indicator in keychain/none mode)
+> **Remaining:** 1 manual (startup auto-open requires pre-config)
 
 - [ ] Configure credential store to master_password mode and lock it — on app startup, the unlock dialog should appear automatically
-- [ ] Enter the correct master password in the unlock dialog — dialog closes and credential store becomes unlocked
-- [ ] Enter an incorrect master password — error message "Incorrect master password." is shown, password field is cleared
-- [ ] Click "Skip" on the unlock dialog — dialog closes, credential store remains locked
-- [ ] With master_password mode active, verify the status bar shows a lock icon with "Locked" or "Unlocked" text
-- [ ] Click the "Locked" indicator in the status bar — unlock dialog opens
-- [ ] Click the "Unlocked" indicator in the status bar — credential store locks, indicator changes to "Locked"
-- [ ] With keychain or none mode active — no credential store indicator is shown in the status bar
 
 #### Credential store auto-fill on connect (PR #258)
 
@@ -1565,12 +1402,11 @@ These areas have the most automatable items and would yield the greatest reducti
 
 #### Auto-lock timeout for master password credential store (PR #263)
 
-> **E2E coverage:** 2 E2E (setting persistence, Never option), 3 partial (timeout timing, timer reset, immediate effect)
+> **Automated** in `credential-store.test.js` (2 tests: setting persistence, Never option)
+> **Remaining:** 3 partial (timeout timing, timer reset, immediate effect)
 
-- [ ] In Settings > Security, set auto-lock timeout to 5 minutes — verify the dropdown saves and the setting persists after restarting the app
 - [ ] With master password mode active and store unlocked, wait for the configured timeout to elapse — verify the store auto-locks and the unlock dialog appears
 - [ ] While the store is unlocked, perform credential operations (connect with saved password, browse credentials) — verify each operation resets the inactivity timer (store does not lock prematurely)
-- [ ] Set auto-lock to "Never" — verify the store does not auto-lock regardless of inactivity
 - [ ] Change the auto-lock timeout while the store is unlocked — verify the new timeout takes effect immediately without requiring a lock/unlock cycle
 
 ---
