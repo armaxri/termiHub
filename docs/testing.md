@@ -650,18 +650,15 @@ Each test uses a `FaultGuard` that automatically resets faults on drop (includin
 
 ## Manual Testing
 
-Manual test procedures for features that cannot be effectively automated. Run these tests before releases and after major changes.
-
-Each section groups related tests by feature area. **Baseline** subsections cover fundamental feature behavior. Other subsections reference the PR they originated from for traceability.
+Manual test procedures for verifying user-facing features before releases and after major changes. Tests already covered by automated suites (unit, integration, E2E) have been removed from this list.
 
 ### Test Environment Setup
 
-- Build the app with `pnpm tauri dev` (development) or `pnpm tauri build` (release)
-- For comprehensive system testing, use the Docker container fleet in `tests/docker/` (13 containers covering SSH variants, telnet, serial, SFTP stress, network fault injection — see [tests/docker/README.md](../tests/docker/README.md))
-- For quick dev testing, use the simpler Docker targets in `examples/`
-- Pre-generated SSH test keys for all key types are in `tests/fixtures/ssh-keys/`
-- For serial port tests, set up virtual serial ports with `socat` (see `tests/docker/serial-echo/` or `examples/`)
-- For cross-platform tests, run on each target OS
+- Build the release app with `pnpm tauri build`
+- For SSH/Telnet/serial testing: Docker containers from `tests/docker/` (see [tests/docker/README.md](../tests/docker/README.md))
+- Pre-generated SSH test keys in `tests/fixtures/ssh-keys/`
+- For serial port tests: virtual serial ports via `socat` (see `tests/docker/serial-echo/`)
+- Test on each target OS (macOS, Linux, Windows) for cross-platform items
 
 ---
 
@@ -689,11 +686,6 @@ Each section groups related tests by feature area. **Baseline** subsections cove
 - [ ] Create an SSH connection — verify no setup command flash before the prompt appears
 - [ ] Create a local PowerShell or CMD connection — verify startup output is not delayed (no regression)
 
-#### Default shell detection and labeling (PR #140)
-
-- [x] Open connection editor for a local shell — the shell dropdown should show e.g. "Zsh (default)"
-- [x] New terminals default to the correct system shell
-
 #### Configurable starting directory (PR #148)
 
 - [ ] Create a local shell with no starting directory — verify it opens in home directory
@@ -713,12 +705,10 @@ Each section groups related tests by feature area. **Baseline** subsections cove
 - [ ] Launch termiHub on macOS — open a local shell terminal
 - [ ] Hold any letter key (e.g., `k`) — verify key repeats continuously
 - [ ] Verify accent picker no longer appears when holding letter keys
-- [ ] Verify system-wide setting is unchanged: `defaults read -g ApplePressAndHoldEnabled`
-- [ ] Verify the app still builds on non-macOS (the code is `cfg`-gated)
 
 #### Doubled terminal text fix on macOS (PR #108)
 
-- [ ] `pnpm tauri dev` — open terminal — verify prompt appears once, typing shows single characters, command output is not duplicated
+- [ ] Open a terminal — verify prompt appears once, typing shows single characters, command output is not duplicated
 - [ ] Open multiple terminals / split views — each terminal shows single output
 
 #### WSL shell detection on Windows (PR #139)
@@ -780,10 +770,6 @@ Each section groups related tests by feature area. **Baseline** subsections cove
 
 #### Password prompt at connect (PR #38)
 
-- [x] Create an SSH connection with password auth — no password field in editor, hint text shown instead
-- [x] Right-click — Connect on a password-auth SSH connection — password dialog appears
-- [x] Enter password and click Connect — SSH terminal opens normally
-- [x] Click Cancel in password dialog — no tab is created
 - [ ] SSH key-auth connections — no password dialog, connects directly
 - [ ] SFTP connect to password-auth SSH — password dialog appears
 - [ ] Inspect `connections.json` — no `password` field present for any SSH connection
@@ -837,26 +823,15 @@ Each section groups related tests by feature area. **Baseline** subsections cove
 
 #### SSH monitoring in status bar (PR #114, #115)
 
-- [x] Status bar left section shows "Monitor" button with Activity icon
-- [x] Clicking "Monitor" opens dropdown listing all saved SSH connections
 - [ ] Selecting a connection connects monitoring, shows inline stats
 - [ ] Stats auto-refresh every 5 seconds
 - [ ] Refresh and disconnect icon buttons work
 - [ ] High values show warning (yellow >= 70%) and critical (red >= 90%) colors
-- [x] Activity bar no longer shows monitoring icon
 - [ ] Sidebar no longer has monitoring view
 - [ ] Save & Connect button saves and opens terminal in one action
 - [ ] After connecting, status bar displays: hostname, CPU%, Mem%, Disk%
 - [ ] Clicking hostname opens detail dropdown with system info, refresh, and disconnect
 - [ ] Disconnecting returns to the "Monitor" button state
-
-#### Ping host context menu (PR #37)
-
-- [x] Right-click an SSH connection with a host configured — "Ping Host" appears between "Connect" and "Edit"
-- [x] Right-click a Telnet connection — "Ping Host" appears
-- [x] Right-click a Local or Serial connection — no "Ping Host" item
-- [x] Click "Ping Host" — new terminal tab opens titled "Ping <host>" running `ping <host>`
-- [x] Existing "Connect" action still works as before
 
 #### Environment variable expansion in connections (PR #68)
 
@@ -913,10 +888,6 @@ Each section groups related tests by feature area. **Baseline** subsections cove
 - [ ] Type commands in a connected Telnet session — commands execute and output displays
 - [ ] Create Telnet connection to non-existent host — error message displayed within reasonable timeout
 
-#### Docker Telnet connection (PR #40)
-
-- [x] Connect to Docker Telnet (port 2323) — login prompt works with `testuser`/`testpass`
-
 ---
 
 ### Tab Management
@@ -929,60 +900,28 @@ Each section groups related tests by feature area. **Baseline** subsections cove
 - [ ] Click different tabs, use Ctrl+Tab / Ctrl+Shift+Tab — correct terminal displayed for each tab
 - [ ] Right-click a tab — context menu with Close, Copy, Save, Clear options
 - [ ] Close the last tab in a split panel — panel removed (if other panels exist) or empty panel remains
-
-#### Rename terminal tab (PR #156)
-
-- [x] Right-click terminal tab — "Rename" appears — renaming works
-- [x] Right-click inside terminal area — full context menu appears with same options
-
-#### Tab coloring with color picker (PR #67)
-
-- [x] Right-click a terminal tab — "Set Color..." — pick a color — verify tab shows colored left border and terminal has colored frame
-- [x] Clear the color — verify indicators are removed
-- [x] Edit a connection — set a color — connect — verify tab starts with that color
-- [x] Close and reopen a colored connection — verify color persists
-- [x] Override a persisted color via context menu — verify runtime color takes effect
-
-#### Clear terminal via context menu (PR #34)
-
-- [x] Right-click a terminal tab — context menu with "Clear Terminal" appears
-- [x] Click "Clear Terminal" — terminal scrollback is cleared
-- [x] Right-click the Settings tab — no context menu appears
 - [ ] Drag-and-drop tabs still works correctly
 
 #### Save terminal content to file (PR #35)
 
-- [x] Right-click a terminal tab — context menu shows "Save to File" above "Clear Terminal"
 - [ ] Click "Save to File" — native save dialog opens with default filename `terminal-output.txt`
 - [ ] Choose a location — file is written with the terminal's text content
 - [ ] Cancel the dialog — nothing happens
-- [x] Settings tab still has no context menu
-
-#### Copy terminal content to clipboard (PR #36)
-
-- [x] Right-click a terminal tab — context menu shows "Save to File", "Copy to Clipboard", "Clear Terminal" in that order
-- [x] Click "Copy to Clipboard" — paste elsewhere to verify terminal content is on the clipboard
-- [x] "Save to File" still works as before (regression check)
-- [x] Settings tab has no context menu (unchanged behavior)
 
 #### Suppress browser default context menu (PR #150)
 
 - [ ] Right-click on empty areas (sidebar whitespace, terminal, activity bar) — no menu appears
-- [x] Right-click on a connection — custom context menu still works
-- [x] Right-click on a tab — custom context menu still works
 
 #### Per-connection horizontal scrolling (PR #45)
 
 - [ ] Create connection with horizontal scrolling enabled — connect — run `echo $(python3 -c "print('A'*300)")` — line should not wrap, horizontal scrollbar appears
 - [ ] Create connection without horizontal scrolling — same command — line wraps normally
-- [x] Right-click tab — "Horizontal Scrolling" toggle — behavior switches dynamically
 - [ ] Hold a key down — key repeat works normally in horizontal scroll mode
 - [ ] Close and reopen app — connection setting persists
 - [ ] Resize window/panels — scroll area adjusts correctly
 
 #### Dynamic horizontal scroll width update (PR #49)
 
-- [ ] `pnpm build` — no TypeScript errors
 - [ ] Open terminal — enable horizontal scrolling — run a command producing wide output (e.g. `ls -la /usr/bin`) — scrollbar should expand automatically after output settles
 - [ ] Hold a key (e.g. `k`) — key should repeat without interruption
 - [ ] Run `clear` — scroll width should shrink back to viewport width
@@ -998,15 +937,6 @@ Each section groups related tests by feature area. **Baseline** subsections cove
 - [ ] Right-click a connection > Edit, modify fields, save — changes persisted, visible on next app restart
 - [ ] Right-click a connection > Delete — connection removed from list
 - [ ] Right-click a connection > Duplicate — "Copy of <name>" appears in same folder
-
-#### Connection editor as tab (PR #109)
-
-- [x] Click "New Connection" in sidebar — editor opens as a tab in the panel area
-- [x] Right-click a connection — Edit — editor tab opens with "Edit: <name>" title
-- [x] Save a connection — tab closes and connection is persisted
-- [x] Cancel — tab closes without saving
-- [x] Open multiple editor tabs simultaneously for different connections
-- [x] Re-clicking Edit on an already-open connection activates the existing tab
 
 #### Remove folder selector from editor (PR #146)
 
@@ -1026,18 +956,13 @@ Each section groups related tests by feature area. **Baseline** subsections cove
 
 #### Save & Connect button (PR #112)
 
-- [x] Open New Connection — fill form — click "Save & Connect" — connection is saved AND a terminal tab opens
 - [ ] Edit existing SSH connection — click "Save & Connect" — password prompt appears — connection opens after password entry
 - [ ] Click "Save & Connect" with password auth, cancel password prompt — editor tab stays open (connect aborted, but save already completed)
-- [x] Existing "Save" and "Cancel" buttons still work as before
 
-#### Import/export in settings gear dropdown (PR #33)
+#### Import/export connections (PR #33)
 
-- [x] Click the Settings gear in the activity bar — dropdown menu appears with three items
-- [x] Click "Settings" — settings tab opens
 - [ ] Click "Import Connections" — file open dialog, imports JSON, connection list refreshes
 - [ ] Click "Export Connections" — file save dialog, saves JSON
-- [x] Connection list toolbar no longer has Import/Export buttons (only New Folder and New Connection remain)
 
 #### Encrypted export/import of connections with credentials (PR #322)
 
@@ -1055,13 +980,13 @@ Each section groups related tests by feature area. **Baseline** subsections cove
 
 #### SSH key file validation (PR #204)
 
-- [ ] Open connection editor, select SSH type, set auth method to "SSH Key" — select a `.pub` file via browse — verify a warning hint appears: "This looks like a public key (.pub)..." _(validation logic: Rust unit test `ssh_key_validate.rs` — `pub_extension_returns_warning`)_
-- [ ] Type or paste a path to a valid OpenSSH private key — verify a green success hint appears: "OpenSSH private key detected." _(validation logic: Rust unit test — `openssh_private_key_detected`)_
-- [ ] Type or paste a path to a valid RSA PEM private key — verify a green success hint appears: "RSA (PEM) private key detected." _(validation logic: Rust unit test — `rsa_pem_private_key_detected`)_
-- [ ] Type a nonexistent path (e.g., `/no/such/key`) — verify a red error hint appears: "File not found." _(validation logic: Rust unit test — `nonexistent_file_returns_error`)_
-- [ ] Select a PuTTY PPK file — verify a warning hint appears mentioning `puttygen` conversion _(validation logic: Rust unit tests — `putty_ppk_returns_warning_with_instructions`, `putty_ppk_v2_detected`)_
-- [ ] Select a random non-key file (e.g., a `.txt` file) — verify a warning hint appears: "Not a recognized SSH private key format." _(validation logic: Rust unit test — `unrecognized_format_returns_warning`)_
-- [ ] Clear the key path field — verify the hint disappears _(validation logic: Rust unit test — `empty_path_is_silently_valid`)_
+- [ ] Open connection editor, select SSH type, set auth method to "SSH Key" — select a `.pub` file via browse — verify a warning hint appears: "This looks like a public key (.pub)..."
+- [ ] Type or paste a path to a valid OpenSSH private key — verify a green success hint appears: "OpenSSH private key detected."
+- [ ] Type or paste a path to a valid RSA PEM private key — verify a green success hint appears: "RSA (PEM) private key detected."
+- [ ] Type a nonexistent path (e.g., `/no/such/key`) — verify a red error hint appears: "File not found."
+- [ ] Select a PuTTY PPK file — verify a warning hint appears mentioning `puttygen` conversion
+- [ ] Select a random non-key file (e.g., a `.txt` file) — verify a warning hint appears: "Not a recognized SSH private key format."
+- [ ] Clear the key path field — verify the hint disappears
 - [ ] Type a path character by character — verify the hint updates after a short debounce delay (no flickering on every keystroke)
 
 #### SSH key path browse button (PR #205)
@@ -1272,49 +1197,33 @@ Each section groups related tests by feature area. **Baseline** subsections cove
 
 #### No white flash on startup (PR #192)
 
-- [ ] Build and run the app (`pnpm tauri dev`) — verify the window starts with a dark background (#1e1e1e) instead of flashing white
+- [ ] Launch the app — verify the window starts with a dark background (#1e1e1e) instead of flashing white
 - [ ] Observe the full startup sequence — there should be no white → dark → white transitions
 - [ ] Open Settings > Appearance > Theme — switch to Light, then back to Dark — verify theming still works correctly
 - [ ] Restart the app with Dark theme selected — verify no white flash on launch
 
 #### Color theme switching (PR #220)
 
-- [ ] Open Settings > Appearance > Theme — select "Light" — verify all UI elements update: sidebar becomes light gray, tabs become light, text becomes dark, borders lighten _(store logic: Vitest `appStore.settings.test.ts` — "calls applyTheme when switching from system to light")_
+- [ ] Open Settings > Appearance > Theme — select "Light" — verify all UI elements update: sidebar becomes light gray, tabs become light, text becomes dark, borders lighten
 - [ ] Select "Dark" — verify all UI elements revert to the dark color scheme
-- [ ] Select "System" — verify the app follows the current OS dark/light mode preference _(store logic: Vitest — "calls applyTheme('system') when switching to system mode")_
-- [ ] In "System" mode, toggle OS dark/light mode — verify the app switches themes automatically without a restart _(callback: Vitest — "registers onThemeChange callback on initial load")_
+- [ ] Select "System" — verify the app follows the current OS dark/light mode preference
+- [ ] In "System" mode, toggle OS dark/light mode — verify the app switches themes automatically without a restart
 - [ ] Open multiple terminal tabs — switch theme — verify all terminal instances re-theme live (background, foreground, ANSI colors all change)
 - [ ] Verify the activity bar stays dark in both Light and Dark themes (visual anchor)
 - [ ] Verify state dots (connected/connecting/disconnected) are visible in both themes on terminal tabs and agent sidebar nodes
-- [ ] Close and reopen the app — verify the selected theme persists across restarts _(store logic: Vitest — "persists theme setting via saveSettings", "applies theme from settings on initial load", "stores theme setting in store state after load")_
+- [ ] Close and reopen the app — verify the selected theme persists across restarts
 - [ ] Trigger an error (e.g., throw in a component) to see the ErrorBoundary — verify it renders with theme-appropriate colors
 
 #### Theme switching applies immediately (PR #224)
 
-- [ ] Open Settings > Appearance > Theme — switch from Dark to Light — verify the UI changes immediately without needing an app restart _(store logic: Vitest `appStore.settings.test.ts` — "calls applyTheme when switching from system to light")_
+- [ ] Open Settings > Appearance > Theme — switch from Dark to Light — verify the UI changes immediately without needing an app restart
 - [ ] Switch from Light to Dark — verify immediate visual change
-- [ ] Switch to System — verify the theme matches the current OS preference immediately _(store logic: Vitest — "calls applyTheme('system') when switching to system mode")_
+- [ ] Switch to System — verify the theme matches the current OS preference immediately
 - [ ] Rapidly toggle between Dark and Light several times — verify each switch is applied instantly with no delay
-
-#### Status bar (PR #30)
-
-- [ ] Run `npm run build` — no compile errors
-- [x] Launch the app and verify the status bar appears at the bottom spanning the full window width
-- [x] Verify existing layout (Activity Bar, Sidebar, Terminal View) is unaffected
 
 #### Settings as tab (PR #32)
 
-- [x] Click Settings — a "Settings" tab opens with content
-- [x] Click Settings again — reactivates existing settings tab (no duplicate)
-- [x] Close the settings tab — it's removed like any other tab
 - [ ] Drag the settings tab between panels — works with correct Settings icon
-- [x] Connections and File Browser sidebar views still work normally
-
-#### Settings button at bottom of activity bar (PR #31)
-
-- [x] Settings gear icon appears at the bottom of the activity bar
-- [x] Connections and File Browser icons remain at the top
-- [x] Clicking the settings icon still toggles the sidebar settings view
 
 #### Horizontal Activity Bar mode (PR #264)
 
@@ -1328,42 +1237,11 @@ Each section groups related tests by feature area. **Baseline** subsections cove
 #### Customize Layout dialog (PR #242)
 
 - [ ] Click the Settings gear in the Activity Bar — click "Customize Layout..." — verify the dialog opens with title "Customize Layout"
-- [x] Verify three preset cards appear (Default, Focus, Zen) with CSS thumbnails showing the layout arrangement _(Vitest: `CustomizeLayoutDialog.test.tsx` — "renders three preset buttons")_
-- [x] Click "Focus" preset — verify Activity Bar stays visible, Sidebar hides, Status Bar stays visible, and the Focus card shows an accent border _(Vitest: "applies Focus preset on click", "shows active indicator on Focus preset")_
-- [x] Click "Zen" preset — verify Activity Bar hides, Sidebar hides, Status Bar hides, and the Zen card shows an accent border _(Vitest: "applies Zen preset on click", "shows active indicator on Zen preset")_
-- [x] Click "Default" preset — verify all elements return to default positions and the Default card shows an accent border _(Vitest: "applies Default preset on click", "shows active indicator on Default preset")_
-- [x] Uncheck "Visible" under Activity Bar — verify the Activity Bar disappears from the app and position radios become disabled _(Vitest: "unchecking Activity Bar visible hides it", "disables Activity Bar position radios when not visible")_
-- [x] Re-check "Visible" under Activity Bar — verify it reappears at the last selected position (not always "left") _(Vitest: "re-checking Activity Bar visible shows it again")_
-- [x] Select "Right" position for Activity Bar — verify it moves to the right side of the main area _(Vitest: "selecting Right position for Activity Bar updates config")_
-- [x] Select "Top" position for Activity Bar — verify it renders horizontally above the main content _(Vitest: "selecting Top position for Activity Bar updates config")_
-- [x] Uncheck "Visible" under Sidebar — verify the Sidebar disappears and position radios become disabled _(Vitest: "unchecking Sidebar visible hides it", "disables Sidebar position radios when not visible")_
-- [x] Re-check "Visible" under Sidebar — verify it reappears _(Vitest: "re-checking Sidebar visible shows it again")_
-- [x] Select "Right" position for Sidebar — verify it moves to the right side _(Vitest: "selecting Right position for Sidebar updates config")_
-- [x] Uncheck "Visible" under Status Bar — verify the Status Bar disappears _(Vitest: "unchecking Status Bar visible hides it")_
-- [x] Click "Reset to Default" — verify all settings return to default layout _(Vitest: "Reset to Default restores default layout config")_
-- [x] Click "Close" — verify the dialog closes _(Vitest: "Close button closes the dialog")_
 - [ ] Press Escape — verify the dialog closes
-- [x] Reopen the dialog — verify it reflects the current layout state (changes persisted) _(Vitest: "reopening dialog reflects current layout state")_
-
-#### Layout preview in Customize Layout dialog (PR #243)
-
-- [x] Open the Customize Layout dialog — verify a "Layout Preview" section appears below the Status Bar controls, showing a labeled schematic of the current layout _(Vitest: `CustomizeLayoutDialog.test.tsx` — "renders LayoutPreview inside the dialog"; `LayoutPreview.test.tsx` — "renders all sections in default layout")_
-- [x] Verify the preview shows labeled boxes: "AB" (Activity Bar), "Sidebar", "Terminal", "Status Bar" in positions matching the current layout config _(Vitest: `LayoutPreview.test.tsx` — "renders labels inside sections")_
-- [x] Change Activity Bar position to "Right" — verify the AB box moves to the right side in the preview _(Vitest: `CustomizeLayoutDialog.test.tsx` — "LayoutPreview updates when Activity Bar position changes to Right"; `LayoutPreview.test.tsx` — "renders activity bar on right side")_
-- [x] Change Activity Bar position to "Top" — verify the AB box spans the full width at top with "Activity Bar" label _(Vitest: `CustomizeLayoutDialog.test.tsx` — "LayoutPreview updates when Activity Bar position changes to Top"; `LayoutPreview.test.tsx` — "renders top activity bar when position is top", "renders Activity Bar label when position is top")_
-- [x] Uncheck Activity Bar "Visible" — verify the AB box disappears from the preview _(Vitest: `CustomizeLayoutDialog.test.tsx` — "LayoutPreview hides AB when Activity Bar visibility is unchecked"; `LayoutPreview.test.tsx` — "hides activity bar when position is hidden")_
-- [x] Change Sidebar position to "Right" — verify the Sidebar box moves to the right of the Terminal box _(Vitest: `CustomizeLayoutDialog.test.tsx` — "LayoutPreview moves sidebar to right when Sidebar position changes"; `LayoutPreview.test.tsx` — "renders sidebar on right side of terminal")_
-- [x] Uncheck Sidebar "Visible" — verify the Sidebar box disappears from the preview _(Vitest: `CustomizeLayoutDialog.test.tsx` — "LayoutPreview hides sidebar when Sidebar visibility is unchecked"; `LayoutPreview.test.tsx` — "hides sidebar when sidebarVisible is false")_
-- [x] Uncheck Status Bar "Visible" — verify the Status Bar strip disappears from the preview _(Vitest: `CustomizeLayoutDialog.test.tsx` — "LayoutPreview hides status bar when Status Bar visibility is unchecked"; `LayoutPreview.test.tsx` — "hides status bar when statusBarVisible is false")_
-- [x] Click "Zen" preset — verify the preview shows only the Terminal box (all other elements hidden) _(Vitest: `CustomizeLayoutDialog.test.tsx` — "LayoutPreview shows only terminal in Zen preset"; `LayoutPreview.test.tsx` — "renders zen layout")_
-- [x] Click "Default" preset — verify the preview shows all elements in default positions _(Vitest: `CustomizeLayoutDialog.test.tsx` — "LayoutPreview restores all elements when returning to Default preset")_
 
 #### Sidebar toggle button and Ctrl+B shortcut (PR #194)
 
-- [x] Click the PanelLeft icon button in the terminal toolbar (right side) — sidebar hides _(E2E: `sidebar-toggle.test.js` — "should hide the sidebar when clicking the toggle button")_
-- [x] Click the button again — sidebar shows, button appears highlighted _(E2E: `sidebar-toggle.test.js` — "should show the sidebar when clicking the toggle button again", "should show toggle button as highlighted when sidebar is visible")_
 - [ ] Press Ctrl+B (Cmd+B on Mac) — sidebar toggles
-- [x] Open a split view — verify the toggle button remains visible and functional in the toolbar _(E2E: `sidebar-toggle.test.js` — "should keep the toggle button functional after split view")_
 - [ ] Hover the button — tooltip shows "Toggle Sidebar (Ctrl+B)" (or "Cmd+B" on Mac)
 
 #### Highlight selected tab with top border accent (PR #190)
@@ -1395,11 +1273,8 @@ Each section groups related tests by feature area. **Baseline** subsections cove
 
 #### Custom app icon (PR #70)
 
-- [ ] `ls -la src-tauri/icons/` — all 16 PNGs + .icns + .ico present with reasonable sizes
-- [ ] Open `public/termihub.svg` in browser — shows termiHub icon
-- [ ] `pnpm tauri dev` — app icon in dock/taskbar is the custom icon, favicon in browser tab is termiHub
-- [ ] `icon/` directory is gone
-- [ ] README renders correctly on GitHub with centered icon
+- [ ] App icon in dock/taskbar is the custom termiHub icon
+- [ ] Favicon in browser dev mode is termiHub icon
 
 ---
 
@@ -1418,7 +1293,7 @@ Each section groups related tests by feature area. **Baseline** subsections cove
 
 #### RemoteBackend and session reconnect (PR #87)
 
-- [ ] Connect to a remote host running `termihub-agent --stdio`
+- [ ] Connect to a remote host running the agent
 - [ ] Verify terminal output appears for shell and serial sessions
 - [ ] Kill SSH connection, verify "reconnecting" indicator and auto-reconnect
 - [ ] Close tab, verify cleanup (no orphan threads)
@@ -1445,49 +1320,12 @@ Each section groups related tests by feature area. **Baseline** subsections cove
 - [ ] After setup, right-click agent → "Connect" — verify agent connects successfully
 - [ ] Test error case: select a non-existent binary path — verify error is shown
 
-#### Agent Docker container sessions (PR TBD)
-
-- [ ] Start agent in TCP mode: `cargo run -- --listen 127.0.0.1:7685`
-- [ ] Send `initialize` + `session.create` (type "docker", config `{"image":"alpine:latest","shell":"/bin/sh","cols":80,"rows":24}`) — verify session ID returned
-- [ ] Send `session.attach` — verify `session.output` notifications with shell prompt inside the container
-- [ ] Send `session.input` with base64-encoded `echo hello\n` — verify output contains "hello"
-- [ ] Send `session.resize` with cols=120, rows=40 — verify no error
-- [ ] Send `session.detach`, then `session.attach` again — verify buffer replay includes previous output
-- [ ] Run `docker ps` on host — verify `termihub-<session-id>` container exists
-- [ ] Kill the agent process, restart it — verify `session.list` shows the recovered Docker session
-- [ ] Attach to the recovered Docker session — verify container is still functional
-- [ ] Send `session.close` — verify session is removed, daemon exits, and container is stopped/removed
-- [ ] Create a Docker session with `remove_on_exit: false`, close it — verify container is stopped but not removed (`docker ps -a` shows it)
-- [ ] Create a Docker session with env vars `{"env_vars":[{"key":"FOO","value":"bar"}]}` — run `echo $FOO` in container — verify output is "bar"
-- [ ] Create a Docker session with volumes `{"volumes":[{"host_path":"/tmp","container_path":"/mnt/host","read_only":true}]}` — run `ls /mnt/host` in container — verify host files visible
-
-#### Agent shell sessions (PR TBD)
-
-- [ ] Start agent in TCP mode: `cargo run -- --listen 127.0.0.1:7685`
-- [ ] Send `initialize` + `session.create` (type "shell") via netcat — verify session ID returned
-- [ ] Send `session.attach` — verify `session.output` notifications with shell prompt
-- [ ] Send `session.input` with base64-encoded `echo hello\n` — verify output contains "hello"
-- [ ] Send `session.resize` with cols=120, rows=40 — verify no error
-- [ ] Send `session.detach`, then `session.attach` again — verify buffer replay includes previous output
-- [ ] Kill the agent process, restart it — verify `session.list` shows the recovered session
-- [ ] Attach to the recovered session — verify previous output is replayed
-- [ ] Send `session.close` — verify session is removed and daemon process exits
-
-#### TCP listener mode and systemd (PR #116)
-
-- [ ] `cargo run -- --listen` starts and listens on 127.0.0.1:7685
-- [ ] Connect with `nc localhost 7685`, send initialize JSON-RPC, get response
-- [ ] Disconnect and reconnect — sessions persist
-- [ ] `kill -TERM <pid>` causes graceful shutdown
-- [ ] `cargo run -- --stdio` still works as before
-
 ---
 
 ### Credential Store
 
 #### KeychainStore integration with OS keychain (PR #250)
 
-- [ ] Run `cargo test -p termihub -- --ignored keychain` — verify all 6 ignored integration tests pass (set/get, remove/get, remove_all, nonexistent get, nonexistent remove, is_available)
 - [ ] On Windows: verify credentials are stored in Windows Credential Manager (search for "termihub" entries)
 - [ ] On macOS: verify credentials are stored in Keychain Access (search for "termihub" entries)
 - [ ] On Linux: verify credentials are stored via Secret Service / D-Bus (if available)
@@ -1530,56 +1368,3 @@ Each section groups related tests by feature area. **Baseline** subsections cove
 - [ ] Check available shells in connection editor on each target OS — correct shells listed (zsh/bash/sh on Unix, PowerShell/cmd/Git Bash on Windows)
 - [ ] Open serial port dropdown on each target OS — correct port naming convention (/dev/tty\* on Unix, COM\* on Windows)
 - [ ] Enable X11 forwarding on an SSH connection on macOS or Linux with X server — X11 forwarding works (not available on Windows)
-
----
-
-### Infrastructure
-
-#### Docker test environment and virtual serial (PR #40)
-
-- [ ] `cargo build` — no compile errors
-- [ ] `./examples/scripts/start-test-environment.sh` — Docker containers start, app launches with test config
-- [ ] Connect to Docker SSH (port 2222) — prompted for password, connects with `testuser`/`testpass`
-- [ ] `./examples/scripts/stop-test-environment.sh` — containers stop cleanly
-- [ ] `./examples/scripts/setup-virtual-serial.sh` — creates `/tmp/termihub-serial-a` and `/tmp/termihub-serial-b`
-- [ ] `TERMIHUB_CONFIG_DIR=/tmp/test-config pnpm tauri dev` — app uses override directory
-
-#### Comprehensive test container fleet (PR #378)
-
-- [ ] `docker compose -f tests/docker/docker-compose.yml config` — compose file parses without errors
-- [ ] `docker compose -f tests/docker/docker-compose.yml build` — all 11 default-profile containers build successfully
-- [ ] `docker compose -f tests/docker/docker-compose.yml up -d` — all containers start and pass health checks
-- [ ] SSH password auth via port 2201 (`testuser`/`testpass`)
-- [ ] SSH key auth via port 2203 with `tests/fixtures/ssh-keys/ed25519`
-- [ ] Jump host chain via port 2204 (bastion) to internal target — `cat ~/marker.txt` returns `JUMPHOST_TARGET_REACHED`
-- [ ] Telnet via port 2301
-- [ ] `docker compose -f tests/docker/docker-compose.yml --profile fault up -d` — network fault proxy starts
-- [ ] `docker exec termihub-network-fault apply-latency 500ms` — fault applied without error
-- [ ] `docker compose -f tests/docker/docker-compose.yml --profile stress up -d` — SFTP stress container starts with pre-generated test data
-- [ ] `docker compose -f tests/docker/docker-compose.yml down` — all containers stop cleanly
-
----
-
-### Performance
-
-#### Stress test for 40 concurrent terminals (PR #88)
-
-- [ ] Run `pnpm test:e2e:perf` on Linux (requires `tauri-driver` and a built app via `pnpm tauri build`)
-- [ ] Verify all 4 test cases pass and performance baselines are logged to console
-- [ ] Verify `pnpm test:e2e` still runs existing tests without regression
-
----
-
-### Documentation
-
-#### User and developer documentation (PR #72)
-
-- [ ] Verify all internal cross-links between docs resolve correctly
-- [ ] Verify keyboard shortcuts table matches `src/hooks/useKeyboardShortcuts.ts`
-- [ ] Verify serial config options match `src/components/Settings/SerialSettings.tsx`
-- [ ] Verify SSH settings match `src/components/Settings/SshSettings.tsx`
-- [ ] Verify README renders correctly on GitHub
-
-#### E2E test suite setup (PR #82)
-
-- [ ] `pnpm tauri build` then `pnpm test:e2e` against built app (requires `cargo install tauri-driver`)
