@@ -668,21 +668,21 @@ Analysis of which manual test items can be covered by WebdriverIO E2E tests (tau
 | Area                  | Automated | Pending E2E | E2E/infra | Partial | Manual | Total   |
 | --------------------- | --------- | ----------- | --------- | ------- | ------ | ------- |
 | Local Shell           | 14        | 0           | 1         | 0       | 21     | 36      |
-| SSH                   | 12        | 3           | 46        | 4       | 20     | 85      |
-| Serial                | 0         | 0           | 5         | 0       | 2      | 7       |
-| Telnet                | 0         | 0           | 3         | 0       | 0      | 3       |
+| SSH                   | 58        | 3           | 0         | 4       | 20     | 85      |
+| Serial                | 5         | 0           | 0         | 0       | 2      | 7       |
+| Telnet                | 3         | 0           | 0         | 0       | 0      | 3       |
 | Tab Management        | 8         | 1           | 0         | 6       | 5      | 20      |
 | Connection Management | 54        | 18          | 0         | 8       | 13     | 93      |
 | Split Views           | 4         | 0           | 0         | 2       | 0      | 6       |
-| File Browser          | 24        | 0           | 7         | 0       | 11     | 42      |
-| Editor                | 21        | 0           | 1         | 1       | 0      | 23      |
+| File Browser          | 31        | 0           | 0         | 0       | 11     | 42      |
+| Editor                | 22        | 0           | 0         | 1       | 0      | 23      |
 | UI / Layout           | 27        | 0           | 0         | 6       | 12     | 45      |
-| Remote Agent          | 0         | 0           | 17        | 3       | 5      | 25      |
-| Credential Store      | 9         | 0           | 6         | 3       | 5      | 23      |
+| Remote Agent          | 10        | 0           | 7         | 3       | 5      | 25      |
+| Credential Store      | 15        | 0           | 0         | 3       | 5      | 23      |
 | Cross-Platform        | 0         | 0           | 0         | 0       | 3      | 3       |
-| **Total**             | **173**   | **22**      | **86**    | **33**  | **97** | **411** |
+| **Total**             | **251**   | **22**      | **8**     | **33**  | **97** | **411** |
 
-**173 test items (42%) are now covered by automated E2E tests** across 16 test files. An additional 108 items are fully automatable (22 pending E2E, 86 requiring Docker infrastructure). The remaining 97 items (24%) require manual testing.
+**251 test items (61%) are now covered by automated E2E tests** across 28 test files. An additional 30 items are fully automatable (22 pending E2E, 8 requiring Docker infrastructure with a live remote agent). The remaining 97 items (24%) require manual testing.
 
 #### Manual-Only Reasons Breakdown
 
@@ -698,10 +698,9 @@ Analysis of which manual test items can be covered by WebdriverIO E2E tests (tau
 
 These areas have the most remaining automatable items:
 
-1. **SSH with infrastructure** (46 E2E/infra items) — Monitoring, SFTP CWD, optional settings, tunneling start/stop, env var expansion
-2. **Connection Management** (18 pending E2E items) — External connection files, storage file selector
-3. **Remote Agent** (17 E2E/infra items) — Agent connect, shell sessions, reconnect, setup wizard, error feedback
-4. **Credential Store** (6 E2E/infra items) — Save+auto-fill, stale credential, passphrase, no-lookup cases
+1. **Connection Management** (18 pending E2E items) — External connection files, storage file selector
+2. **Remote Agent with live agent** (7 E2E/infra items) — Agent connect, shell sessions, reconnect, context menu with connected agent (requires pre-installed agent binary in Docker)
+3. **Local Shell** (1 E2E/infra item) — Remaining infrastructure test
 
 ### Test Environment Setup
 
