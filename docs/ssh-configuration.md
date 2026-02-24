@@ -229,7 +229,7 @@ The file browser shows:
 - File size (formatted as B, KB, MB)
 - File permissions in Unix `rwx` notation
 
-See the [User Guide](user-guide.md#file-browser) for more details on the file browser interface.
+See the [File Browser section](../README.md#file-browser) in the README for more details on the file browser interface.
 
 ---
 
