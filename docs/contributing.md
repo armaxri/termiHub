@@ -187,7 +187,7 @@ cargo test --workspace --all-features
 
 ### Test Environment
 
-The `examples/` directory provides Docker-based test servers:
+**Quick dev testing** — The `examples/` directory provides a simple Docker-based test setup:
 
 ```bash
 cd examples
@@ -195,12 +195,22 @@ cd examples
 ./stop-test-environment.sh    # Stop servers
 ```
 
-See [examples/README.md](../examples/README.md) for details on:
+See [examples/README.md](../examples/README.md) for details on SSH (port 2222), Telnet (port 2323), virtual serial ports, and X11 forwarding.
 
-- SSH server (port 2222) and Telnet server (port 2323)
-- Virtual serial ports via socat
-- Pre-configured test connections
-- X11 forwarding test applications
+**Comprehensive system testing** — The `tests/docker/` directory provides 13 purpose-built Docker containers for thorough system testing:
+
+```bash
+docker compose -f tests/docker/docker-compose.yml up -d             # Core containers
+docker compose -f tests/docker/docker-compose.yml --profile all up -d  # Everything
+docker compose -f tests/docker/docker-compose.yml down              # Tear down
+```
+
+See [tests/docker/README.md](../tests/docker/README.md) for details on:
+
+- SSH variants (password, legacy, key-only, jump host chain, restricted shell, banner, tunnel, X11)
+- Telnet, virtual serial ports, SFTP stress testing
+- Network fault injection (latency, packet loss, throttling, disconnect)
+- Pre-generated SSH test keys in `tests/fixtures/ssh-keys/`
 
 ---
 
@@ -372,7 +382,7 @@ Update the connection type dropdown in `src/components/Sidebar/ConnectionEditor.
 
 ### 7. Test
 
-- Use the test environment in `examples/` if applicable
+- Use the comprehensive test containers in `tests/docker/` for system testing, or the quick-start environment in `examples/` for basic dev testing
 - Test on your target platform
 - Run `cargo clippy` and `pnpm build` to check for errors
 

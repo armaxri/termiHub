@@ -1060,7 +1060,7 @@ All modes support auto-lock after a configurable timeout. Credential storage is 
 
 **Rationale:**
 
-- Docker is already used for test infrastructure (SSH/Telnet servers, virtual serial ports)
+- Docker is already used for test infrastructure — a comprehensive fleet of 13 containers in `tests/docker/` covers SSH variants, telnet, serial, SFTP stress, and network fault injection (see [tests/docker/README.md](../tests/docker/README.md))
 - Runs locally without external cloud services or CI
 - Tests the Linux build of the app, which shares the same React UI and Rust backend logic
 - Developers on Linux can also run E2E tests natively without Docker

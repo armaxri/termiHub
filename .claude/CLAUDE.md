@@ -83,7 +83,9 @@ scripts/                      # Dev helper scripts (.sh + .cmd variants)
 docs/                         # All documentation
   concepts/                   # Concept documents for "Concept" labeled issues
 tests/e2e/                    # WebdriverIO E2E tests
-examples/                     # Docker test environment (SSH, Telnet, virtual serial)
+tests/docker/                 # Comprehensive Docker test containers (SSH variants, telnet, serial, SFTP, fault injection)
+tests/fixtures/               # Test fixtures (SSH keys, config samples)
+examples/                     # Quick-start dev environment (SSH, Telnet, virtual serial)
 ```
 
 ---

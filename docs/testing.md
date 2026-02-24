@@ -581,8 +581,10 @@ Each section groups related tests by feature area. **Baseline** subsections cove
 ### Test Environment Setup
 
 - Build the app with `pnpm tauri dev` (development) or `pnpm tauri build` (release)
-- For serial port tests, set up virtual serial ports with `socat` (see `examples/`)
-- For SSH/Telnet tests, use the Docker targets in `examples/` or real remote hosts
+- For comprehensive system testing, use the Docker container fleet in `tests/docker/` (13 containers covering SSH variants, telnet, serial, SFTP stress, network fault injection — see [tests/docker/README.md](../tests/docker/README.md))
+- For quick dev testing, use the simpler Docker targets in `examples/`
+- Pre-generated SSH test keys for all key types are in `tests/fixtures/ssh-keys/`
+- For serial port tests, set up virtual serial ports with `socat` (see `tests/docker/serial-echo/` or `examples/`)
 - For cross-platform tests, run on each target OS
 
 ---
@@ -1465,6 +1467,20 @@ Each section groups related tests by feature area. **Baseline** subsections cove
 - [ ] `./examples/scripts/stop-test-environment.sh` — containers stop cleanly
 - [ ] `./examples/scripts/setup-virtual-serial.sh` — creates `/tmp/termihub-serial-a` and `/tmp/termihub-serial-b`
 - [ ] `TERMIHUB_CONFIG_DIR=/tmp/test-config pnpm tauri dev` — app uses override directory
+
+#### Comprehensive test container fleet (PR #378)
+
+- [ ] `docker compose -f tests/docker/docker-compose.yml config` — compose file parses without errors
+- [ ] `docker compose -f tests/docker/docker-compose.yml build` — all 11 default-profile containers build successfully
+- [ ] `docker compose -f tests/docker/docker-compose.yml up -d` — all containers start and pass health checks
+- [ ] SSH password auth via port 2201 (`testuser`/`testpass`)
+- [ ] SSH key auth via port 2203 with `tests/fixtures/ssh-keys/ed25519`
+- [ ] Jump host chain via port 2204 (bastion) to internal target — `cat ~/marker.txt` returns `JUMPHOST_TARGET_REACHED`
+- [ ] Telnet via port 2301
+- [ ] `docker compose -f tests/docker/docker-compose.yml --profile fault up -d` — network fault proxy starts
+- [ ] `docker exec termihub-network-fault apply-latency 500ms` — fault applied without error
+- [ ] `docker compose -f tests/docker/docker-compose.yml --profile stress up -d` — SFTP stress container starts with pre-generated test data
+- [ ] `docker compose -f tests/docker/docker-compose.yml down` — all containers stop cleanly
 
 ---
 

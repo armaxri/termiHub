@@ -423,13 +423,15 @@ pnpm tauri build
 
 ### Test Environment
 
-The `examples/` directory provides Docker-based test servers:
+**Quick start** — The `examples/` directory provides simple Docker-based test servers:
 
 ```bash
 cd examples
 ./start-test-environment.sh   # Start SSH (port 2222) + Telnet (port 2323) servers
 ./stop-test-environment.sh    # Stop servers
 ```
+
+**Comprehensive testing** — The `tests/docker/` directory provides 13 Docker containers for system testing (SSH variants, telnet, serial, SFTP stress, network fault injection). See [tests/docker/README.md](tests/docker/README.md).
 
 ---
 
