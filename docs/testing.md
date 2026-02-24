@@ -566,8 +566,7 @@ it("should have no accessibility violations", async () => {
 
 - [Manual Testing](manual-testing.md) — Manual test procedures, baseline tests, and PR regression checklist
 - [Performance Profiling Guide](performance.md) — How to profile with DevTools, baseline metrics, memory leak detection
-- [Contributing](contributing.md) — Development workflow and coding standards
-- [Building](building.md) — Build and development setup instructions
+- [Contributing](contributing.md) — Development setup, building, workflow, and coding standards
 
 ## Resources
 
