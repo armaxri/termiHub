@@ -1,0 +1,259 @@
+# termiHub Comprehensive Test Infrastructure
+#
+# Usage:
+#   docker compose up -d                    # Start all containers
+#   docker compose up -d ssh-password       # Start specific container
+#   docker compose --profile fault up -d    # Include fault injection
+#   docker compose --profile stress up -d   # Include stress test containers
+#   docker compose --profile all up -d      # Start everything
+#   docker compose down                     # Stop and remove all
+#
+# Profiles:
+#   (default)  - Core test containers (SSH, telnet, serial)
+#   fault      - Network fault injection proxy
+#   stress     - SFTP stress test container
+#   all        - Everything
+#
+# Networks:
+#   test-net      - Main test network (all containers)
+#   jumphost-net  - Isolated network for jump host testing
+
+services:
+  # ============================================================
+  # SSH Containers
+  # ============================================================
+
+  # Standard SSH with password auth (OpenSSH latest / Ubuntu 24.04)
+  ssh-password:
+    build: ./ssh-password
+    container_name: termihub-ssh-password
+    ports:
+      - "127.0.0.1:2201:22"
+    networks:
+      - test-net
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo | nc -w1 localhost 22"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Legacy SSH (OpenSSH 7.x / Ubuntu 18.04) for compatibility
+  ssh-legacy:
+    build:
+      context: ./ssh-legacy
+      additional_contexts:
+        keys: ../fixtures/ssh-keys
+    container_name: termihub-ssh-legacy
+    ports:
+      - "127.0.0.1:2202:22"
+    networks:
+      - test-net
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo | nc -w1 localhost 22"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # SSH with key-based auth only (all key types)
+  ssh-keys:
+    build:
+      context: ./ssh-keys
+      additional_contexts:
+        keys: ../fixtures/ssh-keys
+    container_name: termihub-ssh-keys
+    ports:
+      - "127.0.0.1:2203:22"
+    networks:
+      - test-net
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo | nc -w1 localhost 22"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Jump host bastion (entry point for 2-hop chain)
+  ssh-jumphost-bastion:
+    build:
+      context: ./ssh-jumphost-bastion
+      additional_contexts:
+        keys: ../fixtures/ssh-keys
+    container_name: termihub-ssh-bastion
+    ports:
+      - "127.0.0.1:2204:22"
+    networks:
+      - test-net
+      - jumphost-net
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo | nc -w1 localhost 22"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Jump host target (only reachable via bastion through jumphost-net)
+  ssh-jumphost-target:
+    build:
+      context: ./ssh-jumphost-target
+      additional_contexts:
+        keys: ../fixtures/ssh-keys
+    container_name: termihub-ssh-target
+    # No host port exposure — only reachable via bastion
+    networks:
+      - jumphost-net
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo | nc -w1 localhost 22"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Restricted shell (rbash) for testing limited environments
+  ssh-restricted:
+    build: ./ssh-restricted
+    container_name: termihub-ssh-restricted
+    ports:
+      - "127.0.0.1:2205:22"
+    networks:
+      - test-net
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo | nc -w1 localhost 22"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # SSH with pre-auth banner and MOTD
+  ssh-banner:
+    build: ./ssh-banner
+    container_name: termihub-ssh-banner
+    ports:
+      - "127.0.0.1:2206:22"
+    networks:
+      - test-net
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo | nc -w1 localhost 22"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # SSH with internal services for tunnel testing
+  ssh-tunnel-target:
+    build:
+      context: ./ssh-tunnel-target
+      additional_contexts:
+        keys: ../fixtures/ssh-keys
+    container_name: termihub-ssh-tunnel
+    ports:
+      - "127.0.0.1:2207:22"
+    networks:
+      - test-net
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo | nc -w1 localhost 22"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # SSH with X11 forwarding support
+  ssh-x11:
+    build:
+      context: ./ssh-x11
+      additional_contexts:
+        keys: ../fixtures/ssh-keys
+    container_name: termihub-ssh-x11
+    ports:
+      - "127.0.0.1:2208:22"
+    networks:
+      - test-net
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo | nc -w1 localhost 22"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ============================================================
+  # Telnet
+  # ============================================================
+
+  telnet-server:
+    build: ./telnet-server
+    container_name: termihub-telnet
+    ports:
+      - "127.0.0.1:2301:23"
+    networks:
+      - test-net
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo | nc -w1 localhost 23"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ============================================================
+  # Serial
+  # ============================================================
+
+  serial-echo:
+    build: ./serial-echo
+    container_name: termihub-serial
+    privileged: true
+    volumes:
+      - serial-ports:/tmp
+    networks:
+      - test-net
+
+  # ============================================================
+  # Network Fault Injection (profile: fault)
+  # ============================================================
+
+  network-fault-proxy:
+    build:
+      context: ./network-fault-proxy
+      additional_contexts:
+        keys: ../fixtures/ssh-keys
+    container_name: termihub-network-fault
+    ports:
+      - "127.0.0.1:2209:22"
+    cap_add:
+      - NET_ADMIN
+    networks:
+      - test-net
+    profiles:
+      - fault
+      - all
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo | nc -w1 localhost 22"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ============================================================
+  # SFTP Stress Testing (profile: stress)
+  # ============================================================
+
+  sftp-stress:
+    build:
+      context: ./sftp-stress
+      additional_contexts:
+        keys: ../fixtures/ssh-keys
+    container_name: termihub-sftp-stress
+    ports:
+      - "127.0.0.1:2210:22"
+    networks:
+      - test-net
+    profiles:
+      - stress
+      - all
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo | nc -w1 localhost 22"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+networks:
+  test-net:
+    name: termihub-test-net
+    driver: bridge
+  jumphost-net:
+    name: termihub-jumphost-net
+    driver: bridge
+    internal: true  # No external access — only bastion bridges to test-net
+
+volumes:
+  serial-ports:
+    name: termihub-serial-ports
