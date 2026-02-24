@@ -46,16 +46,16 @@ graph LR
 **Capability comparison — local vs. agent:**
 
 | Capability                               | Local Desktop | Agent  |
-|------------------------------------------|:-------------:|:------:|
-| Local shells                             | Yes           | Yes    |
-| Serial ports                             | Yes           | Yes    |
-| SSH connections                          | Yes           | Yes    |
-| Docker containers                        | Yes           | Yes    |
-| File browsing (SFTP/local)               | Yes           | Yes    |
-| Prepared connections + folders           | Yes           | Yes    |
-| Session persistence (survive disconnect) | No            | Yes    |
-| Session persistence (survive restart)    | No            | Yes    |
-| Deploy an agent on a target              | Yes           | **No** |
+| ---------------------------------------- | :-----------: | :----: |
+| Local shells                             |      Yes      |  Yes   |
+| Serial ports                             |      Yes      |  Yes   |
+| SSH connections                          |      Yes      |  Yes   |
+| Docker containers                        |      Yes      |  Yes   |
+| File browsing (SFTP/local)               |      Yes      |  Yes   |
+| Prepared connections + folders           |      Yes      |  Yes   |
+| Session persistence (survive disconnect) |      No       |  Yes   |
+| Session persistence (survive restart)    |      No       |  Yes   |
+| Deploy an agent on a target              |      Yes      | **No** |
 
 ---
 
@@ -182,8 +182,8 @@ AGENT: nas-backup (○ offline)             ← not currently reachable
 **Key principles:**
 
 - **Separate sections** for each connection source: local connections, each external file, and each remote agent. They are visually distinct and independently collapsible.
-- **Prepared connections** are always visible in the tree, whether or not they have active sessions. They define *what can be connected to*.
-- **Running sessions** appear as children of their parent prepared connection. They show the running command and uptime. They are the *active instances*.
+- **Prepared connections** are always visible in the tree, whether or not they have active sessions. They define _what can be connected to_.
+- **Running sessions** appear as children of their parent prepared connection. They show the running command and uptime. They are the _active instances_.
 - **Folders** organize prepared connections within each section. The agent supports the same folder hierarchy as the local desktop.
 - **Agent status** is shown in the section header: `online`, `offline`, `deploying`, `updating`.
 - **Offline agents** show only their name and status — no tree content. The agent's prepared connections and sessions are only visible after connecting. There is no local cache of the agent's state.
@@ -380,12 +380,12 @@ stateDiagram-v2
 **State definitions:**
 
 | State        | Desktop | Agent | Daemon | Description                                        |
-|--------------|:-------:|:-----:|:------:|----------------------------------------------------|
-| **Running**  | Yes     | Yes   | Yes    | Normal operation, output streaming to desktop      |
-| **Detached** | No      | Yes   | Yes    | Desktop disconnected, output buffered in ring buf. |
-| **Orphaned** | No      | No    | Yes    | Agent died, session daemon keeps shell alive       |
-| **Closed**   | —       | —     | No     | Session terminated, resources released             |
-| **Dead**     | —       | —     | —      | Host rebooted, all sessions lost                   |
+| ------------ | :-----: | :---: | :----: | -------------------------------------------------- |
+| **Running**  |   Yes   |  Yes  |  Yes   | Normal operation, output streaming to desktop      |
+| **Detached** |   No    |  Yes  |  Yes   | Desktop disconnected, output buffered in ring buf. |
+| **Orphaned** |   No    |  No   |  Yes   | Agent died, session daemon keeps shell alive       |
+| **Closed**   |    —    |   —   |   No   | Session terminated, resources released             |
+| **Dead**     |    —    |   —   |   —    | Host rebooted, all sessions lost                   |
 
 ### Multi-User Isolation
 
@@ -525,12 +525,12 @@ File browsing is handled through **agent-side RPC methods** rather than a separa
 
 The file browsing scope is **connection-scoped**: each prepared connection can have a "Browse Files" action, and the agent resolves which filesystem to browse based on the connection type:
 
-| Connection Type | File Browsing Method                                  |
-|-----------------|-------------------------------------------------------|
-| Local shell     | Agent reads its own local filesystem directly         |
-| SSH to target   | Agent SFTPs to the target and relays results via RPC  |
-| Serial          | Not applicable (no filesystem access)                 |
-| Docker          | Agent execs into the container to list/read files     |
+| Connection Type | File Browsing Method                                 |
+| --------------- | ---------------------------------------------------- |
+| Local shell     | Agent reads its own local filesystem directly        |
+| SSH to target   | Agent SFTPs to the target and relays results via RPC |
+| Serial          | Not applicable (no filesystem access)                |
+| Docker          | Agent execs into the container to list/read files    |
 
 ```mermaid
 graph LR
@@ -561,7 +561,7 @@ graph LR
 
 ### Prepared Connections & Running Sessions Relationship
 
-Prepared connections define *how* to connect. Running sessions are *active instances* created from those settings. This relationship is the same on the local desktop and on the agent.
+Prepared connections define _how_ to connect. Running sessions are _active instances_ created from those settings. This relationship is the same on the local desktop and on the agent.
 
 ```mermaid
 graph TD
@@ -834,21 +834,22 @@ The agent persists critical state to disk so it can recover after restarts:
 
 **Persisted (survives agent restart and host reboot):**
 
-| Data                     | Location                                       | Format |
-|--------------------------|-------------------------------------------------|--------|
-| Prepared connections     | `~/.config/termihub-agent/connections.json`     | JSON   |
-| Folders                  | `~/.config/termihub-agent/connections.json`     | JSON   |
-| Session definitions      | `~/.config/termihub-agent/sessions.json`        | JSON   |
-| Active session metadata  | `~/.config/termihub-agent/state.json`           | JSON   |
+| Data                    | Location                                    | Format |
+| ----------------------- | ------------------------------------------- | ------ |
+| Prepared connections    | `~/.config/termihub-agent/connections.json` | JSON   |
+| Folders                 | `~/.config/termihub-agent/connections.json` | JSON   |
+| Session definitions     | `~/.config/termihub-agent/sessions.json`    | JSON   |
+| Active session metadata | `~/.config/termihub-agent/state.json`       | JSON   |
 
 **Ephemeral (survives agent restart, lost on host reboot):**
 
-| Data                        | Location                                  | Format       |
-|-----------------------------|-------------------------------------------|--------------|
-| Session daemon sockets      | `/tmp/termihub/<user>/session-*.sock`     | Unix sockets |
-| Session daemon PIDs         | Referenced in `state.json`                | —            |
+| Data                   | Location                              | Format       |
+| ---------------------- | ------------------------------------- | ------------ |
+| Session daemon sockets | `/tmp/termihub/<user>/session-*.sock` | Unix sockets |
+| Session daemon PIDs    | Referenced in `state.json`            | —            |
 
 **Prepared connections** (`connections.json`) mirrors the desktop's connection store:
+
 ```json
 {
   "version": "1",
@@ -880,6 +881,7 @@ The agent persists critical state to disk so it can recover after restarts:
 ```
 
 **Active session metadata** (`state.json`) tracks running sessions:
+
 ```json
 {
   "sessions": {
@@ -954,16 +956,16 @@ The current JSON-RPC protocol needs these additions to support the full agent vi
 
 **Agent lifecycle:**
 
-| Method               | Direction | Purpose                                                  |
-|----------------------|-----------|----------------------------------------------------------|
-| `agent.shutdown`     | D→A       | Graceful shutdown (orphan sessions to daemons)           |
-| `agent.update`       | D→A       | Prepare for update (same as shutdown + update intent)    |
-| `session.recover`    | D→A       | Trigger recovery scan for orphaned session daemons       |
+| Method            | Direction | Purpose                                               |
+| ----------------- | --------- | ----------------------------------------------------- |
+| `agent.shutdown`  | D→A       | Graceful shutdown (orphan sessions to daemons)        |
+| `agent.update`    | D→A       | Prepare for update (same as shutdown + update intent) |
+| `session.recover` | D→A       | Trigger recovery scan for orphaned session daemons    |
 
 **Prepared connections & folders (mirroring desktop model):**
 
-| Method                       | Direction | Purpose                                  |
-|------------------------------|-----------|------------------------------------------|
+| Method                       | Direction | Purpose                                   |
+| ---------------------------- | --------- | ----------------------------------------- |
 | `connections.list`           | D→A       | List all prepared connections and folders |
 | `connections.create`         | D→A       | Create a prepared connection on the agent |
 | `connections.update`         | D→A       | Update a prepared connection's config     |
@@ -974,29 +976,29 @@ The current JSON-RPC protocol needs these additions to support the full agent vi
 
 **File browsing (connection-scoped):**
 
-| Method                       | Direction | Purpose                                                  |
-|------------------------------|-----------|----------------------------------------------------------|
-| `files.list`                 | D→A       | List directory contents (scoped to a connection)         |
-| `files.read`                 | D→A       | Read file content                                        |
-| `files.write`                | D→A       | Write file content                                       |
-| `files.delete`               | D→A       | Delete a file or directory                               |
-| `files.rename`               | D→A       | Rename/move a file or directory                          |
-| `files.stat`                 | D→A       | Get file metadata (size, permissions, modified time)     |
+| Method         | Direction | Purpose                                              |
+| -------------- | --------- | ---------------------------------------------------- |
+| `files.list`   | D→A       | List directory contents (scoped to a connection)     |
+| `files.read`   | D→A       | Read file content                                    |
+| `files.write`  | D→A       | Write file content                                   |
+| `files.delete` | D→A       | Delete a file or directory                           |
+| `files.rename` | D→A       | Rename/move a file or directory                      |
+| `files.stat`   | D→A       | Get file metadata (size, permissions, modified time) |
 
 **Monitoring:**
 
-| Method                    | Direction | Purpose                                      |
-|---------------------------|-----------|----------------------------------------------|
-| `monitoring.subscribe`    | D→A       | Start receiving monitoring data for a host   |
-| `monitoring.unsubscribe`  | D→A       | Stop monitoring data stream                  |
+| Method                   | Direction | Purpose                                    |
+| ------------------------ | --------- | ------------------------------------------ |
+| `monitoring.subscribe`   | D→A       | Start receiving monitoring data for a host |
+| `monitoring.unsubscribe` | D→A       | Stop monitoring data stream                |
 
 **New notification types:**
 
-| Notification           | When                | Data                               |
-|------------------------|---------------------|------------------------------------|
-| `monitoring.data`      | Periodic            | CPU, memory, disk, network stats   |
-| `session.recovered`    | After agent restart | List of recovered session IDs      |
-| `agent.shutting_down`  | Before shutdown     | Reason, estimated recovery time    |
+| Notification          | When                | Data                             |
+| --------------------- | ------------------- | -------------------------------- |
+| `monitoring.data`     | Periodic            | CPU, memory, disk, network stats |
+| `session.recovered`   | After agent restart | List of recovered session IDs    |
+| `agent.shutting_down` | Before shutdown     | Reason, estimated recovery time  |
 
 ### Desktop-Side Changes
 
@@ -1032,10 +1034,10 @@ The Tauri desktop app needs modifications to support the full agent experience:
 
 > Resolved during concept design.
 
-| # | Question | Decision |
-| - | -------- | -------- |
-| 1 | Ring buffer size | Configurable per session (default 1 MiB). Stored in prepared connection settings. |
-| 2 | Windows agent support | Not in initial implementation. Noted for future — would require named pipes and ConPTY instead of Unix sockets and PTYs. |
-| 3 | Docker session persistence | Agent manages container lifecycle: create, reattach, and stop. Containers run until explicitly stopped. |
-| 4 | External connection sources on agents | Desktop-only feature. Agents only have locally created prepared connections. |
-| 5 | Terminal resize on reconnect | Standard resize — PTY is resized to new client dimensions. Programs handle `SIGWINCH` as usual. |
+| #   | Question                              | Decision                                                                                                                 |
+| --- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| 1   | Ring buffer size                      | Configurable per session (default 1 MiB). Stored in prepared connection settings.                                        |
+| 2   | Windows agent support                 | Not in initial implementation. Noted for future — would require named pipes and ConPTY instead of Unix sockets and PTYs. |
+| 3   | Docker session persistence            | Agent manages container lifecycle: create, reattach, and stop. Containers run until explicitly stopped.                  |
+| 4   | External connection sources on agents | Desktop-only feature. Agents only have locally created prepared connections.                                             |
+| 5   | Terminal resize on reconnect          | Standard resize — PTY is resized to new client dimensions. Programs handle `SIGWINCH` as usual.                          |

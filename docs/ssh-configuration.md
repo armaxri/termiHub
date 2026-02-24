@@ -17,6 +17,7 @@ When **Auth Method** is set to **Password**, termiHub prompts for the password e
 When **Auth Method** is set to **SSH Key**, you provide a path to your private key file. This is the recommended method for frequent connections.
 
 **Settings:**
+
 - **Key Path** — Absolute path to your private key file (e.g., `~/.ssh/id_rsa`). The `~` prefix is expanded to your home directory.
 
 ---
@@ -32,10 +33,12 @@ ssh-keygen -t ed25519 -C "your_email@example.com"
 ```
 
 When prompted:
+
 - **File location**: Press Enter to accept the default (`~/.ssh/id_ed25519`), or specify a custom path
 - **Passphrase**: Enter a passphrase for extra security, or press Enter for no passphrase
 
 This creates two files:
+
 - `~/.ssh/id_ed25519` — Your private key (keep this secret)
 - `~/.ssh/id_ed25519.pub` — Your public key (install on servers)
 
@@ -126,6 +129,7 @@ chmod 644 ~/.ssh/id_ed25519.pub
    ```
 
 **Key location**: Keys are typically stored in `C:\Users\<username>\.ssh\`. In termiHub, you can use either:
+
 - `~/.ssh/id_ed25519` (the `~` prefix works)
 - `C:\Users\<username>\.ssh\id_ed25519`
 
@@ -220,6 +224,7 @@ When you click on an SSH terminal tab, the file browser in the sidebar automatic
 ### File Information
 
 The file browser shows:
+
 - File name
 - File size (formatted as B, KB, MB)
 - File permissions in Unix `rwx` notation
@@ -230,14 +235,14 @@ See the [User Guide](user-guide.md#file-browser) for more details on the file br
 
 ## Connection Settings Reference
 
-| Field | Description | Default |
-|-------|-------------|---------|
-| Host | Server hostname or IP address | — |
-| Port | SSH port | 22 |
-| Username | Remote username | — |
-| Auth Method | `password` or `key` | password |
-| Key Path | Path to private key (when using key auth) | — |
-| Enable X11 Forwarding | Forward remote GUI apps to local display | Off |
+| Field                 | Description                               | Default  |
+| --------------------- | ----------------------------------------- | -------- |
+| Host                  | Server hostname or IP address             | —        |
+| Port                  | SSH port                                  | 22       |
+| Username              | Remote username                           | —        |
+| Auth Method           | `password` or `key`                       | password |
+| Key Path              | Path to private key (when using key auth) | —        |
+| Enable X11 Forwarding | Forward remote GUI apps to local display  | Off      |
 
 ### Environment Variable Placeholders
 

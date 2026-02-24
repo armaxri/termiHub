@@ -16,6 +16,11 @@ echo "=== Frontend: Prettier ==="
 pnpm exec prettier --write "src/**/*.{ts,tsx,css}"
 
 echo ""
+echo "=== Markdown: Prettier + markdownlint ==="
+pnpm exec prettier --write "docs/**/*.md" "*.md"
+pnpm exec markdownlint-cli2 --fix "docs/**/*.md" "*.md"
+
+echo ""
 echo "=== Rust workspace: cargo fmt ==="
 cargo fmt --all
 

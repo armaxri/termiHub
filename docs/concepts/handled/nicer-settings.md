@@ -64,12 +64,12 @@ The settings tab replaces the current flat `SettingsPanel` with a two-panel layo
 
 A narrow left panel (~180 px) listing all setting categories as clickable items:
 
-| Category | Icon | Description |
-|---|---|---|
-| **General** | `Settings2` | Default user, default SSH key, default shell |
-| **Appearance** | `Palette` | Theme, font family, font size |
-| **Terminal** | `TerminalSquare` | Default terminal behavior (scrolling, scrollback buffer) |
-| **External Files** | `FileJson` | External connection file management (current SettingsPanel content) |
+| Category           | Icon             | Description                                                         |
+| ------------------ | ---------------- | ------------------------------------------------------------------- |
+| **General**        | `Settings2`      | Default user, default SSH key, default shell                        |
+| **Appearance**     | `Palette`        | Theme, font family, font size                                       |
+| **Terminal**       | `TerminalSquare` | Default terminal behavior (scrolling, scrollback buffer)            |
+| **External Files** | `FileJson`       | External connection file management (current SettingsPanel content) |
 
 - The active category is highlighted with the accent color left-border indicator (similar to VS Code's activity bar active indicator)
 - Clicking a category instantly switches the right panel content (no page transition)
@@ -81,28 +81,28 @@ The right panel shows the settings for the currently selected category. Each cat
 
 #### General
 
-| Setting | Control | Default | Description |
-|---|---|---|---|
-| Default User | Text input | *(empty)* | Pre-filled as username when creating new SSH/Telnet connections |
-| Default SSH Key | File path + Browse button | *(empty)* | Pre-filled as key path when creating new SSH connections with key auth |
-| Default Shell | Dropdown (auto-detected shells) | System default | Shell used for new local terminal tabs |
+| Setting         | Control                         | Default        | Description                                                            |
+| --------------- | ------------------------------- | -------------- | ---------------------------------------------------------------------- |
+| Default User    | Text input                      | _(empty)_      | Pre-filled as username when creating new SSH/Telnet connections        |
+| Default SSH Key | File path + Browse button       | _(empty)_      | Pre-filled as key path when creating new SSH connections with key auth |
+| Default Shell   | Dropdown (auto-detected shells) | System default | Shell used for new local terminal tabs                                 |
 
 #### Appearance
 
-| Setting | Control | Default | Description |
-|---|---|---|---|
-| Theme | Dropdown: Dark / Light / System | Dark | Application color theme |
-| Font Family | Text input | `monospace` | Terminal font family |
-| Font Size | Number input (8–32) | 14 | Terminal font size in pixels |
+| Setting     | Control                         | Default     | Description                  |
+| ----------- | ------------------------------- | ----------- | ---------------------------- |
+| Theme       | Dropdown: Dark / Light / System | Dark        | Application color theme      |
+| Font Family | Text input                      | `monospace` | Terminal font family         |
+| Font Size   | Number input (8–32)             | 14          | Terminal font size in pixels |
 
 #### Terminal
 
-| Setting | Control | Default | Description |
-|---|---|---|---|
-| Default Horizontal Scrolling | Toggle | Off | Default for new terminals (can be overridden per-connection) |
-| Scrollback Buffer | Number input (100–100000) | 5000 | Lines of terminal scrollback history |
-| Cursor Style | Dropdown: Block / Underline / Bar | Block | Terminal cursor appearance |
-| Cursor Blink | Toggle | On | Whether the cursor blinks |
+| Setting                      | Control                           | Default | Description                                                  |
+| ---------------------------- | --------------------------------- | ------- | ------------------------------------------------------------ |
+| Default Horizontal Scrolling | Toggle                            | Off     | Default for new terminals (can be overridden per-connection) |
+| Scrollback Buffer            | Number input (100–100000)         | 5000    | Lines of terminal scrollback history                         |
+| Cursor Style                 | Dropdown: Block / Underline / Bar | Block   | Terminal cursor appearance                                   |
+| Cursor Blink                 | Toggle                            | On      | Whether the cursor blinks                                    |
 
 #### External Files
 
@@ -388,13 +388,13 @@ Transform the current single-section panel into the two-panel layout:
 
 ### 3. New Components
 
-| Component | Location | Purpose |
-|---|---|---|
-| `SettingsNav` | `src/components/Settings/SettingsNav.tsx` | Category sidebar with icons and active indicator |
-| `SettingsSearch` | `src/components/Settings/SettingsSearch.tsx` | Search bar with filtering logic |
-| `GeneralSettings` | `src/components/Settings/GeneralSettings.tsx` | Default user, SSH key, shell settings |
-| `AppearanceSettings` | `src/components/Settings/AppearanceSettings.tsx` | Theme, font family, font size |
-| `TerminalSettings` | `src/components/Settings/TerminalSettings.tsx` | Scrolling, scrollback, cursor settings |
+| Component            | Location                                         | Purpose                                          |
+| -------------------- | ------------------------------------------------ | ------------------------------------------------ |
+| `SettingsNav`        | `src/components/Settings/SettingsNav.tsx`        | Category sidebar with icons and active indicator |
+| `SettingsSearch`     | `src/components/Settings/SettingsSearch.tsx`     | Search bar with filtering logic                  |
+| `GeneralSettings`    | `src/components/Settings/GeneralSettings.tsx`    | Default user, SSH key, shell settings            |
+| `AppearanceSettings` | `src/components/Settings/AppearanceSettings.tsx` | Theme, font family, font size                    |
+| `TerminalSettings`   | `src/components/Settings/TerminalSettings.tsx`   | Scrolling, scrollback, cursor settings           |
 
 Each settings component follows the existing pattern: receives settings via props, calls `onChange` for updates.
 

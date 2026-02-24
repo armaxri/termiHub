@@ -25,6 +25,7 @@ Update the version number in all four locations:
 4. **`agent/Cargo.toml`** — `version = "X.Y.Z"`
 
 Use [Semantic Versioning](https://semver.org/):
+
 - **MAJOR** (X): Breaking changes
 - **MINOR** (Y): New features, backwards-compatible
 - **PATCH** (Z): Bug fixes, backwards-compatible
@@ -39,9 +40,11 @@ Move the `[Unreleased]` section to a versioned section:
 ## [X.Y.Z] - YYYY-MM-DD
 
 ### Added
+
 - ...
 
 ### Fixed
+
 - ...
 ```
 

@@ -56,8 +56,8 @@ See [`wdio.conf.js`](../wdio.conf.js) in the project root.
 
 ```javascript
 // tests/e2e/terminal-creation.test.js
-describe('Terminal Creation Flow', () => {
-  it('should create a new local bash terminal', async () => {
+describe("Terminal Creation Flow", () => {
+  it("should create a new local bash terminal", async () => {
     // Open sidebar
     await browser.$('[data-testid="activity-bar-connections"]').click();
 
@@ -72,7 +72,7 @@ describe('Terminal Creation Flow', () => {
 
     // Enter connection name
     const nameInput = await browser.$('[data-testid="connection-name-input"]');
-    await nameInput.setValue('Test Bash Terminal');
+    await nameInput.setValue("Test Bash Terminal");
 
     // Save connection
     await browser.$('[data-testid="save-connection-btn"]').click();
@@ -93,21 +93,21 @@ describe('Terminal Creation Flow', () => {
     await expect(terminal).toExist();
   });
 
-  it('should create SSH connection with X11 forwarding', async () => {
+  it("should create SSH connection with X11 forwarding", async () => {
     // Similar flow for SSH
     await browser.$('[data-testid="connection-type-ssh"]').click();
 
     // Fill SSH details
-    await browser.$('[data-testid="ssh-host"]').setValue('192.168.1.100');
-    await browser.$('[data-testid="ssh-port"]').setValue('22');
-    await browser.$('[data-testid="ssh-username"]').setValue('testuser');
+    await browser.$('[data-testid="ssh-host"]').setValue("192.168.1.100");
+    await browser.$('[data-testid="ssh-port"]').setValue("22");
+    await browser.$('[data-testid="ssh-username"]').setValue("testuser");
 
     // Enable X11
     await browser.$('[data-testid="ssh-enable-x11"]').click();
 
     // Verify X11 status indicator
     const x11Status = await browser.$('[data-testid="x11-status"]');
-    await expect(x11Status).toHaveText('X Server Running');
+    await expect(x11Status).toHaveText("X Server Running");
   });
 });
 ```
@@ -311,16 +311,16 @@ npm install --save-dev @playwright/test
 
 ```javascript
 // tests/visual/terminal.spec.js
-import { test, expect } from '@playwright/test';
+import { test, expect } from "@playwright/test";
 
-test('terminal UI should match baseline', async ({ page }) => {
-  await page.goto('http://localhost:1420');
+test("terminal UI should match baseline", async ({ page }) => {
+  await page.goto("http://localhost:1420");
 
   // Wait for app to load
   await page.waitForSelector('[data-testid="terminal-view"]');
 
   // Take screenshot and compare
-  await expect(page).toHaveScreenshot('terminal-view.png', {
+  await expect(page).toHaveScreenshot("terminal-view.png", {
     maxDiffPixels: 100, // Allow small differences
   });
 });
@@ -406,6 +406,7 @@ jobs:
 ## Coverage Goals
 
 Target coverage levels:
+
 - **Rust Backend**: >80% line coverage
 - **React Components**: >70% coverage
 - **E2E Critical Paths**: 100% (all main user flows)
@@ -430,16 +431,16 @@ Target coverage levels:
 
 ```javascript
 // Good
-it('should create local bash terminal when user clicks new connection')
+it("should create local bash terminal when user clicks new connection");
 
 // Bad
-it('test1')
+it("test1");
 ```
 
 ### 3. AAA Pattern (Arrange, Act, Assert)
 
 ```javascript
-it('should send terminal input to backend', async () => {
+it("should send terminal input to backend", async () => {
   // Arrange
   const terminal = render(<Terminal sessionId="123" />);
   const input = "echo test";
@@ -462,13 +463,13 @@ it('should send terminal input to backend', async () => {
 
 ```typescript
 // Mock Tauri APIs
-vi.mock('@tauri-apps/api/tauri', () => ({
+vi.mock("@tauri-apps/api/tauri", () => ({
   invoke: vi.fn(),
 }));
 
 // Mock file system
-vi.mock('@tauri-apps/api/fs', () => ({
-  readTextFile: vi.fn().mockResolvedValue('mock content'),
+vi.mock("@tauri-apps/api/fs", () => ({
+  readTextFile: vi.fn().mockResolvedValue("mock content"),
 }));
 ```
 
@@ -510,6 +511,7 @@ pnpm test:ui
 ```
 
 Opens interactive test runner in browser with:
+
 - Live test results
 - Component inspection
 - Coverage visualization
@@ -517,6 +519,7 @@ Opens interactive test runner in browser with:
 ### VS Code Integration
 
 Install the recommended VS Code extensions (already configured in `.vscode/extensions.json`):
+
 - **Vitest**: Run and debug tests from the editor with inline results
 - **Test Explorer UI**: Visual test tree in the sidebar
 
@@ -530,6 +533,7 @@ pnpm test:e2e:perf
 ```
 
 The suite (`tests/e2e/performance.test.js`) covers:
+
 - **PERF-01**: Create 40 terminals via toolbar, verify tab count
 - **PERF-02**: UI responsiveness with 40 terminals open (41st creation <5s)
 - **PERF-03**: JS heap memory stays under 500 MB
@@ -540,10 +544,10 @@ For detailed profiling instructions, baseline metrics, and memory leak detection
 ## Accessibility Testing
 
 ```javascript
-import { axe, toHaveNoViolations } from 'jest-axe';
+import { axe, toHaveNoViolations } from "jest-axe";
 expect.extend(toHaveNoViolations);
 
-it('should have no accessibility violations', async () => {
+it("should have no accessibility violations", async () => {
   const { container } = render(<Terminal />);
   const results = await axe(container);
   expect(results).toHaveNoViolations();

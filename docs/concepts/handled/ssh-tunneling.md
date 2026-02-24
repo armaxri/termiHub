@@ -82,6 +82,7 @@ When the "Tunnels" activity bar item is active, the sidebar shows the tunnel man
 ```
 
 Each tunnel entry shows:
+
 - **Name**: User-assigned label
 - **Status indicator**: `●` active (green), `○` stopped (gray), `◐` connecting (yellow), `✕` failed (red)
 - **Type abbreviation + port mapping**: `L` (local), `R` (remote), `D` (dynamic), followed by the port summary
@@ -973,7 +974,7 @@ export type TabContentType =
   | "editor"
   | "connection-editor"
   | "log-viewer"
-  | "tunnel-editor";    // NEW
+  | "tunnel-editor"; // NEW
 ```
 
 ### 6. Visual Diagram Component
@@ -1001,6 +1002,7 @@ flowchart TD
 ```
 
 The diagram layout depends on tunnel type:
+
 - **Local**: `[Your PC] → [SSH Server] → [Target]`
 - **Remote**: `[Target] ← [SSH Server] ← [Your PC]`
 - **Dynamic**: `[Your PC] → [SSH Server] → [Internet]`
@@ -1101,14 +1103,14 @@ PRs 2-3 (frontend) and PR 4 (backend) can proceed in parallel after PR 1. PRs 5-
 
 ### 10. Design Decision Summary
 
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| Storage location | Separate `tunnels.json` | Keeps tunnel config decoupled from connection config; easier to manage independently |
-| SSH session management | Shared session pool | Avoids redundant SSH connections; multiple tunnels through same server share one session |
-| Forwarding implementation | `ssh2` crate with blocking threads | Matches existing SSH backend pattern; `ssh2` is synchronous, so threading is required |
-| SOCKS5 for dynamic | Custom minimal implementation | Only SOCKS5 CONNECT needed; avoids external dependency for simple protocol |
-| Tunnel type tagging | `#[serde(tag = "type", content = "config")]` | Matches existing `ConnectionConfig` serialization pattern |
-| Sidebar panel vs tab | Sidebar panel for list, tab for editor | Consistent with connections pattern (sidebar = list, tab = editor) |
-| Visual diagram | Pure CSS boxes + arrows | No extra dependency; simple layout that renders reliably across platforms |
-| Auto-start | Per-tunnel toggle | Not all tunnels should auto-start; user controls which ones do |
-| Reconnection | Exponential backoff with cap | Standard resilience pattern; 30s cap prevents excessive waiting |
+| Decision                  | Choice                                       | Rationale                                                                                |
+| ------------------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Storage location          | Separate `tunnels.json`                      | Keeps tunnel config decoupled from connection config; easier to manage independently     |
+| SSH session management    | Shared session pool                          | Avoids redundant SSH connections; multiple tunnels through same server share one session |
+| Forwarding implementation | `ssh2` crate with blocking threads           | Matches existing SSH backend pattern; `ssh2` is synchronous, so threading is required    |
+| SOCKS5 for dynamic        | Custom minimal implementation                | Only SOCKS5 CONNECT needed; avoids external dependency for simple protocol               |
+| Tunnel type tagging       | `#[serde(tag = "type", content = "config")]` | Matches existing `ConnectionConfig` serialization pattern                                |
+| Sidebar panel vs tab      | Sidebar panel for list, tab for editor       | Consistent with connections pattern (sidebar = list, tab = editor)                       |
+| Visual diagram            | Pure CSS boxes + arrows                      | No extra dependency; simple layout that renders reliably across platforms                |
+| Auto-start                | Per-tunnel toggle                            | Not all tunnels should auto-start; user controls which ones do                           |
+| Reconnection              | Exponential backoff with cap                 | Standard resilience pattern; 30s cap prevents excessive waiting                          |

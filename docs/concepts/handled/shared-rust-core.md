@@ -11,7 +11,7 @@ termiHub currently maintains two independent Rust crates:
 - **`src-tauri/`** (package `termihub`, 13,622 LOC) — the Tauri desktop backend
 - **`agent/`** (package `termihub-agent`, 11,032 LOC) — the remote agent
 
-Both crates do **fundamentally the same thing**: manage terminal sessions (shell, serial, Docker, SSH), browse files, and monitor systems. The only difference is *where they run* and *how they deliver output*:
+Both crates do **fundamentally the same thing**: manage terminal sessions (shell, serial, Docker, SSH), browse files, and monitor systems. The only difference is _where they run_ and _how they deliver output_:
 
 - Desktop: runs locally, delivers output via Tauri events
 - Agent: runs remotely, delivers output via JSON-RPC notifications over SSH
@@ -55,39 +55,39 @@ Surface-level duplications: serial config match blocks, Docker arg vectors, `Fil
 
 The entire session management layer is duplicated at the **architectural level**. Both sides follow the same pattern for every connection type:
 
-| Connection Type | Desktop Implementation | Agent Implementation | What's Actually Different |
-| --------------- | ---------------------- | --------------------- | ------------------------- |
-| **Shell** | `LocalShell::new()` → portable-pty → reader thread → mpsc channel | `ShellBackend::new()` → daemon → nix openpty → poll loop → Unix socket | Only the PTY provider and transport |
-| **Docker** | `DockerShell::new()` → build args → portable-pty → reader thread | `DockerBackend::new()` → build args → `docker run -d` → daemon → `docker exec` | Only the container lifecycle strategy and transport |
-| **SSH** | `SshConnection::new()` → ssh2 channel → blocking mode juggling → reader thread | `SshBackend::new()` → build `ssh -tt` args → daemon → PTY | Only the SSH implementation strategy and transport |
-| **Serial** | `SerialConnection::new()` → parse config → open port → reader thread | `SerialBackend::new()` → parse config → open port → reader thread + ring buffer | Nearly identical; agent adds ring buffer |
-| **File listing** | `list_dir()` → iterate entries → skip `.`/`..` → build `FileEntry` | `list_dir_sync()` → iterate entries → skip `.`/`..` → build `FileEntry` | Only error types |
-| **Monitoring** | `parse_stats()` → `CpuCounters` → delta calculation | `parse_stats()` → `CpuCounters` → delta calculation | Explicitly documented copy |
+| Connection Type  | Desktop Implementation                                                         | Agent Implementation                                                            | What's Actually Different                           |
+| ---------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- | --------------------------------------------------- |
+| **Shell**        | `LocalShell::new()` → portable-pty → reader thread → mpsc channel              | `ShellBackend::new()` → daemon → nix openpty → poll loop → Unix socket          | Only the PTY provider and transport                 |
+| **Docker**       | `DockerShell::new()` → build args → portable-pty → reader thread               | `DockerBackend::new()` → build args → `docker run -d` → daemon → `docker exec`  | Only the container lifecycle strategy and transport |
+| **SSH**          | `SshConnection::new()` → ssh2 channel → blocking mode juggling → reader thread | `SshBackend::new()` → build `ssh -tt` args → daemon → PTY                       | Only the SSH implementation strategy and transport  |
+| **Serial**       | `SerialConnection::new()` → parse config → open port → reader thread           | `SerialBackend::new()` → parse config → open port → reader thread + ring buffer | Nearly identical; agent adds ring buffer            |
+| **File listing** | `list_dir()` → iterate entries → skip `.`/`..` → build `FileEntry`             | `list_dir_sync()` → iterate entries → skip `.`/`..` → build `FileEntry`         | Only error types                                    |
+| **Monitoring**   | `parse_stats()` → `CpuCounters` → delta calculation                            | `parse_stats()` → `CpuCounters` → delta calculation                             | Explicitly documented copy                          |
 
-The *logic* is the same. The *transport* differs. The current architecture forces implementing and maintaining the logic twice because it's entangled with transport concerns.
+The _logic_ is the same. The _transport_ differs. The current architecture forces implementing and maintaining the logic twice because it's entangled with transport concerns.
 
 #### Concrete Bug Fix Examples
 
 Desktop-only edge cases that the agent doesn't have:
 
-| Edge Case | Desktop Code | Agent Status |
-| --------- | ------------ | ------------ |
-| OSC7 working directory tracking injection | `manager.rs:78-95` — injects OSC7 setup for WSL/SSH shells | Missing — agent shells don't get CWD tracking |
-| Screen-clear detection for clean startup | `manager.rs:293-330` — waits for ANSI `ESC[2J ESC[H` before emitting | Missing — agent may flash startup noise |
-| Initial command delay (200ms) | `manager.rs:188-200` — separate thread sleeps then sends | Missing — agent doesn't delay initial commands |
-| SSH blocking mode coordination | `ssh.rs:132-156` — toggles blocking for write/resize to prevent reader deadlock | Not applicable (agent uses daemon) but shows the kind of workaround that accumulates |
-| Serial timeout handling | `serial.rs:76` — explicitly catches `TimedOut` and continues | `serial/backend.rs:248` — also handles `TimedOut` but with different error handling path |
-| Output coalescing (32 KB batching) | `manager.rs:335-340` — coalesces pending chunks into single event | Agent has 65 KB chunking, different logic — neither benefits from improvements to the other |
+| Edge Case                                 | Desktop Code                                                                    | Agent Status                                                                                |
+| ----------------------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| OSC7 working directory tracking injection | `manager.rs:78-95` — injects OSC7 setup for WSL/SSH shells                      | Missing — agent shells don't get CWD tracking                                               |
+| Screen-clear detection for clean startup  | `manager.rs:293-330` — waits for ANSI `ESC[2J ESC[H` before emitting            | Missing — agent may flash startup noise                                                     |
+| Initial command delay (200ms)             | `manager.rs:188-200` — separate thread sleeps then sends                        | Missing — agent doesn't delay initial commands                                              |
+| SSH blocking mode coordination            | `ssh.rs:132-156` — toggles blocking for write/resize to prevent reader deadlock | Not applicable (agent uses daemon) but shows the kind of workaround that accumulates        |
+| Serial timeout handling                   | `serial.rs:76` — explicitly catches `TimedOut` and continues                    | `serial/backend.rs:248` — also handles `TimedOut` but with different error handling path    |
+| Output coalescing (32 KB batching)        | `manager.rs:335-340` — coalesces pending chunks into single event               | Agent has 65 KB chunking, different logic — neither benefits from improvements to the other |
 
 Agent-only features that the desktop doesn't benefit from:
 
-| Feature | Agent Code | Desktop Status |
-| ------- | ---------- | -------------- |
-| Ring buffer (1 MiB) for output replay | `buffer/ring_buffer.rs` — circular buffer for serial + daemon | Missing — desktop serial has no replay capability |
-| Session persistence across restarts | `session/manager.rs:451-647` — state.json + daemon socket recovery | Missing — desktop loses all sessions on restart |
-| Attach/detach semantics | `daemon/client.rs` — disconnect without killing, reconnect with replay | Missing — desktop close = kill |
-| Serial auto-reconnect | `serial/backend.rs:313-346` — retries every 3s when device disconnects | Missing — desktop serial just dies on disconnect |
-| Docker container persistence | `docker/backend.rs:71-87` — `docker run -d` keeps container alive | Missing — desktop uses `docker run -it --rm` which dies on close |
+| Feature                               | Agent Code                                                             | Desktop Status                                                   |
+| ------------------------------------- | ---------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Ring buffer (1 MiB) for output replay | `buffer/ring_buffer.rs` — circular buffer for serial + daemon          | Missing — desktop serial has no replay capability                |
+| Session persistence across restarts   | `session/manager.rs:451-647` — state.json + daemon socket recovery     | Missing — desktop loses all sessions on restart                  |
+| Attach/detach semantics               | `daemon/client.rs` — disconnect without killing, reconnect with replay | Missing — desktop close = kill                                   |
+| Serial auto-reconnect                 | `serial/backend.rs:313-346` — retries every 3s when device disconnects | Missing — desktop serial just dies on disconnect                 |
+| Docker container persistence          | `docker/backend.rs:71-87` — `docker run -d` keeps container alive      | Missing — desktop uses `docker run -it --rm` which dies on close |
 
 ### Vision
 
@@ -1174,33 +1174,33 @@ The core crate depends primarily on `serde`, `serde_json`, `thiserror`, and `asy
 
 **Lines moved to core (backend engine):**
 
-| Module | Estimated LOC | Source |
-| ------ | ------------- | ------ |
-| `config/` — all config types + expansion | ~300 | Both crates' config definitions |
-| `session/shell.rs` — command building, OSC7, startup | ~150 | `local_shell.rs` + `shell/backend.rs` |
-| `session/docker.rs` — arg building, validation, container lifecycle | ~200 | `docker_shell.rs` + `docker/backend.rs` |
-| `session/serial.rs` — config parsing, reader loop, reconnect | ~250 | `serial.rs` + `serial/backend.rs` |
-| `session/ssh.rs` — arg building, validation | ~100 | `ssh.rs` + `ssh/backend.rs` |
-| `buffer/` — ring buffer | ~170 | `agent/src/buffer/ring_buffer.rs` |
-| `output/` — coalescer, screen-clear detection | ~100 | `manager.rs` output reader logic |
-| `files/` — trait, local backend, utils | ~300 | Both crates' `files/` modules |
-| `monitoring/` — types, parser, collector trait | ~400 | Both crates' `monitoring/` modules |
-| `protocol/` — JSON-RPC types, error codes | ~150 | Both crates' protocol definitions |
-| `errors.rs` — core error types | ~80 | New (replaces duplicated error enums) |
-| **Total core** | **~2,200** | |
+| Module                                                              | Estimated LOC | Source                                  |
+| ------------------------------------------------------------------- | ------------- | --------------------------------------- |
+| `config/` — all config types + expansion                            | ~300          | Both crates' config definitions         |
+| `session/shell.rs` — command building, OSC7, startup                | ~150          | `local_shell.rs` + `shell/backend.rs`   |
+| `session/docker.rs` — arg building, validation, container lifecycle | ~200          | `docker_shell.rs` + `docker/backend.rs` |
+| `session/serial.rs` — config parsing, reader loop, reconnect        | ~250          | `serial.rs` + `serial/backend.rs`       |
+| `session/ssh.rs` — arg building, validation                         | ~100          | `ssh.rs` + `ssh/backend.rs`             |
+| `buffer/` — ring buffer                                             | ~170          | `agent/src/buffer/ring_buffer.rs`       |
+| `output/` — coalescer, screen-clear detection                       | ~100          | `manager.rs` output reader logic        |
+| `files/` — trait, local backend, utils                              | ~300          | Both crates' `files/` modules           |
+| `monitoring/` — types, parser, collector trait                      | ~400          | Both crates' `monitoring/` modules      |
+| `protocol/` — JSON-RPC types, error codes                           | ~150          | Both crates' protocol definitions       |
+| `errors.rs` — core error types                                      | ~80           | New (replaces duplicated error enums)   |
+| **Total core**                                                      | **~2,200**    |                                         |
 
 **Lines removed from desktop + agent (duplication eliminated):**
 
-| Category | Estimated Removed |
-| -------- | ----------------- |
-| Config types (both crates) | ~300 |
-| Session logic (command building, validation) | ~500 |
-| Serial config parsing + reader loop (both crates) | ~300 |
-| File listing + utils (both crates) | ~250 |
-| Monitoring types + parsing (both crates) | ~600 |
-| Protocol types (both crates) | ~200 |
-| Duplicated tests | ~400 |
-| **Total removed** | **~2,550** |
+| Category                                          | Estimated Removed |
+| ------------------------------------------------- | ----------------- |
+| Config types (both crates)                        | ~300              |
+| Session logic (command building, validation)      | ~500              |
+| Serial config parsing + reader loop (both crates) | ~300              |
+| File listing + utils (both crates)                | ~250              |
+| Monitoring types + parsing (both crates)          | ~600              |
+| Protocol types (both crates)                      | ~200              |
+| Duplicated tests                                  | ~400              |
+| **Total removed**                                 | **~2,550**        |
 
 **Net change:**
 
@@ -1218,12 +1218,14 @@ The core crate depends primarily on `serde`, `serde_json`, `thiserror`, and `asy
 - **The desktop can adopt agent features** (ring buffer, serial reconnect) when desired
 
 **Build time impact:**
+
 - Workspace builds compile shared dependencies once (serde, serde_json compiled once instead of twice)
 - Core crate is moderate size (~2,200 LOC) and compiles fast (no async runtime, no framework)
 - Incremental builds benefit: changes in desktop don't trigger agent rebuilds and vice versa
 - Changes in core trigger rebuilds of both consumers — this is correct and desired
 
 **CI impact:**
+
 - `cargo test --workspace` replaces three separate test commands
 - `cargo clippy --workspace` replaces three separate clippy runs
 - `cargo fmt --all -- --check` already works with workspaces
@@ -1232,16 +1234,16 @@ The core crate depends primarily on `serde`, `serde_json`, `thiserror`, and `asy
 
 ### Risks and Mitigations
 
-| Risk | Mitigation |
-|------|-----------|
-| Large migration scope — more files touched than utility extraction | Phased approach (4 phases), each results in a working system. Ship incrementally. |
-| Trait-based abstraction adds indirection | Traits are simple (OutputSink: 3 methods, ProcessSpawner: 2 methods). No dynamic dispatch in hot paths — generics monomorphize at compile time. |
-| Core changes affect both consumers | This is the feature, not a bug. CI catches breakage in both. |
-| Desktop sync model vs agent async model | Core is sync-first. Agent wraps with `spawn_blocking` where needed (already does this). |
-| Config serde differences (camelCase vs snake_case) | Core uses snake_case. Each consumer applies serde rename at protocol boundary (thin layer). |
-| `serialport` dependency in core | Feature flag: `serial = ["dep:serialport"]`, same approach as before. |
-| Migration temporarily breaks things | Each phase is independently shippable. Phase 1 (config + protocol) is zero-risk. Later phases can be rolled back independently. |
-| Risk of over-abstraction | Core traits model what already exists in both crates. No speculative abstractions — only patterns already proven in production. |
+| Risk                                                               | Mitigation                                                                                                                                      |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Large migration scope — more files touched than utility extraction | Phased approach (4 phases), each results in a working system. Ship incrementally.                                                               |
+| Trait-based abstraction adds indirection                           | Traits are simple (OutputSink: 3 methods, ProcessSpawner: 2 methods). No dynamic dispatch in hot paths — generics monomorphize at compile time. |
+| Core changes affect both consumers                                 | This is the feature, not a bug. CI catches breakage in both.                                                                                    |
+| Desktop sync model vs agent async model                            | Core is sync-first. Agent wraps with `spawn_blocking` where needed (already does this).                                                         |
+| Config serde differences (camelCase vs snake_case)                 | Core uses snake_case. Each consumer applies serde rename at protocol boundary (thin layer).                                                     |
+| `serialport` dependency in core                                    | Feature flag: `serial = ["dep:serialport"]`, same approach as before.                                                                           |
+| Migration temporarily breaks things                                | Each phase is independently shippable. Phase 1 (config + protocol) is zero-risk. Later phases can be rolled back independently.                 |
+| Risk of over-abstraction                                           | Core traits model what already exists in both crates. No speculative abstractions — only patterns already proven in production.                 |
 
 ### Recommendation
 

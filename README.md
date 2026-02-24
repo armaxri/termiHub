@@ -21,6 +21,7 @@ termiHub provides a VS Code-like interface for managing multiple terminal connec
 ## Features
 
 ### Connection Types
+
 - **Local shells** — zsh, bash, PowerShell, cmd, Git Bash with automatic shell detection
 - **SSH** — Remote terminal sessions with key-based and password authentication
 - **Serial** — Direct serial port connections for hardware debugging and IoT devices
@@ -30,17 +31,20 @@ termiHub provides a VS Code-like interface for managing multiple terminal connec
 - **Remote agent** — Persistent sessions on headless servers via auto-deployed `termihub-agent`
 
 ### Terminal Management
+
 - **Split views** — Arrange terminals in horizontal and vertical splits with drag-and-drop
 - **Tab management** — Drag-and-drop tabs between panels, per-tab colors, CWD tracking
 - **Connection management** — Organize connections in folder hierarchies with import/export from external files
 
 ### SSH Features
+
 - **File browser** — Browse, upload, download, and edit remote files via SFTP
 - **SSH tunneling** — Local, remote, and dynamic (SOCKS5) port forwarding with session pooling
 - **X11 forwarding** — Forward remote GUI applications to your local X server
 - **System monitoring** — Real-time CPU, memory, disk, and network stats for remote hosts
 
 ### UI and Customization
+
 - **VS Code-inspired layout** — Activity bar, sidebar, status bar with customizable positions
 - **Themes** — Dark, Light, and System (auto-detects OS preference) themes
 - **Layout presets** — Default, Focus (no sidebar), and Zen (minimal UI) modes
@@ -48,10 +52,12 @@ termiHub provides a VS Code-like interface for managing multiple terminal connec
 - **Schema-driven settings** — Connection types declare their own settings; the UI renders them automatically
 
 ### Security
+
 - **Credential storage** — Optional credential encryption via platform keychain, master password, or prompt-only mode
 - **Auto-lock** — Configurable timeout for credential store locking
 
 ### Platform Support
+
 - **Cross-platform** — Windows, Linux, and macOS
 - **Shared core** — `termihub-core` Rust library shared between desktop and remote agent
 

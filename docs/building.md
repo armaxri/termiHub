@@ -284,14 +284,14 @@ The remote agent (`termihub-agent`) runs on Linux hosts (servers, ARM devices, N
 
 ### Targets
 
-| Triple | Arch | libc | Use Case |
-|--------|------|------|----------|
-| `x86_64-unknown-linux-gnu` | x64 | glibc | Standard servers |
-| `aarch64-unknown-linux-gnu` | ARM64 | glibc | ARM64 servers, Raspberry Pi 3/4/5 |
-| `armv7-unknown-linux-gnueabihf` | ARMv7 | glibc | ARMv7 devices, older Raspberry Pi |
-| `x86_64-unknown-linux-musl` | x64 | musl | Static x64 binaries |
-| `aarch64-unknown-linux-musl` | ARM64 | musl | Static ARM64 binaries |
-| `armv7-unknown-linux-musleabihf` | ARMv7 | musl | Static ARMv7 binaries |
+| Triple                           | Arch  | libc  | Use Case                          |
+| -------------------------------- | ----- | ----- | --------------------------------- |
+| `x86_64-unknown-linux-gnu`       | x64   | glibc | Standard servers                  |
+| `aarch64-unknown-linux-gnu`      | ARM64 | glibc | ARM64 servers, Raspberry Pi 3/4/5 |
+| `armv7-unknown-linux-gnueabihf`  | ARMv7 | glibc | ARMv7 devices, older Raspberry Pi |
+| `x86_64-unknown-linux-musl`      | x64   | musl  | Static x64 binaries               |
+| `aarch64-unknown-linux-musl`     | ARM64 | musl  | Static ARM64 binaries             |
+| `armv7-unknown-linux-musleabihf` | ARMv7 | musl  | Static ARMv7 binaries             |
 
 ### Quick Start
 
@@ -308,11 +308,13 @@ scripts\build-agents.cmd          # Windows
 ### Platform-Specific Notes
 
 **Linux (Debian/Ubuntu):**
+
 - GNU targets use native cross-compilers (`gcc-aarch64-linux-gnu`, `gcc-arm-linux-gnueabihf`) — fast, no Docker needed
 - Musl targets use `cross-rs` (Docker-based) because musl packages don't include `libudev`
 - The setup script installs multi-arch `libudev-dev` for ARM64 and ARMv7
 
 **macOS / Windows:**
+
 - All targets use `cross-rs` (Docker-based) since no native Linux cross-compilers are available
 - Docker Desktop must be running before building
 
@@ -405,6 +407,7 @@ pnpm tauri dev
 ```
 
 This starts:
+
 - The Vite development server for the frontend (with hot module replacement)
 - The Rust backend compiled in debug mode
 
@@ -503,6 +506,7 @@ error: could not find system library 'libudev'
 ```
 
 Install the udev development package:
+
 - **Ubuntu/Debian**: `sudo apt install libudev-dev`
 - **Fedora**: `sudo dnf install systemd-devel`
 

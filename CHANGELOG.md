@@ -316,6 +316,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Double-click a connection to connect directly
 
 ### Fixed
+
 - Black bar visible at the bottom of terminal tabs caused by xterm.js viewport default background color mismatch
 - Terminal text appearing doubled on macOS (e.g., "llss" instead of "ls") caused by duplicate Tauri event listeners under React StrictMode
 - Local file explorer now loads the user's home directory on first open instead of showing an empty root

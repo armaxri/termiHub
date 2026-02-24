@@ -30,6 +30,7 @@ termiHub is built with:
 ### Trait-Based Backend
 
 All terminal types implement the `TerminalBackend` trait, which provides a consistent interface for:
+
 - Spawning sessions
 - Sending input / receiving output
 - Resizing the terminal
@@ -44,6 +45,7 @@ Adding a new terminal type means implementing this trait and registering it with
 ### State Management
 
 The frontend uses Zustand for state management with a single `appStore` that manages:
+
 - Panel layout (recursive tree of horizontal/vertical splits)
 - Tab state (active tab, dirty flags, colors, CWD tracking)
 - Connection and folder persistence
@@ -111,6 +113,7 @@ For the full architecture documentation, including class diagrams and data flow 
 ## Development Setup
 
 See [Building termiHub](building.md) for detailed instructions on:
+
 - Installing prerequisites (Node.js, pnpm, Rust, system libraries)
 - Platform-specific dependencies
 - Running the development server
@@ -271,6 +274,7 @@ Create a new file in `src-tauri/src/terminal/` (e.g., `my_protocol.rs`):
 ### 2. Register with TerminalManager
 
 Update `src-tauri/src/terminal/manager.rs` to:
+
 - Add a match arm for the new connection type
 - Instantiate your backend when a session is created
 
@@ -348,6 +352,7 @@ cd examples
 ```
 
 See [examples/README.md](../examples/README.md) for details on:
+
 - SSH server (port 2222) and Telnet server (port 2323)
 - Virtual serial ports via socat
 - Pre-configured test connections
@@ -356,6 +361,7 @@ See [examples/README.md](../examples/README.md) for details on:
 ### Manual Testing
 
 See [Manual Test Plan](manual-testing.md) for the full checklist. For UI changes, test at minimum:
+
 - Create, edit, duplicate, and delete connections
 - Connect to each terminal type
 - Drag-and-drop tabs between panels
@@ -371,11 +377,11 @@ The remote agent (`termihub-agent`) is a standalone Rust binary in `agent/` that
 
 ### Operating Modes
 
-| Mode | Flag | Use Case |
-|------|------|----------|
-| Stdio | `--stdio` | Production — NDJSON over stdin/stdout, launched by desktop via SSH |
-| TCP | `--listen [addr]` | Development/test — TCP listener (default `127.0.0.1:7685`) |
-| Daemon | `--daemon <id>` | Internal — session daemon process, not invoked directly |
+| Mode   | Flag              | Use Case                                                           |
+| ------ | ----------------- | ------------------------------------------------------------------ |
+| Stdio  | `--stdio`         | Production — NDJSON over stdin/stdout, launched by desktop via SSH |
+| TCP    | `--listen [addr]` | Development/test — TCP listener (default `127.0.0.1:7685`)         |
+| Daemon | `--daemon <id>`   | Internal — session daemon process, not invoked directly            |
 
 ### Key Architecture Concepts
 

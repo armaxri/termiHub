@@ -876,7 +876,7 @@ Each section groups related tests by feature area. **Baseline** subsections cove
 ### Baseline
 
 - [ ] Check available shells in connection editor on each target OS — correct shells listed (zsh/bash/sh on Unix, PowerShell/cmd/Git Bash on Windows)
-- [ ] Open serial port dropdown on each target OS — correct port naming convention (/dev/tty* on Unix, COM* on Windows)
+- [ ] Open serial port dropdown on each target OS — correct port naming convention (/dev/tty\* on Unix, COM\* on Windows)
 - [ ] Enable X11 forwarding on an SSH connection on macOS or Linux with X server — X11 forwarding works (not available on Windows)
 
 ---

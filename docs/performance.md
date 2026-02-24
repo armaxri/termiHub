@@ -33,6 +33,7 @@ Backend output channels use `sync_channel(64)` instead of unbounded channels, pr
 ## Profiling with Chrome DevTools
 
 1. Start the app in development mode:
+
    ```bash
    pnpm tauri dev
    ```
@@ -42,16 +43,19 @@ Backend output channels use `sync_channel(64)` instead of unbounded channels, pr
 3. Use the following DevTools panels:
 
 ### Performance Panel
+
 - Click **Record**, perform the action you want to profile (e.g., open 10 terminals), then **Stop**.
 - Look for long tasks (>50ms) in the flame chart.
 - Check for layout thrashing or excessive paint operations.
 
 ### Memory Panel
+
 - Take a **Heap Snapshot** before and after creating terminals.
 - Compare snapshots to find leaked objects.
 - Use **Allocation instrumentation on timeline** to watch real-time allocations.
 
 ### Performance Monitor (real-time)
+
 - Open via DevTools → More tools → Performance monitor.
 - Watch **JS heap size**, **DOM nodes**, **Event listeners**, and **Layouts/sec**.
 
@@ -59,14 +63,14 @@ Backend output channels use `sync_channel(64)` instead of unbounded channels, pr
 
 When profiling, record these metrics with N=1 terminal and N=40 terminals:
 
-| Metric | N=1 baseline | N=40 target | How to measure |
-|--------|-------------|-------------|----------------|
-| Terminal creation time | — | <500ms per terminal | DevTools Performance panel |
-| JS heap size | — | <500 MB | `performance.memory.usedJSHeapSize` |
-| Event listener count | 2 global | 2 global (not 80) | DevTools → Performance monitor |
-| Tauri event throughput | — | No dropped events | Check terminal output completeness |
-| Rust thread count | ~5 | ~85 (2 per terminal + base) | Task Manager or `ps` |
-| Input latency (keystroke to echo) | <50ms | <100ms | Manual measurement |
+| Metric                            | N=1 baseline | N=40 target                 | How to measure                      |
+| --------------------------------- | ------------ | --------------------------- | ----------------------------------- |
+| Terminal creation time            | —            | <500ms per terminal         | DevTools Performance panel          |
+| JS heap size                      | —            | <500 MB                     | `performance.memory.usedJSHeapSize` |
+| Event listener count              | 2 global     | 2 global (not 80)           | DevTools → Performance monitor      |
+| Tauri event throughput            | —            | No dropped events           | Check terminal output completeness  |
+| Rust thread count                 | ~5           | ~85 (2 per terminal + base) | Task Manager or `ps`                |
+| Input latency (keystroke to echo) | <50ms        | <100ms                      | Manual measurement                  |
 
 ## Memory Leak Detection Checklist
 
@@ -77,6 +81,7 @@ After creating and closing 40 terminals, verify:
 2. **No detached DOM nodes**: In the Memory panel, search for "Detached" after closing all terminals. There should be no detached xterm containers.
 
 3. **Event listeners cleaned up**: The singleton dispatcher's callback maps should be empty after all terminals are closed. Check via console:
+
    ```javascript
    // In DevTools console (if exposed for debugging)
    // The dispatcher's maps should have 0 entries
@@ -96,6 +101,7 @@ pnpm test:e2e:perf
 ```
 
 The suite covers:
+
 - **PERF-01**: Create 40 terminals, verify tab count
 - **PERF-02**: UI responsiveness with 40 terminals open (41st creation <5s)
 - **PERF-03**: JS heap memory under 500 MB
@@ -108,13 +114,16 @@ The backend enforces a maximum of 50 concurrent sessions (`MAX_SESSIONS` in `man
 ## Troubleshooting Performance Issues
 
 ### High memory usage
+
 - Check if output batching is working: in DevTools Performance panel, `xterm.write()` calls should be infrequent (once per animation frame, not once per output chunk).
 - Check for unbounded terminal scrollback: xterm.js default scrollback is 1000 lines. Consider reducing if memory is tight.
 
 ### Slow terminal creation
+
 - Check if the session limit is close: creating sessions near the limit incurs a mutex lock check.
 - Check shell startup: some shells (especially zsh with plugins) have slow startup times.
 
 ### Laggy input
+
 - Check if the bounded channel is full: this causes the backend write thread to block, which can delay output but shouldn't affect input. If input feels laggy, the issue is likely in the frontend event loop.
 - Check if too many terminals are producing heavy output simultaneously.

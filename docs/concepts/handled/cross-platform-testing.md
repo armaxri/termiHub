@@ -139,21 +139,21 @@ Developers working on platform-specific code see a clear guide for what to test 
 
 The following matrix maps feature areas to their platform-divergent behavior and the required testing approach on each platform:
 
-| Feature Area | Windows | macOS | Linux | Test Type |
-|---|---|---|---|---|
-| **Shell detection** | PowerShell, cmd, Git Bash, WSL distros | zsh (default), bash, sh | bash/zsh/sh | Unit (per-platform) + Manual |
-| **Local shell spawn** | Absolute paths to avoid WSL interception | Standard exec | Standard exec | Unit + E2E |
-| **File paths** | `\` separators, UNC paths (`\\wsl$\`), drive letters | `/` separators | `/` separators | Unit (per-platform) |
-| **Serial ports** | `COM*` enumeration | `/dev/tty.*`, `/dev/cu.*` | `/dev/ttyUSB*`, `/dev/ttyACM*` | Unit + Manual (hardware) |
-| **X11 forwarding** | Not supported | XQuartz (TCP on `localhost:N`) | Native Unix socket or TCP | Manual + E2E (Docker) |
-| **SSH key paths** | `C:\Users\<user>\.ssh\` with `\` separators | `~/.ssh/` | `~/.ssh/` | Unit (per-platform) |
-| **Key repeat** | Standard | Requires `ApplePressAndHoldEnabled=false` | Standard | Manual (macOS only) |
-| **WebView rendering** | Edge WebView2 | WKWebView | WebKitGTK | Manual |
-| **Font rendering** | Bundled Nerd Font required | System fonts | System fonts | Manual |
-| **Agent daemon** | Not supported (no `fork`) | `daemon(3)` via libc | `daemon(3)` via libc | Unit (unix-only) |
-| **WSL integration** | WSL distro detection, path conversion, OSC 7 injection | N/A | N/A | Unit + Manual (Windows) |
-| **Tilde expansion** | `%USERPROFILE%` | `$HOME` | `$HOME` | Unit (per-platform) |
-| **Process exit codes** | Windows exit codes | POSIX signals | POSIX signals | Unit |
+| Feature Area           | Windows                                                | macOS                                     | Linux                          | Test Type                    |
+| ---------------------- | ------------------------------------------------------ | ----------------------------------------- | ------------------------------ | ---------------------------- |
+| **Shell detection**    | PowerShell, cmd, Git Bash, WSL distros                 | zsh (default), bash, sh                   | bash/zsh/sh                    | Unit (per-platform) + Manual |
+| **Local shell spawn**  | Absolute paths to avoid WSL interception               | Standard exec                             | Standard exec                  | Unit + E2E                   |
+| **File paths**         | `\` separators, UNC paths (`\\wsl$\`), drive letters   | `/` separators                            | `/` separators                 | Unit (per-platform)          |
+| **Serial ports**       | `COM*` enumeration                                     | `/dev/tty.*`, `/dev/cu.*`                 | `/dev/ttyUSB*`, `/dev/ttyACM*` | Unit + Manual (hardware)     |
+| **X11 forwarding**     | Not supported                                          | XQuartz (TCP on `localhost:N`)            | Native Unix socket or TCP      | Manual + E2E (Docker)        |
+| **SSH key paths**      | `C:\Users\<user>\.ssh\` with `\` separators            | `~/.ssh/`                                 | `~/.ssh/`                      | Unit (per-platform)          |
+| **Key repeat**         | Standard                                               | Requires `ApplePressAndHoldEnabled=false` | Standard                       | Manual (macOS only)          |
+| **WebView rendering**  | Edge WebView2                                          | WKWebView                                 | WebKitGTK                      | Manual                       |
+| **Font rendering**     | Bundled Nerd Font required                             | System fonts                              | System fonts                   | Manual                       |
+| **Agent daemon**       | Not supported (no `fork`)                              | `daemon(3)` via libc                      | `daemon(3)` via libc           | Unit (unix-only)             |
+| **WSL integration**    | WSL distro detection, path conversion, OSC 7 injection | N/A                                       | N/A                            | Unit + Manual (Windows)      |
+| **Tilde expansion**    | `%USERPROFILE%`                                        | `$HOME`                                   | `$HOME`                        | Unit (per-platform)          |
+| **Process exit codes** | Windows exit codes                                     | POSIX signals                             | POSIX signals                  | Unit                         |
 
 ### Developer Local Testing Workflow
 
@@ -494,36 +494,36 @@ The current `docs/manual-testing.md` has three cross-platform tests (XPLAT-01 to
 
 **New Windows-specific tests (XPLAT-WIN series):**
 
-| ID | Test | Steps | Expected Result |
-|---|---|---|---|
-| XPLAT-WIN-01 | WSL distro detection | Open connection editor, select Local | WSL distros listed (if WSL installed) |
-| XPLAT-WIN-02 | PowerShell via absolute path | Create PowerShell connection, connect | PowerShell launches (not WSL) |
-| XPLAT-WIN-03 | Git Bash via absolute path | Create Git Bash connection, connect | Git Bash launches (not WSL) |
-| XPLAT-WIN-04 | WSL file browser paths | Open WSL tab, `cd /mnt/c/Users` | File browser shows `C:/Users` |
-| XPLAT-WIN-05 | COM port enumeration | Open serial connection editor | COM ports listed |
-| XPLAT-WIN-06 | SSH key paths with backslashes | Set SSH key to `~/.ssh/id_ed25519`, connect | Key path resolved correctly |
-| XPLAT-WIN-07 | Nerd Font rendering | Open PowerShell with Agnoster theme | Powerline glyphs render correctly |
+| ID           | Test                           | Steps                                       | Expected Result                       |
+| ------------ | ------------------------------ | ------------------------------------------- | ------------------------------------- |
+| XPLAT-WIN-01 | WSL distro detection           | Open connection editor, select Local        | WSL distros listed (if WSL installed) |
+| XPLAT-WIN-02 | PowerShell via absolute path   | Create PowerShell connection, connect       | PowerShell launches (not WSL)         |
+| XPLAT-WIN-03 | Git Bash via absolute path     | Create Git Bash connection, connect         | Git Bash launches (not WSL)           |
+| XPLAT-WIN-04 | WSL file browser paths         | Open WSL tab, `cd /mnt/c/Users`             | File browser shows `C:/Users`         |
+| XPLAT-WIN-05 | COM port enumeration           | Open serial connection editor               | COM ports listed                      |
+| XPLAT-WIN-06 | SSH key paths with backslashes | Set SSH key to `~/.ssh/id_ed25519`, connect | Key path resolved correctly           |
+| XPLAT-WIN-07 | Nerd Font rendering            | Open PowerShell with Agnoster theme         | Powerline glyphs render correctly     |
 
 **New macOS-specific tests (XPLAT-MAC series):**
 
-| ID | Test | Steps | Expected Result |
-|---|---|---|---|
-| XPLAT-MAC-01 | Zsh as default shell | Open connection editor, select Local | Zsh marked as "(default)" |
-| XPLAT-MAC-02 | Key repeat works | Open terminal, hold a letter key | Key repeats without accent picker |
-| XPLAT-MAC-03 | No doubled text | Open terminal, type commands | Single characters, no duplication |
-| XPLAT-MAC-04 | X11 via XQuartz | Enable X11 forwarding, run `xclock` | Window appears via XQuartz |
-| XPLAT-MAC-05 | Serial port paths | Open serial connection editor | `/dev/tty.*` and `/dev/cu.*` listed |
-| XPLAT-MAC-06 | WKWebView rendering | Inspect terminal rendering, scrolling | No visual artifacts |
+| ID           | Test                 | Steps                                 | Expected Result                     |
+| ------------ | -------------------- | ------------------------------------- | ----------------------------------- |
+| XPLAT-MAC-01 | Zsh as default shell | Open connection editor, select Local  | Zsh marked as "(default)"           |
+| XPLAT-MAC-02 | Key repeat works     | Open terminal, hold a letter key      | Key repeats without accent picker   |
+| XPLAT-MAC-03 | No doubled text      | Open terminal, type commands          | Single characters, no duplication   |
+| XPLAT-MAC-04 | X11 via XQuartz      | Enable X11 forwarding, run `xclock`   | Window appears via XQuartz          |
+| XPLAT-MAC-05 | Serial port paths    | Open serial connection editor         | `/dev/tty.*` and `/dev/cu.*` listed |
+| XPLAT-MAC-06 | WKWebView rendering  | Inspect terminal rendering, scrolling | No visual artifacts                 |
 
 **New Linux-specific tests (XPLAT-LIN series):**
 
-| ID | Test | Steps | Expected Result |
-|---|---|---|---|
-| XPLAT-LIN-01 | Shell detection | Open connection editor, select Local | bash/zsh/sh listed |
-| XPLAT-LIN-02 | X11 forwarding native | Enable X11, run `xclock` via SSH | Window on local X display |
-| XPLAT-LIN-03 | Serial ports | Open serial connection editor | `/dev/ttyUSB*`, `/dev/ttyACM*` listed |
-| XPLAT-LIN-04 | Docker test environment | Run `./scripts/test-system.sh` | All system tests pass |
-| XPLAT-LIN-05 | E2E with tauri-driver | Run `pnpm test:e2e` | All E2E tests pass |
+| ID           | Test                    | Steps                                | Expected Result                       |
+| ------------ | ----------------------- | ------------------------------------ | ------------------------------------- |
+| XPLAT-LIN-01 | Shell detection         | Open connection editor, select Local | bash/zsh/sh listed                    |
+| XPLAT-LIN-02 | X11 forwarding native   | Enable X11, run `xclock` via SSH     | Window on local X display             |
+| XPLAT-LIN-03 | Serial ports            | Open serial connection editor        | `/dev/ttyUSB*`, `/dev/ttyACM*` listed |
+| XPLAT-LIN-04 | Docker test environment | Run `./scripts/test-system.sh`       | All system tests pass                 |
+| XPLAT-LIN-05 | E2E with tauri-driver   | Run `pnpm test:e2e`                  | All E2E tests pass                    |
 
 ### 2. Add Platform-Specific Unit Tests
 
@@ -571,8 +571,8 @@ e2e-tests:
     - uses: pnpm/action-setup@v4
     - uses: actions/setup-node@v4
       with:
-        node-version: '20'
-        cache: 'pnpm'
+        node-version: "20"
+        cache: "pnpm"
     # Linux: install system deps + tauri-driver
     - name: Install system dependencies (Ubuntu)
       if: matrix.os == 'ubuntu-latest'
@@ -746,12 +746,12 @@ Add a section to `docs/manual-testing.md` that tracks the last verified date per
 ```markdown
 ## Platform Verification Status
 
-| Feature | Windows | macOS | Linux | Last Release |
-|---------|---------|-------|-------|-------------|
-| Shell detection | v0.4.0 | v0.4.0 | v0.4.0 | v0.4.0 |
-| Serial ports | v0.3.0 | v0.3.0 | v0.4.0 | v0.4.0 |
-| X11 forwarding | N/A | v0.4.0 | v0.4.0 | v0.4.0 |
-| WSL integration | v0.4.0 | N/A | N/A | v0.4.0 |
+| Feature         | Windows | macOS  | Linux  | Last Release |
+| --------------- | ------- | ------ | ------ | ------------ |
+| Shell detection | v0.4.0  | v0.4.0 | v0.4.0 | v0.4.0       |
+| Serial ports    | v0.3.0  | v0.3.0 | v0.4.0 | v0.4.0       |
+| X11 forwarding  | N/A     | v0.4.0 | v0.4.0 | v0.4.0       |
+| WSL integration | v0.4.0  | N/A    | N/A    | v0.4.0       |
 ```
 
 ### 7. Implementation Roadmap

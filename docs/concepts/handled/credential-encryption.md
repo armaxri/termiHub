@@ -398,17 +398,18 @@ flowchart TD
 ```
 
 The resolution order is:
+
 1. **Credential store** (Keychain or Master Password store) — checked first if the store is unlocked
 2. **Session cache** (in-memory, from #121) — checked next
 3. **User prompt** — shown as last resort
 
 ### Three Storage Modes
 
-| Mode | Backend | Portability | Requires | Security Level |
-|------|---------|-------------|----------|----------------|
-| **OS Keychain** | Windows Credential Manager, macOS Keychain, Linux Secret Service | Per-machine | OS credential service | Highest — OS-managed |
-| **Master Password** | Argon2id KDF + AES-256-GCM encrypted file | Portable (copy config dir) | User remembers password | High — user-chosen entropy |
-| **None** | No persistence | N/A | Nothing | Credentials not saved |
+| Mode                | Backend                                                          | Portability                | Requires                | Security Level             |
+| ------------------- | ---------------------------------------------------------------- | -------------------------- | ----------------------- | -------------------------- |
+| **OS Keychain**     | Windows Credential Manager, macOS Keychain, Linux Secret Service | Per-machine                | OS credential service   | Highest — OS-managed       |
+| **Master Password** | Argon2id KDF + AES-256-GCM encrypted file                        | Portable (copy config dir) | User remembers password | High — user-chosen entropy |
+| **None**            | No persistence                                                   | N/A                        | Nothing                 | Credentials not saved      |
 
 ### OS Keychain Mode
 
@@ -425,12 +426,14 @@ The resolution order is:
 The Master Password mode encrypts all saved credentials into a single file (`credentials.enc`) in the config directory.
 
 **Key derivation:**
+
 - Algorithm: Argon2id (memory-hard, resistant to GPU/ASIC attacks)
 - Parameters: 64 MB memory, 3 iterations, 1 parallelism (tuned for ~0.5s on modern hardware)
 - Salt: 32 random bytes, generated once and stored alongside the encrypted data
 - Output: 256-bit key
 
 **Encryption:**
+
 - Algorithm: AES-256-GCM (authenticated encryption)
 - Nonce: 12 random bytes, generated per encryption operation
 - Associated data: version byte (for future format changes)
@@ -495,6 +498,7 @@ stateDiagram-v2
 ```
 
 **Auto-lock:**
+
 - Configurable timeout (default: 15 minutes of inactivity)
 - Inactivity = no terminal input, no mouse movement in the app window
 - When locked, the in-memory decrypted credentials are securely cleared
@@ -855,14 +859,14 @@ Based on the current project architecture at the time of concept creation. The c
 
 **Rust (`src-tauri/Cargo.toml`):**
 
-| Crate | Purpose | Version |
-|-------|---------|---------|
-| `keyring` | Cross-platform keychain abstraction (Windows Credential Manager, macOS Keychain, Linux Secret Service via D-Bus) | ^3 |
-| `argon2` | Argon2id key derivation for master password mode | ^0.5 |
-| `aes-gcm` | AES-256-GCM authenticated encryption for master password mode | ^0.10 |
-| `rand` | Cryptographically secure random salt/nonce generation (already a transitive dep) | ^0.8 |
-| `base64` | Encoding encrypted data for JSON storage | ^0.22 |
-| `zeroize` | Secure memory clearing for passwords and keys | ^1 |
+| Crate     | Purpose                                                                                                          | Version |
+| --------- | ---------------------------------------------------------------------------------------------------------------- | ------- |
+| `keyring` | Cross-platform keychain abstraction (Windows Credential Manager, macOS Keychain, Linux Secret Service via D-Bus) | ^3      |
+| `argon2`  | Argon2id key derivation for master password mode                                                                 | ^0.5    |
+| `aes-gcm` | AES-256-GCM authenticated encryption for master password mode                                                    | ^0.10   |
+| `rand`    | Cryptographically secure random salt/nonce generation (already a transitive dep)                                 | ^0.8    |
+| `base64`  | Encoding encrypted data for JSON storage                                                                         | ^0.22   |
+| `zeroize` | Secure memory clearing for passwords and keys                                                                    | ^1      |
 
 No new frontend dependencies are needed — the UI changes use existing React patterns and components.
 
@@ -1198,23 +1202,23 @@ pub async fn switch_credential_store(
 
 **New components:**
 
-| Component | Location | Purpose |
-|-----------|----------|---------|
-| `SecuritySettings.tsx` | `src/components/Settings/` | Security settings panel with storage mode selection |
-| `UnlockDialog.tsx` | `src/components/` | Master password unlock modal |
-| `MasterPasswordSetup.tsx` | `src/components/` | Setup/change master password dialog |
-| `CredentialStoreIndicator.tsx` | `src/components/` | Status bar lock/unlock indicator |
+| Component                      | Location                   | Purpose                                             |
+| ------------------------------ | -------------------------- | --------------------------------------------------- |
+| `SecuritySettings.tsx`         | `src/components/Settings/` | Security settings panel with storage mode selection |
+| `UnlockDialog.tsx`             | `src/components/`          | Master password unlock modal                        |
+| `MasterPasswordSetup.tsx`      | `src/components/`          | Setup/change master password dialog                 |
+| `CredentialStoreIndicator.tsx` | `src/components/`          | Status bar lock/unlock indicator                    |
 
 **Modified components:**
 
-| Component | Changes |
-|-----------|---------|
-| `SettingsPanel.tsx` | Add "Security" category to navigation |
-| `SettingsNav.tsx` | Add Security entry |
-| `SshSettings.tsx` | Update "Save password" / "Save passphrase" hint text based on active store |
-| `AgentSettings.tsx` | Same credential hint updates |
-| `ConnectionEditor.tsx` | Pass credential store status to SSH/Agent settings |
-| `App.tsx` | Listen for credential store events, render `UnlockDialog` |
+| Component              | Changes                                                                    |
+| ---------------------- | -------------------------------------------------------------------------- |
+| `SettingsPanel.tsx`    | Add "Security" category to navigation                                      |
+| `SettingsNav.tsx`      | Add Security entry                                                         |
+| `SshSettings.tsx`      | Update "Save password" / "Save passphrase" hint text based on active store |
+| `AgentSettings.tsx`    | Same credential hint updates                                               |
+| `ConnectionEditor.tsx` | Pass credential store status to SSH/Agent settings                         |
+| `App.tsx`              | Listen for credential store events, render `UnlockDialog`                  |
 
 **Store changes (`appStore.ts`):**
 
@@ -1301,12 +1305,13 @@ pub fn new(app_handle: &AppHandle) -> Result<Self> {
 
 Keychain entries follow a consistent naming pattern:
 
-| Field | Value |
-|-------|-------|
-| **Service** | `termihub` |
+| Field              | Value                               |
+| ------------------ | ----------------------------------- |
+| **Service**        | `termihub`                          |
 | **Username** (key) | `{connection_id}:{credential_type}` |
 
 Examples:
+
 - `termihub` / `conn-abc123:password`
 - `termihub` / `conn-abc123:key_passphrase`
 - `termihub` / `agent-def456:password`
@@ -1316,33 +1321,33 @@ This naming ensures uniqueness and allows termiHub to enumerate its own entries 
 
 ### 11. File Changes Summary
 
-| File | Change |
-|------|--------|
-| `src-tauri/Cargo.toml` | Add `keyring`, `argon2`, `aes-gcm`, `base64`, `zeroize` dependencies |
-| `src-tauri/src/credential/mod.rs` | New: `CredentialStore` trait, factory, `CredentialKey` |
-| `src-tauri/src/credential/keychain.rs` | New: `KeychainStore` implementation |
-| `src-tauri/src/credential/master_password.rs` | New: `MasterPasswordStore` implementation |
-| `src-tauri/src/credential/null.rs` | New: `NullStore` implementation |
-| `src-tauri/src/credential/types.rs` | New: `CredentialStoreStatus`, `StorageMode`, envelopes |
-| `src-tauri/src/main.rs` | Register credential store as Tauri managed state |
-| `src-tauri/src/connection/manager.rs` | Replace `strip_ssh_password` with `prepare_for_storage`; add migration detection |
-| `src-tauri/src/connection/settings.rs` | Add `credential_storage_mode`, `credential_auto_lock_minutes` |
-| `src-tauri/src/terminal/backend.rs` | Add `save_password` to `SshConfig` and `RemoteAgentConfig` |
-| `src-tauri/src/commands/` | New: `unlock_credential_store`, `lock_credential_store`, `get_credential_store_status`, `change_master_password`, `switch_credential_store` |
-| `src-tauri/src/events/` | New: `credential-store-locked`, `credential-store-unlocked`, `credential-migration-needed` events |
-| `src/types/terminal.ts` | Add `savePassword` to `SshConfig` and `RemoteAgentConfig` |
-| `src/services/api.ts` | Add credential store commands |
-| `src/services/events.ts` | Add credential store event types and listeners |
-| `src/store/appStore.ts` | Add credential store state and actions |
-| `src/components/Settings/SecuritySettings.tsx` | New: Security settings panel |
-| `src/components/Settings/SettingsPanel.tsx` | Add Security category |
-| `src/components/Settings/SettingsNav.tsx` | Add Security entry |
-| `src/components/Settings/SshSettings.tsx` | Update credential save hints |
-| `src/components/Settings/AgentSettings.tsx` | Update credential save hints |
-| `src/components/UnlockDialog.tsx` | New: Master password unlock modal |
-| `src/components/MasterPasswordSetup.tsx` | New: Setup/change master password dialog |
-| `src/components/CredentialStoreIndicator.tsx` | New: Status bar indicator |
-| `src/components/App.tsx` | Credential store event listeners, render UnlockDialog |
+| File                                           | Change                                                                                                                                      |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src-tauri/Cargo.toml`                         | Add `keyring`, `argon2`, `aes-gcm`, `base64`, `zeroize` dependencies                                                                        |
+| `src-tauri/src/credential/mod.rs`              | New: `CredentialStore` trait, factory, `CredentialKey`                                                                                      |
+| `src-tauri/src/credential/keychain.rs`         | New: `KeychainStore` implementation                                                                                                         |
+| `src-tauri/src/credential/master_password.rs`  | New: `MasterPasswordStore` implementation                                                                                                   |
+| `src-tauri/src/credential/null.rs`             | New: `NullStore` implementation                                                                                                             |
+| `src-tauri/src/credential/types.rs`            | New: `CredentialStoreStatus`, `StorageMode`, envelopes                                                                                      |
+| `src-tauri/src/main.rs`                        | Register credential store as Tauri managed state                                                                                            |
+| `src-tauri/src/connection/manager.rs`          | Replace `strip_ssh_password` with `prepare_for_storage`; add migration detection                                                            |
+| `src-tauri/src/connection/settings.rs`         | Add `credential_storage_mode`, `credential_auto_lock_minutes`                                                                               |
+| `src-tauri/src/terminal/backend.rs`            | Add `save_password` to `SshConfig` and `RemoteAgentConfig`                                                                                  |
+| `src-tauri/src/commands/`                      | New: `unlock_credential_store`, `lock_credential_store`, `get_credential_store_status`, `change_master_password`, `switch_credential_store` |
+| `src-tauri/src/events/`                        | New: `credential-store-locked`, `credential-store-unlocked`, `credential-migration-needed` events                                           |
+| `src/types/terminal.ts`                        | Add `savePassword` to `SshConfig` and `RemoteAgentConfig`                                                                                   |
+| `src/services/api.ts`                          | Add credential store commands                                                                                                               |
+| `src/services/events.ts`                       | Add credential store event types and listeners                                                                                              |
+| `src/store/appStore.ts`                        | Add credential store state and actions                                                                                                      |
+| `src/components/Settings/SecuritySettings.tsx` | New: Security settings panel                                                                                                                |
+| `src/components/Settings/SettingsPanel.tsx`    | Add Security category                                                                                                                       |
+| `src/components/Settings/SettingsNav.tsx`      | Add Security entry                                                                                                                          |
+| `src/components/Settings/SshSettings.tsx`      | Update credential save hints                                                                                                                |
+| `src/components/Settings/AgentSettings.tsx`    | Update credential save hints                                                                                                                |
+| `src/components/UnlockDialog.tsx`              | New: Master password unlock modal                                                                                                           |
+| `src/components/MasterPasswordSetup.tsx`       | New: Setup/change master password dialog                                                                                                    |
+| `src/components/CredentialStoreIndicator.tsx`  | New: Status bar indicator                                                                                                                   |
+| `src/components/App.tsx`                       | Credential store event listeners, render UnlockDialog                                                                                       |
 
 ### 12. Implementation Order
 

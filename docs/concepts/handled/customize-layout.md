@@ -86,11 +86,11 @@ The dialog opens as a modal overlay, centered on the application window. It prov
 
 Three built-in presets provide quick workspace configurations:
 
-| Preset | Activity Bar | Sidebar | Status Bar | Description |
-|--------|-------------|---------|------------|-------------|
-| **Default** | Left, visible | Left, visible | Visible | Standard termiHub layout — all UI elements in their default positions |
-| **Focus** | Left, visible | Hidden | Visible | Activity Bar remains for navigation, but sidebar is collapsed to maximize terminal space |
-| **Zen** | Hidden | Hidden | Hidden | Maximum terminal area — all chrome removed for distraction-free work |
+| Preset      | Activity Bar  | Sidebar       | Status Bar | Description                                                                              |
+| ----------- | ------------- | ------------- | ---------- | ---------------------------------------------------------------------------------------- |
+| **Default** | Left, visible | Left, visible | Visible    | Standard termiHub layout — all UI elements in their default positions                    |
+| **Focus**   | Left, visible | Hidden        | Visible    | Activity Bar remains for navigation, but sidebar is collapsed to maximize terminal space |
+| **Zen**     | Hidden        | Hidden        | Hidden     | Maximum terminal area — all chrome removed for distraction-free work                     |
 
 Each preset is represented by a small thumbnail showing a schematic of the layout. The active preset is highlighted with the accent color border. Clicking a preset immediately applies it.
 
@@ -454,10 +454,7 @@ This needs to become layout-aware, using CSS classes driven by the store's `layo
 function App() {
   const layout = useAppStore((s) => s.layoutConfig);
 
-  const appMainClass = [
-    "app__main",
-    `app__main--ab-${layout.activityBarPosition}`,
-  ].join(" ");
+  const appMainClass = ["app__main", `app__main--ab-${layout.activityBarPosition}`].join(" ");
 
   return (
     <div className="app">
@@ -510,10 +507,10 @@ The `ActivityBar` component needs a `horizontal` prop variant:
 
 ### 5. New Components
 
-| Component | Location | Purpose |
-|-----------|----------|---------|
+| Component               | Location                                            | Purpose                                                  |
+| ----------------------- | --------------------------------------------------- | -------------------------------------------------------- |
 | `CustomizeLayoutDialog` | `src/components/Settings/CustomizeLayoutDialog.tsx` | Modal dialog with preset thumbnails and section controls |
-| `LayoutPreview` | `src/components/Settings/LayoutPreview.tsx` | Small SVG/CSS preview of the current layout |
+| `LayoutPreview`         | `src/components/Settings/LayoutPreview.tsx`         | Small SVG/CSS preview of the current layout              |
 
 The dialog uses the existing Radix UI `Dialog` primitive (already used for `RenameDialog`, `ColorPickerDialog`) for consistent modal behavior.
 

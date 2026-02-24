@@ -10,13 +10,13 @@ This guide covers how to configure serial port connections in termiHub on each p
 
 Serial devices appear under `/dev/tty.*` when connected. Common paths:
 
-| Device | Path |
-|--------|------|
-| USB-to-serial adapter | `/dev/tty.usbserial-*` |
-| USB-to-serial (FTDI) | `/dev/tty.usbserial-FTDI*` |
-| USB-to-serial (CH340) | `/dev/tty.wchusbserial*` |
-| Arduino / similar | `/dev/tty.usbmodem*` |
-| Bluetooth serial | `/dev/tty.Bluetooth-*` |
+| Device                | Path                       |
+| --------------------- | -------------------------- |
+| USB-to-serial adapter | `/dev/tty.usbserial-*`     |
+| USB-to-serial (FTDI)  | `/dev/tty.usbserial-FTDI*` |
+| USB-to-serial (CH340) | `/dev/tty.wchusbserial*`   |
+| Arduino / similar     | `/dev/tty.usbmodem*`       |
+| Bluetooth serial      | `/dev/tty.Bluetooth-*`     |
 
 **USB driver installation**: Most modern USB-to-serial adapters work out of the box on macOS. If your device is not recognized:
 
@@ -34,11 +34,11 @@ Serial devices appear under `/dev/tty.*` when connected. Common paths:
 
 Serial devices appear under `/dev/ttyUSB*` or `/dev/ttyACM*`. Common paths:
 
-| Device | Path |
-|--------|------|
+| Device                | Path           |
+| --------------------- | -------------- |
 | USB-to-serial adapter | `/dev/ttyUSB0` |
-| Arduino / ACM device | `/dev/ttyACM0` |
-| Built-in serial port | `/dev/ttyS0` |
+| Arduino / ACM device  | `/dev/ttyACM0` |
+| Built-in serial port  | `/dev/ttyS0`   |
 
 **Permissions**: By default, serial ports require root access. Add your user to the `dialout` group:
 
@@ -100,18 +100,19 @@ Serial devices appear as COM ports (e.g., `COM3`, `COM4`).
 
 When creating a serial connection in termiHub, configure these parameters to match your device:
 
-| Parameter | Options | Default | Description |
-|-----------|---------|---------|-------------|
-| Port | Auto-detected or manual | — | Serial port path |
-| Baud Rate | 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600 | 9600 | Data transfer speed (bits/second) |
-| Data Bits | 5, 6, 7, 8 | 8 | Number of data bits per frame |
-| Stop Bits | 1, 2 | 1 | Number of stop bits per frame |
-| Parity | None, Odd, Even | None | Error-checking method |
-| Flow Control | None, Hardware (RTS/CTS), Software (XON/XOFF) | None | Data flow regulation |
+| Parameter    | Options                                                   | Default | Description                       |
+| ------------ | --------------------------------------------------------- | ------- | --------------------------------- |
+| Port         | Auto-detected or manual                                   | —       | Serial port path                  |
+| Baud Rate    | 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600 | 9600    | Data transfer speed (bits/second) |
+| Data Bits    | 5, 6, 7, 8                                                | 8       | Number of data bits per frame     |
+| Stop Bits    | 1, 2                                                      | 1       | Number of stop bits per frame     |
+| Parity       | None, Odd, Even                                           | None    | Error-checking method             |
+| Flow Control | None, Hardware (RTS/CTS), Software (XON/XOFF)             | None    | Data flow regulation              |
 
 ### Common Configurations
 
 **Most embedded devices** (Arduino, ESP32, STM32, etc.):
+
 - Baud Rate: 115200
 - Data Bits: 8
 - Stop Bits: 1
@@ -119,6 +120,7 @@ When creating a serial connection in termiHub, configure these parameters to mat
 - Flow Control: None
 
 **Legacy serial devices**:
+
 - Baud Rate: 9600
 - Data Bits: 8
 - Stop Bits: 1
@@ -126,6 +128,7 @@ When creating a serial connection in termiHub, configure these parameters to mat
 - Flow Control: None
 
 **Industrial equipment (Modbus RTU)**:
+
 - Baud Rate: 9600 or 19200
 - Data Bits: 8
 - Stop Bits: 1 or 2
@@ -157,6 +160,7 @@ cd examples/serial
 ```
 
 This creates two linked virtual ports:
+
 - `/tmp/termihub-serial-a` — Connect termiHub to this port
 - `/tmp/termihub-serial-b` — Used by the echo server
 

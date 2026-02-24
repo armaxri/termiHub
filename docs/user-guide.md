@@ -27,15 +27,16 @@ termiHub uses a VS Code-inspired three-column layout:
 
 The narrow left-most column with icon buttons:
 
-| Icon | View | Description |
-|------|------|-------------|
-| Network | Connections | Manage and open terminal connections |
-| Folder | File Browser | Browse local and remote files |
+| Icon          | View          | Description                              |
+| ------------- | ------------- | ---------------------------------------- |
+| Network       | Connections   | Manage and open terminal connections     |
+| Folder        | File Browser  | Browse local and remote files            |
 | Gear (bottom) | Settings menu | Import/export connections, open settings |
 
 Click an active icon to toggle (collapse/expand) the sidebar.
 
 The **gear icon** at the bottom opens a dropdown menu with:
+
 - **Settings** — Open the Settings tab
 - **Import Connections** — Load connections from a JSON file
 - **Export Connections** — Save all connections to a JSON file
@@ -47,6 +48,7 @@ The middle column shows the view selected in the Activity Bar. It can be collaps
 ### Terminal View
 
 The main area on the right. Contains:
+
 - **Tab Bar** — Tabs for open terminals, editors, and settings
 - **Terminal Content** — The active terminal, editor, or settings panel
 - **Terminal Toolbar** — New Terminal (+), Split, and Close Panel buttons
@@ -137,6 +139,7 @@ Select the shell in the connection editor's **Shell** dropdown, which only shows
 Connects to a remote server via SSH. See [SSH Configuration](ssh-configuration.md) for detailed setup instructions.
 
 **Settings:**
+
 - **Host** — Hostname or IP address
 - **Port** — SSH port (default: 22)
 - **Username** — Remote username
@@ -148,6 +151,7 @@ Connects to a remote server via SSH. See [SSH Configuration](ssh-configuration.m
 Connects to a remote server via the Telnet protocol.
 
 **Settings:**
+
 - **Host** — Hostname or IP address
 - **Port** — Telnet port (default: 23)
 
@@ -156,6 +160,7 @@ Connects to a remote server via the Telnet protocol.
 Connects to a serial device (USB-to-serial adapters, IoT devices, networking equipment, etc.). See [Serial Setup](serial-setup.md) for platform-specific instructions.
 
 **Settings:**
+
 - **Port** — Serial port path (auto-detected or manual entry)
 - **Baud Rate** — 9600, 19200, 38400, 57600, 115200, 230400, 460800, or 921600
 - **Data Bits** — 5, 6, 7, or 8
@@ -181,6 +186,7 @@ Both options can also be changed at runtime via the tab's right-click context me
 ### Tab Bar
 
 Open terminals appear as tabs at the top of the terminal view. Each tab shows:
+
 - A type-specific icon (terminal, wifi, cable, globe)
 - The connection name
 - An optional colored left border (if a tab color is set)
@@ -196,6 +202,7 @@ Open terminals appear as tabs at the top of the terminal view. Each tab shows:
 ### Tab Context Menu
 
 Right-click a terminal tab for these options:
+
 - **Save to File** — Export the terminal buffer to a text file
 - **Copy to Clipboard** — Copy the entire terminal buffer
 - **Clear Terminal** — Clear the terminal screen
@@ -222,6 +229,7 @@ termiHub supports splitting the terminal area into multiple panels arranged hori
 ### Cross-Panel Tab Movement
 
 Drag any tab from one panel and drop it:
+
 - **On the tab bar** of another panel to move it there
 - **On the edge** of another panel to create a new split with that tab
 
@@ -231,13 +239,13 @@ Drop zones are highlighted as you drag.
 
 ## Keyboard Shortcuts
 
-| Shortcut | Action |
-|----------|--------|
-| `Ctrl+Shift+`` (`` ` ``) | New local terminal |
-| `Ctrl+W` / `Cmd+W` | Close active tab |
-| `Ctrl+Tab` | Next tab |
-| `Ctrl+Shift+Tab` | Previous tab |
-| `Ctrl+S` / `Cmd+S` | Save file (in editor) |
+| Shortcut                 | Action                |
+| ------------------------ | --------------------- |
+| `Ctrl+Shift+`` (`` ` ``) | New local terminal    |
+| `Ctrl+W` / `Cmd+W`       | Close active tab      |
+| `Ctrl+Tab`               | Next tab              |
+| `Ctrl+Shift+Tab`         | Previous tab          |
+| `Ctrl+S` / `Cmd+S`       | Save file (in editor) |
 
 On macOS, `Cmd` can be used in place of `Ctrl` for the modifier shortcuts.
 
@@ -251,12 +259,12 @@ The file browser in the sidebar lets you browse local and remote filesystems.
 
 The file browser operates in three modes depending on the active terminal tab:
 
-| Active Tab | Mode | Description |
-|-----------|------|-------------|
-| Local shell | Local | Browses the local filesystem |
-| SSH | SFTP | Browses the remote server via SFTP |
-| Serial / Telnet | None | File browser unavailable |
-| Editor / Settings | Previous | Retains the last active mode |
+| Active Tab        | Mode     | Description                        |
+| ----------------- | -------- | ---------------------------------- |
+| Local shell       | Local    | Browses the local filesystem       |
+| SSH               | SFTP     | Browses the remote server via SFTP |
+| Serial / Telnet   | None     | File browser unavailable           |
+| Editor / Settings | Previous | Retains the last active mode       |
 
 When you switch to an SSH terminal tab, the SFTP connection is established automatically.
 
@@ -268,13 +276,13 @@ When you switch to an SSH terminal tab, the SFTP connection is established autom
 
 ### Toolbar
 
-| Button | Description |
-|--------|-------------|
-| Up arrow | Navigate to parent directory |
-| Refresh | Reload the current directory |
-| Upload | Upload a file (SFTP mode only) |
-| New File | Create an empty file |
-| New Folder | Create a new directory |
+| Button     | Description                         |
+| ---------- | ----------------------------------- |
+| Up arrow   | Navigate to parent directory        |
+| Refresh    | Reload the current directory        |
+| Upload     | Upload a file (SFTP mode only)      |
+| New File   | Create an empty file                |
+| New Folder | Create a new directory              |
 | Disconnect | Disconnect SFTP session (SFTP only) |
 
 ### File and Directory Context Menu
@@ -282,6 +290,7 @@ When you switch to an SSH terminal tab, the SFTP connection is established autom
 Right-click a file or directory for options:
 
 **Files:**
+
 - **Edit** — Open in the built-in editor
 - **Open in VS Code** — Open in external VS Code (downloads first if remote)
 - **Download** — Download to local machine (SFTP mode only)
@@ -289,6 +298,7 @@ Right-click a file or directory for options:
 - **Delete** — Delete the file
 
 **Directories:**
+
 - **Open** — Navigate into the directory
 - **Rename** — Rename the directory
 - **Delete** — Delete the directory
@@ -300,6 +310,7 @@ In SFTP mode, drag files from your operating system's file manager onto the file
 ### File Information
 
 Each entry shows:
+
 - File or directory name
 - File size (formatted as B, KB, MB)
 - File permissions in `rwx` notation (SFTP mode)
@@ -335,13 +346,13 @@ Files open in a new tab in the terminal view.
 
 When an editor tab is active, the status bar at the bottom shows:
 
-| Item | Description |
-|------|-------------|
-| Ln / Col | Current cursor line and column |
-| Language | Detected language mode |
-| EOL | Line ending type (LF or CRLF) — click to toggle |
+| Item     | Description                                       |
+| -------- | ------------------------------------------------- |
+| Ln / Col | Current cursor line and column                    |
+| Language | Detected language mode                            |
+| EOL      | Line ending type (LF or CRLF) — click to toggle   |
 | Tab Size | Current tab size — click to cycle between 2 and 4 |
-| Encoding | File encoding (UTF-8) |
+| Encoding | File encoding (UTF-8)                             |
 
 ### Open in VS Code
 

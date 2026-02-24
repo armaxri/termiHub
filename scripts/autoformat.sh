@@ -13,6 +13,10 @@ case "$FILE_PATH" in
     *.ts|*.tsx|*.js|*.jsx|*.css)
         npx prettier --write "$FILE_PATH" &>/dev/null
         ;;
+    *.md)
+        npx prettier --write "$FILE_PATH" &>/dev/null
+        npx markdownlint-cli2 --fix "$FILE_PATH" &>/dev/null
+        ;;
     *.rs)
         rustfmt "$FILE_PATH" &>/dev/null
         ;;
