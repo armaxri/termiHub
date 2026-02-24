@@ -1,76 +1,48 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <!-- Gradients -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
   <defs>
-    <linearGradient id="terminalGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#60a5fa;stop-opacity:1" />
-      <stop offset="100%" style="stop-color:#3b82f6;stop-opacity:1" />
+    <linearGradient id="borderGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#43E97B"/>
+      <stop offset="35%" style="stop-color:#38D9A9"/>
+      <stop offset="65%" style="stop-color:#3478C6"/>
+      <stop offset="100%" style="stop-color:#2B5EA7"/>
     </linearGradient>
-    <linearGradient id="connectionGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#06b6d4;stop-opacity:1" />
-      <stop offset="100%" style="stop-color:#0891b2;stop-opacity:1" />
+    <linearGradient id="borderGrad2" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#2B5EA7"/>
+      <stop offset="35%" style="stop-color:#3478C6"/>
+      <stop offset="65%" style="stop-color:#38D9A9"/>
+      <stop offset="100%" style="stop-color:#43E97B"/>
     </linearGradient>
   </defs>
   
-  <!-- Connection hub nodes (top) -->
-  <circle cx="256" cy="80" r="12" fill="url(#connectionGradient)" stroke="#0891b2" stroke-width="2"/>
-  <line x1="256" y1="92" x2="256" y2="120" stroke="#0891b2" stroke-width="3" stroke-dasharray="5,5"/>
+  <!-- Outer rounded square with gradient -->
+  <rect x="8" y="8" width="496" height="496" rx="100" ry="100" fill="url(#borderGrad)" opacity="0.85"/>
+  <rect x="8" y="8" width="496" height="496" rx="100" ry="100" fill="url(#borderGrad2)" opacity="0.55"/>
   
-  <!-- Background terminal windows (stacked effect) -->
+  <!-- Inner dark background -->
+  <rect x="28" y="28" width="456" height="456" rx="82" ry="82" fill="#1a1a2e"/>
   
-  <!-- Black terminal (furthest back, top-left offset) -->
-  <rect x="70" y="120" width="320" height="240" rx="16" fill="#1e293b" stroke="#334155" stroke-width="4" opacity="0.7"/>
-  <circle cx="94" cy="145" r="6" fill="#ef4444"/>
-  <circle cx="118" cy="145" r="6" fill="#f59e0b"/>
-  <circle cx="142" cy="145" r="6" fill="#10b981"/>
+  <!-- Left eye: ^ -->
+  <text x="180" y="235"
+        font-family="'SF Mono', 'Fira Code', 'Consolas', monospace"
+        font-size="140"
+        font-weight="700"
+        fill="#E8E8E8"
+        text-anchor="middle">^</text>
   
-  <!-- Red terminal (second layer) -->
-  <rect x="86" y="136" width="320" height="240" rx="16" fill="#1e293b" stroke="#ef4444" stroke-width="4" opacity="0.8"/>
-  <circle cx="110" cy="161" r="6" fill="#ef4444"/>
-  <circle cx="134" cy="161" r="6" fill="#f59e0b"/>
-  <circle cx="158" cy="161" r="6" fill="#10b981"/>
+  <!-- Right eye: ^ -->
+  <text x="332" y="235"
+        font-family="'SF Mono', 'Fira Code', 'Consolas', monospace"
+        font-size="140"
+        font-weight="700"
+        fill="#E8E8E8"
+        text-anchor="middle">^</text>
   
-  <!-- Yellow terminal (third layer) -->
-  <rect x="102" y="152" width="320" height="240" rx="16" fill="#1e293b" stroke="#fbbf24" stroke-width="4" opacity="0.85"/>
-  <circle cx="126" cy="177" r="6" fill="#ef4444"/>
-  <circle cx="150" cy="177" r="6" fill="#f59e0b"/>
-  <circle cx="174" cy="177" r="6" fill="#10b981"/>
-  
-  <!-- Green terminal (fourth layer) -->
-  <rect x="118" y="168" width="320" height="240" rx="16" fill="#1e293b" stroke="#10b981" stroke-width="4" opacity="0.9"/>
-  <circle cx="142" cy="193" r="6" fill="#ef4444"/>
-  <circle cx="166" cy="193" r="6" fill="#f59e0b"/>
-  <circle cx="190" cy="193" r="6" fill="#10b981"/>
-  
-  <!-- Main blue terminal window (front, centered) -->
-  <rect x="134" y="184" width="320" height="240" rx="16" fill="#1e293b" stroke="url(#terminalGradient)" stroke-width="4"/>
-  
-  <!-- Terminal header dots -->
-  <circle cx="158" cy="209" r="6" fill="#ef4444"/>
-  <circle cx="182" cy="209" r="6" fill="#f59e0b"/>
-  <circle cx="206" cy="209" r="6" fill="#10b981"/>
-  
-  <!-- Terminal prompt symbol (>) -->
-  <path d="M 158 264 L 203 294 L 158 324" stroke="#60a5fa" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-  
-  <!-- Terminal command text "cd " -->
-  <text x="218" y="315" font-family="monospace" font-size="72" font-weight="bold" fill="#60a5fa" stroke="#60a5fa" stroke-width="2" paint-order="stroke">cd</text>
-  
-  <!-- Terminal cursor (horizontal underscore style) -->
-  <rect x="330" y="320" width="45" height="8" rx="2" fill="#60a5fa">
-    <animate attributeName="opacity" values="1;0;1" dur="1.5s" repeatCount="indefinite"/>
-  </rect>
-  
-  <!-- Connection hub nodes (bottom) -->
-  <!-- Bottom left node -->
-  <circle cx="180" cy="410" r="12" fill="url(#connectionGradient)" stroke="#0891b2" stroke-width="2"/>
-  <line x1="200" y1="390" x2="220" y2="370" stroke="#0891b2" stroke-width="3" stroke-dasharray="5,5"/>
-  
-  <!-- Bottom right node -->
-  <circle cx="332" cy="410" r="12" fill="url(#connectionGradient)" stroke="#0891b2" stroke-width="2"/>
-  <line x1="312" y1="390" x2="292" y2="370" stroke="#0891b2" stroke-width="3" stroke-dasharray="5,5"/>
-  
-  <!-- Bottom center node -->
-  <circle cx="256" cy="442" r="12" fill="url(#connectionGradient)" stroke="#0891b2" stroke-width="2"/>
-  <line x1="256" y1="430" x2="256" y2="370" stroke="#0891b2" stroke-width="3" stroke-dasharray="5,5"/>
+  <!-- Mouth: literal ) bracket rotated to smile -->
+  <text x="256" y="380"
+        font-family="'SF Mono', 'Fira Code', 'Consolas', monospace"
+        font-size="160"
+        font-weight="700"
+        fill="#E8E8E8"
+        text-anchor="middle"
+        transform="rotate(90, 256, 340)">)</text>
 </svg>
