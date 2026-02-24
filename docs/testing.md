@@ -554,6 +554,82 @@ it("should have no accessibility violations", async () => {
 });
 ```
 
+## Comprehensive System Tests
+
+termiHub includes a comprehensive test infrastructure with 13 Docker containers (SSH variants, telnet, serial, SFTP stress, network fault injection) and Rust integration tests that exercise the app's backends directly. See the [concept document](concepts/comprehensive-test-infrastructure.md) for the full design.
+
+### Quick Start
+
+```bash
+# Start all Docker containers
+docker compose -f tests/docker/docker-compose.yml up -d
+
+# Run all Rust integration tests
+cargo test -p termihub-core --all-features -- --nocapture
+
+# Run a specific test suite
+cargo test -p termihub-core --all-features --test ssh_auth -- --nocapture
+
+# Include fault injection tests (requires fault profile)
+docker compose -f tests/docker/docker-compose.yml --profile fault up -d
+cargo test -p termihub-core --all-features --test network_resilience -- --nocapture --test-threads=1
+
+# Include SFTP stress tests (requires stress profile)
+docker compose -f tests/docker/docker-compose.yml --profile stress up -d
+cargo test -p termihub-core --all-features --test sftp_stress -- --nocapture
+
+# Stop all containers
+docker compose -f tests/docker/docker-compose.yml --profile all down
+```
+
+### Test Suites
+
+| Suite                | File                                              | Tests | Docker Containers                          | Description                                                       |
+| -------------------- | ------------------------------------------------- | ----- | ------------------------------------------ | ----------------------------------------------------------------- |
+| SSH Auth             | `core/tests/ssh_auth.rs`                          | 12    | ssh-password:2201, ssh-keys:2203           | Password, 6 key types, 3 passphrase keys, wrong credentials       |
+| SSH Compat           | `core/tests/ssh_compat.rs`                        | 2     | ssh-legacy:2202                            | Legacy OpenSSH 7.x compatibility                                  |
+| SSH Advanced         | `core/tests/ssh_advanced.rs`                      | 5     | bastion:2204, restricted:2205, tunnel:2207 | Jump host, restricted shell, TCP tunneling                        |
+| Telnet               | `core/tests/telnet.rs`                            | 3     | telnet:2301                                | Connect, output subscribe, login flow                             |
+| SFTP Stress          | `core/tests/sftp_stress.rs`                       | 16    | sftp-stress:2210                           | Large files, deep trees, symlinks, special filenames, permissions |
+| Network Resilience   | `core/tests/network_resilience.rs`                | 10    | network-fault:2209                         | Latency, packet loss, throttle, disconnect, jitter, corruption    |
+| Monitoring           | `core/tests/monitoring.rs`                        | 4     | ssh-password:2201                          | CPU, memory, disk stats, stats under load                         |
+| SSH Banner (E2E)     | `tests/e2e/infrastructure/ssh-banner.test.js`     | 2     | ssh-banner:2206                            | Pre-auth banner, MOTD display                                     |
+| SSH Keys (E2E)       | `tests/e2e/infrastructure/ssh-keys.test.js`       | 1     | ssh-keys:2203                              | Key auth UI flow                                                  |
+| Windows Shells (E2E) | `tests/e2e/infrastructure/windows-shells.test.js` | 5     | none                                       | PowerShell, cmd.exe, WSL (Windows-only)                           |
+
+### Skip Behavior
+
+All Rust integration tests use the `require_docker!` macro which checks TCP port connectivity at runtime. If the required Docker container is not running, the test prints a message and returns early (no failure). This means you can run `cargo test` without Docker and only the tests requiring containers will be skipped.
+
+### Per-Machine Test Scripts
+
+Platform-specific orchestration scripts that start Docker containers, run all applicable tests, and tear down infrastructure:
+
+```bash
+# macOS (no E2E — tauri-driver unsupported)
+./scripts/test-system-mac.sh
+./scripts/test-system-mac.sh --with-all --keep-infra
+
+# Linux (full suite including E2E if tauri-driver installed)
+./scripts/test-system-linux.sh
+./scripts/test-system-linux.sh --with-fault --with-stress
+
+# Windows (via WSL or Git Bash)
+./scripts/test-system-windows.sh
+```
+
+Common flags: `--skip-build`, `--skip-unit`, `--skip-serial`, `--with-fault`, `--with-stress`, `--with-all`, `--keep-infra`.
+
+### Network Resilience Tests
+
+The network resilience suite (`network_resilience.rs`) must run single-threaded because tests modify shared container state via `docker exec`:
+
+```bash
+cargo test -p termihub-core --all-features --test network_resilience -- --nocapture --test-threads=1
+```
+
+Each test uses a `FaultGuard` that automatically resets faults on drop (including panics).
+
 ## Next Steps
 
 1. **Phase 1** (Now): Add `data-testid` attributes to all components
