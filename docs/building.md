@@ -152,6 +152,105 @@ pnpm tauri build
 
 ---
 
+## Raspberry Pi / ARM64 Linux
+
+termiHub builds for ARM64 Linux, covering Raspberry Pi 3 (64-bit OS), Pi 4, Pi 5, and other ARM64 SBCs (Orange Pi, Rock Pi, etc.).
+
+### Prerequisites
+
+- 64-bit OS (Raspberry Pi OS Bookworm or newer recommended)
+- At least 2GB RAM (4GB+ recommended)
+
+Verify your architecture:
+
+```bash
+uname -m
+# Should output: aarch64
+```
+
+### Installing from Release
+
+**Using .deb Package (Recommended):**
+
+```bash
+wget https://github.com/armaxri/termiHub/releases/latest/download/termiHub-X.X.X-linux-arm64.deb
+sudo dpkg -i termiHub-X.X.X-linux-arm64.deb
+sudo apt-get install -f   # fix dependencies if needed
+```
+
+**Using AppImage:**
+
+```bash
+wget https://github.com/armaxri/termiHub/releases/latest/download/termiHub-X.X.X-linux-arm64.AppImage
+chmod +x termiHub-X.X.X-linux-arm64.AppImage
+./termiHub-X.X.X-linux-arm64.AppImage
+```
+
+If the AppImage won't run, install FUSE: `sudo apt-get install fuse libfuse2`
+
+### System Dependencies
+
+Same as Linux/Ubuntu above:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y \
+  libwebkit2gtk-4.1-0 \
+  libgtk-3-0 \
+  libayatana-appindicator3-1
+```
+
+### Building from Source on Raspberry Pi
+
+```bash
+# Install Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# Install build dependencies
+sudo apt-get install -y \
+  libwebkit2gtk-4.1-dev \
+  build-essential \
+  curl \
+  wget \
+  libssl-dev \
+  libgtk-3-dev \
+  libayatana-appindicator3-dev \
+  librsvg2-dev
+
+# Install Node.js and pnpm
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt-get install -y nodejs
+npm install -g pnpm
+
+# Clone and build
+git clone https://github.com/armaxri/termiHub.git
+cd termiHub
+pnpm install
+pnpm run build
+```
+
+The first build takes 20–30 minutes on Pi 4, less on Pi 5.
+
+### Performance Tips
+
+- **Raspberry Pi 3/4**: Close unnecessary applications to free RAM. Consider a lightweight desktop environment (LXDE). Increase swap if needed.
+- **Raspberry Pi 5**: Should run smoothly with default settings.
+
+### Serial Port Access
+
+```bash
+# Add user to dialout group for serial port access
+sudo usermod -a -G dialout $USER
+# Logout and login for changes to take effect
+```
+
+### Updating
+
+**Using .deb package**: Download the new version and `sudo dpkg -i` it.
+**Using AppImage**: Replace the old AppImage with the new one.
+
+---
+
 ## Windows
 
 ### System Dependencies
@@ -236,6 +335,46 @@ agent/target/<triple>/release/termihub-agent
 ```
 
 For example: `agent/target/aarch64-unknown-linux-gnu/release/termihub-agent`
+
+### Deploying the Remote Agent
+
+Once built (or cross-compiled), the `termihub-agent` binary can be deployed to any Linux host (server, Raspberry Pi, NAS, etc.).
+
+**Install using the provided script:**
+
+```bash
+cd agent
+sudo ./install.sh
+```
+
+This copies the binary to `/usr/local/bin/`, installs a systemd service, and enables it.
+
+**Start and check the service:**
+
+```bash
+sudo systemctl start termihub-agent
+sudo systemctl status termihub-agent
+journalctl -u termihub-agent -f
+```
+
+**Agent modes:**
+
+- **`--listen [addr]`** — TCP listener mode (default: `127.0.0.1:7685`). Used for systemd service. Sessions persist across client reconnects.
+- **`--stdio`** — Stdio mode (NDJSON over stdin/stdout). Used when launched over SSH exec channels.
+
+The systemd service uses `--listen` mode by default. To change the listen address:
+
+```bash
+sudo systemctl edit termihub-agent
+# Override ExecStart to change the address
+```
+
+**Connecting from the desktop app:**
+
+- **SSH port forward**: `ssh -L 7685:127.0.0.1:7685 user@host` then connect to `localhost:7685`
+- **Direct LAN**: Start with `--listen 0.0.0.0:7685` and connect to the host's IP address
+
+**Security note:** The TCP listener does not implement authentication or encryption. Always bind to `127.0.0.1` (default) and tunnel via SSH, or run on a trusted local network only.
 
 ---
 

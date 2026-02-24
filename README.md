@@ -63,12 +63,11 @@ termiHub provides a VS Code-like interface for managing multiple terminal connec
 - **[Serial Setup](docs/serial-setup.md)** — Serial port configuration per platform
 - **[SSH Configuration](docs/ssh-configuration.md)** — SSH keys, X11 forwarding, SFTP
 - **[Testing Strategy](docs/testing.md)** — Automated testing layers (unit, integration, E2E)
-- **[Manual Testing](docs/manual-testing.md)** — Manual test plan for hardware-dependent features
+- **[Manual Testing](docs/manual-testing.md)** — Manual test procedures and regression checklist
 - **[Contributing](docs/contributing.md)** — Development workflow, coding standards, architecture
 - **[Architecture](docs/architecture.md)** — Full arc42 architecture documentation
 - **[Remote Protocol](docs/remote-protocol.md)** — Desktop-to-agent JSON-RPC specification
 - **[Performance](docs/performance.md)** — Profiling guide and baseline metrics
-- **[Raspberry Pi](docs/raspberry-pi.md)** — ARM device deployment and remote agent setup
 - **[Releasing](docs/releasing.md)** — Release process and version management
 
 ## Built With
