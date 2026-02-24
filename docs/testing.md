@@ -1055,13 +1055,13 @@ Each section groups related tests by feature area. **Baseline** subsections cove
 
 #### SSH key file validation (PR #204)
 
-- [ ] Open connection editor, select SSH type, set auth method to "SSH Key" — select a `.pub` file via browse — verify a warning hint appears: "This looks like a public key (.pub)..."
-- [ ] Type or paste a path to a valid OpenSSH private key — verify a green success hint appears: "OpenSSH private key detected."
-- [ ] Type or paste a path to a valid RSA PEM private key — verify a green success hint appears: "RSA (PEM) private key detected."
-- [ ] Type a nonexistent path (e.g., `/no/such/key`) — verify a red error hint appears: "File not found."
-- [ ] Select a PuTTY PPK file — verify a warning hint appears mentioning `puttygen` conversion
-- [ ] Select a random non-key file (e.g., a `.txt` file) — verify a warning hint appears: "Not a recognized SSH private key format."
-- [ ] Clear the key path field — verify the hint disappears
+- [ ] Open connection editor, select SSH type, set auth method to "SSH Key" — select a `.pub` file via browse — verify a warning hint appears: "This looks like a public key (.pub)..." _(validation logic: Rust unit test `ssh_key_validate.rs` — `pub_extension_returns_warning`)_
+- [ ] Type or paste a path to a valid OpenSSH private key — verify a green success hint appears: "OpenSSH private key detected." _(validation logic: Rust unit test — `openssh_private_key_detected`)_
+- [ ] Type or paste a path to a valid RSA PEM private key — verify a green success hint appears: "RSA (PEM) private key detected." _(validation logic: Rust unit test — `rsa_pem_private_key_detected`)_
+- [ ] Type a nonexistent path (e.g., `/no/such/key`) — verify a red error hint appears: "File not found." _(validation logic: Rust unit test — `nonexistent_file_returns_error`)_
+- [ ] Select a PuTTY PPK file — verify a warning hint appears mentioning `puttygen` conversion _(validation logic: Rust unit tests — `putty_ppk_returns_warning_with_instructions`, `putty_ppk_v2_detected`)_
+- [ ] Select a random non-key file (e.g., a `.txt` file) — verify a warning hint appears: "Not a recognized SSH private key format." _(validation logic: Rust unit test — `unrecognized_format_returns_warning`)_
+- [ ] Clear the key path field — verify the hint disappears _(validation logic: Rust unit test — `empty_path_is_silently_valid`)_
 - [ ] Type a path character by character — verify the hint updates after a short debounce delay (no flickering on every keystroke)
 
 #### SSH key path browse button (PR #205)
@@ -1279,21 +1279,21 @@ Each section groups related tests by feature area. **Baseline** subsections cove
 
 #### Color theme switching (PR #220)
 
-- [ ] Open Settings > Appearance > Theme — select "Light" — verify all UI elements update: sidebar becomes light gray, tabs become light, text becomes dark, borders lighten
+- [ ] Open Settings > Appearance > Theme — select "Light" — verify all UI elements update: sidebar becomes light gray, tabs become light, text becomes dark, borders lighten _(store logic: Vitest `appStore.settings.test.ts` — "calls applyTheme when switching from system to light")_
 - [ ] Select "Dark" — verify all UI elements revert to the dark color scheme
-- [ ] Select "System" — verify the app follows the current OS dark/light mode preference
-- [ ] In "System" mode, toggle OS dark/light mode — verify the app switches themes automatically without a restart
+- [ ] Select "System" — verify the app follows the current OS dark/light mode preference _(store logic: Vitest — "calls applyTheme('system') when switching to system mode")_
+- [ ] In "System" mode, toggle OS dark/light mode — verify the app switches themes automatically without a restart _(callback: Vitest — "registers onThemeChange callback on initial load")_
 - [ ] Open multiple terminal tabs — switch theme — verify all terminal instances re-theme live (background, foreground, ANSI colors all change)
 - [ ] Verify the activity bar stays dark in both Light and Dark themes (visual anchor)
 - [ ] Verify state dots (connected/connecting/disconnected) are visible in both themes on terminal tabs and agent sidebar nodes
-- [ ] Close and reopen the app — verify the selected theme persists across restarts
+- [ ] Close and reopen the app — verify the selected theme persists across restarts _(store logic: Vitest — "persists theme setting via saveSettings", "applies theme from settings on initial load", "stores theme setting in store state after load")_
 - [ ] Trigger an error (e.g., throw in a component) to see the ErrorBoundary — verify it renders with theme-appropriate colors
 
 #### Theme switching applies immediately (PR #224)
 
-- [ ] Open Settings > Appearance > Theme — switch from Dark to Light — verify the UI changes immediately without needing an app restart
+- [ ] Open Settings > Appearance > Theme — switch from Dark to Light — verify the UI changes immediately without needing an app restart _(store logic: Vitest `appStore.settings.test.ts` — "calls applyTheme when switching from system to light")_
 - [ ] Switch from Light to Dark — verify immediate visual change
-- [ ] Switch to System — verify the theme matches the current OS preference immediately
+- [ ] Switch to System — verify the theme matches the current OS preference immediately _(store logic: Vitest — "calls applyTheme('system') when switching to system mode")_
 - [ ] Rapidly toggle between Dark and Light several times — verify each switch is applied instantly with no delay
 
 #### Status bar (PR #30)
@@ -1328,42 +1328,42 @@ Each section groups related tests by feature area. **Baseline** subsections cove
 #### Customize Layout dialog (PR #242)
 
 - [ ] Click the Settings gear in the Activity Bar — click "Customize Layout..." — verify the dialog opens with title "Customize Layout"
-- [ ] Verify three preset cards appear (Default, Focus, Zen) with CSS thumbnails showing the layout arrangement
-- [ ] Click "Focus" preset — verify Activity Bar stays visible, Sidebar hides, Status Bar stays visible, and the Focus card shows an accent border
-- [ ] Click "Zen" preset — verify Activity Bar hides, Sidebar hides, Status Bar hides, and the Zen card shows an accent border
-- [ ] Click "Default" preset — verify all elements return to default positions and the Default card shows an accent border
-- [ ] Uncheck "Visible" under Activity Bar — verify the Activity Bar disappears from the app and position radios become disabled
-- [ ] Re-check "Visible" under Activity Bar — verify it reappears at the last selected position (not always "left")
-- [ ] Select "Right" position for Activity Bar — verify it moves to the right side of the main area
-- [ ] Select "Top" position for Activity Bar — verify it renders horizontally above the main content
-- [ ] Uncheck "Visible" under Sidebar — verify the Sidebar disappears and position radios become disabled
-- [ ] Re-check "Visible" under Sidebar — verify it reappears
-- [ ] Select "Right" position for Sidebar — verify it moves to the right side
-- [ ] Uncheck "Visible" under Status Bar — verify the Status Bar disappears
-- [ ] Click "Reset to Default" — verify all settings return to default layout
-- [ ] Click "Close" — verify the dialog closes
+- [x] Verify three preset cards appear (Default, Focus, Zen) with CSS thumbnails showing the layout arrangement _(Vitest: `CustomizeLayoutDialog.test.tsx` — "renders three preset buttons")_
+- [x] Click "Focus" preset — verify Activity Bar stays visible, Sidebar hides, Status Bar stays visible, and the Focus card shows an accent border _(Vitest: "applies Focus preset on click", "shows active indicator on Focus preset")_
+- [x] Click "Zen" preset — verify Activity Bar hides, Sidebar hides, Status Bar hides, and the Zen card shows an accent border _(Vitest: "applies Zen preset on click", "shows active indicator on Zen preset")_
+- [x] Click "Default" preset — verify all elements return to default positions and the Default card shows an accent border _(Vitest: "applies Default preset on click", "shows active indicator on Default preset")_
+- [x] Uncheck "Visible" under Activity Bar — verify the Activity Bar disappears from the app and position radios become disabled _(Vitest: "unchecking Activity Bar visible hides it", "disables Activity Bar position radios when not visible")_
+- [x] Re-check "Visible" under Activity Bar — verify it reappears at the last selected position (not always "left") _(Vitest: "re-checking Activity Bar visible shows it again")_
+- [x] Select "Right" position for Activity Bar — verify it moves to the right side of the main area _(Vitest: "selecting Right position for Activity Bar updates config")_
+- [x] Select "Top" position for Activity Bar — verify it renders horizontally above the main content _(Vitest: "selecting Top position for Activity Bar updates config")_
+- [x] Uncheck "Visible" under Sidebar — verify the Sidebar disappears and position radios become disabled _(Vitest: "unchecking Sidebar visible hides it", "disables Sidebar position radios when not visible")_
+- [x] Re-check "Visible" under Sidebar — verify it reappears _(Vitest: "re-checking Sidebar visible shows it again")_
+- [x] Select "Right" position for Sidebar — verify it moves to the right side _(Vitest: "selecting Right position for Sidebar updates config")_
+- [x] Uncheck "Visible" under Status Bar — verify the Status Bar disappears _(Vitest: "unchecking Status Bar visible hides it")_
+- [x] Click "Reset to Default" — verify all settings return to default layout _(Vitest: "Reset to Default restores default layout config")_
+- [x] Click "Close" — verify the dialog closes _(Vitest: "Close button closes the dialog")_
 - [ ] Press Escape — verify the dialog closes
-- [ ] Reopen the dialog — verify it reflects the current layout state (changes persisted)
+- [x] Reopen the dialog — verify it reflects the current layout state (changes persisted) _(Vitest: "reopening dialog reflects current layout state")_
 
 #### Layout preview in Customize Layout dialog (PR #243)
 
-- [ ] Open the Customize Layout dialog — verify a "Layout Preview" section appears below the Status Bar controls, showing a labeled schematic of the current layout
-- [ ] Verify the preview shows labeled boxes: "AB" (Activity Bar), "Sidebar", "Terminal", "Status Bar" in positions matching the current layout config
-- [ ] Change Activity Bar position to "Right" — verify the AB box moves to the right side in the preview
-- [ ] Change Activity Bar position to "Top" — verify the AB box spans the full width at top with "Activity Bar" label
-- [ ] Uncheck Activity Bar "Visible" — verify the AB box disappears from the preview
-- [ ] Change Sidebar position to "Right" — verify the Sidebar box moves to the right of the Terminal box
-- [ ] Uncheck Sidebar "Visible" — verify the Sidebar box disappears from the preview
-- [ ] Uncheck Status Bar "Visible" — verify the Status Bar strip disappears from the preview
-- [ ] Click "Zen" preset — verify the preview shows only the Terminal box (all other elements hidden)
-- [ ] Click "Default" preset — verify the preview shows all elements in default positions
+- [x] Open the Customize Layout dialog — verify a "Layout Preview" section appears below the Status Bar controls, showing a labeled schematic of the current layout _(Vitest: `CustomizeLayoutDialog.test.tsx` — "renders LayoutPreview inside the dialog"; `LayoutPreview.test.tsx` — "renders all sections in default layout")_
+- [x] Verify the preview shows labeled boxes: "AB" (Activity Bar), "Sidebar", "Terminal", "Status Bar" in positions matching the current layout config _(Vitest: `LayoutPreview.test.tsx` — "renders labels inside sections")_
+- [x] Change Activity Bar position to "Right" — verify the AB box moves to the right side in the preview _(Vitest: `CustomizeLayoutDialog.test.tsx` — "LayoutPreview updates when Activity Bar position changes to Right"; `LayoutPreview.test.tsx` — "renders activity bar on right side")_
+- [x] Change Activity Bar position to "Top" — verify the AB box spans the full width at top with "Activity Bar" label _(Vitest: `CustomizeLayoutDialog.test.tsx` — "LayoutPreview updates when Activity Bar position changes to Top"; `LayoutPreview.test.tsx` — "renders top activity bar when position is top", "renders Activity Bar label when position is top")_
+- [x] Uncheck Activity Bar "Visible" — verify the AB box disappears from the preview _(Vitest: `CustomizeLayoutDialog.test.tsx` — "LayoutPreview hides AB when Activity Bar visibility is unchecked"; `LayoutPreview.test.tsx` — "hides activity bar when position is hidden")_
+- [x] Change Sidebar position to "Right" — verify the Sidebar box moves to the right of the Terminal box _(Vitest: `CustomizeLayoutDialog.test.tsx` — "LayoutPreview moves sidebar to right when Sidebar position changes"; `LayoutPreview.test.tsx` — "renders sidebar on right side of terminal")_
+- [x] Uncheck Sidebar "Visible" — verify the Sidebar box disappears from the preview _(Vitest: `CustomizeLayoutDialog.test.tsx` — "LayoutPreview hides sidebar when Sidebar visibility is unchecked"; `LayoutPreview.test.tsx` — "hides sidebar when sidebarVisible is false")_
+- [x] Uncheck Status Bar "Visible" — verify the Status Bar strip disappears from the preview _(Vitest: `CustomizeLayoutDialog.test.tsx` — "LayoutPreview hides status bar when Status Bar visibility is unchecked"; `LayoutPreview.test.tsx` — "hides status bar when statusBarVisible is false")_
+- [x] Click "Zen" preset — verify the preview shows only the Terminal box (all other elements hidden) _(Vitest: `CustomizeLayoutDialog.test.tsx` — "LayoutPreview shows only terminal in Zen preset"; `LayoutPreview.test.tsx` — "renders zen layout")_
+- [x] Click "Default" preset — verify the preview shows all elements in default positions _(Vitest: `CustomizeLayoutDialog.test.tsx` — "LayoutPreview restores all elements when returning to Default preset")_
 
 #### Sidebar toggle button and Ctrl+B shortcut (PR #194)
 
-- [ ] Click the PanelLeft icon button in the terminal toolbar (right side) — sidebar hides
-- [ ] Click the button again — sidebar shows, button appears highlighted
+- [x] Click the PanelLeft icon button in the terminal toolbar (right side) — sidebar hides _(E2E: `sidebar-toggle.test.js` — "should hide the sidebar when clicking the toggle button")_
+- [x] Click the button again — sidebar shows, button appears highlighted _(E2E: `sidebar-toggle.test.js` — "should show the sidebar when clicking the toggle button again", "should show toggle button as highlighted when sidebar is visible")_
 - [ ] Press Ctrl+B (Cmd+B on Mac) — sidebar toggles
-- [ ] Open a split view — verify the toggle button remains visible and functional in the toolbar
+- [x] Open a split view — verify the toggle button remains visible and functional in the toolbar _(E2E: `sidebar-toggle.test.js` — "should keep the toggle button functional after split view")_
 - [ ] Hover the button — tooltip shows "Toggle Sidebar (Ctrl+B)" (or "Cmd+B" on Mac)
 
 #### Highlight selected tab with top border accent (PR #190)
