@@ -166,6 +166,14 @@ The container fleet is managed via Docker Compose with profiles:
 6. **Tears down Docker containers** on completion (unless `--keep-infra`)
 7. **Outputs summary** with pass/fail counts and duration
 
+### Container Lifecycle: Start All At Once
+
+All containers are started together before tests begin, rather than per-test or per-suite. Rationale:
+
+- **Idle containers are cheap**: Each SSH server uses ~20 MB RAM and near-zero CPU when idle. All 13 containers total ~300 MB — negligible even on the Raspberry Pi (4 GB RAM).
+- **Startup overhead is expensive**: Container startup takes 1-3s each, plus health checks (5s interval, 3 retries). Starting/stopping per test would add 5-15s of wait time per scenario, turning a 1-2 minute test run into 10+ minutes.
+- **Docker Compose profiles provide opt-in granularity**: The `fault` and `stress` profiles let you skip the heavier containers (network fault proxy, SFTP stress with 120 MB test data) when you only need core testing. `docker compose up -d` starts just the essentials.
+
 ### Test Categories
 
 #### Category 1: Unit Tests (all machines, no Docker)
