@@ -131,6 +131,7 @@ export const FILE_MENU_DELETE = '[data-testid="file-menu-delete"]';
 export const CTX_FILE_OPEN = '[data-testid="context-file-open"]';
 export const CTX_FILE_EDIT = '[data-testid="context-file-edit"]';
 export const CTX_FILE_RENAME = '[data-testid="context-file-rename"]';
+export const CTX_FILE_DOWNLOAD = '[data-testid="context-file-download"]';
 export const CTX_FILE_DELETE = '[data-testid="context-file-delete"]';
 
 // --- Password Prompt ---
@@ -250,6 +251,39 @@ export const keyPathOption = (prefix, i) => `[data-testid="${prefix}key-path-opt
 // --- Dynamic Form Fields ---
 export const dynamicField = (key) => `[data-testid="dynamic-field-${key}"]`;
 export const fieldInput = (key) => `[data-testid="field-${key}"]`;
+
+// --- Tunnel Status ---
+export const tunnelStatus = (id) => `[data-testid="tunnel-status-${id}"]`;
+export const tunnelName = (id) => `[data-testid="tunnel-name-${id}"]`;
+export const tunnelType = (id) => `[data-testid="tunnel-type-${id}"]`;
+
+// --- Agent Context Menu ---
+export const CTX_AGENT_CONNECT = '[data-testid="context-agent-connect"]';
+export const CTX_AGENT_DISCONNECT = '[data-testid="context-agent-disconnect"]';
+export const CTX_AGENT_SETUP = '[data-testid="context-agent-setup"]';
+export const CTX_AGENT_NEW_SHELL = '[data-testid="context-agent-new-shell"]';
+export const CTX_AGENT_NEW_SERIAL = '[data-testid="context-agent-new-serial"]';
+export const CTX_AGENT_REFRESH = '[data-testid="context-agent-refresh"]';
+export const CTX_AGENT_EDIT = '[data-testid="context-agent-edit"]';
+export const CTX_AGENT_DELETE = '[data-testid="context-agent-delete"]';
+
+// --- Agent Node ---
+export const agentNode = (id) => `[data-testid="agent-node-${id}"]`;
+export const agentState = (id) => `[data-testid="agent-state-${id}"]`;
+
+// --- Connection Error Dialog ---
+export const CONNECTION_ERROR_TITLE = '[data-testid="connection-error-title"]';
+export const CONNECTION_ERROR_MESSAGE = '[data-testid="connection-error-message"]';
+export const CONNECTION_ERROR_DETAILS = '[data-testid="connection-error-details"]';
+
+// --- File Browser Placeholder ---
+export const FILE_BROWSER_PLACEHOLDER = '[data-testid="file-browser-placeholder"]';
+export const FILE_BROWSER_SFTP_CONNECTING = '[data-testid="file-browser-sftp-connecting"]';
+
+// --- Per-connection override fields (DynamicForm) ---
+export const FIELD_ENABLE_MONITORING = '[data-testid="field-enableMonitoring"]';
+export const FIELD_ENABLE_FILE_BROWSER = '[data-testid="field-enableFileBrowser"]';
+export const FIELD_SAVE_PASSWORD = '[data-testid="field-savePassword"]';
 
 // --- Generic helpers ---
 /** Match all tab elements (for counting) */
