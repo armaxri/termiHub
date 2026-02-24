@@ -147,12 +147,12 @@ The container fleet is managed via Docker Compose with profiles:
 
 ### Machine Inventory & Roles
 
-| Machine | OS | Network | Docker | Serial HW | Role |
-|---------|-----|---------|--------|-----------|------|
-| **Mac** (private) | macOS | Private network | Yes | USB-to-serial | Dev machine, Docker system tests, real serial |
-| **Ubuntu tower** | Ubuntu Linux | Company network | Yes | USB-to-serial | Primary Linux test server, full suite |
-| **Raspberry Pi** | Ubuntu Linux (ARM) | Company network | Yes | GPIO serial | ARM architecture testing |
-| **Windows PC** | Windows + WSL2 | Company network | Yes (in WSL) | None | Windows shell testing, WSL Docker tests |
+| Machine           | OS                 | Network         | Docker       | Serial HW     | Role                                          |
+| ----------------- | ------------------ | --------------- | ------------ | ------------- | --------------------------------------------- |
+| **Mac** (private) | macOS              | Private network | Yes          | USB-to-serial | Dev machine, Docker system tests, real serial |
+| **Ubuntu tower**  | Ubuntu Linux       | Company network | Yes          | USB-to-serial | Primary Linux test server, full suite         |
+| **Raspberry Pi**  | Ubuntu Linux (ARM) | Company network | Yes          | GPIO serial   | ARM architecture testing                      |
+| **Windows PC**    | Windows + WSL2     | Company network | Yes (in WSL) | None          | Windows shell testing, WSL Docker tests       |
 
 > **Network isolation**: The Mac is on a private network, separate from the three company machines. The company machines (Windows, Ubuntu tower, Raspberry Pi) can communicate with each other on the company network.
 
@@ -560,116 +560,116 @@ graph TB
 
 ### SSH Authentication Suite
 
-| ID | Scenario | Container | Auth Method | Key |
-|----|----------|-----------|-------------|-----|
-| SSH-AUTH-01 | Password login | ssh-password:2201 | password | — |
-| SSH-AUTH-02 | RSA-2048 key | ssh-keys:2203 | publickey | `rsa_2048` |
-| SSH-AUTH-03 | RSA-4096 key | ssh-keys:2203 | publickey | `rsa_4096` |
-| SSH-AUTH-04 | Ed25519 key | ssh-keys:2203 | publickey | `ed25519` |
-| SSH-AUTH-05 | ECDSA-256 key | ssh-keys:2203 | publickey | `ecdsa_256` |
-| SSH-AUTH-06 | ECDSA-384 key | ssh-keys:2203 | publickey | `ecdsa_384` |
-| SSH-AUTH-07 | ECDSA-521 key | ssh-keys:2203 | publickey | `ecdsa_521` |
-| SSH-AUTH-08 | RSA-2048 + passphrase | ssh-keys:2203 | publickey | `rsa_2048_passphrase` |
-| SSH-AUTH-09 | Ed25519 + passphrase | ssh-keys:2203 | publickey | `ed25519_passphrase` |
-| SSH-AUTH-10 | ECDSA-256 + passphrase | ssh-keys:2203 | publickey | `ecdsa_256_passphrase` |
-| SSH-AUTH-11 | Wrong password (reject) | ssh-password:2201 | password | — |
-| SSH-AUTH-12 | Wrong key (reject) | ssh-keys:2203 | publickey | non-matching |
+| ID          | Scenario                | Container         | Auth Method | Key                    |
+| ----------- | ----------------------- | ----------------- | ----------- | ---------------------- |
+| SSH-AUTH-01 | Password login          | ssh-password:2201 | password    | —                      |
+| SSH-AUTH-02 | RSA-2048 key            | ssh-keys:2203     | publickey   | `rsa_2048`             |
+| SSH-AUTH-03 | RSA-4096 key            | ssh-keys:2203     | publickey   | `rsa_4096`             |
+| SSH-AUTH-04 | Ed25519 key             | ssh-keys:2203     | publickey   | `ed25519`              |
+| SSH-AUTH-05 | ECDSA-256 key           | ssh-keys:2203     | publickey   | `ecdsa_256`            |
+| SSH-AUTH-06 | ECDSA-384 key           | ssh-keys:2203     | publickey   | `ecdsa_384`            |
+| SSH-AUTH-07 | ECDSA-521 key           | ssh-keys:2203     | publickey   | `ecdsa_521`            |
+| SSH-AUTH-08 | RSA-2048 + passphrase   | ssh-keys:2203     | publickey   | `rsa_2048_passphrase`  |
+| SSH-AUTH-09 | Ed25519 + passphrase    | ssh-keys:2203     | publickey   | `ed25519_passphrase`   |
+| SSH-AUTH-10 | ECDSA-256 + passphrase  | ssh-keys:2203     | publickey   | `ecdsa_256_passphrase` |
+| SSH-AUTH-11 | Wrong password (reject) | ssh-password:2201 | password    | —                      |
+| SSH-AUTH-12 | Wrong key (reject)      | ssh-keys:2203     | publickey   | non-matching           |
 
 ### SSH Compatibility Suite
 
-| ID | Scenario | Container | Verification |
-|----|----------|-----------|--------------|
-| SSH-COMPAT-01 | Legacy OpenSSH 7.x password | ssh-legacy:2202 | Login + `ssh -V` output |
-| SSH-COMPAT-02 | Legacy OpenSSH 7.x key auth | ssh-legacy:2202 | Key login succeeds |
-| SSH-COMPAT-03 | Banner display | ssh-banner:2206 | Terminal output contains banner text |
-| SSH-COMPAT-04 | MOTD display | ssh-banner:2206 | Terminal output contains MOTD text |
+| ID            | Scenario                    | Container       | Verification                         |
+| ------------- | --------------------------- | --------------- | ------------------------------------ |
+| SSH-COMPAT-01 | Legacy OpenSSH 7.x password | ssh-legacy:2202 | Login + `ssh -V` output              |
+| SSH-COMPAT-02 | Legacy OpenSSH 7.x key auth | ssh-legacy:2202 | Key login succeeds                   |
+| SSH-COMPAT-03 | Banner display              | ssh-banner:2206 | Terminal output contains banner text |
+| SSH-COMPAT-04 | MOTD display                | ssh-banner:2206 | Terminal output contains MOTD text   |
 
 ### SSH Advanced Suite
 
-| ID | Scenario | Container | Verification |
-|----|----------|-----------|--------------|
-| SSH-JUMP-01 | 2-hop ProxyJump | bastion:2204 → target | Read marker file |
-| SSH-SHELL-01 | Restricted shell (rbash) | ssh-restricted:2205 | Limited commands work, `cd` fails |
-| SSH-SHELL-02 | Unrestricted comparison | ssh-restricted:2205 | `freeuser` has full shell |
-| SSH-TUNNEL-01 | Local port forward | ssh-tunnel:2207 | Tunnel to internal HTTP → "TUNNEL_TEST_OK" |
-| SSH-TUNNEL-02 | Dynamic SOCKS proxy | ssh-tunnel:2207 | SOCKS proxy reaches internal HTTP |
-| SSH-TUNNEL-03 | TCP echo via tunnel | ssh-tunnel:2207 | Echo server round-trip via tunnel |
-| SSH-X11-01 | X11 forwarding DISPLAY set | ssh-x11:2208 | Run `test-x11.sh` → "X11_FORWARDING_OK" |
-| SSH-X11-02 | X11 app launch | ssh-x11:2208 | `xdpyinfo` succeeds |
+| ID            | Scenario                   | Container             | Verification                               |
+| ------------- | -------------------------- | --------------------- | ------------------------------------------ |
+| SSH-JUMP-01   | 2-hop ProxyJump            | bastion:2204 → target | Read marker file                           |
+| SSH-SHELL-01  | Restricted shell (rbash)   | ssh-restricted:2205   | Limited commands work, `cd` fails          |
+| SSH-SHELL-02  | Unrestricted comparison    | ssh-restricted:2205   | `freeuser` has full shell                  |
+| SSH-TUNNEL-01 | Local port forward         | ssh-tunnel:2207       | Tunnel to internal HTTP → "TUNNEL_TEST_OK" |
+| SSH-TUNNEL-02 | Dynamic SOCKS proxy        | ssh-tunnel:2207       | SOCKS proxy reaches internal HTTP          |
+| SSH-TUNNEL-03 | TCP echo via tunnel        | ssh-tunnel:2207       | Echo server round-trip via tunnel          |
+| SSH-X11-01    | X11 forwarding DISPLAY set | ssh-x11:2208          | Run `test-x11.sh` → "X11_FORWARDING_OK"    |
+| SSH-X11-02    | X11 app launch             | ssh-x11:2208          | `xdpyinfo` succeeds                        |
 
 ### Telnet Suite
 
-| ID | Scenario | Container | Verification |
-|----|----------|-----------|--------------|
+| ID     | Scenario               | Container   | Verification                 |
+| ------ | ---------------------- | ----------- | ---------------------------- |
 | TEL-01 | Connect + authenticate | telnet:2301 | Login with testuser/testpass |
-| TEL-02 | Banner display | telnet:2301 | Banner text visible |
-| TEL-03 | Command execution | telnet:2301 | `whoami` returns testuser |
+| TEL-02 | Banner display         | telnet:2301 | Banner text visible          |
+| TEL-03 | Command execution      | telnet:2301 | `whoami` returns testuser    |
 
 ### Serial Port Suite
 
-| ID | Scenario | Container/HW | Verification |
-|----|----------|------------|--------------|
-| SER-VIRT-01 | Echo mode (send = receive) | serial-echo (port A) | Send string, verify echo |
-| SER-VIRT-02 | Uppercase mode | serial-echo (port C) | Send "hello", verify "HELLO" |
-| SER-VIRT-03 | Binary data round-trip | serial-echo (port A) | Send binary, verify match |
-| SER-HW-01 | Detect USB-to-serial adapter | Real hardware | Adapter appears in device list |
-| SER-HW-02 | Baud rate configuration | Real hardware | Connect at 9600, 115200 |
-| SER-HW-03 | Data transmission | Real hardware | Loopback or echo device test |
+| ID          | Scenario                     | Container/HW         | Verification                   |
+| ----------- | ---------------------------- | -------------------- | ------------------------------ |
+| SER-VIRT-01 | Echo mode (send = receive)   | serial-echo (port A) | Send string, verify echo       |
+| SER-VIRT-02 | Uppercase mode               | serial-echo (port C) | Send "hello", verify "HELLO"   |
+| SER-VIRT-03 | Binary data round-trip       | serial-echo (port A) | Send binary, verify match      |
+| SER-HW-01   | Detect USB-to-serial adapter | Real hardware        | Adapter appears in device list |
+| SER-HW-02   | Baud rate configuration      | Real hardware        | Connect at 9600, 115200        |
+| SER-HW-03   | Data transmission            | Real hardware        | Loopback or echo device test   |
 
 ### Network Resilience Suite
 
-| ID | Scenario | Fault | Verification |
-|----|----------|-------|--------------|
-| NET-FAULT-01 | High latency SSH | 500ms delay | Session works, commands delayed |
-| NET-FAULT-02 | Extreme latency | 2000ms delay | Session works, UI shows slow indicator |
-| NET-FAULT-03 | Moderate packet loss | 10% loss | Session recovers, some retransmissions |
-| NET-FAULT-04 | Severe packet loss | 50% loss | Session degrades gracefully |
-| NET-FAULT-05 | Bandwidth throttle (dialup) | 56kbps | Large output slowed, no crash |
-| NET-FAULT-06 | Bandwidth throttle (1Mbps) | 1Mbps | Normal operation with slight delay |
-| NET-FAULT-07 | Full disconnect | 100% loss | UI shows disconnected, no hang |
-| NET-FAULT-08 | Disconnect + recovery | 100% → 0% | Reconnect succeeds |
-| NET-FAULT-09 | Jitter simulation | 200ms ± 100ms | Session stable despite variable latency |
-| NET-FAULT-10 | Packet corruption | 5% corrupt | SSH handles corruption gracefully |
+| ID           | Scenario                    | Fault         | Verification                            |
+| ------------ | --------------------------- | ------------- | --------------------------------------- |
+| NET-FAULT-01 | High latency SSH            | 500ms delay   | Session works, commands delayed         |
+| NET-FAULT-02 | Extreme latency             | 2000ms delay  | Session works, UI shows slow indicator  |
+| NET-FAULT-03 | Moderate packet loss        | 10% loss      | Session recovers, some retransmissions  |
+| NET-FAULT-04 | Severe packet loss          | 50% loss      | Session degrades gracefully             |
+| NET-FAULT-05 | Bandwidth throttle (dialup) | 56kbps        | Large output slowed, no crash           |
+| NET-FAULT-06 | Bandwidth throttle (1Mbps)  | 1Mbps         | Normal operation with slight delay      |
+| NET-FAULT-07 | Full disconnect             | 100% loss     | UI shows disconnected, no hang          |
+| NET-FAULT-08 | Disconnect + recovery       | 100% → 0%     | Reconnect succeeds                      |
+| NET-FAULT-09 | Jitter simulation           | 200ms ± 100ms | Session stable despite variable latency |
+| NET-FAULT-10 | Packet corruption           | 5% corrupt    | SSH handles corruption gracefully       |
 
 ### SFTP Stress Suite
 
-| ID | Scenario | Container | Verification |
-|----|----------|-----------|--------------|
-| SFTP-STRESS-01 | Download 1 MB file | sftp-stress:2210 | Size + checksum match |
-| SFTP-STRESS-02 | Download 10 MB file | sftp-stress:2210 | Size + checksum match |
-| SFTP-STRESS-03 | Download 100 MB file | sftp-stress:2210 | Size + checksum match |
-| SFTP-STRESS-04 | Upload 50 MB file | sftp-stress:2210 | Round-trip verify |
-| SFTP-STRESS-05 | List 1000-entry dir | sftp-stress:2210 | All 1000 entries returned |
-| SFTP-STRESS-06 | Navigate 50-level tree | sftp-stress:2210 | Read file at depth 50 |
-| SFTP-STRESS-07 | Valid file symlink | sftp-stress:2210 | Follow link, read content |
-| SFTP-STRESS-08 | Valid dir symlink | sftp-stress:2210 | Follow link, list contents |
-| SFTP-STRESS-09 | Broken symlink | sftp-stress:2210 | Graceful error, no crash |
-| SFTP-STRESS-10 | Circular symlinks | sftp-stress:2210 | Detected, no infinite loop |
-| SFTP-STRESS-11 | Unicode filename | sftp-stress:2210 | File accessible and readable |
-| SFTP-STRESS-12 | Filename with spaces | sftp-stress:2210 | File accessible and readable |
-| SFTP-STRESS-13 | 200-char filename | sftp-stress:2210 | File accessible |
-| SFTP-STRESS-14 | Hidden files (.dotfiles) | sftp-stress:2210 | Visible when option enabled |
-| SFTP-STRESS-15 | Permission 000 file | sftp-stress:2210 | Graceful "access denied" |
-| SFTP-STRESS-16 | Permission 000 directory | sftp-stress:2210 | Graceful "access denied" |
+| ID             | Scenario                 | Container        | Verification                 |
+| -------------- | ------------------------ | ---------------- | ---------------------------- |
+| SFTP-STRESS-01 | Download 1 MB file       | sftp-stress:2210 | Size + checksum match        |
+| SFTP-STRESS-02 | Download 10 MB file      | sftp-stress:2210 | Size + checksum match        |
+| SFTP-STRESS-03 | Download 100 MB file     | sftp-stress:2210 | Size + checksum match        |
+| SFTP-STRESS-04 | Upload 50 MB file        | sftp-stress:2210 | Round-trip verify            |
+| SFTP-STRESS-05 | List 1000-entry dir      | sftp-stress:2210 | All 1000 entries returned    |
+| SFTP-STRESS-06 | Navigate 50-level tree   | sftp-stress:2210 | Read file at depth 50        |
+| SFTP-STRESS-07 | Valid file symlink       | sftp-stress:2210 | Follow link, read content    |
+| SFTP-STRESS-08 | Valid dir symlink        | sftp-stress:2210 | Follow link, list contents   |
+| SFTP-STRESS-09 | Broken symlink           | sftp-stress:2210 | Graceful error, no crash     |
+| SFTP-STRESS-10 | Circular symlinks        | sftp-stress:2210 | Detected, no infinite loop   |
+| SFTP-STRESS-11 | Unicode filename         | sftp-stress:2210 | File accessible and readable |
+| SFTP-STRESS-12 | Filename with spaces     | sftp-stress:2210 | File accessible and readable |
+| SFTP-STRESS-13 | 200-char filename        | sftp-stress:2210 | File accessible              |
+| SFTP-STRESS-14 | Hidden files (.dotfiles) | sftp-stress:2210 | Visible when option enabled  |
+| SFTP-STRESS-15 | Permission 000 file      | sftp-stress:2210 | Graceful "access denied"     |
+| SFTP-STRESS-16 | Permission 000 directory | sftp-stress:2210 | Graceful "access denied"     |
 
 ### Windows/WSL Suite
 
-| ID | Scenario | Platform | Verification |
-|----|----------|----------|--------------|
-| WIN-SHELL-01 | PowerShell session | Windows native | `$PSVersionTable` output |
-| WIN-SHELL-02 | cmd.exe session | Windows native | `ver` output |
-| WIN-WSL-01 | WSL bash session | WSL | `uname -a` shows Linux |
-| WIN-WSL-02 | WSL shell detection | WSL | Correct shell detected |
-| WIN-WSL-03 | WSL Docker tests | WSL Docker | SSH containers reachable |
+| ID           | Scenario            | Platform       | Verification             |
+| ------------ | ------------------- | -------------- | ------------------------ |
+| WIN-SHELL-01 | PowerShell session  | Windows native | `$PSVersionTable` output |
+| WIN-SHELL-02 | cmd.exe session     | Windows native | `ver` output             |
+| WIN-WSL-01   | WSL bash session    | WSL            | `uname -a` shows Linux   |
+| WIN-WSL-02   | WSL shell detection | WSL            | Correct shell detected   |
+| WIN-WSL-03   | WSL Docker tests    | WSL Docker     | SSH containers reachable |
 
 ### Monitoring Suite
 
-| ID | Scenario | Container | Verification |
-|----|----------|-----------|--------------|
-| MON-01 | CPU stats collection | ssh-password:2201 | CPU percentages returned |
-| MON-02 | Memory stats collection | ssh-password:2201 | Memory usage returned |
-| MON-03 | Disk stats collection | ssh-password:2201 | Disk usage returned |
-| MON-04 | Stats under load | ssh-password:2201 | Stress + collect, no timeout |
+| ID     | Scenario                | Container         | Verification                 |
+| ------ | ----------------------- | ----------------- | ---------------------------- |
+| MON-01 | CPU stats collection    | ssh-password:2201 | CPU percentages returned     |
+| MON-02 | Memory stats collection | ssh-password:2201 | Memory usage returned        |
+| MON-03 | Disk stats collection   | ssh-password:2201 | Disk usage returned          |
+| MON-04 | Stats under load        | ssh-password:2201 | Stress + collect, no timeout |
 
 ---
 
@@ -679,44 +679,44 @@ The following scenarios **cannot be covered by this test infrastructure** and mu
 
 ### Platform-Specific Visual Behavior
 
-| Scenario | Reason |
-|----------|--------|
-| macOS visual rendering (fonts, DPI, Retina) | No tauri-driver on macOS (ADR-5) |
-| macOS native Keychain prompts | Requires interactive user consent |
-| macOS key repeat rate fix verification | Requires sustained physical key press |
+| Scenario                                          | Reason                                    |
+| ------------------------------------------------- | ----------------------------------------- |
+| macOS visual rendering (fonts, DPI, Retina)       | No tauri-driver on macOS (ADR-5)          |
+| macOS native Keychain prompts                     | Requires interactive user consent         |
+| macOS key repeat rate fix verification            | Requires sustained physical key press     |
 | Windows visual rendering (DPI scaling, ClearType) | No tauri-driver in current CI for Windows |
-| System tray icon rendering and behavior | Platform-native, not WebView-accessible |
-| Touch/trackpad gestures | No HID simulation in test framework |
+| System tray icon rendering and behavior           | Platform-native, not WebView-accessible   |
+| Touch/trackpad gestures                           | No HID simulation in test framework       |
 
 ### Hardware-Specific Behavior
 
-| Scenario | Reason |
-|----------|--------|
-| USB-to-serial hot-plug detection | Requires physical device insertion/removal |
-| Bluetooth serial pairing | Requires real Bluetooth hardware |
-| Real serial device baud rate negotiation | Device-specific behavior varies |
-| Raspberry Pi GPIO serial (UART) | Platform-specific hardware, not Docker-accessible |
+| Scenario                                 | Reason                                            |
+| ---------------------------------------- | ------------------------------------------------- |
+| USB-to-serial hot-plug detection         | Requires physical device insertion/removal        |
+| Bluetooth serial pairing                 | Requires real Bluetooth hardware                  |
+| Real serial device baud rate negotiation | Device-specific behavior varies                   |
+| Raspberry Pi GPIO serial (UART)          | Platform-specific hardware, not Docker-accessible |
 
 ### User Experience & Interaction
 
-| Scenario | Reason |
-|----------|--------|
-| First-launch onboarding wizard | One-time flow, hard to test repeatedly |
-| Auto-update download and install | Requires real update server + platform installer |
-| Drag-and-drop between tabs (visual feedback) | WebDriver drag simulation is unreliable |
-| Right-click context menus (native) | Platform-native menus not accessible via WebDriver |
-| Clipboard integration (copy/paste) | Platform-specific clipboard access varies |
-| Accessibility (screen reader compatibility) | Requires real screen reader testing |
+| Scenario                                     | Reason                                             |
+| -------------------------------------------- | -------------------------------------------------- |
+| First-launch onboarding wizard               | One-time flow, hard to test repeatedly             |
+| Auto-update download and install             | Requires real update server + platform installer   |
+| Drag-and-drop between tabs (visual feedback) | WebDriver drag simulation is unreliable            |
+| Right-click context menus (native)           | Platform-native menus not accessible via WebDriver |
+| Clipboard integration (copy/paste)           | Platform-specific clipboard access varies          |
+| Accessibility (screen reader compatibility)  | Requires real screen reader testing                |
 
 ### Network & Infrastructure
 
-| Scenario | Reason |
-|----------|--------|
-| Real SSH server fingerprint change detection | Requires persistent known_hosts state across runs |
-| SSH agent forwarding with real ssh-agent | Requires host ssh-agent with real keys loaded |
-| Real DNS resolution failures | Docker DNS is reliable, can't simulate real DNS issues |
-| Corporate proxy/firewall behavior | Requires real corporate network infrastructure |
-| Cross-machine SSH (tower ↔ Pi ↔ Windows) | Company network configuration, not reproducible in Docker |
+| Scenario                                     | Reason                                                    |
+| -------------------------------------------- | --------------------------------------------------------- |
+| Real SSH server fingerprint change detection | Requires persistent known_hosts state across runs         |
+| SSH agent forwarding with real ssh-agent     | Requires host ssh-agent with real keys loaded             |
+| Real DNS resolution failures                 | Docker DNS is reliable, can't simulate real DNS issues    |
+| Corporate proxy/firewall behavior            | Requires real corporate network infrastructure            |
+| Cross-machine SSH (tower ↔ Pi ↔ Windows)     | Company network configuration, not reproducible in Docker |
 
 ---
 
@@ -842,14 +842,14 @@ The new containers can be wired into the existing WebdriverIO E2E infrastructure
 
 ### Estimated Container Resource Usage
 
-| Container | Memory | Disk (image) | CPU |
-|-----------|--------|--------------|-----|
-| SSH containers (each) | ~20 MB | ~80 MB | Minimal |
-| Telnet | ~15 MB | ~70 MB | Minimal |
-| Serial echo | ~10 MB | ~50 MB | Minimal |
-| SFTP stress | ~30 MB + ~120 MB data | ~200 MB | Minimal |
-| Network fault proxy | ~20 MB | ~90 MB | Minimal |
-| **Total (all 13)** | **~300 MB** | **~1.2 GB** | **Low** |
+| Container             | Memory                | Disk (image) | CPU     |
+| --------------------- | --------------------- | ------------ | ------- |
+| SSH containers (each) | ~20 MB                | ~80 MB       | Minimal |
+| Telnet                | ~15 MB                | ~70 MB       | Minimal |
+| Serial echo           | ~10 MB                | ~50 MB       | Minimal |
+| SFTP stress           | ~30 MB + ~120 MB data | ~200 MB      | Minimal |
+| Network fault proxy   | ~20 MB                | ~90 MB       | Minimal |
+| **Total (all 13)**    | **~300 MB**           | **~1.2 GB**  | **Low** |
 
 The Raspberry Pi (4 GB RAM) can run all containers simultaneously. The total disk usage is modest and the CPU requirements are negligible since containers idle except when actively handling test connections.
 
