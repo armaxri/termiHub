@@ -652,6 +652,58 @@ Each test uses a `FaultGuard` that automatically resets faults on drop (includin
 
 Manual test procedures for verifying user-facing features before releases and after major changes. Tests already covered by automated suites (unit, integration, E2E) have been removed from this list.
 
+### E2E Automation Coverage Analysis
+
+Analysis of which manual test items can be covered by WebdriverIO E2E tests (tauri-driver on Linux/Windows, Docker on macOS). Each subsection below is annotated with a `> E2E coverage` note.
+
+#### Feasibility Categories
+
+- **E2E** — Fully automatable with the existing WebdriverIO + tauri-driver infrastructure
+- **E2E/infra** — Automatable but requires Docker test containers (SSH, serial, telnet, agent)
+- **Partial** — Some aspects automatable (e.g., element visibility), others need manual verification (visual rendering, drag-and-drop precision)
+- **Manual** — Cannot be automated: platform-specific (macOS/Windows/WSL), native OS dialogs, visual rendering, external app integration, OS-level features
+
+#### Summary
+
+| Area                  | E2E     | E2E/infra | Partial | Manual | Total   |
+| --------------------- | ------- | --------- | ------- | ------ | ------- |
+| Local Shell           | 13      | 1         | 1       | 21     | 36      |
+| SSH                   | 15      | 46        | 4       | 20     | 85      |
+| Serial                | 0       | 5         | 0       | 2      | 7       |
+| Telnet                | 0       | 3         | 0       | 0      | 3       |
+| Tab Management        | 9       | 0         | 6       | 5      | 20      |
+| Connection Management | 72      | 0         | 8       | 13     | 93      |
+| Split Views           | 4       | 0         | 2       | 0      | 6       |
+| File Browser          | 24      | 7         | 0       | 11     | 42      |
+| Editor                | 21      | 1         | 1       | 0      | 23      |
+| UI / Layout           | 27      | 0         | 6       | 12     | 45      |
+| Remote Agent          | 0       | 17        | 3       | 5      | 25      |
+| Credential Store      | 9       | 6         | 3       | 5      | 23      |
+| Cross-Platform        | 0       | 0         | 0       | 3      | 3       |
+| **Total**             | **194** | **86**    | **34**  | **97** | **411** |
+
+**68% of manual tests (280 items) are fully E2E-automatable.** Including partial coverage, 76% (314 items) can benefit from E2E automation. The remaining 24% (97 items) require manual testing.
+
+#### Manual-Only Reasons Breakdown
+
+| Reason                                | Items | Examples                                                                |
+| ------------------------------------- | ----- | ----------------------------------------------------------------------- |
+| Platform-specific (macOS/Windows/WSL) | ~50   | macOS key repeat, WSL file browser, Windows shell interception          |
+| Native OS dialogs (file picker, save) | ~20   | Import/export connections, SSH key browse button, save terminal to file |
+| Visual rendering verification         | ~18   | Powerline glyphs, white flash timing, 1px panel borders, black bar fix  |
+| External app integration              | ~4    | Open in VS Code                                                         |
+| OS-level features                     | ~5    | Keychain integration, custom app icon, key repeat accent picker         |
+
+#### Highest-Value Automation Targets
+
+These areas have the most automatable items and would yield the greatest reduction in manual testing burden:
+
+1. **Connection Management** (72 E2E items) — SSH key suggestions, default user/key, port extraction, schema-driven forms, storage file selector, folder handling
+2. **UI / Layout** (27 E2E items) — Horizontal activity bar, theme switching, customize layout dialog, tab accent borders, sidebar toggle, split resize handles
+3. **File Browser** (24 E2E + 7 infra items) — CWD tracking, context menus, new file creation, double-click editing, stuck-at-root fix
+4. **Editor** (21 E2E items) — Monaco editor lifecycle, status bar fields, indent/language selectors
+5. **SSH with infrastructure** (46 E2E/infra items) — Monitoring, SFTP CWD, optional settings, tunneling UI, env var expansion
+
 ### Test Environment Setup
 
 - Build the release app with `pnpm tauri build`
@@ -666,12 +718,16 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### Baseline
 
+> **E2E coverage:** 3 E2E, 1 partial (resize visual), 0 manual
+
 - [ ] Open connection editor, select Local type — shell dropdown shows shells available on current OS (zsh/bash/sh on macOS/Linux; PowerShell/cmd on Windows)
 - [ ] Create and connect a local shell connection — terminal opens, shell prompt appears, commands execute
 - [ ] Resize the app window or drag a split divider with a running local shell — terminal re-renders correctly, no garbled output, `tput cols`/`tput lines` reports new size
 - [ ] Type `exit` in a running local shell — terminal shows "[Process exited with code 0]"
 
 #### Terminal input works on new connections (PR #198)
+
+> **E2E coverage:** 3 E2E, 1 E2E/infra (SSH), 1 manual (PowerShell-only)
 
 - [ ] Open a new local PowerShell terminal — verify keyboard input works immediately without needing to click the terminal area
 - [ ] Rapidly create 3–4 local terminals in a row — verify all accept keyboard input when switched to
@@ -681,12 +737,16 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### No initial output flash for WSL/SSH terminals (PR #175)
 
+> **E2E coverage:** 0 E2E — all 4 manual (WSL/Windows-specific, visual timing)
+
 - [ ] Create a WSL connection — verify no welcome banner or setup commands flash before the prompt appears
 - [ ] Rapidly create two WSL connections after app startup — verify both terminals show a clean prompt with no strange output
 - [ ] Create an SSH connection — verify no setup command flash before the prompt appears
 - [ ] Create a local PowerShell or CMD connection — verify startup output is not delayed (no regression)
 
 #### Configurable starting directory (PR #148)
+
+> **E2E coverage:** 5/5 E2E (set dir, verify pwd output)
 
 - [ ] Create a local shell with no starting directory — verify it opens in home directory
 - [ ] Create a local shell with starting directory set to `/tmp` — verify it opens in `/tmp`
@@ -696,11 +756,15 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### New tabs open in home directory (PR #66)
 
+> **E2E coverage:** 2 E2E, 1 manual (multi-OS verification)
+
 - [ ] Open the app and create a new local shell tab — verify it starts in `~`
 - [ ] Verify the file browser shows the home directory after the first prompt
 - [ ] Test on macOS/Linux (uses `$HOME`) and Windows (uses `%USERPROFILE%`) if possible
 
 #### macOS key repeat fix (PR #48)
+
+> **E2E coverage:** 0 E2E — all 3 manual (macOS-specific behavior)
 
 - [ ] Launch termiHub on macOS — open a local shell terminal
 - [ ] Hold any letter key (e.g., `k`) — verify key repeats continuously
@@ -708,15 +772,21 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### Doubled terminal text fix on macOS (PR #108)
 
+> **E2E coverage:** 0 E2E — all 2 manual (macOS-specific)
+
 - [ ] Open a terminal — verify prompt appears once, typing shows single characters, command output is not duplicated
 - [ ] Open multiple terminals / split views — each terminal shows single output
 
 #### WSL shell detection on Windows (PR #139)
 
+> **E2E coverage:** 0 E2E — all 2 manual (Windows/WSL-specific)
+
 - [ ] Open connection editor — shell dropdown shows WSL distros (if WSL is installed)
 - [ ] Select a WSL distro — WSL shell launches correctly in a new tab
 
 #### Windows shell WSL interception fix (PR #129)
+
+> **E2E coverage:** 0 E2E — all 4 manual (Windows-specific)
 
 - [ ] Create new local shell connection — verify shell dropdown defaults to PowerShell on Windows
 - [ ] Open saved PowerShell connection — verify it launches PowerShell (not WSL)
@@ -724,6 +794,8 @@ Manual test procedures for verifying user-facing features before releases and af
 - [ ] Press Ctrl+Shift+`` ` `` for new terminal — verify platform default shell opens
 
 #### WSL file browser follows CWD with OSC 7 injection (PR #154)
+
+> **E2E coverage:** 0 E2E — all 4 manual (WSL-specific)
 
 - [ ] Open WSL Ubuntu tab — file browser shows `//wsl$/Ubuntu/home/<user>`
 - [ ] `cd /tmp` — file browser follows to `//wsl$/Ubuntu/tmp`
@@ -736,6 +808,8 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### Baseline
 
+> **E2E coverage:** 6 E2E/infra (password auth, key auth, error handling, resize, commands, disconnect — all via Docker SSH)
+
 - [ ] Create SSH connection with password auth, connect — password prompt appears, connection succeeds after entering password
 - [ ] Create SSH connection with key auth, set key path, connect — connection succeeds without password prompt
 - [ ] Create SSH connection to non-existent host, connect — error message displayed in terminal within reasonable timeout
@@ -745,11 +819,15 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### Agnoster/Powerline theme rendering (PR #197)
 
+> **E2E coverage:** 0 E2E — all 3 manual (visual font/color rendering)
+
 - [ ] Connect via SSH to a Linux machine with zsh + Agnoster theme — the `user@machine` prompt segment should blend with the terminal background (no visible black rectangle)
 - [ ] Connect via SSH to a machine with a default bash prompt — verify no visual regression in prompt rendering
 - [ ] Open a local shell terminal — verify ANSI color rendering is unaffected
 
 #### SSH key authentication on Windows (PR #160)
+
+> **E2E coverage:** 0 E2E — all 4 manual (Windows-specific)
 
 - [ ] SSH key auth with Ed25519 key on Windows connects successfully
 - [ ] SSH key auth with RSA key still works
@@ -758,17 +836,23 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### OpenSSH-format private keys / Ed25519 (PR #134)
 
+> **E2E coverage:** 3 E2E/infra (Ed25519, passphrase, PEM — test keys in fixtures, Docker SSH containers)
+
 - [ ] SSH connect with Ed25519 key in OpenSSH format
 - [ ] SSH connect with passphrase-protected key
 - [ ] Legacy PEM-format key still works (no regression)
 
 #### SSH agent setup guidance (PR #133)
 
+> **E2E coverage:** 1 E2E/infra (error message), 1 partial (agent status dependent), 1 manual (PowerShell elevation)
+
 - [ ] Open connection editor, select SSH + Agent auth — warning appears if agent is stopped, normal hint if running
 - [ ] Click "Setup SSH Agent" button — local PowerShell tab opens with elevation command
 - [ ] SSH connect with agent auth when agent is stopped — helpful error in terminal
 
 #### Password prompt at connect (PR #38)
+
+> **E2E coverage:** 1 E2E (no password in JSON), 2 E2E/infra (key no dialog, SFTP dialog), 2 manual (native export dialog, startup strip)
 
 - [ ] SSH key-auth connections — no password dialog, connects directly
 - [ ] SFTP connect to password-auth SSH — password dialog appears
@@ -777,6 +861,8 @@ Manual test procedures for verifying user-facing features before releases and af
 - [ ] Existing connections with stored passwords — passwords stripped on app startup
 
 #### X11 forwarding (PR #69)
+
+> **E2E coverage:** 0 E2E — all 6 manual (requires X server)
 
 - [ ] Connect via "Docker SSH + X11" example connection
 - [ ] Run `xclock` or `xeyes` — window appears on local display
@@ -787,6 +873,8 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### SFTP file browser follows SSH terminal CWD (PR #186)
 
+> **E2E coverage:** 5 E2E/infra (Docker SSH + file browser panel verification)
+
 - [ ] SSH to a Linux host — open Files sidebar — run `cd /tmp` in the terminal — SFTP browser navigates to `/tmp`
 - [ ] Run `cd ~` — SFTP browser navigates back to home directory
 - [ ] Run `cd /var/log` — SFTP browser navigates to `/var/log`
@@ -795,11 +883,15 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### Auto-connect monitoring on SSH tab switch (PR #163)
 
+> **E2E coverage:** 3 E2E/infra (Docker SSH + status bar checks)
+
 - [ ] Open an SSH terminal tab — monitoring stats appear automatically in the status bar
 - [ ] Switch between two SSH tabs connected to different hosts — monitoring switches hosts
 - [ ] Manual "Monitor" dropdown still works as a fallback
 
 #### Optional monitoring and file browser settings (PR #199)
+
+> **E2E coverage:** 11 E2E/infra (settings toggles + SSH connection verification)
 
 - [ ] Open Settings > Advanced — verify "Power Monitoring" and "File Browser" toggles are visible and enabled by default
 - [ ] Disable "Power Monitoring" globally — connect to an SSH host — verify no monitoring stats appear in the status bar
@@ -815,6 +907,8 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### Monitoring hides on non-SSH tab (PR #165)
 
+> **E2E coverage:** 5 E2E/infra (tab switching + status bar visibility)
+
 - [ ] Open an SSH terminal tab — monitoring stats appear in the status bar
 - [ ] Switch to a local shell tab — monitoring section disappears from status bar
 - [ ] Switch back to the SSH tab — monitoring stats reappear immediately (no reconnect delay)
@@ -822,6 +916,8 @@ Manual test procedures for verifying user-facing features before releases and af
 - [ ] Close all tabs — monitoring hides
 
 #### SSH monitoring in status bar (PR #114, #115)
+
+> **E2E coverage:** 1 E2E (sidebar check), 7 E2E/infra (stats, buttons, dropdown), 1 partial (high-value colors need specific load)
 
 - [ ] Selecting a connection connects monitoring, shows inline stats
 - [ ] Stats auto-refresh every 5 seconds
@@ -835,12 +931,16 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### Environment variable expansion in connections (PR #68)
 
+> **E2E coverage:** 2 E2E (local checks, config inspection), 2 E2E/infra (SSH username resolution)
+
 - [ ] Create an SSH connection with username `${env:USER}` — connect — resolves to actual username
 - [ ] Create a local shell with initial command `echo ${env:HOME}` — prints home directory
 - [ ] Use an undefined variable `${env:NONEXISTENT}` — left as-is, no crash
 - [ ] Verify saved connection JSON still contains literal `${env:USER}` (not expanded)
 
 #### SSH tunneling (PR #225)
+
+> **E2E coverage:** 10 E2E (tunnel UI CRUD, type selector, diagram, duplicate, delete), 5 E2E/infra (start/stop, traffic, actual forwarding), 2 partial (app restart persistence), 1 manual (auto-start on launch)
 
 - [ ] Click "SSH Tunnels" in the activity bar — verify the tunnels sidebar panel opens with "No SSH tunnels configured" message and a "+ New Tunnel" button
 - [ ] Click "+ New Tunnel" — verify a tunnel editor tab opens with name field, SSH connection dropdown, type selector (Local/Remote/Dynamic), and visual diagram
@@ -867,6 +967,8 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### Baseline
 
+> **E2E coverage:** 5 E2E/infra (virtual serial ports via socat in Docker)
+
 - [ ] Open connection editor, select Serial type with a serial port or virtual port via socat available — port dropdown lists available serial ports
 - [ ] Create serial connection at 9600 and 115200 baud with a serial device or virtual port, connect — connection opens, data exchange works
 - [ ] Type characters in a connected serial session — characters sent to device and echoed back (if device echoes)
@@ -874,6 +976,8 @@ Manual test procedures for verifying user-facing features before releases and af
 - [ ] Set non-default data bits, stop bits, parity, flow control on a serial connection — connection works with configured parameters
 
 #### Nerd Font / Powerline glyph support (PR #131)
+
+> **E2E coverage:** 0 E2E — all 2 manual (visual glyph rendering)
 
 - [ ] SSH to a host running zsh with the agnoster theme — Powerline glyphs render correctly instead of boxes
 - [ ] Verify on a clean Windows machine without any Nerd Font installed locally
@@ -883,6 +987,8 @@ Manual test procedures for verifying user-facing features before releases and af
 ### Telnet
 
 #### Baseline
+
+> **E2E coverage:** 3 E2E/infra (Docker telnet container)
 
 - [ ] Create Telnet connection to a server (e.g. Docker example), connect — connection established, server banner displayed
 - [ ] Type commands in a connected Telnet session — commands execute and output displays
@@ -894,6 +1000,8 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### Baseline
 
+> **E2E coverage:** 5 E2E (new tabs, close, switch, context menu, close last in split), 2 partial (drag reorder limited in WebDriver)
+
 - [ ] Click New Terminal multiple times — multiple tabs appear in tab bar, most recent is active
 - [ ] Click X on a tab or use Ctrl+W with multiple tabs open — tab removed, adjacent tab becomes active
 - [ ] Drag a tab to a new position in the tab bar with multiple tabs open — tab moves to new position, order persists
@@ -904,15 +1012,21 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### Save terminal content to file (PR #35)
 
+> **E2E coverage:** 0 E2E — all 3 manual (native file save dialog)
+
 - [ ] Click "Save to File" — native save dialog opens with default filename `terminal-output.txt`
 - [ ] Choose a location — file is written with the terminal's text content
 - [ ] Cancel the dialog — nothing happens
 
 #### Suppress browser default context menu (PR #150)
 
+> **E2E coverage:** 1 E2E (context menu verification)
+
 - [ ] Right-click on empty areas (sidebar whitespace, terminal, activity bar) — no menu appears
 
 #### Per-connection horizontal scrolling (PR #45)
+
+> **E2E coverage:** 2 E2E (toggle, persistence), 2 partial (visual scroll check), 1 manual (key repeat timing)
 
 - [ ] Create connection with horizontal scrolling enabled — connect — run `echo $(python3 -c "print('A'*300)")` — line should not wrap, horizontal scrollbar appears
 - [ ] Create connection without horizontal scrolling — same command — line wraps normally
@@ -921,6 +1035,8 @@ Manual test procedures for verifying user-facing features before releases and af
 - [ ] Resize window/panels — scroll area adjusts correctly
 
 #### Dynamic horizontal scroll width update (PR #49)
+
+> **E2E coverage:** 1 E2E (clear resets width), 2 partial (output + scroll interaction), 1 manual (key repeat)
 
 - [ ] Open terminal — enable horizontal scrolling — run a command producing wide output (e.g. `ls -la /usr/bin`) — scrollbar should expand automatically after output settles
 - [ ] Hold a key (e.g. `k`) — key should repeat without interruption
@@ -933,6 +1049,8 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### Baseline
 
+> **E2E coverage:** 4 E2E (create, edit, delete, duplicate — all UI interactions)
+
 - [ ] Click + in connection list, fill form, save — connection appears in list
 - [ ] Right-click a connection > Edit, modify fields, save — changes persisted, visible on next app restart
 - [ ] Right-click a connection > Delete — connection removed from list
@@ -940,12 +1058,16 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### Remove folder selector from editor (PR #146)
 
+> **E2E coverage:** 3 E2E (no dropdown, folder right-click, in-folder edit), 1 partial (drag onto folder)
+
 - [ ] Open connection editor — verify no "Folder" dropdown is shown
 - [ ] Right-click a folder — "New Connection" — save — verify connection is placed in that folder
 - [ ] Drag a connection onto a folder in the sidebar — verify it moves correctly
 - [ ] Edit an existing connection in a folder — save — verify it stays in the same folder
 
 #### Shell-specific icons and icon picker (PR #157)
+
+> **E2E coverage:** 6 partial (can verify icon element existence via data-testid, but visual icon correctness needs manual check)
 
 - [ ] Open a PowerShell tab — verify biceps icon appears in tab bar and drag overlay
 - [ ] Open a Git Bash tab — verify git branch icon appears
@@ -956,15 +1078,21 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### Save & Connect button (PR #112)
 
+> **E2E coverage:** 2 E2E (save+connect flow, separate save/cancel)
+
 - [ ] Edit existing SSH connection — click "Save & Connect" — password prompt appears — connection opens after password entry
 - [ ] Click "Save & Connect" with password auth, cancel password prompt — editor tab stays open (connect aborted, but save already completed)
 
 #### Import/export connections (PR #33)
 
+> **E2E coverage:** 0 E2E — all 2 manual (native file dialogs)
+
 - [ ] Click "Import Connections" — file open dialog, imports JSON, connection list refreshes
 - [ ] Click "Export Connections" — file save dialog, saves JSON
 
 #### Encrypted export/import of connections with credentials (PR #322)
+
+> **E2E coverage:** 4 E2E (in-app dialog UI: default selection, password/confirm fields, validation errors), 7 manual (native file picker for actual export/import)
 
 - [ ] Click "Export Connections" — Export dialog opens with "Without credentials" selected by default
 - [ ] Select "With credentials (encrypted)" — password and confirm fields appear with warning text
@@ -980,6 +1108,8 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### SSH key file validation (PR #204)
 
+> **E2E coverage:** 8 E2E (type paths, verify hint text, debounce behavior — all UI interactions on connection editor)
+
 - [ ] Open connection editor, select SSH type, set auth method to "SSH Key" — select a `.pub` file via browse — verify a warning hint appears: "This looks like a public key (.pub)..."
 - [ ] Type or paste a path to a valid OpenSSH private key — verify a green success hint appears: "OpenSSH private key detected."
 - [ ] Type or paste a path to a valid RSA PEM private key — verify a green success hint appears: "RSA (PEM) private key detected."
@@ -991,6 +1121,8 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### SSH key path browse button (PR #205)
 
+> **E2E coverage:** 0 E2E — all 5 manual (native file dialog)
+
 - [ ] Create or edit an SSH connection, set auth method to "Key", click "..." button — verify a native file dialog opens defaulting to `~/.ssh`
 - [ ] Select a key file — verify the path populates in the input field
 - [ ] Cancel the dialog — verify the input field remains unchanged
@@ -998,6 +1130,8 @@ Manual test procedures for verifying user-facing features before releases and af
 - [ ] Manually type a path in the input field — verify it still works as before
 
 #### SSH key path file suggestions (PR #118)
+
+> **E2E coverage:** 10 E2E (dropdown display, filtering, keyboard nav, Tab/Enter/Escape, browse fallback, agent field)
 
 - [ ] Open connection editor, select SSH type, set auth method to "SSH Key" — focus the Key Path field — verify a dropdown appears listing private key files from `~/.ssh/`
 - [ ] Verify `.pub` files, `known_hosts`, `authorized_keys`, and `config` are NOT shown in the dropdown
@@ -1012,6 +1146,8 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### Default user and SSH key applied to new connections (PR #201)
 
+> **E2E coverage:** 7 E2E (settings defaults, form pre-fill, auth method, edit preserves values, suggestion dropdown)
+
 - [ ] Open Settings > General — set "Default User" to `admin` and "Default SSH Key Path" to a valid path — save
 - [ ] Create a new SSH connection — verify the username is pre-filled with `admin`, auth method is set to "Key", and key path is pre-filled
 - [ ] Clear "Default SSH Key Path" in settings — create a new SSH connection — verify auth method defaults to "Password" and key path is empty
@@ -1022,6 +1158,8 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### Auto-extract port from host field (PR #195)
 
+> **E2E coverage:** 5 E2E (type host:port, verify field splitting — pure UI interaction)
+
 - [ ] Enter `192.168.0.2:2222` in the SSH host field, tab out — verify host becomes `192.168.0.2` and port becomes `2222`
 - [ ] Enter `[::1]:22` in the host field, tab out — verify host becomes `::1` and port becomes `22`
 - [ ] Enter `myhost.example.com` (no port) — verify host stays unchanged and port is not modified
@@ -1029,6 +1167,8 @@ Manual test procedures for verifying user-facing features before releases and af
 - [ ] Verify the same behavior works in Telnet and Agent settings
 
 #### External connection file support (PR #50, redesigned in PR #210)
+
+> **E2E coverage:** 7 E2E (toggle, context menu, tree display — with programmatic file setup), 1 partial (drag-and-drop), 2 manual (native file picker for Create/Add)
 
 - [ ] Settings tab — "External Connection Files" section visible
 - [ ] "Create File" — enter name — save dialog — empty JSON file created and auto-added to list
@@ -1043,6 +1183,8 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### Storage File selector in connection editor (PR #210)
 
+> **E2E coverage:** 7 E2E (dropdown options, save to different files, move between files), 1 partial (requires external file setup)
+
 - [ ] Add an external connection file in Settings and enable it
 - [ ] Open connection editor — click "Advanced" — verify "Storage File" dropdown appears
 - [ ] Dropdown shows "Default (connections.json)" and the enabled external file paths
@@ -1053,6 +1195,8 @@ Manual test procedures for verifying user-facing features before releases and af
 - [ ] Advanced section does not appear when no external files are configured in Settings
 
 #### Schema-driven connection settings (PR #362)
+
+> **E2E coverage:** 11 E2E (form rendering per type, field switching, conditional fields, capabilities — all UI verification)
 
 - [ ] Open connection editor → switch between all connection types (Local, SSH, Serial, Telnet, Docker) — verify each type shows the correct settings fields matching the previous hardcoded UI
 - [ ] Create a new SSH connection — verify host, port, username, auth method fields appear; switching auth method toggles key path / password visibility
@@ -1072,6 +1216,8 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### Baseline
 
+> **E2E coverage:** 4 E2E (split, close, nested), 2 partial (drag divider, drag tab to edge — limited in WebDriver)
+
 - [ ] Click split button or use toolbar with a terminal open — panel splits horizontally, new empty panel appears
 - [ ] Hold Shift + click split (or toolbar option) — panel splits vertically
 - [ ] Close all tabs in one panel with multiple panels — panel removed, remaining panels resize
@@ -1085,6 +1231,8 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### Baseline
 
+> **E2E coverage:** 2 E2E (files view switch, double-click edit), 1 E2E/infra (SFTP connect), 3 manual (upload/OS drag, download dialog, VS Code)
+
 - [ ] Switch to Files view, select Local mode — local filesystem tree displayed
 - [ ] Connect SFTP via picker with an SSH connection — remote filesystem tree displayed
 - [ ] Right-click remote file > Upload or drag file from OS in SFTP mode — file appears in remote listing
@@ -1093,6 +1241,8 @@ Manual test procedures for verifying user-facing features before releases and af
 - [ ] Right-click file > Open in VS Code (when VS Code installed) — file opens in VS Code
 
 #### CWD-aware file browser (PR #39)
+
+> **E2E coverage:** 5 E2E (local cd tracking, tab switch, sidebar switch, rename/delete, create dir), 2 E2E/infra (SSH SFTP auto-connect)
 
 - [ ] Open a local zsh terminal — `cd /tmp` — sidebar file browser shows `/tmp` contents
 - [ ] Open a second local shell tab — switch between tabs — file browser follows each tab's CWD
@@ -1104,6 +1254,8 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### File browser follows tab switch from WSL to PowerShell (PR #167)
 
+> **E2E coverage:** 0 E2E — all 4 manual (WSL-specific)
+
 - [ ] Open a WSL tab — file browser shows `//wsl$/<distro>/home/<user>`
 - [ ] Open a PowerShell tab — file browser switches to Windows home directory
 - [ ] Switch back to WSL tab — file browser returns to WSL path
@@ -1111,11 +1263,15 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### Local file explorer stuck at root fix (PR #110)
 
+> **E2E coverage:** 3 E2E (home dir on open, bash fallback, navigation caching)
+
 - [ ] Open a local terminal, click Files sidebar — file list shows home directory contents
 - [ ] Test with bash (no OSC 7) — still loads home directory
 - [ ] Navigate away and back — does not re-navigate if entries already loaded
 
 #### File browser stays active when editing (PR #57)
+
+> **E2E coverage:** 3 E2E (local file, tab switch, settings), 1 E2E/infra (remote SFTP file)
 
 - [ ] Open a local file for editing — file browser shows the file's parent directory
 - [ ] Open a remote (SFTP) file for editing — file browser shows the remote parent directory
@@ -1124,6 +1280,8 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### New File button (PR #58)
 
+> **E2E coverage:** 4 E2E (create, escape cancel, local mode, new folder), 1 E2E/infra (SFTP mode)
+
 - [ ] Click "New File" button — inline input appears — type name — Enter — file created and list refreshes
 - [ ] Press Escape in the input — cancels without creating
 - [ ] Works in local file browser mode
@@ -1131,6 +1289,8 @@ Manual test procedures for verifying user-facing features before releases and af
 - [ ] "New Folder" still works as before
 
 #### Right-click context menu (PR #59)
+
+> **E2E coverage:** 5 E2E (file menu, dir menu, three-dots, actions, styling), 1 E2E/infra (SFTP download option)
 
 - [ ] Right-click a file — context menu appears with Edit, Open in VS Code, Rename, Delete
 - [ ] Right-click a directory — context menu appears with Open, Rename, Delete
@@ -1141,12 +1301,16 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### Open in VS Code (PR #51)
 
+> **E2E coverage:** 0 E2E — all 4 manual (external VS Code app integration)
+
 - [ ] File browser (local mode) — right-click file — "Open in VS Code" visible — opens file in VS Code
 - [ ] File browser (SFTP mode) — right-click file — "Open in VS Code" — file opens — edit and close tab — file re-uploaded (verify content changed on remote)
 - [ ] VS Code not installed — "Open in VS Code" menu item does not appear
 - [ ] SFTP session lost during edit — error event emitted, no crash
 
 #### Double-click file to open in editor (PR #61)
+
+> **E2E coverage:** 2 E2E (local file, directory), 1 E2E/infra (SFTP file)
 
 - [ ] Double-click a file in local file browser — opens in editor tab
 - [ ] Double-click a file in SFTP file browser — opens in editor tab
@@ -1157,6 +1321,8 @@ Manual test procedures for verifying user-facing features before releases and af
 ### Editor
 
 #### Built-in file editor with Monaco (PR #54)
+
+> **E2E coverage:** 7 E2E (open, edit+save, toolbar save, dirty/clean close, reuse tab, binary error), 1 E2E/infra (SFTP edit), 1 partial (drag between panels)
 
 - [ ] Right-click a file in the local file browser — "Edit" — file opens in editor tab with syntax highlighting
 - [ ] Edit content — tab shows dirty dot — Ctrl+S — saves — dirty dot clears
@@ -1170,6 +1336,8 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### Editor status bar (PR #65)
 
+> **E2E coverage:** 7 E2E (all status bar fields: Ln/Col, Spaces, encoding, EOL, language, show/hide on tab switch)
+
 - [ ] Open a `.ts` file — status bar shows: `Ln 1, Col 1  Spaces: 4  UTF-8  LF  typescript`
 - [ ] Move cursor — Ln/Col updates in real-time
 - [ ] Click "Spaces: 4" — changes to "Spaces: 2", editor indentation updates
@@ -1180,11 +1348,15 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### Indent selection in status bar (PR #111)
 
+> **E2E coverage:** 3 E2E (dropdown, option selection, label update)
+
 - [ ] Open a file in the editor, click the indent indicator in the status bar — dropdown appears with "Indent Using Spaces" (1/2/4/8) and "Indent Using Tabs" (1/2/4/8)
 - [ ] Selecting an option updates the editor behavior and the status bar label
 - [ ] Label correctly shows "Spaces: N" or "Tab Size: N"
 
 #### Language mode selector (PR #113)
+
+> **E2E coverage:** 4 E2E (dropdown, search filter, language selection, close behavior)
 
 - [ ] Open a file in the editor, click the language name in the status bar — dropdown appears with search input and all available languages
 - [ ] Typing filters the list in real-time
@@ -1197,12 +1369,16 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### No white flash on startup (PR #192)
 
+> **E2E coverage:** 1 E2E (theme switching works), 3 manual (visual startup timing, app restart)
+
 - [ ] Launch the app — verify the window starts with a dark background (#1e1e1e) instead of flashing white
 - [ ] Observe the full startup sequence — there should be no white → dark → white transitions
 - [ ] Open Settings > Appearance > Theme — switch to Light, then back to Dark — verify theming still works correctly
 - [ ] Restart the app with Dark theme selected — verify no white flash on launch
 
 #### Color theme switching (PR #220)
+
+> **E2E coverage:** 4 E2E (select Light/Dark, terminal re-theme, activity bar dark), 2 partial (System mode, state dots), 3 manual (OS toggle, app restart, ErrorBoundary)
 
 - [ ] Open Settings > Appearance > Theme — select "Light" — verify all UI elements update: sidebar becomes light gray, tabs become light, text becomes dark, borders lighten
 - [ ] Select "Dark" — verify all UI elements revert to the dark color scheme
@@ -1216,6 +1392,8 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### Theme switching applies immediately (PR #224)
 
+> **E2E coverage:** 3 E2E (Dark-to-Light, Light-to-Dark, rapid toggle), 1 partial (System mode follows OS)
+
 - [ ] Open Settings > Appearance > Theme — switch from Dark to Light — verify the UI changes immediately without needing an app restart
 - [ ] Switch from Light to Dark — verify immediate visual change
 - [ ] Switch to System — verify the theme matches the current OS preference immediately
@@ -1223,9 +1401,13 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### Settings as tab (PR #32)
 
+> **E2E coverage:** 1 partial (drag between panels — limited in WebDriver)
+
 - [ ] Drag the settings tab between panels — works with correct Settings icon
 
 #### Horizontal Activity Bar mode (PR #264)
+
+> **E2E coverage:** 6 E2E (position, icon layout, active indicator, dropdown direction, space fill, position switch)
 
 - [ ] Set `activityBarPosition` to `"top"` — verify the Activity Bar renders horizontally above the main content area
 - [ ] Verify icons display in a row: Connections, File Browser, SSH Tunnels on the left; Log Viewer, Settings on the right
@@ -1236,15 +1418,21 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### Customize Layout dialog (PR #242)
 
+> **E2E coverage:** 2 E2E (dialog open via gear, Escape closes)
+
 - [ ] Click the Settings gear in the Activity Bar — click "Customize Layout..." — verify the dialog opens with title "Customize Layout"
 - [ ] Press Escape — verify the dialog closes
 
 #### Sidebar toggle button and Ctrl+B shortcut (PR #194)
 
+> **E2E coverage:** 2 E2E (Ctrl+B/Cmd+B shortcut, tooltip text)
+
 - [ ] Press Ctrl+B (Cmd+B on Mac) — sidebar toggles
 - [ ] Hover the button — tooltip shows "Toggle Sidebar (Ctrl+B)" (or "Cmd+B" on Mac)
 
 #### Highlight selected tab with top border accent (PR #190)
+
+> **E2E coverage:** 4 E2E (active border, focus/unfocus dimming, panel switch, close panel — via CSS class checks)
 
 - [ ] Open multiple tabs in a single panel — active tab should have a blue top border, inactive tabs should have no top border
 - [ ] Split the view into two panels — focused panel's active tab has a bright blue border, unfocused panel's active tab has a dimmer (gray) border
@@ -1253,12 +1441,16 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### Vertical split resize handle (PR #213)
 
+> **E2E coverage:** 3 E2E (handle visibility for vertical, horizontal, nested), 1 partial (drag to resize)
+
 - [ ] Split a terminal vertically (top/bottom) — verify the resize handle between panels is visible
 - [ ] Drag the vertical resize handle — verify panels resize smoothly
 - [ ] Split a terminal horizontally (left/right) — verify no regression, resize handle still works
 - [ ] Create nested splits (horizontal inside vertical and vice versa) — verify all resize handles are visible and draggable
 
 #### Clear separation between split view panels (PR #189)
+
+> **E2E coverage:** 0 E2E — all 4 manual (1px visual border verification)
 
 - [ ] Open a split view (drag a tab to the edge of a panel) — verify a visible 1px line appears between adjacent panels
 - [ ] Single-panel mode — verify the left border blends naturally against the sidebar edge
@@ -1267,11 +1459,15 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### Black bar at bottom of terminal fix (PR #130)
 
+> **E2E coverage:** 0 E2E — all 3 manual (visual pixel-level verification)
+
 - [ ] Terminal tabs no longer show a black bar at the bottom
 - [ ] Resizing window/split panels — terminal fills correctly
 - [ ] Settings tab unaffected
 
 #### Custom app icon (PR #70)
+
+> **E2E coverage:** 0 E2E — all 2 manual (OS-level dock/taskbar icon, favicon)
 
 - [ ] App icon in dock/taskbar is the custom termiHub icon
 - [ ] Favicon in browser dev mode is termiHub icon
@@ -1282,6 +1478,8 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### Redesign remote agent as parent folder with child sessions (PR #164)
 
+> **E2E coverage:** 4 E2E/infra (connect, shell session, reconnect, context menu — requires agent infrastructure)
+
 - [ ] Create a remote agent entry — connect — see available shells/ports in expanded folder
 - [ ] Create a shell session under agent — terminal tab opens
 - [ ] Disconnect agent — reconnect — persistent sessions re-attach
@@ -1289,9 +1487,13 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### Wire RemoteBackend into TerminalManager and UI (PR #106)
 
+> **E2E coverage:** 1 E2E/infra (create connection, verify form/output)
+
 - [ ] Create a "Remote Agent" connection in the UI, verify settings form renders, verify connection attempt produces terminal output or error (not a crash)
 
 #### RemoteBackend and session reconnect (PR #87)
+
+> **E2E coverage:** 3 E2E/infra (connect, output, reconnect), 1 manual (cleanup verification)
 
 - [ ] Connect to a remote host running the agent
 - [ ] Verify terminal output appears for shell and serial sessions
@@ -1299,6 +1501,8 @@ Manual test procedures for verifying user-facing features before releases and af
 - [ ] Close tab, verify cleanup (no orphan threads)
 
 #### Connection error feedback dialog
+
+> **E2E coverage:** 5 E2E/infra (invalid host, wrong password, agent not installed, technical details, close button), 1 manual (agent binary state)
 
 - [ ] Create a remote agent with an invalid hostname — click "Connect" — verify "Could Not Reach Host" dialog appears with Close button
 - [ ] Create a remote agent with valid host but wrong password — click "Connect" — verify "Authentication Failed" dialog appears with Close button
@@ -1308,6 +1512,8 @@ Manual test procedures for verifying user-facing features before releases and af
 - [ ] In any error dialog, click Close — verify the dialog closes and the agent remains in disconnected state
 
 #### Agent setup wizard (PR #137)
+
+> **E2E coverage:** 4 E2E/infra (context menu, dialog, terminal, commands), 3 partial (file picker, binary upload), 3 manual (systemd, error case, connect after)
 
 - [ ] Create a remote agent entry pointing to Docker SSH container (127.0.0.1:2222, testuser/testpass)
 - [ ] Right-click the disconnected agent — verify "Setup Agent..." appears in context menu
@@ -1326,11 +1532,15 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### KeychainStore integration with OS keychain (PR #250)
 
+> **E2E coverage:** 0 E2E — all 3 manual (OS-specific keychain verification)
+
 - [ ] On Windows: verify credentials are stored in Windows Credential Manager (search for "termihub" entries)
 - [ ] On macOS: verify credentials are stored in Keychain Access (search for "termihub" entries)
 - [ ] On Linux: verify credentials are stored via Secret Service / D-Bus (if available)
 
 #### Master password unlock dialog and status bar indicator (PR #257)
+
+> **E2E coverage:** 7 E2E (correct/incorrect password, skip, status bar indicator, lock/unlock, no indicator in other modes), 1 manual (startup auto-open requires pre-config)
 
 - [ ] Configure credential store to master_password mode and lock it — on app startup, the unlock dialog should appear automatically
 - [ ] Enter the correct master password in the unlock dialog — dialog closes and credential store becomes unlocked
@@ -1343,6 +1553,8 @@ Manual test procedures for verifying user-facing features before releases and af
 
 #### Credential store auto-fill on connect (PR #258)
 
+> **E2E coverage:** 6 E2E/infra (save+auto-fill, stale credential, passphrase, no-lookup cases — via Docker SSH), 1 manual (remote agent)
+
 - [ ] Create an SSH connection with `savePassword` enabled, connect once (enter password when prompted) — verify the password is saved to the credential store
 - [ ] Disconnect and reconnect the same SSH connection — verify the stored credential is used automatically without prompting
 - [ ] Change the remote password, then reconnect — verify the stale credential is detected (auth failure), cleared from the store, and the user is re-prompted for the new password
@@ -1352,6 +1564,8 @@ Manual test procedures for verifying user-facing features before releases and af
 - [ ] Connect a remote agent with `savePassword` enabled — verify stored credentials are used automatically, and stale credentials trigger re-prompt after removal
 
 #### Auto-lock timeout for master password credential store (PR #263)
+
+> **E2E coverage:** 2 E2E (setting persistence, Never option), 3 partial (timeout timing, timer reset, immediate effect)
 
 - [ ] In Settings > Security, set auto-lock timeout to 5 minutes — verify the dropdown saves and the setting persists after restarting the app
 - [ ] With master password mode active and store unlocked, wait for the configured timeout to elapse — verify the store auto-locks and the unlock dialog appears
@@ -1364,6 +1578,8 @@ Manual test procedures for verifying user-facing features before releases and af
 ### Cross-Platform
 
 #### Baseline
+
+> **E2E coverage:** 0 E2E — all 3 manual (per-OS verification needed on each target platform)
 
 - [ ] Check available shells in connection editor on each target OS — correct shells listed (zsh/bash/sh on Unix, PowerShell/cmd/Git Bash on Windows)
 - [ ] Open serial port dropdown on each target OS — correct port naming convention (/dev/tty\* on Unix, COM\* on Windows)
