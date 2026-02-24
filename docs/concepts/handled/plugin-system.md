@@ -276,12 +276,12 @@ flowchart TD
 
 Each plugin declares one or more extension points in its manifest. The following types are supported:
 
-| Extension Point | Description | Runtime | Registration |
-|----------------|-------------|---------|-------------|
-| **Terminal Backend** | New connection type with full terminal I/O | Rust (dynamic library) | Registers a factory function with TerminalManager |
-| **Protocol Parser** | Transforms or annotates terminal output streams | JavaScript (WebView) | Registers as output filter in terminal rendering pipeline |
-| **Theme** | Custom color theme definition | JSON (static data) | Registers ThemeDefinition with theme engine |
-| **Status Bar Widget** | Adds information to the status bar | JavaScript (WebView) | Registers component in status bar slot |
+| Extension Point       | Description                                     | Runtime                | Registration                                              |
+| --------------------- | ----------------------------------------------- | ---------------------- | --------------------------------------------------------- |
+| **Terminal Backend**  | New connection type with full terminal I/O      | Rust (dynamic library) | Registers a factory function with TerminalManager         |
+| **Protocol Parser**   | Transforms or annotates terminal output streams | JavaScript (WebView)   | Registers as output filter in terminal rendering pipeline |
+| **Theme**             | Custom color theme definition                   | JSON (static data)     | Registers ThemeDefinition with theme engine               |
+| **Status Bar Widget** | Adds information to the status bar              | JavaScript (WebView)   | Registers component in status bar slot                    |
 
 ### Installing a Plugin
 
@@ -305,13 +305,13 @@ Each plugin declares one or more extension points in its manifest. The following
 
 Plugins declare required permissions in their manifest. The user is prompted to grant these permissions during installation. Permissions are coarse-grained to keep the model simple:
 
-| Permission | Grants Access To |
-|-----------|-----------------|
-| `terminal` | Creating and managing terminal sessions |
-| `network` | Making outbound network connections |
-| `filesystem` | Reading/writing files (scoped to declared paths) |
-| `ui` | Rendering UI components in designated slots |
-| `settings` | Storing and reading plugin-specific configuration |
+| Permission   | Grants Access To                                  |
+| ------------ | ------------------------------------------------- |
+| `terminal`   | Creating and managing terminal sessions           |
+| `network`    | Making outbound network connections               |
+| `filesystem` | Reading/writing files (scoped to declared paths)  |
+| `ui`         | Rendering UI components in designated slots       |
+| `settings`   | Storing and reading plugin-specific configuration |
 
 ### Error Handling
 
@@ -826,12 +826,7 @@ export interface PluginManifest {
   settings?: Record<string, PluginSettingSchema>;
 }
 
-export type PluginPermission =
-  | "terminal"
-  | "network"
-  | "filesystem"
-  | "ui"
-  | "settings";
+export type PluginPermission = "terminal" | "network" | "filesystem" | "ui" | "settings";
 
 export interface PluginExtensions {
   terminalBackend?: TerminalBackendExtension;
@@ -861,12 +856,7 @@ export interface StatusBarWidgetExtension {
   position: "left" | "right";
 }
 
-export type PluginState =
-  | "installed"
-  | "active"
-  | "disabled"
-  | "error"
-  | "incompatible";
+export type PluginState = "installed" | "active" | "disabled" | "error" | "incompatible";
 
 export interface InstalledPlugin {
   manifest: PluginManifest;
@@ -1031,12 +1021,12 @@ disablePlugin: (pluginId: string) => Promise<void>;
 
 ### 11. New Components
 
-| Component | Location | Purpose |
-|-----------|----------|---------|
-| `PluginManagerView` | `src/components/Plugins/PluginManagerView.tsx` | Sidebar view listing installed plugins |
-| `PluginDetailPanel` | `src/components/Plugins/PluginDetailPanel.tsx` | Expanded detail view for selected plugin |
-| `PluginInstallDialog` | `src/components/Plugins/PluginInstallDialog.tsx` | Permission review and install confirmation dialog |
-| `PluginSettingsSection` | `src/components/Settings/PluginSettingsSection.tsx` | Settings UI for plugin-specific configuration |
+| Component                | Location                                             | Purpose                                             |
+| ------------------------ | ---------------------------------------------------- | --------------------------------------------------- |
+| `PluginManagerView`      | `src/components/Plugins/PluginManagerView.tsx`       | Sidebar view listing installed plugins              |
+| `PluginDetailPanel`      | `src/components/Plugins/PluginDetailPanel.tsx`       | Expanded detail view for selected plugin            |
+| `PluginInstallDialog`    | `src/components/Plugins/PluginInstallDialog.tsx`     | Permission review and install confirmation dialog   |
+| `PluginSettingsSection`  | `src/components/Settings/PluginSettingsSection.tsx`  | Settings UI for plugin-specific configuration       |
 | `PluginConnectionConfig` | `src/components/Settings/PluginConnectionConfig.tsx` | Dynamic form renderer for plugin connection configs |
 
 ### 12. File System Layout

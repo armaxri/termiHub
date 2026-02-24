@@ -55,6 +55,7 @@ The theme setting lives in the **Appearance** category of the Settings panel (as
 ```
 
 The dropdown shows:
+
 1. **Built-in themes**: Dark, Light, System — always present
 2. **Separator line**
 3. **User-defined themes**: listed by name, if any exist
@@ -160,6 +161,7 @@ The built-in Light theme follows VS Code's Light+ aesthetic:
 ```
 
 Key design decisions for the Light theme:
+
 - The **activity bar stays dark** (like VS Code) — it provides a strong visual anchor regardless of theme
 - The **sidebar** uses a light gray background (`#f3f3f3`) with dark text
 - The **terminal area** uses white background with dark foreground text
@@ -451,10 +453,10 @@ Each theme is a TypeScript object (for built-in) or JSON file (for custom):
 
 ```typescript
 interface ThemeDefinition {
-  id: string;                    // unique identifier
-  name: string;                  // display name
-  type: "builtin" | "custom";   // cannot delete built-in themes
-  baseTheme?: string;            // custom themes inherit from a base
+  id: string; // unique identifier
+  name: string; // display name
+  type: "builtin" | "custom"; // cannot delete built-in themes
+  baseTheme?: string; // custom themes inherit from a base
   colors: {
     // Backgrounds
     bgPrimary: string;
@@ -537,73 +539,73 @@ interface ThemeDefinition {
 
 **Dark theme** (current values extracted from `variables.css` and `Terminal.tsx`):
 
-| Token | Value |
-|-------|-------|
-| `bgPrimary` | `#1e1e1e` |
-| `bgSecondary` | `#252526` |
-| `bgTertiary` | `#2d2d2d` |
-| `textPrimary` | `#cccccc` |
-| `accentColor` | `#007acc` |
-| `terminalBg` | `#1e1e1e` |
-| `terminalFg` | `#cccccc` |
-| *...all current values* | |
+| Token                   | Value     |
+| ----------------------- | --------- |
+| `bgPrimary`             | `#1e1e1e` |
+| `bgSecondary`           | `#252526` |
+| `bgTertiary`            | `#2d2d2d` |
+| `textPrimary`           | `#cccccc` |
+| `accentColor`           | `#007acc` |
+| `terminalBg`            | `#1e1e1e` |
+| `terminalFg`            | `#cccccc` |
+| _...all current values_ |           |
 
 **Light theme** (VS Code Light+ inspired):
 
-| Token | Value |
-|-------|-------|
-| `bgPrimary` | `#ffffff` |
-| `bgSecondary` | `#f3f3f3` |
-| `bgTertiary` | `#e8e8e8` |
-| `bgHover` | `#e8e8e8` |
-| `bgActive` | `#d6d6d6` |
-| `bgInput` | `#ffffff` |
-| `bgDropdown` | `#ffffff` |
-| `activityBarBg` | `#2c2c2c` |
-| `activityBarActive` | `#ffffff` |
-| `activityBarInactive` | `#858585` |
-| `activityBarIndicator` | `#ffffff` |
-| `sidebarBg` | `#f3f3f3` |
-| `sidebarHeaderBg` | `#f3f3f3` |
-| `tabBg` | `#ececec` |
-| `tabActiveBg` | `#ffffff` |
-| `tabBorder` | `#f3f3f3` |
-| `textPrimary` | `#383a42` |
-| `textSecondary` | `#6a737d` |
-| `textDisabled` | `#a0a0a0` |
-| `textAccent` | `#0366d6` |
-| `textLink` | `#0366d6` |
-| `borderPrimary` | `#d1d5da` |
-| `borderSecondary` | `#e1e4e8` |
-| `accentColor` | `#0366d6` |
-| `accentHover` | `#0350a0` |
-| `focusBorder` | `#0366d6` |
-| `colorSuccess` | `#22863a` |
-| `colorWarning` | `#b08800` |
-| `colorError` | `#cb2431` |
-| `colorInfo` | `#0366d6` |
-| `terminalBg` | `#ffffff` |
-| `terminalFg` | `#383a42` |
-| `terminalCursor` | `#526eff` |
-| `terminalSelection` | `rgba(3, 102, 214, 0.2)` |
-| `ansiBlack` | `#383a42` |
-| `ansiRed` | `#e45649` |
-| `ansiGreen` | `#50a14f` |
-| `ansiYellow` | `#c18401` |
-| `ansiBlue` | `#4078f2` |
-| `ansiMagenta` | `#a626a4` |
-| `ansiCyan` | `#0184bc` |
-| `ansiWhite` | `#fafafa` |
-| `ansiBrightBlack` | `#4f525e` |
-| `ansiBrightRed` | `#e06c75` |
-| `ansiBrightGreen` | `#98c379` |
-| `ansiBrightYellow` | `#e5c07b` |
-| `ansiBrightBlue` | `#61afef` |
-| `ansiBrightMagenta` | `#c678dd` |
-| `ansiBrightCyan` | `#56b6c2` |
-| `ansiBrightWhite` | `#ffffff` |
-| `scrollbarThumb` | `rgba(100, 100, 100, 0.3)` |
-| `scrollbarThumbHover` | `rgba(100, 100, 100, 0.5)` |
+| Token                  | Value                      |
+| ---------------------- | -------------------------- |
+| `bgPrimary`            | `#ffffff`                  |
+| `bgSecondary`          | `#f3f3f3`                  |
+| `bgTertiary`           | `#e8e8e8`                  |
+| `bgHover`              | `#e8e8e8`                  |
+| `bgActive`             | `#d6d6d6`                  |
+| `bgInput`              | `#ffffff`                  |
+| `bgDropdown`           | `#ffffff`                  |
+| `activityBarBg`        | `#2c2c2c`                  |
+| `activityBarActive`    | `#ffffff`                  |
+| `activityBarInactive`  | `#858585`                  |
+| `activityBarIndicator` | `#ffffff`                  |
+| `sidebarBg`            | `#f3f3f3`                  |
+| `sidebarHeaderBg`      | `#f3f3f3`                  |
+| `tabBg`                | `#ececec`                  |
+| `tabActiveBg`          | `#ffffff`                  |
+| `tabBorder`            | `#f3f3f3`                  |
+| `textPrimary`          | `#383a42`                  |
+| `textSecondary`        | `#6a737d`                  |
+| `textDisabled`         | `#a0a0a0`                  |
+| `textAccent`           | `#0366d6`                  |
+| `textLink`             | `#0366d6`                  |
+| `borderPrimary`        | `#d1d5da`                  |
+| `borderSecondary`      | `#e1e4e8`                  |
+| `accentColor`          | `#0366d6`                  |
+| `accentHover`          | `#0350a0`                  |
+| `focusBorder`          | `#0366d6`                  |
+| `colorSuccess`         | `#22863a`                  |
+| `colorWarning`         | `#b08800`                  |
+| `colorError`           | `#cb2431`                  |
+| `colorInfo`            | `#0366d6`                  |
+| `terminalBg`           | `#ffffff`                  |
+| `terminalFg`           | `#383a42`                  |
+| `terminalCursor`       | `#526eff`                  |
+| `terminalSelection`    | `rgba(3, 102, 214, 0.2)`   |
+| `ansiBlack`            | `#383a42`                  |
+| `ansiRed`              | `#e45649`                  |
+| `ansiGreen`            | `#50a14f`                  |
+| `ansiYellow`           | `#c18401`                  |
+| `ansiBlue`             | `#4078f2`                  |
+| `ansiMagenta`          | `#a626a4`                  |
+| `ansiCyan`             | `#0184bc`                  |
+| `ansiWhite`            | `#fafafa`                  |
+| `ansiBrightBlack`      | `#4f525e`                  |
+| `ansiBrightRed`        | `#e06c75`                  |
+| `ansiBrightGreen`      | `#98c379`                  |
+| `ansiBrightYellow`     | `#e5c07b`                  |
+| `ansiBrightBlue`       | `#61afef`                  |
+| `ansiBrightMagenta`    | `#c678dd`                  |
+| `ansiBrightCyan`       | `#56b6c2`                  |
+| `ansiBrightWhite`      | `#ffffff`                  |
+| `scrollbarThumb`       | `rgba(100, 100, 100, 0.3)` |
+| `scrollbarThumbHover`  | `rgba(100, 100, 100, 0.5)` |
 
 ### 3. File Structure
 
@@ -680,7 +682,7 @@ class ThemeEngine {
     if (setting === "light") return lightTheme;
     if (setting.startsWith("custom:")) {
       const id = setting.slice(7);
-      const custom = customs.find(t => t.id === id);
+      const custom = customs.find((t) => t.id === id);
       return custom ? this.mergeWithBase(custom) : darkTheme;
     }
     return darkTheme;
@@ -699,13 +701,13 @@ class ThemeEngine {
 
 Before the theme system can work end-to-end, these hardcoded color locations must be refactored:
 
-| Location | Current | Change |
-|----------|---------|--------|
-| `Terminal.tsx:240-262` | Hardcoded xterm theme object | Read from `ThemeEngine.getXtermTheme()` |
-| `AgentNode.tsx:39-44` | Hardcoded state dot colors (`#0dbc79`, `#e5e510`, `#cd3131`) | Use CSS variables `var(--color-success)`, `var(--color-warning)`, `var(--color-error)` |
-| `TabBar.css:111-122` | Hardcoded state dot colors in CSS | Use CSS variables |
-| `App.tsx:35-60` | Inline error boundary styles | Use CSS class with CSS variables |
-| `ColorPickerDialog.tsx:6-15` | Hardcoded preset color swatches | These are independent of the theme (user-chosen tab colors) — no change needed |
+| Location                     | Current                                                      | Change                                                                                 |
+| ---------------------------- | ------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
+| `Terminal.tsx:240-262`       | Hardcoded xterm theme object                                 | Read from `ThemeEngine.getXtermTheme()`                                                |
+| `AgentNode.tsx:39-44`        | Hardcoded state dot colors (`#0dbc79`, `#e5e510`, `#cd3131`) | Use CSS variables `var(--color-success)`, `var(--color-warning)`, `var(--color-error)` |
+| `TabBar.css:111-122`         | Hardcoded state dot colors in CSS                            | Use CSS variables                                                                      |
+| `App.tsx:35-60`              | Inline error boundary styles                                 | Use CSS class with CSS variables                                                       |
+| `ColorPickerDialog.tsx:6-15` | Hardcoded preset color swatches                              | These are independent of the theme (user-chosen tab colors) — no change needed         |
 
 ### 7. CSS Variable Application Strategy
 

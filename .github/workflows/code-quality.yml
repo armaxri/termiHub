@@ -78,6 +78,9 @@ jobs:
       - name: Check formatting with Prettier
         run: pnpm run format:check
 
+      - name: Lint Markdown
+        run: pnpm run markdownlint
+
   # Run tests
   tests:
     name: Run Tests

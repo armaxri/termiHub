@@ -22,6 +22,14 @@ else
 fi
 
 echo ""
+echo "=== Markdown: markdownlint ==="
+if pnpm run markdownlint; then
+    echo "PASS"
+else
+    FAILED=1
+fi
+
+echo ""
 echo "=== Frontend: ESLint ==="
 if pnpm run lint; then
     echo "PASS"

@@ -107,6 +107,7 @@ When connecting with an encrypted key that has no saved passphrase, a modal dial
 ```
 
 The dialog offers two storage options:
+
 - **Remember for this session** — Cache the passphrase in memory until the app is closed. Default: checked.
 - **Save to connection** — Persist the passphrase to `connections.json`. Default: unchecked. Includes a plaintext warning.
 
@@ -136,12 +137,12 @@ When a passphrase is incorrect, the prompt re-appears with an error message:
 
 ### Settings Form Behavior Summary
 
-| Key State | Passphrase Field | Save Checkbox | Validation Hint |
-|-----------|-----------------|---------------|-----------------|
-| Encrypted, passphrase saved | Shown, pre-filled | Checked | "🔒 Encrypted key. Passphrase saved." |
-| Encrypted, passphrase not saved | Shown, empty | Unchecked | "🔒 Encrypted key. You will be prompted on connect." |
-| Unencrypted | Hidden | Hidden | "✓ Key detected." |
-| Unknown encryption status | Shown, optional | Unchecked | (standard format validation only) |
+| Key State                       | Passphrase Field  | Save Checkbox | Validation Hint                                      |
+| ------------------------------- | ----------------- | ------------- | ---------------------------------------------------- |
+| Encrypted, passphrase saved     | Shown, pre-filled | Checked       | "🔒 Encrypted key. Passphrase saved."                |
+| Encrypted, passphrase not saved | Shown, empty      | Unchecked     | "🔒 Encrypted key. You will be prompted on connect." |
+| Unencrypted                     | Hidden            | Hidden        | "✓ Key detected."                                    |
+| Unknown encryption status       | Shown, optional   | Unchecked     | (standard format validation only)                    |
 
 ---
 
@@ -213,25 +214,27 @@ The existing `validate_ssh_key` endpoint is enhanced to detect whether a key is 
 
 **Detection strategies by key format:**
 
-| Format | Encryption Detection Method |
-|--------|---------------------------|
-| OpenSSH (`BEGIN OPENSSH PRIVATE KEY`) | Parse with `ssh_key` crate, call `is_encrypted()` |
-| PKCS#8 (`BEGIN ENCRYPTED PRIVATE KEY`) | Header alone indicates encryption |
-| PKCS#8 (`BEGIN PRIVATE KEY`) | Header alone indicates no encryption |
-| RSA PEM (`BEGIN RSA PRIVATE KEY`) | Check for `Proc-Type: 4,ENCRYPTED` and `DEK-Info` headers |
-| EC PEM (`BEGIN EC PRIVATE KEY`) | Check for `Proc-Type: 4,ENCRYPTED` and `DEK-Info` headers |
-| DSA PEM (`BEGIN DSA PRIVATE KEY`) | Check for `Proc-Type: 4,ENCRYPTED` and `DEK-Info` headers |
+| Format                                 | Encryption Detection Method                               |
+| -------------------------------------- | --------------------------------------------------------- |
+| OpenSSH (`BEGIN OPENSSH PRIVATE KEY`)  | Parse with `ssh_key` crate, call `is_encrypted()`         |
+| PKCS#8 (`BEGIN ENCRYPTED PRIVATE KEY`) | Header alone indicates encryption                         |
+| PKCS#8 (`BEGIN PRIVATE KEY`)           | Header alone indicates no encryption                      |
+| RSA PEM (`BEGIN RSA PRIVATE KEY`)      | Check for `Proc-Type: 4,ENCRYPTED` and `DEK-Info` headers |
+| EC PEM (`BEGIN EC PRIVATE KEY`)        | Check for `Proc-Type: 4,ENCRYPTED` and `DEK-Info` headers |
+| DSA PEM (`BEGIN DSA PRIVATE KEY`)      | Check for `Proc-Type: 4,ENCRYPTED` and `DEK-Info` headers |
 
 ### Separating Password from Passphrase
 
 The `password` field is currently overloaded. The concept introduces a dedicated `keyPassphrase` field:
 
 **Current state:**
+
 ```
 SshConfig.password → used for password auth AND key passphrase
 ```
 
 **Proposed state:**
+
 ```
 SshConfig.password      → used only for password auth
 SshConfig.keyPassphrase → used only for key passphrase (new field)
@@ -812,23 +815,23 @@ The `PassphraseDialog` component reads `passphrasePrompt` from the store and ren
 
 ### 9. File Changes Summary
 
-| File | Change |
-|------|--------|
-| `src-tauri/src/utils/ssh_key_validate.rs` | Add `encrypted` field to `SshKeyValidation`, detect encryption status |
-| `src-tauri/src/terminal/backend.rs` | Add `key_passphrase`, `save_key_passphrase` to `SshConfig` and `RemoteAgentConfig`; update `expand()` |
-| `src-tauri/src/utils/ssh_auth.rs` | Make `connect_and_authenticate` async, add passphrase resolution flow |
-| `src-tauri/src/utils/passphrase_cache.rs` | New: in-memory passphrase cache |
-| `src-tauri/src/utils/mod.rs` | Register `passphrase_cache` module |
-| `src-tauri/src/events/` | New: `PassphraseNeededEvent` |
-| `src-tauri/src/commands/terminal.rs` | New: `submit_passphrase` command |
-| `src-tauri/src/connection/storage.rs` | Config migration logic |
-| `src-tauri/src/main.rs` | Manage `PassphraseCache` as Tauri state |
-| `src/types/terminal.ts` | Add `keyPassphrase`, `saveKeyPassphrase` to `SshConfig`; update `SshKeyValidation` |
-| `src/services/api.ts` | Add `submitPassphrase` function; update `SshKeyValidation` type |
-| `src/services/events.ts` | Add `PassphraseNeededEvent` type and listener |
-| `src/components/Settings/SshSettings.tsx` | Adapt passphrase field to encryption status, add save checkbox |
-| `src/components/PassphraseDialog.tsx` | New: modal passphrase prompt dialog |
-| `src/store/appStore.ts` | Add passphrase prompt state and actions |
+| File                                      | Change                                                                                                |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `src-tauri/src/utils/ssh_key_validate.rs` | Add `encrypted` field to `SshKeyValidation`, detect encryption status                                 |
+| `src-tauri/src/terminal/backend.rs`       | Add `key_passphrase`, `save_key_passphrase` to `SshConfig` and `RemoteAgentConfig`; update `expand()` |
+| `src-tauri/src/utils/ssh_auth.rs`         | Make `connect_and_authenticate` async, add passphrase resolution flow                                 |
+| `src-tauri/src/utils/passphrase_cache.rs` | New: in-memory passphrase cache                                                                       |
+| `src-tauri/src/utils/mod.rs`              | Register `passphrase_cache` module                                                                    |
+| `src-tauri/src/events/`                   | New: `PassphraseNeededEvent`                                                                          |
+| `src-tauri/src/commands/terminal.rs`      | New: `submit_passphrase` command                                                                      |
+| `src-tauri/src/connection/storage.rs`     | Config migration logic                                                                                |
+| `src-tauri/src/main.rs`                   | Manage `PassphraseCache` as Tauri state                                                               |
+| `src/types/terminal.ts`                   | Add `keyPassphrase`, `saveKeyPassphrase` to `SshConfig`; update `SshKeyValidation`                    |
+| `src/services/api.ts`                     | Add `submitPassphrase` function; update `SshKeyValidation` type                                       |
+| `src/services/events.ts`                  | Add `PassphraseNeededEvent` type and listener                                                         |
+| `src/components/Settings/SshSettings.tsx` | Adapt passphrase field to encryption status, add save checkbox                                        |
+| `src/components/PassphraseDialog.tsx`     | New: modal passphrase prompt dialog                                                                   |
+| `src/store/appStore.ts`                   | Add passphrase prompt state and actions                                                               |
 
 ### 10. Migration Path
 
