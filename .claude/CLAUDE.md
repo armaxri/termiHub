@@ -116,7 +116,7 @@ examples/                     # Docker test environment (SSH, Telnet, virtual se
   3. **Documented manual test steps** — last resort for things that can't be automated (e.g., visual rendering, platform-specific hardware)
 - No change should ship without at least one of the above
 - For bug fixes, add a regression test that would fail without the fix (when possible)
-- **Manual test tracking**: When a PR includes manual test steps (in the PR description's "Test plan" section), also add those steps to `docs/manual-testing.md` under the appropriate feature area heading, referencing the PR number. This keeps manual tests discoverable and prevents them from being forgotten after merge.
+- **Manual test tracking**: When a PR includes manual test steps (in the PR description's "Test plan" section), also add those steps to the Manual Testing section in `docs/testing.md` under the appropriate feature area heading, referencing the PR number. This keeps manual tests discoverable and prevents them from being forgotten after merge.
 - **E2E platform constraint**: `tauri-driver` only supports Linux and Windows — it does **not** work on macOS (no WKWebView driver exists). E2E system tests run inside Docker (Linux) on all platforms. See ADR-5 in [architecture.md](../docs/architecture.md). macOS-specific behavior must be verified via manual tests.
 
 ### General
@@ -173,7 +173,7 @@ A PostToolUse hook in `.claude/settings.json` runs `scripts/autoformat.sh` after
 **Before pushing or creating a PR**, complete all outstanding internal tasks first. Do not defer these to after pushing. When the user asks to push, **stop and report** which of the following items are still pending, then ask for permission before proceeding:
 
 1. **CHANGELOG.md** — updated for every user-facing change (under `[Unreleased]`)
-2. **docs/manual-testing.md** — updated if the PR includes manual test steps
+2. **docs/testing.md (Manual Testing section)** — updated if the PR includes manual test steps
 3. **Concept documents** — if working on a `Concept` issue, ensure `docs/concepts/<name>.md` is written and committed
 4. **Other documentation** — any doc updates implied by the changes (architecture.md, README references, JSDoc, doc comments, etc.)
 5. **Formatting** — run `./scripts/format.sh` and commit any formatting fixes as a separate commit
@@ -233,11 +233,8 @@ pnpm tauri dev
 ## Key References
 
 - [Architecture](../docs/architecture.md) — Full arc42 architecture documentation
-- [Contributing](../docs/contributing.md) — Development setup, building, workflow, and coding standards
-- [Testing Strategy](../docs/testing.md) — Automated and manual testing approach
-- [Manual Testing](../docs/manual-testing.md) — Manual test procedures and regression checklist
-- [Performance](../docs/performance.md) — Profiling guide and baseline metrics
-- [Releasing](../docs/releasing.md) — Release process and version management
+- [Contributing](../docs/contributing.md) — Development setup, building, workflow, releasing, and performance profiling
+- [Testing](../docs/testing.md) — Automated and manual testing approach
 - [Remote Protocol](../docs/remote-protocol.md) — Desktop-to-agent JSON-RPC specification
 - [Concepts](../docs/concepts/) — Design concept documents for `Concept` labeled issues
 - [Scripts](../scripts/README.md) — Development helper scripts

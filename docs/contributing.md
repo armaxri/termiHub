@@ -380,7 +380,7 @@ Update the connection type dropdown in `src/components/Sidebar/ConnectionEditor.
 
 ## Testing
 
-For the full testing strategy — including unit, integration, E2E, and visual regression testing — see [Testing Strategy](testing.md).
+For the full testing strategy — including unit, integration, E2E, visual regression testing, and manual test procedures — see [Testing](testing.md).
 
 ### Running Tests
 
@@ -418,7 +418,7 @@ pnpm test:e2e
 
 ### Manual Testing
 
-See [Manual Test Plan](manual-testing.md) for the full checklist. For UI changes, test at minimum:
+See the [Manual Testing section in testing.md](testing.md#manual-testing) for the full checklist. For UI changes, test at minimum:
 
 - Create, edit, duplicate, and delete connections
 - Connect to each terminal type
@@ -782,3 +782,152 @@ The first build compiles all Rust dependencies and can take several minutes. Sub
 # Use fewer codegen units (faster compile, slower runtime — fine for dev)
 CARGO_PROFILE_DEV_CODEGEN_UNITS=16 pnpm tauri dev
 ```
+
+---
+
+## Release Process
+
+### Pre-Release Checklist
+
+Before creating a release, run the quality scripts and verify:
+
+```bash
+./scripts/test.sh      # All unit tests (frontend + backend + agent)
+./scripts/check.sh     # Formatting, linting, clippy (mirrors CI)
+```
+
+- [ ] All scripts pass without errors
+- [ ] `CHANGELOG.md` has been updated with all user-facing changes
+- [ ] No known release-blocking issues remain
+
+### Version Bump
+
+Update the version number in all four locations:
+
+1. **`package.json`** — `"version": "X.Y.Z"`
+2. **`src-tauri/Cargo.toml`** — `version = "X.Y.Z"`
+3. **`src-tauri/tauri.conf.json`** — `"version": "X.Y.Z"`
+4. **`agent/Cargo.toml`** — `version = "X.Y.Z"`
+
+Use [Semantic Versioning](https://semver.org/):
+
+- **MAJOR** (X): Breaking changes
+- **MINOR** (Y): New features, backwards-compatible
+- **PATCH** (Z): Bug fixes, backwards-compatible
+
+### Finalize Changelog
+
+Move the `[Unreleased]` section to a versioned section:
+
+```markdown
+## [Unreleased]
+
+## [X.Y.Z] - YYYY-MM-DD
+
+### Added
+
+- ...
+
+### Fixed
+
+- ...
+```
+
+### Commit, Tag, and Push
+
+```bash
+# Commit the version bump and changelog
+git add package.json src-tauri/Cargo.toml src-tauri/tauri.conf.json CHANGELOG.md
+git commit -m "chore: release vX.Y.Z"
+
+# Create an annotated tag
+git tag -a vX.Y.Z -m "Release vX.Y.Z"
+
+# Push commit and tag
+git push origin main
+git push origin vX.Y.Z
+```
+
+Pushing the `vX.Y.Z` tag triggers the [Release workflow](../.github/workflows/release.yml), which will:
+
+1. Create a GitHub Release with notes extracted from `CHANGELOG.md`
+2. Build platform-specific installers (macOS .dmg, Windows .msi, Linux .AppImage + .deb)
+3. Upload all artifacts to the GitHub Release page
+4. Update the `latest` tag
+
+### Post-Release Verification
+
+After the workflow completes:
+
+- [ ] Check the [GitHub Actions](https://github.com/armaxri/termiHub/actions) page — all jobs should be green
+- [ ] Visit the [Releases page](https://github.com/armaxri/termiHub/releases) — verify the release exists with correct notes
+- [ ] Confirm all platform artifacts are attached (macOS x64, macOS ARM64, Windows x64, Linux x64, Linux ARM64)
+- [ ] Download and smoke-test at least one artifact on your platform
+
+### Hotfix Process
+
+For urgent bug fixes on a released version:
+
+1. Create a branch from the release tag: `git checkout -b bugfix/description vX.Y.Z`
+2. Fix the bug and add tests
+3. Bump the patch version (e.g., `X.Y.Z` → `X.Y.Z+1`)
+4. Update `CHANGELOG.md`
+5. Merge to `main` via PR
+6. Tag and push (same process as above)
+
+---
+
+## Performance Profiling
+
+### Overview
+
+termiHub targets 40 concurrent terminal sessions. This section covers how to profile the application, what metrics to capture, and how to detect regressions.
+
+### Architecture Optimizations
+
+- **Singleton Event Dispatcher** — A single global Tauri event listener per event type (`terminal-output`, `terminal-exit`) instead of per-terminal listeners. Events are routed via O(1) `Map` lookup by `session_id`. Location: `src/services/events.ts`.
+- **Output Batching (requestAnimationFrame)** — Terminal output chunks are buffered and flushed in a single `requestAnimationFrame` callback. Location: `src/components/Terminal/Terminal.tsx`.
+- **Backend Output Coalescing** — The Rust backend coalesces pending output chunks (up to 32 KB) into a single Tauri event emission. Location: `src-tauri/src/terminal/manager.rs`.
+- **Bounded Channels** — Backend output channels use `sync_channel(64)` for backpressure. Location: `src-tauri/src/terminal/backend.rs`.
+
+### Profiling with Chrome DevTools
+
+1. Start the app in development mode: `pnpm tauri dev`
+2. Open Chrome DevTools (right-click > Inspect or F12)
+3. **Performance Panel** — Record actions, look for long tasks (>50ms) in the flame chart
+4. **Memory Panel** — Take heap snapshots before/after creating terminals, compare for leaks
+5. **Performance Monitor** — Watch JS heap size, DOM nodes, event listeners, layouts/sec in real-time
+
+### Baseline Metrics
+
+| Metric                            | N=1 baseline | N=40 target                 | How to measure                      |
+| --------------------------------- | ------------ | --------------------------- | ----------------------------------- |
+| Terminal creation time            | —            | <500ms per terminal         | DevTools Performance panel          |
+| JS heap size                      | —            | <500 MB                     | `performance.memory.usedJSHeapSize` |
+| Event listener count              | 2 global     | 2 global (not 80)           | DevTools → Performance monitor      |
+| Tauri event throughput            | —            | No dropped events           | Check terminal output completeness  |
+| Rust thread count                 | ~5           | ~85 (2 per terminal + base) | Task Manager or `ps`                |
+| Input latency (keystroke to echo) | <50ms        | <100ms                      | Manual measurement                  |
+
+### Memory Leak Detection
+
+After creating and closing 40 terminals, verify:
+
+1. **JS heap returns to baseline** — Delta should be minimal (<10 MB)
+2. **No detached DOM nodes** — Search for "Detached" in Memory panel
+3. **Event listeners cleaned up** — Singleton dispatcher's callback maps should be empty
+4. **Rust threads cleaned up** — Thread count should return to baseline
+5. **No channel leaks** — Bounded channels should be dropped when terminals close
+
+### Automated Performance Tests
+
+```bash
+# Requires a built app (pnpm tauri build) and tauri-driver
+pnpm test:e2e:perf
+```
+
+The suite covers: PERF-01 (create 40 terminals), PERF-02 (UI responsiveness), PERF-03 (heap under 500 MB), PERF-04 (cleanup after close).
+
+### Session Limit
+
+The backend enforces a maximum of 50 concurrent sessions (`MAX_SESSIONS` in `manager.rs`). Attempting to create more returns an error displayed in the terminal.

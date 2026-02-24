@@ -840,7 +840,7 @@ Three GitHub Actions workflows handle the build and release pipeline. See `.gith
 | **Agent**        | Push/PR to `main` | Agent crate formatting, linting, tests, ARM64 cross-compilation |
 | **Release**      | Tag `v*.*.*`      | Create GitHub Release with platform installers                  |
 
-See [Releasing](releasing.md) for the full release process.
+See [Releasing](contributing.md#release-process) for the full release process.
 
 ### Development Scripts
 
@@ -1065,7 +1065,7 @@ All modes support auto-lock after a configurable timeout. Credential storage is 
 - Tests the Linux build of the app, which shares the same React UI and Rust backend logic
 - Developers on Linux can also run E2E tests natively without Docker
 
-**Trade-off:** Tests run against the Linux build, not the native macOS build. macOS-specific rendering behavior (WKWebView quirks) must be verified via manual testing. See [Manual Testing](manual-testing.md).
+**Trade-off:** Tests run against the Linux build, not the native macOS build. macOS-specific rendering behavior (WKWebView quirks) must be verified via manual testing. See [Manual Testing](testing.md#manual-testing).
 
 **Future consideration:** The experimental [danielraffel/tauri-webdriver](https://github.com/danielraffel/tauri-webdriver) project (Feb 2026) provides a WKWebView WebDriver via a Tauri plugin. If it matures, it could enable native macOS E2E testing without Docker. Evaluate periodically.
 
@@ -1207,7 +1207,7 @@ graph TD
 | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Runtime type safety for connection settings**  | `ConnectionConfig` stores settings as `serde_json::Value` / `Record<string, unknown>` — no compile-time type checking for connection-specific fields | Schema-based validation at connect time; strongly-typed config structs inside each `ConnectionType::connect()` implementation deserialize and validate         |
 | **ConPTY dependency**                            | Windows PTY requires Windows 10 1809+                                                                                                                | Document minimum version; fail gracefully on older Windows                                                                                                     |
-| **xterm.js canvas testing**                      | Terminal renders to `<canvas>`, invisible to DOM-based test tools                                                                                    | Manual testing plan ([manual-testing.md](manual-testing.md)); E2E tests cover surrounding UI                                                                   |
+| **xterm.js canvas testing**                      | Terminal renders to `<canvas>`, invisible to DOM-based test tools                                                                                    | Manual testing plan ([testing.md](testing.md#manual-testing)); E2E tests cover surrounding UI                                                                  |
 | **WebView rendering differences**                | Tauri uses platform WebView (Edge/WebKitGTK/WebKit) with subtle CSS differences                                                                      | CI builds on all 3 OSes; test matrix for visual regression                                                                                                     |
 | **libssh2 limitations**                          | `ssh2` crate wraps libssh2 which has occasional compatibility issues with newer SSH servers                                                          | Monitor upstream issues; consider `russh` migration if needed                                                                                                  |
 | **Single-threaded IPC**                          | Tauri commands run on the main thread by default                                                                                                     | Heavy operations use `tauri::async_runtime::spawn`                                                                                                             |
