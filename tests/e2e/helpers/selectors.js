@@ -72,7 +72,7 @@ export const CTX_FOLDER_DELETE = '[data-testid="context-folder-delete"]';
 // --- Tabs (dynamic by UUID) ---
 export const tab = (id) => `[data-testid="tab-${id}"]`;
 export const tabClose = (id) => `[data-testid="tab-close-${id}"]`;
-export const TAB_ACTIVE_CLASS = 'tab--active';
+export const TAB_ACTIVE_CLASS = "tab--active";
 
 // --- Tab Context Menu ---
 export const TAB_CTX_SAVE = '[data-testid="tab-context-save"]';
@@ -86,12 +86,14 @@ export const TAB_CTX_SET_COLOR = '[data-testid="tab-context-set-color"]';
 export const TOOLBAR_NEW_TERMINAL = '[data-testid="terminal-view-new-terminal"]';
 export const TOOLBAR_SPLIT = '[data-testid="terminal-view-split"]';
 export const TOOLBAR_CLOSE_PANEL = '[data-testid="terminal-view-close-panel"]';
+export const TOOLBAR_TOGGLE_SIDEBAR = '[data-testid="terminal-view-toggle-sidebar"]';
 
 // --- Color Picker ---
 export const COLOR_PICKER_HEX_INPUT = '[data-testid="color-picker-hex-input"]';
 export const COLOR_PICKER_CLEAR = '[data-testid="color-picker-clear"]';
 export const COLOR_PICKER_APPLY = '[data-testid="color-picker-apply"]';
-export const colorPickerSwatch = (hex) => `[data-testid="color-picker-swatch-${hex.replace('#', '')}"]`;
+export const colorPickerSwatch = (hex) =>
+  `[data-testid="color-picker-swatch-${hex.replace("#", "")}"]`;
 
 // --- File Browser ---
 export const FILE_BROWSER_UP = '[data-testid="file-browser-up"]';
@@ -135,4 +137,5 @@ export const FILE_EDITOR_SAVE = '[data-testid="file-editor-save"]';
 
 // --- Generic helpers ---
 /** Match all tab elements (for counting) */
-export const ALL_TABS = '[data-testid^="tab-"]:not([data-testid^="tab-close-"]):not([data-testid^="tab-context-"])';
+export const ALL_TABS =
+  '[data-testid^="tab-"]:not([data-testid^="tab-close-"]):not([data-testid^="tab-context-"])';
