@@ -714,13 +714,8 @@ These areas have the most remaining automatable items:
 
 ### Local Shell
 
-#### Baseline
-
-> **Automated** in `local-shell-extended.test.js` (4 tests: shell dropdown, connect/execute, resize, exit message)
-
 #### Terminal input works on new connections (PR #198)
 
-> **Automated** in `local-shell-extended.test.js` (3 tests: rapid creation, tab switching, split panel input)
 > **Remaining:** 1 E2E/infra (SSH), 1 manual (PowerShell-only)
 
 - [ ] Open a new local PowerShell terminal — verify keyboard input works immediately without needing to click the terminal area
@@ -735,13 +730,8 @@ These areas have the most remaining automatable items:
 - [ ] Create an SSH connection — verify no setup command flash before the prompt appears
 - [ ] Create a local PowerShell or CMD connection — verify startup output is not delayed (no regression)
 
-#### Configurable starting directory (PR #148)
-
-> **Automated** in `local-shell-extended.test.js` (5 tests: default dir, /tmp, tilde, env var, edit existing)
-
 #### New tabs open in home directory (PR #66)
 
-> **Automated** in `local-shell-extended.test.js` (2 tests: shell tab, file browser)
 > **Remaining:** 1 manual (multi-OS verification)
 
 - [ ] Test on macOS/Linux (uses `$HOME`) and Windows (uses `%USERPROFILE%`) if possible
@@ -790,10 +780,6 @@ These areas have the most remaining automatable items:
 
 ### SSH
 
-#### Baseline
-
-> **Automated** via E2E/infra tests (password auth, key auth, error handling, resize, commands, disconnect — all via Docker SSH)
-
 #### Agnoster/Powerline theme rendering (PR #197)
 
 > **E2E coverage:** 0 E2E — all 3 manual (visual font/color rendering)
@@ -811,10 +797,6 @@ These areas have the most remaining automatable items:
 - [ ] SSH password auth still works
 - [ ] SSH agent auth still works
 
-#### OpenSSH-format private keys / Ed25519 (PR #134)
-
-> **Automated** via E2E/infra tests (Ed25519, passphrase, PEM — test keys in fixtures, Docker SSH containers)
-
 #### SSH agent setup guidance (PR #133)
 
 > **E2E coverage:** 1 E2E/infra (error message), 1 partial (agent status dependent), 1 manual (PowerShell elevation)
@@ -824,7 +806,6 @@ These areas have the most remaining automatable items:
 
 #### Password prompt at connect (PR #38)
 
-> **Partially automated** in `connection-forms.test.js` (1 test: no password field for SSH password auth)
 > **Remaining:** 2 E2E/infra (key no dialog, SFTP dialog), 2 manual (native export dialog, startup strip)
 
 - [ ] SSH key-auth connections — no password dialog, connects directly
@@ -843,25 +824,8 @@ These areas have the most remaining automatable items:
 - [ ] Enable X11 without local X server — SSH connects with graceful degradation
 - [ ] Existing saved connections without the new field load correctly
 
-#### SFTP file browser follows SSH terminal CWD (PR #186)
-
-> **Automated** via E2E/infra tests (5 tests: Docker SSH + file browser panel — cd tracking, home dir, multi-tab CWD, tab switch)
-
-#### Auto-connect monitoring on SSH tab switch (PR #163)
-
-> **Automated** via E2E/infra tests (3 tests: Docker SSH + status bar — auto-connect, host switching, manual dropdown fallback)
-
-#### Optional monitoring and file browser settings (PR #199)
-
-> **Automated** via E2E/infra tests (11 tests: settings toggles, global enable/disable, per-connection overrides, persistence — all verified with SSH connections)
-
-#### Monitoring hides on non-SSH tab (PR #165)
-
-> **Automated** via E2E/infra tests (5 tests: tab switching + status bar visibility — SSH/local/settings tabs, close all)
-
 #### SSH monitoring in status bar (PR #114, #115)
 
-> **Partially automated** in `settings.test.js` (1 test: sidebar no longer has monitoring view)
 > **Remaining:** 7 E2E/infra (stats, buttons, dropdown), 1 partial (high-value colors need specific load)
 
 - [ ] Selecting a connection connects monitoring, shows inline stats
@@ -873,13 +837,8 @@ These areas have the most remaining automatable items:
 - [ ] Clicking hostname opens detail dropdown with system info, refresh, and disconnect
 - [ ] Disconnecting returns to the "Monitor" button state
 
-#### Environment variable expansion in connections (PR #68)
-
-> **Automated** via E2E + E2E/infra tests (4 tests: SSH username resolution, env var expansion, undefined variable handling, literal persistence in JSON)
-
 #### SSH tunneling (PR #225)
 
-> **Automated** in `ssh-tunnels.test.js` (10 tests: sidebar panel, editor, Local/Remote/Dynamic types with diagrams, reactive ports, save, edit, duplicate, delete)
 > **Remaining:** 5 E2E/infra (start/stop, traffic, forwarding), 2 partial (app restart persistence), 1 manual (auto-start on launch)
 
 - [ ] Verify the tunnel config persists across app restarts (check `tunnels.json` in the config directory)
@@ -895,10 +854,6 @@ These areas have the most remaining automatable items:
 
 ### Serial
 
-#### Baseline
-
-> **Automated** via E2E/infra tests (5 tests: virtual serial ports via socat in Docker — port listing, baud rates, echo, disconnect, non-default parameters)
-
 #### Nerd Font / Powerline glyph support (PR #131)
 
 > **E2E coverage:** 0 E2E — all 2 manual (visual glyph rendering)
@@ -908,19 +863,10 @@ These areas have the most remaining automatable items:
 
 ---
 
-### Telnet
-
-#### Baseline
-
-> **Automated** via E2E/infra tests (3 tests: Docker telnet container — connect+banner, command execution, non-existent host error)
-
----
-
 ### Tab Management
 
 #### Baseline
 
-> **Automated** in `tab-management.test.js` (5 tests: create tabs, close tab, switch tab, context menu) + `split-views.test.js` (close panel)
 > **Remaining:** 2 partial (drag reorder limited in WebDriver)
 
 - [ ] Drag a tab to a new position in the tab bar with multiple tabs open — tab moves to new position, order persists
@@ -934,13 +880,8 @@ These areas have the most remaining automatable items:
 - [ ] Choose a location — file is written with the terminal's text content
 - [ ] Cancel the dialog — nothing happens
 
-#### Suppress browser default context menu (PR #150)
-
-> **Automated** in `tab-management.test.js` (3 tests: right-click sidebar, terminal, activity bar — no browser context menu)
-
 #### Per-connection horizontal scrolling (PR #45)
 
-> **Automated** in `tab-management.test.js` (2 tests: toggle horizontal scrolling, persistence)
 > **Remaining:** 2 partial (visual scroll check), 1 manual (key repeat timing)
 
 - [ ] Create connection with horizontal scrolling enabled — connect — run `echo $(python3 -c "print('A'*300)")` — line should not wrap, horizontal scrollbar appears
@@ -962,13 +903,8 @@ These areas have the most remaining automatable items:
 
 ### Connection Management
 
-#### Baseline
-
-> **Automated** in `connection-crud.test.js` (4 tests: create, edit, delete, duplicate — all UI interactions)
-
 #### Remove folder selector from editor (PR #146)
 
-> **Automated** in `connection-editor-extended.test.js` (3 tests: no dropdown, folder right-click, in-folder edit)
 > **Remaining:** 1 partial (drag onto folder)
 
 - [ ] Drag a connection onto a folder in the sidebar — verify it moves correctly
@@ -984,10 +920,6 @@ These areas have the most remaining automatable items:
 - [ ] Search "arm" in the icon picker — verify BicepsFlexed appears
 - [ ] Clear a custom icon — verify default icon is restored
 
-#### Save & Connect button (PR #112)
-
-> **Automated** in `connection-crud.test.js` (2 tests: save+connect flow, separate save/cancel)
-
 #### Import/export connections (PR #33)
 
 > **E2E coverage:** 0 E2E — all 2 manual (native file dialogs)
@@ -997,7 +929,6 @@ These areas have the most remaining automatable items:
 
 #### Encrypted export/import of connections with credentials (PR #322)
 
-> **Automated** in `encrypted-export-import.test.js` (4 tests: default selection, password/confirm fields, validation errors)
 > **Remaining:** 7 manual (native file picker for actual export/import)
 
 - [ ] Enter matching passwords (8+ chars), click Export — file save dialog opens, JSON file is saved with `$encrypted` section
@@ -1008,10 +939,6 @@ These areas have the most remaining automatable items:
 - [ ] Click "Skip Credentials" on an encrypted import — verify connections imported without credentials
 - [ ] Import a plain (non-encrypted) export file — verify simple Import button shown (no password prompt), connections imported normally
 
-#### SSH key file validation (PR #204)
-
-> **Automated** in `connection-editor-extended.test.js` (8 tests: .pub warning, OpenSSH/RSA success, nonexistent error, PPK warning, random file warning, clear hint, debounce)
-
 #### SSH key path browse button (PR #205)
 
 > **E2E coverage:** 0 E2E — all 5 manual (native file dialog)
@@ -1021,18 +948,6 @@ These areas have the most remaining automatable items:
 - [ ] Cancel the dialog — verify the input field remains unchanged
 - [ ] Repeat the above for Agent connection settings
 - [ ] Manually type a path in the input field — verify it still works as before
-
-#### SSH key path file suggestions (PR #118)
-
-> **Automated** in `connection-editor-extended.test.js` (10 tests: dropdown display, .pub filtering, real-time filter, arrow keys, Tab/Enter accept, auto-accept, Escape, browse button, Agent field, empty dir)
-
-#### Default user and SSH key applied to new connections (PR #201)
-
-> **Automated** in `connection-editor-extended.test.js` (7 tests: settings defaults, SSH pre-fill, password fallback, username-only, Remote Agent, edit preserves values, suggestion dropdown)
-
-#### Auto-extract port from host field (PR #195)
-
-> **Automated** in `connection-editor-extended.test.js` (5 tests: IPv4:port, [IPv6]:port, plain hostname, bare IPv6, Telnet/Agent)
 
 #### External connection file support (PR #50, redesigned in PR #210)
 
@@ -1048,17 +963,12 @@ These areas have the most remaining automatable items:
 
 - [ ] Add an external connection file in Settings and enable it (prerequisite for testing external file behavior end-to-end)
 
-#### Schema-driven connection settings (PR #362)
-
-> **Automated** in `connection-editor-extended.test.js` (11 tests: type switching, SSH fields+auth toggle, Docker env/volumes, SSH combobox, Serial dropdowns, edit loading, Save & Connect, conditional fields, type reset, monitoring toggle, file browser toggle)
-
 ---
 
 ### Split Views
 
 #### Baseline
 
-> **Automated** in `split-views.test.js` (3 tests: horizontal split, close panel, nested splits)
 > **Remaining:** 2 partial (drag divider, drag tab to edge — limited in WebDriver)
 
 - [ ] Hold Shift + click split (or toolbar option) — panel splits vertically
@@ -1071,7 +981,6 @@ These areas have the most remaining automatable items:
 
 #### Baseline
 
-> **Partially automated** in `file-browser-local.test.js` (2 tests: files view switch, file entries display)
 > **Remaining:** 1 E2E/infra (SFTP connect), 3 manual (upload/OS drag, download dialog, VS Code)
 
 - [ ] Connect SFTP via picker with an SSH connection — remote filesystem tree displayed
@@ -1081,7 +990,6 @@ These areas have the most remaining automatable items:
 
 #### CWD-aware file browser (PR #39)
 
-> **Automated** in `file-browser-extended.test.js` (5 tests: cd tracking, tab switch, sidebar switch, rename/delete, create dir)
 > **Remaining:** 2 E2E/infra (SSH SFTP auto-connect)
 
 - [ ] Open an SSH terminal — file browser auto-connects SFTP (with password prompt) and shows remote CWD
@@ -1096,27 +1004,20 @@ These areas have the most remaining automatable items:
 - [ ] Switch back to WSL tab — file browser returns to WSL path
 - [ ] Open a bash tab (no OSC 7) — file browser shows home directory, not previous tab's path
 
-#### Local file explorer stuck at root fix (PR #110)
-
-> **Automated** in `file-browser-extended.test.js` (3 tests: home dir on open, bash fallback, navigation caching)
-
 #### File browser stays active when editing (PR #57)
 
-> **Automated** in `file-browser-extended.test.js` (3 tests: parent directory, tab switch, settings placeholder)
 > **Remaining:** 1 E2E/infra (remote SFTP file)
 
 - [ ] Open a remote (SFTP) file for editing — file browser shows the remote parent directory
 
 #### New File button (PR #58)
 
-> **Automated** in `file-browser-extended.test.js` (4 tests: create via Enter, Escape cancel, local mode, new folder)
 > **Remaining:** 1 E2E/infra (SFTP mode)
 
 - [ ] Works in SFTP file browser mode
 
 #### Right-click context menu (PR #59)
 
-> **Automated** in `file-browser-extended.test.js` (5 tests: file menu, dir menu, three-dots, delete action, styling)
 > **Remaining:** 1 E2E/infra (SFTP download option)
 
 - [ ] Right-click in SFTP mode — Download option appears for files
@@ -1132,7 +1033,6 @@ These areas have the most remaining automatable items:
 
 #### Double-click file to open in editor (PR #61)
 
-> **Automated** in `file-browser-extended.test.js` (2 tests: open file, navigate directory)
 > **Remaining:** 1 E2E/infra (SFTP file)
 
 - [ ] Double-click a file in SFTP file browser — opens in editor tab
@@ -1143,23 +1043,10 @@ These areas have the most remaining automatable items:
 
 #### Built-in file editor with Monaco (PR #54)
 
-> **Automated** in `editor.test.js` (7 tests: open, edit+save, toolbar save, dirty/clean close, reuse tab, binary error)
 > **Remaining:** 1 E2E/infra (SFTP edit), 1 partial (drag between panels)
 
 - [ ] SFTP file browser — right-click file — "Edit" — remote file loads with [Remote] badge — edit + save works
 - [ ] Editor tab drag-and-drop between panels works correctly
-
-#### Editor status bar (PR #65)
-
-> **Automated** in `editor.test.js` (7 tests: Ln/Col/Spaces/UTF-8/LF/language display, cursor update, indent change, EOL toggle, hide on terminal, show on editor, clear on close)
-
-#### Indent selection in status bar (PR #111)
-
-> **Automated** in `editor.test.js` (3 tests: dropdown, option selection, label format)
-
-#### Language mode selector (PR #113)
-
-> **Automated** in `editor.test.js` (4 tests: dropdown with search, filter, language change, dismiss)
 
 ---
 
@@ -1167,7 +1054,6 @@ These areas have the most remaining automatable items:
 
 #### No white flash on startup (PR #192)
 
-> **Partially automated** — theme switching covered by `theme-layout.test.js`
 > **Remaining:** 3 manual (visual startup timing, app restart)
 
 - [ ] Launch the app — verify the window starts with a dark background (#1e1e1e) instead of flashing white
@@ -1176,7 +1062,6 @@ These areas have the most remaining automatable items:
 
 #### Color theme switching (PR #220)
 
-> **Automated** in `theme-layout.test.js` (4 tests: Light theme, Dark revert, terminal re-theme, activity bar dark)
 > **Remaining:** 2 partial (System mode, state dots), 3 manual (OS toggle, app restart, ErrorBoundary)
 
 - [ ] Select "System" — verify the app follows the current OS dark/light mode preference
@@ -1187,7 +1072,6 @@ These areas have the most remaining automatable items:
 
 #### Theme switching applies immediately (PR #224)
 
-> **Automated** in `theme-layout.test.js` (3 tests: Dark-to-Light, Light-to-Dark, rapid toggle)
 > **Remaining:** 1 partial (System mode follows OS)
 
 - [ ] Switch to System — verify the theme matches the current OS preference immediately
@@ -1198,25 +1082,8 @@ These areas have the most remaining automatable items:
 
 - [ ] Drag the settings tab between panels — works with correct Settings icon
 
-#### Horizontal Activity Bar mode (PR #264)
-
-> **Automated** in `theme-layout.test.js` (6 tests: horizontal rendering, icon row, active indicator, dropdown direction, space filling, position switching)
-
-#### Customize Layout dialog (PR #242)
-
-> **Automated** in `theme-layout.test.js` (2 tests: dialog open via gear, Escape closes)
-
-#### Sidebar toggle button and Ctrl+B shortcut (PR #194)
-
-> **Automated** in `sidebar-toggle.test.js` (2 tests: Ctrl+B/Cmd+B shortcut, tooltip text)
-
-#### Highlight selected tab with top border accent (PR #190)
-
-> **Automated** in `theme-layout.test.js` (4 tests: active border, focus/unfocus dimming, panel switch, close panel)
-
 #### Vertical split resize handle (PR #213)
 
-> **Automated** in `theme-layout.test.js` (3 tests: vertical, horizontal, nested handle visibility)
 > **Remaining:** 1 partial (drag to resize)
 
 - [ ] Drag the vertical resize handle — verify panels resize smoothly
@@ -1248,14 +1115,6 @@ These areas have the most remaining automatable items:
 ---
 
 ### Remote Agent
-
-#### Redesign remote agent as parent folder with child sessions (PR #164)
-
-> **Automated** via E2E/infra tests (4 tests: connect, shell session, reconnect, context menu — requires agent infrastructure)
-
-#### Wire RemoteBackend into TerminalManager and UI (PR #106)
-
-> **Automated** via E2E/infra tests (create connection, verify form/output)
 
 #### RemoteBackend and session reconnect (PR #87)
 
@@ -1294,7 +1153,6 @@ These areas have the most remaining automatable items:
 
 #### Master password unlock dialog and status bar indicator (PR #257)
 
-> **Automated** in `credential-store.test.js` (8 tests: startup detection, correct/incorrect password, skip, status bar indicator, lock/unlock click, no indicator in keychain/none mode)
 > **Remaining:** 1 manual (startup auto-open requires pre-config)
 
 - [ ] Configure credential store to master_password mode and lock it — on app startup, the unlock dialog should appear automatically
@@ -1307,7 +1165,6 @@ These areas have the most remaining automatable items:
 
 #### Auto-lock timeout for master password credential store (PR #263)
 
-> **Automated** in `credential-store.test.js` (2 tests: setting persistence, Never option)
 > **Remaining:** 3 partial (timeout timing, timer reset, immediate effect)
 
 - [ ] With master password mode active and store unlocked, wait for the configured timeout to elapse — verify the store auto-locks and the unlock dialog appears
