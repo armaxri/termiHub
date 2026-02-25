@@ -792,14 +792,7 @@ These areas have the most remaining automatable items:
 
 #### Baseline
 
-> **E2E coverage:** 6 E2E/infra (password auth, key auth, error handling, resize, commands, disconnect — all via Docker SSH)
-
-- [ ] Create SSH connection with password auth, connect — password prompt appears, connection succeeds after entering password
-- [ ] Create SSH connection with key auth, set key path, connect — connection succeeds without password prompt
-- [ ] Create SSH connection to non-existent host, connect — error message displayed in terminal within reasonable timeout
-- [ ] Resize the app window with a connected SSH session — remote shell reports updated dimensions
-- [ ] Run commands that produce output (e.g. `ls -la`, `top`) in a connected SSH session — output renders correctly in terminal
-- [ ] Kill the SSH server or disconnect network during an SSH session — terminal shows disconnection message
+> **Automated** via E2E/infra tests (password auth, key auth, error handling, resize, commands, disconnect — all via Docker SSH)
 
 #### Agnoster/Powerline theme rendering (PR #197)
 
@@ -820,11 +813,7 @@ These areas have the most remaining automatable items:
 
 #### OpenSSH-format private keys / Ed25519 (PR #134)
 
-> **E2E coverage:** 3 E2E/infra (Ed25519, passphrase, PEM — test keys in fixtures, Docker SSH containers)
-
-- [ ] SSH connect with Ed25519 key in OpenSSH format
-- [ ] SSH connect with passphrase-protected key
-- [ ] Legacy PEM-format key still works (no regression)
+> **Automated** via E2E/infra tests (Ed25519, passphrase, PEM — test keys in fixtures, Docker SSH containers)
 
 #### SSH agent setup guidance (PR #133)
 
@@ -832,7 +821,6 @@ These areas have the most remaining automatable items:
 
 - [ ] Open connection editor, select SSH + Agent auth — warning appears if agent is stopped, normal hint if running
 - [ ] Click "Setup SSH Agent" button — local PowerShell tab opens with elevation command
-- [ ] SSH connect with agent auth when agent is stopped — helpful error in terminal
 
 #### Password prompt at connect (PR #38)
 
@@ -857,47 +845,19 @@ These areas have the most remaining automatable items:
 
 #### SFTP file browser follows SSH terminal CWD (PR #186)
 
-> **E2E coverage:** 5 E2E/infra (Docker SSH + file browser panel verification)
-
-- [ ] SSH to a Linux host — open Files sidebar — run `cd /tmp` in the terminal — SFTP browser navigates to `/tmp`
-- [ ] Run `cd ~` — SFTP browser navigates back to home directory
-- [ ] Run `cd /var/log` — SFTP browser navigates to `/var/log`
-- [ ] Open a second SSH tab to a different host — file browser follows the active tab's CWD independently
-- [ ] Switch between SSH tabs — file browser updates to each tab's last known CWD
+> **Automated** via E2E/infra tests (5 tests: Docker SSH + file browser panel — cd tracking, home dir, multi-tab CWD, tab switch)
 
 #### Auto-connect monitoring on SSH tab switch (PR #163)
 
-> **E2E coverage:** 3 E2E/infra (Docker SSH + status bar checks)
-
-- [ ] Open an SSH terminal tab — monitoring stats appear automatically in the status bar
-- [ ] Switch between two SSH tabs connected to different hosts — monitoring switches hosts
-- [ ] Manual "Monitor" dropdown still works as a fallback
+> **Automated** via E2E/infra tests (3 tests: Docker SSH + status bar — auto-connect, host switching, manual dropdown fallback)
 
 #### Optional monitoring and file browser settings (PR #199)
 
-> **E2E coverage:** 11 E2E/infra (settings toggles + SSH connection verification)
-
-- [ ] Open Settings > Advanced — verify "Power Monitoring" and "File Browser" toggles are visible and enabled by default
-- [ ] Disable "Power Monitoring" globally — connect to an SSH host — verify no monitoring stats appear in the status bar
-- [ ] Re-enable "Power Monitoring" globally — connect to an SSH host — verify monitoring stats appear again
-- [ ] Disable "File Browser" globally — switch to Files sidebar — verify SFTP file browser does not activate for SSH tabs
-- [ ] Re-enable "File Browser" globally — verify SFTP file browser works again for SSH tabs
-- [ ] Edit an SSH connection — verify "Power Monitoring" and "File Browser" dropdowns appear with Default/Enabled/Disabled options
-- [ ] Set per-connection monitoring to "Disabled" while global is enabled — connect — verify no monitoring for that connection
-- [ ] Set per-connection monitoring to "Enabled" while global is disabled — connect — verify monitoring works for that connection
-- [ ] Set per-connection monitoring to "Default" — verify it follows the global setting
-- [ ] Repeat the above three tests for the file browser per-connection override
-- [ ] Save a connection with per-connection overrides, close and reopen the app — verify settings persist
+> **Automated** via E2E/infra tests (11 tests: settings toggles, global enable/disable, per-connection overrides, persistence — all verified with SSH connections)
 
 #### Monitoring hides on non-SSH tab (PR #165)
 
-> **E2E coverage:** 5 E2E/infra (tab switching + status bar visibility)
-
-- [ ] Open an SSH terminal tab — monitoring stats appear in the status bar
-- [ ] Switch to a local shell tab — monitoring section disappears from status bar
-- [ ] Switch back to the SSH tab — monitoring stats reappear immediately (no reconnect delay)
-- [ ] Open a settings tab — monitoring hides
-- [ ] Close all tabs — monitoring hides
+> **Automated** via E2E/infra tests (5 tests: tab switching + status bar visibility — SSH/local/settings tabs, close all)
 
 #### SSH monitoring in status bar (PR #114, #115)
 
@@ -915,12 +875,7 @@ These areas have the most remaining automatable items:
 
 #### Environment variable expansion in connections (PR #68)
 
-> **E2E coverage:** 2 E2E (local checks, config inspection), 2 E2E/infra (SSH username resolution)
-
-- [ ] Create an SSH connection with username `${env:USER}` — connect — resolves to actual username
-- [ ] Create a local shell with initial command `echo ${env:HOME}` — prints home directory
-- [ ] Use an undefined variable `${env:NONEXISTENT}` — left as-is, no crash
-- [ ] Verify saved connection JSON still contains literal `${env:USER}` (not expanded)
+> **Automated** via E2E + E2E/infra tests (4 tests: SSH username resolution, env var expansion, undefined variable handling, literal persistence in JSON)
 
 #### SSH tunneling (PR #225)
 
@@ -942,13 +897,7 @@ These areas have the most remaining automatable items:
 
 #### Baseline
 
-> **E2E coverage:** 5 E2E/infra (virtual serial ports via socat in Docker)
-
-- [ ] Open connection editor, select Serial type with a serial port or virtual port via socat available — port dropdown lists available serial ports
-- [ ] Create serial connection at 9600 and 115200 baud with a serial device or virtual port, connect — connection opens, data exchange works
-- [ ] Type characters in a connected serial session — characters sent to device and echoed back (if device echoes)
-- [ ] Disconnect the serial device during a connected serial session — terminal shows error/disconnect message
-- [ ] Set non-default data bits, stop bits, parity, flow control on a serial connection — connection works with configured parameters
+> **Automated** via E2E/infra tests (5 tests: virtual serial ports via socat in Docker — port listing, baud rates, echo, disconnect, non-default parameters)
 
 #### Nerd Font / Powerline glyph support (PR #131)
 
@@ -963,11 +912,7 @@ These areas have the most remaining automatable items:
 
 #### Baseline
 
-> **E2E coverage:** 3 E2E/infra (Docker telnet container)
-
-- [ ] Create Telnet connection to a server (e.g. Docker example), connect — connection established, server banner displayed
-- [ ] Type commands in a connected Telnet session — commands execute and output displays
-- [ ] Create Telnet connection to non-existent host — error message displayed within reasonable timeout
+> **Automated** via E2E/infra tests (3 tests: Docker telnet container — connect+banner, command execution, non-existent host error)
 
 ---
 
@@ -1093,29 +1038,15 @@ These areas have the most remaining automatable items:
 
 > **E2E coverage:** 7 E2E (toggle, context menu, tree display — with programmatic file setup), 1 partial (drag-and-drop), 2 manual (native file picker for Create/Add)
 
-- [ ] Settings tab — "External Connection Files" section visible
 - [ ] "Create File" — enter name — save dialog — empty JSON file created and auto-added to list
 - [ ] "Add File" — native file picker — select JSON — path appears in list with toggle
-- [ ] External connections appear in the unified "Connections" tree alongside local connections
-- [ ] External connections: edit, duplicate, delete via context menu
 - [ ] Drag-and-drop external connections into local folders — folder assignment persists correctly
-- [ ] Toggle file disabled in Settings — external connections disappear from the unified tree
-- [ ] Re-enable file — connections reappear
-- [ ] Remove file from Settings — connections disappear
-- [ ] Local connections still fully editable/draggable/deletable (no regressions)
 
 #### Storage File selector in connection editor (PR #210)
 
 > **E2E coverage:** 7 E2E (dropdown options, save to different files, move between files), 1 partial (requires external file setup)
 
-- [ ] Add an external connection file in Settings and enable it
-- [ ] Open connection editor — click "Advanced" — verify "Storage File" dropdown appears
-- [ ] Dropdown shows "Default (connections.json)" and the enabled external file paths
-- [ ] Create a new connection with "Default" storage file — verify it persists to connections.json
-- [ ] Create a new connection with an external file selected — verify it persists to that external file
-- [ ] Edit an existing local connection — change storage file to an external file — save — verify the connection moved (appears in external file, removed from connections.json)
-- [ ] Edit an external connection — change storage file to "Default" — save — verify it moved to connections.json
-- [ ] Advanced section does not appear when no external files are configured in Settings
+- [ ] Add an external connection file in Settings and enable it (prerequisite for testing external file behavior end-to-end)
 
 #### Schema-driven connection settings (PR #362)
 
@@ -1320,48 +1251,29 @@ These areas have the most remaining automatable items:
 
 #### Redesign remote agent as parent folder with child sessions (PR #164)
 
-> **E2E coverage:** 4 E2E/infra (connect, shell session, reconnect, context menu — requires agent infrastructure)
-
-- [ ] Create a remote agent entry — connect — see available shells/ports in expanded folder
-- [ ] Create a shell session under agent — terminal tab opens
-- [ ] Disconnect agent — reconnect — persistent sessions re-attach
-- [ ] Agent context menu actions all work (connect/disconnect/new session/edit/delete)
+> **Automated** via E2E/infra tests (4 tests: connect, shell session, reconnect, context menu — requires agent infrastructure)
 
 #### Wire RemoteBackend into TerminalManager and UI (PR #106)
 
-> **E2E coverage:** 1 E2E/infra (create connection, verify form/output)
-
-- [ ] Create a "Remote Agent" connection in the UI, verify settings form renders, verify connection attempt produces terminal output or error (not a crash)
+> **Automated** via E2E/infra tests (create connection, verify form/output)
 
 #### RemoteBackend and session reconnect (PR #87)
 
 > **E2E coverage:** 3 E2E/infra (connect, output, reconnect), 1 manual (cleanup verification)
 
-- [ ] Connect to a remote host running the agent
-- [ ] Verify terminal output appears for shell and serial sessions
-- [ ] Kill SSH connection, verify "reconnecting" indicator and auto-reconnect
 - [ ] Close tab, verify cleanup (no orphan threads)
 
 #### Connection error feedback dialog
 
 > **E2E coverage:** 5 E2E/infra (invalid host, wrong password, agent not installed, technical details, close button), 1 manual (agent binary state)
 
-- [ ] Create a remote agent with an invalid hostname — click "Connect" — verify "Could Not Reach Host" dialog appears with Close button
-- [ ] Create a remote agent with valid host but wrong password — click "Connect" — verify "Authentication Failed" dialog appears with Close button
-- [ ] Create a remote agent with valid SSH credentials but no agent binary installed — click "Connect" — verify "Agent Not Installed" dialog appears with "Setup Agent" and Close buttons
 - [ ] In the "Agent Not Installed" dialog, click "Setup Agent" — verify the Agent Setup dialog opens
-- [ ] In any error dialog, click "Technical details" — verify the raw backend error message is shown
-- [ ] In any error dialog, click Close — verify the dialog closes and the agent remains in disconnected state
 
 #### Agent setup wizard (PR #137)
 
 > **E2E coverage:** 4 E2E/infra (context menu, dialog, terminal, commands), 3 partial (file picker, binary upload), 3 manual (systemd, error case, connect after)
 
-- [ ] Create a remote agent entry pointing to Docker SSH container (127.0.0.1:2222, testuser/testpass)
-- [ ] Right-click the disconnected agent — verify "Setup Agent..." appears in context menu
-- [ ] Click "Setup Agent..." — verify dialog opens with binary path, remote path, and service checkbox
 - [ ] Browse for a pre-built `termihub-agent` binary (Linux x86_64) — verify file picker works
-- [ ] Click "Start Setup" — verify SSH terminal tab opens with the shell prompt
 - [ ] Verify setup commands are injected into the terminal (mv, chmod, --version)
 - [ ] Verify the binary is uploaded and `termihub-agent --version` runs successfully
 - [ ] Test with "Install systemd service" checked — verify systemd commands are injected
@@ -1391,12 +1303,6 @@ These areas have the most remaining automatable items:
 
 > **E2E coverage:** 6 E2E/infra (save+auto-fill, stale credential, passphrase, no-lookup cases — via Docker SSH), 1 manual (remote agent)
 
-- [ ] Create an SSH connection with `savePassword` enabled, connect once (enter password when prompted) — verify the password is saved to the credential store
-- [ ] Disconnect and reconnect the same SSH connection — verify the stored credential is used automatically without prompting
-- [ ] Change the remote password, then reconnect — verify the stale credential is detected (auth failure), cleared from the store, and the user is re-prompted for the new password
-- [ ] Create an SSH connection using key auth with `savePassword` enabled and a passphrase-protected key — verify the stored passphrase is used automatically on reconnect
-- [ ] Create an SSH connection using agent auth — verify no credential store lookup occurs and connection proceeds normally
-- [ ] Create an SSH connection with `savePassword` disabled — verify no credential store lookup occurs and the user is prompted as before
 - [ ] Connect a remote agent with `savePassword` enabled — verify stored credentials are used automatically, and stale credentials trigger re-prompt after removal
 
 #### Auto-lock timeout for master password credential store (PR #263)
