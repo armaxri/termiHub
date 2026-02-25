@@ -179,6 +179,21 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     existingConnection?.sourceFile ?? null
   );
 
+  /** Check if the trimmed name collides with any existing connection or agent name. */
+  const nameError = useMemo((): string | null => {
+    const trimmed = name.trim();
+    if (!trimmed) return null;
+    const isDuplicate = connections.some(
+      (c) => c.name.trim().toLowerCase() === trimmed.toLowerCase() && c.id !== editingConnectionId
+    );
+    if (isDuplicate) return "A connection with this name already exists.";
+    const isDuplicateAgent = remoteAgents.some(
+      (a) => a.name.trim().toLowerCase() === trimmed.toLowerCase() && a.id !== editingConnectionId
+    );
+    if (isDuplicateAgent) return "A remote agent with this name already exists.";
+    return null;
+  }, [name, connections, remoteAgents, editingConnectionId]);
+
   // Category navigation
   const [activeCategory, setActiveCategory] = useState<EditorCategory>(loadSavedCategory);
   const [isCompact, setIsCompact] = useState(false);
@@ -243,6 +258,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   /** Save the connection (or agent) and return the saved entry (or null if name is empty). */
   const saveConnection = useCallback((): SavedConnection | RemoteAgentDefinition | null => {
     if (!name.trim()) return null;
+    if (nameError) return null;
 
     if (isAgentMode) {
       const agentConfig = connSettings as unknown as RemoteAgentConfig;
@@ -300,6 +316,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     }
   }, [
     name,
+    nameError,
     connSettings,
     selectedType,
     terminalOptions,
@@ -390,8 +407,17 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           onChange={(e) => setName(e.target.value)}
           placeholder="Connection name"
           autoFocus
+          className={nameError ? "settings-form__input--error" : ""}
           data-testid="connection-editor-name-input"
         />
+        {nameError && (
+          <p
+            className="settings-form__hint settings-form__hint--error"
+            data-testid="connection-editor-name-error"
+          >
+            {nameError}
+          </p>
+        )}
       </label>
       <label className="settings-form__field">
         <span className="settings-form__label">Type</span>
