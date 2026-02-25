@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Comprehensive Rust integration test suite (52 tests across 7 files) exercising termiHub's SSH, telnet, SFTP, monitoring, and network resilience backends against Docker test containers — tests skip gracefully when containers are not running
+- E2E infrastructure tests for SSH banner/MOTD display, SSH key auth UI flow, and Windows shell sessions (PowerShell, cmd.exe, WSL)
+- Per-machine system test orchestration scripts (`test-system-mac.sh`, `test-system-linux.sh`, `test-system-windows.sh`) that start Docker containers, run unit + integration + E2E tests, and tear down infrastructure
+
 ### Fixed
 
 - Default local shell no longer labeled with "(default)" in the connection editor after schema-driven form refactor — the shell option label in the backend schema now includes the suffix again

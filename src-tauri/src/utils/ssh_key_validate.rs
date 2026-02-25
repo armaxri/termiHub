@@ -318,4 +318,54 @@ mod tests {
         assert_eq!(result.status, ValidationStatus::Warning);
         assert!(result.message.contains("Not a recognized"));
     }
+
+    #[test]
+    fn sk_ssh_ed25519_fido_key_content_detected() {
+        let f = write_temp(b"sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI... user@host");
+        let result = validate_ssh_key(f.path().to_str().unwrap());
+        assert_eq!(result.status, ValidationStatus::Warning);
+        assert!(result.message.contains("public key"));
+    }
+
+    #[test]
+    fn sk_ecdsa_fido_key_content_detected() {
+        let f = write_temp(b"sk-ecdsa-sha2-nistp256@openssh.com AAAA... user@host");
+        let result = validate_ssh_key(f.path().to_str().unwrap());
+        assert_eq!(result.status, ValidationStatus::Warning);
+        assert!(result.message.contains("public key"));
+    }
+
+    #[test]
+    fn ssh_dss_public_key_content_detected() {
+        let f = write_temp(b"ssh-dss AAAAB3NzaC1kc3MA... user@host");
+        let result = validate_ssh_key(f.path().to_str().unwrap());
+        assert_eq!(result.status, ValidationStatus::Warning);
+        assert!(result.message.contains("public key"));
+    }
+
+    #[test]
+    fn mixed_case_pub_extension_returns_warning() {
+        let f = write_temp_with_suffix(b"ssh-ed25519 AAAA... user@host", ".PUB");
+        let result = validate_ssh_key(f.path().to_str().unwrap());
+        assert_eq!(result.status, ValidationStatus::Warning);
+        assert!(result.message.contains("public key"));
+        assert!(result.message.contains(".pub"));
+    }
+
+    #[test]
+    fn putty_ppk_v2_detected() {
+        let content = b"PuTTY-User-Key-File-2: ssh-rsa\nEncryption: aes256-cbc\n";
+        let f = write_temp(content);
+        let result = validate_ssh_key(f.path().to_str().unwrap());
+        assert_eq!(result.status, ValidationStatus::Warning);
+        assert!(result.message.contains("PuTTY"));
+    }
+
+    #[test]
+    fn empty_file_returns_unrecognized_warning() {
+        let f = write_temp(b"");
+        let result = validate_ssh_key(f.path().to_str().unwrap());
+        assert_eq!(result.status, ValidationStatus::Warning);
+        assert!(result.message.contains("Not a recognized"));
+    }
 }

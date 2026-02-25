@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="public/icons/termihub-terminal-v2.svg" width="128" height="128" alt="termiHub">
+  <img src="public/termihub.svg" width="128" height="128" alt="termiHub">
 </p>
 
 <h1 align="center">termiHub</h1>

@@ -27,11 +27,11 @@ jobs:
             os: ubuntu-latest
             rust_target: 'x86_64-unknown-linux-gnu'
             artifact_name: 'termiHub-Linux-x64'
-          - platform: 'ubuntu-latest-arm64'
-            os: ubuntu-latest
+          - platform: 'ubuntu-arm64'
+            os: ubuntu-24.04-arm
             rust_target: 'aarch64-unknown-linux-gnu'
             artifact_name: 'termiHub-Linux-arm64'
-            # AppImage can't be cross-compiled (linuxdeploy is x86_64-only)
+            # AppImage is not supported on ARM64 (linuxdeploy is x86_64-only)
             extra_args: '--bundles deb,rpm'
           - platform: 'windows-latest'
             os: windows-latest
@@ -62,7 +62,7 @@ jobs:
           key: ${{ matrix.platform }}
 
       - name: Install system dependencies (Ubuntu)
-        if: matrix.os == 'ubuntu-latest'
+        if: startsWith(matrix.os, 'ubuntu')
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -76,52 +76,6 @@ jobs:
             librsvg2-dev \
             libudev-dev \
             patchelf
-
-      - name: Install ARM64 cross-compilation tools (Ubuntu ARM64)
-        if: matrix.rust_target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-
-          # Add ARM64 architecture for cross-compilation dependencies
-          sudo dpkg --add-architecture arm64
-
-          # Pin existing sources to amd64 only so apt doesn't try to fetch
-          # arm64 packages from mirrors that only serve amd64.
-          # Ubuntu 24.04+ uses deb822 .sources format instead of .list format.
-          sudo sed -i 's/^deb \(http\|mirror\)/deb [arch=amd64] \1/' /etc/apt/sources.list 2>/dev/null || true
-          sudo sed -i 's/^deb \(http\|mirror\)/deb [arch=amd64] \1/' /etc/apt/sources.list.d/*.list 2>/dev/null || true
-          # Handle deb822 format (.sources files): add Architectures: amd64
-          for f in /etc/apt/sources.list.d/*.sources; do
-            [ -f "$f" ] && sudo sed -i '/^Types:/a Architectures: amd64' "$f" 2>/dev/null || true
-          done
-
-          # Add arm64 sources from ports.ubuntu.com
-          sudo bash -c 'cat > /etc/apt/sources.list.d/arm64-ports.list <<EOF
-          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ $(lsb_release -sc) main restricted universe multiverse
-          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ $(lsb_release -sc)-updates main restricted universe multiverse
-          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ $(lsb_release -sc)-security main restricted universe multiverse
-          EOF'
-
-          sudo apt-get update
-          # Upgrade amd64 packages so their versions stay in sync with the
-          # arm64 ports repository.  Without this, Multi-Arch: same packages
-          # (e.g. libglib2.0-dev-bin) can have a version mismatch that makes
-          # the arm64 install un-satisfiable.
-          sudo apt-get upgrade -y
-          # Use -o to allow overwriting shared arch-independent files (e.g. GIR files)
-          # that conflict between amd64 and arm64 dev packages.
-          sudo apt-get install -y -o Dpkg::Options::="--force-overwrite" \
-            libwebkit2gtk-4.1-dev:arm64 \
-            libssl-dev:arm64 \
-            libgtk-3-dev:arm64 \
-            libayatana-appindicator3-dev:arm64 \
-            librsvg2-dev:arm64 \
-            libudev-dev:arm64
-
-          # Set environment variables for cross-compilation
-          echo "PKG_CONFIG_SYSROOT_DIR=/usr/aarch64-linux-gnu" >> $GITHUB_ENV
-          echo "PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig" >> $GITHUB_ENV
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile

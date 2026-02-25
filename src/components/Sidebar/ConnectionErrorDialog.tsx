@@ -33,13 +33,24 @@ export function ConnectionErrorDialog({
         <Dialog.Content className="connection-error-dialog__content">
           <div className="connection-error-dialog__icon-row">
             <AlertTriangle size={20} className="connection-error-dialog__icon" />
-            <Dialog.Title className="connection-error-dialog__title">{error.title}</Dialog.Title>
+            <Dialog.Title
+              className="connection-error-dialog__title"
+              data-testid="connection-error-title"
+            >
+              {error.title}
+            </Dialog.Title>
           </div>
-          <Dialog.Description className="connection-error-dialog__message">
+          <Dialog.Description
+            className="connection-error-dialog__message"
+            data-testid="connection-error-message"
+          >
             {error.message}
           </Dialog.Description>
           {error.rawError !== error.message && (
-            <details className="connection-error-dialog__details">
+            <details
+              className="connection-error-dialog__details"
+              data-testid="connection-error-details"
+            >
               <summary>Technical details</summary>
               <code className="connection-error-dialog__raw">{error.rawError}</code>
             </details>

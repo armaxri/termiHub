@@ -187,7 +187,7 @@ export function AgentNode({ agent }: AgentNodeProps) {
   }, [agent.id, refreshAgentSessions]);
 
   return (
-    <div className="connection-list__group">
+    <div className="connection-list__group" data-testid={`agent-node-${agent.id}`}>
       <ContextMenu.Root>
         <ContextMenu.Trigger asChild>
           <div className="connection-list__group-header">
@@ -199,6 +199,7 @@ export function AgentNode({ agent }: AgentNodeProps) {
               <span
                 className={`agent-node__state-dot ${STATE_DOT_CLASSES[agent.connectionState] ?? "agent-node__state-dot--disconnected"}`}
                 title={agent.connectionState}
+                data-testid={`agent-state-${agent.id}`}
               />
               <Server size={14} />
               <span className="connection-list__group-title">{agent.name}</span>
@@ -221,13 +222,18 @@ export function AgentNode({ agent }: AgentNodeProps) {
           <ContextMenu.Content className="context-menu__content">
             {!isConnected ? (
               <>
-                <ContextMenu.Item className="context-menu__item" onSelect={handleConnect}>
+                <ContextMenu.Item
+                  className="context-menu__item"
+                  onSelect={handleConnect}
+                  data-testid="context-agent-connect"
+                >
                   <Play size={14} />
                   Connect
                 </ContextMenu.Item>
                 <ContextMenu.Item
                   className="context-menu__item"
                   onSelect={() => setSetupDialogOpen(true)}
+                  data-testid="context-agent-setup"
                 >
                   <Upload size={14} />
                   Setup Agent...
@@ -235,16 +241,28 @@ export function AgentNode({ agent }: AgentNodeProps) {
               </>
             ) : (
               <>
-                <ContextMenu.Item className="context-menu__item" onSelect={handleDisconnect}>
+                <ContextMenu.Item
+                  className="context-menu__item"
+                  onSelect={handleDisconnect}
+                  data-testid="context-agent-disconnect"
+                >
                   <Square size={14} />
                   Disconnect
                 </ContextMenu.Item>
-                <ContextMenu.Item className="context-menu__item" onSelect={handleRefresh}>
+                <ContextMenu.Item
+                  className="context-menu__item"
+                  onSelect={handleRefresh}
+                  data-testid="context-agent-refresh"
+                >
                   <RefreshCw size={14} />
                   Refresh Sessions
                 </ContextMenu.Item>
                 <ContextMenu.Separator className="context-menu__separator" />
-                <ContextMenu.Item className="context-menu__item" onSelect={handleNewShellSession}>
+                <ContextMenu.Item
+                  className="context-menu__item"
+                  onSelect={handleNewShellSession}
+                  data-testid="context-agent-new-shell"
+                >
                   <Terminal size={14} />
                   New Shell Session
                 </ContextMenu.Item>
@@ -252,6 +270,7 @@ export function AgentNode({ agent }: AgentNodeProps) {
                   <ContextMenu.Item
                     className="context-menu__item"
                     onSelect={handleNewSerialSession}
+                    data-testid="context-agent-new-serial"
                   >
                     <Cable size={14} />
                     New Serial Session
@@ -263,6 +282,7 @@ export function AgentNode({ agent }: AgentNodeProps) {
             <ContextMenu.Item
               className="context-menu__item"
               onSelect={() => openConnectionEditorTab(agent.id)}
+              data-testid="context-agent-edit"
             >
               <Pencil size={14} />
               Edit
@@ -270,6 +290,7 @@ export function AgentNode({ agent }: AgentNodeProps) {
             <ContextMenu.Item
               className="context-menu__item context-menu__item--danger"
               onSelect={() => deleteRemoteAgent(agent.id)}
+              data-testid="context-agent-delete"
             >
               <Trash2 size={14} />
               Delete
