@@ -24,6 +24,7 @@ export const CONN_EDITOR_CLEAR_COLOR = '[data-testid="connection-editor-clear-co
 export const CONN_EDITOR_ICON_PICKER = '[data-testid="connection-editor-icon-picker"]';
 export const CONN_EDITOR_CLEAR_ICON = '[data-testid="connection-editor-clear-icon"]';
 export const CONN_EDITOR_SOURCE_FILE = '[data-testid="connection-editor-source-file"]';
+export const CONN_EDITOR_NAME_ERROR = '[data-testid="connection-editor-name-error"]';
 export const CONN_SETTINGS_FORM = '[data-testid="connection-settings-form"]';
 
 // --- Local Shell Settings ---
