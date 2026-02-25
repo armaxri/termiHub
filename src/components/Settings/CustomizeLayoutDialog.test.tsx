@@ -71,10 +71,6 @@ function query(testId: string): HTMLElement | null {
   return document.querySelector(`[data-testid="${testId}"]`);
 }
 
-function queryAll(testId: string): NodeListOf<HTMLElement> {
-  return document.querySelectorAll(`[data-testid="${testId}"]`);
-}
-
 function renderDialog() {
   act(() => {
     root.render(<CustomizeLayoutDialog />);
