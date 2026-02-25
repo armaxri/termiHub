@@ -957,6 +957,16 @@ These areas have the most remaining automatable items:
 - [ ] "Add File" — native file picker — select JSON — path appears in list with toggle
 - [ ] Drag-and-drop external connections into local folders — folder assignment persists correctly
 
+#### Duplicate connection name validation (#380)
+
+> **E2E coverage:** 4 E2E (error display, save blocked, error clears, self-edit allowed)
+
+- [ ] Create a connection named "Test" — open "New Connection" and type "Test" as the name — verify name input has red border and error message "A connection with this name already exists." appears
+- [ ] Click Save with a duplicate name — verify the editor stays open (save is blocked)
+- [ ] Change the name to "Test2" — verify the error disappears and Save works
+- [ ] Edit the "Test" connection — verify no error is shown (own name is not a duplicate)
+- [ ] Try "test" (lowercase) when "Test" exists — verify case-insensitive duplicate detection
+
 #### Storage File selector in connection editor (PR #210)
 
 > **E2E coverage:** 7 E2E (dropdown options, save to different files, move between files), 1 partial (requires external file setup)
