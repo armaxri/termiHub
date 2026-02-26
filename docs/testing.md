@@ -1196,6 +1196,18 @@ These areas have the most remaining automatable items:
 - [ ] Corrupt `tunnels.json` with invalid JSON — launch the app — verify it starts normally without tunnels, shows a recovery dialog, and creates a `tunnels.json.bak` backup
 - [ ] Dismiss the recovery dialog by clicking "OK" — verify the dialog closes and the app functions normally
 
+#### Nested tree data model and duplicate name handling (PR #385)
+
+> **E2E coverage:** 0 E2E — all 7 manual (requires inspecting on-disk JSON format and verifying credential migration)
+
+- [ ] Fresh start with no config file — create folders and connections — verify `connections.json` uses nested v2 tree format with no IDs on disk (only `name`, `type`, `config`, `children`)
+- [ ] Create two connections with the same name in the same folder — verify the second is auto-renamed with a `(1)` suffix
+- [ ] Create a connection with a saved password — rename the connection — verify the password still works after rename (credential auto-migration)
+- [ ] Create a connection with a saved password in a folder — move the connection to a different folder via drag-and-drop — verify the password still works after move
+- [ ] Create a connection with a saved password in a folder — rename the folder — verify the password still works for all connections in the folder
+- [ ] Import/export round-trip — export connections, import into a fresh install — verify all connections and folders are preserved
+- [ ] External connection file — create connections in an external file — verify the external file also uses v2 nested format with no IDs
+
 ---
 
 ### Cross-Platform
