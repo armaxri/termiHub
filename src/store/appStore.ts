@@ -24,6 +24,7 @@ import {
   LayoutConfig,
   DEFAULT_LAYOUT,
   LAYOUT_PRESETS,
+  RecoveryWarning,
 } from "@/types/connection";
 import { CredentialStoreStatusInfo } from "@/types/credential";
 import {
@@ -38,6 +39,7 @@ import {
   getSettings,
   saveSettings as persistSettings,
   reloadExternalConnections as apiReloadExternalConnections,
+  getRecoveryWarnings,
 } from "@/services/storage";
 import {
   sftpOpen,
@@ -186,6 +188,11 @@ interface AppState {
   importDialogOpen: boolean;
   importFileContent: string | undefined;
   setImportDialog: (open: boolean, content?: string) => void;
+
+  // Recovery warnings from corrupt config files
+  recoveryWarnings: RecoveryWarning[];
+  recoveryDialogOpen: boolean;
+  setRecoveryDialogOpen: (open: boolean) => void;
 
   loadFromBackend: () => Promise<void>;
   updateSettings: (settings: AppSettings) => Promise<void>;
@@ -850,6 +857,11 @@ export const useAppStore = create<AppState>((set, get) => {
     importFileContent: undefined,
     setImportDialog: (open, content) => set({ importDialogOpen: open, importFileContent: content }),
 
+    // Recovery warnings from corrupt config files
+    recoveryWarnings: [],
+    recoveryDialogOpen: false,
+    setRecoveryDialogOpen: (open) => set({ recoveryDialogOpen: open }),
+
     updateLayoutConfig: (partial) => {
       const updated = { ...get().layoutConfig, ...partial };
       set({ layoutConfig: updated });
@@ -929,6 +941,15 @@ export const useAppStore = create<AppState>((set, get) => {
       }
       // Check VS Code availability in the background
       get().checkVscodeAvailability();
+      // Check for recovery warnings from corrupt config files
+      try {
+        const warnings = await getRecoveryWarnings();
+        if (warnings.length > 0) {
+          set({ recoveryWarnings: warnings, recoveryDialogOpen: true });
+        }
+      } catch (err) {
+        console.error("Failed to load recovery warnings:", err);
+      }
     },
 
     updateSettings: async (newSettings) => {

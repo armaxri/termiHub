@@ -22,6 +22,7 @@ import {
   previewImport,
   exportConnectionsEncrypted,
   importConnectionsWithCredentials,
+  getRecoveryWarnings,
 } from "./api";
 import type { ImportPreview, ImportResult } from "./api";
 
@@ -94,5 +95,8 @@ export { exportConnectionsEncrypted };
 
 /** Import connections with optional credential decryption */
 export { importConnectionsWithCredentials };
+
+/** Get recovery warnings from app startup */
+export { getRecoveryWarnings };
 
 export type { ImportPreview, ImportResult };

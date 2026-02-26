@@ -33,6 +33,13 @@ export interface ExternalFileError {
   error: string;
 }
 
+/** A warning generated during file recovery at startup. */
+export interface RecoveryWarning {
+  fileName: string;
+  message: string;
+  details: string | null;
+}
+
 /** Capabilities reported by a connected remote agent. */
 export interface AgentCapabilities {
   connectionTypes: string[];

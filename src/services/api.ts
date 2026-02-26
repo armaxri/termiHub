@@ -14,6 +14,7 @@ import {
   ExternalFileError,
   AppSettings,
   AgentCapabilities,
+  RecoveryWarning,
 } from "@/types/connection";
 
 // --- Terminal / session commands ---
@@ -235,6 +236,11 @@ export async function importConnectionsWithCredentials(
     json,
     importPassword,
   });
+}
+
+/** Drain and return any recovery warnings from app startup. */
+export async function getRecoveryWarnings(): Promise<RecoveryWarning[]> {
+  return await invoke<RecoveryWarning[]>("get_recovery_warnings");
 }
 
 // --- Settings commands ---
