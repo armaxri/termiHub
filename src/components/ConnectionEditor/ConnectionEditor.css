@@ -143,6 +143,11 @@
   color: var(--color-error);
 }
 
+.settings-form__field input.settings-form__input--error,
+.settings-form__field select.settings-form__input--error {
+  border-color: var(--color-error);
+}
+
 .settings-form__hint--success,
 .settings-form__hint--valid {
   color: var(--color-success);
