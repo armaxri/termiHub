@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Graceful recovery from corrupt configuration files: if `settings.json`, `connections.json`, or `tunnels.json` contain invalid JSON, the app backs up the corrupt file to `.bak`, replaces it with defaults (or recovers individual valid entries for connections), logs the error, and shows a recovery notification dialog on startup — the app never crashes due to corrupt config files (#383)
 - Comprehensive Rust integration test suite (52 tests across 7 files) exercising termiHub's SSH, telnet, SFTP, monitoring, and network resilience backends against Docker test containers — tests skip gracefully when containers are not running
 - E2E infrastructure tests for SSH banner/MOTD display, SSH key auth UI flow, and Windows shell sessions (PowerShell, cmd.exe, WSL)
 - Per-machine system test orchestration scripts (`test-system-mac.sh`, `test-system-linux.sh`, `test-system-windows.sh`) that start Docker containers, run unit + integration + E2E tests, and tear down infrastructure

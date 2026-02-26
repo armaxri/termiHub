@@ -1173,6 +1173,20 @@ These areas have the most remaining automatable items:
 
 ---
 
+### Configuration Recovery
+
+#### Corrupt settings file recovery (PR #383)
+
+> **E2E coverage:** 0 E2E — all 5 manual (requires manually corrupting config files on disk)
+
+- [ ] Corrupt `settings.json` with invalid JSON (e.g., `{broken`) — launch the app — verify it starts normally, shows a recovery dialog listing "settings.json" with a recovery message, and creates a `settings.json.bak` backup
+- [ ] Corrupt `connections.json` with completely invalid JSON — launch the app — verify it starts with an empty connection list, shows a recovery dialog, and creates a `connections.json.bak` backup
+- [ ] Corrupt a single connection entry in `connections.json` (valid JSON structure but one malformed connection object) — launch the app — verify good connections are preserved, the bad entry is dropped, and the recovery dialog shows per-entry details
+- [ ] Corrupt `tunnels.json` with invalid JSON — launch the app — verify it starts normally without tunnels, shows a recovery dialog, and creates a `tunnels.json.bak` backup
+- [ ] Dismiss the recovery dialog by clicking "OK" — verify the dialog closes and the app functions normally
+
+---
+
 ### Cross-Platform
 
 #### Baseline
