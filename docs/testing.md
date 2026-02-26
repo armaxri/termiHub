@@ -961,11 +961,12 @@ These areas have the most remaining automatable items:
 
 > **E2E coverage:** 4 E2E (error display, save blocked, error clears, self-edit allowed)
 
-- [ ] Create a connection named "Test" — open "New Connection" and type "Test" as the name — verify name input has red border and error message "A connection with this name already exists." appears
+- [ ] Create a connection named "Test" in root — open "New Connection" and type "Test" as the name — verify name input has red border and error message "A connection with this name already exists in this folder." appears
 - [ ] Click Save with a duplicate name — verify the editor stays open (save is blocked)
 - [ ] Change the name to "Test2" — verify the error disappears and Save works
 - [ ] Edit the "Test" connection — verify no error is shown (own name is not a duplicate)
-- [ ] Try "test" (lowercase) when "Test" exists — verify case-insensitive duplicate detection
+- [ ] Try "test" (lowercase) when "Test" exists in the same folder — verify case-insensitive duplicate detection
+- [ ] Create folder "device1" and folder "device2" — create "serial" in device1 — create "serial" in device2 — verify no duplicate error (same name in different folders is allowed)
 
 #### Storage File selector in connection editor (PR #210)
 

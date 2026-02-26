@@ -179,20 +179,23 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     existingConnection?.sourceFile ?? null
   );
 
-  /** Check if the trimmed name collides with any existing connection or agent name. */
+  /** Check if the trimmed name collides with any connection in the same folder or any agent. */
   const nameError = useMemo((): string | null => {
     const trimmed = name.trim();
     if (!trimmed) return null;
     const isDuplicate = connections.some(
-      (c) => c.name.trim().toLowerCase() === trimmed.toLowerCase() && c.id !== editingConnectionId
+      (c) =>
+        c.name.trim().toLowerCase() === trimmed.toLowerCase() &&
+        c.id !== editingConnectionId &&
+        c.folderId === folderId
     );
-    if (isDuplicate) return "A connection with this name already exists.";
+    if (isDuplicate) return "A connection with this name already exists in this folder.";
     const isDuplicateAgent = remoteAgents.some(
       (a) => a.name.trim().toLowerCase() === trimmed.toLowerCase() && a.id !== editingConnectionId
     );
     if (isDuplicateAgent) return "A remote agent with this name already exists.";
     return null;
-  }, [name, connections, remoteAgents, editingConnectionId]);
+  }, [name, connections, remoteAgents, editingConnectionId, folderId]);
 
   // Category navigation
   const [activeCategory, setActiveCategory] = useState<EditorCategory>(loadSavedCategory);

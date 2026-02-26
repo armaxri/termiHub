@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- System crash when creating a connection with a duplicate name — the connection editor now validates names in real-time and shows a red-bordered input with an error message when a duplicate is detected (#380)
+- System crash when creating a connection with a duplicate name — the connection editor now validates names in real-time and shows a red-bordered input with an error message when a duplicate is detected; validation is scoped per folder so the same name is allowed in different folders (#380)
 - Default local shell no longer labeled with "(default)" in the connection editor after schema-driven form refactor — the shell option label in the backend schema now includes the suffix again
 
 ### Changed
