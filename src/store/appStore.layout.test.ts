@@ -24,6 +24,7 @@ vi.mock("@/services/storage", () => ({
   saveSettings: (...args: unknown[]) => mockSaveSettings(...args),
   moveConnectionToFile: vi.fn(() => Promise.resolve()),
   reloadExternalConnections: vi.fn(() => Promise.resolve([])),
+  getRecoveryWarnings: vi.fn(() => Promise.resolve([])),
 }));
 
 vi.mock("@/themes", () => ({
