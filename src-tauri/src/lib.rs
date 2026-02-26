@@ -8,7 +8,7 @@ mod terminal;
 mod tunnel;
 mod utils;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 use tracing::info;
@@ -16,7 +16,8 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 use connection::manager::ConnectionManager;
-use connection::settings::SettingsStorage;
+use connection::recovery::RecoveryWarning;
+use connection::settings::{AppSettings, SettingsStorage};
 use credential::{AutoLockTimer, CredentialManager, StorageMode};
 use files::sftp::SftpManager;
 use monitoring::MonitoringManager;
@@ -56,7 +57,10 @@ pub fn run() {
                 *handle = Some(app.handle().clone());
             }
 
-            // Load settings to determine the credential storage mode
+            let mut recovery_warnings: Vec<RecoveryWarning> = Vec::new();
+
+            // Load settings to determine the credential storage mode.
+            // On failure, fall back to defaults so the app can still start.
             let config_dir = match std::env::var("TERMIHUB_CONFIG_DIR") {
                 Ok(dir) => std::path::PathBuf::from(dir),
                 Err(_) => app
@@ -67,9 +71,33 @@ pub fn run() {
             };
             std::fs::create_dir_all(&config_dir).expect("Failed to create config directory");
 
-            let settings_storage =
-                SettingsStorage::new(app.handle()).expect("Failed to initialize settings storage");
-            let settings = settings_storage.load().expect("Failed to load settings");
+            let settings = match SettingsStorage::new(app.handle()) {
+                Ok(storage) => match storage.load_with_recovery() {
+                    Ok(result) => {
+                        recovery_warnings.extend(result.warnings);
+                        result.data
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to load settings with recovery: {e}");
+                        recovery_warnings.push(RecoveryWarning {
+                            file_name: "settings.json".to_string(),
+                            message: "Could not load settings, using defaults.".to_string(),
+                            details: Some(e.to_string()),
+                        });
+                        AppSettings::default()
+                    }
+                },
+                Err(e) => {
+                    tracing::error!("Failed to initialize settings storage: {e}");
+                    recovery_warnings.push(RecoveryWarning {
+                        file_name: "settings.json".to_string(),
+                        message: "Could not initialize settings storage, using defaults."
+                            .to_string(),
+                        details: Some(e.to_string()),
+                    });
+                    AppSettings::default()
+                }
+            };
 
             let storage_mode =
                 StorageMode::from_settings_str(settings.credential_storage_mode.as_deref());
@@ -97,13 +125,27 @@ pub fn run() {
                 auto_lock_minutes,
             );
             credential_manager.set_auto_lock_timer(auto_lock_timer);
-            let connection_manager = ConnectionManager::new(
+
+            // Initialize connection manager with recovery loading.
+            // On failure, the app still starts but with no connections.
+            match ConnectionManager::new(
                 app.handle(),
                 credential_manager.clone() as Arc<dyn credential::CredentialStore>,
-            )
-            .expect("Failed to initialize connection manager");
+            ) {
+                Ok(manager) => {
+                    recovery_warnings.extend(manager.take_recovery_warnings());
+                    app.manage(manager);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to initialize connection manager: {e}");
+                    recovery_warnings.push(RecoveryWarning {
+                        file_name: "connections.json".to_string(),
+                        message: "Could not initialize connection storage. Connections are unavailable until the app is restarted.".to_string(),
+                        details: Some(e.to_string()),
+                    });
+                }
+            }
             app.manage(credential_manager.clone());
-            app.manage(connection_manager);
 
             if needs_locked_event {
                 let handle = app.handle().clone();
@@ -122,22 +164,37 @@ pub fn run() {
             app.manage(session_manager);
             app.manage(agent_manager);
 
-            let tunnel_manager = tunnel::tunnel_manager::TunnelManager::new(app.handle())
-                .expect("Failed to initialize tunnel manager");
+            // Initialize tunnel manager with recovery loading.
+            // On failure, the app still starts but tunnels are unavailable.
+            match tunnel::tunnel_manager::TunnelManager::new(app.handle()) {
+                Ok(manager) => {
+                    recovery_warnings.extend(manager.take_recovery_warnings());
 
-            // Auto-start tunnels in a background thread to avoid blocking app startup
-            {
-                let handle = app.handle().clone();
-                std::thread::spawn(move || {
-                    // Wait briefly for the manager to be registered as state
-                    std::thread::sleep(std::time::Duration::from_millis(500));
-                    if let Some(mgr) = handle.try_state::<tunnel::tunnel_manager::TunnelManager>() {
-                        mgr.start_auto_tunnels();
-                    }
-                });
+                    // Auto-start tunnels in a background thread
+                    let handle = app.handle().clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                        if let Some(mgr) =
+                            handle.try_state::<tunnel::tunnel_manager::TunnelManager>()
+                        {
+                            mgr.start_auto_tunnels();
+                        }
+                    });
+
+                    app.manage(manager);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to initialize tunnel manager: {e}");
+                    recovery_warnings.push(RecoveryWarning {
+                        file_name: "tunnels.json".to_string(),
+                        message: "Could not initialize tunnel storage. Tunnels are unavailable until the app is restarted.".to_string(),
+                        details: Some(e.to_string()),
+                    });
+                }
             }
 
-            app.manage(tunnel_manager);
+            // Store recovery warnings so the frontend can retrieve them
+            app.manage(Mutex::new(recovery_warnings));
 
             Ok(())
         })
@@ -180,6 +237,7 @@ pub fn run() {
             commands::connection::export_connections_encrypted,
             commands::connection::preview_import,
             commands::connection::import_connections_with_credentials,
+            commands::connection::get_recovery_warnings,
             // SFTP (kept temporarily — will migrate to session-based file browsing)
             commands::files::sftp_open,
             commands::files::sftp_close,

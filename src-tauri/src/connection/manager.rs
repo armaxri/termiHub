@@ -8,6 +8,7 @@ use super::config::{
     ConnectionFolder, ConnectionStore, EncryptedConnectionExport, ExternalConnectionStore,
     ImportPreview, ImportResult, SavedConnection, SavedRemoteAgent,
 };
+use super::recovery::RecoveryWarning;
 use super::settings::{AppSettings, SettingsStorage};
 use super::storage::ConnectionStorage;
 use crate::credential::crypto::{decrypt_with_password, encrypt_with_password};
@@ -77,14 +78,18 @@ pub struct ConnectionManager {
     settings: Mutex<AppSettings>,
     settings_storage: SettingsStorage,
     credential_store: Arc<dyn CredentialStore>,
+    recovery_warnings: Mutex<Vec<RecoveryWarning>>,
 }
 
 impl ConnectionManager {
     /// Create a new connection manager, loading existing data from disk.
     /// On first load, strips any stored SSH passwords (migration).
+    /// Uses recovery loading to handle corrupt files gracefully.
     pub fn new(app_handle: &AppHandle, credential_store: Arc<dyn CredentialStore>) -> Result<Self> {
         let storage = ConnectionStorage::new(app_handle)?;
-        let mut store = storage.load()?;
+        let conn_result = storage.load_with_recovery()?;
+        let mut store = conn_result.data;
+        let mut warnings = conn_result.warnings;
 
         // Migrate: strip any existing stored passwords
         let mut needs_save = false;
@@ -109,15 +114,25 @@ impl ConnectionManager {
         }
 
         let settings_storage = SettingsStorage::new(app_handle)?;
-        let settings = settings_storage.load()?;
+        let settings_result = settings_storage.load_with_recovery()?;
+        warnings.extend(settings_result.warnings);
 
         Ok(Self {
             store: Mutex::new(store),
             storage,
-            settings: Mutex::new(settings),
+            settings: Mutex::new(settings_result.data),
             settings_storage,
             credential_store,
+            recovery_warnings: Mutex::new(warnings),
         })
+    }
+
+    /// Drain and return any recovery warnings collected during initialization.
+    pub fn take_recovery_warnings(&self) -> Vec<RecoveryWarning> {
+        self.recovery_warnings
+            .lock()
+            .map(|mut w| w.drain(..).collect())
+            .unwrap_or_default()
     }
 
     /// Get all connections and folders.

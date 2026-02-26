@@ -13,6 +13,7 @@ use super::remote_forward::RemoteForwarder;
 use super::session_pool::SshSessionPool;
 use super::storage::TunnelStorage;
 use crate::connection::manager::ConnectionManager;
+use crate::connection::recovery::RecoveryWarning;
 use crate::utils::errors::TerminalError;
 
 /// An active tunnel with its forwarder.
@@ -38,22 +39,35 @@ pub struct TunnelManager {
     active_tunnels: Mutex<HashMap<String, ActiveTunnel>>,
     session_pool: Mutex<SshSessionPool>,
     app_handle: AppHandle,
+    recovery_warnings: Mutex<Vec<RecoveryWarning>>,
 }
 
 impl TunnelManager {
     /// Create a new TunnelManager, loading saved tunnels from disk.
+    /// Uses recovery loading to handle corrupt files gracefully.
     pub fn new(app_handle: &AppHandle) -> Result<Self> {
         let storage =
             TunnelStorage::new(app_handle).context("Failed to initialize tunnel storage")?;
-        let store = storage.load().context("Failed to load tunnels")?;
+        let result = storage
+            .load_with_recovery()
+            .context("Failed to load tunnels")?;
 
         Ok(Self {
-            tunnel_configs: Mutex::new(store),
+            tunnel_configs: Mutex::new(result.data),
             storage,
             active_tunnels: Mutex::new(HashMap::new()),
             session_pool: Mutex::new(SshSessionPool::new()),
             app_handle: app_handle.clone(),
+            recovery_warnings: Mutex::new(result.warnings),
         })
+    }
+
+    /// Drain and return any recovery warnings collected during initialization.
+    pub fn take_recovery_warnings(&self) -> Vec<RecoveryWarning> {
+        self.recovery_warnings
+            .lock()
+            .map(|mut w| w.drain(..).collect())
+            .unwrap_or_default()
     }
 
     /// Get all saved tunnel configurations.

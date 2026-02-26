@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use tauri::State;
@@ -8,6 +8,7 @@ use crate::connection::config::{
     ConnectionFolder, ImportPreview, ImportResult, SavedConnection, SavedRemoteAgent,
 };
 use crate::connection::manager::{self, ConnectionManager};
+use crate::connection::recovery::RecoveryWarning;
 use crate::connection::settings::AppSettings;
 use crate::credential::CredentialManager;
 
@@ -237,4 +238,17 @@ pub fn import_connections_with_credentials(
     manager
         .import_encrypted_json(&json, import_password.as_deref())
         .map_err(|e| e.to_string())
+}
+
+/// Drain and return any recovery warnings collected during app startup.
+///
+/// Returns an empty list on subsequent calls (warnings are drained on first call).
+#[tauri::command]
+pub fn get_recovery_warnings(
+    warnings: State<'_, Mutex<Vec<RecoveryWarning>>>,
+) -> Vec<RecoveryWarning> {
+    warnings
+        .lock()
+        .map(|mut w| w.drain(..).collect())
+        .unwrap_or_default()
 }

@@ -9,6 +9,7 @@ import { CustomizeLayoutDialog } from "@/components/Settings/CustomizeLayoutDial
 import { ExportDialog, ImportDialog } from "@/components/ExportImport";
 import { UnlockDialog } from "@/components/UnlockDialog";
 import { MasterPasswordSetup } from "@/components/MasterPasswordSetup";
+import { RecoveryDialog } from "@/components/Settings/RecoveryDialog";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useTunnelEvents } from "@/hooks/useTunnelEvents";
 import { useCredentialStoreEvents } from "@/hooks/useCredentialStoreEvents";
@@ -91,6 +92,9 @@ function App() {
   const masterPasswordSetupOpen = useAppStore((s) => s.masterPasswordSetupOpen);
   const masterPasswordSetupMode = useAppStore((s) => s.masterPasswordSetupMode);
   const closeMasterPasswordSetup = useAppStore((s) => s.closeMasterPasswordSetup);
+  const recoveryWarnings = useAppStore((s) => s.recoveryWarnings);
+  const recoveryDialogOpen = useAppStore((s) => s.recoveryDialogOpen);
+  const setRecoveryDialogOpen = useAppStore((s) => s.setRecoveryDialogOpen);
 
   useEffect(() => {
     loadFromBackend();
@@ -127,6 +131,11 @@ function App() {
             if (!open) closeMasterPasswordSetup();
           }}
           mode={masterPasswordSetupMode}
+        />
+        <RecoveryDialog
+          open={recoveryDialogOpen}
+          onOpenChange={setRecoveryDialogOpen}
+          warnings={recoveryWarnings}
         />
       </div>
     </ErrorBoundary>

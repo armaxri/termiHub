@@ -21,6 +21,7 @@ vi.mock("@/services/storage", () => ({
   saveSettings: vi.fn(() => Promise.resolve()),
   moveConnectionToFile: vi.fn(() => Promise.resolve()),
   reloadExternalConnections: vi.fn(() => Promise.resolve([])),
+  getRecoveryWarnings: vi.fn(() => Promise.resolve([])),
 }));
 
 const mockMonitoringClose = vi.fn((_sessionId: string) => Promise.resolve());

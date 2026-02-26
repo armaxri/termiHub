@@ -27,7 +27,11 @@ const TYPE_ICONS: Record<string, LucideIcon> = {
 };
 
 /** Shell-specific icon overrides for local connections */
-function getShellIconInfo(shellType: ShellType): { component?: LucideIcon; iconNode?: IconNode } {
+function getShellIconInfo(shellType: ShellType | undefined): {
+  component?: LucideIcon;
+  iconNode?: IconNode;
+} {
+  if (!shellType) return { component: Terminal };
   if (shellType === "powershell") return { component: BicepsFlexed };
   if (shellType === "gitbash") return { component: GitBranch };
   if (shellType.startsWith("wsl:")) return { iconNode: labIcons.penguin as IconNode };
@@ -40,7 +44,7 @@ export function getDefaultIconInfo(config: ConnectionConfig): {
   iconNode?: IconNode;
 } {
   if (config.type === "local") {
-    return getShellIconInfo(config.config.shellType as ShellType);
+    return getShellIconInfo(config.config?.shellType as ShellType | undefined);
   }
   return { component: TYPE_ICONS[config.type] };
 }
