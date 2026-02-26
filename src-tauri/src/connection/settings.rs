@@ -5,6 +5,8 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
+use super::recovery::{RecoveryResult, RecoveryWarning};
+
 const FILE_NAME: &str = "settings.json";
 
 /// Configuration for a single external connection file.
@@ -118,18 +120,55 @@ impl SettingsStorage {
         })
     }
 
-    /// Load settings from disk. Returns defaults if the file doesn't exist.
-    pub fn load(&self) -> Result<AppSettings> {
+    /// Load with recovery: on parse failure, backs up the corrupt file and resets to defaults.
+    ///
+    /// Since `AppSettings` uses `#[serde(default)]`, partial field corruption is handled
+    /// by serde itself. Only completely unparseable files need recovery here.
+    pub fn load_with_recovery(&self) -> Result<RecoveryResult<AppSettings>> {
         if !self.file_path.exists() {
-            return Ok(AppSettings::default());
+            return Ok(RecoveryResult {
+                data: AppSettings::default(),
+                warnings: Vec::new(),
+            });
         }
 
         let data = fs::read_to_string(&self.file_path).context("Failed to read settings file")?;
 
-        let settings: AppSettings =
-            serde_json::from_str(&data).context("Failed to parse settings file")?;
+        // Fast path: normal parse succeeds
+        if let Ok(settings) = serde_json::from_str::<AppSettings>(&data) {
+            return Ok(RecoveryResult {
+                data: settings,
+                warnings: Vec::new(),
+            });
+        }
 
-        Ok(settings)
+        // Parse failed — back up and reset to defaults
+        let backup_path = self.file_path.with_extension("json.bak");
+        let _ = fs::copy(&self.file_path, &backup_path);
+        tracing::warn!(
+            "Settings file is corrupt, backed up to {}",
+            backup_path.display()
+        );
+
+        let parse_error = serde_json::from_str::<AppSettings>(&data)
+            .err()
+            .map(|e| e.to_string());
+
+        let warning = RecoveryWarning {
+            file_name: FILE_NAME.to_string(),
+            message: "Settings file was corrupt and has been reset to defaults.".to_string(),
+            details: parse_error,
+        };
+        tracing::error!("Settings file corrupt, resetting to defaults");
+
+        let defaults = AppSettings::default();
+        self.save(&defaults)
+            .context("Failed to save default settings after recovery")?;
+
+        Ok(RecoveryResult {
+            data: defaults,
+            warnings: vec![warning],
+        })
     }
 
     /// Save settings to disk (pretty-printed JSON).
@@ -146,6 +185,63 @@ impl SettingsStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
+
+    fn create_test_storage(dir: &TempDir) -> SettingsStorage {
+        SettingsStorage {
+            file_path: dir.path().join(FILE_NAME),
+        }
+    }
+
+    #[test]
+    fn load_with_recovery_missing_file_returns_defaults() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+
+        let result = storage.load_with_recovery().unwrap();
+        assert!(result.warnings.is_empty());
+        assert_eq!(result.data.version, "1");
+        assert!(result.data.power_monitoring_enabled);
+    }
+
+    #[test]
+    fn load_with_recovery_valid_settings() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+
+        let settings = AppSettings {
+            theme: Some("dark".to_string()),
+            ..Default::default()
+        };
+        storage.save(&settings).unwrap();
+
+        let result = storage.load_with_recovery().unwrap();
+        assert!(result.warnings.is_empty());
+        assert_eq!(result.data.theme.as_deref(), Some("dark"));
+    }
+
+    #[test]
+    fn load_with_recovery_corrupt_settings() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        std::fs::write(&storage.file_path, "not valid json {{{").unwrap();
+
+        let result = storage.load_with_recovery().unwrap();
+        assert_eq!(result.warnings.len(), 1);
+        assert!(result.warnings[0].message.contains("corrupt"));
+        assert!(result.warnings[0].details.is_some());
+        // Returns defaults
+        assert_eq!(result.data.version, "1");
+        assert!(result.data.power_monitoring_enabled);
+
+        // Backup should exist
+        let backup = storage.file_path.with_extension("json.bak");
+        assert!(backup.exists());
+        assert_eq!(
+            std::fs::read_to_string(&backup).unwrap(),
+            "not valid json {{{"
+        );
+    }
 
     #[test]
     fn deserialize_legacy_json_without_new_fields() {
