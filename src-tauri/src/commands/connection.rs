@@ -37,11 +37,11 @@ pub fn load_connections_and_folders(
     manager: State<'_, ConnectionManager>,
 ) -> Result<ConnectionData, String> {
     info!("Loading connections and folders");
-    let store = manager.get_all().map_err(|e| e.to_string())?;
+    let flat = manager.get_all().map_err(|e| e.to_string())?;
 
     // Flatten external connections into the main connections list
     let external_sources = manager.load_external_sources();
-    let mut all_connections = store.connections;
+    let mut all_connections = flat.connections;
     let mut external_errors = Vec::new();
 
     for source in external_sources {
@@ -56,8 +56,8 @@ pub fn load_connections_and_folders(
 
     Ok(ConnectionData {
         connections: all_connections,
-        folders: store.folders,
-        agents: store.agents,
+        folders: flat.folders,
+        agents: flat.agents,
         external_errors,
     })
 }

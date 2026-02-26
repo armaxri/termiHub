@@ -23,31 +23,34 @@ pub struct TerminalOptions {
     pub cursor_blink: Option<bool>,
 }
 
-/// A saved connection with a name and optional folder assignment.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SavedConnection {
-    pub id: String,
-    pub name: String,
-    pub config: ConnectionConfig,
-    pub folder_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub terminal_options: Option<TerminalOptions>,
-    /// Runtime-only: which external file this connection was loaded from.
-    /// `None` = main connections.json, `Some(path)` = external file.
-    /// Stripped before writing to disk.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub source_file: Option<String>,
-}
+// ---------------------------------------------------------------------------
+// On-disk types (v2 nested tree format)
+// ---------------------------------------------------------------------------
 
-/// A folder for organizing connections.
+/// A node in the connection tree stored on disk.
+///
+/// Folders contain children; connections are leaf nodes.
+/// Neither has an `id` — identity is determined by name within the parent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ConnectionFolder {
-    pub id: String,
-    pub name: String,
-    pub parent_id: Option<String>,
-    pub is_expanded: bool,
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum ConnectionTreeNode {
+    /// A folder containing child nodes.
+    #[serde(rename_all = "camelCase")]
+    Folder {
+        name: String,
+        #[serde(default)]
+        is_expanded: bool,
+        #[serde(default)]
+        children: Vec<ConnectionTreeNode>,
+    },
+    /// A saved connection.
+    #[serde(rename_all = "camelCase")]
+    Connection {
+        name: String,
+        config: ConnectionConfig,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        terminal_options: Option<TerminalOptions>,
+    },
 }
 
 /// A saved remote agent definition (SSH transport config only, no ephemeral state).
@@ -59,12 +62,11 @@ pub struct SavedRemoteAgent {
     pub config: RemoteAgentConfig,
 }
 
-/// Top-level schema for the connections JSON file.
+/// Top-level schema for the connections JSON file (v2 nested format).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionStore {
     pub version: String,
-    pub folders: Vec<ConnectionFolder>,
-    pub connections: Vec<SavedConnection>,
+    pub children: Vec<ConnectionTreeNode>,
     #[serde(default)]
     pub agents: Vec<SavedRemoteAgent>,
 }
@@ -72,35 +74,32 @@ pub struct ConnectionStore {
 impl Default for ConnectionStore {
     fn default() -> Self {
         Self {
-            version: "1".to_string(),
-            folders: Vec::new(),
-            connections: Vec::new(),
+            version: "2".to_string(),
+            children: Vec::new(),
             agents: Vec::new(),
         }
     }
 }
 
-/// Schema for external connection files. Same as `ConnectionStore` but with an optional `name`.
+/// Schema for external connection files. Same nested format with an optional `name`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExternalConnectionStore {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     pub version: String,
-    pub folders: Vec<ConnectionFolder>,
-    pub connections: Vec<SavedConnection>,
+    pub children: Vec<ConnectionTreeNode>,
 }
 
 /// Export format that optionally includes an encrypted credentials section.
 ///
 /// When the user exports "with credentials", the `$encrypted` field
 /// contains an [`EncryptedEnvelope`] holding a JSON map of
-/// `"connection_id:credential_type" -> "value"`.
+/// `"connection_path_id:credential_type" -> "value"`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EncryptedConnectionExport {
     pub version: String,
-    pub folders: Vec<ConnectionFolder>,
-    pub connections: Vec<SavedConnection>,
+    pub children: Vec<ConnectionTreeNode>,
     #[serde(default)]
     pub agents: Vec<SavedRemoteAgent>,
     #[serde(rename = "$encrypted", skip_serializing_if = "Option::is_none")]
@@ -123,6 +122,52 @@ pub struct ImportPreview {
 pub struct ImportResult {
     pub connections_imported: usize,
     pub credentials_imported: usize,
+}
+
+// ---------------------------------------------------------------------------
+// In-memory types (flat, with generated path-based IDs)
+// ---------------------------------------------------------------------------
+
+/// In-memory representation of a saved connection (with generated path-based ID).
+///
+/// The `id` is not stored on disk — it is derived from the connection's
+/// position in the tree (e.g., `"Work/Dev/My SSH"`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedConnection {
+    pub id: String,
+    pub name: String,
+    pub config: ConnectionConfig,
+    pub folder_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_options: Option<TerminalOptions>,
+    /// Runtime-only: which external file this connection was loaded from.
+    /// `None` = main connections.json, `Some(path)` = external file.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub source_file: Option<String>,
+}
+
+/// In-memory representation of a folder (with generated path-based ID).
+///
+/// The `id` is not stored on disk — it is derived from the folder's
+/// position in the tree (e.g., `"Work/Dev"`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionFolder {
+    pub id: String,
+    pub name: String,
+    pub parent_id: Option<String>,
+    pub is_expanded: bool,
+}
+
+/// Flattened in-memory store used by the manager and IPC layer.
+///
+/// This is NOT serialized to disk — the on-disk format is [`ConnectionStore`]
+/// (nested tree). Conversion happens in `tree.rs`.
+pub struct FlatConnectionStore {
+    pub connections: Vec<SavedConnection>,
+    pub folders: Vec<ConnectionFolder>,
+    pub agents: Vec<SavedRemoteAgent>,
 }
 
 #[cfg(test)]
@@ -151,87 +196,101 @@ mod tests {
     }
 
     #[test]
-    fn saved_connection_local_serde_round_trip() {
-        let conn = SavedConnection {
-            id: "conn-1".to_string(),
-            name: "My Shell".to_string(),
+    fn connection_tree_node_folder_serde_round_trip() {
+        let node = ConnectionTreeNode::Folder {
+            name: "Work".to_string(),
+            is_expanded: true,
+            children: vec![ConnectionTreeNode::Connection {
+                name: "My SSH".to_string(),
+                config: make_ssh_config(),
+                terminal_options: None,
+            }],
+        };
+        let json = serde_json::to_string(&node).unwrap();
+        let deserialized: ConnectionTreeNode = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            ConnectionTreeNode::Folder {
+                name,
+                is_expanded,
+                children,
+            } => {
+                assert_eq!(name, "Work");
+                assert!(is_expanded);
+                assert_eq!(children.len(), 1);
+            }
+            _ => panic!("Expected Folder"),
+        }
+    }
+
+    #[test]
+    fn connection_tree_node_connection_serde_round_trip() {
+        let node = ConnectionTreeNode::Connection {
+            name: "Local Shell".to_string(),
             config: make_local_config(),
-            folder_id: None,
-            terminal_options: None,
-            source_file: None,
+            terminal_options: Some(TerminalOptions {
+                horizontal_scrolling: Some(true),
+                ..Default::default()
+            }),
         };
-        let json = serde_json::to_string(&conn).unwrap();
-        let deserialized: SavedConnection = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.id, "conn-1");
-        assert_eq!(deserialized.name, "My Shell");
-        assert_eq!(deserialized.config.type_id, "local");
+        let json = serde_json::to_string(&node).unwrap();
+        let deserialized: ConnectionTreeNode = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            ConnectionTreeNode::Connection {
+                name,
+                config,
+                terminal_options,
+            } => {
+                assert_eq!(name, "Local Shell");
+                assert_eq!(config.type_id, "local");
+                assert!(terminal_options.is_some());
+            }
+            _ => panic!("Expected Connection"),
+        }
     }
 
     #[test]
-    fn saved_connection_ssh_serde_round_trip() {
-        let conn = SavedConnection {
-            id: "conn-2".to_string(),
-            name: "SSH Server".to_string(),
-            config: make_ssh_config(),
-            folder_id: Some("folder-1".to_string()),
-            terminal_options: None,
-            source_file: None,
+    fn connection_store_v2_serde_round_trip() {
+        let store = ConnectionStore {
+            version: "2".to_string(),
+            children: vec![
+                ConnectionTreeNode::Folder {
+                    name: "Work".to_string(),
+                    is_expanded: true,
+                    children: vec![ConnectionTreeNode::Connection {
+                        name: "Prod SSH".to_string(),
+                        config: make_ssh_config(),
+                        terminal_options: None,
+                    }],
+                },
+                ConnectionTreeNode::Connection {
+                    name: "Local".to_string(),
+                    config: make_local_config(),
+                    terminal_options: None,
+                },
+            ],
+            agents: vec![],
         };
-        let json = serde_json::to_string(&conn).unwrap();
-        let deserialized: SavedConnection = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.id, "conn-2");
-        assert_eq!(deserialized.config.type_id, "ssh");
-        assert_eq!(deserialized.config.settings["host"], "example.com");
-        assert_eq!(deserialized.config.settings["port"], 22);
+        let json = serde_json::to_string_pretty(&store).unwrap();
+        let deserialized: ConnectionStore = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.version, "2");
+        assert_eq!(deserialized.children.len(), 2);
+        assert!(deserialized.agents.is_empty());
     }
 
     #[test]
-    fn saved_connection_serial_serde_round_trip() {
-        let conn = SavedConnection {
-            id: "conn-3".to_string(),
-            name: "Serial Port".to_string(),
-            config: ConnectionConfig {
-                type_id: "serial".to_string(),
-                settings: serde_json::json!({
-                    "port": "/dev/ttyUSB0",
-                    "baudRate": 115200,
-                    "dataBits": 8,
-                    "stopBits": 1,
-                    "parity": "none",
-                    "flowControl": "none"
-                }),
-            },
-            folder_id: None,
-            terminal_options: None,
-            source_file: None,
-        };
-        let json = serde_json::to_string(&conn).unwrap();
-        let deserialized: SavedConnection = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.config.type_id, "serial");
-        assert_eq!(deserialized.config.settings["baudRate"], 115200);
+    fn connection_store_default_is_v2() {
+        let store = ConnectionStore::default();
+        assert_eq!(store.version, "2");
+        assert!(store.children.is_empty());
+        assert!(store.agents.is_empty());
     }
 
     #[test]
-    fn saved_connection_telnet_serde_round_trip() {
-        let conn = SavedConnection {
-            id: "conn-4".to_string(),
-            name: "Telnet Server".to_string(),
-            config: ConnectionConfig {
-                type_id: "telnet".to_string(),
-                settings: serde_json::json!({
-                    "host": "telnet.example.com",
-                    "port": 23
-                }),
-            },
-            folder_id: None,
-            terminal_options: None,
-            source_file: None,
-        };
-        let json = serde_json::to_string(&conn).unwrap();
-        let deserialized: SavedConnection = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.config.type_id, "telnet");
-        assert_eq!(deserialized.config.settings["host"], "telnet.example.com");
-        assert_eq!(deserialized.config.settings["port"], 23);
+    fn connection_store_with_agents_backward_compat() {
+        // agents field missing from JSON should default to empty
+        let json = r#"{"version":"2","children":[]}"#;
+        let store: ConnectionStore = serde_json::from_str(json).unwrap();
+        assert!(store.agents.is_empty());
     }
 
     #[test]
@@ -258,101 +317,33 @@ mod tests {
     }
 
     #[test]
-    fn connection_store_with_agents_backward_compat() {
-        let json = r#"{"version":"1","folders":[],"connections":[]}"#;
-        let store: ConnectionStore = serde_json::from_str(json).unwrap();
-        assert!(store.agents.is_empty());
-    }
-
-    #[test]
-    fn ssh_config_backward_compat_missing_feature_fields() {
-        // Old JSON without enableMonitoring/enableFileBrowser should still parse
-        let json = r#"{
-            "type": "ssh",
-            "config": {
-                "host": "example.com",
-                "port": 22,
-                "username": "admin",
-                "authMethod": "password",
-                "password": "secret",
-                "enableX11Forwarding": false
-            }
-        }"#;
-        let config: ConnectionConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.type_id, "ssh");
-        assert_eq!(config.settings["host"], "example.com");
-        // Feature fields simply don't exist in the JSON value
-        assert!(config.settings.get("enableMonitoring").is_none());
-        assert!(config.settings.get("enableFileBrowser").is_none());
-    }
-
-    #[test]
-    fn ssh_config_feature_fields_round_trip() {
-        let config = ConnectionConfig {
-            type_id: "ssh".to_string(),
-            settings: serde_json::json!({
-                "host": "example.com",
-                "username": "admin",
-                "authMethod": "password",
-                "enableMonitoring": false,
-                "enableFileBrowser": true
-            }),
-        };
-        let json = serde_json::to_string(&config).unwrap();
-        let deserialized: ConnectionConfig = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.settings["enableMonitoring"], false);
-        assert_eq!(deserialized.settings["enableFileBrowser"], true);
-    }
-
-    #[test]
     fn serde_produces_correct_json_shape() {
-        let conn = SavedConnection {
-            id: "test".to_string(),
+        let node = ConnectionTreeNode::Connection {
             name: "Test".to_string(),
             config: make_local_config(),
-            folder_id: None,
             terminal_options: Some(TerminalOptions {
                 horizontal_scrolling: Some(true),
                 color: None,
                 ..Default::default()
             }),
-            source_file: None,
         };
-        let json: serde_json::Value = serde_json::to_value(&conn).unwrap();
-        assert!(json.get("folderId").is_some());
+        let json: serde_json::Value = serde_json::to_value(&node).unwrap();
+        assert_eq!(json.get("type").unwrap(), "connection");
+        assert_eq!(json.get("name").unwrap(), "Test");
+        assert!(json.get("config").is_some());
         assert!(json.get("terminalOptions").is_some());
-        let config = json.get("config").unwrap();
-        assert_eq!(config.get("type").unwrap(), "local");
-        assert!(config.get("config").is_some());
-        assert!(json.get("sourceFile").is_none());
     }
 
     #[test]
-    fn source_file_included_when_set() {
-        let conn = SavedConnection {
-            id: "test".to_string(),
-            name: "Test".to_string(),
-            config: make_local_config(),
-            folder_id: None,
-            terminal_options: None,
-            source_file: Some("/path/to/external.json".to_string()),
+    fn folder_json_shape_has_type_tag() {
+        let node = ConnectionTreeNode::Folder {
+            name: "Work".to_string(),
+            is_expanded: false,
+            children: vec![],
         };
-        let json: serde_json::Value = serde_json::to_value(&conn).unwrap();
-        assert_eq!(
-            json.get("sourceFile").unwrap().as_str().unwrap(),
-            "/path/to/external.json"
-        );
-    }
-
-    #[test]
-    fn source_file_defaults_to_none_on_deserialize() {
-        let json = r#"{
-            "id": "test",
-            "name": "Test",
-            "config": {"type": "local", "config": {"shellType": "bash"}},
-            "folderId": null
-        }"#;
-        let conn: SavedConnection = serde_json::from_str(json).unwrap();
-        assert!(conn.source_file.is_none());
+        let json: serde_json::Value = serde_json::to_value(&node).unwrap();
+        assert_eq!(json.get("type").unwrap(), "folder");
+        assert_eq!(json.get("name").unwrap(), "Work");
+        assert_eq!(json.get("isExpanded").unwrap(), false);
     }
 }

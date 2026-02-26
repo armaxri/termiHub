@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking**: Reworked connection data model from flat arrays with synthetic IDs to a nested tree format on disk — connections and folders no longer have IDs in the stored JSON; identity is determined by name within the parent folder (like a filesystem), eliminating ID collisions when sharing connection files via git; path-based IDs are generated deterministically at load time for in-memory use; duplicate sibling names are auto-renamed with `(1)`, `(2)` suffixes; credentials are auto-migrated when connections are renamed or moved (#385)
+
 ### Added
 
 - Graceful recovery from corrupt configuration files: if `settings.json`, `connections.json`, or `tunnels.json` contain invalid JSON, the app backs up the corrupt file to `.bak`, replaces it with defaults (or recovers individual valid entries for connections), logs the error, and shows a recovery notification dialog on startup — the app never crashes due to corrupt config files (#383)

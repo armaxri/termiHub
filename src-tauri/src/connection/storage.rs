@@ -4,8 +4,9 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use tauri::{AppHandle, Manager};
 
-use super::config::{ConnectionFolder, ConnectionStore, SavedConnection, SavedRemoteAgent};
+use super::config::{ConnectionStore, ConnectionTreeNode, FlatConnectionStore, SavedRemoteAgent};
 use super::recovery::{RecoveryResult, RecoveryWarning};
+use super::tree::flatten_tree;
 
 const FILE_NAME: &str = "connections.json";
 
@@ -36,17 +37,19 @@ impl ConnectionStorage {
         })
     }
 
-    /// Load with recovery: on parse failure, attempts per-entry granular recovery.
+    /// Load the connections file, recovering gracefully from corruption.
     ///
     /// - If the file is missing, returns defaults with no warnings.
-    /// - If structured parsing succeeds, returns normally.
-    /// - If parsing fails, backs up the file to `.bak` and tries per-entry recovery
-    ///   via `serde_json::Value`. Valid entries are kept; invalid entries are dropped
-    ///   and reported as warnings.
-    pub fn load_with_recovery(&self) -> Result<RecoveryResult<ConnectionStore>> {
+    /// - If parsing succeeds, flattens the tree to in-memory arrays.
+    /// - If parsing fails, backs up to `.bak` and attempts recursive node recovery.
+    pub fn load_with_recovery(&self) -> Result<RecoveryResult<FlatConnectionStore>> {
         if !self.file_path.exists() {
             return Ok(RecoveryResult {
-                data: ConnectionStore::default(),
+                data: FlatConnectionStore {
+                    connections: Vec::new(),
+                    folders: Vec::new(),
+                    agents: Vec::new(),
+                },
                 warnings: Vec::new(),
             });
         }
@@ -56,8 +59,13 @@ impl ConnectionStorage {
 
         // Fast path: normal parse succeeds
         if let Ok(store) = serde_json::from_str::<ConnectionStore>(&data) {
+            let (connections, folders) = flatten_tree(&store.children, None);
             return Ok(RecoveryResult {
-                data: store,
+                data: FlatConnectionStore {
+                    connections,
+                    folders,
+                    agents: store.agents,
+                },
                 warnings: Vec::new(),
             });
         }
@@ -70,7 +78,7 @@ impl ConnectionStorage {
             backup_path.display()
         );
 
-        // Try to parse as unstructured JSON for per-entry recovery
+        // Try to parse as unstructured JSON for per-node recovery
         let value: serde_json::Value = match serde_json::from_str(&data) {
             Ok(v) => v,
             Err(e) => {
@@ -83,63 +91,26 @@ impl ConnectionStorage {
                 };
                 tracing::error!("Connections file completely corrupt: {e}");
                 let default_store = ConnectionStore::default();
-                self.save(&default_store)
+                self.save_store(&default_store)
                     .context("Failed to save default connections after recovery")?;
                 return Ok(RecoveryResult {
-                    data: default_store,
+                    data: FlatConnectionStore {
+                        connections: Vec::new(),
+                        folders: Vec::new(),
+                        agents: Vec::new(),
+                    },
                     warnings: vec![warning],
                 });
             }
         };
 
-        // Granular recovery: try each entry individually
+        // Granular recovery: try each node individually
         let mut warnings = Vec::new();
-        let mut recovered_connections = Vec::new();
-        let mut recovered_folders = Vec::new();
+        let mut recovered_children = Vec::new();
         let mut recovered_agents = Vec::new();
 
-        if let Some(arr) = value.get("connections").and_then(|v| v.as_array()) {
-            for (i, entry) in arr.iter().enumerate() {
-                match serde_json::from_value::<SavedConnection>(entry.clone()) {
-                    Ok(conn) => recovered_connections.push(conn),
-                    Err(e) => {
-                        let name = entry
-                            .get("name")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("unknown");
-                        warnings.push(RecoveryWarning {
-                            file_name: FILE_NAME.to_string(),
-                            message: format!(
-                                "Removed corrupt connection entry at index {i} (\"{name}\")."
-                            ),
-                            details: Some(e.to_string()),
-                        });
-                        tracing::warn!("Dropped corrupt connection at index {i} (\"{name}\"): {e}");
-                    }
-                }
-            }
-        }
-
-        if let Some(arr) = value.get("folders").and_then(|v| v.as_array()) {
-            for (i, entry) in arr.iter().enumerate() {
-                match serde_json::from_value::<ConnectionFolder>(entry.clone()) {
-                    Ok(folder) => recovered_folders.push(folder),
-                    Err(e) => {
-                        let name = entry
-                            .get("name")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("unknown");
-                        warnings.push(RecoveryWarning {
-                            file_name: FILE_NAME.to_string(),
-                            message: format!(
-                                "Removed corrupt folder entry at index {i} (\"{name}\")."
-                            ),
-                            details: Some(e.to_string()),
-                        });
-                        tracing::warn!("Dropped corrupt folder at index {i} (\"{name}\"): {e}");
-                    }
-                }
-            }
+        if let Some(arr) = value.get("children").and_then(|v| v.as_array()) {
+            recover_nodes_recursive(arr, &mut recovered_children, &mut warnings, "");
         }
 
         if let Some(arr) = value.get("agents").and_then(|v| v.as_array()) {
@@ -174,29 +145,31 @@ impl ConnectionStorage {
             });
         }
 
-        let version = value
-            .get("version")
-            .and_then(|v| v.as_str())
-            .unwrap_or("1")
-            .to_string();
         let recovered_store = ConnectionStore {
-            version,
-            connections: recovered_connections,
-            folders: recovered_folders,
+            version: "2".to_string(),
+            children: recovered_children,
             agents: recovered_agents,
         };
 
-        self.save(&recovered_store)
+        self.save_store(&recovered_store)
             .context("Failed to save recovered connections")?;
 
+        let (connections, folders) = flatten_tree(&recovered_store.children, None);
+
         Ok(RecoveryResult {
-            data: recovered_store,
+            data: FlatConnectionStore {
+                connections,
+                folders,
+                agents: recovered_store.agents,
+            },
             warnings,
         })
     }
 
     /// Save the connection store to disk (pretty-printed JSON).
-    pub fn save(&self, store: &ConnectionStore) -> Result<()> {
+    ///
+    /// Takes the on-disk `ConnectionStore` (nested tree format).
+    pub fn save_store(&self, store: &ConnectionStore) -> Result<()> {
         let data =
             serde_json::to_string_pretty(store).context("Failed to serialize connections")?;
 
@@ -204,11 +177,98 @@ impl ConnectionStorage {
 
         Ok(())
     }
+
+    /// Save flat in-memory data to disk by first building the nested tree.
+    pub fn save_flat(&self, flat: &FlatConnectionStore) -> Result<()> {
+        let tree = super::tree::build_tree(&flat.connections, &flat.folders);
+        let store = ConnectionStore {
+            version: "2".to_string(),
+            children: tree,
+            agents: flat.agents.clone(),
+        };
+        self.save_store(&store)
+    }
+}
+
+/// Recursively recover valid tree nodes from a JSON array,
+/// dropping corrupt entries and recording warnings.
+fn recover_nodes_recursive(
+    arr: &[serde_json::Value],
+    recovered: &mut Vec<ConnectionTreeNode>,
+    warnings: &mut Vec<RecoveryWarning>,
+    path_context: &str,
+) {
+    for (i, entry) in arr.iter().enumerate() {
+        let name = entry
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let node_path = if path_context.is_empty() {
+            name.to_string()
+        } else {
+            format!("{}/{}", path_context, name)
+        };
+
+        let type_str = entry.get("type").and_then(|v| v.as_str());
+
+        match type_str {
+            Some("folder") => {
+                // Try to recover children recursively even if this folder partially fails
+                let is_expanded = entry
+                    .get("isExpanded")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+
+                let mut child_nodes = Vec::new();
+                if let Some(child_arr) = entry.get("children").and_then(|v| v.as_array()) {
+                    recover_nodes_recursive(child_arr, &mut child_nodes, warnings, &node_path);
+                }
+
+                recovered.push(ConnectionTreeNode::Folder {
+                    name: name.to_string(),
+                    is_expanded,
+                    children: child_nodes,
+                });
+            }
+            Some("connection") => {
+                match serde_json::from_value::<ConnectionTreeNode>(entry.clone()) {
+                    Ok(node) => recovered.push(node),
+                    Err(e) => {
+                        warnings.push(RecoveryWarning {
+                            file_name: FILE_NAME.to_string(),
+                            message: format!(
+                                "Removed corrupt connection at index {i} (\"{node_path}\")."
+                            ),
+                            details: Some(e.to_string()),
+                        });
+                        tracing::warn!(
+                            "Dropped corrupt connection at index {i} (\"{node_path}\"): {e}"
+                        );
+                    }
+                }
+            }
+            _ => {
+                warnings.push(RecoveryWarning {
+                    file_name: FILE_NAME.to_string(),
+                    message: format!("Removed unrecognized entry at index {i} (\"{node_path}\")."),
+                    details: Some(format!(
+                        "Expected type 'folder' or 'connection', got {:?}",
+                        type_str
+                    )),
+                });
+                tracing::warn!(
+                    "Dropped unrecognized entry at index {i} (\"{node_path}\"): type={:?}",
+                    type_str
+                );
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::connection::config::{ConnectionFolder, SavedConnection};
     use tempfile::TempDir;
 
     fn create_test_storage(dir: &TempDir) -> ConnectionStorage {
@@ -230,21 +290,65 @@ mod tests {
     }
 
     #[test]
-    fn load_with_recovery_valid_json() {
+    fn load_with_recovery_valid_v2_json() {
         let dir = TempDir::new().unwrap();
         let storage = create_test_storage(&dir);
 
         let store = ConnectionStore {
-            version: "1".to_string(),
-            folders: vec![],
-            connections: vec![],
+            version: "2".to_string(),
+            children: vec![ConnectionTreeNode::Connection {
+                name: "Test".to_string(),
+                config: crate::terminal::backend::ConnectionConfig {
+                    type_id: "local".to_string(),
+                    settings: serde_json::json!({"shellType": "bash"}),
+                },
+                terminal_options: None,
+            }],
             agents: vec![],
         };
-        storage.save(&store).unwrap();
+        storage.save_store(&store).unwrap();
 
         let result = storage.load_with_recovery().unwrap();
         assert!(result.warnings.is_empty());
-        assert_eq!(result.data.version, "1");
+        assert_eq!(result.data.connections.len(), 1);
+        assert_eq!(result.data.connections[0].name, "Test");
+        assert_eq!(result.data.connections[0].id, "Test");
+        assert_eq!(result.data.connections[0].folder_id, None);
+    }
+
+    #[test]
+    fn load_with_recovery_nested_folder() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+
+        let store = ConnectionStore {
+            version: "2".to_string(),
+            children: vec![ConnectionTreeNode::Folder {
+                name: "Work".to_string(),
+                is_expanded: true,
+                children: vec![ConnectionTreeNode::Connection {
+                    name: "SSH".to_string(),
+                    config: crate::terminal::backend::ConnectionConfig {
+                        type_id: "ssh".to_string(),
+                        settings: serde_json::json!({"host": "example.com"}),
+                    },
+                    terminal_options: None,
+                }],
+            }],
+            agents: vec![],
+        };
+        storage.save_store(&store).unwrap();
+
+        let result = storage.load_with_recovery().unwrap();
+        assert!(result.warnings.is_empty());
+        assert_eq!(result.data.folders.len(), 1);
+        assert_eq!(result.data.folders[0].id, "Work");
+        assert_eq!(result.data.connections.len(), 1);
+        assert_eq!(result.data.connections[0].id, "Work/SSH");
+        assert_eq!(
+            result.data.connections[0].folder_id.as_deref(),
+            Some("Work")
+        );
     }
 
     #[test]
@@ -268,22 +372,21 @@ mod tests {
     }
 
     #[test]
-    fn load_with_recovery_partial_connections() {
+    fn load_with_recovery_partial_children() {
         let dir = TempDir::new().unwrap();
         let storage = create_test_storage(&dir);
 
-        // Write JSON with one valid and one invalid connection
+        // Write JSON with one valid connection and one corrupt entry
         let json = r#"{
-            "version": "1",
-            "folders": [],
-            "connections": [
+            "version": "2",
+            "children": [
                 {
-                    "id": "good-1",
+                    "type": "connection",
                     "name": "Good Connection",
                     "config": { "type": "local", "config": {} }
                 },
                 {
-                    "id": 12345,
+                    "type": "connection",
                     "broken": true
                 }
             ],
@@ -293,7 +396,7 @@ mod tests {
 
         let result = storage.load_with_recovery().unwrap();
         assert_eq!(result.data.connections.len(), 1);
-        assert_eq!(result.data.connections[0].id, "good-1");
+        assert_eq!(result.data.connections[0].name, "Good Connection");
         assert_eq!(result.warnings.len(), 1);
         assert!(result.warnings[0].message.contains("index 1"));
 
@@ -314,5 +417,54 @@ mod tests {
         // Should have a warning about invalid structure
         assert!(!result.warnings.is_empty());
         assert!(result.data.connections.is_empty());
+    }
+
+    #[test]
+    fn save_flat_round_trip() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+
+        let flat = FlatConnectionStore {
+            connections: vec![SavedConnection {
+                id: "Work/SSH".to_string(),
+                name: "SSH".to_string(),
+                config: crate::terminal::backend::ConnectionConfig {
+                    type_id: "ssh".to_string(),
+                    settings: serde_json::json!({"host": "example.com"}),
+                },
+                folder_id: Some("Work".to_string()),
+                terminal_options: None,
+                source_file: None,
+            }],
+            folders: vec![ConnectionFolder {
+                id: "Work".to_string(),
+                name: "Work".to_string(),
+                parent_id: None,
+                is_expanded: true,
+            }],
+            agents: vec![],
+        };
+
+        storage.save_flat(&flat).unwrap();
+
+        // Verify on-disk format is nested v2
+        let raw = fs::read_to_string(&storage.file_path).unwrap();
+        let on_disk: ConnectionStore = serde_json::from_str(&raw).unwrap();
+        assert_eq!(on_disk.version, "2");
+        assert_eq!(on_disk.children.len(), 1); // One folder
+        match &on_disk.children[0] {
+            ConnectionTreeNode::Folder { name, children, .. } => {
+                assert_eq!(name, "Work");
+                assert_eq!(children.len(), 1);
+            }
+            _ => panic!("Expected folder"),
+        }
+
+        // Load back and verify
+        let result = storage.load_with_recovery().unwrap();
+        assert!(result.warnings.is_empty());
+        assert_eq!(result.data.connections.len(), 1);
+        assert_eq!(result.data.connections[0].name, "SSH");
+        assert_eq!(result.data.connections[0].id, "Work/SSH");
     }
 }

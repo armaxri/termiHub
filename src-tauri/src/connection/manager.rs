@@ -6,11 +6,15 @@ use tauri::AppHandle;
 
 use super::config::{
     ConnectionFolder, ConnectionStore, EncryptedConnectionExport, ExternalConnectionStore,
-    ImportPreview, ImportResult, SavedConnection, SavedRemoteAgent,
+    FlatConnectionStore, ImportPreview, ImportResult, SavedConnection, SavedRemoteAgent,
 };
 use super::recovery::RecoveryWarning;
 use super::settings::{AppSettings, SettingsStorage};
 use super::storage::ConnectionStorage;
+use super::tree::{
+    build_tree, compute_connection_id, compute_folder_id, count_tree_items,
+    deduplicate_sibling_names, flatten_tree,
+};
 use crate::credential::crypto::{decrypt_with_password, encrypt_with_password};
 use crate::credential::{CredentialKey, CredentialStore, CredentialType};
 
@@ -64,6 +68,24 @@ pub(crate) fn prepare_agent_for_storage(
     Ok(agent)
 }
 
+/// Migrate credentials when a connection's path-based ID changes
+/// (due to rename or move).
+fn migrate_credential(old_id: &str, new_id: &str, store: &dyn CredentialStore) -> Result<()> {
+    if old_id == new_id {
+        return Ok(());
+    }
+    // Try migrating both credential types
+    for cred_type in &[CredentialType::Password, CredentialType::KeyPassphrase] {
+        let old_key = CredentialKey::new(old_id, cred_type.clone());
+        if let Ok(Some(value)) = store.get(&old_key) {
+            let new_key = CredentialKey::new(new_id, cred_type.clone());
+            store.set(&new_key, &value)?;
+            store.remove(&old_key)?;
+        }
+    }
+    Ok(())
+}
+
 /// Result of loading a single external connection file (flattened).
 pub struct ExternalSource {
     pub file_path: String,
@@ -73,7 +95,7 @@ pub struct ExternalSource {
 
 /// Manages saved connections and folders with file persistence.
 pub struct ConnectionManager {
-    store: Mutex<ConnectionStore>,
+    store: Mutex<FlatConnectionStore>,
     storage: ConnectionStorage,
     settings: Mutex<AppSettings>,
     settings_storage: SettingsStorage,
@@ -83,42 +105,19 @@ pub struct ConnectionManager {
 
 impl ConnectionManager {
     /// Create a new connection manager, loading existing data from disk.
-    /// On first load, strips any stored SSH passwords (migration).
     /// Uses recovery loading to handle corrupt files gracefully.
     pub fn new(app_handle: &AppHandle, credential_store: Arc<dyn CredentialStore>) -> Result<Self> {
         let storage = ConnectionStorage::new(app_handle)?;
         let conn_result = storage.load_with_recovery()?;
-        let mut store = conn_result.data;
+        let flat = conn_result.data;
         let mut warnings = conn_result.warnings;
-
-        // Migrate: strip any existing stored passwords
-        let mut needs_save = false;
-        for conn in &mut store.connections {
-            if let Some(obj) = conn.config.settings.as_object_mut() {
-                if obj.get("password").and_then(|v| v.as_str()).is_some() {
-                    obj.remove("password");
-                    needs_save = true;
-                }
-            }
-        }
-        for agent in &mut store.agents {
-            if agent.config.password.is_some() {
-                agent.config.password = None;
-                needs_save = true;
-            }
-        }
-        if needs_save {
-            storage
-                .save(&store)
-                .context("Failed to strip stored passwords on migration")?;
-        }
 
         let settings_storage = SettingsStorage::new(app_handle)?;
         let settings_result = settings_storage.load_with_recovery()?;
         warnings.extend(settings_result.warnings);
 
         Ok(Self {
-            store: Mutex::new(store),
+            store: Mutex::new(flat),
             storage,
             settings: Mutex::new(settings_result.data),
             settings_storage,
@@ -135,10 +134,14 @@ impl ConnectionManager {
             .unwrap_or_default()
     }
 
-    /// Get all connections and folders.
-    pub fn get_all(&self) -> Result<ConnectionStore> {
+    /// Get all connections, folders, and agents (flat in-memory view).
+    pub fn get_all(&self) -> Result<FlatConnectionStore> {
         let store = self.store.lock().unwrap();
-        Ok(store.clone())
+        Ok(FlatConnectionStore {
+            connections: store.connections.clone(),
+            folders: store.folders.clone(),
+            agents: store.agents.clone(),
+        })
     }
 
     /// Save (add or update) a remote agent. Passwords are stripped before persisting.
@@ -152,7 +155,9 @@ impl ConnectionManager {
             store.agents.push(agent);
         }
 
-        self.storage.save(&store).context("Failed to persist agent")
+        self.storage
+            .save_flat(&store)
+            .context("Failed to persist agent")
     }
 
     /// Delete a remote agent by ID.
@@ -161,23 +166,48 @@ impl ConnectionManager {
         let mut store = self.store.lock().unwrap();
         store.agents.retain(|a| a.id != id);
         self.storage
-            .save(&store)
+            .save_flat(&store)
             .context("Failed to persist after agent delete")
     }
 
     /// Save (add or update) a connection. Passwords are stripped before persisting.
+    ///
+    /// After saving, runs deduplication to ensure unique names within the
+    /// connection's folder. If the connection is renamed by dedup, credentials
+    /// are migrated to the new path-based ID.
     pub fn save_connection(&self, connection: SavedConnection) -> Result<()> {
         let connection = prepare_for_storage(connection, &*self.credential_store)?;
+        let old_id = connection.id.clone();
         let mut store = self.store.lock().unwrap();
+        let FlatConnectionStore {
+            connections,
+            folders,
+            ..
+        } = &mut *store;
 
-        if let Some(existing) = store.connections.iter_mut().find(|c| c.id == connection.id) {
+        if let Some(existing) = connections.iter_mut().find(|c| c.id == connection.id) {
             *existing = connection;
         } else {
-            store.connections.push(connection);
+            connections.push(connection);
+        }
+
+        // Deduplicate sibling names (may rename the connection)
+        deduplicate_sibling_names(connections, folders);
+
+        // Check if the connection was renamed by dedup and migrate credentials
+        // After dedup, the old_id might no longer exist — find the new ID
+        let new_id = connections
+            .iter()
+            .find(|c| c.id != old_id)
+            .map(|c| c.id.clone());
+        if let Some(ref new_id) = new_id {
+            if *new_id != old_id {
+                let _ = migrate_credential(&old_id, new_id, &*self.credential_store);
+            }
         }
 
         self.storage
-            .save(&store)
+            .save_flat(&store)
             .context("Failed to persist connection")
     }
 
@@ -187,64 +217,146 @@ impl ConnectionManager {
         let mut store = self.store.lock().unwrap();
         store.connections.retain(|c| c.id != id);
         self.storage
-            .save(&store)
+            .save_flat(&store)
             .context("Failed to persist after delete")
     }
 
     /// Save (add or update) a folder.
+    ///
+    /// If a folder is renamed, recomputes path-based IDs for all descendant
+    /// connections and folders, migrating credentials as needed.
     pub fn save_folder(&self, folder: ConnectionFolder) -> Result<()> {
         let mut store = self.store.lock().unwrap();
 
+        // Check if this is a rename (collect info before mutating)
+        let rename_info: Option<(String, String)> = store
+            .folders
+            .iter()
+            .find(|f| f.id == folder.id)
+            .and_then(|existing| {
+                if existing.name != folder.name {
+                    let old_id = existing.id.clone();
+                    let new_id = compute_folder_id(folder.parent_id.as_deref(), &folder.name);
+                    Some((old_id, new_id))
+                } else {
+                    None
+                }
+            });
+
+        // Apply the folder update
         if let Some(existing) = store.folders.iter_mut().find(|f| f.id == folder.id) {
             *existing = folder;
         } else {
             store.folders.push(folder);
         }
 
+        // Recompute descendant IDs if renamed
+        if let Some((old_id, new_id)) = rename_info {
+            let FlatConnectionStore {
+                connections,
+                folders,
+                ..
+            } = &mut *store;
+            recompute_descendant_ids(
+                connections,
+                folders,
+                &old_id,
+                &new_id,
+                &*self.credential_store,
+            )?;
+        }
+
+        // Ensure unique folder names within parent
+        let FlatConnectionStore {
+            connections,
+            folders,
+            ..
+        } = &mut *store;
+        deduplicate_sibling_names(connections, folders);
+
         self.storage
-            .save(&store)
+            .save_flat(&store)
             .context("Failed to persist folder")
     }
 
-    /// Delete a folder by ID. Moves its connections to root (folder_id = None).
+    /// Delete a folder by ID. Moves its connections to root (folder_id = None)
+    /// and reparents child folders, recomputing path-based IDs and migrating
+    /// credentials.
     pub fn delete_folder(&self, id: &str) -> Result<()> {
         let mut store = self.store.lock().unwrap();
 
-        // Move child connections to root
-        for conn in &mut store.connections {
-            if conn.folder_id.as_deref() == Some(id) {
-                conn.folder_id = None;
-            }
-        }
-
-        // Reparent child folders to the deleted folder's parent
         let parent_id = store
             .folders
             .iter()
             .find(|f| f.id == id)
             .and_then(|f| f.parent_id.clone());
 
-        for folder in &mut store.folders {
+        // Move child connections to parent (or root)
+        for conn in store.connections.iter_mut() {
+            if conn.folder_id.as_deref() == Some(id) {
+                let old_id = conn.id.clone();
+                conn.folder_id = parent_id.clone();
+                conn.id = compute_connection_id(parent_id.as_deref(), &conn.name);
+                let _ = migrate_credential(&old_id, &conn.id, &*self.credential_store);
+            }
+        }
+
+        // Collect reparent operations needed
+        let reparent_ops: Vec<(String, String)> = store
+            .folders
+            .iter()
+            .filter(|f| f.parent_id.as_deref() == Some(id))
+            .map(|f| {
+                let old_id = f.id.clone();
+                let new_id = compute_folder_id(parent_id.as_deref(), &f.name);
+                (old_id, new_id)
+            })
+            .collect();
+
+        // Update parent_id for child folders
+        for folder in store.folders.iter_mut() {
             if folder.parent_id.as_deref() == Some(id) {
                 folder.parent_id = parent_id.clone();
             }
         }
 
+        // Recompute descendant IDs for reparented folders
+        for (old_id, new_id) in reparent_ops {
+            let FlatConnectionStore {
+                connections,
+                folders,
+                ..
+            } = &mut *store;
+            let _ = recompute_descendant_ids(
+                connections,
+                folders,
+                &old_id,
+                &new_id,
+                &*self.credential_store,
+            );
+        }
+
         store.folders.retain(|f| f.id != id);
         self.storage
-            .save(&store)
+            .save_flat(&store)
             .context("Failed to persist after folder delete")
     }
 
     /// Export all connections and folders as a JSON string. Passwords are stripped.
     pub fn export_json(&self) -> Result<String> {
         let store = self.store.lock().unwrap();
-        let mut export_store = store.clone();
-        export_store.connections = export_store
-            .connections
+        let mut export_conns = store.connections.clone();
+        export_conns = export_conns
             .into_iter()
             .map(|c| prepare_for_storage(c, &*self.credential_store))
             .collect::<Result<Vec<_>>>()?;
+
+        let tree = build_tree(&export_conns, &store.folders);
+        let export_store = ConnectionStore {
+            version: "2".to_string(),
+            children: tree,
+            agents: store.agents.clone(),
+        };
         serde_json::to_string_pretty(&export_store)
             .context("Failed to serialize connections for export")
     }
@@ -255,18 +367,20 @@ impl ConnectionManager {
         let imported: ConnectionStore =
             serde_json::from_str(json).context("Failed to parse import data")?;
 
-        let mut store = self.store.lock().unwrap();
-        let count = imported.connections.len();
+        let (imported_conns, imported_folders) = flatten_tree(&imported.children, None);
+        let count = imported_conns.len();
 
-        // Merge: add imported folders that don't already exist
-        for folder in imported.folders {
+        let mut store = self.store.lock().unwrap();
+
+        // Merge: add imported folders that don't already exist (by name path)
+        for folder in imported_folders {
             if !store.folders.iter().any(|f| f.id == folder.id) {
                 store.folders.push(folder);
             }
         }
 
         // Merge: add imported connections that don't already exist (strip passwords)
-        for conn in imported.connections {
+        for conn in imported_conns {
             if !store.connections.iter().any(|c| c.id == conn.id) {
                 store
                     .connections
@@ -274,8 +388,18 @@ impl ConnectionManager {
             }
         }
 
+        // Deduplicate after merge
+        {
+            let FlatConnectionStore {
+                connections,
+                folders,
+                ..
+            } = &mut *store;
+            deduplicate_sibling_names(connections, folders);
+        }
+
         self.storage
-            .save(&store)
+            .save_flat(&store)
             .context("Failed to persist after import")?;
         Ok(count)
     }
@@ -346,11 +470,7 @@ impl ConnectionManager {
         }
     }
 
-    /// Export connections as JSON with an optional encrypted credentials section.
-    ///
-    /// When `password` is provided, credentials for SSH connections and agents
-    /// are fetched from the credential store, encrypted with the password,
-    /// and included in the `$encrypted` field of the export.
+    /// Export connections with optional encrypted credentials.
     pub fn export_encrypted_json(
         &self,
         password: Option<&str>,
@@ -373,8 +493,7 @@ impl ConnectionManager {
         let agents = store.agents.clone();
         drop(store);
 
-        // Strip inline passwords from all connections (they should already be
-        // stripped, but be defensive).
+        // Strip inline passwords
         let connections: Vec<SavedConnection> = connections
             .into_iter()
             .map(|c| prepare_for_storage(c, &*self.credential_store))
@@ -385,7 +504,6 @@ impl ConnectionManager {
             Some(pw) => {
                 let mut cred_map: HashMap<String, String> = HashMap::new();
 
-                // Gather credentials for connections that have auth settings
                 for conn in &connections {
                     let settings = &conn.config.settings;
                     if let Some(auth_method) = settings.get("authMethod").and_then(|v| v.as_str()) {
@@ -401,7 +519,6 @@ impl ConnectionManager {
                     }
                 }
 
-                // Gather credentials for agents
                 for agent in &agents {
                     let cred_type = if agent.config.auth_method == "key" {
                         CredentialType::KeyPassphrase
@@ -428,10 +545,10 @@ impl ConnectionManager {
             None => None,
         };
 
+        let tree = build_tree(&connections, &folders);
         let export = EncryptedConnectionExport {
-            version: "1".to_string(),
-            folders,
-            connections,
+            version: "2".to_string(),
+            children: tree,
             agents,
             encrypted,
         };
@@ -440,10 +557,6 @@ impl ConnectionManager {
     }
 
     /// Import connections from an encrypted export JSON string.
-    ///
-    /// If the JSON contains an `$encrypted` section and `password` is provided,
-    /// credentials are decrypted and stored in the credential store. Without a
-    /// password, the encrypted section is silently skipped.
     pub fn import_encrypted_json(
         &self,
         json: &str,
@@ -469,17 +582,20 @@ impl ConnectionManager {
             }
         }
 
+        // Flatten the imported tree
+        let (imported_conns, imported_folders) = flatten_tree(&imported.children, None);
+        let connections_imported = imported_conns.len();
+
         // Merge connections, folders, and agents
         let mut store = self.store.lock().unwrap();
-        let connections_imported = imported.connections.len();
 
-        for folder in imported.folders {
+        for folder in imported_folders {
             if !store.folders.iter().any(|f| f.id == folder.id) {
                 store.folders.push(folder);
             }
         }
 
-        for conn in imported.connections {
+        for conn in imported_conns {
             if !store.connections.iter().any(|c| c.id == conn.id) {
                 store
                     .connections
@@ -493,8 +609,18 @@ impl ConnectionManager {
             }
         }
 
+        // Deduplicate after merge
+        {
+            let FlatConnectionStore {
+                connections,
+                folders,
+                ..
+            } = &mut *store;
+            deduplicate_sibling_names(connections, folders);
+        }
+
         self.storage
-            .save(&store)
+            .save_flat(&store)
             .context("Failed to persist after import")?;
 
         Ok(ImportResult {
@@ -521,7 +647,7 @@ impl ConnectionManager {
                     .context("Connection not found in main store")?;
                 let conn = store.connections.remove(idx);
                 self.storage
-                    .save(&store)
+                    .save_flat(&store)
                     .context("Failed to persist removal from main store")?;
                 conn
             }
@@ -538,7 +664,7 @@ impl ConnectionManager {
                 let mut store = self.store.lock().unwrap();
                 store.connections.push(disk_conn);
                 self.storage
-                    .save(&store)
+                    .save_flat(&store)
                     .context("Failed to persist addition to main store")?;
             }
             Some(file_path) => {
@@ -553,15 +679,76 @@ impl ConnectionManager {
     }
 }
 
+/// Recompute path-based IDs for all descendants of a folder whose ID changed.
+fn recompute_descendant_ids(
+    connections: &mut [SavedConnection],
+    folders: &mut [ConnectionFolder],
+    old_folder_id: &str,
+    new_folder_id: &str,
+    credential_store: &dyn CredentialStore,
+) -> Result<()> {
+    if old_folder_id == new_folder_id {
+        return Ok(());
+    }
+
+    // Update the folder itself
+    if let Some(folder) = folders.iter_mut().find(|f| f.id == old_folder_id) {
+        folder.id = new_folder_id.to_string();
+    }
+
+    // Update direct child connections
+    for conn in connections.iter_mut() {
+        if conn.folder_id.as_deref() == Some(old_folder_id) {
+            let old_conn_id = conn.id.clone();
+            conn.folder_id = Some(new_folder_id.to_string());
+            conn.id = compute_connection_id(Some(new_folder_id), &conn.name);
+            let _ = migrate_credential(&old_conn_id, &conn.id, credential_store);
+        }
+    }
+
+    // Collect child folder IDs that need updating (to avoid borrow conflicts)
+    let child_updates: Vec<(String, String)> = folders
+        .iter()
+        .filter(|f| f.parent_id.as_deref() == Some(old_folder_id))
+        .map(|f| {
+            let old_child_id = f.id.clone();
+            let new_child_id = compute_folder_id(Some(new_folder_id), &f.name);
+            (old_child_id, new_child_id)
+        })
+        .collect();
+
+    // Update child folders' parent_id
+    for folder in folders.iter_mut() {
+        if folder.parent_id.as_deref() == Some(old_folder_id) {
+            folder.parent_id = Some(new_folder_id.to_string());
+        }
+    }
+
+    // Recursively update grandchildren
+    for (old_child_id, new_child_id) in child_updates {
+        recompute_descendant_ids(
+            connections,
+            folders,
+            &old_child_id,
+            &new_child_id,
+            credential_store,
+        )?;
+    }
+
+    Ok(())
+}
+
 /// Parse an import JSON string and return a summary of its contents
 /// without actually performing the import.
 pub fn preview_import_json(json: &str) -> Result<ImportPreview> {
     let export: EncryptedConnectionExport =
         serde_json::from_str(json).context("Failed to parse import data")?;
 
+    let (conn_count, folder_count) = count_tree_items(&export.children);
+
     Ok(ImportPreview {
-        connection_count: export.connections.len(),
-        folder_count: export.folders.len(),
+        connection_count: conn_count,
+        folder_count,
         agent_count: export.agents.len(),
         has_encrypted_credentials: export.encrypted.is_some(),
     })
@@ -570,7 +757,7 @@ pub fn preview_import_json(json: &str) -> Result<ImportPreview> {
 /// Load a single external connection file, flattening connections.
 fn load_single_external_file(
     file_path: &str,
-    main_folder_ids: &std::collections::HashSet<&str>,
+    main_folder_ids: &HashSet<&str>,
     store: &dyn CredentialStore,
 ) -> ExternalSource {
     match try_load_external_file(file_path, main_folder_ids, store) {
@@ -587,51 +774,61 @@ fn load_single_external_file(
 /// Connections get `source_file` set and `folder_id` validated against the main folder tree.
 pub(crate) fn try_load_external_file(
     file_path: &str,
-    main_folder_ids: &std::collections::HashSet<&str>,
+    main_folder_ids: &HashSet<&str>,
     store: &dyn CredentialStore,
 ) -> Result<ExternalSource> {
     let data = std::fs::read_to_string(file_path)
         .with_context(|| format!("Failed to read external file: {}", file_path))?;
 
-    let mut ext_store: ExternalConnectionStore = serde_json::from_str(&data)
+    let ext_store: ExternalConnectionStore = serde_json::from_str(&data)
         .with_context(|| format!("Failed to parse external file: {}", file_path))?;
 
-    // Migrate: strip plaintext passwords from external file and route to credential store.
-    // This mirrors the migration in `ConnectionManager::new()` for the main connections.json.
-    let has_plaintext_passwords = ext_store.connections.iter().any(|conn| {
+    // Flatten the nested tree
+    let (mut connections, _folders) = flatten_tree(&ext_store.children, None);
+
+    // Migrate: strip plaintext passwords and route to credential store
+    let has_plaintext_passwords = connections.iter().any(|conn| {
         conn.config
             .settings
             .get("password")
             .and_then(|v| v.as_str())
             .is_some()
     });
+
     if has_plaintext_passwords {
-        ext_store.connections = ext_store
-            .connections
+        connections = connections
             .into_iter()
             .map(|c| prepare_for_storage(c, store))
             .collect::<Result<Vec<_>>>()?;
 
-        let cleaned_data = serde_json::to_string_pretty(&ext_store)
+        // Rewrite the external file with passwords stripped
+        let cleaned_tree = build_tree(&connections, &[]);
+        let cleaned_store = ExternalConnectionStore {
+            name: ext_store.name,
+            version: "2".to_string(),
+            children: cleaned_tree,
+        };
+        let cleaned_data = serde_json::to_string_pretty(&cleaned_store)
             .context("Failed to serialize external file during migration")?;
         std::fs::write(file_path, cleaned_data)
             .with_context(|| format!("Failed to rewrite external file: {}", file_path))?;
     }
 
-    // Flatten connections: set source_file, validate folder_id
-    let mut connections = Vec::new();
-    for mut conn in ext_store.connections {
+    // Validate folder_id: if not in main folders, put at root
+    for conn in &mut connections {
         conn.source_file = Some(file_path.to_string());
-
-        // If the connection's folder_id doesn't match any main folder, put it at root
         if let Some(ref fid) = conn.folder_id {
             if !main_folder_ids.contains(fid.as_str()) {
                 conn.folder_id = None;
             }
         }
-
-        connections.push(prepare_for_storage(conn, store)?);
     }
+
+    // Strip passwords from in-memory connections
+    connections = connections
+        .into_iter()
+        .map(|c| prepare_for_storage(c, store))
+        .collect::<Result<Vec<_>>>()?;
 
     Ok(ExternalSource {
         file_path: file_path.to_string(),
@@ -640,7 +837,7 @@ pub(crate) fn try_load_external_file(
     })
 }
 
-/// Save or update a single connection in an external file (by ID).
+/// Save or update a single connection in an external file (by name+folder path).
 fn save_or_update_in_external_file(file_path: &str, connection: SavedConnection) -> Result<()> {
     let data = std::fs::read_to_string(file_path)
         .with_context(|| format!("Failed to read external file: {}", file_path))?;
@@ -648,15 +845,16 @@ fn save_or_update_in_external_file(file_path: &str, connection: SavedConnection)
     let mut ext_store: ExternalConnectionStore = serde_json::from_str(&data)
         .with_context(|| format!("Failed to parse external file: {}", file_path))?;
 
-    if let Some(existing) = ext_store
-        .connections
-        .iter_mut()
-        .find(|c| c.id == connection.id)
-    {
+    // Flatten, update, rebuild
+    let (mut conns, folders) = flatten_tree(&ext_store.children, None);
+
+    if let Some(existing) = conns.iter_mut().find(|c| c.id == connection.id) {
         *existing = connection;
     } else {
-        ext_store.connections.push(connection);
+        conns.push(connection);
     }
+
+    ext_store.children = build_tree(&conns, &folders);
 
     let data = serde_json::to_string_pretty(&ext_store)
         .context("Failed to serialize external connection file")?;
@@ -673,7 +871,9 @@ fn remove_from_external_file(file_path: &str, connection_id: &str) -> Result<()>
     let mut ext_store: ExternalConnectionStore = serde_json::from_str(&data)
         .with_context(|| format!("Failed to parse external file: {}", file_path))?;
 
-    ext_store.connections.retain(|c| c.id != connection_id);
+    let (mut conns, folders) = flatten_tree(&ext_store.children, None);
+    conns.retain(|c| c.id != connection_id);
+    ext_store.children = build_tree(&conns, &folders);
 
     let data = serde_json::to_string_pretty(&ext_store)
         .context("Failed to serialize external connection file")?;
@@ -693,13 +893,15 @@ fn remove_and_return_from_external_file(
     let mut ext_store: ExternalConnectionStore = serde_json::from_str(&data)
         .with_context(|| format!("Failed to parse external file: {}", file_path))?;
 
-    let idx = ext_store
-        .connections
+    let (mut conns, folders) = flatten_tree(&ext_store.children, None);
+
+    let idx = conns
         .iter()
         .position(|c| c.id == connection_id)
         .with_context(|| format!("Connection {} not found in {}", connection_id, file_path))?;
 
-    let conn = ext_store.connections.remove(idx);
+    let conn = conns.remove(idx);
+    ext_store.children = build_tree(&conns, &folders);
 
     let data = serde_json::to_string_pretty(&ext_store)
         .context("Failed to serialize external connection file")?;
@@ -717,14 +919,16 @@ pub fn save_external_file(
     connections: Vec<SavedConnection>,
     credential_store: &dyn CredentialStore,
 ) -> Result<()> {
+    let connections: Vec<SavedConnection> = connections
+        .into_iter()
+        .map(|c| prepare_for_storage(c, credential_store))
+        .collect::<Result<Vec<_>>>()?;
+
+    let tree = build_tree(&connections, &folders);
     let store = ExternalConnectionStore {
         name: Some(name.to_string()),
-        version: "1".to_string(),
-        folders,
-        connections: connections
-            .into_iter()
-            .map(|c| prepare_for_storage(c, credential_store))
-            .collect::<Result<Vec<_>>>()?,
+        version: "2".to_string(),
+        children: tree,
     };
     let data = serde_json::to_string_pretty(&store)
         .context("Failed to serialize external connection file")?;
@@ -927,37 +1131,29 @@ mod tests {
         let path_str = file_path.to_str().unwrap();
 
         let folders = vec![ConnectionFolder {
-            id: "folder-1".to_string(),
+            id: "My Folder".to_string(),
             name: "My Folder".to_string(),
             parent_id: None,
             is_expanded: true,
         }];
 
-        let connections = vec![make_ssh_conn("conn-1", "password", Some("secret"), None)];
-        let mut connections_with_folder = connections;
-        connections_with_folder[0].folder_id = Some("folder-1".to_string());
+        let mut conn = make_ssh_conn("My Folder/SSH", "password", Some("secret"), None);
+        conn.name = "SSH".to_string();
+        conn.folder_id = Some("My Folder".to_string());
 
         // Save
-        save_external_file(
-            path_str,
-            "Test File",
-            folders,
-            connections_with_folder,
-            &store,
-        )
-        .unwrap();
+        save_external_file(path_str, "Test File", folders, vec![conn], &store).unwrap();
 
-        // Load with "folder-1" in the main folder set so it's recognized
-        let main_folders: std::collections::HashSet<&str> = vec!["folder-1"].into_iter().collect();
+        // Load with "My Folder" in the main folder set so it's recognized
+        let main_folders: HashSet<&str> = vec!["My Folder"].into_iter().collect();
         let source = try_load_external_file(path_str, &main_folders, &store).unwrap();
         assert!(source.error.is_none());
 
-        // Connections should keep original IDs (no namespace) and have source_file set
         assert_eq!(source.connections.len(), 1);
         let conn = &source.connections[0];
-        assert_eq!(conn.id, "conn-1");
+        assert_eq!(conn.name, "SSH");
         assert_eq!(conn.source_file.as_deref(), Some(path_str));
-        assert_eq!(conn.folder_id.as_deref(), Some("folder-1"));
+        assert_eq!(conn.folder_id.as_deref(), Some("My Folder"));
         assert!(
             conn.config.settings.get("password").is_none(),
             "Password should be stripped"
@@ -971,310 +1167,31 @@ mod tests {
         let file_path = dir.path().join("test_fallback.json");
         let path_str = file_path.to_str().unwrap();
 
-        let mut conn = make_local_conn("conn-1");
-        conn.folder_id = Some("unknown-folder".to_string());
-
-        save_external_file(path_str, "Test", Vec::new(), vec![conn], &store).unwrap();
-
-        // Load with empty main folders — folder_id should fall to None
-        let main_folders: std::collections::HashSet<&str> = std::collections::HashSet::new();
-        let source = try_load_external_file(path_str, &main_folders, &store).unwrap();
-        assert_eq!(source.connections[0].folder_id, None);
-    }
-
-    /// Write an external file with raw connections (passwords NOT stripped).
-    /// Used by migration tests to simulate a pre-migration file on disk.
-    fn write_raw_external_file(
-        path: &str,
-        name: &str,
-        folders: Vec<ConnectionFolder>,
-        connections: Vec<SavedConnection>,
-    ) {
-        let store = ExternalConnectionStore {
-            name: Some(name.to_string()),
-            version: "1".to_string(),
-            folders,
-            connections,
-        };
-        let data = serde_json::to_string_pretty(&store).unwrap();
-        std::fs::write(path, data).unwrap();
-    }
-
-    #[test]
-    fn external_file_migration_strips_passwords_from_disk() {
-        let mock = MockStore::new();
-        let dir = tempfile::tempdir().unwrap();
-        let file_path = dir.path().join("migrate_strip.json");
-        let path_str = file_path.to_str().unwrap();
-
-        // Write a file with a plaintext password (save_password = true)
-        let conn = make_ssh_conn("c1", "password", Some("secret123"), Some(true));
-        write_raw_external_file(path_str, "Test", Vec::new(), vec![conn]);
-
-        // Load — should trigger migration
-        let main_folders: HashSet<&str> = HashSet::new();
-        let source = try_load_external_file(path_str, &main_folders, &mock).unwrap();
-
-        // In-memory password should be stripped
-        assert_eq!(source.connections.len(), 1);
-        assert!(
-            source.connections[0]
-                .config
-                .settings
-                .get("password")
-                .is_none(),
-            "In-memory password should be None"
-        );
-
-        // Credential store should have the password
-        let stored = mock.stored.lock().unwrap();
-        assert_eq!(stored.len(), 1);
-        assert_eq!(stored[0].0.connection_id, "c1");
-        assert_eq!(stored[0].0.credential_type, CredentialType::Password);
-        assert_eq!(stored[0].1, "secret123");
-
-        // Re-read the file — password should be gone from disk
-        let raw = std::fs::read_to_string(path_str).unwrap();
-        assert!(
-            !raw.contains("secret123"),
-            "Password should be stripped from disk"
-        );
-    }
-
-    #[test]
-    fn external_file_migration_skips_when_no_passwords() {
-        let mock = MockStore::new();
-        let dir = tempfile::tempdir().unwrap();
-        let file_path = dir.path().join("no_pw.json");
-        let path_str = file_path.to_str().unwrap();
-
-        // Write a file with no password
-        let conn = make_ssh_conn("c1", "key", None, None);
-        write_raw_external_file(path_str, "Test", Vec::new(), vec![conn]);
-
-        // Snapshot original file content
-        let original = std::fs::read_to_string(path_str).unwrap();
-
-        // Load
-        let main_folders: HashSet<&str> = HashSet::new();
-        let _source = try_load_external_file(path_str, &main_folders, &mock).unwrap();
-
-        // File content should be unchanged (no rewrite)
-        let after = std::fs::read_to_string(path_str).unwrap();
-        assert_eq!(original, after, "File should not have been rewritten");
-
-        // Credential store should be empty
-        assert!(mock.stored.lock().unwrap().is_empty());
-    }
-
-    #[test]
-    fn external_file_migration_preserves_folder_structure() {
-        let mock = MockStore::new();
-        let dir = tempfile::tempdir().unwrap();
-        let file_path = dir.path().join("folders.json");
-        let path_str = file_path.to_str().unwrap();
+        let mut conn = make_local_conn("Unknown/Local");
+        conn.name = "Local".to_string();
+        conn.folder_id = Some("Unknown".to_string());
 
         let folders = vec![ConnectionFolder {
-            id: "f1".to_string(),
-            name: "My Folder".to_string(),
+            id: "Unknown".to_string(),
+            name: "Unknown".to_string(),
             parent_id: None,
             is_expanded: true,
         }];
 
-        let mut conn = make_ssh_conn("c1", "password", Some("pw"), Some(true));
-        conn.folder_id = Some("f1".to_string());
-        write_raw_external_file(path_str, "Named File", folders, vec![conn]);
+        save_external_file(path_str, "Test", folders, vec![conn], &store).unwrap();
 
-        // Load with empty main_folder_ids
+        // Load with empty main folders — folder_id should fall to None
         let main_folders: HashSet<&str> = HashSet::new();
-        let _source = try_load_external_file(path_str, &main_folders, &mock).unwrap();
-
-        // Re-read the file and verify structure is preserved on disk
-        let raw = std::fs::read_to_string(path_str).unwrap();
-        let on_disk: ExternalConnectionStore = serde_json::from_str(&raw).unwrap();
-        assert_eq!(on_disk.name, Some("Named File".to_string()));
-        assert_eq!(on_disk.folders.len(), 1);
-        assert_eq!(on_disk.folders[0].id, "f1");
-        assert_eq!(on_disk.folders[0].name, "My Folder");
-        assert_eq!(on_disk.connections.len(), 1);
-        // folder_id should still be on disk (only modified in-memory for display)
-        assert_eq!(
-            on_disk.connections[0].folder_id,
-            Some("f1".to_string()),
-            "folder_id should be preserved on disk"
-        );
-        // Password should be gone
-        assert!(
-            on_disk.connections[0]
-                .config
-                .settings
-                .get("password")
-                .is_none(),
-            "Password stripped on disk"
-        );
-    }
-
-    #[test]
-    fn external_file_migration_no_store_when_save_false() {
-        let mock = MockStore::new();
-        let dir = tempfile::tempdir().unwrap();
-        let file_path = dir.path().join("no_save.json");
-        let path_str = file_path.to_str().unwrap();
-
-        // save_password is None (not true), so password should NOT be stored in credential store
-        let conn = make_ssh_conn("c1", "password", Some("ephemeral"), None);
-        write_raw_external_file(path_str, "Test", Vec::new(), vec![conn]);
-
-        let main_folders: HashSet<&str> = HashSet::new();
-        let _source = try_load_external_file(path_str, &main_folders, &mock).unwrap();
-
-        // Credential store should be empty — password was discarded, not stored
-        assert!(
-            mock.stored.lock().unwrap().is_empty(),
-            "Should not store when save_password is not true"
-        );
-
-        // File should no longer contain the password
-        let raw = std::fs::read_to_string(path_str).unwrap();
-        assert!(
-            !raw.contains("ephemeral"),
-            "Password should be stripped from disk even without save"
-        );
-    }
-
-    #[test]
-    fn external_file_migration_handles_mixed_connections() {
-        let mock = MockStore::new();
-        let dir = tempfile::tempdir().unwrap();
-        let file_path = dir.path().join("mixed.json");
-        let path_str = file_path.to_str().unwrap();
-
-        let connections = vec![
-            // SSH with password + save_password=true → should store
-            make_ssh_conn("c1", "password", Some("pw1"), Some(true)),
-            // Local shell → no password to handle
-            make_local_conn("c2"),
-            // SSH key auth with passphrase + save_password=true → should store
-            make_ssh_conn("c3", "key", Some("passphrase3"), Some(true)),
-            // SSH with no password → nothing to do
-            make_ssh_conn("c4", "password", None, Some(true)),
-        ];
-        write_raw_external_file(path_str, "Mixed", Vec::new(), connections);
-
-        let main_folders: HashSet<&str> = HashSet::new();
-        let source = try_load_external_file(path_str, &main_folders, &mock).unwrap();
-
-        // All 4 connections should be returned
-        assert_eq!(source.connections.len(), 4);
-
-        // Exactly 2 credentials stored (c1 password + c3 key passphrase)
-        let stored = mock.stored.lock().unwrap();
-        assert_eq!(stored.len(), 2, "Should store exactly 2 credentials");
-
-        let c1_entry = stored
-            .iter()
-            .find(|(k, _)| k.connection_id == "c1")
-            .unwrap();
-        assert_eq!(c1_entry.0.credential_type, CredentialType::Password);
-        assert_eq!(c1_entry.1, "pw1");
-
-        let c3_entry = stored
-            .iter()
-            .find(|(k, _)| k.connection_id == "c3")
-            .unwrap();
-        assert_eq!(c3_entry.0.credential_type, CredentialType::KeyPassphrase);
-        assert_eq!(c3_entry.1, "passphrase3");
-
-        // File on disk should be clean
-        let raw = std::fs::read_to_string(path_str).unwrap();
-        assert!(!raw.contains("pw1"), "pw1 should be stripped from disk");
-        assert!(
-            !raw.contains("passphrase3"),
-            "passphrase3 should be stripped from disk"
-        );
-    }
-
-    #[test]
-    fn external_file_password_stripped_on_save() {
-        let store = crate::credential::NullStore;
-        let dir = tempfile::tempdir().unwrap();
-        let file_path = dir.path().join("pass_test.json");
-        let path_str = file_path.to_str().unwrap();
-
-        let connections = vec![make_ssh_conn(
-            "c1",
-            "password",
-            Some("should_be_removed"),
-            None,
-        )];
-
-        save_external_file(path_str, "Test", Vec::new(), connections, &store).unwrap();
-
-        // Read raw JSON and verify password is not stored
-        let raw = std::fs::read_to_string(path_str).unwrap();
-        assert!(
-            !raw.contains("should_be_removed"),
-            "Password should not be in saved file"
-        );
-    }
-
-    /// Mock credential store that stores and retrieves values.
-    struct MockStoreWithData {
-        data: Mutex<HashMap<String, String>>,
-    }
-
-    impl MockStoreWithData {
-        fn new() -> Self {
-            Self {
-                data: Mutex::new(HashMap::new()),
-            }
-        }
-    }
-
-    impl CredentialStore for MockStoreWithData {
-        fn get(&self, key: &CredentialKey) -> Result<Option<String>> {
-            Ok(self.data.lock().unwrap().get(&key.to_string()).cloned())
-        }
-        fn set(&self, key: &CredentialKey, value: &str) -> Result<()> {
-            self.data
-                .lock()
-                .unwrap()
-                .insert(key.to_string(), value.to_string());
-            Ok(())
-        }
-        fn remove(&self, key: &CredentialKey) -> Result<()> {
-            self.data.lock().unwrap().remove(&key.to_string());
-            Ok(())
-        }
-        fn remove_all_for_connection(&self, connection_id: &str) -> Result<()> {
-            let prefix = format!("{connection_id}:");
-            self.data
-                .lock()
-                .unwrap()
-                .retain(|k, _| !k.starts_with(&prefix));
-            Ok(())
-        }
-        fn list_keys(&self) -> Result<Vec<CredentialKey>> {
-            Ok(self
-                .data
-                .lock()
-                .unwrap()
-                .keys()
-                .filter_map(|k| CredentialKey::from_map_key(k))
-                .collect())
-        }
-        fn status(&self) -> CredentialStoreStatus {
-            CredentialStoreStatus::Unlocked
-        }
+        let source = try_load_external_file(path_str, &main_folders, &store).unwrap();
+        assert_eq!(source.connections[0].folder_id, None);
     }
 
     #[test]
     fn preview_import_detects_encrypted_section() {
         let json = r#"{
-            "version": "1",
-            "folders": [],
-            "connections": [
-                {"id": "c1", "name": "SSH", "config": {"type": "ssh", "config": {"host": "h", "port": 22, "username": "u", "authMethod": "password", "enableX11Forwarding": false}}, "folderId": null}
+            "version": "2",
+            "children": [
+                {"type": "connection", "name": "SSH", "config": {"type": "ssh", "config": {"host": "h", "port": 22, "username": "u", "authMethod": "password"}}}
             ],
             "agents": [],
             "$encrypted": {"version": 1, "kdf": {"algorithm": "argon2id", "salt": "AAAA", "memoryCost": 65536, "timeCost": 3, "parallelism": 1}, "nonce": "AAAA", "data": "AAAA"}
@@ -1289,9 +1206,10 @@ mod tests {
     #[test]
     fn preview_import_detects_no_encrypted_section() {
         let json = r#"{
-            "version": "1",
-            "folders": [{"id": "f1", "name": "F", "parentId": null, "isExpanded": true}],
-            "connections": [],
+            "version": "2",
+            "children": [
+                {"type": "folder", "name": "F", "isExpanded": true, "children": []}
+            ],
             "agents": []
         }"#;
 
@@ -1302,85 +1220,10 @@ mod tests {
     }
 
     #[test]
-    fn preview_import_backward_compat_with_connection_store() {
-        // Old format ConnectionStore (no $encrypted, no agents)
-        let json = r#"{"version": "1", "folders": [], "connections": []}"#;
+    fn preview_import_with_agents() {
+        let json = r#"{"version": "2", "children": [], "agents": []}"#;
         let preview = preview_import_json(json).unwrap();
         assert_eq!(preview.connection_count, 0);
         assert!(!preview.has_encrypted_credentials);
-    }
-
-    #[test]
-    fn encrypted_export_import_round_trip() {
-        let cred_store = Arc::new(MockStoreWithData::new());
-
-        // Store a credential
-        let key = CredentialKey::new("c1", CredentialType::Password);
-        cred_store.set(&key, "my-secret-pw").unwrap();
-
-        // Build a store with one SSH connection
-        let store = ConnectionStore {
-            version: "1".to_string(),
-            folders: vec![],
-            connections: vec![make_ssh_conn("c1", "password", None, None)],
-            agents: vec![],
-        };
-
-        // Simulate the export
-        let store_json = serde_json::to_string_pretty(&store).unwrap();
-        let imported_store: ConnectionStore = serde_json::from_str(&store_json).unwrap();
-
-        // Build the encrypted export manually using the crypto module
-        let mut cred_map: HashMap<String, String> = HashMap::new();
-        cred_map.insert(key.to_string(), "my-secret-pw".to_string());
-        let plaintext = serde_json::to_vec(&cred_map).unwrap();
-        let envelope =
-            crate::credential::crypto::encrypt_with_password("export-pw", &plaintext).unwrap();
-
-        let export = EncryptedConnectionExport {
-            version: "1".to_string(),
-            folders: imported_store.folders,
-            connections: imported_store.connections,
-            agents: vec![],
-            encrypted: Some(envelope),
-        };
-
-        let export_json = serde_json::to_string_pretty(&export).unwrap();
-
-        // Verify $encrypted is present
-        assert!(export_json.contains("$encrypted"));
-
-        // Verify preview detects encrypted
-        let preview = preview_import_json(&export_json).unwrap();
-        assert!(preview.has_encrypted_credentials);
-        assert_eq!(preview.connection_count, 1);
-
-        // Decrypt the credentials manually
-        let re_parsed: EncryptedConnectionExport = serde_json::from_str(&export_json).unwrap();
-        let decrypted = crate::credential::crypto::decrypt_with_password(
-            "export-pw",
-            re_parsed.encrypted.as_ref().unwrap(),
-        )
-        .unwrap();
-        let recovered_map: HashMap<String, String> = serde_json::from_slice(&decrypted).unwrap();
-        assert_eq!(
-            recovered_map.get(&key.to_string()),
-            Some(&"my-secret-pw".to_string())
-        );
-    }
-
-    #[test]
-    fn encrypted_export_wrong_password_fails_decrypt() {
-        let cred_map: HashMap<String, String> =
-            vec![("c1:password".to_string(), "secret".to_string())]
-                .into_iter()
-                .collect();
-
-        let plaintext = serde_json::to_vec(&cred_map).unwrap();
-        let envelope =
-            crate::credential::crypto::encrypt_with_password("correct-pw", &plaintext).unwrap();
-
-        let result = crate::credential::crypto::decrypt_with_password("wrong-pw", &envelope);
-        assert!(result.is_err());
     }
 }
