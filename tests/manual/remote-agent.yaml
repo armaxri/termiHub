@@ -1,0 +1,116 @@
+category: remote-agent
+display_name: "Remote Agent"
+
+tests:
+  # --- RemoteBackend and session reconnect (PR #87) ---
+
+  - id: MT-AGENT-01
+    name: "Close tab — verify cleanup"
+    pr: 87
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Open a remote agent connection"
+      - "Close the tab"
+      - "Check for orphan threads/processes"
+    expected:
+      - "No orphan threads remain after closing tab"
+    verification: manual
+
+  # --- Connection error feedback dialog ---
+
+  - id: MT-AGENT-02
+    name: "Agent Not Installed — Setup Agent button"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Connect to a host without the agent installed"
+      - "In the 'Agent Not Installed' dialog, click 'Setup Agent'"
+    expected:
+      - "Agent Setup dialog opens"
+    verification: manual
+
+  # --- Agent setup wizard (PR #137) ---
+
+  - id: MT-AGENT-03
+    name: "Browse for agent binary"
+    pr: 137
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "In Agent Setup, click browse for a pre-built termihub-agent binary"
+    expected:
+      - "File picker works, binary path selected"
+    verification: manual
+    tags: [native-dialog]
+
+  - id: MT-AGENT-04
+    name: "Setup commands injected into terminal"
+    pr: 137
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Select a valid agent binary"
+      - "Proceed with setup"
+      - "Observe the terminal"
+    expected:
+      - "Setup commands are injected (mv, chmod, --version)"
+    verification: manual
+
+  - id: MT-AGENT-05
+    name: "Agent binary uploaded and version runs"
+    pr: 137
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Complete the agent setup process"
+    expected:
+      - "Binary is uploaded and 'termihub-agent --version' runs successfully"
+    verification: manual
+
+  - id: MT-AGENT-06
+    name: "Systemd service installation"
+    pr: 137
+    platforms: [linux]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Check 'Install systemd service' during setup"
+      - "Proceed with setup"
+    expected:
+      - "Systemd commands are injected into terminal"
+    verification: manual
+
+  - id: MT-AGENT-07
+    name: "Connect after setup"
+    pr: 137
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "After agent setup, right-click agent > 'Connect'"
+    expected:
+      - "Agent connects successfully"
+    verification: manual
+
+  - id: MT-AGENT-08
+    name: "Error on non-existent binary path"
+    pr: 137
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Select a non-existent binary path in Agent Setup"
+    expected:
+      - "Error is shown"
+    verification: manual

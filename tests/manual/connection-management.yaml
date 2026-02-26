@@ -1,0 +1,447 @@
+category: connection-management
+display_name: "Connection Management"
+
+tests:
+  # --- Remove folder selector from editor (PR #146) ---
+
+  - id: MT-CONN-01
+    name: "Drag connection onto folder"
+    pr: 146
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Create a folder and a connection in the sidebar"
+      - "Drag the connection onto the folder"
+    expected:
+      - "Connection moves into the folder correctly"
+    verification: manual
+
+  # --- Shell-specific icons and icon picker (PR #157) ---
+
+  - id: MT-CONN-02
+    name: "PowerShell tab shows biceps icon"
+    pr: 157
+    platforms: [all]
+    prerequisites:
+      - app: true
+    setup:
+      - create_connection:
+          name: "PS Icon Test"
+          type: local
+          config:
+            shellType: powershell
+      - connect: "PS Icon Test"
+    instructions:
+      - "Open the PowerShell tab"
+      - "Check the icon in the tab bar and drag overlay"
+    expected:
+      - "Biceps icon appears in tab bar and drag overlay"
+    verification: manual
+    tags: [visual]
+
+  - id: MT-CONN-03
+    name: "Git Bash tab shows git branch icon"
+    pr: 157
+    platforms: [all]
+    prerequisites:
+      - app: true
+    setup:
+      - create_connection:
+          name: "Git Bash Icon Test"
+          type: local
+          config:
+            shellType: gitBash
+      - connect: "Git Bash Icon Test"
+    instructions:
+      - "Open the Git Bash tab"
+      - "Check the icon"
+    expected:
+      - "Git branch icon appears"
+    verification: manual
+    tags: [visual]
+
+  - id: MT-CONN-04
+    name: "WSL tab shows penguin icon"
+    pr: 157
+    platforms: [windows]
+    prerequisites:
+      - app: true
+    setup:
+      - create_connection:
+          name: "WSL Icon Test"
+          type: local
+          config:
+            shellType: wsl
+      - connect: "WSL Icon Test"
+    instructions:
+      - "Open the WSL tab"
+      - "Check the icon"
+    expected:
+      - "Penguin icon appears"
+    verification: manual
+    tags: [visual]
+
+  - id: MT-CONN-05
+    name: "Custom icon via icon picker"
+    pr: 157
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Edit a saved connection"
+      - "Click 'Set Icon'"
+      - "Search for an icon and apply"
+    expected:
+      - "Icon shows in sidebar and tab"
+    verification: manual
+
+  - id: MT-CONN-06
+    name: "Icon picker search works"
+    pr: 157
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open the icon picker"
+      - "Search 'arm'"
+    expected:
+      - "BicepsFlexed appears in results"
+    verification: manual
+
+  - id: MT-CONN-07
+    name: "Clear custom icon restores default"
+    pr: 157
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Edit a connection with a custom icon"
+      - "Clear the custom icon"
+    expected:
+      - "Default icon is restored"
+    verification: manual
+
+  # --- Import/export connections (PR #33) ---
+
+  - id: MT-CONN-08
+    name: "Import connections from file"
+    pr: 33
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Click 'Import Connections' in the sidebar menu"
+      - "Select a JSON file"
+    expected:
+      - "File open dialog appears, imports JSON, connection list refreshes"
+    verification: manual
+    tags: [native-dialog]
+
+  - id: MT-CONN-09
+    name: "Export connections to file"
+    pr: 33
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Click 'Export Connections' in the sidebar menu"
+      - "Choose a location and save"
+    expected:
+      - "File save dialog appears, saves JSON"
+    verification: manual
+    tags: [native-dialog]
+
+  # --- Encrypted export/import (PR #322) ---
+
+  - id: MT-CONN-10
+    name: "Encrypted export with password"
+    pr: 322
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Click Export, choose 'With credentials'"
+      - "Enter matching passwords (8+ chars)"
+      - "Click Export"
+    expected:
+      - "File save dialog opens, JSON file saved with $encrypted section"
+    verification: manual
+    tags: [native-dialog]
+
+  - id: MT-CONN-11
+    name: "Export without credentials — no $encrypted"
+    pr: 322
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Export 'Without credentials'"
+      - "Open the saved JSON file"
+    expected:
+      - "No $encrypted section in saved JSON"
+    verification: manual
+
+  - id: MT-CONN-12
+    name: "Import encrypted — shows password field"
+    pr: 322
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Click 'Import Connections'"
+      - "Select a file with encrypted credentials"
+    expected:
+      - "Import dialog shows connection count and password field"
+    verification: manual
+
+  - id: MT-CONN-13
+    name: "Import encrypted — correct password"
+    pr: 322
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Enter the correct export password"
+      - "Click 'Import with Credentials'"
+    expected:
+      - "Success message shows connections and credentials imported"
+    verification: manual
+
+  - id: MT-CONN-14
+    name: "Import encrypted — wrong password"
+    pr: 322
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Enter a wrong password"
+    expected:
+      - "'Wrong password' error, password field remains for retry"
+    verification: manual
+
+  - id: MT-CONN-15
+    name: "Skip Credentials on encrypted import"
+    pr: 322
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Click 'Skip Credentials' on an encrypted import"
+    expected:
+      - "Connections imported without credentials"
+    verification: manual
+
+  - id: MT-CONN-16
+    name: "Import plain (non-encrypted) file"
+    pr: 322
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Import a plain (non-encrypted) export file"
+    expected:
+      - "Simple Import button shown (no password prompt)"
+      - "Connections imported normally"
+    verification: manual
+
+  # --- SSH key path browse button (PR #205) ---
+
+  - id: MT-CONN-17
+    name: "SSH key browse button opens file dialog"
+    pr: 205
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Create/edit an SSH connection"
+      - "Set auth method to 'Key'"
+      - "Click '...' browse button"
+    expected:
+      - "Native file dialog opens defaulting to ~/.ssh"
+    verification: manual
+    tags: [native-dialog]
+
+  - id: MT-CONN-18
+    name: "SSH key browse — select file populates path"
+    pr: 205
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "In the key browse dialog, select a key file"
+    expected:
+      - "Path populates in the input field"
+    verification: manual
+
+  - id: MT-CONN-19
+    name: "SSH key browse — cancel leaves field unchanged"
+    pr: 205
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Click '...' then cancel the dialog"
+    expected:
+      - "Input field remains unchanged"
+    verification: manual
+
+  - id: MT-CONN-20
+    name: "Agent connection key browse works"
+    pr: 205
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Repeat the SSH key browse test for Agent connection settings"
+    expected:
+      - "Same behavior: file dialog opens, select works, cancel works"
+    verification: manual
+
+  - id: MT-CONN-21
+    name: "Manual key path input still works"
+    pr: 205
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Manually type a key path in the input field"
+    expected:
+      - "Typed path is accepted"
+    verification: manual
+
+  # --- External connection file support (PR #50, redesigned in PR #210) ---
+
+  - id: MT-CONN-22
+    name: "Create File — empty JSON created"
+    pr: 210
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "In Settings > External Files, click 'Create File'"
+      - "Enter a name and save"
+    expected:
+      - "Native save dialog appears"
+      - "Empty JSON file created and auto-added to list"
+    verification: manual
+    tags: [native-dialog]
+
+  - id: MT-CONN-23
+    name: "Add File — select existing JSON"
+    pr: 210
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "In Settings > External Files, click 'Add File'"
+      - "Select an existing JSON file"
+    expected:
+      - "Native file picker appears"
+      - "Path appears in list with toggle"
+    verification: manual
+    tags: [native-dialog]
+
+  - id: MT-CONN-24
+    name: "Drag external connections into local folders"
+    pr: 210
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Drag external connections into local folders in the sidebar"
+    expected:
+      - "Folder assignment persists correctly"
+    verification: manual
+
+  # --- Duplicate connection name validation (#380) ---
+
+  - id: MT-CONN-25
+    name: "Duplicate name shows error"
+    pr: 380
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Create a connection named 'Test' in root"
+      - "Open 'New Connection' and type 'Test' as the name"
+    expected:
+      - "Name input has red border"
+      - "Error: 'A connection with this name already exists in this folder.'"
+    verification: manual
+
+  - id: MT-CONN-26
+    name: "Save blocked with duplicate name"
+    pr: 380
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Click Save with a duplicate name"
+    expected:
+      - "Editor stays open (save is blocked)"
+    verification: manual
+
+  - id: MT-CONN-27
+    name: "Error clears when name changed"
+    pr: 380
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Change the name to 'Test2'"
+    expected:
+      - "Error disappears and Save works"
+    verification: manual
+
+  - id: MT-CONN-28
+    name: "Self-edit shows no duplicate error"
+    pr: 380
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Edit the existing 'Test' connection"
+    expected:
+      - "No error is shown (own name is not a duplicate)"
+    verification: manual
+
+  - id: MT-CONN-29
+    name: "Case-insensitive duplicate detection"
+    pr: 380
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Try 'test' (lowercase) when 'Test' exists in the same folder"
+    expected:
+      - "Duplicate error is shown (case-insensitive)"
+    verification: manual
+
+  - id: MT-CONN-30
+    name: "Same name in different folders is allowed"
+    pr: 380
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Create folder 'device1' and 'device2'"
+      - "Create 'serial' in device1 and 'serial' in device2"
+    expected:
+      - "No duplicate error (same name in different folders is allowed)"
+    verification: manual
+
+  # --- Storage File selector in connection editor (PR #210) ---
+
+  - id: MT-CONN-31
+    name: "External file end-to-end"
+    pr: 210
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Add an external connection file in Settings and enable it"
+      - "Verify external file behavior end-to-end"
+    expected:
+      - "External file loads and connections are visible"
+    verification: manual

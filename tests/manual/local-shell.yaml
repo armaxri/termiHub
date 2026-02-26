@@ -1,0 +1,381 @@
+category: local-shell
+display_name: "Local Shell"
+
+tests:
+  # --- Terminal input works on new connections (PR #198) ---
+
+  - id: MT-LOCAL-01
+    name: "PowerShell input works on new connection"
+    pr: 198
+    platforms: [windows]
+    prerequisites:
+      - app: true
+    setup:
+      - create_connection:
+          name: "PowerShell Input Test"
+          type: local
+          config:
+            shellType: powershell
+      - connect: "PowerShell Input Test"
+    instructions:
+      - "Observe the terminal tab that just opened"
+      - "Type any text (e.g., 'hello') — it should appear immediately"
+      - "You should NOT need to click the terminal area first"
+    expected:
+      - "Keyboard input works immediately without clicking the terminal"
+    verification: manual
+
+  - id: MT-LOCAL-02
+    name: "SSH input works on new connection"
+    pr: 198
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    setup:
+      - create_connection:
+          name: "SSH Input Test"
+          type: ssh
+          config:
+            host: "127.0.0.1"
+            port: 2201
+            username: "testuser"
+            authMethod: password
+      - connect: "SSH Input Test"
+    instructions:
+      - "Observe the terminal tab that just opened"
+      - "Enter the password 'testpass' when prompted"
+      - "Type any text — it should appear immediately"
+    expected:
+      - "Keyboard input works immediately after connection"
+    verification: manual
+
+  # --- No initial output flash for WSL/SSH terminals (PR #175) ---
+
+  - id: MT-LOCAL-03
+    name: "WSL connection — no welcome banner flash"
+    pr: 175
+    platforms: [windows]
+    prerequisites:
+      - app: true
+    setup:
+      - create_connection:
+          name: "WSL Flash Test"
+          type: local
+          config:
+            shellType: wsl
+      - connect: "WSL Flash Test"
+    instructions:
+      - "Watch the terminal carefully as it opens"
+      - "Look for any flash of setup commands or welcome banner"
+    expected:
+      - "No welcome banner or setup commands flash before the prompt appears"
+      - "A clean prompt appears directly"
+    verification: manual
+
+  - id: MT-LOCAL-04
+    name: "Rapid WSL connections — no strange output"
+    pr: 175
+    platforms: [windows]
+    prerequisites:
+      - app: true
+    setup:
+      - create_connection:
+          name: "WSL Rapid Test 1"
+          type: local
+          config:
+            shellType: wsl
+      - create_connection:
+          name: "WSL Rapid Test 2"
+          type: local
+          config:
+            shellType: wsl
+    instructions:
+      - "Rapidly double-click 'WSL Rapid Test 1' then 'WSL Rapid Test 2'"
+      - "Both tabs should open in quick succession"
+      - "Check both terminals for output"
+    expected:
+      - "Both terminals show a clean prompt with no strange output"
+    verification: manual
+
+  - id: MT-LOCAL-05
+    name: "SSH connection — no setup command flash"
+    pr: 175
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    setup:
+      - create_connection:
+          name: "SSH Flash Test"
+          type: ssh
+          config:
+            host: "127.0.0.1"
+            port: 2201
+            username: "testuser"
+            authMethod: password
+      - connect: "SSH Flash Test"
+    instructions:
+      - "Watch the terminal carefully as it opens"
+      - "Enter password 'testpass' when prompted"
+      - "Look for any flash of setup commands before the prompt"
+    expected:
+      - "No setup command flash before the prompt appears"
+    verification: manual
+
+  - id: MT-LOCAL-06
+    name: "PowerShell/CMD startup not delayed"
+    pr: 175
+    platforms: [windows]
+    prerequisites:
+      - app: true
+    setup:
+      - create_connection:
+          name: "PS Startup Test"
+          type: local
+          config:
+            shellType: powershell
+      - connect: "PS Startup Test"
+    instructions:
+      - "Observe how quickly the PowerShell prompt appears"
+      - "It should appear without excessive delay"
+    expected:
+      - "Startup output is not delayed (no regression from WSL fix)"
+    verification: manual
+
+  # --- New tabs open in home directory (PR #66) ---
+
+  - id: MT-LOCAL-07
+    name: "New tabs open in home directory"
+    pr: 66
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open a new local shell terminal (Ctrl+Shift+`)"
+      - "Run 'pwd' (Unix) or 'echo %USERPROFILE%' (Windows)"
+      - "Verify the working directory is the user's home"
+    expected:
+      - "macOS/Linux: matches $HOME"
+      - "Windows: matches %USERPROFILE%"
+    verification: manual
+
+  # --- macOS key repeat fix (PR #48) ---
+
+  - id: MT-LOCAL-08
+    name: "macOS key repeat works"
+    pr: 48
+    platforms: [macos]
+    prerequisites:
+      - app: true
+    setup:
+      - create_connection:
+          name: "Key Repeat Test"
+          type: local
+          config:
+            shellType: zsh
+      - connect: "Key Repeat Test"
+    instructions:
+      - "Switch to the 'Key Repeat Test' tab"
+      - "Hold any letter key (e.g., 'k') for 3 seconds"
+      - "Observe the terminal output"
+    expected:
+      - "Key repeats continuously (kkkkkkkkkkkk...)"
+      - "Accent picker does NOT appear"
+      - "No delay before repeat starts"
+    verification: manual
+
+  # --- Doubled terminal text fix on macOS (PR #108) ---
+
+  - id: MT-LOCAL-09
+    name: "No doubled terminal text on macOS"
+    pr: 108
+    platforms: [macos]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open a local terminal"
+      - "Observe the prompt — it should appear once"
+      - "Type characters — each appears once"
+      - "Run 'echo hello' — output is not duplicated"
+    expected:
+      - "Prompt appears once, typing shows single characters"
+      - "Command output is not duplicated"
+    verification: manual
+
+  - id: MT-LOCAL-10
+    name: "No doubled text in split views on macOS"
+    pr: 108
+    platforms: [macos]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open multiple terminals / split views"
+      - "Type in each terminal"
+    expected:
+      - "Each terminal shows single output (no doubling)"
+    verification: manual
+
+  # --- WSL shell detection on Windows (PR #139) ---
+
+  - id: MT-LOCAL-11
+    name: "WSL distros in shell dropdown"
+    pr: 139
+    platforms: [windows]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open the connection editor for a new local connection"
+      - "Click the shell type dropdown"
+      - "Look for WSL distro entries"
+    expected:
+      - "Shell dropdown shows installed WSL distros (if WSL is installed)"
+    verification: manual
+
+  - id: MT-LOCAL-12
+    name: "WSL distro launches correctly"
+    pr: 139
+    platforms: [windows]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Select a WSL distro from the shell dropdown"
+      - "Save and connect"
+    expected:
+      - "WSL shell launches correctly in a new tab"
+    verification: manual
+
+  # --- Windows shell WSL interception fix (PR #129) ---
+
+  - id: MT-LOCAL-13
+    name: "Shell dropdown defaults to PowerShell on Windows"
+    pr: 129
+    platforms: [windows]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Create a new local shell connection"
+      - "Check the shell type dropdown default"
+    expected:
+      - "Shell dropdown defaults to PowerShell on Windows"
+    verification: manual
+
+  - id: MT-LOCAL-14
+    name: "Saved PowerShell connection launches PowerShell"
+    pr: 129
+    platforms: [windows]
+    prerequisites:
+      - app: true
+    setup:
+      - create_connection:
+          name: "PS Launch Test"
+          type: local
+          config:
+            shellType: powershell
+      - connect: "PS Launch Test"
+    instructions:
+      - "Observe the opened terminal"
+      - "Verify it is PowerShell (not WSL)"
+    expected:
+      - "PowerShell launches (not WSL)"
+    verification: manual
+
+  - id: MT-LOCAL-15
+    name: "Saved Git Bash connection launches Git Bash"
+    pr: 129
+    platforms: [windows]
+    prerequisites:
+      - app: true
+    setup:
+      - create_connection:
+          name: "Git Bash Launch Test"
+          type: local
+          config:
+            shellType: gitBash
+      - connect: "Git Bash Launch Test"
+    instructions:
+      - "Observe the opened terminal"
+      - "Verify it is Git Bash"
+    expected:
+      - "Git Bash launches correctly"
+    verification: manual
+
+  - id: MT-LOCAL-16
+    name: "Ctrl+Shift+` opens platform default shell"
+    pr: 129
+    platforms: [windows]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Press Ctrl+Shift+` to open a new terminal"
+      - "Verify the shell type"
+    expected:
+      - "Platform default shell opens (PowerShell on Windows)"
+    verification: manual
+
+  # --- WSL file browser follows CWD with OSC 7 injection (PR #154) ---
+
+  - id: MT-LOCAL-17
+    name: "WSL file browser shows correct initial path"
+    pr: 154
+    platforms: [windows]
+    prerequisites:
+      - app: true
+    setup:
+      - create_connection:
+          name: "WSL CWD Test"
+          type: local
+          config:
+            shellType: wsl
+      - connect: "WSL CWD Test"
+    instructions:
+      - "Open the WSL Ubuntu tab"
+      - "Check the file browser panel path"
+    expected:
+      - "File browser shows //wsl$/Ubuntu/home/<user>"
+    verification: manual
+
+  - id: MT-LOCAL-18
+    name: "WSL file browser follows cd /tmp"
+    pr: 154
+    platforms: [windows]
+    prerequisites:
+      - app: true
+    instructions:
+      - "In the WSL tab, run: cd /tmp"
+      - "Check the file browser panel path"
+    expected:
+      - "File browser follows to //wsl$/Ubuntu/tmp"
+    verification: manual
+
+  - id: MT-LOCAL-19
+    name: "WSL file browser shows Windows path for /mnt/c"
+    pr: 154
+    platforms: [windows]
+    prerequisites:
+      - app: true
+    instructions:
+      - "In the WSL tab, run: cd /mnt/c/Users"
+      - "Check the file browser panel path"
+    expected:
+      - "File browser shows C:/Users"
+    verification: manual
+
+  - id: MT-LOCAL-20
+    name: "WSL Fedora — no 'clear: command not found'"
+    pr: 154
+    platforms: [windows]
+    prerequisites:
+      - app: true
+    setup:
+      - create_connection:
+          name: "WSL Fedora Test"
+          type: local
+          config:
+            shellType: wsl
+    instructions:
+      - "Open a WSL Fedora tab (if Fedora WSL is installed)"
+      - "Check terminal output for errors"
+    expected:
+      - "No 'clear: command not found' error"
+    verification: manual

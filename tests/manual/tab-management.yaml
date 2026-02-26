@@ -1,0 +1,226 @@
+category: tab-management
+display_name: "Tab Management"
+
+tests:
+  # --- Baseline ---
+
+  - id: MT-TAB-01
+    name: "Drag tab to new position"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open multiple terminal tabs"
+      - "Drag a tab to a new position in the tab bar"
+    expected:
+      - "Tab moves to new position, order persists"
+    verification: manual
+
+  - id: MT-TAB-02
+    name: "Drag-and-drop tabs works correctly"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open multiple tabs"
+      - "Drag and drop tabs between different positions"
+    expected:
+      - "Drag-and-drop tabs works correctly"
+    verification: manual
+
+  # --- Save terminal content to file (PR #35) ---
+
+  - id: MT-TAB-03
+    name: "Save to File — native dialog opens"
+    pr: 35
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open a terminal with some output"
+      - "Right-click the terminal tab or use the menu"
+      - "Click 'Save to File'"
+    expected:
+      - "Native save dialog opens with default filename 'terminal-output.txt'"
+    verification: manual
+    tags: [native-dialog]
+
+  - id: MT-TAB-04
+    name: "Save to File — file is written"
+    pr: 35
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "In the save dialog, choose a location and save"
+      - "Open the saved file"
+    expected:
+      - "File is written with the terminal's text content"
+    verification: manual
+
+  - id: MT-TAB-05
+    name: "Save to File — cancel does nothing"
+    pr: 35
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Click 'Save to File' then cancel the dialog"
+    expected:
+      - "Nothing happens (no crash, no file written)"
+    verification: manual
+
+  # --- Per-connection horizontal scrolling (PR #45) ---
+
+  - id: MT-TAB-06
+    name: "Horizontal scrolling enabled — no wrap"
+    pr: 45
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Create a connection with horizontal scrolling enabled"
+      - "Connect and run: echo $(python3 -c \"print('A'*300)\")"
+    expected:
+      - "Line does not wrap, horizontal scrollbar appears"
+    verification: manual
+
+  - id: MT-TAB-07
+    name: "Horizontal scrolling disabled — line wraps"
+    pr: 45
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Create a connection without horizontal scrolling"
+      - "Run the same wide-output command"
+    expected:
+      - "Line wraps normally"
+    verification: manual
+
+  - id: MT-TAB-08
+    name: "Key repeat works in horizontal scroll mode"
+    pr: 45
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "In a terminal with horizontal scrolling enabled"
+      - "Hold a key down"
+    expected:
+      - "Key repeat works normally"
+    verification: manual
+
+  - id: MT-TAB-09
+    name: "Horizontal scroll setting persists"
+    pr: 45
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Close and reopen the app"
+      - "Check the connection's horizontal scroll setting"
+    expected:
+      - "Connection setting persists"
+    verification: manual
+
+  - id: MT-TAB-10
+    name: "Scroll area adjusts on resize"
+    pr: 45
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "In a terminal with horizontal scrolling"
+      - "Resize the window/panels"
+    expected:
+      - "Scroll area adjusts correctly"
+    verification: manual
+
+  # --- Dynamic horizontal scroll width update (PR #49) ---
+
+  - id: MT-TAB-11
+    name: "Scrollbar expands after wide output"
+    pr: 49
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open terminal with horizontal scrolling enabled"
+      - "Run a command producing wide output (e.g., ls -la /usr/bin)"
+    expected:
+      - "Scrollbar expands automatically after output settles"
+    verification: manual
+
+  - id: MT-TAB-12
+    name: "Key repeat works with dynamic scroll"
+    pr: 49
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "In a terminal with horizontal scrolling enabled"
+      - "Hold a key (e.g., 'k')"
+    expected:
+      - "Key repeats without interruption"
+    verification: manual
+
+  - id: MT-TAB-13
+    name: "Clear resets scroll width"
+    pr: 49
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "After producing wide output, run: clear"
+    expected:
+      - "Scroll width shrinks back to viewport width"
+    verification: manual
+
+  - id: MT-TAB-14
+    name: "Toggle horizontal scrolling off/on"
+    pr: 49
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Toggle horizontal scrolling off then on"
+    expected:
+      - "Still works as before after toggling"
+    verification: manual
+
+  # --- Split Views ---
+
+  - id: MT-TAB-15
+    name: "Shift+click splits vertically"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Hold Shift + click the split button (or use the toolbar option)"
+    expected:
+      - "Panel splits vertically"
+    verification: manual
+
+  - id: MT-TAB-16
+    name: "Drag divider resizes split panels"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open a split view"
+      - "Drag the divider between split panels"
+    expected:
+      - "Panels resize, terminals re-fit"
+    verification: manual
+
+  - id: MT-TAB-17
+    name: "Drag tab to edge creates new split"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Drag a tab to the edge of another panel"
+    expected:
+      - "New split created, tab moves to new panel"
+    verification: manual

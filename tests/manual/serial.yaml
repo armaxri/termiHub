@@ -1,0 +1,34 @@
+category: serial
+display_name: "Serial"
+
+tests:
+  # --- Nerd Font / Powerline glyph support (PR #131) ---
+
+  - id: MT-SER-01
+    name: "Powerline glyphs render in SSH with agnoster"
+    pr: 131
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "SSH to a host running zsh with the agnoster theme"
+      - "Observe the prompt glyphs"
+    expected:
+      - "Powerline glyphs render correctly instead of boxes"
+    verification: manual
+    tags: [visual]
+
+  - id: MT-SER-02
+    name: "Glyphs render on clean Windows without Nerd Font"
+    pr: 131
+    platforms: [windows]
+    prerequisites:
+      - app: true
+    instructions:
+      - "On a clean Windows machine without any Nerd Font installed locally"
+      - "Open a terminal and verify font rendering"
+    expected:
+      - "Bundled Nerd Font renders glyphs correctly"
+    verification: manual
+    tags: [visual]
