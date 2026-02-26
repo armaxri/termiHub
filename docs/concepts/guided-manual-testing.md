@@ -919,28 +919,28 @@ If the binary is not found, the runner prompts the user to build first (`pnpm ta
 
 Every manual test item in `docs/testing.md` maps to a YAML entry:
 
-| testing.md Section           | YAML File                    | ID Prefix      | ~Count |
-| ---------------------------- | ---------------------------- | -------------- | ------ |
-| Local Shell                  | `local-shell.yaml`           | `MT-LOCAL`     | 20     |
-| SSH                          | `ssh.yaml`                   | `MT-SSH`       | 35     |
-| Serial                       | `serial.yaml`                | `MT-SER`       | 2      |
-| Tab Management + Split Views | `tab-management.yaml`        | `MT-TAB`       | 17     |
-| Connection Management        | `connection-management.yaml` | `MT-CONN`      | 31     |
-| File Browser + Editor        | `file-browser.yaml`          | `MT-FB`        | 20     |
-| UI / Layout                  | `ui-layout.yaml`             | `MT-UI`        | 20     |
-| Remote Agent                 | `remote-agent.yaml`          | `MT-AGENT`     | 8      |
-| Credential Store             | `credential-store.yaml`      | `MT-CRED`      | 8      |
-| Cross-Platform               | `cross-platform.yaml`        | `MT-XPLAT`     | 3      |
-| Configuration Recovery       | `config-recovery.yaml`       | `MT-RECOVERY`  | 12     |
+| testing.md Section           | YAML File                    | ID Prefix     | ~Count |
+| ---------------------------- | ---------------------------- | ------------- | ------ |
+| Local Shell                  | `local-shell.yaml`           | `MT-LOCAL`    | 20     |
+| SSH                          | `ssh.yaml`                   | `MT-SSH`      | 35     |
+| Serial                       | `serial.yaml`                | `MT-SER`      | 2      |
+| Tab Management + Split Views | `tab-management.yaml`        | `MT-TAB`      | 17     |
+| Connection Management        | `connection-management.yaml` | `MT-CONN`     | 31     |
+| File Browser + Editor        | `file-browser.yaml`          | `MT-FB`       | 20     |
+| UI / Layout                  | `ui-layout.yaml`             | `MT-UI`       | 20     |
+| Remote Agent                 | `remote-agent.yaml`          | `MT-AGENT`    | 8      |
+| Credential Store             | `credential-store.yaml`      | `MT-CRED`     | 8      |
+| Cross-Platform               | `cross-platform.yaml`        | `MT-XPLAT`    | 3      |
+| Configuration Recovery       | `config-recovery.yaml`       | `MT-RECOVERY` | 12     |
 
 ### Dependencies
 
-| Tool                 | Purpose                  | Required                  | Notes                                               |
-| -------------------- | ------------------------ | ------------------------- | --------------------------------------------------- |
-| `python3` + `PyYAML` | Runner + YAML parsing    | yes                       | Already a project prerequisite (serial echo server) |
+| Tool                 | Purpose                  | Required                  | Notes                                                 |
+| -------------------- | ------------------------ | ------------------------- | ----------------------------------------------------- |
+| `python3` + `PyYAML` | Runner + YAML parsing    | yes                       | Already a project prerequisite (serial echo server)   |
 | `jq`                 | JSON verification checks | optional                  | Used for `json_check` if available; graceful fallback |
-| `docker`             | Container infrastructure | for SSH/telnet/SFTP tests | Already used by test-system scripts                 |
-| `socat`              | Virtual serial ports     | for serial tests          | Already used by test-system scripts                 |
+| `docker`             | Container infrastructure | for SSH/telnet/SFTP tests | Already used by test-system scripts                   |
+| `socat`              | Virtual serial ports     | for serial tests          | Already used by test-system scripts                   |
 
 ### Future Enhancements (Out of Scope)
 
