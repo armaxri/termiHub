@@ -126,7 +126,7 @@ tauri-driver is a WebDriver proxy that translates W3C WebDriver protocol command
 
 The 9 helper modules (1,286 lines) encode three categories of logic:
 
-**Category 1: UI interaction sequences (reusable as YAML action templates)**
+#### Category 1: UI interaction sequences (reusable as YAML action templates)
 
 Helpers like `createLocalConnection(name)`, `openNewConnectionEditor()`, and `closeAllTabs()` are sequences of WebDriver actions that map directly to YAML action lists:
 
@@ -145,7 +145,7 @@ templates:
 
 This approach works well for ~60% of the helper logic (app.js, connections.js, sidebar.js, tabs.js).
 
-**Category 2: Infrastructure interaction with async waits (require Python functions)**
+#### Category 2: Infrastructure interaction with async waits (require Python functions)
 
 Helpers like `handlePasswordPrompt(password, timeout)`, `waitForMonitoringStats(timeout)`, and `verifyTerminalRendered(waitMs)` involve conditional logic, timeouts, and DOM queries that are difficult to express in YAML:
 
@@ -187,7 +187,7 @@ def handle_password_prompt(driver, password, timeout=5000):
     driver.find_element(By.CSS_SELECTOR, SELECTORS['password_prompt_connect']).click()
 ```
 
-**Category 3: Dynamic assertion logic (require Python or inline JS)**
+#### Category 3: Dynamic assertion logic (require Python or inline JS)
 
 Some tests use complex assertion patterns:
 
@@ -222,7 +222,7 @@ This keeps the YAML readable for ~80% of tests while allowing full programmatic 
 
 **Analysis by test complexity tier:**
 
-**Tier 1 — Simple assertions (40% of tests): YAML excels**
+#### Tier 1 — Simple assertions (40% of tests): YAML excels
 
 ```yaml
 # Example: "SSH port defaults to 22"
@@ -239,7 +239,7 @@ This keeps the YAML readable for ~80% of tests while allowing full programmatic 
 
 Clear, readable, easy to maintain. The YAML is arguably **more readable** than the equivalent JavaScript.
 
-**Tier 2 — Multi-step workflows (35% of tests): YAML is adequate with templates**
+#### Tier 2 — Multi-step workflows (35% of tests): YAML is adequate with templates
 
 ```yaml
 # Example: "Create SSH connection and verify monitoring"
@@ -264,7 +264,7 @@ Clear, readable, easy to maintain. The YAML is arguably **more readable** than t
 
 Manageable, but the `call` actions hide complexity. A developer reading this YAML must look up the helper implementations to understand what `handle_password_prompt` actually does.
 
-**Tier 3 — Complex stateful workflows (25% of tests): YAML becomes unwieldy**
+#### Tier 3 — Complex stateful workflows (25% of tests): YAML becomes unwieldy
 
 Consider `connection-editor-extended.test.js` (1,592 lines). A single test in this file:
 
