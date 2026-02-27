@@ -1,0 +1,41 @@
+category: cross-platform
+display_name: "Cross-Platform"
+
+tests:
+  - id: MT-XPLAT-01
+    name: "Correct shells listed per OS"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open the connection editor"
+      - "Check the shell type dropdown"
+    expected:
+      - "Unix: zsh/bash/sh listed"
+      - "Windows: PowerShell/cmd/Git Bash listed"
+    verification: manual
+
+  - id: MT-XPLAT-02
+    name: "Serial port naming convention per OS"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open the serial port dropdown in the connection editor"
+    expected:
+      - "Unix: /dev/tty* naming"
+      - "Windows: COM* naming"
+    verification: manual
+
+  - id: MT-XPLAT-03
+    name: "X11 forwarding on macOS/Linux"
+    platforms: [macos, linux]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Enable X11 forwarding on an SSH connection"
+      - "Connect (with X server running for full test)"
+    expected:
+      - "X11 forwarding works (not available on Windows)"
+    verification: manual

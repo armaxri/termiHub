@@ -1,0 +1,175 @@
+category: config-recovery
+display_name: "Configuration Recovery"
+
+tests:
+  # --- Corrupt settings file recovery (PR #383) ---
+
+  - id: MT-RECOVERY-01
+    name: "Corrupt settings.json recovery"
+    pr: 383
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Corrupt settings.json with invalid JSON (e.g., '{broken')"
+      - "Launch the app"
+    expected:
+      - "App starts normally"
+      - "Recovery dialog lists 'settings.json' with recovery message"
+      - "settings.json.bak backup created"
+    verification: manual
+
+  - id: MT-RECOVERY-02
+    name: "Corrupt connections.json recovery"
+    pr: 383
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Corrupt connections.json with completely invalid JSON"
+      - "Launch the app"
+    expected:
+      - "App starts with empty connection list"
+      - "Recovery dialog shown"
+      - "connections.json.bak backup created"
+    verification: manual
+
+  - id: MT-RECOVERY-03
+    name: "Partial connections.json corruption"
+    pr: 383
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Corrupt a single connection entry in connections.json"
+      - "(valid JSON structure but one malformed connection object)"
+      - "Launch the app"
+    expected:
+      - "Good connections are preserved"
+      - "Bad entry is dropped"
+      - "Recovery dialog shows per-entry details"
+    verification: manual
+
+  - id: MT-RECOVERY-04
+    name: "Corrupt tunnels.json recovery"
+    pr: 383
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Corrupt tunnels.json with invalid JSON"
+      - "Launch the app"
+    expected:
+      - "App starts normally without tunnels"
+      - "Recovery dialog shown"
+      - "tunnels.json.bak backup created"
+    verification: manual
+
+  - id: MT-RECOVERY-05
+    name: "Dismiss recovery dialog"
+    pr: 383
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "After a recovery dialog appears, click 'OK'"
+    expected:
+      - "Dialog closes and app functions normally"
+    verification: manual
+
+  # --- Nested tree data model (PR #385) ---
+
+  - id: MT-RECOVERY-06
+    name: "Fresh start uses v2 nested format"
+    pr: 385
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Start with no config file"
+      - "Create folders and connections"
+      - "Inspect connections.json on disk"
+    expected:
+      - "Uses nested v2 tree format"
+      - "No IDs on disk (only name, type, config, children)"
+    verification: manual
+
+  - id: MT-RECOVERY-07
+    name: "Auto-rename duplicate names"
+    pr: 385
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Create two connections with the same name in the same folder"
+    expected:
+      - "Second is auto-renamed with a (1) suffix"
+    verification: manual
+
+  - id: MT-RECOVERY-08
+    name: "Credential migration on rename"
+    pr: 385
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Create a connection with a saved password"
+      - "Rename the connection"
+      - "Reconnect"
+    expected:
+      - "Password still works after rename"
+    verification: manual
+
+  - id: MT-RECOVERY-09
+    name: "Credential migration on folder move"
+    pr: 385
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Create a connection with saved password in a folder"
+      - "Move connection to a different folder via drag-and-drop"
+      - "Reconnect"
+    expected:
+      - "Password still works after move"
+    verification: manual
+
+  - id: MT-RECOVERY-10
+    name: "Credential migration on folder rename"
+    pr: 385
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Create connections with saved passwords in a folder"
+      - "Rename the folder"
+      - "Reconnect each connection"
+    expected:
+      - "Passwords still work for all connections in the folder"
+    verification: manual
+
+  - id: MT-RECOVERY-11
+    name: "Import/export round-trip"
+    pr: 385
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Export connections"
+      - "Import into a fresh install"
+    expected:
+      - "All connections and folders are preserved"
+    verification: manual
+
+  - id: MT-RECOVERY-12
+    name: "External file uses v2 nested format"
+    pr: 385
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Create connections in an external file"
+      - "Inspect the external file on disk"
+    expected:
+      - "External file uses v2 nested format with no IDs"
+    verification: manual

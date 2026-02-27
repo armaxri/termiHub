@@ -1,0 +1,285 @@
+category: file-browser
+display_name: "File Browser"
+
+tests:
+  # --- Baseline ---
+
+  - id: MT-FB-01
+    name: "SFTP connects and shows remote filesystem"
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Connect SFTP via picker with an SSH connection"
+    expected:
+      - "Remote filesystem tree displayed"
+    verification: manual
+
+  - id: MT-FB-02
+    name: "Upload file via SFTP"
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Right-click in SFTP file browser > Upload"
+      - "Or drag a file from the OS into the SFTP panel"
+    expected:
+      - "File appears in remote listing"
+    verification: manual
+
+  - id: MT-FB-03
+    name: "Download file via SFTP"
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Right-click a remote file > Download in SFTP mode"
+    expected:
+      - "File saved to local filesystem"
+    verification: manual
+    tags: [native-dialog]
+
+  - id: MT-FB-04
+    name: "Open in VS Code from file browser"
+    pr: 51
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Right-click a file > 'Open in VS Code' (VS Code must be installed)"
+    expected:
+      - "File opens in VS Code"
+    verification: manual
+
+  # --- CWD-aware file browser (PR #39) ---
+
+  - id: MT-FB-05
+    name: "SSH terminal auto-connects SFTP"
+    pr: 39
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Open an SSH terminal"
+      - "Check the file browser panel"
+    expected:
+      - "File browser auto-connects SFTP (with password prompt) and shows remote CWD"
+    verification: manual
+
+  - id: MT-FB-06
+    name: "Serial terminal shows no-filesystem placeholder"
+    pr: 39
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open a serial terminal"
+      - "Check the file browser panel"
+    expected:
+      - "File browser shows 'no filesystem' placeholder"
+    verification: manual
+
+  # --- File browser follows tab switch from WSL to PowerShell (PR #167) ---
+
+  - id: MT-FB-07
+    name: "WSL tab — file browser shows WSL path"
+    pr: 167
+    platforms: [windows]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open a WSL tab"
+      - "Check the file browser path"
+    expected:
+      - "File browser shows //wsl$/<distro>/home/<user>"
+    verification: manual
+
+  - id: MT-FB-08
+    name: "PowerShell tab — file browser shows Windows home"
+    pr: 167
+    platforms: [windows]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open a PowerShell tab"
+      - "Check the file browser path"
+    expected:
+      - "File browser switches to Windows home directory"
+    verification: manual
+
+  - id: MT-FB-09
+    name: "Switch back to WSL — file browser returns"
+    pr: 167
+    platforms: [windows]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Switch back to the WSL tab"
+      - "Check the file browser path"
+    expected:
+      - "File browser returns to WSL path"
+    verification: manual
+
+  - id: MT-FB-10
+    name: "Bash tab — file browser shows home directory"
+    pr: 167
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open a bash tab (no OSC 7)"
+      - "Check the file browser path"
+    expected:
+      - "File browser shows home directory, not previous tab's path"
+    verification: manual
+
+  # --- File browser stays active when editing (PR #57) ---
+
+  - id: MT-FB-11
+    name: "File browser shows parent dir during edit"
+    pr: 57
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Open a remote (SFTP) file for editing"
+      - "Check the file browser panel"
+    expected:
+      - "File browser shows the remote parent directory"
+    verification: manual
+
+  # --- New File button (PR #58) ---
+
+  - id: MT-FB-12
+    name: "New File button in SFTP mode"
+    pr: 58
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "In SFTP file browser mode, click 'New File'"
+    expected:
+      - "New file creation works in SFTP mode"
+    verification: manual
+
+  # --- Right-click context menu (PR #59) ---
+
+  - id: MT-FB-13
+    name: "Right-click SFTP — Download option"
+    pr: 59
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Right-click a file in SFTP mode"
+    expected:
+      - "Download option appears for files"
+    verification: manual
+
+  # --- Open in VS Code (PR #51) ---
+
+  - id: MT-FB-14
+    name: "Open in VS Code — local mode"
+    pr: 51
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "In local file browser, right-click a file"
+      - "Click 'Open in VS Code'"
+    expected:
+      - "File opens in VS Code"
+    verification: manual
+
+  - id: MT-FB-15
+    name: "Open in VS Code — SFTP edit and re-upload"
+    pr: 51
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "In SFTP file browser, right-click a file"
+      - "Click 'Open in VS Code'"
+      - "Edit the file in VS Code and close the tab"
+    expected:
+      - "File re-uploaded (verify content changed on remote)"
+    verification: manual
+
+  - id: MT-FB-16
+    name: "VS Code not installed — menu item hidden"
+    pr: 51
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "On a system without VS Code installed"
+      - "Right-click a file in file browser"
+    expected:
+      - "'Open in VS Code' menu item does not appear"
+    verification: manual
+
+  - id: MT-FB-17
+    name: "SFTP session lost during VS Code edit"
+    pr: 51
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Open a file via VS Code from SFTP"
+      - "Kill the SSH/SFTP connection while file is open"
+    expected:
+      - "Error event emitted, no crash"
+    verification: manual
+
+  # --- Double-click file to open in editor (PR #61) ---
+
+  - id: MT-FB-18
+    name: "Double-click file opens in editor"
+    pr: 61
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Double-click a file in SFTP file browser"
+    expected:
+      - "File opens in editor tab"
+    verification: manual
+
+  # --- Editor: Built-in file editor with Monaco (PR #54) ---
+
+  - id: MT-FB-19
+    name: "SFTP edit with Remote badge"
+    pr: 54
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "In SFTP file browser, right-click file > 'Edit'"
+    expected:
+      - "Remote file loads with [Remote] badge"
+      - "Edit + save works"
+    verification: manual
+
+  - id: MT-FB-20
+    name: "Editor tab drag-and-drop between panels"
+    pr: 54
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open an editor tab"
+      - "Drag it between panels in split view"
+    expected:
+      - "Drag-and-drop works correctly"
+    verification: manual

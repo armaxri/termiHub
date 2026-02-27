@@ -1,0 +1,564 @@
+category: ssh
+display_name: "SSH"
+
+tests:
+  # --- Agnoster/Powerline theme rendering (PR #197) ---
+
+  - id: MT-SSH-01
+    name: "Agnoster theme renders without black rectangle"
+    pr: 197
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Connect via SSH to a Linux machine with zsh + Agnoster theme"
+      - "Observe the user@machine prompt segment"
+    expected:
+      - "Prompt segment blends with terminal background"
+      - "No visible black rectangle behind user@machine segment"
+    verification: manual
+    tags: [visual]
+
+  - id: MT-SSH-02
+    name: "Default bash prompt renders correctly"
+    pr: 197
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    setup:
+      - create_connection:
+          name: "SSH Bash Prompt Test"
+          type: ssh
+          config:
+            host: "127.0.0.1"
+            port: 2201
+            username: "testuser"
+            authMethod: password
+      - connect: "SSH Bash Prompt Test"
+    instructions:
+      - "Enter password 'testpass' when prompted"
+      - "Observe the default bash prompt"
+    expected:
+      - "No visual regression in prompt rendering"
+    verification: manual
+    tags: [visual]
+
+  - id: MT-SSH-03
+    name: "Local shell ANSI colors unaffected"
+    pr: 197
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open a local shell terminal"
+      - "Run a command that produces colored output (e.g., 'ls --color')"
+    expected:
+      - "ANSI color rendering is unaffected"
+    verification: manual
+    tags: [visual]
+
+  # --- SSH key authentication on Windows (PR #160) ---
+
+  - id: MT-SSH-04
+    name: "SSH Ed25519 key auth on Windows"
+    pr: 160
+    platforms: [windows]
+    prerequisites:
+      - app: true
+      - docker: true
+    setup:
+      - create_connection:
+          name: "SSH Ed25519 Test"
+          type: ssh
+          config:
+            host: "127.0.0.1"
+            port: 2203
+            username: "testuser"
+            authMethod: key
+            keyPath: "tests/fixtures/ssh-keys/ed25519"
+      - connect: "SSH Ed25519 Test"
+    instructions:
+      - "Observe the connection attempt"
+    expected:
+      - "SSH connects successfully with Ed25519 key"
+    verification: manual
+
+  - id: MT-SSH-05
+    name: "SSH RSA key auth still works"
+    pr: 160
+    platforms: [windows]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Create an SSH connection using an RSA key"
+      - "Connect"
+    expected:
+      - "SSH key auth with RSA key works"
+    verification: manual
+
+  - id: MT-SSH-06
+    name: "SSH password auth still works on Windows"
+    pr: 160
+    platforms: [windows]
+    prerequisites:
+      - app: true
+      - docker: true
+    setup:
+      - create_connection:
+          name: "SSH Password Test"
+          type: ssh
+          config:
+            host: "127.0.0.1"
+            port: 2201
+            username: "testuser"
+            authMethod: password
+      - connect: "SSH Password Test"
+    instructions:
+      - "Enter password 'testpass' when prompted"
+    expected:
+      - "SSH password auth works"
+    verification: manual
+
+  - id: MT-SSH-07
+    name: "SSH agent auth still works"
+    pr: 160
+    platforms: [windows]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Ensure SSH agent is running with a key loaded"
+      - "Create an SSH connection with agent auth method"
+      - "Connect"
+    expected:
+      - "SSH agent auth works"
+    verification: manual
+
+  # --- SSH agent setup guidance (PR #133) ---
+
+  - id: MT-SSH-08
+    name: "SSH agent status warning in editor"
+    pr: 133
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open connection editor, select SSH type"
+      - "Set auth method to 'Agent'"
+      - "Check for warning/hint text"
+    expected:
+      - "Warning appears if agent is stopped"
+      - "Normal hint appears if agent is running"
+    verification: manual
+
+  - id: MT-SSH-09
+    name: "Setup SSH Agent button opens PowerShell"
+    pr: 133
+    platforms: [windows]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open connection editor, select SSH + Agent auth"
+      - "Click 'Setup SSH Agent' button"
+    expected:
+      - "Local PowerShell tab opens with elevation command"
+    verification: manual
+
+  # --- Password prompt at connect (PR #38) ---
+
+  - id: MT-SSH-10
+    name: "Key auth — no password dialog"
+    pr: 38
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    setup:
+      - create_connection:
+          name: "SSH Key Auth No Dialog"
+          type: ssh
+          config:
+            host: "127.0.0.1"
+            port: 2203
+            username: "testuser"
+            authMethod: key
+            keyPath: "tests/fixtures/ssh-keys/ed25519"
+      - connect: "SSH Key Auth No Dialog"
+    instructions:
+      - "Observe the connection — no password dialog should appear"
+    expected:
+      - "Connects directly without password dialog"
+    verification: manual
+
+  - id: MT-SSH-11
+    name: "SFTP password auth — dialog appears"
+    pr: 38
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Connect SFTP to a password-auth SSH server"
+    expected:
+      - "Password dialog appears"
+    verification: manual
+
+  - id: MT-SSH-12
+    name: "Export connections — no passwords"
+    pr: 38
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Export connections via Settings > Export (without credentials)"
+      - "Save to a known location"
+      - "Open the exported JSON file"
+    expected:
+      - "No passwords in exported JSON"
+    verification: manual
+
+  - id: MT-SSH-13
+    name: "Stored passwords stripped on startup"
+    pr: 38
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "If you have connections with old-style stored passwords, launch the app"
+      - "Check that passwords are no longer stored in connections.json"
+    expected:
+      - "Passwords stripped from connections on app startup"
+    verification: manual
+
+  # --- X11 forwarding (PR #69) ---
+
+  - id: MT-SSH-14
+    name: "Docker SSH + X11 connection works"
+    pr: 69
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Connect via 'Docker SSH + X11' example connection"
+      - "Verify the SSH session opens"
+    expected:
+      - "SSH connection with X11 forwarding succeeds"
+    verification: manual
+
+  - id: MT-SSH-15
+    name: "X11 app window appears on local display"
+    pr: 69
+    platforms: [macos, linux]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "From the X11 SSH session, run: xclock"
+      - "Or try: xeyes"
+    expected:
+      - "Window appears on local display"
+    verification: manual
+
+  - id: MT-SSH-16
+    name: "DISPLAY variable set correctly"
+    pr: 69
+    platforms: [macos, linux]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "From the X11 SSH session, run: echo $DISPLAY"
+    expected:
+      - "Shows localhost:N.0 on remote"
+    verification: manual
+
+  - id: MT-SSH-17
+    name: "SSH works without X11 enabled"
+    pr: 69
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    setup:
+      - create_connection:
+          name: "SSH No X11"
+          type: ssh
+          config:
+            host: "127.0.0.1"
+            port: 2201
+            username: "testuser"
+            authMethod: password
+            enableX11Forwarding: false
+      - connect: "SSH No X11"
+    instructions:
+      - "Enter password 'testpass'"
+      - "Verify SSH works normally"
+    expected:
+      - "SSH connects and works normally without X11"
+    verification: manual
+
+  - id: MT-SSH-18
+    name: "X11 graceful degradation without X server"
+    pr: 69
+    platforms: [windows]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Enable X11 forwarding on an SSH connection"
+      - "Connect without a local X server running"
+    expected:
+      - "SSH connects with graceful degradation"
+    verification: manual
+
+  - id: MT-SSH-19
+    name: "Old connections without X11 field load correctly"
+    pr: 69
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open the app with saved connections from before the X11 feature"
+      - "Verify connections load correctly"
+    expected:
+      - "Existing saved connections load without errors"
+    verification: manual
+
+  # --- SSH monitoring in status bar (PR #114, #115) ---
+
+  - id: MT-SSH-20
+    name: "SSH monitoring shows inline stats"
+    pr: 114
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    setup:
+      - create_connection:
+          name: "SSH Monitor Test"
+          type: ssh
+          config:
+            host: "127.0.0.1"
+            port: 2201
+            username: "testuser"
+            authMethod: password
+    instructions:
+      - "Select the SSH connection in the sidebar"
+      - "Click 'Monitor' to connect monitoring"
+    expected:
+      - "Inline stats appear in the status bar"
+    verification: manual
+
+  - id: MT-SSH-21
+    name: "Stats auto-refresh every 5 seconds"
+    pr: 114
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "With monitoring connected, watch the stats for 15 seconds"
+    expected:
+      - "Stats auto-refresh every 5 seconds"
+    verification: manual
+
+  - id: MT-SSH-22
+    name: "Refresh and disconnect buttons work"
+    pr: 114
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Click the refresh button in the monitoring bar"
+      - "Click the disconnect button"
+    expected:
+      - "Refresh updates stats immediately"
+      - "Disconnect stops monitoring"
+    verification: manual
+
+  - id: MT-SSH-23
+    name: "High values show warning/critical colors"
+    pr: 115
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Connect monitoring to a server with high CPU/memory usage"
+      - "Or observe the color thresholds"
+    expected:
+      - "Yellow at >= 70%, red at >= 90%"
+    verification: manual
+    tags: [visual]
+
+  - id: MT-SSH-24
+    name: "Save & Connect button works"
+    pr: 114
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Create/edit an SSH connection"
+      - "Click 'Save & Connect'"
+    expected:
+      - "Connection saves and terminal opens in one action"
+    verification: manual
+
+  - id: MT-SSH-25
+    name: "Status bar shows hostname, CPU%, Mem%, Disk%"
+    pr: 114
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Connect to an SSH server and enable monitoring"
+      - "Check the status bar display"
+    expected:
+      - "Status bar displays hostname, CPU%, Mem%, Disk%"
+    verification: manual
+
+  - id: MT-SSH-26
+    name: "Hostname dropdown with system info"
+    pr: 114
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Click the hostname in the status bar"
+    expected:
+      - "Detail dropdown opens with system info, refresh, and disconnect"
+    verification: manual
+
+  - id: MT-SSH-27
+    name: "Disconnecting returns to Monitor button state"
+    pr: 114
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Disconnect from monitoring"
+    expected:
+      - "Returns to the 'Monitor' button state"
+    verification: manual
+
+  # --- SSH tunneling (PR #225) ---
+
+  - id: MT-SSH-28
+    name: "Tunnel config persists across restarts"
+    pr: 225
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Create an SSH tunnel"
+      - "Close and reopen the app"
+      - "Check tunnels.json in the config directory"
+    expected:
+      - "Tunnel configuration persists"
+    verification: manual
+
+  - id: MT-SSH-29
+    name: "Edit and save tunnel"
+    pr: 225
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Edit an existing tunnel configuration"
+      - "Click 'Save'"
+    expected:
+      - "Changes are persisted"
+    verification: manual
+
+  - id: MT-SSH-30
+    name: "Start tunnel — status turns green"
+    pr: 225
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Click the Play button on a tunnel in the sidebar"
+    expected:
+      - "Status indicator turns green (connected)"
+    verification: manual
+    tags: [visual]
+
+  - id: MT-SSH-31
+    name: "Stop tunnel — status turns grey"
+    pr: 225
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Click the Stop button on an active tunnel"
+    expected:
+      - "Status indicator turns grey (disconnected)"
+    verification: manual
+    tags: [visual]
+
+  - id: MT-SSH-32
+    name: "Save & Start tunnel"
+    pr: 225
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Click 'Save & Start' in the tunnel editor"
+    expected:
+      - "Tunnel is saved and started in one action"
+    verification: manual
+
+  - id: MT-SSH-33
+    name: "Local forward tunnel works"
+    pr: 225
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Create a local forward tunnel (e.g., local 18080 -> remote localhost:80)"
+      - "Start the tunnel"
+      - "In a terminal, run: curl http://127.0.0.1:18080"
+    expected:
+      - "curl reaches the remote service"
+    verification:
+      type: port_listening
+      port: 18080
+      description: "Tunnel local port is listening"
+
+  - id: MT-SSH-34
+    name: "Auto-start tunnel on app launch"
+    pr: 225
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Enable 'Auto-start when app launches' on a tunnel"
+      - "Restart the app"
+    expected:
+      - "Tunnel starts automatically"
+    verification: manual
+
+  - id: MT-SSH-35
+    name: "Tunnel traffic stats update"
+    pr: 225
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "With an active tunnel, send some traffic through it"
+      - "Check the sidebar tunnel entry"
+    expected:
+      - "Traffic stats (bytes sent/received, active connections) update"
+    verification: manual

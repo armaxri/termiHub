@@ -175,13 +175,14 @@ At the end, the runner prints a summary and writes the report:
 ### Command-Line Interface
 
 ```
-Usage: ./scripts/test-manual.sh [OPTIONS]
+Usage: python scripts/test-manual.py [OPTIONS]
 
 Options:
   --category <name>     Run only tests in a specific category
-                        (local-shell, ssh, serial, tab, connection,
-                         file-browser, editor, ui, agent, credential,
-                         cross-platform)
+                        (local-shell, ssh, serial, tab-management,
+                         connection-management, file-browser, ui-layout,
+                         remote-agent, credential-store, cross-platform,
+                         config-recovery)
   --test <id>           Run a single test by ID (e.g., MT-LOCAL-03)
   --platform <os>       Override platform detection (macos, linux, windows)
   --skip-setup          Skip infrastructure setup (assume already running)
@@ -801,73 +802,96 @@ flowchart TD
 ```
 tests/
   manual/                             # YAML test definitions
-    local-shell.yaml                  # ~12 tests (macOS key repeat, WSL, doubled text, etc.)
-    ssh.yaml                          # ~14 tests (Powerline, X11, key auth, monitoring, tunnels)
+    local-shell.yaml                  # ~20 tests (macOS key repeat, WSL, doubled text, etc.)
+    ssh.yaml                          # ~35 tests (Powerline, X11, key auth, monitoring, tunnels)
     serial.yaml                       #  ~2 tests (Nerd Font glyphs)
-    tab-management.yaml               #  ~5 tests (drag, save to file, horizontal scroll)
-    connection-management.yaml        #  ~8 tests (import/export, icons, external files)
-    file-browser.yaml                 #  ~4 tests (SFTP, VS Code, WSL paths)
-    editor.yaml                       #  ~2 tests (SFTP edit, drag between panels)
-    ui-layout.yaml                    #  ~9 tests (white flash, theme, borders, app icon)
-    remote-agent.yaml                 #  ~4 tests (cleanup, setup wizard, error dialog)
-    credential-store.yaml             #  ~3 tests (keychain, master password, auto-lock)
+    tab-management.yaml               # ~17 tests (drag, save to file, horizontal scroll, split views)
+    connection-management.yaml        # ~31 tests (import/export, icons, external files, validation)
+    file-browser.yaml                 # ~20 tests (SFTP, VS Code, WSL paths, editor)
+    ui-layout.yaml                    # ~20 tests (white flash, theme, borders, app icon)
+    remote-agent.yaml                 #  ~8 tests (cleanup, setup wizard, error dialog)
+    credential-store.yaml             #  ~8 tests (keychain, master password, auto-lock)
     cross-platform.yaml               #  ~3 tests (shell list, serial ports, X11)
+    config-recovery.yaml              # ~12 tests (corrupt settings, nested tree data model)
   reports/                            # Generated JSON reports (gitignored)
     .gitkeep
 scripts/
-  test-manual.sh                      # Main guided test runner (bash)
-  test-manual.cmd                     # Windows wrapper (calls bash via WSL or Git Bash)
-  parse-manual-tests.py               # Small YAML-to-JSON helper (~50 lines)
+  test-manual.py                      # Cross-platform Python guided test runner
 ```
 
 ### Runner Implementation
 
-The runner is a single bash script, consistent with the existing `test-system-*.sh` scripts. It uses standard Unix tools (`bash`, `jq`, `python3`, `nc`, `uname`).
+The runner is a single Python script (`scripts/test-manual.py`), chosen over the originally planned bash + jq + .cmd wrapper approach because:
 
-**YAML parsing**: A small Python helper (`scripts/parse-manual-tests.py`) converts YAML to JSON. Python 3 is already a prerequisite (used by the serial echo server) and `PyYAML` is available on all target platforms. The helper is invoked once at startup to produce a single JSON blob that the bash script processes with `jq`.
+- **Cross-platform natively**: Python runs on macOS, Linux, and Windows without requiring Git Bash or WSL
+- **No extra dependencies**: Python handles YAML (PyYAML), JSON, and interactive I/O natively — no `jq` needed
+- **Single file**: Eliminates the need for a separate YAML-to-JSON helper and Windows .cmd wrapper
+- **Cleaner logic**: argparse for CLI arguments, `socket` for port checks, `subprocess` for Docker/socat management
+
+Python 3.8+ with PyYAML is already a project prerequisite (used by the serial echo server).
 
 **Key structure:**
 
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
+```python
+#!/usr/bin/env python3
 
-# 1. Parse arguments (--category, --test, --platform, etc.)
-# 2. Detect platform (uname -s, uname -m)
-# 3. Check prerequisites (jq, python3, docker, socat, app binary)
-# 4. Load YAML test definitions via Python helper -> JSON
-# 5. Filter tests by platform and --category/--test args
-# 6. Show session summary, wait for Enter
-# 7. Infrastructure management (lazy start with cleanup trap)
+# 1. Parse arguments (argparse: --category, --test, --platform, etc.)
+# 2. Detect platform (platform module -> macos/linux/windows)
+# 3. Check prerequisites (Docker, socat availability)
+# 4. Load YAML test definitions directly (yaml.safe_load)
+# 5. Filter tests by platform and CLI args
+# 6. Show session summary, wait for user
+# 7. Infrastructure management (lazy start, atexit cleanup)
 # 8. Main loop: present tests one at a time, collect results
-# 9. Teardown + report generation
+# 9. Verification engine (automated checks + manual confirmation)
+# 10. Save progress after each test (resume support)
+# 11. Generate JSON report + print summary
 ```
 
 ### Verification Engine
 
-Implemented as a set of bash functions:
+Implemented as Python functions using only the standard library:
 
-```bash
-verify_file_exists() {
-    local path="$1"
-    [ -f "$path" ]
-}
+```python
+def run_verification(verification):
+    """Dispatch to the appropriate check based on type."""
+    checks = []
+    vtype = verification.get("type", "")
 
-verify_json_check() {
-    local path="$1"
-    local jq_expr="$2"
-    jq -e "$jq_expr" "$path" >/dev/null 2>&1
-}
+    if vtype == "file_exists":
+        checks.append({
+            "description": verification["description"],
+            "passed": os.path.isfile(verification["path"]),
+        })
 
-verify_process_running() {
-    local name="$1"
-    pgrep -f "$name" >/dev/null 2>&1
-}
+    elif vtype == "json_check":
+        # Uses json.load for validation; optionally jq if available
+        try:
+            with open(verification["path"]) as f:
+                json.load(f)
+            passed = True
+        except (json.JSONDecodeError, FileNotFoundError):
+            passed = False
+        checks.append({"description": verification["description"], "passed": passed})
 
-verify_port_listening() {
-    local port="$1"
-    nc -z 127.0.0.1 "$port" 2>/dev/null
-}
+    elif vtype == "process_running":
+        # Uses subprocess: pgrep on Unix, tasklist on Windows
+        ...
+
+    elif vtype == "port_listening":
+        # Uses socket.create_connection with timeout
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=2):
+                passed = True
+        except (ConnectionRefusedError, socket.timeout, OSError):
+            passed = False
+        checks.append({"description": verification["description"], "passed": passed})
+
+    elif vtype == "combined":
+        for auto_check in verification.get("automated", []):
+            checks.extend(run_verification(auto_check))
+
+    return checks
 ```
 
 ### App Binary Detection
@@ -884,41 +908,39 @@ If the binary is not found, the runner prompts the user to build first (`pnpm ta
 
 ### Integration with Existing Infrastructure
 
-| Existing Asset                      | How the Runner Uses It                                                                           |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `tests/docker/docker-compose.yml`   | Started directly via `docker compose up -d` for tests needing SSH/telnet containers              |
-| `tests/fixtures/ssh-keys/`          | Referenced in instructions (e.g., "use the ed25519 key at `tests/fixtures/ssh-keys/ed25519`")    |
-| `TERMIHUB_CONFIG_DIR` env var       | Used to inject pre-created connections into the app at launch                                    |
-| `scripts/test-system-*.sh` patterns | Code structure reused: argument parsing, cleanup traps, health check loops, Docker orchestration |
+| Existing Asset                    | How the Runner Uses It                                                                        |
+| --------------------------------- | --------------------------------------------------------------------------------------------- |
+| `tests/docker/docker-compose.yml` | Started directly via `docker compose up -d` for tests needing SSH/telnet containers           |
+| `tests/fixtures/ssh-keys/`        | Referenced in instructions (e.g., "use the ed25519 key at `tests/fixtures/ssh-keys/ed25519`") |
+| `TERMIHUB_CONFIG_DIR` env var     | Used to inject pre-created connections into the app at launch                                 |
+| `examples/` patterns              | Infrastructure lifecycle patterns reused from `start-test-environment.sh`                     |
 
 ### Test-to-YAML Migration from docs/testing.md
 
 Every manual test item in `docs/testing.md` maps to a YAML entry:
 
-| testing.md Section           | YAML File                    | ID Prefix  | ~Count |
-| ---------------------------- | ---------------------------- | ---------- | ------ |
-| Local Shell                  | `local-shell.yaml`           | `MT-LOCAL` | 12     |
-| SSH                          | `ssh.yaml`                   | `MT-SSH`   | 14     |
-| Serial                       | `serial.yaml`                | `MT-SER`   | 2      |
-| Tab Management + Split Views | `tab-management.yaml`        | `MT-TAB`   | 5      |
-| Connection Management        | `connection-management.yaml` | `MT-CONN`  | 8      |
-| File Browser                 | `file-browser.yaml`          | `MT-FB`    | 4      |
-| Editor                       | `editor.yaml`                | `MT-EDIT`  | 2      |
-| UI / Layout                  | `ui-layout.yaml`             | `MT-UI`    | 9      |
-| Remote Agent                 | `remote-agent.yaml`          | `MT-AGENT` | 4      |
-| Credential Store             | `credential-store.yaml`      | `MT-CRED`  | 3      |
-| Cross-Platform               | `cross-platform.yaml`        | `MT-XPLAT` | 3      |
+| testing.md Section           | YAML File                    | ID Prefix     | ~Count |
+| ---------------------------- | ---------------------------- | ------------- | ------ |
+| Local Shell                  | `local-shell.yaml`           | `MT-LOCAL`    | 20     |
+| SSH                          | `ssh.yaml`                   | `MT-SSH`      | 35     |
+| Serial                       | `serial.yaml`                | `MT-SER`      | 2      |
+| Tab Management + Split Views | `tab-management.yaml`        | `MT-TAB`      | 17     |
+| Connection Management        | `connection-management.yaml` | `MT-CONN`     | 31     |
+| File Browser + Editor        | `file-browser.yaml`          | `MT-FB`       | 20     |
+| UI / Layout                  | `ui-layout.yaml`             | `MT-UI`       | 20     |
+| Remote Agent                 | `remote-agent.yaml`          | `MT-AGENT`    | 8      |
+| Credential Store             | `credential-store.yaml`      | `MT-CRED`     | 8      |
+| Cross-Platform               | `cross-platform.yaml`        | `MT-XPLAT`    | 3      |
+| Configuration Recovery       | `config-recovery.yaml`       | `MT-RECOVERY` | 12     |
 
 ### Dependencies
 
-| Tool                 | Purpose                               | Required                  | Notes                                               |
-| -------------------- | ------------------------------------- | ------------------------- | --------------------------------------------------- |
-| `bash`               | Script runtime                        | yes                       | macOS/Linux native; via WSL or Git Bash on Windows  |
-| `python3` + `PyYAML` | YAML parsing                          | yes                       | Already a project prerequisite (serial echo server) |
-| `jq`                 | JSON verification + report processing | yes                       | `brew install jq` / `apt install jq`                |
-| `docker`             | Container infrastructure              | for SSH/telnet/SFTP tests | Already used by test-system scripts                 |
-| `socat`              | Virtual serial ports                  | for serial tests          | Already used by test-system scripts                 |
-| `nc` (netcat)        | Port health checks                    | yes                       | Bundled on macOS/Linux                              |
+| Tool                 | Purpose                  | Required                  | Notes                                                 |
+| -------------------- | ------------------------ | ------------------------- | ----------------------------------------------------- |
+| `python3` + `PyYAML` | Runner + YAML parsing    | yes                       | Already a project prerequisite (serial echo server)   |
+| `jq`                 | JSON verification checks | optional                  | Used for `json_check` if available; graceful fallback |
+| `docker`             | Container infrastructure | for SSH/telnet/SFTP tests | Already used by test-system scripts                   |
+| `socat`              | Virtual serial ports     | for serial tests          | Already used by test-system scripts                   |
 
 ### Future Enhancements (Out of Scope)
 

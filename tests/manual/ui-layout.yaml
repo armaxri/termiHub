@@ -1,0 +1,286 @@
+category: ui-layout
+display_name: "UI / Layout"
+
+tests:
+  # --- No white flash on startup (PR #192) ---
+
+  - id: MT-UI-01
+    name: "No white flash on startup"
+    pr: 192
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Launch the app (cold start)"
+      - "Watch the window background carefully"
+    expected:
+      - "Window starts with dark background (#1e1e1e)"
+      - "No white flash"
+    verification: manual
+    tags: [visual]
+
+  - id: MT-UI-02
+    name: "No white transitions during startup"
+    pr: 192
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Observe the full startup sequence"
+    expected:
+      - "No white -> dark -> white transitions"
+    verification: manual
+    tags: [visual]
+
+  - id: MT-UI-03
+    name: "Dark theme restart — no white flash"
+    pr: 192
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "With Dark theme selected, restart the app"
+    expected:
+      - "No white flash on launch"
+    verification: manual
+    tags: [visual]
+
+  # --- Color theme switching (PR #220) ---
+
+  - id: MT-UI-04
+    name: "System theme follows OS preference"
+    pr: 220
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "In Settings, select 'System' theme"
+    expected:
+      - "App follows the current OS dark/light mode preference"
+    verification: manual
+    tags: [visual]
+
+  - id: MT-UI-05
+    name: "OS theme toggle — app switches automatically"
+    pr: 220
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "With 'System' theme selected"
+      - "Toggle OS dark/light mode"
+    expected:
+      - "App switches themes automatically without restart"
+    verification: manual
+    tags: [visual]
+
+  - id: MT-UI-06
+    name: "State dots visible in both themes"
+    pr: 220
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open some terminal tabs and check connected/disconnected state dots"
+      - "Switch between light and dark themes"
+    expected:
+      - "State dots visible in both themes on terminal tabs and agent sidebar"
+    verification: manual
+    tags: [visual]
+
+  - id: MT-UI-07
+    name: "Theme persists across restarts"
+    pr: 220
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Select a specific theme"
+      - "Close and reopen the app"
+    expected:
+      - "Selected theme persists"
+    verification: manual
+
+  - id: MT-UI-08
+    name: "ErrorBoundary renders with theme colors"
+    pr: 220
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Trigger an error (e.g., throw in a component) to see ErrorBoundary"
+    expected:
+      - "Renders with theme-appropriate colors"
+    verification: manual
+    tags: [visual]
+
+  # --- Theme switching applies immediately (PR #224) ---
+
+  - id: MT-UI-09
+    name: "System theme applies immediately"
+    pr: 224
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Switch to System theme"
+    expected:
+      - "Theme matches current OS preference immediately"
+    verification: manual
+    tags: [visual]
+
+  # --- Settings as tab (PR #32) ---
+
+  - id: MT-UI-10
+    name: "Settings tab drag between panels"
+    pr: 32
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Drag the settings tab between panels"
+    expected:
+      - "Works with correct Settings icon"
+    verification: manual
+
+  # --- Vertical split resize handle (PR #213) ---
+
+  - id: MT-UI-11
+    name: "Vertical resize handle works"
+    pr: 213
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open a split view"
+      - "Drag the vertical resize handle"
+    expected:
+      - "Panels resize smoothly"
+    verification: manual
+
+  # --- Clear separation between split view panels (PR #189) ---
+
+  - id: MT-UI-12
+    name: "1px line between split panels"
+    pr: 189
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open a split view (drag a tab to the edge of a panel)"
+      - "Look at the border between panels"
+    expected:
+      - "Visible 1px line appears between adjacent panels"
+    verification: manual
+    tags: [visual]
+
+  - id: MT-UI-13
+    name: "Single panel — border blends with sidebar"
+    pr: 189
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Return to single-panel mode"
+      - "Check the left border"
+    expected:
+      - "Left border blends naturally against the sidebar edge"
+    verification: manual
+    tags: [visual]
+
+  - id: MT-UI-14
+    name: "Horizontal split border"
+    pr: 189
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Create a horizontal split (left/right panels)"
+    expected:
+      - "Border appears between left and right panels"
+    verification: manual
+    tags: [visual]
+
+  - id: MT-UI-15
+    name: "Vertical split border"
+    pr: 189
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Create a vertical split (top/bottom panels)"
+    expected:
+      - "Border appears between top and bottom panels"
+    verification: manual
+    tags: [visual]
+
+  # --- Black bar at bottom of terminal fix (PR #130) ---
+
+  - id: MT-UI-16
+    name: "No black bar at bottom of terminal"
+    pr: 130
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open terminal tabs"
+      - "Look at the bottom of each terminal"
+    expected:
+      - "No black bar at the bottom"
+    verification: manual
+    tags: [visual]
+
+  - id: MT-UI-17
+    name: "Terminal fills correctly on resize"
+    pr: 130
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Resize window/split panels"
+    expected:
+      - "Terminal fills correctly"
+    verification: manual
+    tags: [visual]
+
+  - id: MT-UI-18
+    name: "Settings tab unaffected by terminal fix"
+    pr: 130
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open the Settings tab"
+      - "Check for visual issues"
+    expected:
+      - "Settings tab renders correctly (unaffected)"
+    verification: manual
+
+  # --- Custom app icon (PR #70) ---
+
+  - id: MT-UI-19
+    name: "App icon in dock/taskbar"
+    pr: 70
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Check the app icon in dock (macOS), taskbar (Windows), or launcher (Linux)"
+    expected:
+      - "Custom termiHub icon is displayed"
+    verification: manual
+    tags: [visual]
+
+  - id: MT-UI-20
+    name: "Favicon in dev mode"
+    pr: 70
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Run the app in dev mode (pnpm tauri dev)"
+      - "Check the browser tab favicon"
+    expected:
+      - "termiHub icon as favicon"
+    verification: manual
+    tags: [visual]
