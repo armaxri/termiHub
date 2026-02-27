@@ -344,6 +344,18 @@ impl ConnectionManager {
         }
 
         store.folders.retain(|f| f.id != id);
+
+        // Deduplicate names — reparented children may collide with existing
+        // siblings in the parent folder
+        {
+            let FlatConnectionStore {
+                connections,
+                folders,
+                ..
+            } = &mut *store;
+            deduplicate_sibling_names(connections, folders);
+        }
+
         self.storage
             .save_flat(&store)
             .context("Failed to persist after folder delete")
