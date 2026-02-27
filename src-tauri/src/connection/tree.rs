@@ -789,6 +789,54 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // Regression: drag-and-drop move into folder with same-name sibling
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn dedup_move_connection_into_folder_with_same_name_sibling() {
+        // Simulates the scenario: connection "Zsh" at root is moved into
+        // folder "TestDir" which already contains a connection named "Zsh".
+        // After the move, the connection has folder_id = "TestDir" but its
+        // ID has been recomputed to "TestDir/Zsh", colliding with the
+        // existing connection's ID.
+        let mut folders = vec![ConnectionFolder {
+            id: "TestDir".to_string(),
+            name: "TestDir".to_string(),
+            parent_id: None,
+            is_expanded: true,
+        }];
+        let mut conns = vec![
+            // Existing connection in folder
+            SavedConnection {
+                id: "TestDir/Zsh".to_string(),
+                name: "Zsh".to_string(),
+                config: make_local_config(),
+                folder_id: Some("TestDir".to_string()),
+                terminal_options: None,
+                source_file: None,
+            },
+            // Moved connection: ID recomputed to match new folder
+            SavedConnection {
+                id: "TestDir/Zsh".to_string(),
+                name: "Zsh".to_string(),
+                config: make_local_config(),
+                folder_id: Some("TestDir".to_string()),
+                terminal_options: None,
+                source_file: None,
+            },
+        ];
+
+        deduplicate_sibling_names(&mut conns, &mut folders);
+
+        // First connection keeps its name
+        assert_eq!(conns[0].name, "Zsh");
+        assert_eq!(conns[0].id, "TestDir/Zsh");
+        // Second (moved) connection gets renamed
+        assert_eq!(conns[1].name, "Zsh (1)");
+        assert_eq!(conns[1].id, "TestDir/Zsh (1)");
+    }
+
+    // -----------------------------------------------------------------------
     // count_tree_items
     // -----------------------------------------------------------------------
 
