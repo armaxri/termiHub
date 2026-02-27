@@ -8,6 +8,8 @@
 .connection-list__group {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 
 .connection-list__group-header {
