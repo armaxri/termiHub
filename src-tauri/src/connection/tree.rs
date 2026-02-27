@@ -837,6 +837,76 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // Regression: folder deletion reparents children that collide with
+    // existing siblings in the parent folder
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn dedup_after_folder_delete_reparents_children() {
+        // Simulates deleting folder "Dir" which contains "SSH".
+        // Root already has a connection named "SSH".
+        // After reparenting, both are at root → dedup should rename the second.
+        let mut folders = vec![];
+        let mut conns = vec![
+            // Existing root connection
+            SavedConnection {
+                id: "SSH".to_string(),
+                name: "SSH".to_string(),
+                config: make_ssh_config(),
+                folder_id: None,
+                terminal_options: None,
+                source_file: None,
+            },
+            // Connection reparented from deleted folder to root
+            SavedConnection {
+                id: "SSH".to_string(),
+                name: "SSH".to_string(),
+                config: make_ssh_config(),
+                folder_id: None,
+                terminal_options: None,
+                source_file: None,
+            },
+        ];
+
+        deduplicate_sibling_names(&mut conns, &mut folders);
+
+        assert_eq!(conns[0].name, "SSH");
+        assert_eq!(conns[0].id, "SSH");
+        assert_eq!(conns[1].name, "SSH (1)");
+        assert_eq!(conns[1].id, "SSH (1)");
+    }
+
+    #[test]
+    fn dedup_after_folder_delete_reparents_subfolders() {
+        // Simulates deleting folder "Parent" which contains subfolder "Work".
+        // Root already has a folder named "Work".
+        // After reparenting, both are at root → dedup should rename the second.
+        let mut folders = vec![
+            ConnectionFolder {
+                id: "Work".to_string(),
+                name: "Work".to_string(),
+                parent_id: None,
+                is_expanded: true,
+            },
+            // Subfolder reparented from deleted folder to root
+            ConnectionFolder {
+                id: "Work".to_string(),
+                name: "Work".to_string(),
+                parent_id: None,
+                is_expanded: false,
+            },
+        ];
+        let mut conns = vec![];
+
+        deduplicate_sibling_names(&mut conns, &mut folders);
+
+        assert_eq!(folders[0].name, "Work");
+        assert_eq!(folders[0].id, "Work");
+        assert_eq!(folders[1].name, "Work (1)");
+        assert_eq!(folders[1].id, "Work (1)");
+    }
+
+    // -----------------------------------------------------------------------
     // count_tree_items
     // -----------------------------------------------------------------------
 

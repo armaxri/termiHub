@@ -1019,18 +1019,20 @@ export const useAppStore = create<AppState>((set, get) => {
 
     addConnection: (connection) => {
       set((state) => ({ connections: [...state.connections, connection] }));
-      persistConnection(stripPassword(connection)).catch((err) =>
-        console.error("Failed to persist new connection:", err)
-      );
+      persistConnection(stripPassword(connection))
+        .then(() => loadConnections())
+        .then(({ connections, folders }) => set({ connections, folders }))
+        .catch((err) => console.error("Failed to persist new connection:", err));
     },
 
     updateConnection: (connection) => {
       set((state) => ({
         connections: state.connections.map((c) => (c.id === connection.id ? connection : c)),
       }));
-      persistConnection(stripPassword(connection)).catch((err) =>
-        console.error("Failed to persist connection update:", err)
-      );
+      persistConnection(stripPassword(connection))
+        .then(() => loadConnections())
+        .then(({ connections, folders }) => set({ connections, folders }))
+        .catch((err) => console.error("Failed to persist connection update:", err));
     },
 
     deleteConnection: (connectionId) => {
@@ -1045,7 +1047,10 @@ export const useAppStore = create<AppState>((set, get) => {
 
     addFolder: (folder) => {
       set((state) => ({ folders: [...state.folders, folder] }));
-      persistFolder(folder).catch((err) => console.error("Failed to persist new folder:", err));
+      persistFolder(folder)
+        .then(() => loadConnections())
+        .then(({ connections, folders }) => set({ connections, folders }))
+        .catch((err) => console.error("Failed to persist new folder:", err));
     },
 
     deleteFolder: (folderId) => {
@@ -1061,24 +1066,12 @@ export const useAppStore = create<AppState>((set, get) => {
           .map((f) => (f.parentId === folderId ? { ...f, parentId } : f))
           .filter((f) => f.id !== folderId);
 
-        // Persist moved connections
-        connections
-          .filter(
-            (c) =>
-              c.folderId === null &&
-              state.connections.find((sc) => sc.id === c.id)?.folderId === folderId
-          )
-          .forEach((c) => {
-            persistConnection(c).catch((err) =>
-              console.error("Failed to persist connection move:", err)
-            );
-          });
-
         return { folders, connections };
       });
-      removeFolder(folderId).catch((err) =>
-        console.error("Failed to persist folder deletion:", err)
-      );
+      removeFolder(folderId)
+        .then(() => loadConnections())
+        .then(({ connections, folders }) => set({ connections, folders }))
+        .catch((err) => console.error("Failed to persist folder deletion:", err));
     },
 
     duplicateConnection: (connectionId) => {
@@ -1091,9 +1084,10 @@ export const useAppStore = create<AppState>((set, get) => {
         name: `Copy of ${original.name}`,
       };
       set((s) => ({ connections: [...s.connections, duplicate] }));
-      persistConnection(stripPassword(duplicate)).catch((err) =>
-        console.error("Failed to persist duplicated connection:", err)
-      );
+      persistConnection(stripPassword(duplicate))
+        .then(() => loadConnections())
+        .then(({ connections, folders }) => set({ connections, folders }))
+        .catch((err) => console.error("Failed to persist duplicated connection:", err));
     },
 
     moveConnectionToFile: async (connectionId, targetSource) => {

@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Duplicate connection names now auto-renamed with `(1)`, `(2)` suffixes in all scenarios: adding, renaming, duplicating, folder deletion, and import — the frontend now reloads from the backend after every persist operation to sync dedup renames; the backend also deduplicates when folder deletion reparents children (#388)
 - Grey screen / app crash when dragging a connection into a folder that already contains a connection with the same name — the backend now recomputes the connection's path-based ID after a folder change and correctly migrates credentials; the frontend reloads connections after a move to sync dedup renames
 - System crash when creating a connection with a duplicate name — the connection editor now validates names in real-time and shows a red-bordered input with an error message when a duplicate is detected; validation is scoped per folder so the same name is allowed in different folders (#380)
 - Default local shell no longer labeled with "(default)" in the connection editor after schema-driven form refactor — the shell option label in the backend schema now includes the suffix again
