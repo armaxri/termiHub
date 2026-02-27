@@ -733,19 +733,19 @@ See [scripts/README.md](../scripts/README.md) for all options. Reports are saved
 
 ### Test Categories
 
-| Category               | YAML File                                                          | ID Prefix     | Tests |
-| ---------------------- | ------------------------------------------------------------------ | ------------- | ----- |
-| Local Shell            | [`local-shell.yaml`](../tests/manual/local-shell.yaml)            | `MT-LOCAL`    | 20    |
-| SSH                    | [`ssh.yaml`](../tests/manual/ssh.yaml)                            | `MT-SSH`      | 35    |
-| Serial                 | [`serial.yaml`](../tests/manual/serial.yaml)                      | `MT-SER`      | 2     |
-| Tab Management         | [`tab-management.yaml`](../tests/manual/tab-management.yaml)      | `MT-TAB`      | 17    |
-| Connection Management  | [`connection-management.yaml`](../tests/manual/connection-management.yaml) | `MT-CONN` | 31 |
-| File Browser + Editor  | [`file-browser.yaml`](../tests/manual/file-browser.yaml)          | `MT-FB`       | 20    |
-| UI / Layout            | [`ui-layout.yaml`](../tests/manual/ui-layout.yaml)                | `MT-UI`       | 20    |
-| Remote Agent           | [`remote-agent.yaml`](../tests/manual/remote-agent.yaml)          | `MT-AGENT`    | 8     |
-| Credential Store       | [`credential-store.yaml`](../tests/manual/credential-store.yaml)  | `MT-CRED`     | 8     |
-| Cross-Platform         | [`cross-platform.yaml`](../tests/manual/cross-platform.yaml)      | `MT-XPLAT`    | 3     |
-| Configuration Recovery | [`config-recovery.yaml`](../tests/manual/config-recovery.yaml)    | `MT-RECOVERY` | 12    |
-| **Total**              |                                                                    |               | **176** |
+| Category               | YAML File                                                                  | ID Prefix     | Tests   |
+| ---------------------- | -------------------------------------------------------------------------- | ------------- | ------- |
+| Local Shell            | [`local-shell.yaml`](../tests/manual/local-shell.yaml)                     | `MT-LOCAL`    | 20      |
+| SSH                    | [`ssh.yaml`](../tests/manual/ssh.yaml)                                     | `MT-SSH`      | 35      |
+| Serial                 | [`serial.yaml`](../tests/manual/serial.yaml)                               | `MT-SER`      | 2       |
+| Tab Management         | [`tab-management.yaml`](../tests/manual/tab-management.yaml)               | `MT-TAB`      | 17      |
+| Connection Management  | [`connection-management.yaml`](../tests/manual/connection-management.yaml) | `MT-CONN`     | 31      |
+| File Browser + Editor  | [`file-browser.yaml`](../tests/manual/file-browser.yaml)                   | `MT-FB`       | 20      |
+| UI / Layout            | [`ui-layout.yaml`](../tests/manual/ui-layout.yaml)                         | `MT-UI`       | 20      |
+| Remote Agent           | [`remote-agent.yaml`](../tests/manual/remote-agent.yaml)                   | `MT-AGENT`    | 8       |
+| Credential Store       | [`credential-store.yaml`](../tests/manual/credential-store.yaml)           | `MT-CRED`     | 8       |
+| Cross-Platform         | [`cross-platform.yaml`](../tests/manual/cross-platform.yaml)               | `MT-XPLAT`    | 3       |
+| Configuration Recovery | [`config-recovery.yaml`](../tests/manual/config-recovery.yaml)             | `MT-RECOVERY` | 12      |
+| **Total**              |                                                                            |               | **176** |
 
 When adding new manual tests, add the YAML definition to the appropriate file in `tests/manual/` — the YAML files are the **source of truth** for guided testing.
