@@ -172,9 +172,10 @@ impl ConnectionManager {
 
     /// Save (add or update) a connection. Passwords are stripped before persisting.
     ///
-    /// After saving, runs deduplication to ensure unique names within the
-    /// connection's folder. If the connection is renamed by dedup, credentials
-    /// are migrated to the new path-based ID.
+    /// After saving, recomputes the path-based ID to match the connection's
+    /// current `folder_id` + `name`, then runs deduplication to ensure unique
+    /// names within the folder. If the ID changes (due to move or dedup rename),
+    /// credentials are migrated to the new path-based ID.
     pub fn save_connection(&self, connection: SavedConnection) -> Result<()> {
         let connection = prepare_for_storage(connection, &*self.credential_store)?;
         let old_id = connection.id.clone();
@@ -185,25 +186,31 @@ impl ConnectionManager {
             ..
         } = &mut *store;
 
-        if let Some(existing) = connections.iter_mut().find(|c| c.id == connection.id) {
-            *existing = connection;
+        // Find and replace, or add new — track the index so we can read
+        // the final ID after deduplication.
+        let save_idx = if let Some(idx) = connections.iter().position(|c| c.id == connection.id) {
+            connections[idx] = connection;
+            idx
         } else {
             connections.push(connection);
-        }
+            connections.len() - 1
+        };
 
-        // Deduplicate sibling names (may rename the connection)
+        // Recompute ID to match current folder_id + name.
+        // This is needed when a connection is moved to a different folder
+        // via drag-and-drop — the frontend only updates folder_id, not id.
+        connections[save_idx].id = compute_connection_id(
+            connections[save_idx].folder_id.as_deref(),
+            &connections[save_idx].name,
+        );
+
+        // Deduplicate sibling names (may rename the connection and change its ID)
         deduplicate_sibling_names(connections, folders);
 
-        // Check if the connection was renamed by dedup and migrate credentials
-        // After dedup, the old_id might no longer exist — find the new ID
-        let new_id = connections
-            .iter()
-            .find(|c| c.id != old_id)
-            .map(|c| c.id.clone());
-        if let Some(ref new_id) = new_id {
-            if *new_id != old_id {
-                let _ = migrate_credential(&old_id, new_id, &*self.credential_store);
-            }
+        // Migrate credentials from old path-ID to new path-ID (if changed)
+        let new_id = &connections[save_idx].id;
+        if *new_id != old_id {
+            let _ = migrate_credential(&old_id, new_id, &*self.credential_store);
         }
 
         self.storage
