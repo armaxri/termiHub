@@ -1112,18 +1112,20 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     moveConnectionToFolder: (connectionId, folderId) => {
-      set((state) => {
-        const connections = state.connections.map((c) =>
-          c.id === connectionId ? { ...c, folderId } : c
-        );
-        const moved = connections.find((c) => c.id === connectionId);
-        if (moved) {
-          persistConnection(stripPassword(moved)).catch((err) =>
-            console.error("Failed to persist connection move:", err)
-          );
-        }
-        return { connections };
-      });
+      // Optimistic update for instant visual feedback
+      set((state) => ({
+        connections: state.connections.map((c) => (c.id === connectionId ? { ...c, folderId } : c)),
+      }));
+
+      // Persist to backend, then reload to sync any dedup renames
+      // (e.g., when moving a connection into a folder with a same-named sibling)
+      const moved = get().connections.find((c) => c.id === connectionId);
+      if (moved) {
+        persistConnection(stripPassword(moved))
+          .then(() => loadConnections())
+          .then(({ connections, folders }) => set({ connections, folders }))
+          .catch((err) => console.error("Failed to persist connection move:", err));
+      }
     },
 
     // File browser / SFTP
