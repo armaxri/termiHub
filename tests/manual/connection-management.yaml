@@ -445,3 +445,18 @@ tests:
     expected:
       - "External file loads and connections are visible"
     verification: manual
+
+  # --- Drag connection out of folder (#394) ---
+
+  - id: MT-CONN-32
+    name: "Drag connection out of folder to root"
+    pr: 394
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Create a folder and drag a connection into it"
+      - "Expand the folder and drag the connection out to the empty root area below all folders"
+    expected:
+      - "Connection moves out of the folder back to the root level"
+    verification: manual

@@ -8,6 +8,8 @@
 .connection-list__group {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 
 .connection-list__group-header {
@@ -73,6 +75,8 @@
 .connection-list__tree {
   flex: 1;
   overflow-y: auto;
+  min-height: 40px;
+  padding-bottom: 8px;
 }
 
 .connection-tree__folder,
@@ -217,6 +221,8 @@
 
 .connection-tree__root-drop--over {
   background-color: color-mix(in srgb, var(--bg-hover) 50%, transparent);
+  outline: 1px dashed var(--accent-color);
+  outline-offset: -1px;
 }
 
 .connection-tree__drag-overlay {

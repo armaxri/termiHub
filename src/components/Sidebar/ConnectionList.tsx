@@ -8,6 +8,7 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
+  pointerWithin,
   DragEndEvent,
   DragStartEvent,
 } from "@dnd-kit/core";
@@ -138,10 +139,11 @@ function TreeNode({
   });
 
   return (
-    <div className="connection-tree__node" ref={setNodeRef}>
+    <div className="connection-tree__node">
       <ContextMenu.Root>
         <ContextMenu.Trigger asChild>
           <button
+            ref={setNodeRef}
             className={`connection-tree__folder${isOver ? " connection-tree__folder--drop-over" : ""}`}
             onClick={() => onToggle(folder.id)}
             style={{ paddingLeft: `${depth * 16 + 8}px` }}
@@ -504,11 +506,16 @@ export function ConnectionList() {
 
       const connectionId = active.id as string;
       const overId = over.id as string;
+      const connection = active.data.current?.connection as SavedConnection | undefined;
 
       if (overId === "root") {
-        moveConnectionToFolder(connectionId, null);
+        if (connection?.folderId != null) {
+          moveConnectionToFolder(connectionId, null);
+        }
       } else if (over.data.current?.type === "folder") {
-        moveConnectionToFolder(connectionId, overId);
+        if (connection?.folderId !== overId) {
+          moveConnectionToFolder(connectionId, overId);
+        }
       }
     },
     [moveConnectionToFolder]
@@ -521,7 +528,12 @@ export function ConnectionList() {
 
   return (
     <div className="connection-list">
-      <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={pointerWithin}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+      >
         <div className="connection-list__group">
           <div className="connection-list__group-header">
             <button
