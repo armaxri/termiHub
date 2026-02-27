@@ -8,6 +8,7 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
+  pointerWithin,
   DragEndEvent,
   DragStartEvent,
 } from "@dnd-kit/core";
@@ -527,7 +528,12 @@ export function ConnectionList() {
 
   return (
     <div className="connection-list">
-      <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={pointerWithin}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+      >
         <div className="connection-list__group">
           <div className="connection-list__group-header">
             <button
