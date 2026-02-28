@@ -156,9 +156,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     }
     // New connection defaults to local shell
     const localType = findSchema(connectionTypes, "local");
-    const defaults = localType
-      ? buildTypeDefaults(localType, settings)
-      : { shell: defaultShell };
+    const defaults = localType ? buildTypeDefaults(localType, settings) : { shell: defaultShell };
     return { typeId: "local", settings: defaults };
   }, [existingConnection, existingAgent, connectionTypes, settings, defaultShell]);
 
