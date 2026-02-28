@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- WSL distributions no longer appear in the local shell connection dropdown on Windows — they are now only available through the dedicated WSL connection type (#400)
 - Local shell connections now display the correct shell-specific icons (PowerShell, Git Bash, WSL) in the sidebar and tab bar — the frontend icon resolution and config creation used a legacy `shellType` key that didn't match the backend schema's `shell` key; old saved connections with `shellType` are handled via backward-compatible fallback (#397)
 - Connections can now be dragged out of a folder back to the root level — the folder drop target was covering the entire folder subtree (header + children), preventing the root drop zone from receiving the drop; now only the folder header row is a drop target (#394)
 - Duplicate connection names now auto-renamed with `(1)`, `(2)` suffixes in all scenarios: adding, renaming, duplicating, folder deletion, and import — the frontend now reloads from the backend after every persist operation to sync dedup renames; the backend also deduplicates when folder deletion reparents children (#388)
