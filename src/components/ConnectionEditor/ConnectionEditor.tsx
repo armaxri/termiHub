@@ -158,7 +158,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     const localType = findSchema(connectionTypes, "local");
     const defaults = localType
       ? buildTypeDefaults(localType, settings)
-      : { shellType: defaultShell };
+      : { shell: defaultShell };
     return { typeId: "local", settings: defaults };
   }, [existingConnection, existingAgent, connectionTypes, settings, defaultShell]);
 
@@ -342,7 +342,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     addTab("Setup SSH Agent", "local", {
       type: "local",
       config: {
-        shellType: "powershell" as ShellType,
+        shell: "powershell" as ShellType,
         initialCommand:
           "Start-Process powershell -Verb RunAs -ArgumentList 'Set-Service ssh-agent -StartupType Manual; Start-Service ssh-agent; ssh-add; pause'",
       },
