@@ -187,7 +187,10 @@ export function AgentNode({ agent }: AgentNodeProps) {
   }, [agent.id, refreshAgentSessions]);
 
   return (
-    <div className="connection-list__group" data-testid={`agent-node-${agent.id}`}>
+    <div
+      className={`connection-list__group${agent.isExpanded ? " connection-list__group--expanded" : ""}`}
+      data-testid={`agent-node-${agent.id}`}
+    >
       <ContextMenu.Root>
         <ContextMenu.Trigger asChild>
           <div className="connection-list__group-header">

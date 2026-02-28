@@ -8,8 +8,12 @@
 .connection-list__group {
   display: flex;
   flex-direction: column;
-  flex: 1;
   min-height: 0;
+}
+
+.connection-list__group--expanded {
+  flex: 1;
+  overflow: hidden;
 }
 
 .connection-list__group-header {
@@ -18,6 +22,11 @@
   justify-content: space-between;
   padding: var(--spacing-xs) var(--spacing-sm);
   min-height: 28px;
+  border-top: 1px solid var(--border-primary);
+}
+
+.connection-list__group:first-child > .connection-list__group-header {
+  border-top: none;
 }
 
 .connection-list__group-toggle {

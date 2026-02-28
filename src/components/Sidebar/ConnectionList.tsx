@@ -534,7 +534,9 @@ export function ConnectionList() {
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
       >
-        <div className="connection-list__group">
+        <div
+          className={`connection-list__group${!localCollapsed ? " connection-list__group--expanded" : ""}`}
+        >
           <div className="connection-list__group-header">
             <button
               className="connection-list__group-toggle"
