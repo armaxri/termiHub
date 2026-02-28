@@ -11,13 +11,13 @@ export const MOCK_CONNECTIONS: SavedConnection[] = [
     id: "conn-1",
     name: "Local Bash",
     folderId: "folder-1",
-    config: { type: "local", config: { shellType: "bash" } },
+    config: { type: "local", config: { shell: "bash" } },
   },
   {
     id: "conn-2",
     name: "Local Zsh",
     folderId: "folder-1",
-    config: { type: "local", config: { shellType: "zsh" } },
+    config: { type: "local", config: { shell: "zsh" } },
   },
   {
     id: "conn-3",

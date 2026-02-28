@@ -1045,7 +1045,7 @@ mod tests {
             name: "Local".to_string(),
             config: ConnectionConfig {
                 type_id: "local".to_string(),
-                settings: serde_json::json!({"shellType": "bash"}),
+                settings: serde_json::json!({"shell": "bash"}),
             },
             folder_id: None,
             terminal_options: None,
@@ -1116,7 +1116,7 @@ mod tests {
         let conn = make_local_conn("c3");
         let result = prepare_for_storage(conn, &store).unwrap();
         assert_eq!(result.config.type_id, "local");
-        assert_eq!(result.config.settings["shellType"], "bash");
+        assert_eq!(result.config.settings["shell"], "bash");
         assert!(store.stored.lock().unwrap().is_empty());
     }
 

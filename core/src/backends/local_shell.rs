@@ -164,8 +164,10 @@ impl ConnectionType for LocalShell {
         }
 
         // Parse settings into ShellConfig.
+        // Fall back to legacy "shellType" key for old saved connections.
         let shell = settings
             .get("shell")
+            .or_else(|| settings.get("shellType"))
             .and_then(|v| v.as_str())
             .map(String::from);
         let starting_directory = settings
@@ -635,5 +637,25 @@ mod tests {
             .disconnect()
             .await
             .expect("disconnect should not fail");
+    }
+
+    /// Old saved connections use `"shellType"` instead of `"shell"`.
+    /// Verify that `connect()` still works with the legacy key.
+    #[tokio::test]
+    async fn connect_with_legacy_shell_type_key() {
+        let mut shell = LocalShell::new();
+        let shells = detect_available_shells();
+        let shell_name = shells.first().expect("at least one shell available");
+
+        // Use legacy "shellType" key instead of "shell"
+        let settings = serde_json::json!({ "shellType": shell_name });
+
+        shell
+            .connect(settings)
+            .await
+            .expect("connect with legacy shellType key should succeed");
+        assert!(shell.is_connected());
+
+        shell.disconnect().await.ok();
     }
 }

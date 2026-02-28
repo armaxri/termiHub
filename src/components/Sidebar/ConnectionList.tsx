@@ -487,7 +487,7 @@ export function ConnectionList() {
       if (shells.length === 0) return;
       addTab(`Ping ${host}`, "local", {
         type: "local",
-        config: { shellType: shells[0] as ShellType, initialCommand: `ping ${host}` },
+        config: { shell: shells[0] as ShellType, initialCommand: `ping ${host}` },
       });
     },
     [addTab]

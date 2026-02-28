@@ -178,7 +178,7 @@ mod tests {
     fn make_local_config() -> ConnectionConfig {
         ConnectionConfig {
             type_id: "local".to_string(),
-            settings: serde_json::json!({"shellType": "bash"}),
+            settings: serde_json::json!({"shell": "bash"}),
         }
     }
 

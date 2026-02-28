@@ -45,7 +45,7 @@ describe("resolveFeatureEnabled", () => {
   it("falls back to global default for any config type without explicit override", () => {
     const localConfig: ConnectionConfig = {
       type: "local",
-      config: { shellType: "bash" },
+      config: { shell: "bash" },
     };
     // Without explicit override, falls back to globalDefault.
     // Callers are responsible for checking capabilities before calling.

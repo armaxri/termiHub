@@ -40,7 +40,7 @@ function makeConnection(overrides: Partial<SavedConnection> = {}): SavedConnecti
   return {
     id: `conn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     name: "Test Connection",
-    config: { type: "local", config: { shellType: "bash" } },
+    config: { type: "local", config: { shell: "bash" } },
     folderId: null,
     ...overrides,
   };

@@ -438,7 +438,7 @@ export const useAppStore = create<AppState>((set, get) => {
 
         const defaultConfig: ConnectionConfig = config ?? {
           type: "local",
-          config: { shellType: state.defaultShell },
+          config: { shell: state.defaultShell },
         };
         const newTab = createTab(
           title,
@@ -500,7 +500,7 @@ export const useAppStore = create<AppState>((set, get) => {
         const targetPanelId = state.activePanelId ?? allLeaves[0]?.id;
         if (!targetPanelId) return state;
 
-        const dummyConfig: ConnectionConfig = { type: "local", config: { shellType: "zsh" } };
+        const dummyConfig: ConnectionConfig = { type: "local", config: { shell: "zsh" } };
         const newTab = createTab("Settings", "local", dummyConfig, targetPanelId, "settings");
         const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
           const tabs = leaf.tabs.map((t) => ({ ...t, isActive: false }));
@@ -531,7 +531,7 @@ export const useAppStore = create<AppState>((set, get) => {
         const targetPanelId = state.activePanelId ?? allLeaves[0]?.id;
         if (!targetPanelId) return state;
 
-        const dummyConfig: ConnectionConfig = { type: "local", config: { shellType: "zsh" } };
+        const dummyConfig: ConnectionConfig = { type: "local", config: { shell: "zsh" } };
         const newTab = createTab("Logs", "local", dummyConfig, targetPanelId, "log-viewer");
         const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
           const tabs = leaf.tabs.map((t) => ({ ...t, isActive: false }));
@@ -568,7 +568,7 @@ export const useAppStore = create<AppState>((set, get) => {
         if (!targetPanelId) return state;
 
         const fileName = filePath.split("/").pop() ?? filePath;
-        const dummyConfig: ConnectionConfig = { type: "local", config: { shellType: "zsh" } };
+        const dummyConfig: ConnectionConfig = { type: "local", config: { shell: "zsh" } };
         const editorMeta: EditorTabMeta = { filePath, isRemote, sftpSessionId };
         const newTab = createTab(fileName, "local", dummyConfig, targetPanelId, "editor");
         newTab.editorMeta = editorMeta;
@@ -615,7 +615,7 @@ export const useAppStore = create<AppState>((set, get) => {
           }
         }
 
-        const dummyConfig: ConnectionConfig = { type: "local", config: { shellType: "zsh" } };
+        const dummyConfig: ConnectionConfig = { type: "local", config: { shell: "zsh" } };
         const meta: ConnectionEditorMeta = {
           connectionId,
           folderId: folderId ?? null,
@@ -1634,7 +1634,7 @@ export const useAppStore = create<AppState>((set, get) => {
           }
         }
 
-        const dummyConfig: ConnectionConfig = { type: "local", config: { shellType: "zsh" } };
+        const dummyConfig: ConnectionConfig = { type: "local", config: { shell: "zsh" } };
         const meta: TunnelEditorMeta = { tunnelId };
         const newTab = createTab(title, "local", dummyConfig, targetPanelId, "tunnel-editor");
         newTab.tunnelEditorMeta = meta;
