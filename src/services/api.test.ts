@@ -113,13 +113,13 @@ describe("api service", () => {
 
     it("createTerminal adapter maps local config to create_connection", async () => {
       mockedInvoke.mockResolvedValue("session-123");
-      const config = { type: "local", config: { shellType: "bash" } };
+      const config = { type: "local", config: { shell: "bash" } };
 
       const result = await createTerminal(config);
 
       expect(mockedInvoke).toHaveBeenCalledWith("create_connection", {
         typeId: "local",
-        settings: { shellType: "bash" },
+        settings: { shell: "bash" },
         agentId: null,
       });
       expect(result).toBe("session-123");
@@ -233,7 +233,7 @@ describe("api service", () => {
       const connection = {
         id: "conn-1",
         name: "Test",
-        config: { type: "local", config: { shellType: "bash" } },
+        config: { type: "local", config: { shell: "bash" } },
         folderId: null,
       };
 

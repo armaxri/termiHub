@@ -44,7 +44,7 @@ describe("appStore", () => {
   describe("addTab", () => {
     it("adds a tab to the active panel", () => {
       const { addTab, activePanelId } = useAppStore.getState();
-      addTab("Test Shell", "local", { type: "local", config: { shellType: "zsh" } });
+      addTab("Test Shell", "local", { type: "local", config: { shell: "zsh" } });
 
       const state = useAppStore.getState();
       const leaf = findLeaf(state.rootPanel, activePanelId!) as LeafPanel;
@@ -196,7 +196,7 @@ describe("appStore", () => {
       addConnection({
         id: "conn-1",
         name: "Test Connection",
-        config: { type: "local", config: { shellType: "bash" } },
+        config: { type: "local", config: { shell: "bash" } },
         folderId: null,
       });
 

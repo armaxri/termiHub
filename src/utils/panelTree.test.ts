@@ -20,7 +20,7 @@ function makeTab(id: string, panelId: string): TerminalTab {
     title: id,
     connectionType: "local",
     contentType: "terminal",
-    config: { type: "local", config: { shellType: "zsh" } },
+    config: { type: "local", config: { shell: "zsh" } },
     panelId,
     isActive: false,
   };

@@ -300,7 +300,7 @@ mod tests {
                 name: "Test".to_string(),
                 config: crate::terminal::backend::ConnectionConfig {
                     type_id: "local".to_string(),
-                    settings: serde_json::json!({"shellType": "bash"}),
+                    settings: serde_json::json!({"shell": "bash"}),
                 },
                 terminal_options: None,
             }],
