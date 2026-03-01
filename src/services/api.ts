@@ -4,12 +4,12 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { SessionId, ConnectionConfig, RemoteAgentConfig, LogEntry } from "@/types/terminal";
-import { SettingsSchema, Capabilities } from "@/types/schema";
 import { SystemStats } from "@/types/monitoring";
 import { CredentialStoreStatusInfo, SwitchCredentialStoreResult } from "@/types/credential";
 import {
   SavedConnection,
   ConnectionFolder,
+  ConnectionTypeInfo,
   FileEntry,
   ExternalFileError,
   AppSettings,
@@ -17,16 +17,9 @@ import {
   RecoveryWarning,
 } from "@/types/connection";
 
-// --- Terminal / session commands ---
+export type { ConnectionTypeInfo };
 
-/** Info about a connection type from the backend registry. */
-export interface ConnectionTypeInfo {
-  typeId: string;
-  displayName: string;
-  icon: string;
-  schema: SettingsSchema;
-  capabilities: Capabilities;
-}
+// --- Terminal / session commands ---
 
 /** Get the list of available connection types with their schemas. */
 export async function getConnectionTypes(): Promise<ConnectionTypeInfo[]> {

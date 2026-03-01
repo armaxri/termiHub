@@ -256,8 +256,25 @@ Handshake that establishes the protocol version and exchanges capabilities.
     "protocol_version": "0.2.0",
     "agent_version": "0.1.0",
     "capabilities": {
-      "connection_types": ["local", "ssh", "serial", "docker", "telnet", "wsl"],
-      "max_sessions": 20
+      "connection_types": [
+        {
+          "typeId": "local",
+          "displayName": "Local Shell",
+          "icon": "terminal",
+          "schema": { "groups": [] },
+          "capabilities": {
+            "monitoring": false,
+            "fileBrowser": false,
+            "resize": true,
+            "persistent": false
+          }
+        }
+      ],
+      "max_sessions": 20,
+      "available_shells": ["/bin/bash", "/bin/zsh"],
+      "available_serial_ports": [],
+      "docker_available": false,
+      "available_docker_images": []
     }
   },
   "id": 1
@@ -270,12 +287,16 @@ Handshake that establishes the protocol version and exchanges capabilities.
 | `client`           | `string` | Client identifier          |
 | `client_version`   | `string` | Client application version |
 
-| Result Field                    | Type       | Description                   |
-| ------------------------------- | ---------- | ----------------------------- |
-| `protocol_version`              | `string`   | Negotiated protocol version   |
-| `agent_version`                 | `string`   | Agent binary version          |
-| `capabilities.connection_types` | `string[]` | Supported connection type IDs |
-| `capabilities.max_sessions`     | `integer`  | Maximum concurrent sessions   |
+| Result Field                           | Type                   | Description                                  |
+| -------------------------------------- | ---------------------- | -------------------------------------------- |
+| `protocol_version`                     | `string`               | Negotiated protocol version                  |
+| `agent_version`                        | `string`               | Agent binary version                         |
+| `capabilities.connection_types`        | `ConnectionTypeInfo[]` | Available connection types with schemas/caps |
+| `capabilities.max_sessions`            | `integer`              | Maximum concurrent sessions                  |
+| `capabilities.available_shells`        | `string[]`             | Available shell paths                        |
+| `capabilities.available_serial_ports`  | `string[]`             | Available serial port paths                  |
+| `capabilities.docker_available`        | `boolean`              | Whether Docker is available                  |
+| `capabilities.available_docker_images` | `string[]`             | Available Docker image names                 |
 
 **Errors:**
 
