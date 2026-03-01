@@ -23,13 +23,24 @@ use crate::utils::errors::TerminalError;
 use crate::utils::ssh_auth::connect_and_authenticate;
 
 /// Capabilities returned by the agent after initialization.
+///
+/// The `connection_types` field contains full `ConnectionTypeInfo` objects
+/// from the agent (with typeId, displayName, icon, schema, capabilities).
+/// We store them as raw JSON values so the desktop acts as a pass-through
+/// to the frontend without needing to parse the nested structure.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentCapabilities {
-    pub connection_types: Vec<String>,
+    pub connection_types: Vec<Value>,
     pub max_sessions: u32,
+    #[serde(default)]
     pub available_shells: Vec<String>,
+    #[serde(default)]
     pub available_serial_ports: Vec<String>,
+    #[serde(default)]
+    pub docker_available: bool,
+    #[serde(default)]
+    pub available_docker_images: Vec<String>,
 }
 
 /// Result of connecting to an agent.
@@ -888,4 +899,110 @@ fn reconnect_agent(
         "Failed to reconnect after {} attempts",
         MAX_RETRIES
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// Regression test for #412: the agent sends `connection_types` as an array
+    /// of full `ConnectionTypeInfo` objects, not plain strings. The desktop must
+    /// accept this format without errors.
+    #[test]
+    fn parse_capabilities_with_connection_type_info_objects() {
+        let caps_json = json!({
+            "connectionTypes": [
+                {
+                    "typeId": "local",
+                    "displayName": "Local Shell",
+                    "icon": "terminal",
+                    "schema": { "groups": [] },
+                    "capabilities": {
+                        "monitoring": false,
+                        "fileBrowser": false,
+                        "resize": true,
+                        "persistent": false
+                    }
+                },
+                {
+                    "typeId": "ssh",
+                    "displayName": "SSH",
+                    "icon": "ssh",
+                    "schema": { "groups": [] },
+                    "capabilities": {
+                        "monitoring": true,
+                        "fileBrowser": true,
+                        "resize": true,
+                        "persistent": true
+                    }
+                }
+            ],
+            "maxSessions": 20,
+            "availableShells": ["/bin/bash", "/bin/zsh"],
+            "availableSerialPorts": ["/dev/ttyUSB0"],
+            "dockerAvailable": true,
+            "availableDockerImages": ["ubuntu:22.04"]
+        });
+
+        let caps: AgentCapabilities = serde_json::from_value(caps_json).unwrap();
+        assert_eq!(caps.connection_types.len(), 2);
+        assert_eq!(caps.connection_types[0]["typeId"], "local");
+        assert_eq!(caps.connection_types[1]["typeId"], "ssh");
+        assert_eq!(caps.max_sessions, 20);
+        assert_eq!(caps.available_shells, vec!["/bin/bash", "/bin/zsh"]);
+        assert_eq!(caps.available_serial_ports, vec!["/dev/ttyUSB0"]);
+        assert!(caps.docker_available);
+        assert_eq!(caps.available_docker_images, vec!["ubuntu:22.04"]);
+    }
+
+    /// Verify that optional fields default gracefully when absent,
+    /// ensuring backward compatibility with older agents.
+    #[test]
+    fn parse_capabilities_with_minimal_fields() {
+        let caps_json = json!({
+            "connectionTypes": [],
+            "maxSessions": 10
+        });
+
+        let caps: AgentCapabilities = serde_json::from_value(caps_json).unwrap();
+        assert!(caps.connection_types.is_empty());
+        assert_eq!(caps.max_sessions, 10);
+        assert!(caps.available_shells.is_empty());
+        assert!(caps.available_serial_ports.is_empty());
+        assert!(!caps.docker_available);
+        assert!(caps.available_docker_images.is_empty());
+    }
+
+    /// Verify that capabilities round-trip through serialization,
+    /// ensuring the desktop can forward them to the frontend unchanged.
+    #[test]
+    fn capabilities_round_trip_serialization() {
+        let caps = AgentCapabilities {
+            connection_types: vec![json!({
+                "typeId": "serial",
+                "displayName": "Serial",
+                "icon": "serial",
+                "schema": { "groups": [] },
+                "capabilities": {
+                    "monitoring": false,
+                    "fileBrowser": false,
+                    "resize": false,
+                    "persistent": false
+                }
+            })],
+            max_sessions: 5,
+            available_shells: vec!["/bin/sh".to_string()],
+            available_serial_ports: vec!["/dev/ttyS0".to_string()],
+            docker_available: false,
+            available_docker_images: vec![],
+        };
+
+        let json_val = serde_json::to_value(&caps).unwrap();
+        let roundtripped: AgentCapabilities = serde_json::from_value(json_val).unwrap();
+        assert_eq!(roundtripped.connection_types.len(), 1);
+        assert_eq!(roundtripped.connection_types[0]["typeId"], "serial");
+        assert_eq!(roundtripped.max_sessions, 5);
+        assert_eq!(roundtripped.available_shells, vec!["/bin/sh"]);
+    }
 }
