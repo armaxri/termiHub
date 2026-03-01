@@ -259,14 +259,15 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
               </ContextMenu.Trigger>
               <ContextMenu.Portal>
                 <ContextMenu.Content className="context-menu__content">
-                  <ContextMenu.Item
-                    className="context-menu__item"
-                    disabled={!contextMenuTabSelection}
-                    onSelect={() => copySelectionToClipboard(tab.id)}
-                    data-testid="terminal-context-copy-selection"
-                  >
-                    <Copy size={14} /> Copy Selection
-                  </ContextMenu.Item>
+                  {contextMenuTabSelection && (
+                    <ContextMenu.Item
+                      className="context-menu__item"
+                      onSelect={() => copySelectionToClipboard(tab.id)}
+                      data-testid="terminal-context-copy-selection"
+                    >
+                      <Copy size={14} /> Copy Selection
+                    </ContextMenu.Item>
+                  )}
                   <ContextMenu.Item
                     className="context-menu__item"
                     onSelect={() => copyTerminalToClipboard(tab.id)}
