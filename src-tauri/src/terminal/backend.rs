@@ -426,6 +426,46 @@ mod tests {
         );
     }
 
+    /// Regression test for #406: exec command must never be a bare command
+    /// name — it must always contain a `/` (path separator) so it works in
+    /// non-interactive SSH sessions where `~/.local/bin` is not on PATH.
+    #[test]
+    fn agent_exec_command_never_bare_name() {
+        let configs = [
+            // Default path (None)
+            None,
+            // Tilde path
+            Some("~/bin/termihub-agent".to_string()),
+            // Absolute path
+            Some("/usr/local/bin/termihub-agent".to_string()),
+        ];
+        for agent_path in configs {
+            let config = RemoteAgentConfig {
+                host: "test".to_string(),
+                port: 22,
+                username: "test".to_string(),
+                auth_method: "key".to_string(),
+                password: None,
+                key_path: None,
+                save_password: None,
+                agent_path,
+            };
+            let cmd = config.agent_exec_command();
+            let binary = cmd.split_whitespace().next().unwrap();
+            assert!(
+                binary.contains('/'),
+                "Exec command must use a full path, not a bare name. Got: {cmd}"
+            );
+
+            let ver_cmd = config.agent_version_command();
+            let ver_binary = ver_cmd.split_whitespace().next().unwrap();
+            assert!(
+                ver_binary.contains('/'),
+                "Version command must use a full path, not a bare name. Got: {ver_cmd}"
+            );
+        }
+    }
+
     #[test]
     fn agent_path_none_omitted_in_json() {
         let config = RemoteAgentConfig {
