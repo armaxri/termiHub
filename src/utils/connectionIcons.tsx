@@ -47,6 +47,9 @@ export function getDefaultIconInfo(config: ConnectionConfig): {
     const shellValue = (config.config?.shell ?? config.config?.shellType) as ShellType | undefined;
     return getShellIconInfo(shellValue);
   }
+  if (config.type === "wsl") {
+    return { iconNode: labIcons.penguin as IconNode };
+  }
   return { component: TYPE_ICONS[config.type] };
 }
 
