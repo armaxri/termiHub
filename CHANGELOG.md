@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- File browser now works with WSL sessions instead of showing "missing field host" error — WSL tabs are routed to the local file browser mode using `\\wsl$\<distro>\` UNC paths instead of attempting SFTP (#404)
 - Collapsed sidebar sections (Connections, remote agents) now fold down to header height instead of occupying equal vertical space — expanded sections fill remaining space like VS Code's sidebar panels; sections are resizable by dragging the separator between them and each section's content scrolls independently (#398)
 - WSL connections now correctly show the penguin icon in the sidebar and tab bar — the dedicated `wsl` connection type was falling through to the generic type icon lookup instead of returning the penguin icon (#403)
 - WSL distributions no longer appear in the local shell connection dropdown on Windows — they are now only available through the dedicated WSL connection type (#400)

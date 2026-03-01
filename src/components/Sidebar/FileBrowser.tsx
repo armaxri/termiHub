@@ -309,7 +309,12 @@ function useFileBrowserSync() {
       ? (((activeTab.config.config.shell ?? activeTab.config.config.shellType) as ShellType) ??
         null)
       : null;
-  const wslDistro = activeTabShellType ? getWslDistroName(activeTabShellType) : null;
+  const wslDistro =
+    activeTab?.config.type === "wsl"
+      ? ((activeTab.config.config.distribution as string) ?? null)
+      : activeTabShellType
+        ? getWslDistroName(activeTabShellType)
+        : null;
 
   useEffect(() => {
     if (!activeTab || activeTabContentType === "settings") {
@@ -325,7 +330,7 @@ function useFileBrowserSync() {
       }
       return;
     }
-    if (activeTabConnectionType === "local") {
+    if (activeTabConnectionType === "local" || activeTabConnectionType === "wsl") {
       setFileBrowserMode("local");
     } else if (
       activeTabConnectionType &&
