@@ -16,6 +16,11 @@ use crate::utils::expand::{expand_env_placeholders, expand_tilde};
 
 pub use termihub_core::config::SshConfig;
 
+/// Default install path for the agent binary on the remote host.
+///
+/// Uses `~/.local/bin` so setup works without privilege escalation.
+const DEFAULT_AGENT_PATH: &str = "~/.local/bin/termihub-agent";
+
 /// SSH transport configuration for a remote agent (no session details).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -30,9 +35,48 @@ pub struct RemoteAgentConfig {
     pub key_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub save_password: Option<bool>,
+    /// Path to the agent binary on the remote host.
+    ///
+    /// Defaults to `~/.local/bin/termihub-agent`. The `~` prefix is expanded
+    /// to `$HOME` in SSH exec commands so it works in non-interactive sessions
+    /// where `~/.local/bin` may not be on the PATH.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_path: Option<String>,
 }
 
 impl RemoteAgentConfig {
+    /// Return the agent binary path, defaulting to `~/.local/bin/termihub-agent`.
+    pub fn agent_path(&self) -> &str {
+        self.agent_path.as_deref().unwrap_or(DEFAULT_AGENT_PATH)
+    }
+
+    /// Build the shell command to launch the agent over SSH exec.
+    ///
+    /// Expands a leading `~/` to `$HOME/` so the command works in
+    /// non-interactive SSH sessions where `~/.local/bin` is not on PATH.
+    pub fn agent_exec_command(&self) -> String {
+        let path = self.agent_path();
+        let resolved = if let Some(rest) = path.strip_prefix("~/") {
+            format!("$HOME/{rest}")
+        } else {
+            path.to_string()
+        };
+        format!("{resolved} --stdio")
+    }
+
+    /// Build the shell command to check the agent version on a remote host.
+    ///
+    /// Same `~/` → `$HOME/` expansion as [`agent_exec_command`].
+    pub fn agent_version_command(&self) -> String {
+        let path = self.agent_path();
+        let resolved = if let Some(rest) = path.strip_prefix("~/") {
+            format!("$HOME/{rest}")
+        } else {
+            path.to_string()
+        };
+        format!("{resolved} --version 2>/dev/null")
+    }
+
     #[allow(dead_code)]
     pub fn expand(mut self) -> Self {
         self.host = expand_env_placeholders(&self.host);
@@ -102,6 +146,7 @@ mod tests {
             password: None,
             key_path: Some("/home/user/.ssh/id_rsa".to_string()),
             save_password: None,
+            agent_path: None,
         };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: RemoteAgentConfig = serde_json::from_str(&json).unwrap();
@@ -129,6 +174,7 @@ mod tests {
             password: None,
             key_path: Some("${env:HOME}/.ssh/id_rsa".to_string()),
             save_password: None,
+            agent_path: None,
         };
         let expanded = config.expand();
         assert_eq!(expanded.host, "10.0.0.99");
@@ -148,6 +194,7 @@ mod tests {
             password: None,
             key_path: Some("/home/.ssh/id_rsa".to_string()),
             save_password: None,
+            agent_path: None,
         };
         let ssh = agent.to_ssh_config();
         assert_eq!(ssh.host, "pi.local");
@@ -167,6 +214,7 @@ mod tests {
             password: Some("secret".to_string()),
             key_path: None,
             save_password: Some(true),
+            agent_path: None,
         };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: RemoteAgentConfig = serde_json::from_str(&json).unwrap();
@@ -183,6 +231,7 @@ mod tests {
             password: None,
             key_path: None,
             save_password: None,
+            agent_path: None,
         };
         let json = serde_json::to_string(&config).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -202,6 +251,7 @@ mod tests {
             password: Some("secret".to_string()),
             key_path: None,
             save_password: Some(true),
+            agent_path: None,
         };
         let ssh = agent.to_ssh_config();
         assert_eq!(ssh.save_password, Some(true));
@@ -267,5 +317,132 @@ mod tests {
         let deserialized: ConnectionConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.type_id, "ssh");
         assert_eq!(deserialized.settings["host"], "pi.local");
+    }
+
+    #[test]
+    fn agent_exec_command_default_path() {
+        let config = RemoteAgentConfig {
+            host: "pi.local".to_string(),
+            port: 22,
+            username: "pi".to_string(),
+            auth_method: "key".to_string(),
+            password: None,
+            key_path: None,
+            save_password: None,
+            agent_path: None,
+        };
+        assert_eq!(
+            config.agent_exec_command(),
+            "$HOME/.local/bin/termihub-agent --stdio"
+        );
+    }
+
+    #[test]
+    fn agent_exec_command_custom_tilde_path() {
+        let config = RemoteAgentConfig {
+            host: "pi.local".to_string(),
+            port: 22,
+            username: "pi".to_string(),
+            auth_method: "key".to_string(),
+            password: None,
+            key_path: None,
+            save_password: None,
+            agent_path: Some("~/bin/termihub-agent".to_string()),
+        };
+        assert_eq!(
+            config.agent_exec_command(),
+            "$HOME/bin/termihub-agent --stdio"
+        );
+    }
+
+    #[test]
+    fn agent_exec_command_absolute_path() {
+        let config = RemoteAgentConfig {
+            host: "pi.local".to_string(),
+            port: 22,
+            username: "pi".to_string(),
+            auth_method: "key".to_string(),
+            password: None,
+            key_path: None,
+            save_password: None,
+            agent_path: Some("/usr/local/bin/termihub-agent".to_string()),
+        };
+        assert_eq!(
+            config.agent_exec_command(),
+            "/usr/local/bin/termihub-agent --stdio"
+        );
+    }
+
+    #[test]
+    fn agent_version_command_default_path() {
+        let config = RemoteAgentConfig {
+            host: "pi.local".to_string(),
+            port: 22,
+            username: "pi".to_string(),
+            auth_method: "key".to_string(),
+            password: None,
+            key_path: None,
+            save_password: None,
+            agent_path: None,
+        };
+        assert_eq!(
+            config.agent_version_command(),
+            "$HOME/.local/bin/termihub-agent --version 2>/dev/null"
+        );
+    }
+
+    #[test]
+    fn agent_version_command_absolute_path() {
+        let config = RemoteAgentConfig {
+            host: "pi.local".to_string(),
+            port: 22,
+            username: "pi".to_string(),
+            auth_method: "key".to_string(),
+            password: None,
+            key_path: None,
+            save_password: None,
+            agent_path: Some("/opt/termihub-agent".to_string()),
+        };
+        assert_eq!(
+            config.agent_version_command(),
+            "/opt/termihub-agent --version 2>/dev/null"
+        );
+    }
+
+    #[test]
+    fn agent_path_defaults_when_missing_from_json() {
+        let json = r#"{
+            "host": "pi.local",
+            "port": 22,
+            "username": "pi",
+            "authMethod": "key"
+        }"#;
+        let config: RemoteAgentConfig = serde_json::from_str(json).unwrap();
+        assert!(config.agent_path.is_none());
+        assert_eq!(config.agent_path(), "~/.local/bin/termihub-agent");
+        assert_eq!(
+            config.agent_exec_command(),
+            "$HOME/.local/bin/termihub-agent --stdio"
+        );
+    }
+
+    #[test]
+    fn agent_path_none_omitted_in_json() {
+        let config = RemoteAgentConfig {
+            host: "pi.local".to_string(),
+            port: 22,
+            username: "pi".to_string(),
+            auth_method: "key".to_string(),
+            password: None,
+            key_path: None,
+            save_password: None,
+            agent_path: None,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(
+            v.get("agentPath").is_none(),
+            "agentPath should be omitted when None, got: {json}"
+        );
     }
 }

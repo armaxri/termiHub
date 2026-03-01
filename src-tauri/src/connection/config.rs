@@ -306,6 +306,7 @@ mod tests {
                 password: None,
                 key_path: Some("~/.ssh/id_ed25519".to_string()),
                 save_password: None,
+                agent_path: None,
             },
         };
         let json = serde_json::to_string(&agent).unwrap();
