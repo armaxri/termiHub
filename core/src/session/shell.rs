@@ -216,7 +216,10 @@ pub fn detect_wsl_distros() -> Vec<String> {
 /// Detect available shells on the current platform.
 ///
 /// On Unix, checks standard paths (`/bin/zsh`, `/usr/bin/bash`, etc.).
-/// On Windows, includes PowerShell, cmd, Git Bash, and WSL distributions.
+/// On Windows, includes PowerShell, cmd, and Git Bash.
+///
+/// WSL distributions are not included here — they are handled by the
+/// dedicated WSL connection type (see `backends::wsl`).
 pub fn detect_available_shells() -> Vec<String> {
     let mut shells = Vec::new();
 
@@ -248,11 +251,6 @@ pub fn detect_available_shells() -> Vec<String> {
                 shells.push("gitbash".to_string());
                 break;
             }
-        }
-
-        // Detect WSL distributions
-        for distro in detect_wsl_distros() {
-            shells.push(format!("wsl:{distro}"));
         }
     }
 
@@ -806,6 +804,18 @@ mod tests {
             "expected powershell in detected shells: {:?}",
             shells
         );
+    }
+
+    /// Regression test for #400: WSL distros must not appear in local shells.
+    #[test]
+    fn detect_available_shells_excludes_wsl() {
+        let shells = detect_available_shells();
+        for shell in &shells {
+            assert!(
+                !shell.starts_with("wsl:"),
+                "WSL distro '{shell}' should not appear in local shells (issue #400)"
+            );
+        }
     }
 
     // -----------------------------------------------------------------------
