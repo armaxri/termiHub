@@ -18,6 +18,10 @@ interface TerminalRegistryContextType {
   saveTerminalToFile: (tabId: string) => Promise<void>;
   /** Copy terminal buffer content to the clipboard. */
   copyTerminalToClipboard: (tabId: string) => Promise<void>;
+  /** Get the current text selection in a terminal, or undefined if none. */
+  getTerminalSelection: (tabId: string) => string | undefined;
+  /** Copy the current text selection to the clipboard (no-op if nothing selected). */
+  copySelectionToClipboard: (tabId: string) => Promise<void>;
   /** Ref to the off-screen parking div for orphaned terminal elements. */
   parkingRef: React.RefObject<HTMLDivElement | null>;
 }
@@ -113,6 +117,22 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     [getTerminalContent]
   );
 
+  const getTerminalSelection = useCallback((tabId: string): string | undefined => {
+    const xterm = xtermRegistryRef.current.get(tabId);
+    if (!xterm || !xterm.hasSelection()) return undefined;
+    return xterm.getSelection();
+  }, []);
+
+  const copySelectionToClipboard = useCallback(
+    async (tabId: string) => {
+      const selection = getTerminalSelection(tabId);
+      if (!selection) return;
+
+      await navigator.clipboard.writeText(selection);
+    },
+    [getTerminalSelection]
+  );
+
   const ctx = useMemo(
     () => ({
       register,
@@ -122,6 +142,8 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       clearTerminal,
       saveTerminalToFile,
       copyTerminalToClipboard,
+      getTerminalSelection,
+      copySelectionToClipboard,
       parkingRef,
     }),
     [
@@ -132,6 +154,8 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       clearTerminal,
       saveTerminalToFile,
       copyTerminalToClipboard,
+      getTerminalSelection,
+      copySelectionToClipboard,
     ]
   );
 

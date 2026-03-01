@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Right-click context menu on the terminal area with "Copy Selection" to copy only the selected text, plus "Copy All" for the entire buffer — previously only the tab context menu's "Copy to Clipboard" (entire history) was available (#407)
 - Guided manual test runner (`python scripts/test-manual.py`) — a cross-platform CLI tool that walks developers through manual test items one at a time with platform filtering, lazy infrastructure setup (Docker, virtual serial ports), automated verification checks, interactive pass/fail/skip collection, resume support, and JSON report generation; test definitions live in `tests/manual/*.yaml` covering 176 test items across 11 categories (#384)
 - Graceful recovery from corrupt configuration files: if `settings.json`, `connections.json`, or `tunnels.json` contain invalid JSON, the app backs up the corrupt file to `.bak`, replaces it with defaults (or recovers individual valid entries for connections), logs the error, and shows a recovery notification dialog on startup — the app never crashes due to corrupt config files (#383)
 - Comprehensive Rust integration test suite (52 tests across 7 files) exercising termiHub's SSH, telnet, SFTP, monitoring, and network resilience backends against Docker test containers — tests skip gracefully when containers are not running
