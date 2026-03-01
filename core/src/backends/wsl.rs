@@ -145,7 +145,7 @@ impl ConnectionType for Wsl {
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             monitoring: false,
-            file_browser: true,
+            file_browser: false,
             resize: true,
             persistent: true,
         }
@@ -381,7 +381,7 @@ mod tests {
         let caps = wsl.capabilities();
         assert!(caps.resize);
         assert!(!caps.monitoring);
-        assert!(caps.file_browser);
+        assert!(!caps.file_browser);
         assert!(caps.persistent);
     }
 
