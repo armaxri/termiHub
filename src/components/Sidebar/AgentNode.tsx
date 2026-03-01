@@ -34,6 +34,8 @@ const EMPTY_DEFINITIONS: AgentDefinitionInfo[] = [];
 
 interface AgentNodeProps {
   agent: RemoteAgentDefinition;
+  style?: React.CSSProperties;
+  sectionRef?: (el: HTMLDivElement | null) => void;
 }
 
 /** CSS modifier class for each connection state dot. */
@@ -44,7 +46,7 @@ const STATE_DOT_CLASSES: Record<string, string> = {
   disconnected: "agent-node__state-dot--disconnected",
 };
 
-export function AgentNode({ agent }: AgentNodeProps) {
+export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
   const toggleRemoteAgent = useAppStore((s) => s.toggleRemoteAgent);
   const connectRemoteAgent = useAppStore((s) => s.connectRemoteAgent);
   const disconnectRemoteAgent = useAppStore((s) => s.disconnectRemoteAgent);
@@ -187,7 +189,12 @@ export function AgentNode({ agent }: AgentNodeProps) {
   }, [agent.id, refreshAgentSessions]);
 
   return (
-    <div className="connection-list__group" data-testid={`agent-node-${agent.id}`}>
+    <div
+      ref={sectionRef}
+      className={`connection-list__group${agent.isExpanded ? " connection-list__group--expanded" : ""}`}
+      style={style}
+      data-testid={`agent-node-${agent.id}`}
+    >
       <ContextMenu.Root>
         <ContextMenu.Trigger asChild>
           <div className="connection-list__group-header">

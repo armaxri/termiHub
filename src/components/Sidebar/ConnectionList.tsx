@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, Fragment, useMemo } from "react";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import {
   DndContext,
@@ -32,6 +32,7 @@ import { SavedConnection, ConnectionFolder } from "@/types/connection";
 import { listAvailableShells, createTerminal, removeCredential } from "@/services/api";
 import { ConnectionIcon } from "@/utils/connectionIcons";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
+import { useSectionResize } from "@/hooks/useSectionResize";
 import { AgentNode } from "./AgentNode";
 import "./ConnectionList.css";
 
@@ -526,6 +527,40 @@ export function ConnectionList() {
   const rootConnections = connections.filter((c) => c.folderId === null);
   const LocalChevron = localCollapsed ? ChevronRight : ChevronDown;
 
+  // Build expanded-section mapping for resize hook.
+  // Section 0 = Connections, sections 1..N = remote agents.
+  const sectionsExpanded = useMemo(
+    () => [!localCollapsed, ...remoteAgents.map((a) => a.isExpanded)],
+    [localCollapsed, remoteAgents]
+  );
+  const expandedCount = sectionsExpanded.filter(Boolean).length;
+  const { flexValues, handleProps, sectionRefs } = useSectionResize(expandedCount);
+
+  // Map each section index to its expanded-section index (or -1 if collapsed).
+  const expandedIndexMap = useMemo(() => {
+    const map: number[] = [];
+    let ei = 0;
+    for (const isExpanded of sectionsExpanded) {
+      map.push(isExpanded ? ei++ : -1);
+    }
+    return map;
+  }, [sectionsExpanded]);
+
+  /** Props for a resize handle between section `i` and section `i+1`. */
+  const getResizeHandleProps = useCallback(
+    (sectionIndex: number) => {
+      const eiAbove = expandedIndexMap[sectionIndex];
+      const eiBelow = expandedIndexMap[sectionIndex + 1];
+      if (eiAbove >= 0 && eiBelow >= 0 && eiBelow === eiAbove + 1) {
+        return handleProps(eiAbove);
+      }
+      return {};
+    },
+    [expandedIndexMap, handleProps]
+  );
+
+  const connExpandedIdx = expandedIndexMap[0];
+
   return (
     <div className="connection-list">
       <DndContext
@@ -534,7 +569,13 @@ export function ConnectionList() {
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
       >
-        <div className="connection-list__group">
+        <div
+          ref={(el) => {
+            if (connExpandedIdx >= 0) sectionRefs.current[connExpandedIdx] = el;
+          }}
+          className={`connection-list__group${!localCollapsed ? " connection-list__group--expanded" : ""}`}
+          style={connExpandedIdx >= 0 ? { flex: flexValues[connExpandedIdx] } : undefined}
+        >
           <div className="connection-list__group-header">
             <button
               className="connection-list__group-toggle"
@@ -590,8 +631,21 @@ export function ConnectionList() {
             />
           )}
         </div>
-        {remoteAgents.length > 0 &&
-          remoteAgents.map((agent) => <AgentNode key={agent.id} agent={agent} />)}
+        {remoteAgents.map((agent, i) => {
+          const agentExpandedIdx = expandedIndexMap[i + 1];
+          return (
+            <Fragment key={agent.id}>
+              <div className="connection-list__resize-handle" {...getResizeHandleProps(i)} />
+              <AgentNode
+                agent={agent}
+                style={agentExpandedIdx >= 0 ? { flex: flexValues[agentExpandedIdx] } : undefined}
+                sectionRef={(el) => {
+                  if (agentExpandedIdx >= 0) sectionRefs.current[agentExpandedIdx] = el;
+                }}
+              />
+            </Fragment>
+          );
+        })}
         <DragOverlay>
           {draggingConnection ? (
             <div className="connection-tree__drag-overlay">

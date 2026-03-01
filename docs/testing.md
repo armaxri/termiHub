@@ -665,24 +665,24 @@ Analysis of which manual test items can be covered by WebdriverIO E2E tests (tau
 
 #### Summary
 
-| Area                  | Automated | Pending E2E | E2E/infra | Partial | Manual | Total   |
-| --------------------- | --------- | ----------- | --------- | ------- | ------ | ------- |
-| Local Shell           | 14        | 0           | 1         | 0       | 21     | 36      |
-| SSH                   | 58        | 3           | 0         | 4       | 20     | 85      |
-| Serial                | 5         | 0           | 0         | 0       | 2      | 7       |
-| Telnet                | 3         | 0           | 0         | 0       | 0      | 3       |
-| Tab Management        | 8         | 1           | 0         | 6       | 5      | 20      |
-| Connection Management | 54        | 18          | 0         | 8       | 13     | 93      |
-| Split Views           | 4         | 0           | 0         | 2       | 0      | 6       |
-| File Browser          | 31        | 0           | 0         | 0       | 11     | 42      |
-| Editor                | 22        | 0           | 0         | 1       | 0      | 23      |
-| UI / Layout           | 27        | 0           | 0         | 6       | 12     | 45      |
-| Remote Agent          | 10        | 0           | 7         | 3       | 5      | 25      |
-| Credential Store      | 15        | 0           | 0         | 3       | 5      | 23      |
-| Cross-Platform        | 0         | 0           | 0         | 0       | 3      | 3       |
-| **Total**             | **251**   | **22**      | **8**     | **33**  | **97** | **411** |
+| Area                  | Automated | Pending E2E | E2E/infra | Partial | Manual  | Total   |
+| --------------------- | --------- | ----------- | --------- | ------- | ------- | ------- |
+| Local Shell           | 14        | 0           | 1         | 0       | 21      | 36      |
+| SSH                   | 58        | 3           | 0         | 4       | 20      | 85      |
+| Serial                | 5         | 0           | 0         | 0       | 2       | 7       |
+| Telnet                | 3         | 0           | 0         | 0       | 0       | 3       |
+| Tab Management        | 8         | 1           | 0         | 6       | 5       | 20      |
+| Connection Management | 54        | 18          | 0         | 8       | 13      | 93      |
+| Split Views           | 4         | 0           | 0         | 2       | 0       | 6       |
+| File Browser          | 31        | 0           | 0         | 0       | 11      | 42      |
+| Editor                | 22        | 0           | 0         | 1       | 0       | 23      |
+| UI / Layout           | 27        | 0           | 0         | 6       | 17      | 50      |
+| Remote Agent          | 10        | 0           | 7         | 3       | 5       | 25      |
+| Credential Store      | 15        | 0           | 0         | 3       | 5       | 23      |
+| Cross-Platform        | 0         | 0           | 0         | 0       | 3       | 3       |
+| **Total**             | **251**   | **22**      | **8**     | **33**  | **102** | **416** |
 
-**251 test items (61%) are now covered by automated E2E tests** across 28 test files. An additional 30 items are fully automatable (22 pending E2E, 8 requiring Docker infrastructure with a live remote agent). The remaining 97 items (24%) require manual testing.
+**251 test items (60%) are now covered by automated E2E tests** across 28 test files. An additional 30 items are fully automatable (22 pending E2E, 8 requiring Docker infrastructure with a live remote agent). The remaining 102 items (25%) require manual testing.
 
 #### Manual-Only Reasons Breakdown
 
@@ -741,11 +741,11 @@ See [scripts/README.md](../scripts/README.md) for all options. Reports are saved
 | Tab Management         | [`tab-management.yaml`](../tests/manual/tab-management.yaml)               | `MT-TAB`      | 17      |
 | Connection Management  | [`connection-management.yaml`](../tests/manual/connection-management.yaml) | `MT-CONN`     | 32      |
 | File Browser + Editor  | [`file-browser.yaml`](../tests/manual/file-browser.yaml)                   | `MT-FB`       | 20      |
-| UI / Layout            | [`ui-layout.yaml`](../tests/manual/ui-layout.yaml)                         | `MT-UI`       | 20      |
+| UI / Layout            | [`ui-layout.yaml`](../tests/manual/ui-layout.yaml)                         | `MT-UI`       | 25      |
 | Remote Agent           | [`remote-agent.yaml`](../tests/manual/remote-agent.yaml)                   | `MT-AGENT`    | 8       |
 | Credential Store       | [`credential-store.yaml`](../tests/manual/credential-store.yaml)           | `MT-CRED`     | 8       |
 | Cross-Platform         | [`cross-platform.yaml`](../tests/manual/cross-platform.yaml)               | `MT-XPLAT`    | 3       |
 | Configuration Recovery | [`config-recovery.yaml`](../tests/manual/config-recovery.yaml)             | `MT-RECOVERY` | 12      |
-| **Total**              |                                                                            |               | **177** |
+| **Total**              |                                                                            |               | **182** |
 
 When adding new manual tests, add the YAML definition to the appropriate file in `tests/manual/` — the YAML files are the **source of truth** for guided testing.

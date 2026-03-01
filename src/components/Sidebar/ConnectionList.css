@@ -8,8 +8,35 @@
 .connection-list__group {
   display: flex;
   flex-direction: column;
-  flex: 1;
   min-height: 0;
+}
+
+.connection-list__group--expanded {
+  overflow: hidden;
+}
+
+/* Resize handle between sidebar sections */
+.connection-list__resize-handle {
+  height: 1px;
+  background-color: var(--border-primary);
+  cursor: ns-resize;
+  flex-shrink: 0;
+  position: relative;
+  transition: background-color var(--transition-fast);
+}
+
+.connection-list__resize-handle::before {
+  content: "";
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  left: 0;
+  right: 0;
+}
+
+.connection-list__resize-handle:hover,
+.connection-list__resize-handle--active {
+  background-color: var(--resize-handle-hover-color);
 }
 
 .connection-list__group-header {

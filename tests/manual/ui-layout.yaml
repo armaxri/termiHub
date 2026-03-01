@@ -284,3 +284,86 @@ tests:
       - "termiHub icon as favicon"
     verification: manual
     tags: [visual]
+
+  # --- Sidebar sections fold down when collapsed (PR #398) ---
+
+  - id: MT-UI-21
+    name: "Collapsed sidebar sections fold to header height"
+    pr: 398
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open the Connections sidebar with at least one remote agent configured"
+      - "Expand the Connections group and an agent group"
+      - "Collapse the agent group by clicking its header chevron"
+    expected:
+      - "Collapsed group shrinks to header height only (~28px)"
+      - "Expanded Connections group fills remaining vertical space"
+    verification: manual
+    tags: [visual]
+
+  - id: MT-UI-22
+    name: "Visible separators between sidebar sections"
+    pr: 398
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open the Connections sidebar with at least one remote agent"
+      - "Look at the border between the Connections group and agent group headers"
+    expected:
+      - "A visible border line separates each group section"
+      - "The first group has no top border"
+    verification: manual
+    tags: [visual]
+
+  - id: MT-UI-23
+    name: "Multiple expanded groups share space equally"
+    pr: 398
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open the Connections sidebar with at least one remote agent"
+      - "Expand both the Connections group and an agent group"
+    expected:
+      - "Both expanded groups share the vertical space roughly equally"
+      - "Each group's content area scrolls independently if it has many items"
+    verification: manual
+    tags: [visual]
+
+  - id: MT-UI-24
+    name: "Resize sidebar sections by dragging separator"
+    pr: 398
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open the Connections sidebar with at least one remote agent"
+      - "Expand both the Connections group and an agent group"
+      - "Hover over the separator line between the two groups"
+      - "Drag the separator up or down"
+    expected:
+      - "Cursor changes to ns-resize on hover"
+      - "Separator highlights with accent color on hover"
+      - "Dragging resizes the two adjacent sections"
+      - "Both sections respect a minimum size"
+    verification: manual
+    tags: [visual]
+
+  - id: MT-UI-25
+    name: "Section content scrolls independently"
+    pr: 398
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open the Connections sidebar with enough connections to overflow"
+      - "With at least one remote agent expanded, resize the sections so the Connections group is small"
+      - "Scroll within the Connections group content area"
+    expected:
+      - "The Connections group scrolls independently"
+      - "The agent group remains in place while scrolling the Connections group"
+    verification: manual
+    tags: [visual]
