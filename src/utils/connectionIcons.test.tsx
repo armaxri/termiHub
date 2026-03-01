@@ -37,4 +37,11 @@ describe("getDefaultIconInfo", () => {
     expect(info.iconNode).toBeDefined();
     expect(info.component).toBeUndefined();
   });
+
+  it("returns WSL penguin icon for dedicated wsl connection type", () => {
+    const config: ConnectionConfig = { type: "wsl", config: { distribution: "Ubuntu" } };
+    const info = getDefaultIconInfo(config);
+    expect(info.iconNode).toBeDefined();
+    expect(info.component).toBeUndefined();
+  });
 });
