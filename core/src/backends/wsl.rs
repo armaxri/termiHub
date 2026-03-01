@@ -20,7 +20,7 @@ use crate::connection::{
 use crate::errors::SessionError;
 use crate::files::FileBrowser;
 use crate::monitoring::MonitoringProvider;
-use crate::session::shell::{detect_wsl_distros, shell_to_command};
+use crate::session::shell::{detect_wsl_distros, osc7_setup_command, shell_to_command};
 
 /// Channel capacity for output data from the PTY reader thread.
 const OUTPUT_CHANNEL_CAPACITY: usize = 64;
@@ -283,6 +283,17 @@ impl ConnectionType for Wsl {
             alive,
             child: Arc::new(Mutex::new(child)),
         });
+
+        // Inject OSC 7 PROMPT_COMMAND hook for CWD tracking.
+        // The setup command configures bash/zsh to emit OSC 7 on each prompt,
+        // allowing the file browser to follow the terminal's working directory.
+        // Errors are non-fatal — the shell works without CWD tracking.
+        if let Some(setup) = osc7_setup_command(&shell_key) {
+            let cmd = format!("{setup}\n");
+            if let Err(e) = self.write(cmd.as_bytes()) {
+                debug!("Failed to inject OSC 7 hook: {e}");
+            }
+        }
 
         Ok(())
     }
@@ -560,6 +571,61 @@ mod tests {
         wsl.connect(settings.clone()).await.expect("first connect");
         let result = wsl.connect(settings).await;
         assert!(result.is_err());
+
+        wsl.disconnect().await.ok();
+    }
+
+    /// Regression test for #408: verify the OSC 7 PROMPT_COMMAND hook is
+    /// injected into WSL sessions by checking for the `__termihub_osc7`
+    /// function definition in the echoed output.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn osc7_setup_injected_for_wsl() {
+        let wsl_instance = Wsl::new();
+        let schema = wsl_instance.settings_schema();
+        let distro_field = schema.groups[0]
+            .fields
+            .iter()
+            .find(|f| f.key == "distribution")
+            .unwrap();
+
+        let distro = if let FieldType::Select { options } = &distro_field.field_type {
+            if options.is_empty() {
+                eprintln!("No WSL distributions installed — skipping OSC 7 injection test");
+                return;
+            }
+            options[0].value.clone()
+        } else {
+            panic!("expected Select field type for distribution");
+        };
+
+        let mut wsl = Wsl::new();
+        let settings = serde_json::json!({ "distribution": distro });
+
+        wsl.connect(settings).await.expect("connect failed");
+        let mut rx = wsl.subscribe_output();
+
+        // Wait for the setup command to be echoed back by the PTY.
+        // The echo contains the __termihub_osc7 function and PROMPT_COMMAND.
+        let mut output = Vec::new();
+        let deadline = tokio::time::Duration::from_secs(5);
+        let found = tokio::time::timeout(deadline, async {
+            while let Some(chunk) = rx.recv().await {
+                output.extend_from_slice(&chunk);
+                let text = String::from_utf8_lossy(&output);
+                if text.contains("__termihub_osc7") && text.contains("PROMPT_COMMAND") {
+                    return true;
+                }
+            }
+            false
+        })
+        .await;
+
+        assert!(
+            found.unwrap_or(false),
+            "expected OSC 7 setup (__termihub_osc7 + PROMPT_COMMAND) in WSL output, got: {:?}",
+            String::from_utf8_lossy(&output)
+        );
 
         wsl.disconnect().await.ok();
     }

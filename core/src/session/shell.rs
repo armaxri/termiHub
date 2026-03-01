@@ -163,13 +163,15 @@ pub fn build_shell_command(config: &ShellConfig) -> ShellCommand {
 /// - `"wsl:<distro>"` — WSL variant: includes `cd $HOME` guard for `/mnt/`
 ///   paths and screen-clear escape.
 /// - `"ssh"` — SSH variant: no `/mnt/` guard, includes screen-clear escape.
-/// - Anything else — returns `None` (local shells emit OSC 7 natively or
-///   don't need it).
+/// - `"bash"` / `"gitbash"` — local bash sessions: same as SSH variant
+///   (bash does not emit OSC 7 by default).
+/// - Anything else (`"zsh"`, `"powershell"`, `"cmd"`, etc.) — returns `None`
+///   (zsh emits OSC 7 natively; PowerShell/cmd don't support `PROMPT_COMMAND`).
 pub fn osc7_setup_command(shell_type: &str) -> Option<String> {
     if shell_type.starts_with("wsl:") {
         Some(wsl_osc7_command().to_string())
-    } else if shell_type == "ssh" {
-        Some(ssh_osc7_command().to_string())
+    } else if matches!(shell_type, "ssh" | "bash" | "gitbash") {
+        Some(bash_osc7_command().to_string())
     } else {
         None
     }
@@ -292,12 +294,12 @@ fn wsl_osc7_command() -> &'static str {
     )
 }
 
-/// OSC 7 setup command for SSH shells.
+/// OSC 7 setup command for bash-based shells (SSH, local bash, Git Bash).
 ///
 /// Unlike [`wsl_osc7_command()`], this does not include a `cd $HOME` guard
-/// for `/mnt/` paths, since SSH sessions start in the remote user's home
-/// directory. Ends with ANSI screen-clear escape.
-fn ssh_osc7_command() -> &'static str {
+/// for `/mnt/` paths. Supports both bash (`PROMPT_COMMAND`) and zsh
+/// (`precmd_functions`). Ends with ANSI screen-clear escape.
+fn bash_osc7_command() -> &'static str {
     concat!(
         r#"__termihub_osc7(){ printf '\e]7;file://%s\a' "$PWD"; }; "#,
         r#"[ "$ZSH_VERSION" ] && precmd_functions+=(__termihub_osc7) || "#,
@@ -687,11 +689,42 @@ mod tests {
     }
 
     #[test]
-    fn osc7_local_returns_none() {
+    fn osc7_bash_contains_expected_parts() {
+        let setup = osc7_setup_command("bash").expect("expected Some for bash");
+        assert!(
+            setup.contains(r"\e]7;"),
+            "expected OSC 7 escape marker, got: {setup}"
+        );
+        assert!(
+            setup.contains("PROMPT_COMMAND"),
+            "expected bash PROMPT_COMMAND, got: {setup}"
+        );
+        // Should NOT contain WSL-specific /mnt/ path handling
+        assert!(
+            !setup.contains("/mnt/"),
+            "local bash setup should not contain /mnt/ path handling, got: {setup}"
+        );
+    }
+
+    #[test]
+    fn osc7_gitbash_contains_expected_parts() {
+        let setup = osc7_setup_command("gitbash").expect("expected Some for gitbash");
+        assert!(
+            setup.contains(r"\e]7;"),
+            "expected OSC 7 escape marker, got: {setup}"
+        );
+        assert!(
+            setup.contains("PROMPT_COMMAND"),
+            "expected bash PROMPT_COMMAND, got: {setup}"
+        );
+    }
+
+    #[test]
+    fn osc7_non_bash_returns_none() {
         assert!(osc7_setup_command("zsh").is_none());
-        assert!(osc7_setup_command("bash").is_none());
         assert!(osc7_setup_command("powershell").is_none());
         assert!(osc7_setup_command("cmd").is_none());
+        assert!(osc7_setup_command("sh").is_none());
     }
 
     // -----------------------------------------------------------------------
