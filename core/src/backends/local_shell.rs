@@ -20,7 +20,9 @@ use crate::connection::{
 use crate::errors::SessionError;
 use crate::files::FileBrowser;
 use crate::monitoring::MonitoringProvider;
-use crate::session::shell::{build_shell_command, detect_available_shells, detect_default_shell};
+use crate::session::shell::{
+    build_shell_command, detect_available_shells, detect_default_shell, osc7_setup_command,
+};
 
 /// Channel capacity for output data from the PTY reader thread.
 const OUTPUT_CHANNEL_CAPACITY: usize = 64;
@@ -181,8 +183,14 @@ impl ConnectionType for LocalShell {
             .filter(|s| !s.is_empty())
             .map(String::from);
 
+        // Resolve effective shell name for OSC 7 injection below.
+        let effective_shell = shell
+            .clone()
+            .or_else(detect_default_shell)
+            .unwrap_or_else(|| "sh".to_string());
+
         let config = ShellConfig {
-            shell,
+            shell: Some(effective_shell.clone()),
             starting_directory,
             initial_command: _initial_command,
             ..ShellConfig::default()
@@ -290,6 +298,18 @@ impl ConnectionType for LocalShell {
             alive,
             child: Arc::new(Mutex::new(child)),
         });
+
+        // Inject OSC 7 PROMPT_COMMAND hook for CWD tracking.
+        // Bash (and Git Bash) don't emit OSC 7 by default, so we inject a
+        // PROMPT_COMMAND that emits it on each prompt. Zsh, PowerShell, and cmd
+        // are skipped (zsh has native OSC 7; PowerShell/cmd don't support it).
+        // Errors are non-fatal — the shell works without CWD tracking.
+        if let Some(setup) = osc7_setup_command(&effective_shell) {
+            let cmd = format!("{setup}\n");
+            if let Err(e) = self.write(cmd.as_bytes()) {
+                debug!("Failed to inject OSC 7 hook: {e}");
+            }
+        }
 
         Ok(())
     }
@@ -637,6 +657,50 @@ mod tests {
             .disconnect()
             .await
             .expect("disconnect should not fail");
+    }
+
+    /// Regression test for #408: verify the OSC 7 PROMPT_COMMAND hook is
+    /// injected into local bash sessions by checking for the `__termihub_osc7`
+    /// function definition in the echoed output.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn osc7_setup_injected_for_bash() {
+        use std::path::Path;
+
+        // Skip if bash is not available.
+        if !Path::new("/bin/bash").exists() && !Path::new("/usr/bin/bash").exists() {
+            eprintln!("bash not found — skipping OSC 7 injection test");
+            return;
+        }
+
+        let mut shell = LocalShell::new();
+        let settings = serde_json::json!({ "shell": "bash" });
+
+        shell.connect(settings).await.expect("connect failed");
+        let mut rx = shell.subscribe_output();
+
+        // Wait for the setup command to be echoed back by the PTY.
+        let mut output = Vec::new();
+        let deadline = tokio::time::Duration::from_secs(5);
+        let found = tokio::time::timeout(deadline, async {
+            while let Some(chunk) = rx.recv().await {
+                output.extend_from_slice(&chunk);
+                let text = String::from_utf8_lossy(&output);
+                if text.contains("__termihub_osc7") && text.contains("PROMPT_COMMAND") {
+                    return true;
+                }
+            }
+            false
+        })
+        .await;
+
+        assert!(
+            found.unwrap_or(false),
+            "expected OSC 7 setup (__termihub_osc7 + PROMPT_COMMAND) in bash output, got: {:?}",
+            String::from_utf8_lossy(&output)
+        );
+
+        shell.disconnect().await.ok();
     }
 
     /// Old saved connections use `"shellType"` instead of `"shell"`.
