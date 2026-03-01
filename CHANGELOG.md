@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Remote agent fails to start after successful installation — the SSH exec command used a bare `termihub-agent` binary name that relies on PATH, but `~/.local/bin` is typically not on PATH in non-interactive SSH sessions; now uses the full resolved path (`$HOME/.local/bin/termihub-agent`) for exec, reconnect, and probe commands; added optional `agentPath` field to agent config for custom install locations (#406)
 - Collapsed sidebar sections (Connections, remote agents) now fold down to header height instead of occupying equal vertical space — expanded sections fill remaining space like VS Code's sidebar panels; sections are resizable by dragging the separator between them and each section's content scrolls independently (#398)
 - WSL connections now correctly show the penguin icon in the sidebar and tab bar — the dedicated `wsl` connection type was falling through to the generic type icon lookup instead of returning the penguin icon (#403)
 - WSL distributions no longer appear in the local shell connection dropdown on Windows — they are now only available through the dedicated WSL connection type (#400)

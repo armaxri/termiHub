@@ -1070,6 +1070,7 @@ mod tests {
                 password: password.map(|s| s.to_string()),
                 key_path: None,
                 save_password,
+                agent_path: None,
             },
         }
     }

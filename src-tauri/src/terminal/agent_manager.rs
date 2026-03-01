@@ -155,7 +155,8 @@ impl AgentConnectionManager {
             emit_agent_state(&self.app_handle, agent_id, "disconnected");
             TerminalError::RemoteError(format!("Channel open failed: {}", e))
         })?;
-        channel.exec("termihub-agent --stdio").map_err(|e| {
+        let exec_cmd = config.agent_exec_command();
+        channel.exec(&exec_cmd).map_err(|e| {
             emit_agent_state(&self.app_handle, agent_id, "disconnected");
             TerminalError::RemoteError(format!("Exec failed: {}", e))
         })?;
@@ -824,7 +825,8 @@ fn reconnect_agent(
                 continue;
             }
         };
-        if let Err(e) = channel.exec("termihub-agent --stdio") {
+        let exec_cmd = config.agent_exec_command();
+        if let Err(e) = channel.exec(&exec_cmd) {
             warn!("Reconnect attempt {} failed (exec): {}", attempt + 1, e);
             continue;
         }
