@@ -50,6 +50,10 @@ pub struct AgentProbeResult {
 ///
 /// Connects, runs `uname` and `termihub-agent --version`, and returns
 /// the findings. Does not modify anything on the remote host.
+///
+/// Uses the configured agent path (with `~/` → `$HOME/` expansion) so the
+/// binary is found even when `~/.local/bin` is not on the non-interactive
+/// SSH PATH.
 pub fn probe_remote_agent(
     config: &RemoteAgentConfig,
     expected_version: &str,
@@ -59,8 +63,9 @@ pub fn probe_remote_agent(
 
     let (remote_os, remote_arch) = detect_remote_info(&session)?;
 
-    // Try running the agent with --version
-    let version_output = run_remote_command(&session, "termihub-agent --version 2>/dev/null");
+    // Try running the agent with --version using the resolved path
+    let version_cmd = config.agent_version_command();
+    let version_output = run_remote_command(&session, &version_cmd);
 
     let (found, version, compatible) = match version_output {
         Ok(output) if !output.is_empty() => {

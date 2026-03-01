@@ -54,6 +54,8 @@ export interface RemoteAgentConfig {
   password?: string;
   keyPath?: string;
   savePassword?: boolean;
+  /** Path to the agent binary on the remote host (default: ~/.local/bin/termihub-agent). */
+  agentPath?: string;
 }
 
 /** Key-value pair for Docker environment variables. */
