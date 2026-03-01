@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
+import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
 import { FileBrowser } from "./FileBrowser";
 import type { TerminalTab, LeafPanel } from "@/types/terminal";
@@ -14,10 +15,22 @@ vi.mock("@/services/events", () => ({
   onVscodeEditComplete: vi.fn(() => Promise.resolve(vi.fn())),
 }));
 
-vi.mock("@/services/api", () => ({
-  getHomeDir: vi.fn(() => Promise.resolve("C:\\Users\\test")),
-  ConnectionTypeInfo: {},
-}));
+vi.mock("@/services/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/services/api")>();
+  return {
+    ...actual,
+    getHomeDir: vi.fn(() => Promise.resolve("C:\\Users\\test")),
+  };
+});
+
+const mockedInvoke = vi.mocked(invoke);
+
+/** Flush pending microtasks (Promise callbacks) inside act(). */
+async function flushAsync() {
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 0));
+  });
+}
 
 let container: HTMLDivElement;
 let root: Root;
@@ -57,6 +70,12 @@ describe("FileBrowser – useFileBrowserSync", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
+
+    // Mock local_list_dir to return empty entries so navigateLocal doesn't throw.
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "local_list_dir") return Promise.resolve([]);
+      return Promise.resolve(undefined);
+    });
   });
 
   afterEach(() => {
@@ -66,6 +85,8 @@ describe("FileBrowser – useFileBrowserSync", () => {
     container.remove();
     vi.clearAllMocks();
   });
+
+  // --- Mode selection ---
 
   it("sets fileBrowserMode to 'local' for a WSL tab", () => {
     const wslTab = makeTab({
@@ -109,10 +130,7 @@ describe("FileBrowser – useFileBrowserSync", () => {
     expect(useAppStore.getState().fileBrowserMode).toBe("local");
   });
 
-  it("does not set fileBrowserMode to 'sftp' for a WSL tab", () => {
-    // Simulate a WSL connection type that the backend reports supports file browsing.
-    // Even if connectionTypes claims file_browser=true, the WSL tab should
-    // be caught by the `=== "wsl"` check first and use local mode.
+  it("does not set fileBrowserMode to 'sftp' for a WSL tab even when capability claims true", () => {
     const wslTab = makeTab({
       connectionType: "wsl",
       config: { type: "wsl", config: { distribution: "Debian" } },
@@ -127,7 +145,7 @@ describe("FileBrowser – useFileBrowserSync", () => {
           schema: { groups: [] },
           capabilities: {
             monitoring: false,
-            fileBrowser: true, // backend still claims true
+            fileBrowser: true,
             resize: true,
             persistent: true,
           },
@@ -139,7 +157,128 @@ describe("FileBrowser – useFileBrowserSync", () => {
       root.render(<FileBrowser />);
     });
 
-    // Should still be local, not sftp
     expect(useAppStore.getState().fileBrowserMode).toBe("local");
+  });
+
+  it("sets fileBrowserMode to 'none' for a settings tab", () => {
+    const settingsTab = makeTab({
+      contentType: "settings",
+      config: { type: "local", config: {} },
+    });
+    setActiveTab(settingsTab);
+
+    act(() => {
+      root.render(<FileBrowser />);
+    });
+
+    expect(useAppStore.getState().fileBrowserMode).toBe("none");
+  });
+
+  it("sets fileBrowserMode to 'none' for unsupported connection types", () => {
+    const telnetTab = makeTab({
+      connectionType: "telnet",
+      config: { type: "telnet", config: { host: "example.com" } },
+    });
+    setActiveTab(telnetTab);
+
+    act(() => {
+      root.render(<FileBrowser />);
+    });
+
+    expect(useAppStore.getState().fileBrowserMode).toBe("none");
+  });
+
+  // --- Navigation path conversion ---
+
+  it("navigates to WSL UNC root when WSL tab has no CWD", async () => {
+    const wslTab = makeTab({
+      connectionType: "wsl",
+      config: { type: "wsl", config: { distribution: "FedoraLinux-43" } },
+    });
+    setActiveTab(wslTab);
+    useAppStore.setState({ sidebarView: "files" });
+
+    await act(async () => {
+      root.render(<FileBrowser />);
+    });
+    await flushAsync();
+
+    expect(useAppStore.getState().localCurrentPath).toBe("//wsl$/FedoraLinux-43/");
+  });
+
+  it("converts WSL /mnt/c CWD to Windows drive path for file browser", async () => {
+    const wslTab = makeTab({
+      connectionType: "wsl",
+      config: { type: "wsl", config: { distribution: "Ubuntu" } },
+    });
+    setActiveTab(wslTab);
+    useAppStore.setState({
+      sidebarView: "files",
+      tabCwds: { "tab-1": "/mnt/c/Users/richtera" },
+    });
+
+    await act(async () => {
+      root.render(<FileBrowser />);
+    });
+    await flushAsync();
+
+    expect(useAppStore.getState().localCurrentPath).toBe("C:/Users/richtera");
+  });
+
+  it("converts native WSL Linux path to UNC path for file browser", async () => {
+    const wslTab = makeTab({
+      connectionType: "wsl",
+      config: { type: "wsl", config: { distribution: "Ubuntu" } },
+    });
+    setActiveTab(wslTab);
+    useAppStore.setState({
+      sidebarView: "files",
+      tabCwds: { "tab-1": "/home/user/projects" },
+    });
+
+    await act(async () => {
+      root.render(<FileBrowser />);
+    });
+    await flushAsync();
+
+    expect(useAppStore.getState().localCurrentPath).toBe("//wsl$/Ubuntu/home/user/projects");
+  });
+
+  it("converts CWD for local tab with WSL shell type", async () => {
+    const localWslTab = makeTab({
+      connectionType: "local",
+      config: { type: "local", config: { shell: "wsl:Debian" } },
+    });
+    setActiveTab(localWslTab);
+    useAppStore.setState({
+      sidebarView: "files",
+      tabCwds: { "tab-1": "/mnt/d/work" },
+    });
+
+    await act(async () => {
+      root.render(<FileBrowser />);
+    });
+    await flushAsync();
+
+    expect(useAppStore.getState().localCurrentPath).toBe("D:/work");
+  });
+
+  it("does not apply WSL path conversion for plain local tabs", async () => {
+    const localTab = makeTab({
+      connectionType: "local",
+      config: { type: "local", config: { shell: "powershell" } },
+    });
+    setActiveTab(localTab);
+    useAppStore.setState({
+      sidebarView: "files",
+      tabCwds: { "tab-1": "C:/Users/richtera" },
+    });
+
+    await act(async () => {
+      root.render(<FileBrowser />);
+    });
+    await flushAsync();
+
+    expect(useAppStore.getState().localCurrentPath).toBe("C:/Users/richtera");
   });
 });
