@@ -19,6 +19,7 @@ import {
   Pencil,
   FileDown,
   ClipboardCopy,
+  Copy,
   Eraser,
   ArrowRightLeft,
   Check,
@@ -187,10 +188,17 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
   const setTabHorizontalScrolling = useAppStore((s) => s.setTabHorizontalScrolling);
   const tabColors = useAppStore((s) => s.tabColors);
   const setTabColor = useAppStore((s) => s.setTabColor);
-  const { clearTerminal, saveTerminalToFile, copyTerminalToClipboard } = useTerminalRegistry();
+  const {
+    clearTerminal,
+    saveTerminalToFile,
+    copyTerminalToClipboard,
+    getTerminalSelection,
+    copySelectionToClipboard,
+  } = useTerminalRegistry();
 
   const [colorPickerTabId, setColorPickerTabId] = useState<string | null>(null);
   const [renameTabId, setRenameTabId] = useState<string | null>(null);
+  const [contextMenuTabSelection, setContextMenuTabSelection] = useState<string | null>(null);
 
   const renameTabData = renameTabId ? panel.tabs.find((t) => t.id === renameTabId) : null;
 
@@ -230,7 +238,14 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
               isVisible={tab.id === panel.activeTabId}
             />
           ) : (
-            <ContextMenu.Root key={tab.id}>
+            <ContextMenu.Root
+              key={tab.id}
+              onOpenChange={(open) => {
+                if (open) {
+                  setContextMenuTabSelection(getTerminalSelection(tab.id) ?? null);
+                }
+              }}
+            >
               <ContextMenu.Trigger asChild>
                 <div
                   className={
@@ -246,6 +261,21 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
                 <ContextMenu.Content className="context-menu__content">
                   <ContextMenu.Item
                     className="context-menu__item"
+                    disabled={!contextMenuTabSelection}
+                    onSelect={() => copySelectionToClipboard(tab.id)}
+                    data-testid="terminal-context-copy-selection"
+                  >
+                    <Copy size={14} /> Copy Selection
+                  </ContextMenu.Item>
+                  <ContextMenu.Item
+                    className="context-menu__item"
+                    onSelect={() => copyTerminalToClipboard(tab.id)}
+                  >
+                    <ClipboardCopy size={14} /> Copy All
+                  </ContextMenu.Item>
+                  <ContextMenu.Separator className="context-menu__separator" />
+                  <ContextMenu.Item
+                    className="context-menu__item"
                     onSelect={() => setRenameTabId(tab.id)}
                   >
                     <Pencil size={14} /> Rename
@@ -256,12 +286,6 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
                     onSelect={() => saveTerminalToFile(tab.id)}
                   >
                     <FileDown size={14} /> Save to File
-                  </ContextMenu.Item>
-                  <ContextMenu.Item
-                    className="context-menu__item"
-                    onSelect={() => copyTerminalToClipboard(tab.id)}
-                  >
-                    <ClipboardCopy size={14} /> Copy to Clipboard
                   </ContextMenu.Item>
                   <ContextMenu.Item
                     className="context-menu__item"
