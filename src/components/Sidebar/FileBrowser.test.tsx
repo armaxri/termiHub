@@ -124,7 +124,7 @@ describe("FileBrowser – useFileBrowserSync", () => {
           typeId: "wsl",
           displayName: "WSL",
           icon: "penguin",
-          schema: { fields: [], groups: [] },
+          schema: { groups: [] },
           capabilities: {
             monitoring: false,
             fileBrowser: true, // backend still claims true
