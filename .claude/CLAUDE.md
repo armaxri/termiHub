@@ -112,12 +112,15 @@ examples/                     # Quick-start dev environment (SSH, Telnet, virtua
 
 ### Testing
 
-- Every bug fix and feature should include verification that the change works correctly, in order of preference:
+- **Automatically add tests** after every bug fix or feature implementation — do not wait for the user to ask. Tests are a mandatory part of completing any task, not an optional follow-up.
+- Test type priority (use the highest feasible option):
   1. **Unit tests** (preferred) — fast, isolated, verify specific behavior
   2. **System/integration tests** — when unit tests aren't feasible (e.g., hardware, full app lifecycle)
   3. **Documented manual test steps** — last resort for things that can't be automated (e.g., visual rendering, platform-specific hardware)
 - No change should ship without at least one of the above
-- For bug fixes, add a regression test that would fail without the fix (when possible)
+- For bug fixes, **always** add a regression test that would fail without the fix
+- For new features, add tests covering the core functionality and key edge cases
+- Run `./scripts/test.sh` after adding tests to verify they pass before committing
 - **Manual test tracking**: When a PR includes manual test steps (in the PR description's "Test plan" section), also add those steps to the Manual Testing section in `docs/testing.md` under the appropriate feature area heading, referencing the PR number. This keeps manual tests discoverable and prevents them from being forgotten after merge.
 - **E2E platform constraint**: `tauri-driver` only supports Linux and Windows — it does **not** work on macOS (no WKWebView driver exists). E2E system tests run inside Docker (Linux) on all platforms. See ADR-5 in [architecture.md](../docs/architecture.md). macOS-specific behavior must be verified via manual tests.
 
