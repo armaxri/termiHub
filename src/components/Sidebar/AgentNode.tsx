@@ -1,11 +1,12 @@
 /**
  * Agent folder node in the sidebar.
  *
- * Renders a remote agent as an expandable folder with connection state,
- * child sessions, and saved definitions.
+ * Renders a remote agent as an expandable section with connection state,
+ * active sessions, and a folder tree of saved connections (mirroring the
+ * local connections experience).
  */
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import {
   ChevronDown,
@@ -19,11 +20,24 @@ import {
   RefreshCw,
   Terminal,
   Cable,
+  Container,
+  Globe,
+  Wifi,
   Upload,
+  Folder,
+  FolderPlus,
+  Check,
+  X,
+  Zap,
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { RemoteAgentDefinition } from "@/types/connection";
-import { AgentSessionInfo, AgentDefinitionInfo, removeCredential } from "@/services/api";
+import {
+  AgentSessionInfo,
+  AgentDefinitionInfo,
+  AgentFolderInfo,
+  removeCredential,
+} from "@/services/api";
 import { classifyAgentError, ClassifiedAgentError } from "@/utils/classifyAgentError";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { AgentSetupDialog } from "./AgentSetupDialog";
@@ -31,12 +45,7 @@ import { ConnectionErrorDialog } from "./ConnectionErrorDialog";
 
 const EMPTY_SESSIONS: AgentSessionInfo[] = [];
 const EMPTY_DEFINITIONS: AgentDefinitionInfo[] = [];
-
-interface AgentNodeProps {
-  agent: RemoteAgentDefinition;
-  style?: React.CSSProperties;
-  sectionRef?: (el: HTMLDivElement | null) => void;
-}
+const EMPTY_FOLDERS: AgentFolderInfo[] = [];
 
 /** CSS modifier class for each connection state dot. */
 const STATE_DOT_CLASSES: Record<string, string> = {
@@ -45,6 +54,260 @@ const STATE_DOT_CLASSES: Record<string, string> = {
   reconnecting: "agent-node__state-dot--reconnecting",
   disconnected: "agent-node__state-dot--disconnected",
 };
+
+/** Icon for a session/connection type string. */
+function SessionTypeIcon({ type, size = 14 }: { type: string; size?: number }) {
+  switch (type) {
+    case "serial":
+      return <Cable size={size} />;
+    case "docker":
+      return <Container size={size} />;
+    case "ssh":
+      return <Wifi size={size} />;
+    case "telnet":
+      return <Globe size={size} />;
+    default:
+      return <Terminal size={size} />;
+  }
+}
+
+// ── Inline folder name input ─────────────────────────────────────────
+
+interface InlineFolderInputProps {
+  depth: number;
+  onConfirm: (name: string) => void;
+  onCancel: () => void;
+}
+
+function InlineFolderInput({ depth, onConfirm, onCancel }: InlineFolderInputProps) {
+  const [name, setName] = useState("");
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && name.trim()) {
+      onConfirm(name.trim());
+    } else if (e.key === "Escape") {
+      onCancel();
+    }
+  };
+
+  return (
+    <div
+      className="connection-tree__folder connection-tree__folder--editing"
+      style={{ paddingLeft: `${depth * 16 + 8}px` }}
+    >
+      <Folder size={16} />
+      <input
+        className="connection-tree__inline-input"
+        type="text"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={handleKeyDown}
+        onBlur={onCancel}
+        placeholder="Folder name"
+        autoFocus
+        data-testid="agent-inline-folder-input"
+      />
+      <button
+        className="connection-tree__inline-btn"
+        onMouseDown={(e) => {
+          e.preventDefault();
+          if (name.trim()) onConfirm(name.trim());
+        }}
+        title="Confirm"
+      >
+        <Check size={14} />
+      </button>
+      <button
+        className="connection-tree__inline-btn"
+        onMouseDown={(e) => {
+          e.preventDefault();
+          onCancel();
+        }}
+        title="Cancel"
+      >
+        <X size={14} />
+      </button>
+    </div>
+  );
+}
+
+// ── Agent connection item ────────────────────────────────────────────
+
+interface AgentConnectionItemProps {
+  agentId: string;
+  definition: AgentDefinitionInfo;
+  depth: number;
+  onOpen: (def: AgentDefinitionInfo) => void;
+}
+
+function AgentConnectionItem({ agentId, definition, depth, onOpen }: AgentConnectionItemProps) {
+  const deleteAgentDef = useAppStore((s) => s.deleteAgentDef);
+
+  return (
+    <ContextMenu.Root>
+      <ContextMenu.Trigger asChild>
+        <button
+          className="connection-tree__item"
+          style={{ paddingLeft: `${depth * 16 + 8}px` }}
+          onDoubleClick={() => onOpen(definition)}
+          title={`${definition.name} (${definition.sessionType}${definition.persistent ? ", persistent" : ""})`}
+        >
+          <SessionTypeIcon type={definition.sessionType} />
+          <span className="connection-tree__label">{definition.name}</span>
+          <span className="connection-tree__type">{definition.sessionType}</span>
+        </button>
+      </ContextMenu.Trigger>
+      <ContextMenu.Portal>
+        <ContextMenu.Content className="context-menu__content">
+          <ContextMenu.Item className="context-menu__item" onSelect={() => onOpen(definition)}>
+            <Play size={14} />
+            Connect
+          </ContextMenu.Item>
+          <ContextMenu.Separator className="context-menu__separator" />
+          <ContextMenu.Item
+            className="context-menu__item context-menu__item--danger"
+            onSelect={() => deleteAgentDef(agentId, definition.id)}
+          >
+            <Trash2 size={14} />
+            Delete
+          </ContextMenu.Item>
+        </ContextMenu.Content>
+      </ContextMenu.Portal>
+    </ContextMenu.Root>
+  );
+}
+
+// ── Agent folder node (recursive) ───────────────────────────────────
+
+interface AgentFolderNodeProps {
+  agentId: string;
+  folder: AgentFolderInfo;
+  allFolders: AgentFolderInfo[];
+  allDefinitions: AgentDefinitionInfo[];
+  depth: number;
+  onOpenDefinition: (def: AgentDefinitionInfo) => void;
+}
+
+function AgentFolderNode({
+  agentId,
+  folder,
+  allFolders,
+  allDefinitions,
+  depth,
+  onOpenDefinition,
+}: AgentFolderNodeProps) {
+  const toggleAgentFolder = useAppStore((s) => s.toggleAgentFolder);
+  const createAgentFolder = useAppStore((s) => s.createAgentFolder);
+  const deleteAgentFolder = useAppStore((s) => s.deleteAgentFolder);
+  const saveAgentDef = useAppStore((s) => s.saveAgentDef);
+
+  const [creatingSubfolder, setCreatingSubfolder] = useState(false);
+
+  const Chevron = folder.isExpanded ? ChevronDown : ChevronRight;
+
+  const childFolders = useMemo(
+    () => allFolders.filter((f) => f.parentId === folder.id),
+    [allFolders, folder.id]
+  );
+  const childDefinitions = useMemo(
+    () => allDefinitions.filter((d) => d.folderId === folder.id),
+    [allDefinitions, folder.id]
+  );
+
+  const handleNewConnection = useCallback(() => {
+    saveAgentDef(agentId, {
+      name: "New Connection",
+      type: "shell",
+      config: {},
+      persistent: false,
+      folder_id: folder.id,
+    });
+  }, [agentId, folder.id, saveAgentDef]);
+
+  return (
+    <div>
+      <ContextMenu.Root>
+        <ContextMenu.Trigger asChild>
+          <button
+            className="connection-tree__folder"
+            style={{ paddingLeft: `${depth * 16 + 8}px` }}
+            onClick={() => toggleAgentFolder(agentId, folder.id)}
+          >
+            <Chevron size={16} className="connection-tree__chevron" />
+            <Folder size={16} />
+            <span className="connection-tree__label">{folder.name}</span>
+          </button>
+        </ContextMenu.Trigger>
+        <ContextMenu.Portal>
+          <ContextMenu.Content className="context-menu__content">
+            <ContextMenu.Item className="context-menu__item" onSelect={handleNewConnection}>
+              <Plus size={14} />
+              New Connection
+            </ContextMenu.Item>
+            <ContextMenu.Item
+              className="context-menu__item"
+              onSelect={() => setCreatingSubfolder(true)}
+            >
+              <FolderPlus size={14} />
+              New Subfolder
+            </ContextMenu.Item>
+            <ContextMenu.Separator className="context-menu__separator" />
+            <ContextMenu.Item
+              className="context-menu__item context-menu__item--danger"
+              onSelect={() => deleteAgentFolder(agentId, folder.id)}
+            >
+              <Trash2 size={14} />
+              Delete Folder
+            </ContextMenu.Item>
+          </ContextMenu.Content>
+        </ContextMenu.Portal>
+      </ContextMenu.Root>
+
+      {folder.isExpanded && (
+        <div className="connection-tree__children">
+          {creatingSubfolder && (
+            <InlineFolderInput
+              depth={depth + 1}
+              onConfirm={(name) => {
+                createAgentFolder(agentId, name, folder.id);
+                setCreatingSubfolder(false);
+              }}
+              onCancel={() => setCreatingSubfolder(false)}
+            />
+          )}
+          {childFolders.map((f) => (
+            <AgentFolderNode
+              key={f.id}
+              agentId={agentId}
+              folder={f}
+              allFolders={allFolders}
+              allDefinitions={allDefinitions}
+              depth={depth + 1}
+              onOpenDefinition={onOpenDefinition}
+            />
+          ))}
+          {childDefinitions.map((def) => (
+            <AgentConnectionItem
+              key={def.id}
+              agentId={agentId}
+              definition={def}
+              depth={depth + 1}
+              onOpen={onOpenDefinition}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Main agent node ─────────────────────────────────────────────────
+
+interface AgentNodeProps {
+  agent: RemoteAgentDefinition;
+  style?: React.CSSProperties;
+  sectionRef?: (el: HTMLDivElement | null) => void;
+}
 
 export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
   const toggleRemoteAgent = useAppStore((s) => s.toggleRemoteAgent);
@@ -56,15 +319,29 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
   const addTab = useAppStore((s) => s.addTab);
   const agentSessions = useAppStore((s) => s.agentSessions[agent.id]) ?? EMPTY_SESSIONS;
   const agentDefinitions = useAppStore((s) => s.agentDefinitions[agent.id]) ?? EMPTY_DEFINITIONS;
+  const agentFolders = useAppStore((s) => s.agentFolders[agent.id]) ?? EMPTY_FOLDERS;
   const refreshAgentSessions = useAppStore((s) => s.refreshAgentSessions);
+  const createAgentFolder = useAppStore((s) => s.createAgentFolder);
+  const saveAgentDef = useAppStore((s) => s.saveAgentDef);
 
   const [connecting, setConnecting] = useState(false);
   const [setupDialogOpen, setSetupDialogOpen] = useState(false);
   const [connectionError, setConnectionError] = useState<ClassifiedAgentError | null>(null);
   const [errorDialogOpen, setErrorDialogOpen] = useState(false);
+  const [creatingFolder, setCreatingFolder] = useState(false);
 
   const isConnected = agent.connectionState === "connected";
   const Chevron = agent.isExpanded ? ChevronDown : ChevronRight;
+
+  // Derived: root-level folders and definitions (no parent/folder)
+  const rootFolders = useMemo(
+    () => agentFolders.filter((f) => f.parentId === null || f.parentId === undefined),
+    [agentFolders]
+  );
+  const rootDefinitions = useMemo(
+    () => agentDefinitions.filter((d) => d.folderId === null || d.folderId === undefined),
+    [agentDefinitions]
+  );
 
   const handleConnect = useCallback(async () => {
     if (connecting) return;
@@ -72,7 +349,6 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
     try {
       let password: string | undefined;
 
-      // Try to resolve credential from the store first
       const resolution = await resolveConnectionCredential(
         agent.id,
         agent.config.authMethod,
@@ -93,7 +369,6 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
       try {
         await connectRemoteAgent(agent.id, password);
       } catch (err) {
-        // If we used a stored credential and got an auth failure, retry with prompt
         const classified = classifyAgentError(err);
         if (resolution.usedStoredCredential && classified.category === "auth-failure") {
           await removeCredential(agent.id, resolution.credentialType).catch(() => {});
@@ -188,6 +463,18 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
     refreshAgentSessions(agent.id);
   }, [agent.id, refreshAgentSessions]);
 
+  const handleNewConnection = useCallback(() => {
+    saveAgentDef(agent.id, {
+      name: "New Connection",
+      type: "shell",
+      config: {},
+      persistent: false,
+    });
+  }, [agent.id, saveAgentDef]);
+
+  const hasContent =
+    agentSessions.length > 0 || agentDefinitions.length > 0 || agentFolders.length > 0;
+
   return (
     <div
       ref={sectionRef}
@@ -215,8 +502,15 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
               <div className="connection-list__group-actions">
                 <button
                   className="connection-list__add-btn"
-                  onClick={handleNewShellSession}
-                  title="New Shell Session"
+                  onClick={() => setCreatingFolder(true)}
+                  title="New Folder"
+                >
+                  <FolderPlus size={16} />
+                </button>
+                <button
+                  className="connection-list__add-btn"
+                  onClick={handleNewConnection}
+                  title="New Connection"
                 >
                   <Plus size={16} />
                 </button>
@@ -283,6 +577,23 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
                     New Serial Session
                   </ContextMenu.Item>
                 )}
+                <ContextMenu.Separator className="context-menu__separator" />
+                <ContextMenu.Item
+                  className="context-menu__item"
+                  onSelect={handleNewConnection}
+                  data-testid="context-agent-new-connection"
+                >
+                  <Plus size={14} />
+                  New Connection
+                </ContextMenu.Item>
+                <ContextMenu.Item
+                  className="context-menu__item"
+                  onSelect={() => setCreatingFolder(true)}
+                  data-testid="context-agent-new-folder"
+                >
+                  <FolderPlus size={14} />
+                  New Folder
+                </ContextMenu.Item>
               </>
             )}
             <ContextMenu.Separator className="context-menu__separator" />
@@ -318,45 +629,79 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
         <div className="connection-list__tree">
           {isConnected ? (
             <>
-              {agentSessions.length === 0 && agentDefinitions.length === 0 && (
+              {/* Active sessions section */}
+              {agentSessions.length > 0 && (
+                <>
+                  <div className="agent-node__section-label" style={{ paddingLeft: 24 }}>
+                    <Zap size={12} />
+                    Active Sessions
+                  </div>
+                  {agentSessions.map((session) => (
+                    <button
+                      key={session.sessionId}
+                      className="connection-tree__item"
+                      style={{ paddingLeft: 32 }}
+                      onDoubleClick={() => handleAttachSession(session)}
+                      title={`${session.title} (${session.status})`}
+                    >
+                      <SessionTypeIcon type={session.type} />
+                      <span className="connection-tree__label">{session.title}</span>
+                      <span className="connection-tree__type">{session.status}</span>
+                    </button>
+                  ))}
+                </>
+              )}
+
+              {/* Saved connections section label (only when sessions also exist) */}
+              {agentSessions.length > 0 &&
+                (agentDefinitions.length > 0 || agentFolders.length > 0) && (
+                  <div className="agent-node__section-label" style={{ paddingLeft: 24 }}>
+                    Saved Connections
+                  </div>
+                )}
+
+              {/* Inline folder creation at root */}
+              {creatingFolder && (
+                <InlineFolderInput
+                  depth={1}
+                  onConfirm={(name) => {
+                    createAgentFolder(agent.id, name, null);
+                    setCreatingFolder(false);
+                  }}
+                  onCancel={() => setCreatingFolder(false)}
+                />
+              )}
+
+              {/* Root folders */}
+              {rootFolders.map((folder) => (
+                <AgentFolderNode
+                  key={folder.id}
+                  agentId={agent.id}
+                  folder={folder}
+                  allFolders={agentFolders}
+                  allDefinitions={agentDefinitions}
+                  depth={1}
+                  onOpenDefinition={handleOpenDefinition}
+                />
+              ))}
+
+              {/* Root connections (no folder) */}
+              {rootDefinitions.map((def) => (
+                <AgentConnectionItem
+                  key={def.id}
+                  agentId={agent.id}
+                  definition={def}
+                  depth={1}
+                  onOpen={handleOpenDefinition}
+                />
+              ))}
+
+              {/* Empty state */}
+              {!hasContent && (
                 <div className="agent-node__hint" style={{ paddingLeft: 32 }}>
                   No sessions. Right-click to create one.
                 </div>
               )}
-              {agentSessions.map((session) => (
-                <button
-                  key={session.sessionId}
-                  className="connection-tree__item"
-                  style={{ paddingLeft: 32 }}
-                  onDoubleClick={() => handleAttachSession(session)}
-                  title={`${session.title} (${session.status})`}
-                >
-                  {session.type === "serial" ? <Cable size={14} /> : <Terminal size={14} />}
-                  <span className="connection-tree__label">{session.title}</span>
-                  <span className="connection-tree__type">{session.status}</span>
-                </button>
-              ))}
-              {agentDefinitions.length > 0 && agentSessions.length > 0 && (
-                <div
-                  className="agent-node__hint"
-                  style={{ paddingLeft: 32, marginTop: 4, marginBottom: 2 }}
-                >
-                  Saved Definitions
-                </div>
-              )}
-              {agentDefinitions.map((def) => (
-                <button
-                  key={def.id}
-                  className="connection-tree__item"
-                  style={{ paddingLeft: 32 }}
-                  onDoubleClick={() => handleOpenDefinition(def)}
-                  title={`${def.name} (${def.sessionType}${def.persistent ? ", persistent" : ""})`}
-                >
-                  {def.sessionType === "serial" ? <Cable size={14} /> : <Terminal size={14} />}
-                  <span className="connection-tree__label">{def.name}</span>
-                  <span className="connection-tree__type">{def.sessionType}</span>
-                </button>
-              ))}
             </>
           ) : (
             <div className="agent-node__hint" style={{ paddingLeft: 32 }}>
