@@ -55,11 +55,16 @@ import {
   connectAgent as apiConnectAgent,
   disconnectAgent as apiDisconnectAgent,
   listAgentSessions,
-  listAgentDefinitions,
+  listAgentConnections,
   saveAgentDefinition,
+  updateAgentDefinition as apiUpdateAgentDefinition,
   deleteAgentDefinition,
+  createAgentFolder as apiCreateAgentFolder,
+  updateAgentFolder as apiUpdateAgentFolder,
+  deleteAgentFolder as apiDeleteAgentFolder,
   AgentSessionInfo,
   AgentDefinitionInfo,
+  AgentFolderInfo,
   getCredentialStoreStatus as apiGetCredentialStoreStatus,
   getConnectionTypes,
 } from "@/services/api";
@@ -247,6 +252,7 @@ interface AppState {
   remoteAgents: RemoteAgentDefinition[];
   agentSessions: Record<string, AgentSessionInfo[]>;
   agentDefinitions: Record<string, AgentDefinitionInfo[]>;
+  agentFolders: Record<string, AgentFolderInfo[]>;
   addRemoteAgent: (agent: RemoteAgentDefinition) => void;
   updateRemoteAgent: (agent: RemoteAgentDefinition) => void;
   deleteRemoteAgent: (agentId: string) => void;
@@ -260,7 +266,12 @@ interface AppState {
   setAgentCapabilities: (agentId: string, capabilities: AgentCapabilities) => void;
   refreshAgentSessions: (agentId: string) => Promise<void>;
   saveAgentDef: (agentId: string, definition: Record<string, unknown>) => Promise<void>;
+  updateAgentDef: (agentId: string, params: Record<string, unknown>) => Promise<void>;
   deleteAgentDef: (agentId: string, definitionId: string) => Promise<void>;
+  createAgentFolder: (agentId: string, name: string, parentId?: string | null) => Promise<void>;
+  updateAgentFolder: (agentId: string, params: Record<string, unknown>) => Promise<void>;
+  deleteAgentFolder: (agentId: string, folderId: string) => Promise<void>;
+  toggleAgentFolder: (agentId: string, folderId: string) => void;
 
   // Local file browser state
   localFileEntries: FileEntry[];
@@ -1257,6 +1268,7 @@ export const useAppStore = create<AppState>((set, get) => {
     remoteAgents: [],
     agentSessions: {},
     agentDefinitions: {},
+    agentFolders: {},
 
     addRemoteAgent: (agent) => {
       set((state) => ({ remoteAgents: [...state.remoteAgents, agent] }));
@@ -1288,6 +1300,9 @@ export const useAppStore = create<AppState>((set, get) => {
         ),
         agentDefinitions: Object.fromEntries(
           Object.entries(s.agentDefinitions).filter(([k]) => k !== agentId)
+        ),
+        agentFolders: Object.fromEntries(
+          Object.entries(s.agentFolders).filter(([k]) => k !== agentId)
         ),
       }));
       removeAgent(agentId).catch((err) => console.error("Failed to persist agent deletion:", err));
@@ -1356,6 +1371,7 @@ export const useAppStore = create<AppState>((set, get) => {
           a.id === agentId ? { ...a, connectionState: "disconnected" as const } : a
         ),
         agentSessions: { ...s.agentSessions, [agentId]: [] },
+        agentFolders: { ...s.agentFolders, [agentId]: [] },
       }));
     },
 
@@ -1377,13 +1393,14 @@ export const useAppStore = create<AppState>((set, get) => {
 
     refreshAgentSessions: async (agentId) => {
       try {
-        const [sessions, definitions] = await Promise.all([
+        const [sessions, connectionsData] = await Promise.all([
           listAgentSessions(agentId),
-          listAgentDefinitions(agentId),
+          listAgentConnections(agentId),
         ]);
         set((s) => ({
           agentSessions: { ...s.agentSessions, [agentId]: sessions },
-          agentDefinitions: { ...s.agentDefinitions, [agentId]: definitions },
+          agentDefinitions: { ...s.agentDefinitions, [agentId]: connectionsData.connections },
+          agentFolders: { ...s.agentFolders, [agentId]: connectionsData.folders },
         }));
       } catch (err) {
         console.error(`Failed to refresh agent sessions for ${agentId}:`, err);
@@ -1418,6 +1435,91 @@ export const useAppStore = create<AppState>((set, get) => {
         }));
       } catch (err) {
         console.error(`Failed to delete agent definition on ${agentId}:`, err);
+      }
+    },
+
+    updateAgentDef: async (agentId, params) => {
+      try {
+        const updated = await apiUpdateAgentDefinition(agentId, params);
+        set((s) => ({
+          agentDefinitions: {
+            ...s.agentDefinitions,
+            [agentId]: (s.agentDefinitions[agentId] ?? []).map((d) =>
+              d.id === updated.id ? updated : d
+            ),
+          },
+        }));
+      } catch (err) {
+        console.error(`Failed to update agent definition on ${agentId}:`, err);
+      }
+    },
+
+    createAgentFolder: async (agentId, name, parentId) => {
+      try {
+        const folder = await apiCreateAgentFolder(agentId, name, parentId);
+        set((s) => ({
+          agentFolders: {
+            ...s.agentFolders,
+            [agentId]: [...(s.agentFolders[agentId] ?? []), folder],
+          },
+        }));
+      } catch (err) {
+        console.error(`Failed to create agent folder on ${agentId}:`, err);
+      }
+    },
+
+    updateAgentFolder: async (agentId, params) => {
+      try {
+        const updated = await apiUpdateAgentFolder(agentId, params);
+        set((s) => ({
+          agentFolders: {
+            ...s.agentFolders,
+            [agentId]: (s.agentFolders[agentId] ?? []).map((f) =>
+              f.id === updated.id ? updated : f
+            ),
+          },
+        }));
+      } catch (err) {
+        console.error(`Failed to update agent folder on ${agentId}:`, err);
+      }
+    },
+
+    deleteAgentFolder: async (agentId, folderId) => {
+      try {
+        await apiDeleteAgentFolder(agentId, folderId);
+        set((s) => ({
+          agentFolders: {
+            ...s.agentFolders,
+            [agentId]: (s.agentFolders[agentId] ?? []).filter((f) => f.id !== folderId),
+          },
+          // Agent moves children to root — reflect in UI
+          agentDefinitions: {
+            ...s.agentDefinitions,
+            [agentId]: (s.agentDefinitions[agentId] ?? []).map((d) =>
+              d.folderId === folderId ? { ...d, folderId: null } : d
+            ),
+          },
+        }));
+      } catch (err) {
+        console.error(`Failed to delete agent folder on ${agentId}:`, err);
+      }
+    },
+
+    toggleAgentFolder: (agentId, folderId) => {
+      set((s) => ({
+        agentFolders: {
+          ...s.agentFolders,
+          [agentId]: (s.agentFolders[agentId] ?? []).map((f) =>
+            f.id === folderId ? { ...f, isExpanded: !f.isExpanded } : f
+          ),
+        },
+      }));
+      // Fire-and-forget: persist expansion state on agent
+      const folder = (get().agentFolders[agentId] ?? []).find((f) => f.id === folderId);
+      if (folder) {
+        apiUpdateAgentFolder(agentId, { id: folderId, is_expanded: folder.isExpanded }).catch(
+          () => {}
+        );
       }
     },
 
