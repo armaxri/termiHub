@@ -7,8 +7,8 @@ use tracing::{debug, info};
 use crate::session::manager::SessionManager;
 use crate::terminal::agent_deploy::{AgentDeployConfig, AgentDeployResult, AgentProbeResult};
 use crate::terminal::agent_manager::{
-    AgentCapabilities, AgentConnectResult, AgentConnectionManager, AgentDefinitionInfo,
-    AgentSessionInfo,
+    AgentCapabilities, AgentConnectResult, AgentConnectionManager, AgentConnectionsData,
+    AgentDefinitionInfo, AgentFolderInfo, AgentSessionInfo,
 };
 use crate::terminal::agent_setup::{AgentSetupConfig, AgentSetupResult};
 use crate::terminal::backend::RemoteAgentConfig;
@@ -147,6 +147,106 @@ pub async fn delete_agent_definition(
     tauri::async_runtime::spawn_blocking(move || {
         manager
             .delete_definition(&agent_id, &definition_id)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .unwrap_or_else(|e| Err(e.to_string()))
+}
+
+/// List saved connections and folders on a remote agent.
+///
+/// Async because it sends a JSON-RPC request over SSH.
+#[tauri::command]
+pub async fn list_agent_connections(
+    agent_id: String,
+    agent_manager: State<'_, Arc<AgentConnectionManager>>,
+) -> Result<AgentConnectionsData, String> {
+    debug!(agent_id, "Listing agent connections and folders");
+    let manager = agent_manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        manager
+            .list_connections_and_folders(&agent_id)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .unwrap_or_else(|e| Err(e.to_string()))
+}
+
+/// Update a saved connection definition on a remote agent.
+///
+/// Async because it sends a JSON-RPC request over SSH.
+#[tauri::command]
+pub async fn update_agent_definition(
+    agent_id: String,
+    params: Value,
+    agent_manager: State<'_, Arc<AgentConnectionManager>>,
+) -> Result<AgentDefinitionInfo, String> {
+    debug!(agent_id, "Updating agent definition");
+    let manager = agent_manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        manager
+            .update_definition(&agent_id, params)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .unwrap_or_else(|e| Err(e.to_string()))
+}
+
+/// Create a folder on a remote agent.
+///
+/// Async because it sends a JSON-RPC request over SSH.
+#[tauri::command]
+pub async fn create_agent_folder(
+    agent_id: String,
+    name: String,
+    parent_id: Option<String>,
+    agent_manager: State<'_, Arc<AgentConnectionManager>>,
+) -> Result<AgentFolderInfo, String> {
+    debug!(agent_id, %name, "Creating agent folder");
+    let manager = agent_manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        manager
+            .create_folder(&agent_id, &name, parent_id.as_deref())
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .unwrap_or_else(|e| Err(e.to_string()))
+}
+
+/// Update a folder on a remote agent.
+///
+/// Async because it sends a JSON-RPC request over SSH.
+#[tauri::command]
+pub async fn update_agent_folder(
+    agent_id: String,
+    params: Value,
+    agent_manager: State<'_, Arc<AgentConnectionManager>>,
+) -> Result<AgentFolderInfo, String> {
+    debug!(agent_id, "Updating agent folder");
+    let manager = agent_manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        manager
+            .update_folder(&agent_id, params)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .unwrap_or_else(|e| Err(e.to_string()))
+}
+
+/// Delete a folder on a remote agent.
+///
+/// Async because it sends a JSON-RPC request over SSH.
+#[tauri::command]
+pub async fn delete_agent_folder(
+    agent_id: String,
+    folder_id: String,
+    agent_manager: State<'_, Arc<AgentConnectionManager>>,
+) -> Result<(), String> {
+    info!(agent_id, folder_id, "Deleting agent folder");
+    let manager = agent_manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        manager
+            .delete_folder(&agent_id, &folder_id)
             .map_err(|e| e.to_string())
     })
     .await
