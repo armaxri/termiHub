@@ -217,7 +217,9 @@ impl Dispatcher {
             }
         };
 
-        let type_id = &params.session_type;
+        // Normalize user-facing type names to registry type IDs
+        // (e.g. "shell" → "local").
+        let type_id = normalize_type_id(&params.session_type);
 
         // Validate that the type exists in the registry.
         if !self.session_manager.registry().has_type(type_id) {
@@ -999,6 +1001,19 @@ fn map_file_error(e: FileError) -> (i64, String) {
     }
 }
 
+/// Normalize user-facing session type names to registry type IDs.
+///
+/// Connection definitions and the frontend use `"shell"` as the session
+/// type for local shell connections, but the backend registry registers
+/// the local shell under the type ID `"local"`. This function maps
+/// known aliases to their canonical registry type IDs.
+fn normalize_type_id(raw: &str) -> &str {
+    match raw {
+        "shell" => "local",
+        other => other,
+    }
+}
+
 /// Well-known shell paths to probe on the host system.
 const SHELL_CANDIDATES: &[&str] = &[
     "/bin/bash",
@@ -1200,6 +1215,25 @@ mod tests {
         let result = d.dispatch(req).await;
         let json = result.to_json();
         assert_eq!(json["error"]["code"], errors::INVALID_CONFIGURATION);
+    }
+
+    #[test]
+    fn normalize_type_id_maps_shell_to_local() {
+        assert_eq!(normalize_type_id("shell"), "local");
+    }
+
+    #[test]
+    fn normalize_type_id_passes_through_known_types() {
+        assert_eq!(normalize_type_id("local"), "local");
+        assert_eq!(normalize_type_id("serial"), "serial");
+        assert_eq!(normalize_type_id("ssh"), "ssh");
+        assert_eq!(normalize_type_id("docker"), "docker");
+        assert_eq!(normalize_type_id("telnet"), "telnet");
+    }
+
+    #[test]
+    fn normalize_type_id_passes_through_unknown() {
+        assert_eq!(normalize_type_id("unknown"), "unknown");
     }
 
     // ── Session list tests ──────────────────────────────────────────
