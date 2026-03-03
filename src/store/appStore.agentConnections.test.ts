@@ -9,7 +9,12 @@ const {
   mockUpdateAgentDefinition,
 } = vi.hoisted(() => ({
   mockListAgentSessions: vi.fn(() => Promise.resolve([])),
-  mockListAgentConnections: vi.fn(() => Promise.resolve({ connections: [], folders: [] })),
+  mockListAgentConnections: vi.fn(() =>
+    Promise.resolve({
+      connections: [] as AgentDefinitionInfo[],
+      folders: [] as AgentFolderInfo[],
+    })
+  ),
   mockCreateAgentFolder: vi.fn(),
   mockUpdateAgentFolder: vi.fn(() => Promise.resolve({})),
   mockDeleteAgentFolder: vi.fn(() => Promise.resolve()),
