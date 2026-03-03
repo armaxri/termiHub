@@ -400,13 +400,28 @@ export interface AgentSessionInfo {
   attached: boolean;
 }
 
-/** Info about a saved session definition on an agent. */
+/** Info about a saved connection definition on an agent. */
 export interface AgentDefinitionInfo {
   id: string;
   name: string;
   sessionType: string;
   config: Record<string, unknown>;
   persistent: boolean;
+  folderId: string | null;
+}
+
+/** Info about a folder on an agent. */
+export interface AgentFolderInfo {
+  id: string;
+  name: string;
+  parentId: string | null;
+  isExpanded: boolean;
+}
+
+/** Combined connections and folders from an agent. */
+export interface AgentConnectionsData {
+  connections: AgentDefinitionInfo[];
+  folders: AgentFolderInfo[];
 }
 
 /** Result of connecting to an agent. */
@@ -460,6 +475,45 @@ export async function saveAgentDefinition(
 /** Delete a session definition on an agent. */
 export async function deleteAgentDefinition(agentId: string, definitionId: string): Promise<void> {
   await invoke("delete_agent_definition", { agentId, definitionId });
+}
+
+/** List saved connections and folders on an agent. */
+export async function listAgentConnections(agentId: string): Promise<AgentConnectionsData> {
+  return await invoke<AgentConnectionsData>("list_agent_connections", { agentId });
+}
+
+/** Update a saved connection definition on an agent. */
+export async function updateAgentDefinition(
+  agentId: string,
+  params: Record<string, unknown>
+): Promise<AgentDefinitionInfo> {
+  return await invoke<AgentDefinitionInfo>("update_agent_definition", { agentId, params });
+}
+
+/** Create a folder on an agent. */
+export async function createAgentFolder(
+  agentId: string,
+  name: string,
+  parentId?: string | null
+): Promise<AgentFolderInfo> {
+  return await invoke<AgentFolderInfo>("create_agent_folder", {
+    agentId,
+    name,
+    parentId: parentId ?? null,
+  });
+}
+
+/** Update a folder on an agent. */
+export async function updateAgentFolder(
+  agentId: string,
+  params: Record<string, unknown>
+): Promise<AgentFolderInfo> {
+  return await invoke<AgentFolderInfo>("update_agent_folder", { agentId, params });
+}
+
+/** Delete a folder on an agent. */
+export async function deleteAgentFolder(agentId: string, folderId: string): Promise<void> {
+  await invoke("delete_agent_folder", { agentId, folderId });
 }
 
 // --- Agent setup commands ---
