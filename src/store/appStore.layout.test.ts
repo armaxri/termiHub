@@ -47,8 +47,13 @@ vi.mock("@/services/api", () => ({
   disconnectAgent: vi.fn(),
   listAgentSessions: vi.fn(() => Promise.resolve([])),
   listAgentDefinitions: vi.fn(() => Promise.resolve([])),
+  listAgentConnections: vi.fn(() => Promise.resolve({ connections: [], folders: [] })),
   saveAgentDefinition: vi.fn(),
+  updateAgentDefinition: vi.fn(),
   deleteAgentDefinition: vi.fn(),
+  createAgentFolder: vi.fn(),
+  updateAgentFolder: vi.fn(),
+  deleteAgentFolder: vi.fn(),
   getCredentialStoreStatus: vi.fn(() =>
     Promise.resolve({ mode: "none", status: "unavailable", keychainAvailable: false })
   ),
