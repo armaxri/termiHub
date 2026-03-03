@@ -138,9 +138,16 @@ interface AgentConnectionItemProps {
   definition: AgentDefinitionInfo;
   depth: number;
   onOpen: (def: AgentDefinitionInfo) => void;
+  onEdit: (def: AgentDefinitionInfo) => void;
 }
 
-function AgentConnectionItem({ agentId, definition, depth, onOpen }: AgentConnectionItemProps) {
+function AgentConnectionItem({
+  agentId,
+  definition,
+  depth,
+  onOpen,
+  onEdit,
+}: AgentConnectionItemProps) {
   const deleteAgentDef = useAppStore((s) => s.deleteAgentDef);
 
   return (
@@ -162,6 +169,14 @@ function AgentConnectionItem({ agentId, definition, depth, onOpen }: AgentConnec
           <ContextMenu.Item className="context-menu__item" onSelect={() => onOpen(definition)}>
             <Play size={14} />
             Connect
+          </ContextMenu.Item>
+          <ContextMenu.Item
+            className="context-menu__item"
+            onSelect={() => onEdit(definition)}
+            data-testid="context-agent-def-edit"
+          >
+            <Pencil size={14} />
+            Edit
           </ContextMenu.Item>
           <ContextMenu.Separator className="context-menu__separator" />
           <ContextMenu.Item
@@ -186,6 +201,8 @@ interface AgentFolderNodeProps {
   allDefinitions: AgentDefinitionInfo[];
   depth: number;
   onOpenDefinition: (def: AgentDefinitionInfo) => void;
+  onNewConnection: (folderId: string | null) => void;
+  onEditDefinition: (def: AgentDefinitionInfo) => void;
 }
 
 function AgentFolderNode({
@@ -195,11 +212,12 @@ function AgentFolderNode({
   allDefinitions,
   depth,
   onOpenDefinition,
+  onNewConnection,
+  onEditDefinition,
 }: AgentFolderNodeProps) {
   const toggleAgentFolder = useAppStore((s) => s.toggleAgentFolder);
   const createAgentFolder = useAppStore((s) => s.createAgentFolder);
   const deleteAgentFolder = useAppStore((s) => s.deleteAgentFolder);
-  const saveAgentDef = useAppStore((s) => s.saveAgentDef);
 
   const [creatingSubfolder, setCreatingSubfolder] = useState(false);
 
@@ -213,16 +231,6 @@ function AgentFolderNode({
     () => allDefinitions.filter((d) => d.folderId === folder.id),
     [allDefinitions, folder.id]
   );
-
-  const handleNewConnection = useCallback(() => {
-    saveAgentDef(agentId, {
-      name: "New Connection",
-      type: "shell",
-      config: {},
-      persistent: false,
-      folder_id: folder.id,
-    });
-  }, [agentId, folder.id, saveAgentDef]);
 
   return (
     <div>
@@ -240,7 +248,10 @@ function AgentFolderNode({
         </ContextMenu.Trigger>
         <ContextMenu.Portal>
           <ContextMenu.Content className="context-menu__content">
-            <ContextMenu.Item className="context-menu__item" onSelect={handleNewConnection}>
+            <ContextMenu.Item
+              className="context-menu__item"
+              onSelect={() => onNewConnection(folder.id)}
+            >
               <Plus size={14} />
               New Connection
             </ContextMenu.Item>
@@ -284,6 +295,8 @@ function AgentFolderNode({
               allDefinitions={allDefinitions}
               depth={depth + 1}
               onOpenDefinition={onOpenDefinition}
+              onNewConnection={onNewConnection}
+              onEditDefinition={onEditDefinition}
             />
           ))}
           {childDefinitions.map((def) => (
@@ -293,6 +306,7 @@ function AgentFolderNode({
               definition={def}
               depth={depth + 1}
               onOpen={onOpenDefinition}
+              onEdit={onEditDefinition}
             />
           ))}
         </div>
@@ -322,7 +336,7 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
   const agentFolders = useAppStore((s) => s.agentFolders[agent.id]) ?? EMPTY_FOLDERS;
   const refreshAgentSessions = useAppStore((s) => s.refreshAgentSessions);
   const createAgentFolder = useAppStore((s) => s.createAgentFolder);
-  const saveAgentDef = useAppStore((s) => s.saveAgentDef);
+  const openAgentDefinitionEditorTab = useAppStore((s) => s.openAgentDefinitionEditorTab);
 
   const [connecting, setConnecting] = useState(false);
   const [setupDialogOpen, setSetupDialogOpen] = useState(false);
@@ -463,14 +477,19 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
     refreshAgentSessions(agent.id);
   }, [agent.id, refreshAgentSessions]);
 
-  const handleNewConnection = useCallback(() => {
-    saveAgentDef(agent.id, {
-      name: "New Connection",
-      type: "shell",
-      config: {},
-      persistent: false,
-    });
-  }, [agent.id, saveAgentDef]);
+  const handleNewConnection = useCallback(
+    (folderId: string | null = null) => {
+      openAgentDefinitionEditorTab(agent.id, "new", folderId);
+    },
+    [agent.id, openAgentDefinitionEditorTab]
+  );
+
+  const handleEditDefinition = useCallback(
+    (def: AgentDefinitionInfo) => {
+      openAgentDefinitionEditorTab(agent.id, def.id);
+    },
+    [agent.id, openAgentDefinitionEditorTab]
+  );
 
   const hasContent =
     agentSessions.length > 0 || agentDefinitions.length > 0 || agentFolders.length > 0;
@@ -509,7 +528,7 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
                 </button>
                 <button
                   className="connection-list__add-btn"
-                  onClick={handleNewConnection}
+                  onClick={() => handleNewConnection(null)}
                   title="New Connection"
                 >
                   <Plus size={16} />
@@ -580,7 +599,7 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
                 <ContextMenu.Separator className="context-menu__separator" />
                 <ContextMenu.Item
                   className="context-menu__item"
-                  onSelect={handleNewConnection}
+                  onSelect={() => handleNewConnection(null)}
                   data-testid="context-agent-new-connection"
                 >
                   <Plus size={14} />
@@ -682,6 +701,8 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
                   allDefinitions={agentDefinitions}
                   depth={1}
                   onOpenDefinition={handleOpenDefinition}
+                  onNewConnection={handleNewConnection}
+                  onEditDefinition={handleEditDefinition}
                 />
               ))}
 
@@ -693,6 +714,7 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
                   definition={def}
                   depth={1}
                   onOpen={handleOpenDefinition}
+                  onEdit={handleEditDefinition}
                 />
               ))}
 

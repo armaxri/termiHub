@@ -158,6 +158,11 @@ interface AppState {
   openLogViewerTab: () => void;
   openEditorTab: (filePath: string, isRemote: boolean, sftpSessionId?: string) => void;
   openConnectionEditorTab: (connectionId: string, folderId?: string | null) => void;
+  openAgentDefinitionEditorTab: (
+    agentId: string,
+    definitionId: string,
+    folderId?: string | null
+  ) => void;
   editorDirtyTabs: Record<string, boolean>;
   setEditorDirty: (tabId: string, dirty: boolean) => void;
   closeTab: (tabId: string, panelId: string) => void;
@@ -630,6 +635,57 @@ export const useAppStore = create<AppState>((set, get) => {
         const meta: ConnectionEditorMeta = {
           connectionId,
           folderId: folderId ?? null,
+        };
+        const newTab = createTab(title, "local", dummyConfig, targetPanelId, "connection-editor");
+        newTab.connectionEditorMeta = meta;
+
+        const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
+          const tabs = leaf.tabs.map((t) => ({ ...t, isActive: false }));
+          tabs.push(newTab);
+          return { ...leaf, tabs, activeTabId: newTab.id };
+        });
+        return { rootPanel, activePanelId: targetPanelId };
+      }),
+
+    openAgentDefinitionEditorTab: (agentId, definitionId, folderId) =>
+      set((state) => {
+        const allLeaves = getAllLeaves(state.rootPanel);
+
+        // Look for an existing editor tab for this agent definition
+        for (const leaf of allLeaves) {
+          const existing = leaf.tabs.find(
+            (t) =>
+              t.contentType === "connection-editor" &&
+              t.connectionEditorMeta?.connectionId === agentId &&
+              t.connectionEditorMeta?.agentDefinitionId === definitionId
+          );
+          if (existing) {
+            const rootPanel = updateLeaf(state.rootPanel, leaf.id, (l) => ({
+              ...l,
+              tabs: l.tabs.map((t) => ({ ...t, isActive: t.id === existing.id })),
+              activeTabId: existing.id,
+            }));
+            return { rootPanel, activePanelId: leaf.id };
+          }
+        }
+
+        const targetPanelId = state.activePanelId ?? allLeaves[0]?.id;
+        if (!targetPanelId) return state;
+
+        // Determine title
+        let title = "New Agent Connection";
+        if (definitionId !== "new") {
+          const defs = state.agentDefinitions[agentId] ?? [];
+          const def = defs.find((d) => d.id === definitionId);
+          if (def) title = `Edit: ${def.name}`;
+        }
+
+        const dummyConfig: ConnectionConfig = { type: "local", config: { shell: "zsh" } };
+        const meta: ConnectionEditorMeta = {
+          connectionId: agentId,
+          folderId: null,
+          agentDefinitionId: definitionId,
+          agentFolderId: folderId ?? null,
         };
         const newTab = createTab(title, "local", dummyConfig, targetPanelId, "connection-editor");
         newTab.connectionEditorMeta = meta;

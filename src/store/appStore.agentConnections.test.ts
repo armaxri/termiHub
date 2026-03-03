@@ -202,4 +202,52 @@ describe("appStore — agent connection management", () => {
       expect(defs[0].name).toBe("New");
     });
   });
+
+  describe("openAgentDefinitionEditorTab", () => {
+    it("creates a connection-editor tab with agent definition meta", () => {
+      useAppStore.getState().openAgentDefinitionEditorTab(AGENT_ID, "new", "folder-1");
+
+      const { rootPanel } = useAppStore.getState();
+      const leaf = rootPanel.type === "leaf" ? rootPanel : null;
+      expect(leaf).toBeTruthy();
+      const editorTab = leaf!.tabs.find((t) => t.contentType === "connection-editor");
+      expect(editorTab).toBeTruthy();
+      expect(editorTab!.connectionEditorMeta).toEqual({
+        connectionId: AGENT_ID,
+        folderId: null,
+        agentDefinitionId: "new",
+        agentFolderId: "folder-1",
+      });
+    });
+
+    it("reuses an existing editor tab for the same agent definition", () => {
+      useAppStore.getState().openAgentDefinitionEditorTab(AGENT_ID, "def-1");
+      useAppStore.getState().openAgentDefinitionEditorTab(AGENT_ID, "def-1");
+
+      const { rootPanel } = useAppStore.getState();
+      const leaf = rootPanel.type === "leaf" ? rootPanel : null;
+      const editorTabs = leaf!.tabs.filter(
+        (t) =>
+          t.contentType === "connection-editor" &&
+          t.connectionEditorMeta?.agentDefinitionId === "def-1"
+      );
+      expect(editorTabs).toHaveLength(1);
+    });
+
+    it("sets title from existing definition name", () => {
+      const def = makeDefinition({ id: "def-title", name: "My Shell" });
+      useAppStore.setState({
+        agentDefinitions: { [AGENT_ID]: [def] },
+      });
+
+      useAppStore.getState().openAgentDefinitionEditorTab(AGENT_ID, "def-title");
+
+      const { rootPanel } = useAppStore.getState();
+      const leaf = rootPanel.type === "leaf" ? rootPanel : null;
+      const editorTab = leaf!.tabs.find(
+        (t) => t.connectionEditorMeta?.agentDefinitionId === "def-title"
+      );
+      expect(editorTab!.title).toBe("Edit: My Shell");
+    });
+  });
 });

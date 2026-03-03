@@ -29,6 +29,10 @@ export interface EditorTabMeta {
 export interface ConnectionEditorMeta {
   connectionId: string;
   folderId: string | null;
+  /** When set, the editor operates on an agent definition instead of a local connection or agent transport. */
+  agentDefinitionId?: string;
+  /** Folder on the agent to place a new definition in. */
+  agentFolderId?: string | null;
 }
 
 export interface TunnelEditorMeta {
