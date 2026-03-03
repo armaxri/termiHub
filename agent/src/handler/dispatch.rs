@@ -1111,11 +1111,11 @@ mod tests {
 
         let json = result.to_json();
         assert_eq!(json["result"]["protocol_version"], AGENT_PROTOCOL_VERSION);
-        assert_eq!(json["result"]["capabilities"]["max_sessions"], 20);
-        // connection_types is an array of objects with type_id fields
-        let conn_types = json["result"]["capabilities"]["connection_types"]
+        assert_eq!(json["result"]["capabilities"]["maxSessions"], 20);
+        // connectionTypes is an array of objects with typeId fields
+        let conn_types = json["result"]["capabilities"]["connectionTypes"]
             .as_array()
-            .expect("connection_types should be an array");
+            .expect("connectionTypes should be an array");
         let type_ids: Vec<&str> = conn_types
             .iter()
             .map(|t| t["typeId"].as_str().unwrap())
@@ -1125,11 +1125,11 @@ mod tests {
             "Expected 'local' in {type_ids:?}"
         );
         assert!(type_ids.contains(&"ssh"), "Expected 'ssh' in {type_ids:?}");
-        // available_shells and available_serial_ports must be arrays
-        assert!(json["result"]["capabilities"]["available_shells"]
+        // availableShells and availableSerialPorts must be arrays
+        assert!(json["result"]["capabilities"]["availableShells"]
             .as_array()
             .is_some());
-        assert!(json["result"]["capabilities"]["available_serial_ports"]
+        assert!(json["result"]["capabilities"]["availableSerialPorts"]
             .as_array()
             .is_some());
     }
