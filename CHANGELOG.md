@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Agent connection fails with "Parse capabilities: missing field `connectionTypes`" — the desktop `AgentCapabilities` struct expected `connection_types` as plain strings, but the agent sends full `ConnectionTypeInfo` objects (with typeId, displayName, icon, schema, capabilities); updated desktop to accept the rich objects and pass them through to the frontend (#412)
 - File browser now works with WSL sessions instead of showing "missing field host" error — WSL tabs are routed to the local file browser mode using `\\wsl$\<distro>\` UNC paths instead of attempting SFTP (#404)
 - Remote agent fails to start after successful installation — the SSH exec command used a bare `termihub-agent` binary name that relies on PATH, but `~/.local/bin` is typically not on PATH in non-interactive SSH sessions; now uses the full resolved path (`$HOME/.local/bin/termihub-agent`) for exec, reconnect, and probe commands; added optional `agentPath` field to agent config for custom install locations (#406)
 - Collapsed sidebar sections (Connections, remote agents) now fold down to header height instead of occupying equal vertical space — expanded sections fill remaining space like VS Code's sidebar panels; sections are resizable by dragging the separator between them and each section's content scrolls independently (#398)

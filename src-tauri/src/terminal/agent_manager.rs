@@ -23,13 +23,24 @@ use crate::utils::errors::TerminalError;
 use crate::utils::ssh_auth::connect_and_authenticate;
 
 /// Capabilities returned by the agent after initialization.
+///
+/// The `connection_types` field contains full `ConnectionTypeInfo` objects
+/// from the agent (with typeId, displayName, icon, schema, capabilities).
+/// We store them as raw JSON values so the desktop acts as a pass-through
+/// to the frontend without needing to parse the nested structure.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentCapabilities {
-    pub connection_types: Vec<String>,
+    pub connection_types: Vec<Value>,
     pub max_sessions: u32,
+    #[serde(default)]
     pub available_shells: Vec<String>,
+    #[serde(default)]
     pub available_serial_ports: Vec<String>,
+    #[serde(default)]
+    pub docker_available: bool,
+    #[serde(default)]
+    pub available_docker_images: Vec<String>,
 }
 
 /// Result of connecting to an agent.
@@ -53,14 +64,55 @@ pub struct AgentSessionInfo {
     pub attached: bool,
 }
 
-/// Info about a saved session definition on the agent.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Info about a saved connection definition on the agent.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentDefinitionInfo {
     pub id: String,
     pub name: String,
     pub session_type: String,
     pub config: Value,
     pub persistent: bool,
+    pub folder_id: Option<String>,
+}
+
+/// Info about a folder on the agent.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentFolderInfo {
+    pub id: String,
+    pub name: String,
+    pub parent_id: Option<String>,
+    pub is_expanded: bool,
+}
+
+/// Combined connections and folders data from an agent.
+#[derive(Debug, Clone, Serialize)]
+pub struct AgentConnectionsData {
+    pub connections: Vec<AgentDefinitionInfo>,
+    pub folders: Vec<AgentFolderInfo>,
+}
+
+/// Parse an agent connection from the wire format (snake_case JSON).
+fn parse_agent_definition(v: &Value) -> Option<AgentDefinitionInfo> {
+    Some(AgentDefinitionInfo {
+        id: v["id"].as_str()?.to_string(),
+        name: v["name"].as_str()?.to_string(),
+        session_type: v["session_type"].as_str()?.to_string(),
+        config: v.get("config").cloned().unwrap_or(Value::Null),
+        persistent: v["persistent"].as_bool().unwrap_or(false),
+        folder_id: v["folder_id"].as_str().map(|s| s.to_string()),
+    })
+}
+
+/// Parse an agent folder from the wire format (snake_case JSON).
+fn parse_agent_folder(v: &Value) -> Option<AgentFolderInfo> {
+    Some(AgentFolderInfo {
+        id: v["id"].as_str()?.to_string(),
+        name: v["name"].as_str()?.to_string(),
+        parent_id: v["parent_id"].as_str().map(|s| s.to_string()),
+        is_expanded: v["is_expanded"].as_bool().unwrap_or(false),
+    })
 }
 
 /// Commands sent to the agent I/O thread.
@@ -447,20 +499,38 @@ impl AgentConnectionManager {
             .collect())
     }
 
-    /// List saved session definitions on the agent.
+    /// List saved connections and folders on the agent.
+    pub fn list_connections_and_folders(
+        &self,
+        agent_id: &str,
+    ) -> Result<AgentConnectionsData, TerminalError> {
+        let result = self.send_request(agent_id, "connections.list", serde_json::json!({}))?;
+        let connections = result["connections"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(parse_agent_definition)
+            .collect();
+        let folders = result["folders"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(parse_agent_folder)
+            .collect();
+        Ok(AgentConnectionsData {
+            connections,
+            folders,
+        })
+    }
+
+    /// List saved session definitions on the agent (backward compat).
     pub fn list_definitions(
         &self,
         agent_id: &str,
     ) -> Result<Vec<AgentDefinitionInfo>, TerminalError> {
-        let result = self.send_request(agent_id, "connections.list", serde_json::json!({}))?;
-        let defs = result["definitions"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
-        Ok(defs
-            .into_iter()
-            .filter_map(|d| serde_json::from_value(d).ok())
-            .collect())
+        Ok(self.list_connections_and_folders(agent_id)?.connections)
     }
 
     /// Save a session definition on the agent.
@@ -470,8 +540,19 @@ impl AgentConnectionManager {
         definition: Value,
     ) -> Result<AgentDefinitionInfo, TerminalError> {
         let result = self.send_request(agent_id, "connections.create", definition)?;
-        serde_json::from_value(result)
-            .map_err(|e| TerminalError::RemoteError(format!("Parse definition result: {}", e)))
+        parse_agent_definition(&result)
+            .ok_or_else(|| TerminalError::RemoteError("Failed to parse definition result".into()))
+    }
+
+    /// Update a saved connection definition on the agent.
+    pub fn update_definition(
+        &self,
+        agent_id: &str,
+        params: Value,
+    ) -> Result<AgentDefinitionInfo, TerminalError> {
+        let result = self.send_request(agent_id, "connections.update", params)?;
+        parse_agent_definition(&result)
+            .ok_or_else(|| TerminalError::RemoteError("Failed to parse definition result".into()))
     }
 
     /// Delete a session definition on the agent.
@@ -480,6 +561,43 @@ impl AgentConnectionManager {
             agent_id,
             "connections.delete",
             serde_json::json!({ "id": def_id }),
+        )?;
+        Ok(())
+    }
+
+    /// Create a folder on the agent.
+    pub fn create_folder(
+        &self,
+        agent_id: &str,
+        name: &str,
+        parent_id: Option<&str>,
+    ) -> Result<AgentFolderInfo, TerminalError> {
+        let result = self.send_request(
+            agent_id,
+            "connections.folders.create",
+            serde_json::json!({ "name": name, "parent_id": parent_id }),
+        )?;
+        parse_agent_folder(&result)
+            .ok_or_else(|| TerminalError::RemoteError("Failed to parse folder result".into()))
+    }
+
+    /// Update a folder on the agent.
+    pub fn update_folder(
+        &self,
+        agent_id: &str,
+        params: Value,
+    ) -> Result<AgentFolderInfo, TerminalError> {
+        let result = self.send_request(agent_id, "connections.folders.update", params)?;
+        parse_agent_folder(&result)
+            .ok_or_else(|| TerminalError::RemoteError("Failed to parse folder result".into()))
+    }
+
+    /// Delete a folder on the agent.
+    pub fn delete_folder(&self, agent_id: &str, folder_id: &str) -> Result<(), TerminalError> {
+        self.send_request(
+            agent_id,
+            "connections.folders.delete",
+            serde_json::json!({ "id": folder_id }),
         )?;
         Ok(())
     }
@@ -888,4 +1006,238 @@ fn reconnect_agent(
         "Failed to reconnect after {} attempts",
         MAX_RETRIES
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// Regression test for #412: the agent sends `connection_types` as an array
+    /// of full `ConnectionTypeInfo` objects, not plain strings. The desktop must
+    /// accept this format without errors.
+    #[test]
+    fn parse_capabilities_with_connection_type_info_objects() {
+        let caps_json = json!({
+            "connectionTypes": [
+                {
+                    "typeId": "local",
+                    "displayName": "Local Shell",
+                    "icon": "terminal",
+                    "schema": { "groups": [] },
+                    "capabilities": {
+                        "monitoring": false,
+                        "fileBrowser": false,
+                        "resize": true,
+                        "persistent": false
+                    }
+                },
+                {
+                    "typeId": "ssh",
+                    "displayName": "SSH",
+                    "icon": "ssh",
+                    "schema": { "groups": [] },
+                    "capabilities": {
+                        "monitoring": true,
+                        "fileBrowser": true,
+                        "resize": true,
+                        "persistent": true
+                    }
+                }
+            ],
+            "maxSessions": 20,
+            "availableShells": ["/bin/bash", "/bin/zsh"],
+            "availableSerialPorts": ["/dev/ttyUSB0"],
+            "dockerAvailable": true,
+            "availableDockerImages": ["ubuntu:22.04"]
+        });
+
+        let caps: AgentCapabilities = serde_json::from_value(caps_json).unwrap();
+        assert_eq!(caps.connection_types.len(), 2);
+        assert_eq!(caps.connection_types[0]["typeId"], "local");
+        assert_eq!(caps.connection_types[1]["typeId"], "ssh");
+        assert_eq!(caps.max_sessions, 20);
+        assert_eq!(caps.available_shells, vec!["/bin/bash", "/bin/zsh"]);
+        assert_eq!(caps.available_serial_ports, vec!["/dev/ttyUSB0"]);
+        assert!(caps.docker_available);
+        assert_eq!(caps.available_docker_images, vec!["ubuntu:22.04"]);
+    }
+
+    /// Verify that optional fields default gracefully when absent,
+    /// ensuring backward compatibility with older agents.
+    #[test]
+    fn parse_capabilities_with_minimal_fields() {
+        let caps_json = json!({
+            "connectionTypes": [],
+            "maxSessions": 10
+        });
+
+        let caps: AgentCapabilities = serde_json::from_value(caps_json).unwrap();
+        assert!(caps.connection_types.is_empty());
+        assert_eq!(caps.max_sessions, 10);
+        assert!(caps.available_shells.is_empty());
+        assert!(caps.available_serial_ports.is_empty());
+        assert!(!caps.docker_available);
+        assert!(caps.available_docker_images.is_empty());
+    }
+
+    /// Verify that capabilities round-trip through serialization,
+    /// ensuring the desktop can forward them to the frontend unchanged.
+    #[test]
+    fn capabilities_round_trip_serialization() {
+        let caps = AgentCapabilities {
+            connection_types: vec![json!({
+                "typeId": "serial",
+                "displayName": "Serial",
+                "icon": "serial",
+                "schema": { "groups": [] },
+                "capabilities": {
+                    "monitoring": false,
+                    "fileBrowser": false,
+                    "resize": false,
+                    "persistent": false
+                }
+            })],
+            max_sessions: 5,
+            available_shells: vec!["/bin/sh".to_string()],
+            available_serial_ports: vec!["/dev/ttyS0".to_string()],
+            docker_available: false,
+            available_docker_images: vec![],
+        };
+
+        let json_val = serde_json::to_value(&caps).unwrap();
+        let roundtripped: AgentCapabilities = serde_json::from_value(json_val).unwrap();
+        assert_eq!(roundtripped.connection_types.len(), 1);
+        assert_eq!(roundtripped.connection_types[0]["typeId"], "serial");
+        assert_eq!(roundtripped.max_sessions, 5);
+        assert_eq!(roundtripped.available_shells, vec!["/bin/sh"]);
+    }
+
+    /// Regression: parse_agent_definition reads snake_case fields from agent wire format.
+    #[test]
+    fn parse_definition_from_snake_case_wire_format() {
+        let wire = json!({
+            "id": "conn-abc",
+            "name": "Build Shell",
+            "session_type": "shell",
+            "config": {"shell": "/bin/bash"},
+            "persistent": true,
+            "folder_id": "folder-1"
+        });
+        let def = parse_agent_definition(&wire).unwrap();
+        assert_eq!(def.id, "conn-abc");
+        assert_eq!(def.name, "Build Shell");
+        assert_eq!(def.session_type, "shell");
+        assert!(def.persistent);
+        assert_eq!(def.folder_id, Some("folder-1".to_string()));
+    }
+
+    /// parse_agent_definition handles missing optional fields.
+    #[test]
+    fn parse_definition_minimal() {
+        let wire = json!({
+            "id": "conn-1",
+            "name": "Test",
+            "session_type": "serial"
+        });
+        let def = parse_agent_definition(&wire).unwrap();
+        assert_eq!(def.id, "conn-1");
+        assert!(!def.persistent);
+        assert_eq!(def.folder_id, None);
+        assert_eq!(def.config, Value::Null);
+    }
+
+    /// parse_agent_definition returns None for invalid input.
+    #[test]
+    fn parse_definition_returns_none_for_missing_required() {
+        let wire = json!({"id": "conn-1", "name": "Test"});
+        assert!(parse_agent_definition(&wire).is_none());
+    }
+
+    /// Regression: parse_agent_folder reads snake_case fields from agent wire format.
+    #[test]
+    fn parse_folder_from_snake_case_wire_format() {
+        let wire = json!({
+            "id": "folder-abc",
+            "name": "Production",
+            "parent_id": "folder-root",
+            "is_expanded": true
+        });
+        let folder = parse_agent_folder(&wire).unwrap();
+        assert_eq!(folder.id, "folder-abc");
+        assert_eq!(folder.name, "Production");
+        assert_eq!(folder.parent_id, Some("folder-root".to_string()));
+        assert!(folder.is_expanded);
+    }
+
+    /// parse_agent_folder handles root-level folder (no parent).
+    #[test]
+    fn parse_folder_root_level() {
+        let wire = json!({"id": "folder-1", "name": "Root"});
+        let folder = parse_agent_folder(&wire).unwrap();
+        assert_eq!(folder.parent_id, None);
+        assert!(!folder.is_expanded);
+    }
+
+    /// AgentDefinitionInfo serializes to camelCase for Tauri→frontend boundary.
+    #[test]
+    fn definition_info_serializes_camel_case() {
+        let def = AgentDefinitionInfo {
+            id: "conn-1".to_string(),
+            name: "Test".to_string(),
+            session_type: "shell".to_string(),
+            config: json!({}),
+            persistent: true,
+            folder_id: Some("folder-1".to_string()),
+        };
+        let v = serde_json::to_value(&def).unwrap();
+        assert_eq!(v["sessionType"], "shell");
+        assert_eq!(v["folderId"], "folder-1");
+        // Verify no snake_case keys
+        assert!(v.get("session_type").is_none());
+        assert!(v.get("folder_id").is_none());
+    }
+
+    /// AgentFolderInfo serializes to camelCase for Tauri→frontend boundary.
+    #[test]
+    fn folder_info_serializes_camel_case() {
+        let folder = AgentFolderInfo {
+            id: "folder-1".to_string(),
+            name: "Test".to_string(),
+            parent_id: Some("folder-0".to_string()),
+            is_expanded: true,
+        };
+        let v = serde_json::to_value(&folder).unwrap();
+        assert_eq!(v["parentId"], "folder-0");
+        assert_eq!(v["isExpanded"], true);
+        // Verify no snake_case keys
+        assert!(v.get("parent_id").is_none());
+        assert!(v.get("is_expanded").is_none());
+    }
+
+    /// AgentConnectionsData contains both connections and folders.
+    #[test]
+    fn connections_data_serialization() {
+        let data = AgentConnectionsData {
+            connections: vec![AgentDefinitionInfo {
+                id: "conn-1".to_string(),
+                name: "Shell".to_string(),
+                session_type: "shell".to_string(),
+                config: json!({}),
+                persistent: false,
+                folder_id: None,
+            }],
+            folders: vec![AgentFolderInfo {
+                id: "folder-1".to_string(),
+                name: "Folder".to_string(),
+                parent_id: None,
+                is_expanded: false,
+            }],
+        };
+        let v = serde_json::to_value(&data).unwrap();
+        assert_eq!(v["connections"].as_array().unwrap().len(), 1);
+        assert_eq!(v["folders"].as_array().unwrap().len(), 1);
+        assert_eq!(v["connections"][0]["sessionType"], "shell");
+        assert_eq!(v["folders"][0]["parentId"], Value::Null);
+    }
 }

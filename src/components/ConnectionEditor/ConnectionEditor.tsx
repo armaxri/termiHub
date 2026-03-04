@@ -123,6 +123,9 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const remoteAgents = useAppStore((s) => s.remoteAgents);
   const addRemoteAgent = useAppStore((s) => s.addRemoteAgent);
   const updateRemoteAgent = useAppStore((s) => s.updateRemoteAgent);
+  const agentDefinitions = useAppStore((s) => s.agentDefinitions);
+  const saveAgentDef = useAppStore((s) => s.saveAgentDef);
+  const updateAgentDef = useAppStore((s) => s.updateAgentDef);
   const settings = useAppStore((s) => s.settings);
 
   const editingConnectionId = meta.connectionId;
@@ -138,37 +141,89 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       ? remoteAgents.find((a) => a.id === editingConnectionId)
       : undefined;
 
+  // Resolve agent definition when editing one
+  const existingAgentDef = useMemo(() => {
+    if (!meta.agentDefinitionId || meta.agentDefinitionId === "new" || !existingAgent)
+      return undefined;
+    const defs = agentDefinitions[existingAgent.id] ?? [];
+    return defs.find((d) => d.id === meta.agentDefinitionId);
+  }, [meta.agentDefinitionId, existingAgent, agentDefinitions]);
+
+  /** Agent definition mode: editing/creating a session definition on a connected agent. */
+  const isAgentDefinitionMode = !!meta.agentDefinitionId && !!existingAgent;
+
+  // In definition mode, use the agent's own type registry
+  const agentConnectionTypes = useMemo(
+    () => existingAgent?.capabilities?.connectionTypes ?? [],
+    [existingAgent?.capabilities?.connectionTypes]
+  );
+  const effectiveRegistry = isAgentDefinitionMode ? agentConnectionTypes : connectionTypes;
+
   const defaultShell = useAppStore((s) => s.defaultShell);
 
   // Derive initial typeId and settings from existing connection or defaults
   const initialTypeAndSettings = useMemo(() => {
-    if (existingAgent) {
+    // Agent definition: existing or new
+    if (existingAgentDef) {
+      return {
+        typeId: existingAgentDef.sessionType,
+        settings: existingAgentDef.config,
+      };
+    }
+    if (isAgentDefinitionMode) {
+      const firstType = agentConnectionTypes[0];
+      if (firstType) {
+        return { typeId: firstType.typeId, settings: buildDefaults(firstType.schema) };
+      }
+      return { typeId: "shell", settings: {} };
+    }
+    // Agent transport
+    if (existingAgent && !meta.agentDefinitionId) {
       return {
         typeId: "remote",
         settings: existingAgent.config as unknown as Record<string, unknown>,
       };
     }
+    // Local connection
     if (existingConnection) {
       return {
         typeId: existingConnection.config.type,
         settings: existingConnection.config.config,
       };
     }
-    // New connection defaults to local shell
+    // New local connection defaults to local shell
     const localType = findSchema(connectionTypes, "local");
     const defaults = localType ? buildTypeDefaults(localType, settings) : { shell: defaultShell };
     return { typeId: "local", settings: defaults };
-  }, [existingConnection, existingAgent, connectionTypes, settings, defaultShell]);
+  }, [
+    existingConnection,
+    existingAgent,
+    existingAgentDef,
+    isAgentDefinitionMode,
+    agentConnectionTypes,
+    meta.agentDefinitionId,
+    connectionTypes,
+    settings,
+    defaultShell,
+  ]);
 
-  const [name, setName] = useState(existingConnection?.name ?? existingAgent?.name ?? "");
+  const [name, setName] = useState(
+    existingAgentDef?.name ?? existingConnection?.name ?? existingAgent?.name ?? ""
+  );
   const folderId = existingConnection?.folderId ?? editingConnectionFolderId ?? null;
   const [selectedType, setSelectedType] = useState(initialTypeAndSettings.typeId);
   const [connSettings, setConnSettings] = useState<Record<string, unknown>>(
     initialTypeAndSettings.settings
   );
+  const [persistent, setPersistent] = useState(existingAgentDef?.persistent ?? false);
 
-  /** Agent mode: editing an existing agent, or creating new with "remote" type selected. */
-  const isAgentMode = !!existingAgent || (selectedType === "remote" && !existingConnection);
+  /** Agent transport mode: editing the SSH config to reach the agent itself. */
+  const isAgentTransportMode =
+    !isAgentDefinitionMode &&
+    (!!existingAgent || (selectedType === "remote" && !existingConnection));
+  /** Either agent mode (used for shared behavior like hiding Terminal/Appearance). */
+  const isAnyAgentMode = isAgentTransportMode || isAgentDefinitionMode;
+
   const [terminalOptions, setTerminalOptions] = useState<TerminalOptions>(
     existingConnection?.terminalOptions ?? {}
   );
@@ -200,13 +255,19 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const [isCompact, setIsCompact] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Build type options from registry
-  const typeOptions = useMemo(() => buildTypeOptions(connectionTypes), [connectionTypes]);
+  // Build type options from the effective registry
+  const typeOptions = useMemo(() => {
+    if (isAgentDefinitionMode) {
+      // Definition mode: show only agent-reported types (no "Remote Agent" entry)
+      return agentConnectionTypes.map((ct) => ({ value: ct.typeId, label: ct.displayName }));
+    }
+    return buildTypeOptions(connectionTypes);
+  }, [isAgentDefinitionMode, agentConnectionTypes, connectionTypes]);
 
-  // Get the current schema
+  // Get the current schema from the effective registry
   const currentTypeInfo = useMemo(
-    () => findSchema(connectionTypes, selectedType),
-    [connectionTypes, selectedType]
+    () => findSchema(effectiveRegistry, selectedType),
+    [effectiveRegistry, selectedType]
   );
 
   // ResizeObserver for compact mode
@@ -223,12 +284,12 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     return () => observer.disconnect();
   }, []);
 
-  // In agent mode, force category to "connection"
+  // In any agent mode, force category to "connection"
   useEffect(() => {
-    if (isAgentMode && activeCategory !== "connection") {
+    if (isAnyAgentMode && activeCategory !== "connection") {
       setActiveCategory("connection");
     }
-  }, [isAgentMode, activeCategory]);
+  }, [isAnyAgentMode, activeCategory]);
 
   const handleCategoryChange = useCallback((category: EditorCategory) => {
     setActiveCategory(category);
@@ -242,11 +303,11 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const handleTypeChange = useCallback(
     (typeId: string) => {
       setSelectedType(typeId);
-      const typeInfo = findSchema(connectionTypes, typeId);
+      const typeInfo = findSchema(effectiveRegistry, typeId);
       const defaults = buildTypeDefaults(typeInfo, settings);
       setConnSettings(defaults);
     },
-    [connectionTypes, settings]
+    [effectiveRegistry, settings]
   );
 
   const closeThisTab = useCallback(() => {
@@ -256,12 +317,50 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     }
   }, [rootPanel, tabId, closeTab]);
 
-  /** Save the connection (or agent) and return the saved entry (or null if name is empty). */
+  /** Save agent definition to the remote agent. Returns true on success. */
+  const saveAgentDefinition = useCallback(async (): Promise<boolean> => {
+    if (!name.trim() || !existingAgent) return false;
+    try {
+      if (existingAgentDef) {
+        await updateAgentDef(existingAgent.id, {
+          id: existingAgentDef.id,
+          name: name.trim(),
+          session_type: selectedType,
+          config: connSettings,
+          persistent,
+        });
+      } else {
+        await saveAgentDef(existingAgent.id, {
+          name: name.trim(),
+          type: selectedType,
+          config: connSettings,
+          persistent,
+          folder_id: meta.agentFolderId ?? null,
+        });
+      }
+      return true;
+    } catch (err) {
+      console.error("Failed to save agent definition:", err);
+      return false;
+    }
+  }, [
+    name,
+    selectedType,
+    connSettings,
+    persistent,
+    existingAgent,
+    existingAgentDef,
+    meta.agentFolderId,
+    saveAgentDef,
+    updateAgentDef,
+  ]);
+
+  /** Save the connection (or agent transport) and return the saved entry. */
   const saveConnection = useCallback((): SavedConnection | RemoteAgentDefinition | null => {
     if (!name.trim()) return null;
     if (nameError) return null;
 
-    if (isAgentMode) {
+    if (isAgentTransportMode) {
       const agentConfig = connSettings as unknown as RemoteAgentConfig;
       if (existingAgent) {
         const updated: RemoteAgentDefinition = { ...existingAgent, name, config: agentConfig };
@@ -325,7 +424,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     sourceFile,
     existingConnection,
     existingAgent,
-    isAgentMode,
+    isAgentTransportMode,
     folderId,
     addConnection,
     updateConnection,
@@ -347,20 +446,43 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     });
   }, [addTab]);
 
-  const handleSave = useCallback(() => {
+  const handleSave = useCallback(async () => {
+    if (isAgentDefinitionMode) {
+      if (await saveAgentDefinition()) {
+        closeThisTab();
+      }
+      return;
+    }
     if (saveConnection()) {
       closeThisTab();
     }
-  }, [saveConnection, closeThisTab]);
+  }, [isAgentDefinitionMode, saveAgentDefinition, saveConnection, closeThisTab]);
 
   const handleSaveAndConnect = useCallback(async () => {
+    if (isAgentDefinitionMode && existingAgent) {
+      if (!(await saveAgentDefinition())) return;
+      addTab(name.trim(), "remote-session", {
+        type: "remote-session",
+        config: {
+          agentId: existingAgent.id,
+          sessionType: selectedType,
+          shell: (connSettings.shell as string) ?? undefined,
+          serialPort: (connSettings.port as string) ?? undefined,
+          persistent,
+          title: name.trim(),
+        },
+      });
+      closeThisTab();
+      return;
+    }
+
     const saved = saveConnection();
     if (!saved || "connectionState" in saved) return;
 
     let config: ConnectionConfig = saved.config;
 
     // Use schema to detect if a password prompt is needed
-    const schema = isAgentMode ? AGENT_SCHEMA : currentTypeInfo?.schema;
+    const schema = isAgentTransportMode ? AGENT_SCHEMA : currentTypeInfo?.schema;
     if (schema) {
       const promptInfo = findPasswordPromptInfo(schema, connSettings);
       if (promptInfo) {
@@ -378,13 +500,19 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     addTab(saved.name, saved.config.type, config, undefined, undefined, saved.terminalOptions);
     closeThisTab();
   }, [
+    isAgentDefinitionMode,
+    isAgentTransportMode,
+    existingAgent,
+    saveAgentDefinition,
     saveConnection,
     requestPassword,
     addTab,
     closeThisTab,
-    isAgentMode,
     currentTypeInfo,
     connSettings,
+    name,
+    selectedType,
+    persistent,
   ]);
 
   const handleCancel = useCallback(() => {
@@ -396,7 +524,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
 
   const enabledExternalFiles = settings.externalConnectionFiles.filter((f) => f.enabled);
 
-  const currentSchema = isAgentMode ? AGENT_SCHEMA : currentTypeInfo?.schema;
+  const currentSchema = isAgentTransportMode ? AGENT_SCHEMA : currentTypeInfo?.schema;
 
   const renderConnectionContent = () => (
     <div className="connection-editor__form">
@@ -425,7 +553,13 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         <select
           value={selectedType}
           onChange={(e) => handleTypeChange(e.target.value)}
-          disabled={!!existingAgent}
+          disabled={
+            isAgentTransportMode
+              ? !!existingAgent
+              : isAgentDefinitionMode
+                ? !!existingAgentDef
+                : false
+          }
           data-testid="connection-editor-type-select"
         >
           {typeOptions.map((opt) => (
@@ -444,13 +578,25 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         />
       )}
 
-      {!isAgentMode && (
+      {isAgentDefinitionMode && (
+        <label className="settings-form__field settings-form__field--checkbox">
+          <input
+            type="checkbox"
+            checked={persistent}
+            onChange={(e) => setPersistent(e.target.checked)}
+            data-testid="connection-editor-persistent"
+          />
+          <span className="settings-form__label">Persistent session</span>
+        </label>
+      )}
+
+      {!isAnyAgentMode && (
         <p className="settings-form__hint">
           Use {"${env:VAR}"} for environment variables, e.g. {"${env:USER}"}
         </p>
       )}
 
-      {!isAgentMode && enabledExternalFiles.length > 0 && (
+      {!isAnyAgentMode && enabledExternalFiles.length > 0 && (
         <label className="settings-form__field">
           <span className="settings-form__label">Storage File</span>
           <select
@@ -490,7 +636,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     }
   };
 
-  const categories = isAgentMode ? AGENT_CATEGORIES : EDITOR_CATEGORIES;
+  const categories = isAnyAgentMode ? AGENT_CATEGORIES : EDITOR_CATEGORIES;
 
   return (
     <div
@@ -499,11 +645,15 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       style={{ display: isVisible ? undefined : "none" }}
     >
       <div className="connection-editor__header">
-        {existingAgent
-          ? "Edit Remote Agent"
-          : existingConnection
-            ? "Edit Connection"
-            : "New Connection"}
+        {isAgentDefinitionMode
+          ? existingAgentDef
+            ? "Edit Agent Connection"
+            : "New Agent Connection"
+          : existingAgent
+            ? "Edit Remote Agent"
+            : existingConnection
+              ? "Edit Connection"
+              : "New Connection"}
       </div>
       <div
         className={`connection-editor__body ${isCompact ? "connection-editor__body--compact" : ""}`}
@@ -525,7 +675,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         >
           Cancel
         </button>
-        {!isAgentMode && (
+        {!isAgentTransportMode && (
           <button
             className="connection-editor__btn connection-editor__btn--primary"
             onClick={handleSaveAndConnect}

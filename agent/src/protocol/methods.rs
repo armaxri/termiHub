@@ -27,6 +27,7 @@ pub struct InitializeParams {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Capabilities {
     /// Available connection types from the registry.
     pub connection_types: Vec<ConnectionTypeInfo>,
@@ -375,15 +376,12 @@ mod tests {
         };
         let v = serde_json::to_value(&result).unwrap();
         assert_eq!(v["protocol_version"], "0.2.0");
-        assert_eq!(v["capabilities"]["max_sessions"], 20);
-        assert_eq!(v["capabilities"]["connection_types"][0]["typeId"], "local");
-        assert_eq!(v["capabilities"]["available_shells"][0], "/bin/bash");
-        assert_eq!(
-            v["capabilities"]["available_serial_ports"][0],
-            "/dev/ttyUSB0"
-        );
-        assert_eq!(v["capabilities"]["docker_available"], false);
-        assert!(v["capabilities"]["available_docker_images"]
+        assert_eq!(v["capabilities"]["maxSessions"], 20);
+        assert_eq!(v["capabilities"]["connectionTypes"][0]["typeId"], "local");
+        assert_eq!(v["capabilities"]["availableShells"][0], "/bin/bash");
+        assert_eq!(v["capabilities"]["availableSerialPorts"][0], "/dev/ttyUSB0");
+        assert_eq!(v["capabilities"]["dockerAvailable"], false);
+        assert!(v["capabilities"]["availableDockerImages"]
             .as_array()
             .unwrap()
             .is_empty());

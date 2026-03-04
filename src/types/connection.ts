@@ -1,4 +1,5 @@
 import { ConnectionConfig, RemoteAgentConfig, TerminalOptions } from "./terminal";
+import { SettingsSchema, Capabilities } from "./schema";
 
 export interface SavedConnection {
   id: string;
@@ -40,9 +41,18 @@ export interface RecoveryWarning {
   details: string | null;
 }
 
+/** Info about a connection type from the backend registry. */
+export interface ConnectionTypeInfo {
+  typeId: string;
+  displayName: string;
+  icon: string;
+  schema: SettingsSchema;
+  capabilities: Capabilities;
+}
+
 /** Capabilities reported by a connected remote agent. */
 export interface AgentCapabilities {
-  connectionTypes: string[];
+  connectionTypes: ConnectionTypeInfo[];
   maxSessions: number;
   availableShells?: string[];
   availableSerialPorts?: string[];

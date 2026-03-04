@@ -217,7 +217,9 @@ impl Dispatcher {
             }
         };
 
-        let type_id = &params.session_type;
+        // Normalize user-facing type names to registry type IDs
+        // (e.g. "shell" → "local").
+        let type_id = normalize_type_id(&params.session_type);
 
         // Validate that the type exists in the registry.
         if !self.session_manager.registry().has_type(type_id) {
@@ -999,6 +1001,19 @@ fn map_file_error(e: FileError) -> (i64, String) {
     }
 }
 
+/// Normalize user-facing session type names to registry type IDs.
+///
+/// Connection definitions and the frontend use `"shell"` as the session
+/// type for local shell connections, but the backend registry registers
+/// the local shell under the type ID `"local"`. This function maps
+/// known aliases to their canonical registry type IDs.
+fn normalize_type_id(raw: &str) -> &str {
+    match raw {
+        "shell" => "local",
+        other => other,
+    }
+}
+
 /// Well-known shell paths to probe on the host system.
 const SHELL_CANDIDATES: &[&str] = &[
     "/bin/bash",
@@ -1111,11 +1126,11 @@ mod tests {
 
         let json = result.to_json();
         assert_eq!(json["result"]["protocol_version"], AGENT_PROTOCOL_VERSION);
-        assert_eq!(json["result"]["capabilities"]["max_sessions"], 20);
-        // connection_types is an array of objects with type_id fields
-        let conn_types = json["result"]["capabilities"]["connection_types"]
+        assert_eq!(json["result"]["capabilities"]["maxSessions"], 20);
+        // connectionTypes is an array of objects with typeId fields
+        let conn_types = json["result"]["capabilities"]["connectionTypes"]
             .as_array()
-            .expect("connection_types should be an array");
+            .expect("connectionTypes should be an array");
         let type_ids: Vec<&str> = conn_types
             .iter()
             .map(|t| t["typeId"].as_str().unwrap())
@@ -1125,11 +1140,11 @@ mod tests {
             "Expected 'local' in {type_ids:?}"
         );
         assert!(type_ids.contains(&"ssh"), "Expected 'ssh' in {type_ids:?}");
-        // available_shells and available_serial_ports must be arrays
-        assert!(json["result"]["capabilities"]["available_shells"]
+        // availableShells and availableSerialPorts must be arrays
+        assert!(json["result"]["capabilities"]["availableShells"]
             .as_array()
             .is_some());
-        assert!(json["result"]["capabilities"]["available_serial_ports"]
+        assert!(json["result"]["capabilities"]["availableSerialPorts"]
             .as_array()
             .is_some());
     }
@@ -1200,6 +1215,25 @@ mod tests {
         let result = d.dispatch(req).await;
         let json = result.to_json();
         assert_eq!(json["error"]["code"], errors::INVALID_CONFIGURATION);
+    }
+
+    #[test]
+    fn normalize_type_id_maps_shell_to_local() {
+        assert_eq!(normalize_type_id("shell"), "local");
+    }
+
+    #[test]
+    fn normalize_type_id_passes_through_known_types() {
+        assert_eq!(normalize_type_id("local"), "local");
+        assert_eq!(normalize_type_id("serial"), "serial");
+        assert_eq!(normalize_type_id("ssh"), "ssh");
+        assert_eq!(normalize_type_id("docker"), "docker");
+        assert_eq!(normalize_type_id("telnet"), "telnet");
+    }
+
+    #[test]
+    fn normalize_type_id_passes_through_unknown() {
+        assert_eq!(normalize_type_id("unknown"), "unknown");
     }
 
     // ── Session list tests ──────────────────────────────────────────

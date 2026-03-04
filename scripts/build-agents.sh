@@ -167,7 +167,7 @@ for target in "${SELECTED_TARGETS[@]}"; do
         fi
         method="cross"
 
-        if cross build --release --target "$target" -p termihub-agent 2>&1; then
+        if CROSS_CONFIG=agent/Cross.toml cross build --release --target "$target" -p termihub-agent 2>&1; then
             success=true
         fi
     fi

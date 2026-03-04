@@ -39,23 +39,34 @@ Issues labeled **`Concept`** are design-only tasks. Do **not** implement code fo
 
 ```
 src/                          # React frontend
-  components/                 # ActivityBar/, Sidebar/, Terminal/, SplitView/, Settings/
+  components/                 # ActivityBar/, Sidebar/, Terminal/, SplitView/, Settings/,
+                              # ConnectionEditor/, StatusBar/, TunnelEditor/, TunnelSidebar/,
+                              # CredentialStoreIndicator/, LogViewer/, FileEditor/, etc.
+  data/                       # Application data/fixtures
   hooks/                      # useTerminal, useConnections, useKeyboardShortcuts, etc.
   services/                   # api.ts (Tauri commands), events.ts (Tauri events)
   store/                      # appStore.ts (Zustand)
+  styles/                     # CSS styling
+  test/                       # Test utilities
+  themes/                     # Theme definitions
   types/                      # terminal.ts, connection.ts, events.ts
   utils/                      # formatters, shell detection, panelTree
 src-tauri/src/                # Rust backend (desktop)
-  terminal/                   # backend.rs (trait), manager.rs, local_shell.rs, serial.rs, ssh.rs, telnet.rs
+  terminal/                   # backend.rs (trait), agent_manager.rs, agent_setup.rs, agent_deploy.rs
   connection/                 # config.rs, manager.rs, storage.rs
+  credential/                 # Credential store (encryption, master password, storage)
   files/                      # sftp.rs, local.rs, browser.rs, utils.rs
   monitoring/                 # SSH remote system monitoring (CPU, memory, disk, etc.)
+  session/                    # manager.rs, registry.rs, remote_proxy.rs
+  tunnel/                     # SSH tunnel functionality
   commands/                   # Tauri IPC command handlers
-  events/                     # Event emitters
   utils/                      # shell_detect.rs, expand.rs, errors.rs
 core/src/                     # Shared Rust core library (termihub-core)
+  backends/                   # Backend implementations: local_shell.rs, serial.rs, telnet.rs,
+                              # ssh/ (directory), docker/ (directory), wsl.rs
   buffer/                     # RingBuffer (1 MiB circular byte buffer)
   config/                     # ShellConfig, SshConfig, DockerConfig, SerialConfig, PtySize
+  connection/                 # Connection types and traits
   errors.rs                   # CoreError, SessionError, FileError
   files/                      # FileBackend trait, LocalFileBackend, FileEntry, utilities
   monitoring/                 # SystemStats, CpuCounters, StatsCollector trait, parsers
@@ -85,6 +96,7 @@ docs/                         # All documentation
 tests/e2e/                    # WebdriverIO E2E tests
 tests/docker/                 # Comprehensive Docker test containers (SSH variants, telnet, serial, SFTP, fault injection)
 tests/fixtures/               # Test fixtures (SSH keys, config samples)
+tests/manual/                 # Manual test definitions
 examples/                     # Quick-start dev environment (SSH, Telnet, virtual serial)
 ```
 
@@ -141,7 +153,7 @@ examples/                     # Quick-start dev environment (SSH, Telnet, virtua
 - **Never push directly to `main`**: all changes must be submitted via pull request — no exceptions, even for documentation-only changes
 - **Every change requires a PR**: create a feature or bugfix branch, push it to `origin`, and open a pull request. Direct pushes to `main` are prohibited.
 - **Conventional Commits**: `type(scope): subject` — types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `chore`
-- **Scopes**: `terminal`, `ssh`, `serial`, `ui`, `backend`, `sftp`, `config`
+- **Scopes**: `terminal`, `ssh`, `serial`, `ui`, `backend`, `sftp`, `config`, `agent`, `credential`, `tunnel`
 - **Always merge with a merge commit** (`gh pr merge --merge`) — never squash or rebase, never rebase branches
 - **Commit early and often** — commit as soon as a single logical topic is complete (a single topic = a single commit). Do not batch multiple topics into one commit. Each logical step gets its own commit:
   - Refactors separate from new features
@@ -157,17 +169,19 @@ examples/                     # Quick-start dev environment (SSH, Telnet, virtua
 
 All scripts live in `scripts/` with `.sh` (Unix/macOS) and `.cmd` (Windows) variants. They can be run from anywhere in the repo. See [scripts/README.md](../scripts/README.md) for details.
 
-| Script                     | Purpose                                                                                                                                                                                      |
-| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `./scripts/setup.sh`       | Install all dependencies and do an initial build                                                                                                                                             |
-| `./scripts/dev.sh`         | Start the app in dev mode with hot-reload                                                                                                                                                    |
-| `./scripts/build.sh`       | Build for production (creates platform installer)                                                                                                                                            |
-| `./scripts/test.sh`        | Run all unit tests (frontend + backend + agent)                                                                                                                                              |
-| `./scripts/check.sh`       | Read-only quality checks mirroring CI (formatting, linting, clippy)                                                                                                                          |
-| `./scripts/format.sh`      | Auto-fix all formatting issues (Prettier + cargo fmt)                                                                                                                                        |
-| `./scripts/autoformat.sh`  | Auto-format a single file (called by PostToolUse hook — do not run manually)                                                                                                                 |
-| `./scripts/clean.sh`       | Remove all build artifacts for a fresh start                                                                                                                                                 |
-| `./scripts/test-system.sh` | Start Docker infra + virtual serial ports and run system-level E2E tests (Linux via Docker; `tauri-driver` does not support macOS — see ADR-5 in [architecture.md](../docs/architecture.md)) |
+| Script                           | Purpose                                                                                                            |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `./scripts/setup.sh`             | Install all dependencies and do an initial build                                                                   |
+| `./scripts/dev.sh`               | Start the app in dev mode with hot-reload                                                                          |
+| `./scripts/build.sh`             | Build for production (creates platform installer)                                                                  |
+| `./scripts/test.sh`              | Run all unit tests (frontend + backend + agent)                                                                    |
+| `./scripts/check.sh`             | Read-only quality checks mirroring CI (formatting, linting, clippy)                                                |
+| `./scripts/format.sh`            | Auto-fix all formatting issues (Prettier + cargo fmt)                                                              |
+| `./scripts/autoformat.sh`        | Auto-format a single file (called by PostToolUse hook — do not run manually)                                       |
+| `./scripts/clean.sh`             | Remove all build artifacts for a fresh start                                                                       |
+| `./scripts/build-agents.sh`      | Build remote agent binaries (cross-compilation targets)                                                            |
+| `./scripts/setup-agent-cross.sh` | Set up cross-compilation toolchain for agent builds                                                                |
+| `./scripts/test-system.sh`       | Start Docker infra + virtual serial ports and run system-level E2E tests (dispatches to platform-specific runners) |
 
 ### Auto-Formatting Hook
 
@@ -205,7 +219,10 @@ Always run these before pushing:
 ```bash
 # Frontend
 pnpm run lint            # ESLint
+pnpm run lint:fix        # ESLint with --fix
 pnpm run format:check    # Prettier check (format to auto-fix)
+pnpm run markdownlint    # Markdown linting
+pnpm run markdownlint:fix # Markdown linting with fixes
 pnpm test                # Vitest single run
 pnpm test:watch          # Vitest watch mode
 pnpm test:coverage       # Vitest with coverage
@@ -225,13 +242,12 @@ pnpm tauri dev
 
 ## Adding a New Terminal Backend
 
-1. Implement `TerminalBackend` trait in `src-tauri/src/terminal/`
-2. Register with `TerminalManager` in `manager.rs`
-3. Add Tauri commands in `src-tauri/src/commands/` if needed
-4. Add config types in `connection/config.rs` (Rust) and `src/types/terminal.ts` (TypeScript)
-5. Create settings UI in `src/components/Settings/`
-6. Add to connection type selector in `ConnectionEditor.tsx`
-7. Test on target platform, run `./scripts/check.sh`
+1. Implement the backend in `core/src/backends/` (follow existing patterns like `local_shell.rs`, `telnet.rs`)
+2. Add config types in `core/src/config/` (Rust) and `src/types/terminal.ts` (TypeScript)
+3. Wire up in `src-tauri/src/terminal/` and add Tauri commands in `src-tauri/src/commands/` if needed
+4. Create settings UI in `src/components/Settings/`
+5. Add to connection type selector in `src/components/ConnectionEditor/ConnectionEditor.tsx`
+6. Test on target platform, run `./scripts/check.sh`
 
 ---
 
