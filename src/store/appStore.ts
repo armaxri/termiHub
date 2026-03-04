@@ -36,6 +36,7 @@ import {
   removeFolder,
   persistAgent,
   removeAgent,
+  reorderAgents as persistAgentOrder,
   getSettings,
   saveSettings as persistSettings,
   reloadExternalConnections as apiReloadExternalConnections,
@@ -261,6 +262,7 @@ interface AppState {
   addRemoteAgent: (agent: RemoteAgentDefinition) => void;
   updateRemoteAgent: (agent: RemoteAgentDefinition) => void;
   deleteRemoteAgent: (agentId: string) => void;
+  reorderRemoteAgents: (oldIndex: number, newIndex: number) => void;
   toggleRemoteAgent: (agentId: string) => void;
   connectRemoteAgent: (agentId: string, password?: string) => Promise<void>;
   disconnectRemoteAgent: (agentId: string) => Promise<void>;
@@ -1339,6 +1341,19 @@ export const useAppStore = create<AppState>((set, get) => {
       }));
       persistAgent({ id: agent.id, name: agent.name, config: agent.config }).catch((err) =>
         console.error("Failed to persist agent update:", err)
+      );
+    },
+
+    reorderRemoteAgents: (oldIndex, newIndex) => {
+      set((state) => {
+        const agents = [...state.remoteAgents];
+        const [moved] = agents.splice(oldIndex, 1);
+        agents.splice(newIndex, 0, moved);
+        return { remoteAgents: agents };
+      });
+      const agentIds = get().remoteAgents.map((a) => a.id);
+      persistAgentOrder(agentIds).catch((err) =>
+        console.error("Failed to persist agent reorder:", err)
       );
     },
 

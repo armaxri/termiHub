@@ -12,6 +12,7 @@ import {
   DragEndEvent,
   DragStartEvent,
 } from "@dnd-kit/core";
+import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import {
   ChevronRight,
   ChevronDown,
@@ -25,6 +26,7 @@ import {
   Check,
   X,
   Activity,
+  Server,
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { ShellType } from "@/types/terminal";
@@ -328,6 +330,7 @@ function ConnectionItem({
 export function ConnectionList() {
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [draggingConnection, setDraggingConnection] = useState<SavedConnection | null>(null);
+  const [draggingAgentName, setDraggingAgentName] = useState<string | null>(null);
   const folders = useAppStore((s) => s.folders);
   const connections = useAppStore((s) => s.connections);
   const remoteAgents = useAppStore((s) => s.remoteAgents);
@@ -339,6 +342,7 @@ export function ConnectionList() {
   const addFolder = useAppStore((s) => s.addFolder);
   const duplicateConnection = useAppStore((s) => s.duplicateConnection);
   const moveConnectionToFolder = useAppStore((s) => s.moveConnectionToFolder);
+  const reorderRemoteAgents = useAppStore((s) => s.reorderRemoteAgents);
 
   const pointerSensor = useSensor(PointerSensor, {
     activationConstraint: { distance: 8 },
@@ -494,17 +498,44 @@ export function ConnectionList() {
     [addTab]
   );
 
-  const handleDragStart = useCallback((event: DragStartEvent) => {
-    const conn = event.active.data.current?.connection as SavedConnection | undefined;
-    setDraggingConnection(conn ?? null);
-  }, []);
+  const handleDragStart = useCallback(
+    (event: DragStartEvent) => {
+      const data = event.active.data.current;
+      if (data?.type === "agent") {
+        setDraggingConnection(null);
+        const agent = remoteAgents.find((a) => a.id === event.active.id);
+        setDraggingAgentName(agent?.name ?? null);
+      } else {
+        setDraggingAgentName(null);
+        const conn = data?.connection as SavedConnection | undefined;
+        setDraggingConnection(conn ?? null);
+      }
+    },
+    [remoteAgents]
+  );
 
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
       setDraggingConnection(null);
+      setDraggingAgentName(null);
       const { active, over } = event;
       if (!over) return;
 
+      // Handle agent reorder
+      if (active.data.current?.type === "agent" && over.data.current?.type === "agent") {
+        const activeId = active.id as string;
+        const overId = over.id as string;
+        if (activeId !== overId) {
+          const oldIndex = remoteAgents.findIndex((a) => a.id === activeId);
+          const newIndex = remoteAgents.findIndex((a) => a.id === overId);
+          if (oldIndex !== -1 && newIndex !== -1) {
+            reorderRemoteAgents(oldIndex, newIndex);
+          }
+        }
+        return;
+      }
+
+      // Handle connection drag to folder/root
       const connectionId = active.id as string;
       const overId = over.id as string;
       const connection = active.data.current?.connection as SavedConnection | undefined;
@@ -519,7 +550,7 @@ export function ConnectionList() {
         }
       }
     },
-    [moveConnectionToFolder]
+    [moveConnectionToFolder, remoteAgents, reorderRemoteAgents]
   );
 
   const [localCollapsed, setLocalCollapsed] = useState(false);
@@ -631,21 +662,26 @@ export function ConnectionList() {
             />
           )}
         </div>
-        {remoteAgents.map((agent, i) => {
-          const agentExpandedIdx = expandedIndexMap[i + 1];
-          return (
-            <Fragment key={agent.id}>
-              <div className="connection-list__resize-handle" {...getResizeHandleProps(i)} />
-              <AgentNode
-                agent={agent}
-                style={agentExpandedIdx >= 0 ? { flex: flexValues[agentExpandedIdx] } : undefined}
-                sectionRef={(el) => {
-                  if (agentExpandedIdx >= 0) sectionRefs.current[agentExpandedIdx] = el;
-                }}
-              />
-            </Fragment>
-          );
-        })}
+        <SortableContext
+          items={remoteAgents.map((a) => a.id)}
+          strategy={verticalListSortingStrategy}
+        >
+          {remoteAgents.map((agent, i) => {
+            const agentExpandedIdx = expandedIndexMap[i + 1];
+            return (
+              <Fragment key={agent.id}>
+                <div className="connection-list__resize-handle" {...getResizeHandleProps(i)} />
+                <AgentNode
+                  agent={agent}
+                  style={agentExpandedIdx >= 0 ? { flex: flexValues[agentExpandedIdx] } : undefined}
+                  sectionRef={(el) => {
+                    if (agentExpandedIdx >= 0) sectionRefs.current[agentExpandedIdx] = el;
+                  }}
+                />
+              </Fragment>
+            );
+          })}
+        </SortableContext>
         <DragOverlay>
           {draggingConnection ? (
             <div className="connection-tree__drag-overlay">
@@ -655,6 +691,11 @@ export function ConnectionList() {
                 size={16}
               />
               <span>{draggingConnection.name}</span>
+            </div>
+          ) : draggingAgentName ? (
+            <div className="connection-tree__drag-overlay">
+              <Server size={14} />
+              <span>{draggingAgentName}</span>
             </div>
           ) : null}
         </DragOverlay>

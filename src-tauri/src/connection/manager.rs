@@ -160,6 +160,30 @@ impl ConnectionManager {
             .context("Failed to persist agent")
     }
 
+    /// Reorder remote agents by providing a list of agent IDs in the desired order.
+    pub fn reorder_agents(&self, agent_ids: &[String]) -> Result<()> {
+        let mut store = self.store.lock().unwrap();
+
+        // Build the reordered list: place agents in the order given by agent_ids,
+        // then append any agents not mentioned (shouldn't happen, but be safe).
+        let mut reordered: Vec<SavedRemoteAgent> = Vec::with_capacity(store.agents.len());
+        for id in agent_ids {
+            if let Some(agent) = store.agents.iter().find(|a| a.id == *id) {
+                reordered.push(agent.clone());
+            }
+        }
+        for agent in &store.agents {
+            if !agent_ids.contains(&agent.id) {
+                reordered.push(agent.clone());
+            }
+        }
+
+        store.agents = reordered;
+        self.storage
+            .save_flat(&store)
+            .context("Failed to persist agent reorder")
+    }
+
     /// Delete a remote agent by ID.
     pub fn delete_agent(&self, id: &str) -> Result<()> {
         self.credential_store.remove_all_for_connection(id)?;
