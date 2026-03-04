@@ -3,10 +3,15 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { TerminalPortalProvider, useTerminalRegistry } from "./TerminalRegistry";
+import { sendInput } from "@/services/api";
 
 vi.mock("@/themes", () => ({
   applyTheme: vi.fn(),
   onThemeChange: vi.fn(() => vi.fn()),
+}));
+
+vi.mock("@/services/api", () => ({
+  sendInput: vi.fn().mockResolvedValue(undefined),
 }));
 
 /** Creates a mock xterm instance with configurable selection state. */
@@ -118,5 +123,53 @@ describe("copySelectionToClipboard", () => {
     });
 
     expect(writeText).toHaveBeenCalledWith("hello world");
+  });
+});
+
+describe("pasteToTerminal", () => {
+  it("reads clipboard and sends text as input via registered session", async () => {
+    const readText = vi.fn().mockResolvedValue("pasted text");
+    Object.assign(navigator, { clipboard: { readText } });
+
+    act(() => {
+      registryActions.registerSession("tab-1", "session-1");
+    });
+
+    await act(async () => {
+      await registryActions.pasteToTerminal("tab-1");
+    });
+
+    expect(readText).toHaveBeenCalled();
+    expect(sendInput).toHaveBeenCalledWith("session-1", "pasted text");
+  });
+
+  it("does not send input when clipboard is empty", async () => {
+    const readText = vi.fn().mockResolvedValue("");
+    Object.assign(navigator, { clipboard: { readText } });
+    vi.mocked(sendInput).mockClear();
+
+    act(() => {
+      registryActions.registerSession("tab-1", "session-1");
+    });
+
+    await act(async () => {
+      await registryActions.pasteToTerminal("tab-1");
+    });
+
+    expect(readText).toHaveBeenCalled();
+    expect(sendInput).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when no session is registered for the tab", async () => {
+    const readText = vi.fn().mockResolvedValue("pasted text");
+    Object.assign(navigator, { clipboard: { readText } });
+    vi.mocked(sendInput).mockClear();
+
+    await act(async () => {
+      await registryActions.pasteToTerminal("tab-no-session");
+    });
+
+    expect(readText).not.toHaveBeenCalled();
+    expect(sendInput).not.toHaveBeenCalled();
   });
 });
