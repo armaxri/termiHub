@@ -114,7 +114,8 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
   const lastInputTimeRef = useRef(0);
   const contentDirtyRef = useRef(false);
   const pendingCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const { register, unregister, parkingRef } = useTerminalRegistry();
+  const { register, unregister, registerSession, unregisterSession, parkingRef } =
+    useTerminalRegistry();
 
   const setupTerminal = useCallback(
     async (xterm: XTerm, fitAddon: FitAddon, isCanceled: () => boolean) => {
@@ -144,6 +145,7 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
         }
 
         sessionIdRef.current = sessionId;
+        registerSession(tabId, sessionId);
 
         // Output batching: buffer chunks and flush in a single RAF callback
         const outputBuffer: Uint8Array[] = [];
@@ -182,6 +184,7 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
         const unsubExit = terminalDispatcher.subscribeExit(sessionId, () => {
           xterm.writeln("\r\n\x1b[90m[Process exited]\x1b[0m");
           sessionIdRef.current = null;
+          unregisterSession(tabId);
         });
 
         // Send user input to backend
@@ -244,7 +247,7 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
         }
       }
     },
-    [config, existingSessionId]
+    [config, existingSessionId, tabId, registerSession, unregisterSession]
   );
 
   // Create the terminal element, xterm instance, and register

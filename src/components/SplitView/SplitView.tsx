@@ -19,6 +19,7 @@ import {
   Pencil,
   FileDown,
   ClipboardCopy,
+  ClipboardPaste,
   Copy,
   Eraser,
   ArrowRightLeft,
@@ -194,6 +195,7 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
     copyTerminalToClipboard,
     getTerminalSelection,
     copySelectionToClipboard,
+    pasteToTerminal,
   } = useTerminalRegistry();
 
   const [colorPickerTabId, setColorPickerTabId] = useState<string | null>(null);
@@ -273,6 +275,13 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
                     onSelect={() => copyTerminalToClipboard(tab.id)}
                   >
                     <ClipboardCopy size={14} /> Copy All
+                  </ContextMenu.Item>
+                  <ContextMenu.Item
+                    className="context-menu__item"
+                    onSelect={() => pasteToTerminal(tab.id)}
+                    data-testid="terminal-context-paste"
+                  >
+                    <ClipboardPaste size={14} /> Paste
                   </ContextMenu.Item>
                   <ContextMenu.Separator className="context-menu__separator" />
                   <ContextMenu.Item

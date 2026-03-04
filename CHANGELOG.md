@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Right-click "Paste" option in the terminal context menu — reads clipboard text and sends it as terminal input (#416)
 - File browser CWD tracking for bash/WSL sessions — the app now injects an OSC 7 `PROMPT_COMMAND` hook when spawning bash, Git Bash, or WSL sessions, so the file browser automatically follows the terminal's working directory; zsh already emits OSC 7 natively and is unaffected (#408)
 - Right-click context menu on the terminal area with "Copy Selection" to copy only the selected text, plus "Copy All" for the entire buffer — previously only the tab context menu's "Copy to Clipboard" (entire history) was available (#407)
 - Guided manual test runner (`python scripts/test-manual.py`) — a cross-platform CLI tool that walks developers through manual test items one at a time with platform filtering, lazy infrastructure setup (Docker, virtual serial ports), automated verification checks, interactive pass/fail/skip collection, resume support, and JSON report generation; test definitions live in `tests/manual/*.yaml` covering 176 test items across 11 categories (#384)

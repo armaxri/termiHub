@@ -224,3 +224,22 @@ tests:
     expected:
       - "New split created, tab moves to new panel"
     verification: manual
+
+  # --- Right-click paste (PR #416) ---
+
+  - id: MT-TAB-18
+    name: "Right-click Paste sends clipboard text to terminal"
+    pr: 416
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Copy some text to the clipboard (e.g. 'echo hello')"
+      - "Open a local terminal"
+      - "Right-click inside the terminal area"
+      - "Click 'Paste' in the context menu"
+    expected:
+      - "Context menu shows 'Paste' item with clipboard icon"
+      - "Clipboard text appears in the terminal as typed input"
+    verification: manual
+    tags: [clipboard]

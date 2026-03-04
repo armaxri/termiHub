@@ -2,6 +2,8 @@ import { createContext, useContext, useRef, useCallback, useMemo, ReactNode } fr
 import { Terminal as XTerm } from "@xterm/xterm";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
+import { sendInput } from "@/services/api";
+import { SessionId } from "@/types/terminal";
 
 interface TerminalRegistryContextType {
   /** Register a terminal's xterm container element and xterm instance. */
@@ -22,6 +24,12 @@ interface TerminalRegistryContextType {
   getTerminalSelection: (tabId: string) => string | undefined;
   /** Copy the current text selection to the clipboard (no-op if nothing selected). */
   copySelectionToClipboard: (tabId: string) => Promise<void>;
+  /** Associate a backend session ID with a tab for paste support. */
+  registerSession: (tabId: string, sessionId: SessionId) => void;
+  /** Remove the session ID association for a tab. */
+  unregisterSession: (tabId: string) => void;
+  /** Paste clipboard text into a terminal by sending it as input. */
+  pasteToTerminal: (tabId: string) => Promise<void>;
   /** Ref to the off-screen parking div for orphaned terminal elements. */
   parkingRef: React.RefObject<HTMLDivElement | null>;
 }
@@ -42,6 +50,7 @@ export function useTerminalRegistry() {
 export function TerminalPortalProvider({ children }: { children: ReactNode }) {
   const registryRef = useRef(new Map<string, HTMLDivElement>());
   const xtermRegistryRef = useRef(new Map<string, XTerm>());
+  const sessionRegistryRef = useRef(new Map<string, SessionId>());
   const parkingRef = useRef<HTMLDivElement | null>(null);
 
   const register = useCallback((tabId: string, element: HTMLDivElement, xterm: XTerm) => {
@@ -52,6 +61,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
   const unregister = useCallback((tabId: string) => {
     registryRef.current.delete(tabId);
     xtermRegistryRef.current.delete(tabId);
+    sessionRegistryRef.current.delete(tabId);
   }, []);
 
   const getElement = useCallback((tabId: string) => {
@@ -133,6 +143,23 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     [getTerminalSelection]
   );
 
+  const registerSession = useCallback((tabId: string, sessionId: SessionId) => {
+    sessionRegistryRef.current.set(tabId, sessionId);
+  }, []);
+
+  const unregisterSession = useCallback((tabId: string) => {
+    sessionRegistryRef.current.delete(tabId);
+  }, []);
+
+  const pasteToTerminal = useCallback(async (tabId: string) => {
+    const sessionId = sessionRegistryRef.current.get(tabId);
+    if (!sessionId) return;
+    const text = await navigator.clipboard.readText();
+    if (text) {
+      await sendInput(sessionId, text);
+    }
+  }, []);
+
   const ctx = useMemo(
     () => ({
       register,
@@ -144,6 +171,9 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       copyTerminalToClipboard,
       getTerminalSelection,
       copySelectionToClipboard,
+      registerSession,
+      unregisterSession,
+      pasteToTerminal,
       parkingRef,
     }),
     [
@@ -156,6 +186,9 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       copyTerminalToClipboard,
       getTerminalSelection,
       copySelectionToClipboard,
+      registerSession,
+      unregisterSession,
+      pasteToTerminal,
     ]
   );
 
