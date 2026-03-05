@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Build warning on Windows: unused `socket_path` variable in X11 forwarding code — inlined into the `#[cfg(unix)]` branch so it's not created on non-unix platforms (#434)
 - VS Code not recognized on Windows — `code.cmd` is not found by Rust's `CreateProcessW`; now routes through `cmd.exe /c code` so the shell resolves `.cmd` extensions (#417)
 - Terminal could not be scrolled when the mouse was in the narrow gap at the bottom of the terminal area — the legacy `.xterm-viewport` element (from xterm.js 5.x) was intercepting wheel events before they reached the xterm.js 6.0 custom scrollbar; made the viewport inert and stretched the scrollable element to cover the full terminal area (#429)
 - Agent connection fails with "Parse capabilities: missing field `connectionTypes`" — the desktop `AgentCapabilities` struct expected `connection_types` as plain strings, but the agent sends full `ConnectionTypeInfo` objects (with typeId, displayName, icon, schema, capabilities); updated desktop to accept the rich objects and pass them through to the frontend (#412)
