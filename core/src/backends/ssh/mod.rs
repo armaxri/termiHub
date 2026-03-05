@@ -23,6 +23,7 @@ use crate::connection::{
 use crate::errors::SessionError;
 use crate::files::FileBrowser;
 use crate::monitoring::MonitoringProvider;
+use crate::session::shell::osc7_setup_command;
 use crate::session::ssh::validate_ssh_config;
 
 use self::auth::connect_and_authenticate;
@@ -423,6 +424,17 @@ impl ConnectionType for Ssh {
                     "xauth add localhost:{display_num} MIT-MAGIC-COOKIE-1 {cookie} 2>/dev/null\n",
                 );
                 let _ = channel.write_all(xauth_cmd.as_bytes());
+            }
+        }
+
+        // Inject OSC 7 PROMPT_COMMAND hook for CWD tracking.
+        // The remote shell (typically bash) doesn't emit OSC 7 by default,
+        // so we inject a PROMPT_COMMAND that emits it on each prompt.
+        // Errors are non-fatal — the shell works without CWD tracking.
+        if let Some(setup) = osc7_setup_command("ssh") {
+            let cmd = format!("{setup}\n");
+            if let Err(e) = channel.write_all(cmd.as_bytes()) {
+                debug!("Failed to inject OSC 7 hook: {e}");
             }
         }
 
