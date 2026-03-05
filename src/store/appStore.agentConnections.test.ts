@@ -266,7 +266,7 @@ describe("appStore — agent connection management", () => {
           host: "test.local",
           port: 22,
           username: "user",
-          authMethod: "password",
+          authMethod: "password" as const,
         },
         isExpanded: false,
         connectionState: "disconnected" as const,
