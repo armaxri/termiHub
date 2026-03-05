@@ -73,10 +73,24 @@ done
 # ─── Detect environment ─────────────────────────────────────────────────────
 
 IS_WSL=0
-DOCKER_CMD="docker"
 
 if grep -qEi "(Microsoft|WSL)" /proc/version 2>/dev/null; then
     IS_WSL=1
+fi
+
+# ─── Detect container runtime ───────────────────────────────────────────────
+# Allow override via env: CONTAINER_CMD=podman ./scripts/test-system-windows.sh
+
+if [ -z "${CONTAINER_CMD:-}" ]; then
+    if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+        CONTAINER_CMD="docker"
+    elif [ "$IS_WSL" -eq 1 ] && command -v docker.exe &>/dev/null; then
+        CONTAINER_CMD="docker.exe"
+    elif command -v podman &>/dev/null && podman info &>/dev/null 2>&1; then
+        CONTAINER_CMD="podman"
+    else
+        CONTAINER_CMD="docker"  # will fail below with a clear error
+    fi
 fi
 
 # ─── Cleanup trap ───────────────────────────────────────────────────────────
@@ -89,11 +103,11 @@ cleanup() {
     echo "=== Cleanup ==="
 
     if [ "$DOCKER_STARTED" -eq 1 ] && [ "$KEEP_INFRA" -eq 0 ]; then
-        echo "Stopping Docker containers..."
-        $DOCKER_CMD compose -f tests/docker/docker-compose.yml $COMPOSE_ARGS down 2>/dev/null || true
+        echo "Stopping containers..."
+        $CONTAINER_CMD compose -f tests/docker/docker-compose.yml $COMPOSE_ARGS down 2>/dev/null || true
     elif [ "$KEEP_INFRA" -eq 1 ]; then
-        echo "Keeping Docker containers running (--keep-infra)."
-        echo "Stop manually with: $DOCKER_CMD compose -f tests/docker/docker-compose.yml $COMPOSE_ARGS down"
+        echo "Keeping containers running (--keep-infra)."
+        echo "Stop manually with: $CONTAINER_CMD compose -f tests/docker/docker-compose.yml $COMPOSE_ARGS down"
     fi
 
     echo "Cleanup complete."
@@ -118,19 +132,15 @@ echo "Checking prerequisites..."
 MISSING=0
 HAS_TAURI_DRIVER=0
 
-# Docker: try native first, then WSL passthrough
-if ! command -v docker &>/dev/null; then
-    if [ "$IS_WSL" -eq 1 ] && command -v docker.exe &>/dev/null; then
-        DOCKER_CMD="docker.exe"
-        echo "  docker: using docker.exe (Docker Desktop for Windows)"
-    else
-        echo "  MISSING: docker — install Docker Desktop: https://www.docker.com/products/docker-desktop/"
-        MISSING=1
-    fi
+# Container runtime: validate the detected/provided runtime
+if ! command -v "$CONTAINER_CMD" &>/dev/null; then
+    echo "  MISSING: $CONTAINER_CMD — install Docker Desktop: https://www.docker.com/products/docker-desktop/"
+    echo "           or Podman Desktop: https://podman-desktop.io/"
+    MISSING=1
 fi
 
-if [ "$MISSING" -eq 0 ] && ! $DOCKER_CMD info &>/dev/null 2>&1; then
-    echo "  ERROR: Docker daemon is not running. Please start Docker Desktop."
+if [ "$MISSING" -eq 0 ] && ! $CONTAINER_CMD info &>/dev/null 2>&1; then
+    echo "  ERROR: $CONTAINER_CMD daemon is not running. Please start Docker Desktop or Podman Desktop."
     MISSING=1
 fi
 
@@ -214,7 +224,7 @@ fi
 # ─── Start Docker containers ────────────────────────────────────────────────
 
 echo ""
-echo "=== Starting Docker test infrastructure ==="
+echo "=== Starting container test infrastructure ==="
 
 # Build compose args for profiles
 if [ "$WITH_FAULT" -eq 1 ] && [ "$WITH_STRESS" -eq 1 ]; then
@@ -225,7 +235,7 @@ elif [ "$WITH_STRESS" -eq 1 ]; then
     COMPOSE_ARGS="--profile stress"
 fi
 
-$DOCKER_CMD compose -f tests/docker/docker-compose.yml $COMPOSE_ARGS up -d --build
+$CONTAINER_CMD compose -f tests/docker/docker-compose.yml $COMPOSE_ARGS up -d --build
 DOCKER_STARTED=1
 
 # Wait for core SSH container

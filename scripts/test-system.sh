@@ -54,22 +54,36 @@ for arg in "$@"; do
     esac
 done
 
+# ─── Detect container runtime ───────────────────────────────────────────────
+# Allow override via env: CONTAINER_CMD=podman ./scripts/test-system.sh
+
+if [ -z "${CONTAINER_CMD:-}" ]; then
+    if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+        CONTAINER_CMD="docker"
+    elif command -v podman &>/dev/null && podman info &>/dev/null 2>&1; then
+        CONTAINER_CMD="podman"
+    else
+        CONTAINER_CMD="docker"  # will fail below with a clear error
+    fi
+fi
+
 # ─── macOS: run E2E tests inside Docker (ADR-5) ──────────────────────────────
 # tauri-driver does not support macOS (no WKWebView driver). On Darwin, we
 # delegate the entire build+test flow to a Linux Docker container with Xvfb,
 # WebKitGTK, and tauri-driver. See docs/architecture.md ADR-5.
 
 run_in_docker() {
-    echo "=== macOS detected — running E2E tests inside Docker (ADR-5) ==="
+    echo "=== macOS detected — running E2E tests inside a container (ADR-5) ==="
     echo ""
 
-    # Only Docker is needed on the host for the Docker-based path
-    if ! command -v docker &>/dev/null; then
-        echo "  MISSING: docker — install Docker Desktop: https://www.docker.com/products/docker-desktop/"
+    # Only a container runtime is needed on the host for this path
+    if ! command -v "$CONTAINER_CMD" &>/dev/null; then
+        echo "  MISSING: $CONTAINER_CMD — install Docker Desktop: https://www.docker.com/products/docker-desktop/"
+        echo "           or Podman Desktop: https://podman-desktop.io/"
         exit 1
     fi
-    if ! docker info &>/dev/null 2>&1; then
-        echo "  ERROR: Docker daemon is not running. Please start Docker Desktop."
+    if ! "$CONTAINER_CMD" info &>/dev/null 2>&1; then
+        echo "  ERROR: $CONTAINER_CMD daemon is not running. Please start Docker Desktop or Podman Desktop."
         exit 1
     fi
 
@@ -82,22 +96,22 @@ run_in_docker() {
     macos_cleanup() {
         if [ "$KEEP_INFRA" -eq 0 ]; then
             echo ""
-            echo "=== Stopping Docker containers ==="
-            docker compose -f "$COMPOSE_FILE" down 2>/dev/null || true
+            echo "=== Stopping containers ==="
+            $CONTAINER_CMD compose -f "$COMPOSE_FILE" down 2>/dev/null || true
         else
             echo ""
-            echo "Keeping Docker containers running (--keep-infra)."
-            echo "Stop manually with: docker compose -f $COMPOSE_FILE down"
+            echo "Keeping containers running (--keep-infra)."
+            echo "Stop manually with: $CONTAINER_CMD compose -f $COMPOSE_FILE down"
         fi
     }
     trap macos_cleanup EXIT
 
     echo "Building and starting E2E environment..."
-    echo "  (first run will take 10-15 minutes to build the Docker image)"
+    echo "  (first run will take 10-15 minutes to build the container image)"
     echo ""
 
     TEST_EXIT=0
-    if docker compose -f "$COMPOSE_FILE" up \
+    if $CONTAINER_CMD compose -f "$COMPOSE_FILE" up \
         --build \
         --abort-on-container-exit \
         --exit-code-from e2e-runner; then
@@ -144,10 +158,10 @@ cleanup() {
     rm -f /tmp/termihub-serial-a /tmp/termihub-serial-b
 
     if [ "$DOCKER_STARTED" -eq 1 ] && [ "$KEEP_INFRA" -eq 0 ]; then
-        echo "Stopping Docker containers..."
-        docker compose -f examples/docker/docker-compose.yml down 2>/dev/null || true
+        echo "Stopping containers..."
+        $CONTAINER_CMD compose -f examples/docker/docker-compose.yml down 2>/dev/null || true
     elif [ "$KEEP_INFRA" -eq 1 ]; then
-        echo "Keeping Docker containers running (--keep-infra)."
+        echo "Keeping containers running (--keep-infra)."
     fi
 
     echo "Cleanup complete."
@@ -161,13 +175,14 @@ echo "=== Checking prerequisites ==="
 
 MISSING=0
 
-if ! command -v docker &>/dev/null; then
-    echo "  MISSING: docker — install Docker Desktop: https://www.docker.com/products/docker-desktop/"
+if ! command -v "$CONTAINER_CMD" &>/dev/null; then
+    echo "  MISSING: $CONTAINER_CMD — install Docker Desktop: https://www.docker.com/products/docker-desktop/"
+    echo "           or Podman Desktop: https://podman-desktop.io/"
     MISSING=1
 fi
 
-if command -v docker &>/dev/null && ! docker info &>/dev/null 2>&1; then
-    echo "  ERROR: Docker daemon is not running. Please start Docker Desktop."
+if command -v "$CONTAINER_CMD" &>/dev/null && ! "$CONTAINER_CMD" info &>/dev/null 2>&1; then
+    echo "  ERROR: $CONTAINER_CMD daemon is not running. Please start Docker Desktop or Podman Desktop."
     MISSING=1
 fi
 
@@ -229,8 +244,8 @@ fi
 # ─── Start Docker containers ────────────────────────────────────────────────
 
 echo ""
-echo "=== Starting Docker test infrastructure ==="
-docker compose -f examples/docker/docker-compose.yml up -d --build
+echo "=== Starting container test infrastructure ==="
+$CONTAINER_CMD compose -f examples/docker/docker-compose.yml up -d --build
 DOCKER_STARTED=1
 
 # Wait for SSH server

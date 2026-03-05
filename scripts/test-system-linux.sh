@@ -74,6 +74,19 @@ for arg in "$@"; do
     esac
 done
 
+# ─── Detect container runtime ───────────────────────────────────────────────
+# Allow override via env: CONTAINER_CMD=podman ./scripts/test-system-linux.sh
+
+if [ -z "${CONTAINER_CMD:-}" ]; then
+    if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+        CONTAINER_CMD="docker"
+    elif command -v podman &>/dev/null && podman info &>/dev/null 2>&1; then
+        CONTAINER_CMD="podman"
+    else
+        CONTAINER_CMD="docker"  # will fail below with a clear error
+    fi
+fi
+
 # ─── Cleanup trap ───────────────────────────────────────────────────────────
 
 SOCAT_PID=""
@@ -100,11 +113,11 @@ cleanup() {
     rm -f /tmp/termihub-serial-a /tmp/termihub-serial-b
 
     if [ "$DOCKER_STARTED" -eq 1 ] && [ "$KEEP_INFRA" -eq 0 ]; then
-        echo "Stopping Docker containers..."
-        docker compose -f tests/docker/docker-compose.yml $COMPOSE_ARGS down 2>/dev/null || true
+        echo "Stopping containers..."
+        $CONTAINER_CMD compose -f tests/docker/docker-compose.yml $COMPOSE_ARGS down 2>/dev/null || true
     elif [ "$KEEP_INFRA" -eq 1 ]; then
-        echo "Keeping Docker containers running (--keep-infra)."
-        echo "Stop manually with: docker compose -f tests/docker/docker-compose.yml $COMPOSE_ARGS down"
+        echo "Keeping containers running (--keep-infra)."
+        echo "Stop manually with: $CONTAINER_CMD compose -f tests/docker/docker-compose.yml $COMPOSE_ARGS down"
     fi
 
     echo "Cleanup complete."
@@ -129,13 +142,14 @@ echo "Checking prerequisites..."
 MISSING=0
 HAS_TAURI_DRIVER=0
 
-if ! command -v docker &>/dev/null; then
-    echo "  MISSING: docker — install Docker: https://docs.docker.com/engine/install/"
+if ! command -v "$CONTAINER_CMD" &>/dev/null; then
+    echo "  MISSING: $CONTAINER_CMD — install Docker: https://docs.docker.com/engine/install/"
+    echo "           or Podman: https://podman.io/docs/installation"
     MISSING=1
 fi
 
-if command -v docker &>/dev/null && ! docker info &>/dev/null 2>&1; then
-    echo "  ERROR: Docker daemon is not running. Start with: sudo systemctl start docker"
+if command -v "$CONTAINER_CMD" &>/dev/null && ! "$CONTAINER_CMD" info &>/dev/null 2>&1; then
+    echo "  ERROR: $CONTAINER_CMD daemon is not running. Start with: sudo systemctl start $CONTAINER_CMD"
     MISSING=1
 fi
 
@@ -221,7 +235,7 @@ fi
 # ─── Start Docker containers ────────────────────────────────────────────────
 
 echo ""
-echo "=== Starting Docker test infrastructure ==="
+echo "=== Starting container test infrastructure ==="
 
 # Build compose args for profiles
 if [ "$WITH_FAULT" -eq 1 ] && [ "$WITH_STRESS" -eq 1 ]; then
@@ -232,7 +246,7 @@ elif [ "$WITH_STRESS" -eq 1 ]; then
     COMPOSE_ARGS="--profile stress"
 fi
 
-docker compose -f tests/docker/docker-compose.yml $COMPOSE_ARGS up -d --build
+$CONTAINER_CMD compose -f tests/docker/docker-compose.yml $COMPOSE_ARGS up -d --build
 DOCKER_STARTED=1
 
 # Wait for core SSH container
