@@ -115,6 +115,18 @@ pub fn list_docker_images() -> Vec<String> {
     crate::utils::docker_detect::list_docker_images()
 }
 
+/// Check if Podman is available on the local system.
+#[tauri::command]
+pub fn check_podman_available() -> bool {
+    crate::utils::docker_detect::is_podman_available()
+}
+
+/// List locally available Podman images.
+#[tauri::command]
+pub fn list_podman_images() -> Vec<String> {
+    crate::utils::docker_detect::list_podman_images()
+}
+
 /// Validate an SSH key file path and return a user-facing hint.
 #[tauri::command]
 pub async fn validate_ssh_key(path: String) -> crate::utils::ssh_key_validate::SshKeyValidation {
