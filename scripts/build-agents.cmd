@@ -4,7 +4,7 @@ REM Uses cross-rs exclusively (no native Linux toolchains on Windows).
 REM
 REM Usage: scripts\build-agents.cmd [--help]
 REM
-REM Prerequisites: Rust, Docker Desktop (running), cross-rs
+REM Prerequisites: Rust, Docker Desktop or Podman Desktop (running), cross-rs
 REM Run scripts\setup-agent-cross.cmd first to install required toolchains.
 
 if "%~1"=="--help" goto :usage
@@ -26,7 +26,7 @@ echo   armv7-unknown-linux-musleabihf  Static ARMv7 binaries (musl)
 echo.
 echo Prerequisites:
 echo   - Rust toolchain (rustup)
-echo   - Docker Desktop (must be running)
+echo   - Docker Desktop or Podman Desktop (must be running)
 echo   - cross-rs (install via scripts\setup-agent-cross.cmd)
 exit /b 0
 
@@ -43,12 +43,18 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM Verify Docker
+REM Verify container runtime (Docker or Podman)
 docker info >nul 2>&1
-if errorlevel 1 (
-    echo ERROR: Docker is not running. Start Docker Desktop and try again.
-    exit /b 1
+if not errorlevel 1 goto :runtime_ok
+podman info >nul 2>&1
+if not errorlevel 1 (
+    set CROSS_CONTAINER_ENGINE=podman
+    echo Using Podman as container runtime ^(CROSS_CONTAINER_ENGINE=podman^)
+    goto :runtime_ok
 )
+echo ERROR: No container runtime found. Start Docker Desktop or Podman Desktop and try again.
+exit /b 1
+:runtime_ok
 
 set BUILT=0
 set FAILED=0
