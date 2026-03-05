@@ -102,12 +102,27 @@ impl Default for SerialConfig {
     }
 }
 
+/// Container runtime selection for Docker/Podman sessions.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ContainerRuntime {
+    /// Automatically detect Docker or Podman.
+    #[default]
+    Auto,
+    /// Use Docker explicitly.
+    Docker,
+    /// Use Podman explicitly.
+    Podman,
+}
+
 /// Unified Docker container session configuration.
 ///
 /// Superset of desktop `DockerConfig` and agent `DockerSessionConfig`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DockerConfig {
+    #[serde(default)]
+    pub runtime: ContainerRuntime,
     pub image: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shell: Option<String>,
@@ -130,6 +145,7 @@ pub struct DockerConfig {
 impl Default for DockerConfig {
     fn default() -> Self {
         Self {
+            runtime: ContainerRuntime::Auto,
             image: String::new(),
             shell: None,
             cols: default_cols(),
@@ -408,6 +424,7 @@ mod tests {
     #[test]
     fn docker_config_default() {
         let cfg = DockerConfig::default();
+        assert_eq!(cfg.runtime, ContainerRuntime::Auto);
         assert!(cfg.image.is_empty());
         assert!(cfg.shell.is_none());
         assert_eq!(cfg.cols, 80);
@@ -417,6 +434,33 @@ mod tests {
         assert!(cfg.working_directory.is_none());
         assert!(cfg.remove_on_exit);
         assert!(cfg.env.is_empty());
+    }
+
+    #[test]
+    fn container_runtime_default_is_auto() {
+        let rt = ContainerRuntime::default();
+        assert_eq!(rt, ContainerRuntime::Auto);
+    }
+
+    #[test]
+    fn container_runtime_serde_roundtrip() {
+        for (rt, expected_json) in [
+            (ContainerRuntime::Auto, "\"auto\""),
+            (ContainerRuntime::Docker, "\"docker\""),
+            (ContainerRuntime::Podman, "\"podman\""),
+        ] {
+            let json = serde_json::to_string(&rt).unwrap();
+            assert_eq!(json, expected_json);
+            let back: ContainerRuntime = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, rt);
+        }
+    }
+
+    #[test]
+    fn docker_config_missing_runtime_defaults_to_auto() {
+        let json = r#"{"image": "nginx"}"#;
+        let cfg: DockerConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.runtime, ContainerRuntime::Auto);
     }
 
     #[test]
@@ -544,6 +588,7 @@ mod tests {
     #[test]
     fn docker_config_roundtrip() {
         let cfg = DockerConfig {
+            runtime: ContainerRuntime::Podman,
             image: "ubuntu:22.04".into(),
             shell: Some("/bin/bash".into()),
             cols: 80,
@@ -563,6 +608,7 @@ mod tests {
         };
         let json = serde_json::to_string(&cfg).unwrap();
         let back: DockerConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.runtime, ContainerRuntime::Podman);
         assert_eq!(back.image, "ubuntu:22.04");
         assert_eq!(back.shell.as_deref(), Some("/bin/bash"));
         assert_eq!(back.env_vars.len(), 1);
