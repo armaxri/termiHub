@@ -56,6 +56,24 @@ echo ERROR: No container runtime found. Start Docker Desktop or Podman Desktop a
 exit /b 1
 :runtime_ok
 
+REM On Windows with Podman, cross-rs tries to bind-mount the workspace as
+REM /mnt/c/... inside the container, but Podman (WSL2) cannot statfs those paths.
+REM CROSS_REMOTE=1 makes cross copy the workspace into a named volume instead,
+REM avoiding the "statfs: input/output error" failure.
+REM
+REM Custom images (localhost/termihub-cross:<target>) must be built first by
+REM running scripts\setup-agent-cross.cmd — they are used via Cross.toml's
+REM `image` directive, so cross-rs never needs to build images at compile time.
+if defined CROSS_CONTAINER_ENGINE (
+    set CROSS_REMOTE=1
+    echo Using remote volume mode ^(CROSS_REMOTE=1^) to avoid Windows path mount issues
+    echo.
+)
+
+REM Point cross-rs at the agent-specific Cross.toml so pre-build hooks
+REM (libudev-dev installation) are applied for each target.
+set CROSS_CONFIG=agent\Cross.toml
+
 set BUILT=0
 set FAILED=0
 
