@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Improved
+
+- Terminal right-click context menu now shows "Copy Selection" first when text is selected, otherwise "Paste" is the first option — previously "Copy All" appeared before "Paste" (#425)
+
 ### Changed
 
 - **Breaking**: Reworked connection data model from flat arrays with synthetic IDs to a nested tree format on disk — connections and folders no longer have IDs in the stored JSON; identity is determined by name within the parent folder (like a filesystem), eliminating ID collisions when sharing connection files via git; path-based IDs are generated deterministically at load time for in-memory use; duplicate sibling names are auto-renamed with `(1)`, `(2)` suffixes; credentials are auto-migrated when connections are renamed or moved (#385)
