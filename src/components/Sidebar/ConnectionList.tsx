@@ -4,6 +4,7 @@ import {
   DndContext,
   DragOverlay,
   useDraggable,
+  useDndContext,
   useDroppable,
   PointerSensor,
   useSensor,
@@ -140,6 +141,8 @@ function TreeNode({
     id: folder.id,
     data: { type: "folder" },
   });
+  const { active } = useDndContext();
+  const isConnectionOver = isOver && active?.data.current?.type !== "agent";
 
   return (
     <div className="connection-tree__node">
@@ -147,7 +150,7 @@ function TreeNode({
         <ContextMenu.Trigger asChild>
           <button
             ref={setNodeRef}
-            className={`connection-tree__folder${isOver ? " connection-tree__folder--drop-over" : ""}`}
+            className={`connection-tree__folder${isConnectionOver ? " connection-tree__folder--drop-over" : ""}`}
             onClick={() => onToggle(folder.id)}
             style={{ paddingLeft: `${depth * 16 + 8}px` }}
             data-testid={`folder-toggle-${folder.id}`}
@@ -745,11 +748,13 @@ function RootDropZone({
     id: "root",
     data: { type: "root" },
   });
+  const { active } = useDndContext();
+  const isConnectionOver = isOver && active?.data.current?.type !== "agent";
 
   return (
     <div
       ref={setNodeRef}
-      className={`connection-list__tree${isOver ? " connection-tree__root-drop--over" : ""}`}
+      className={`connection-list__tree${isConnectionOver ? " connection-tree__root-drop--over" : ""}`}
     >
       {isCreatingFolder && (
         <InlineFolderInput depth={0} onConfirm={onCreateFolder} onCancel={onCancelCreateFolder} />
