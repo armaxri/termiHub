@@ -431,11 +431,12 @@ fn detect_from_sockets() -> Option<LocalXServerInfo> {
         let name = name.to_string_lossy();
         if let Some(num_str) = name.strip_prefix('X') {
             if let Ok(display_num) = num_str.parse::<u32>() {
-                let socket_path = format!("/tmp/.X11-unix/X{display_num}");
                 return Some(LocalXServerInfo {
                     display_number: display_num,
                     #[cfg(unix)]
-                    connection: LocalXConnection::UnixSocket(socket_path),
+                    connection: LocalXConnection::UnixSocket(format!(
+                        "/tmp/.X11-unix/X{display_num}"
+                    )),
                     #[cfg(not(unix))]
                     connection: LocalXConnection::Tcp(
                         "localhost".to_string(),
