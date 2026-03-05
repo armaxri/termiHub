@@ -31,6 +31,7 @@ vi.mock("@/services/storage", () => ({
   removeFolder: vi.fn(() => Promise.resolve()),
   persistAgent: vi.fn(() => Promise.resolve()),
   removeAgent: vi.fn(() => Promise.resolve()),
+  reorderAgents: vi.fn(() => Promise.resolve()),
   getSettings: vi.fn(() =>
     Promise.resolve({
       version: "1",
@@ -68,6 +69,7 @@ vi.mock("@/services/api", () => ({
 
 import { useAppStore } from "./appStore";
 import type { AgentDefinitionInfo, AgentFolderInfo } from "@/services/api";
+import type { RemoteAgentDefinition } from "@/types/connection";
 
 function makeDefinition(overrides: Partial<AgentDefinitionInfo> = {}): AgentDefinitionInfo {
   return {
@@ -253,6 +255,61 @@ describe("appStore — agent connection management", () => {
         (t) => t.connectionEditorMeta?.agentDefinitionId === "def-title"
       );
       expect(editorTab!.title).toBe("Edit: My Shell");
+    });
+  });
+
+  describe("reorderRemoteAgents", () => {
+    function makeAgent(id: string, name: string): RemoteAgentDefinition {
+      return {
+        id,
+        name,
+        config: {
+          host: "test.local",
+          port: 22,
+          username: "user",
+          authMethod: "password",
+        },
+        isExpanded: false,
+        connectionState: "disconnected",
+      };
+    }
+
+    it("moves an agent from one position to another", () => {
+      const agents = [
+        makeAgent("a1", "Agent 1"),
+        makeAgent("a2", "Agent 2"),
+        makeAgent("a3", "Agent 3"),
+      ];
+      useAppStore.setState({ remoteAgents: agents });
+
+      useAppStore.getState().reorderRemoteAgents(0, 2);
+
+      const result = useAppStore.getState().remoteAgents;
+      expect(result.map((a) => a.id)).toEqual(["a2", "a3", "a1"]);
+    });
+
+    it("moves an agent backward", () => {
+      const agents = [
+        makeAgent("a1", "Agent 1"),
+        makeAgent("a2", "Agent 2"),
+        makeAgent("a3", "Agent 3"),
+      ];
+      useAppStore.setState({ remoteAgents: agents });
+
+      useAppStore.getState().reorderRemoteAgents(2, 0);
+
+      const result = useAppStore.getState().remoteAgents;
+      expect(result.map((a) => a.id)).toEqual(["a3", "a1", "a2"]);
+    });
+
+    it("no-ops when indices are the same", () => {
+      const agents = [makeAgent("a1", "Agent 1"), makeAgent("a2", "Agent 2")];
+      useAppStore.setState({ remoteAgents: agents });
+
+      useAppStore.getState().reorderRemoteAgents(0, 0);
+
+      const result = useAppStore.getState().remoteAgents;
+      expect(result.map((a) => a.id)).toEqual(["a1", "a2"]);
     });
   });
 });

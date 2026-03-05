@@ -195,6 +195,17 @@ pub fn delete_remote_agent(
     manager.delete_agent(&id).map_err(|e| e.to_string())
 }
 
+/// Reorder remote agents by providing a list of agent IDs in the desired order.
+#[tauri::command]
+pub fn reorder_remote_agents(
+    agent_ids: Vec<String>,
+    manager: State<'_, ConnectionManager>,
+) -> Result<(), String> {
+    manager
+        .reorder_agents(&agent_ids)
+        .map_err(|e| e.to_string())
+}
+
 /// Export connections with optional encrypted credentials.
 ///
 /// If `export_password` is provided, credentials from the store are

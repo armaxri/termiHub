@@ -19,6 +19,7 @@ import {
   SavedRemoteAgent,
   saveRemoteAgent,
   deleteRemoteAgentFromBackend,
+  reorderRemoteAgents as apiReorderRemoteAgents,
   previewImport,
   exportConnectionsEncrypted,
   importConnectionsWithCredentials,
@@ -67,6 +68,11 @@ export async function persistAgent(agent: SavedRemoteAgent): Promise<void> {
 /** Delete a remote agent from persistent storage */
 export async function removeAgent(id: string): Promise<void> {
   await deleteRemoteAgentFromBackend(id);
+}
+
+/** Reorder remote agents */
+export async function reorderAgents(agentIds: string[]): Promise<void> {
+  await apiReorderRemoteAgents(agentIds);
 }
 
 /** Export all connections as JSON */
