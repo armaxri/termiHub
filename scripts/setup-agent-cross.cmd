@@ -17,12 +17,13 @@ echo Installs the cross-compilation toolchains required by build-agents.cmd.
 echo.
 echo Windows:
 echo   - cross-rs (via cargo install) for all targets
-echo   - Verifies Docker Desktop is available
+echo   - Verifies Docker Desktop or Podman Desktop is available
 echo   - Adds Rust targets for all 6 architectures
 echo.
 echo Prerequisites:
 echo   - Rust toolchain (rustup)
-echo   - Docker Desktop (must be running)
+echo   - Docker Desktop or Podman Desktop (must be running)
+echo   - Set CROSS_CONTAINER_ENGINE=podman to use Podman with cross-rs
 exit /b 0
 
 :start
@@ -56,7 +57,7 @@ if %errorlevel% equ 0 (
 )
 echo.
 
-echo --- Checking Docker Desktop ---
+echo --- Checking container runtime ---
 where docker >nul 2>&1
 if %errorlevel% equ 0 (
     docker --version
@@ -66,11 +67,25 @@ if %errorlevel% equ 0 (
     ) else (
         echo   Docker is running.
     )
-) else (
-    echo   ERROR: Docker not found. cross-rs requires Docker Desktop on Windows.
-    echo   Install Docker Desktop: https://www.docker.com/products/docker-desktop/
-    exit /b 1
+    goto :runtime_done
 )
+where podman >nul 2>&1
+if %errorlevel% equ 0 (
+    podman --version
+    podman info >nul 2>&1
+    if errorlevel 1 (
+        echo   WARNING: Podman daemon is not running. Start Podman Desktop before building.
+    ) else (
+        echo   Podman is running.
+        echo   Set CROSS_CONTAINER_ENGINE=podman before running build-agents.cmd
+    )
+    goto :runtime_done
+)
+echo   ERROR: Neither Docker nor Podman found. cross-rs requires a container runtime on Windows.
+echo   Install Docker Desktop: https://www.docker.com/products/docker-desktop/
+echo   Or Podman Desktop: https://podman-desktop.io/
+exit /b 1
+:runtime_done
 
 echo.
 echo === Setup complete ===
