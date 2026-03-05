@@ -1,19 +1,24 @@
 use serde::Serialize;
 use tauri::{Emitter, State};
+use termihub_core::backends::ssh::parse_ssh_settings;
 use tracing::{debug, info};
 
 use crate::files::sftp::SftpManager;
 use crate::files::FileEntry;
-use crate::terminal::backend::SshConfig;
 use crate::utils::errors::TerminalError;
 use crate::utils::vscode;
 
 /// Open a new SFTP session. Returns the session ID.
+///
+/// Accepts raw JSON settings (same shape the frontend stores) and parses
+/// them with `parse_ssh_settings` so that array-encoded `env` fields
+/// (from the `keyValueList` schema type) are handled correctly.
 #[tauri::command]
 pub fn sftp_open(
-    config: SshConfig,
+    config: serde_json::Value,
     manager: State<'_, SftpManager>,
 ) -> Result<String, TerminalError> {
+    let config = parse_ssh_settings(&config);
     info!(host = %config.host, port = config.port, "Opening SFTP session");
     manager.open_session(&config)
 }

@@ -84,7 +84,7 @@ impl Default for Ssh {
 }
 
 /// Parse settings JSON into an `SshConfig`.
-fn parse_ssh_settings(settings: &serde_json::Value) -> SshConfig {
+pub fn parse_ssh_settings(settings: &serde_json::Value) -> SshConfig {
     let str_field = |key: &str| -> String {
         settings
             .get(key)
@@ -1017,5 +1017,59 @@ mod tests {
     async fn disconnect_when_not_connected_is_noop() {
         let mut ssh = Ssh::new();
         ssh.disconnect().await.expect("disconnect should not fail");
+    }
+
+    #[test]
+    fn parse_ssh_settings_env_as_key_value_array() {
+        let settings = serde_json::json!({
+            "host": "example.com",
+            "port": 22,
+            "username": "user",
+            "authMethod": "password",
+            "env": [
+                {"key": "FOO", "value": "bar"},
+                {"key": "BAZ", "value": "qux"}
+            ]
+        });
+        let config = parse_ssh_settings(&settings);
+        assert_eq!(config.host, "example.com");
+        assert_eq!(config.port, 22);
+        assert_eq!(config.username, "user");
+        assert_eq!(config.env.len(), 2);
+        assert_eq!(config.env.get("FOO").unwrap(), "bar");
+        assert_eq!(config.env.get("BAZ").unwrap(), "qux");
+    }
+
+    #[test]
+    fn parse_ssh_settings_env_empty_array() {
+        let settings = serde_json::json!({
+            "host": "example.com",
+            "username": "user",
+            "authMethod": "password",
+            "env": []
+        });
+        let config = parse_ssh_settings(&settings);
+        assert!(config.env.is_empty());
+    }
+
+    #[test]
+    fn parse_ssh_settings_env_missing() {
+        let settings = serde_json::json!({
+            "host": "example.com",
+            "username": "user",
+            "authMethod": "password"
+        });
+        let config = parse_ssh_settings(&settings);
+        assert!(config.env.is_empty());
+    }
+
+    #[test]
+    fn parse_ssh_settings_defaults() {
+        let settings = serde_json::json!({});
+        let config = parse_ssh_settings(&settings);
+        assert_eq!(config.host, "");
+        assert_eq!(config.port, 22);
+        assert_eq!(config.username, "");
+        assert!(config.env.is_empty());
     }
 }
