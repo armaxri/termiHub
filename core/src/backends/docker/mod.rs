@@ -19,10 +19,10 @@ use futures_util::StreamExt;
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, info, warn};
 
-use crate::config::DockerConfig;
+use crate::config::{ContainerRuntime, DockerConfig};
 use crate::connection::{
-    Capabilities, ConnectionType, FieldType, OutputReceiver, OutputSender, SettingsField,
-    SettingsGroup, SettingsSchema,
+    Capabilities, ConnectionType, FieldType, OutputReceiver, OutputSender, SelectOption,
+    SettingsField, SettingsGroup, SettingsSchema,
 };
 use crate::errors::SessionError;
 use crate::files::FileBrowser;
@@ -91,6 +91,122 @@ impl Default for Docker {
     }
 }
 
+/// Return the Podman socket URI for the current platform, if detectable.
+///
+/// Checks (in order):
+/// - `$CONTAINER_HOST` / `$DOCKER_HOST` environment variables (bollard reads these already,
+///   but we use them for the explicit-Podman path too)
+/// - XDG_RUNTIME_DIR / well-known paths for Podman machine sockets (Unix)
+/// - Named-pipe path for Podman machine on Windows
+#[cfg(unix)]
+fn podman_socket_uri() -> Option<String> {
+    // Prefer explicit socket env vars
+    if let Ok(host) = std::env::var("CONTAINER_HOST") {
+        return Some(host);
+    }
+    if let Ok(host) = std::env::var("DOCKER_HOST") {
+        return Some(host);
+    }
+    // XDG_RUNTIME_DIR path (rootless Podman)
+    if let Ok(xdg) = std::env::var("XDG_RUNTIME_DIR") {
+        let path = format!("{xdg}/podman/podman.sock");
+        if std::path::Path::new(&path).exists() {
+            return Some(format!("unix://{path}"));
+        }
+    }
+    // Podman machine default socket (~/.local/share/containers/...)
+    if let Some(home) = std::env::var("HOME").ok() {
+        let path = format!(
+            "{home}/.local/share/containers/podman/machine/podman-machine-default/podman.sock"
+        );
+        if std::path::Path::new(&path).exists() {
+            return Some(format!("unix://{path}"));
+        }
+    }
+    None
+}
+
+#[cfg(windows)]
+fn podman_socket_uri() -> Option<String> {
+    Some("npipe:////./pipe/podman-machine-default".to_string())
+}
+
+/// Connect to the appropriate container runtime based on the config.
+///
+/// - `Auto`: tries `connect_with_local_defaults()` first (which already handles
+///   `DOCKER_HOST`/`CONTAINER_HOST`); if the ping fails, falls back to the Podman socket.
+/// - `Docker`: uses `connect_with_local_defaults()` only.
+/// - `Podman`: connects directly to the Podman socket.
+fn connect_to_runtime(runtime: &ContainerRuntime) -> Result<bollard::Docker, SessionError> {
+    match runtime {
+        ContainerRuntime::Docker => bollard::Docker::connect_with_local_defaults().map_err(|e| {
+            SessionError::SpawnFailed(format!("Failed to connect to Docker daemon: {e}"))
+        }),
+        ContainerRuntime::Podman => {
+            let uri = podman_socket_uri().ok_or_else(|| {
+                SessionError::SpawnFailed("Could not determine Podman socket path".to_string())
+            })?;
+            connect_podman(&uri)
+        }
+        ContainerRuntime::Auto => {
+            // Try Docker/default first.
+            match bollard::Docker::connect_with_local_defaults() {
+                Ok(client) => Ok(client),
+                Err(_) => {
+                    // Fall back to Podman socket.
+                    let uri = podman_socket_uri().ok_or_else(|| {
+                        SessionError::SpawnFailed(
+                            "Failed to connect to Docker daemon and no Podman socket found"
+                                .to_string(),
+                        )
+                    })?;
+                    connect_podman(&uri)
+                }
+            }
+        }
+    }
+}
+
+/// Connect to a container runtime via an explicit URI string.
+fn connect_podman(uri: &str) -> Result<bollard::Docker, SessionError> {
+    #[cfg(unix)]
+    if uri.starts_with("unix://") {
+        return bollard::Docker::connect_with_unix(uri, 120, bollard::API_DEFAULT_VERSION).map_err(
+            |e| {
+                SessionError::SpawnFailed(format!(
+                    "Failed to connect to Podman socket at {uri}: {e}"
+                ))
+            },
+        );
+    }
+
+    if uri.starts_with("npipe://") || uri.starts_with("npipe:") {
+        let pipe_name = uri
+            .trim_start_matches("npipe://")
+            .trim_start_matches("npipe:");
+        #[cfg(windows)]
+        return bollard::Docker::connect_with_named_pipe(
+            pipe_name,
+            120,
+            bollard::API_DEFAULT_VERSION,
+        )
+        .map_err(|e| {
+            SessionError::SpawnFailed(format!(
+                "Failed to connect to Podman named pipe at {pipe_name}: {e}"
+            ))
+        });
+        #[cfg(not(windows))]
+        return Err(SessionError::SpawnFailed(format!(
+            "Named pipe connections are only supported on Windows: {pipe_name}"
+        )));
+    }
+
+    // Fall back to local defaults for other URI schemes (e.g. http)
+    bollard::Docker::connect_with_local_defaults().map_err(|e| {
+        SessionError::SpawnFailed(format!("Failed to connect to container runtime: {e}"))
+    })
+}
+
 /// Parse settings JSON into a `DockerConfig`.
 fn parse_docker_settings(settings: &serde_json::Value) -> DockerConfig {
     let str_field = |key: &str| -> String {
@@ -153,7 +269,14 @@ fn parse_docker_settings(settings: &serde_json::Value) -> DockerConfig {
         })
         .unwrap_or_default();
 
+    let runtime = settings
+        .get("runtime")
+        .and_then(|v| v.as_str())
+        .and_then(|s| serde_json::from_value::<ContainerRuntime>(serde_json::json!(s)).ok())
+        .unwrap_or_default();
+
     DockerConfig {
+        runtime,
         image: str_field("image"),
         shell: opt_str("shell"),
         cols: 80,
@@ -249,6 +372,36 @@ impl ConnectionType for Docker {
                             field_type: FieldType::Boolean,
                             required: false,
                             default: Some(serde_json::json!(true)),
+                            placeholder: None,
+                            supports_env_expansion: false,
+                            supports_tilde_expansion: false,
+                            visible_when: None,
+                        },
+                        SettingsField {
+                            key: "runtime".to_string(),
+                            label: "Runtime".to_string(),
+                            description: Some(
+                                "Container runtime to use (Auto detects Docker or Podman)"
+                                    .to_string(),
+                            ),
+                            field_type: FieldType::Select {
+                                options: vec![
+                                    SelectOption {
+                                        value: "auto".to_string(),
+                                        label: "Auto (detect)".to_string(),
+                                    },
+                                    SelectOption {
+                                        value: "docker".to_string(),
+                                        label: "Docker".to_string(),
+                                    },
+                                    SelectOption {
+                                        value: "podman".to_string(),
+                                        label: "Podman".to_string(),
+                                    },
+                                ],
+                            },
+                            required: false,
+                            default: Some(serde_json::json!("auto")),
                             placeholder: None,
                             supports_env_expansion: false,
                             supports_tilde_expansion: false,
@@ -354,10 +507,8 @@ impl ConnectionType for Docker {
 
         info!(image = %config.image, "Connecting Docker session");
 
-        // Connect to the local Docker daemon.
-        let client = bollard::Docker::connect_with_local_defaults().map_err(|e| {
-            SessionError::SpawnFailed(format!("Failed to connect to Docker daemon: {e}"))
-        })?;
+        // Connect to the container runtime (Docker or Podman).
+        let client = connect_to_runtime(&config.runtime)?;
 
         // Pull the image if it's not already available locally.
         info!(image = %config.image, "Pulling Docker image");
@@ -674,6 +825,7 @@ impl ConnectionType for Docker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::ContainerRuntime;
     use crate::connection::validate_settings;
 
     // --- Metadata tests ---
@@ -766,8 +918,35 @@ mod tests {
         let keys: Vec<&str> = group.fields.iter().map(|f| f.key.as_str()).collect();
         assert_eq!(
             keys,
-            vec!["image", "shell", "workingDirectory", "removeOnExit"]
+            vec![
+                "image",
+                "shell",
+                "workingDirectory",
+                "removeOnExit",
+                "runtime"
+            ]
         );
+    }
+
+    #[test]
+    fn schema_runtime_field_is_select() {
+        let docker = Docker::new();
+        let schema = docker.settings_schema();
+        let runtime = schema.groups[0]
+            .fields
+            .iter()
+            .find(|f| f.key == "runtime")
+            .unwrap();
+        assert!(!runtime.required);
+        assert_eq!(runtime.default, Some(serde_json::json!("auto")));
+        if let FieldType::Select { ref options } = runtime.field_type {
+            assert_eq!(options.len(), 3);
+            assert_eq!(options[0].value, "auto");
+            assert_eq!(options[1].value, "docker");
+            assert_eq!(options[2].value, "podman");
+        } else {
+            panic!("expected Select field type for runtime");
+        }
     }
 
     #[test]
@@ -976,6 +1155,7 @@ mod tests {
             "image": "alpine",
         });
         let config = parse_docker_settings(&settings);
+        assert_eq!(config.runtime, ContainerRuntime::Auto);
         assert_eq!(config.image, "alpine");
         assert!(config.shell.is_none());
         assert!(config.working_directory.is_none());
@@ -985,12 +1165,33 @@ mod tests {
     }
 
     #[test]
+    fn parse_runtime_field() {
+        let settings = serde_json::json!({"image": "alpine", "runtime": "podman"});
+        let config = parse_docker_settings(&settings);
+        assert_eq!(config.runtime, ContainerRuntime::Podman);
+
+        let settings = serde_json::json!({"image": "alpine", "runtime": "docker"});
+        let config = parse_docker_settings(&settings);
+        assert_eq!(config.runtime, ContainerRuntime::Docker);
+
+        let settings = serde_json::json!({"image": "alpine", "runtime": "auto"});
+        let config = parse_docker_settings(&settings);
+        assert_eq!(config.runtime, ContainerRuntime::Auto);
+
+        // Unknown runtime falls back to Auto
+        let settings = serde_json::json!({"image": "alpine", "runtime": "unknown"});
+        let config = parse_docker_settings(&settings);
+        assert_eq!(config.runtime, ContainerRuntime::Auto);
+    }
+
+    #[test]
     fn parse_full_settings() {
         let settings = serde_json::json!({
             "image": "ubuntu:22.04",
             "shell": "/bin/bash",
             "workingDirectory": "/app",
             "removeOnExit": false,
+            "runtime": "docker",
             "envVars": [
                 {"key": "LANG", "value": "en_US.UTF-8"},
                 {"key": "TERM", "value": "xterm-256color"},
@@ -1004,6 +1205,7 @@ mod tests {
             ],
         });
         let config = parse_docker_settings(&settings);
+        assert_eq!(config.runtime, ContainerRuntime::Docker);
         assert_eq!(config.image, "ubuntu:22.04");
         assert_eq!(config.shell.as_deref(), Some("/bin/bash"));
         assert_eq!(config.working_directory.as_deref(), Some("/app"));
