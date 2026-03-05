@@ -225,6 +225,42 @@ tests:
       - "New split created, tab moves to new panel"
     verification: manual
 
+  # --- Right-click context menu ordering (PR #425) ---
+
+  - id: MT-TAB-19
+    name: "Context menu shows Paste first when no text selected"
+    pr: 425
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open a local terminal"
+      - "Ensure no text is selected in the terminal"
+      - "Right-click inside the terminal area"
+    expected:
+      - "'Paste' is the first item in the context menu"
+      - "'Copy All' appears after 'Paste'"
+      - "'Copy Selection' does not appear"
+    verification: manual
+    tags: [clipboard, context-menu]
+
+  - id: MT-TAB-20
+    name: "Context menu shows Copy Selection first when text selected"
+    pr: 425
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open a local terminal and run a command (e.g. 'echo hello')"
+      - "Select some text in the terminal output"
+      - "Right-click inside the terminal area"
+    expected:
+      - "'Copy Selection' is the first item in the context menu"
+      - "'Paste' appears second"
+      - "'Copy All' appears third"
+    verification: manual
+    tags: [clipboard, context-menu]
+
   # --- Right-click paste (PR #416) ---
 
   - id: MT-TAB-18
