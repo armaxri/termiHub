@@ -243,3 +243,23 @@ tests:
       - "Clipboard text appears in the terminal as typed input"
     verification: manual
     tags: [clipboard]
+
+  # --- Bottom-of-terminal scroll fix (PR #429) ---
+
+  - id: MT-TAB-19
+    name: "Scroll wheel works at bottom edge of terminal"
+    pr: 429
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open a local terminal"
+      - "Generate enough output to fill the scrollback buffer (e.g. run 'seq 1 500')"
+      - "Scroll up several pages with the mouse wheel"
+      - "Move the mouse to the very bottom edge of the terminal area (below the last line of text)"
+      - "Scroll down with the mouse wheel"
+    expected:
+      - "The terminal scrolls back to the bottom normally"
+      - "Scrolling works at the bottom edge just like anywhere else in the terminal"
+    verification: manual
+    tags: [scroll]
