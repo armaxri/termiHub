@@ -132,6 +132,46 @@ else
     exit 1
 fi
 
+# --- Build custom cross-rs images ---
+# Detect which container command is available.
+CONTAINER_CMD=""
+if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    CONTAINER_CMD=docker
+elif command -v podman >/dev/null 2>&1 && podman info >/dev/null 2>&1; then
+    CONTAINER_CMD=podman
+fi
+
+if [ -n "$CONTAINER_CMD" ]; then
+    echo ""
+    echo "--- Building custom cross-rs images ---"
+    echo "  Images extend ghcr.io/cross-rs/<target>:main with libudev-dev for serialport."
+    echo ""
+
+    build_failed=0
+    for target in "${TARGETS[@]}"; do
+        echo "  localhost/termihub-cross:$target ..."
+        if "$CONTAINER_CMD" build \
+            -t "localhost/termihub-cross:$target" \
+            -f "agent/docker/Dockerfile.$target" \
+            agent/docker; then
+            echo "  OK"
+        else
+            echo "  FAILED: localhost/termihub-cross:$target"
+            build_failed=$((build_failed + 1))
+        fi
+        echo ""
+    done
+
+    if [ "$build_failed" -gt 0 ]; then
+        echo "ERROR: $build_failed image(s) failed to build. Resolve the errors above and retry."
+        exit 1
+    fi
+else
+    echo ""
+    echo "WARNING: No running container runtime found — skipping custom image build."
+    echo "  Start Docker or Podman and re-run this script before running build-agents.sh."
+fi
+
 echo ""
 echo "=== Setup complete ==="
 echo "Run ./scripts/build-agents.sh to cross-compile the agent."
