@@ -49,6 +49,10 @@ if not errorlevel 1 goto :runtime_ok
 podman info >nul 2>&1
 if not errorlevel 1 (
     set CROSS_CONTAINER_ENGINE=podman
+    REM Podman is rootless by default; cross-rs adds --user UID:GID which causes
+    REM the injected cargo/rustc toolchain to be non-executable inside the container.
+    REM Disable rootless handling so the container runs as root and can execute them.
+    set CROSS_ROOTLESS_CONTAINER_ENGINE=false
     echo Using Podman as container runtime ^(CROSS_CONTAINER_ENGINE=podman^)
     goto :runtime_ok
 )
