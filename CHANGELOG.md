@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Drag-and-drop reordering for remote agents in the sidebar — agents can now be rearranged by dragging their header; the new order is persisted to disk (#423)
 - Right-click "Paste" option in the terminal context menu — reads clipboard text and sends it as terminal input (#416)
 - File browser CWD tracking for bash/WSL sessions — the app now injects an OSC 7 `PROMPT_COMMAND` hook when spawning bash, Git Bash, or WSL sessions, so the file browser automatically follows the terminal's working directory; zsh already emits OSC 7 natively and is unaffected (#408)
 - Right-click context menu on the terminal area with "Copy Selection" to copy only the selected text, plus "Copy All" for the entire buffer — previously only the tab context menu's "Copy to Clipboard" (entire history) was available (#407)
@@ -30,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - SFTP file browser and monitoring fail on SSH connections with `invalid type: sequence, expected a map` — the `sftp_open` and `monitoring_open` Tauri commands tried to deserialize the frontend config directly as `SshConfig`, but the `env` field is stored as an array of `{key, value}` pairs by the schema-driven form; now both commands accept raw JSON and use `parse_ssh_settings` (the same parser used by `create_connection`) for consistent handling (#421)
 - SFTP file browser doesn't follow the current working directory in SSH sessions — the SSH backend was missing the OSC 7 `PROMPT_COMMAND` injection that local shell and WSL backends already had; now injects the same `__termihub_osc7` hook after opening the SSH shell channel, so `cd` commands in the remote session are tracked and the SFTP file browser follows along (#421)
+- VS Code not recognized on Windows — `code.cmd` is not found by Rust's `CreateProcessW`; now routes through `cmd.exe /c code` so the shell resolves `.cmd` extensions (#417)
 - Terminal could not be scrolled when the mouse was in the narrow gap at the bottom of the terminal area — the legacy `.xterm-viewport` element (from xterm.js 5.x) was intercepting wheel events before they reached the xterm.js 6.0 custom scrollbar; made the viewport inert and stretched the scrollable element to cover the full terminal area (#429)
 - Agent connection fails with "Parse capabilities: missing field `connectionTypes`" — the desktop `AgentCapabilities` struct expected `connection_types` as plain strings, but the agent sends full `ConnectionTypeInfo` objects (with typeId, displayName, icon, schema, capabilities); updated desktop to accept the rich objects and pass them through to the frontend (#412)
 - File browser now works with WSL sessions instead of showing "missing field host" error — WSL tabs are routed to the local file browser mode using `\\wsl$\<distro>\` UNC paths instead of attempting SFTP (#404)
