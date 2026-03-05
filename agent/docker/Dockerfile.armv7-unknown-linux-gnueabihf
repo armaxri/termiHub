@@ -1,0 +1,7 @@
+FROM ghcr.io/cross-rs/armv7-unknown-linux-gnueabihf:main
+RUN dpkg --add-architecture armhf \
+    && apt-get update \
+    && apt-get install -y libudev-dev:armhf \
+    && printf '#!/bin/sh\nPKG_CONFIG_PATH=/usr/lib/arm-linux-gnueabihf/pkgconfig PKG_CONFIG_ALLOW_SYSTEM_LIBS=1 exec pkg-config "$@"\n' \
+       > /usr/local/bin/arm-linux-gnueabihf-pkg-config \
+    && chmod +x /usr/local/bin/arm-linux-gnueabihf-pkg-config
