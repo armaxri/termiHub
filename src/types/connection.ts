@@ -126,6 +126,7 @@ export interface AppSettings {
   layout?: LayoutConfig;
   credentialStorageMode?: "keychain" | "master_password" | "none";
   credentialAutoLockMinutes?: number;
+  rightClickBehavior?: "contextMenu" | "quickAction";
 }
 
 export interface FileEntry {

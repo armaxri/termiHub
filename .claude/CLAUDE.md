@@ -136,6 +136,20 @@ examples/                     # Quick-start dev environment (SSH, Telnet, virtua
 - **Manual test tracking**: When a PR includes manual test steps (in the PR description's "Test plan" section), also add those steps to the Manual Testing section in `docs/testing.md` under the appropriate feature area heading, referencing the PR number. This keeps manual tests discoverable and prevents them from being forgotten after merge.
 - **E2E platform constraint**: `tauri-driver` only supports Linux and Windows — it does **not** work on macOS (no WKWebView driver exists). E2E system tests run inside Docker (Linux) on all platforms. See ADR-5 in [architecture.md](../docs/architecture.md). macOS-specific behavior must be verified via manual tests.
 
+### Debugging / Logging
+
+- **Always use the internal LogViewer** for frontend debug logging — never use `console.log`/`console.warn`/`console.error` for debug output. The LogViewer is accessible to the user; the browser DevTools console is not.
+- Use `frontendLog` from `src/utils/frontendLog.ts` to emit debug messages into the LogViewer:
+
+  ```typescript
+  import { frontendLog } from "@/utils/frontendLog";
+  frontendLog("your_module", "your debug message");
+  ```
+
+  Messages appear with target `frontend::your_module` at DEBUG level.
+
+- **Proactively add debug logging** when implementing new features or investigating issues — don't wait for the user to ask. Remove debug logging before the final PR.
+
 ### General
 
 - Max ~500 lines per file, ~50 lines per function

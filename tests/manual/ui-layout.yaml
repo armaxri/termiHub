@@ -367,3 +367,87 @@ tests:
       - "The agent group remains in place while scrolling the Connections group"
     verification: manual
     tags: [visual]
+
+  # --- Switchable Right-Click Terminal Behavior (PR #419) ---
+
+  - id: MT-UI-26
+    name: "Right-click shows context menu by default on macOS/Linux"
+    pr: 419
+    platforms: [macos, linux]
+    prerequisites:
+      - app: true
+      - "Open a terminal with an active session"
+      - "Right-Click Behavior setting is unset (Platform Default)"
+    instructions:
+      - "Right-click on the terminal area"
+    expected:
+      - "A context menu appears with Copy, Paste, Rename, Save, etc."
+    verification: manual
+    tags: [terminal, settings]
+
+  - id: MT-UI-27
+    name: "Quick Copy/Paste copies selected text on right-click"
+    pr: 419
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - "Open a terminal with an active session and some output"
+      - "Set Right-Click Behavior to 'Quick Copy/Paste' in Terminal Settings"
+    instructions:
+      - "Select some text in the terminal by clicking and dragging"
+      - "Right-click on the terminal"
+    expected:
+      - "No context menu appears"
+      - "The selected text is copied to the clipboard"
+      - "The selection is cleared after copying"
+    verification: manual
+    tags: [terminal, settings, clipboard]
+
+  - id: MT-UI-28
+    name: "Quick Copy/Paste pastes when no text is selected"
+    pr: 419
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - "Open a terminal with an active session"
+      - "Set Right-Click Behavior to 'Quick Copy/Paste' in Terminal Settings"
+      - "Copy some text to the clipboard beforehand"
+    instructions:
+      - "Ensure no text is selected in the terminal"
+      - "Right-click on the terminal"
+    expected:
+      - "No context menu appears"
+      - "The clipboard content is pasted into the terminal as input"
+    verification: manual
+    tags: [terminal, settings, clipboard]
+
+  - id: MT-UI-29
+    name: "Right-Click Behavior setting persists across restarts"
+    pr: 419
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open Terminal Settings and set Right-Click Behavior to 'Quick Copy/Paste'"
+      - "Close and reopen the app"
+      - "Open Terminal Settings"
+    expected:
+      - "Right-Click Behavior is still set to 'Quick Copy/Paste'"
+    verification: manual
+    tags: [terminal, settings]
+
+  - id: MT-UI-30
+    name: "Switching back to Context Menu restores right-click menu"
+    pr: 419
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - "Open a terminal with an active session"
+      - "Right-Click Behavior is set to 'Quick Copy/Paste'"
+    instructions:
+      - "Change Right-Click Behavior to 'Context Menu' in Terminal Settings"
+      - "Right-click on the terminal"
+    expected:
+      - "The full context menu appears again"
+    verification: manual
+    tags: [terminal, settings]

@@ -69,6 +69,9 @@ pub struct AppSettings {
     /// Auto-lock timeout in minutes for master password mode. None = never.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub credential_auto_lock_minutes: Option<u32>,
+    /// Right-click behavior: "contextMenu" or "quickAction". None = platform default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub right_click_behavior: Option<String>,
 }
 
 impl Default for AppSettings {
@@ -91,6 +94,7 @@ impl Default for AppSettings {
             layout: None,
             credential_storage_mode: None,
             credential_auto_lock_minutes: None,
+            right_click_behavior: None,
         }
     }
 }
@@ -379,6 +383,49 @@ mod tests {
         let json = serde_json::to_string(&settings).unwrap();
         assert!(!json.contains("credentialStorageMode"));
         assert!(!json.contains("credentialAutoLockMinutes"));
+    }
+
+    #[test]
+    fn deserialize_without_right_click_behavior() {
+        let json = r#"{"version":"1","externalConnectionFiles":[]}"#;
+        let settings: AppSettings = serde_json::from_str(json).unwrap();
+        assert!(settings.right_click_behavior.is_none());
+    }
+
+    #[test]
+    fn deserialize_with_right_click_behavior() {
+        let json = r#"{
+            "version": "1",
+            "externalConnectionFiles": [],
+            "rightClickBehavior": "quickAction"
+        }"#;
+        let settings: AppSettings = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            settings.right_click_behavior.as_deref(),
+            Some("quickAction")
+        );
+    }
+
+    #[test]
+    fn right_click_behavior_round_trip() {
+        for mode in &["contextMenu", "quickAction"] {
+            let settings = AppSettings {
+                right_click_behavior: Some(mode.to_string()),
+                ..Default::default()
+            };
+
+            let json = serde_json::to_string(&settings).unwrap();
+            let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
+
+            assert_eq!(deserialized.right_click_behavior.as_deref(), Some(*mode));
+        }
+    }
+
+    #[test]
+    fn right_click_behavior_none_omitted_from_json() {
+        let settings = AppSettings::default();
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(!json.contains("rightClickBehavior"));
     }
 
     #[test]
