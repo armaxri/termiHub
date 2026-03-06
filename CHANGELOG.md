@@ -9,8 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Comprehensive keyboard shortcut system with platform-aware defaults — macOS uses Cmd-based shortcuts, Windows/Linux uses Ctrl-based shortcuts; all shortcuts are centralized in a KeybindingService with 18 default bindings across 4 categories (General, Clipboard, Terminal, Navigation) (#418)
 - Keyboard shortcuts for terminal clipboard operations — macOS uses Cmd+C/V, Windows/Linux uses Ctrl+Shift+C/V; xterm.js key handler intercepts these before the terminal processes them, fixing the longstanding issue where Ctrl+V on Windows sent a raw control character instead of pasting (#418)
 - Select All keyboard shortcut for terminals — Cmd+A on macOS, Ctrl+Shift+A on Windows/Linux (#418)
+- Keyboard Shortcuts settings panel — new "Keyboard" category in Settings with search filtering, categorized shortcut table, click-to-record key binding mode, conflict detection, and per-action/global reset; custom bindings persist across restarts (#418)
+- Keyboard Shortcuts overlay — opened with Ctrl+K Ctrl+S (Win/Linux) or Cmd+K Cmd+S (macOS), shows all shortcuts in a two-column table with Win/Linux and macOS bindings, search filtering, and current platform highlighting (#418)
+- Chord key sequence support — the KeybindingService now supports multi-key chord sequences (e.g., Ctrl+K Ctrl+S) with a 1500ms timeout and pending chord indicator in the status bar (#418)
+- Large paste confirmation dialog — pasting more than 5000 characters into a terminal shows a confirmation dialog before proceeding (#418)
+- Bracketed paste mode support — when the terminal has bracketed paste mode enabled, pasted text is automatically wrapped in the appropriate escape sequences (#418)
 
 ### Fixed
 
