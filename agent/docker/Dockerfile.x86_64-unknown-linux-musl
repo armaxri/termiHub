@@ -1,11 +1,13 @@
 FROM ghcr.io/cross-rs/x86_64-unknown-linux-musl:main
-RUN apt-get update && apt-get install -y libudev-dev
+# lld: system LLD linker fallback for when Rust's bundled rust-lld lacks execute
+# permission after being copied from Windows via podman cp (DrvFs strips +x bits).
+RUN apt-get update && apt-get install -y libudev-dev lld
 
 # Podman+Windows fix: cross-rs copies the Rust toolchain from the Windows
 # filesystem via `podman cp`, which strips execute bits from ELF binaries
 # (DrvFs->container limitation).  This entrypoint runs a tight background loop
 # that restores +x on any injected bin/ files before the build command runs.
-RUN printf '#!/bin/sh\n( while true; do find /cross -maxdepth 12 -path "*/bin/*" -type f ! -perm /0111 -exec chmod +x {} + 2>/dev/null || true; sleep 1; done ) &\nexec "$@"\n' > /entrypoint.sh \
+RUN printf '#!/bin/sh\n( while true; do find /cross /root -maxdepth 12 -path "*/bin/*" -type f ! -perm /0111 -exec chmod +x {} + 2>/dev/null || true; sleep 1; done ) &\nexec "$@"\n' > /entrypoint.sh \
     && chmod +x /entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]
 # Default CMD keeps the container alive in TTY mode (CROSS_REMOTE=1 on Windows).
