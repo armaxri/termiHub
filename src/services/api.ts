@@ -606,6 +606,11 @@ export async function deleteRemoteAgentFromBackend(id: string): Promise<void> {
   await invoke("delete_remote_agent", { id });
 }
 
+/** Reorder remote agents by providing agent IDs in the desired order. */
+export async function reorderRemoteAgents(agentIds: string[]): Promise<void> {
+  await invoke("reorder_remote_agents", { agentIds });
+}
+
 // --- Monitoring commands ---
 
 /** Open a new monitoring session. Returns session ID. */

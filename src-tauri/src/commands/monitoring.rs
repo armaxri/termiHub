@@ -1,16 +1,20 @@
 use tauri::State;
+use termihub_core::backends::ssh::parse_ssh_settings;
 use tracing::{debug, info};
 
 use crate::monitoring::{MonitoringManager, SystemStats};
-use crate::terminal::backend::SshConfig;
 use crate::utils::errors::TerminalError;
 
 /// Open a new monitoring session. Returns the session ID.
+///
+/// Accepts raw JSON settings and parses them with `parse_ssh_settings`
+/// so that array-encoded `env` fields are handled correctly.
 #[tauri::command]
 pub fn monitoring_open(
-    config: SshConfig,
+    config: serde_json::Value,
     manager: State<'_, MonitoringManager>,
 ) -> Result<String, TerminalError> {
+    let config = parse_ssh_settings(&config);
     info!(host = %config.host, port = config.port, "Opening monitoring session");
     manager.open_session(&config)
 }

@@ -1,8 +1,12 @@
 # Concept Documents — Status Overview
 
-All concept documents have been moved to [`handled/`](handled/) — they are either fully implemented, partially implemented with deferred follow-up work, or represent long-term vision with no active tickets.
+All completed concept documents have been moved to [`handled/`](handled/) — they are either fully implemented, partially implemented with deferred follow-up work, or represent long-term vision with no active tickets.
 
-There are currently no open concepts.
+## Open Concepts
+
+### key-combinations.md (Issue #418)
+
+Concept for correct handling of key combinations across operating systems. Addresses Ctrl+V not pasting on Windows and defines a structured approach to platform-aware keyboard shortcuts, clipboard operations, key event routing, and user-customizable bindings.
 
 ## Handled Concepts
 

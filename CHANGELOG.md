@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Improved
+
+- Terminal right-click context menu now shows "Copy Selection" first when text is selected, otherwise "Paste" is the first option — previously "Copy All" appeared before "Paste" (#425)
+
 ### Changed
 
 - **Breaking**: Reworked connection data model from flat arrays with synthetic IDs to a nested tree format on disk — connections and folders no longer have IDs in the stored JSON; identity is determined by name within the parent folder (like a filesystem), eliminating ID collisions when sharing connection files via git; path-based IDs are generated deterministically at load time for in-memory use; duplicate sibling names are auto-renamed with `(1)`, `(2)` suffixes; credentials are auto-migrated when connections are renamed or moved (#385)
@@ -16,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Switchable right-click terminal behavior — new "Right-Click Behavior" setting in Terminal settings lets users choose between "Context Menu" (macOS/Linux default) and "Quick Copy/Paste" (Windows default, copies selection or pastes if nothing selected); uses Tauri clipboard plugin for native clipboard access (#419)
 - "Copy All Logs" option in the LogViewer context menu — copies all filtered log entries to clipboard (#419)
 - Frontend debug logging utility (`frontendLog`) that emits messages into the LogViewer for in-app debugging (#419)
+- Drag-and-drop reordering for remote agents in the sidebar — agents can now be rearranged by dragging their header; the new order is persisted to disk (#423)
 - Right-click "Paste" option in the terminal context menu — reads clipboard text and sends it as terminal input (#416)
 - File browser CWD tracking for bash/WSL sessions — the app now injects an OSC 7 `PROMPT_COMMAND` hook when spawning bash, Git Bash, or WSL sessions, so the file browser automatically follows the terminal's working directory; zsh already emits OSC 7 natively and is unaffected (#408)
 - Right-click context menu on the terminal area with "Copy Selection" to copy only the selected text, plus "Copy All" for the entire buffer — previously only the tab context menu's "Copy to Clipboard" (entire history) was available (#407)
@@ -27,6 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Build warning on Windows: unused `socket_path` variable in X11 forwarding code — inlined into the `#[cfg(unix)]` branch so it's not created on non-unix platforms (#434)
+- SFTP file browser and monitoring fail on SSH connections with `invalid type: sequence, expected a map` — the `sftp_open` and `monitoring_open` Tauri commands tried to deserialize the frontend config directly as `SshConfig`, but the `env` field is stored as an array of `{key, value}` pairs by the schema-driven form; now both commands accept raw JSON and use `parse_ssh_settings` (the same parser used by `create_connection`) for consistent handling (#421)
+- SFTP file browser doesn't follow the current working directory in SSH sessions — the SSH backend was missing the OSC 7 `PROMPT_COMMAND` injection that local shell and WSL backends already had; now injects the same `__termihub_osc7` hook after opening the SSH shell channel, so `cd` commands in the remote session are tracked and the SFTP file browser follows along (#421)
+- VS Code not recognized on Windows — `code.cmd` is not found by Rust's `CreateProcessW`; now routes through `cmd.exe /c code` so the shell resolves `.cmd` extensions (#417)
+- Terminal could not be scrolled when the mouse was in the narrow gap at the bottom of the terminal area — the legacy `.xterm-viewport` element (from xterm.js 5.x) was intercepting wheel events before they reached the xterm.js 6.0 custom scrollbar; made the viewport inert and stretched the scrollable element to cover the full terminal area (#429)
 - Agent connection fails with "Parse capabilities: missing field `connectionTypes`" — the desktop `AgentCapabilities` struct expected `connection_types` as plain strings, but the agent sends full `ConnectionTypeInfo` objects (with typeId, displayName, icon, schema, capabilities); updated desktop to accept the rich objects and pass them through to the frontend (#412)
 - File browser now works with WSL sessions instead of showing "missing field host" error — WSL tabs are routed to the local file browser mode using `\\wsl$\<distro>\` UNC paths instead of attempting SFTP (#404)
 - Remote agent fails to start after successful installation — the SSH exec command used a bare `termihub-agent` binary name that relies on PATH, but `~/.local/bin` is typically not on PATH in non-interactive SSH sessions; now uses the full resolved path (`$HOME/.local/bin/termihub-agent`) for exec, reconnect, and probe commands; added optional `agentPath` field to agent config for custom install locations (#406)
