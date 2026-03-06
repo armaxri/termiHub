@@ -1,10 +1,11 @@
 import { useEffect } from "react";
 import { useAppStore } from "@/store/appStore";
 import { getAllLeaves } from "@/utils/panelTree";
-import { isMac } from "@/utils/platform";
+import { findMatchingAction } from "@/services/keybindings";
 
 /**
  * Global keyboard shortcuts for the application.
+ * Uses the KeybindingService to match events against configured bindings.
  */
 export function useKeyboardShortcuts() {
   const addTab = useAppStore((s) => s.addTab);
@@ -16,53 +17,50 @@ export function useKeyboardShortcuts() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const isMod = isMac() ? e.metaKey : e.ctrlKey;
+      const action = findMatchingAction(e);
+      if (!action) return;
+
       const allLeaves = getAllLeaves(rootPanel);
 
-      // Ctrl/Cmd+B — Toggle sidebar
-      if (isMod && !e.shiftKey && e.key === "b") {
-        e.preventDefault();
-        toggleSidebar();
-        return;
-      }
+      switch (action) {
+        case "toggle-sidebar":
+          e.preventDefault();
+          toggleSidebar();
+          break;
 
-      // Ctrl/Cmd+Shift+` — New terminal
-      if (isMod && e.shiftKey && e.key === "`") {
-        e.preventDefault();
-        addTab("Terminal", "local");
-        return;
-      }
+        case "new-terminal":
+          e.preventDefault();
+          addTab("Terminal", "local");
+          break;
 
-      // Ctrl/Cmd+W — Close active tab
-      if (isMod && e.key === "w") {
-        e.preventDefault();
-        const panel = allLeaves.find((p) => p.id === activePanelId);
-        if (panel?.activeTabId) {
-          closeTab(panel.activeTabId, panel.id);
+        case "close-tab": {
+          e.preventDefault();
+          const panel = allLeaves.find((p) => p.id === activePanelId);
+          if (panel?.activeTabId) {
+            closeTab(panel.activeTabId, panel.id);
+          }
+          break;
         }
-        return;
-      }
 
-      // Ctrl+Tab — Next tab
-      if (e.ctrlKey && e.key === "Tab" && !e.shiftKey) {
-        e.preventDefault();
-        const panel = allLeaves.find((p) => p.id === activePanelId);
-        if (!panel || panel.tabs.length < 2) return;
-        const currentIdx = panel.tabs.findIndex((t) => t.id === panel.activeTabId);
-        const nextIdx = (currentIdx + 1) % panel.tabs.length;
-        setActiveTab(panel.tabs[nextIdx].id, panel.id);
-        return;
-      }
+        case "next-tab": {
+          e.preventDefault();
+          const panel = allLeaves.find((p) => p.id === activePanelId);
+          if (!panel || panel.tabs.length < 2) break;
+          const currentIdx = panel.tabs.findIndex((t) => t.id === panel.activeTabId);
+          const nextIdx = (currentIdx + 1) % panel.tabs.length;
+          setActiveTab(panel.tabs[nextIdx].id, panel.id);
+          break;
+        }
 
-      // Ctrl+Shift+Tab — Previous tab
-      if (e.ctrlKey && e.key === "Tab" && e.shiftKey) {
-        e.preventDefault();
-        const panel = allLeaves.find((p) => p.id === activePanelId);
-        if (!panel || panel.tabs.length < 2) return;
-        const currentIdx = panel.tabs.findIndex((t) => t.id === panel.activeTabId);
-        const prevIdx = (currentIdx - 1 + panel.tabs.length) % panel.tabs.length;
-        setActiveTab(panel.tabs[prevIdx].id, panel.id);
-        return;
+        case "prev-tab": {
+          e.preventDefault();
+          const panel = allLeaves.find((p) => p.id === activePanelId);
+          if (!panel || panel.tabs.length < 2) break;
+          const currentIdx = panel.tabs.findIndex((t) => t.id === panel.activeTabId);
+          const prevIdx = (currentIdx - 1 + panel.tabs.length) % panel.tabs.length;
+          setActiveTab(panel.tabs[prevIdx].id, panel.id);
+          break;
+        }
       }
     };
 
