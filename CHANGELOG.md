@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- File browser fails in Git Bash on Windows — Git Bash sets `$HOME` to MSYS-style Unix paths like `/c/Users/username` which Windows APIs cannot resolve; now detects and converts MSYS drive paths to native Windows paths (`C:/Users/username`) in `home_dir()` and filesystem operations (#422)
 - Build warning on Windows: unused `socket_path` variable in X11 forwarding code — inlined into the `#[cfg(unix)]` branch so it's not created on non-unix platforms (#434)
 - SFTP file browser and monitoring fail on SSH connections with `invalid type: sequence, expected a map` — the `sftp_open` and `monitoring_open` Tauri commands tried to deserialize the frontend config directly as `SshConfig`, but the `env` field is stored as an array of `{key, value}` pairs by the schema-driven form; now both commands accept raw JSON and use `parse_ssh_settings` (the same parser used by `create_connection`) for consistent handling (#421)
 - SFTP file browser doesn't follow the current working directory in SSH sessions — the SSH backend was missing the OSC 7 `PROMPT_COMMAND` injection that local shell and WSL backends already had; now injects the same `__termihub_osc7` hook after opening the SSH shell channel, so `cd` commands in the remote session are tracked and the SFTP file browser follows along (#421)
