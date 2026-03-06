@@ -194,6 +194,10 @@ interface AppState {
   updateLayoutConfig: (partial: Partial<LayoutConfig>) => void;
   applyLayoutPreset: (preset: "default" | "focus" | "zen") => void;
 
+  // Shortcuts overlay
+  shortcutsOverlayOpen: boolean;
+  setShortcutsOverlayOpen: (open: boolean) => void;
+
   // Export/Import dialogs
   exportDialogOpen: boolean;
   setExportDialogOpen: (open: boolean) => void;
@@ -919,6 +923,10 @@ export const useAppStore = create<AppState>((set, get) => {
     layoutDialogOpen: false,
 
     setLayoutDialogOpen: (open) => set({ layoutDialogOpen: open }),
+
+    // Shortcuts overlay
+    shortcutsOverlayOpen: false,
+    setShortcutsOverlayOpen: (open) => set({ shortcutsOverlayOpen: open }),
 
     // Export/Import dialogs
     exportDialogOpen: false,
