@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { getVersion } from "@tauri-apps/api/app";
-import { Settings2, Palette, TerminalSquare, Shield, FileJson } from "lucide-react";
+import { Settings2, Palette, TerminalSquare, Keyboard, Shield, FileJson } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { applyTheme } from "@/themes/engine";
@@ -13,6 +13,7 @@ import { GeneralSettings } from "./GeneralSettings";
 import { AppearanceSettings } from "./AppearanceSettings";
 import { TerminalSettings } from "./TerminalSettings";
 import { ExternalFilesSettings } from "./ExternalFilesSettings";
+import { KeyboardSettings } from "./KeyboardSettings";
 import { SecuritySettings } from "./SecuritySettings";
 import "./SettingsPanel.css";
 
@@ -20,6 +21,7 @@ const SETTINGS_ICONS: Record<SettingsCategory, LucideIcon> = {
   general: Settings2,
   appearance: Palette,
   terminal: TerminalSquare,
+  keyboard: Keyboard,
   security: Shield,
   "external-files": FileJson,
 };
@@ -34,6 +36,7 @@ function loadSavedCategory(): SettingsCategory {
       saved === "general" ||
       saved === "appearance" ||
       saved === "terminal" ||
+      saved === "keyboard" ||
       saved === "security" ||
       saved === "external-files"
     ) {
@@ -182,6 +185,9 @@ export function SettingsPanel({ isVisible }: SettingsPanelProps) {
           />
         );
       }
+      if (highlightedCategories?.has("keyboard")) {
+        sections.push(<KeyboardSettings key="keyboard" visibleFields={visibleFields} />);
+      }
       if (highlightedCategories?.has("security")) {
         sections.push(<SecuritySettings key="security" visibleFields={visibleFields} />);
       }
@@ -198,6 +204,8 @@ export function SettingsPanel({ isVisible }: SettingsPanelProps) {
         return <AppearanceSettings settings={settings} onChange={handleSettingsChange} />;
       case "terminal":
         return <TerminalSettings settings={settings} onChange={handleSettingsChange} />;
+      case "keyboard":
+        return <KeyboardSettings />;
       case "security":
         return <SecuritySettings />;
       case "external-files":
