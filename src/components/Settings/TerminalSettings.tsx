@@ -85,6 +85,32 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
           </div>
         </div>
       )}
+      {show("rightClickBehavior") && (
+        <label className="settings-form__field">
+          <span className="settings-form__label">Right-Click Behavior</span>
+          <select
+            value={settings.rightClickBehavior ?? ""}
+            onChange={(e) =>
+              onChange({
+                ...settings,
+                rightClickBehavior:
+                  e.target.value === ""
+                    ? undefined
+                    : (e.target.value as "contextMenu" | "quickAction"),
+              })
+            }
+          >
+            <option value="">Platform Default</option>
+            <option value="contextMenu">Context Menu</option>
+            <option value="quickAction">Quick Copy/Paste</option>
+          </select>
+          <span className="settings-form__hint">
+            Context Menu shows the full right-click menu. Quick Copy/Paste copies selected text or
+            pastes if nothing is selected. Default: Context Menu on macOS/Linux, Quick Copy/Paste on
+            Windows.
+          </span>
+        </label>
+      )}
     </div>
   );
 }

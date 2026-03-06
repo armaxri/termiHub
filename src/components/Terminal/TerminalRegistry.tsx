@@ -2,6 +2,7 @@ import { createContext, useContext, useRef, useCallback, useMemo, ReactNode } fr
 import { Terminal as XTerm } from "@xterm/xterm";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
+import { readText as readClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import { sendInput } from "@/services/api";
 import { SessionId } from "@/types/terminal";
 
@@ -22,6 +23,8 @@ interface TerminalRegistryContextType {
   copyTerminalToClipboard: (tabId: string) => Promise<void>;
   /** Get the current text selection in a terminal, or undefined if none. */
   getTerminalSelection: (tabId: string) => string | undefined;
+  /** Clear the current text selection in a terminal. */
+  clearTerminalSelection: (tabId: string) => void;
   /** Copy the current text selection to the clipboard (no-op if nothing selected). */
   copySelectionToClipboard: (tabId: string) => Promise<void>;
   /** Associate a backend session ID with a tab for paste support. */
@@ -133,6 +136,11 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     return xterm.getSelection();
   }, []);
 
+  const clearTerminalSelection = useCallback((tabId: string) => {
+    const xterm = xtermRegistryRef.current.get(tabId);
+    if (xterm) xterm.clearSelection();
+  }, []);
+
   const copySelectionToClipboard = useCallback(
     async (tabId: string) => {
       const selection = getTerminalSelection(tabId);
@@ -154,7 +162,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
   const pasteToTerminal = useCallback(async (tabId: string) => {
     const sessionId = sessionRegistryRef.current.get(tabId);
     if (!sessionId) return;
-    const text = await navigator.clipboard.readText();
+    const text = await readClipboard();
     if (text) {
       await sendInput(sessionId, text);
     }
@@ -170,6 +178,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       saveTerminalToFile,
       copyTerminalToClipboard,
       getTerminalSelection,
+      clearTerminalSelection,
       copySelectionToClipboard,
       registerSession,
       unregisterSession,
@@ -185,6 +194,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       saveTerminalToFile,
       copyTerminalToClipboard,
       getTerminalSelection,
+      clearTerminalSelection,
       copySelectionToClipboard,
       registerSession,
       unregisterSession,

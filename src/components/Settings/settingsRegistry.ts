@@ -98,6 +98,13 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     keywords: ["cursor", "blink", "animation", "flash"],
   },
   {
+    id: "rightClickBehavior",
+    label: "Right-Click Behavior",
+    description: "Terminal right-click action: context menu or quick copy/paste",
+    category: "terminal",
+    keywords: ["right-click", "context menu", "copy", "paste", "quick action", "mouse"],
+  },
+  {
     id: "credentialStorageMode",
     label: "Credential Storage Mode",
     description: "How connection passwords and keys are stored",
