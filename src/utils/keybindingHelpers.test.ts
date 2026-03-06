@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { isCopyShortcut, isPasteShortcut, isSelectAllShortcut } from "./keybindingHelpers";
 
 /** Create a synthetic KeyboardEvent with specified modifier flags. */

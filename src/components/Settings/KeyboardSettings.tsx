@@ -36,30 +36,7 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
   // Force re-render when overrides change
   const [, forceRender] = useState(0);
 
-  const show = !visibleFields || visibleFields.has("keybindings");
-  if (!show) return null;
-
   const bindings = getDefaultBindings();
-
-  const filteredBindings = searchQuery.trim()
-    ? bindings.filter((b) => {
-        const q = searchQuery.toLowerCase();
-        return (
-          b.label.toLowerCase().includes(q) ||
-          b.action.toLowerCase().includes(q) ||
-          b.category.toLowerCase().includes(q) ||
-          serializeBinding(getEffectiveCombo(b.action) ?? b.winLinuxDefault)
-            .toLowerCase()
-            .includes(q)
-        );
-      })
-    : bindings;
-
-  const groupedBindings = CATEGORY_ORDER.map((cat) => ({
-    category: cat,
-    label: CATEGORY_LABELS[cat],
-    bindings: filteredBindings.filter((b) => b.category === cat),
-  })).filter((g) => g.bindings.length > 0);
 
   const persistOverrides = useCallback(() => {
     const overrideEntries = getOverrides();
@@ -110,6 +87,29 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
     },
     [persistOverrides, bindings]
   );
+
+  const show = !visibleFields || visibleFields.has("keybindings");
+  if (!show) return null;
+
+  const filteredBindings = searchQuery.trim()
+    ? bindings.filter((b) => {
+        const q = searchQuery.toLowerCase();
+        return (
+          b.label.toLowerCase().includes(q) ||
+          b.action.toLowerCase().includes(q) ||
+          b.category.toLowerCase().includes(q) ||
+          serializeBinding(getEffectiveCombo(b.action) ?? b.winLinuxDefault)
+            .toLowerCase()
+            .includes(q)
+        );
+      })
+    : bindings;
+
+  const groupedBindings = CATEGORY_ORDER.map((cat) => ({
+    category: cat,
+    label: CATEGORY_LABELS[cat],
+    bindings: filteredBindings.filter((b) => b.category === cat),
+  })).filter((g) => g.bindings.length > 0);
 
   return (
     <div className="settings-panel__category">
