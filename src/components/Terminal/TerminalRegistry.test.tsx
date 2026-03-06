@@ -14,6 +14,12 @@ vi.mock("@/services/api", () => ({
   sendInput: vi.fn().mockResolvedValue(undefined),
 }));
 
+const mockReadClipboard = vi.fn().mockResolvedValue("");
+
+vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({
+  readText: (...args: unknown[]) => mockReadClipboard(...args),
+}));
+
 /** Creates a mock xterm instance with configurable selection state. */
 function createMockXterm(selection?: string): XTerm {
   return {
@@ -128,8 +134,7 @@ describe("copySelectionToClipboard", () => {
 
 describe("pasteToTerminal", () => {
   it("reads clipboard and sends text as input via registered session", async () => {
-    const readText = vi.fn().mockResolvedValue("pasted text");
-    Object.assign(navigator, { clipboard: { readText } });
+    mockReadClipboard.mockResolvedValue("pasted text");
 
     act(() => {
       registryActions.registerSession("tab-1", "session-1");
@@ -139,13 +144,12 @@ describe("pasteToTerminal", () => {
       await registryActions.pasteToTerminal("tab-1");
     });
 
-    expect(readText).toHaveBeenCalled();
+    expect(mockReadClipboard).toHaveBeenCalled();
     expect(sendInput).toHaveBeenCalledWith("session-1", "pasted text");
   });
 
   it("does not send input when clipboard is empty", async () => {
-    const readText = vi.fn().mockResolvedValue("");
-    Object.assign(navigator, { clipboard: { readText } });
+    mockReadClipboard.mockResolvedValue("");
     vi.mocked(sendInput).mockClear();
 
     act(() => {
@@ -156,20 +160,20 @@ describe("pasteToTerminal", () => {
       await registryActions.pasteToTerminal("tab-1");
     });
 
-    expect(readText).toHaveBeenCalled();
+    expect(mockReadClipboard).toHaveBeenCalled();
     expect(sendInput).not.toHaveBeenCalled();
   });
 
   it("does nothing when no session is registered for the tab", async () => {
-    const readText = vi.fn().mockResolvedValue("pasted text");
-    Object.assign(navigator, { clipboard: { readText } });
+    mockReadClipboard.mockClear();
+    mockReadClipboard.mockResolvedValue("pasted text");
     vi.mocked(sendInput).mockClear();
 
     await act(async () => {
       await registryActions.pasteToTerminal("tab-no-session");
     });
 
-    expect(readText).not.toHaveBeenCalled();
+    expect(mockReadClipboard).not.toHaveBeenCalled();
     expect(sendInput).not.toHaveBeenCalled();
   });
 });
