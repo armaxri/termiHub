@@ -198,6 +198,10 @@ interface AppState {
   shortcutsOverlayOpen: boolean;
   setShortcutsOverlayOpen: (open: boolean) => void;
 
+  // Chord pending indicator
+  chordPending: string | null;
+  setChordPending: (pending: string | null) => void;
+
   // Export/Import dialogs
   exportDialogOpen: boolean;
   setExportDialogOpen: (open: boolean) => void;
@@ -927,6 +931,10 @@ export const useAppStore = create<AppState>((set, get) => {
     // Shortcuts overlay
     shortcutsOverlayOpen: false,
     setShortcutsOverlayOpen: (open) => set({ shortcutsOverlayOpen: open }),
+
+    // Chord pending indicator
+    chordPending: null,
+    setChordPending: (pending) => set({ chordPending: pending }),
 
     // Export/Import dialogs
     exportDialogOpen: false,

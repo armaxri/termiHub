@@ -57,6 +57,7 @@ function severityLevel(value: number): "normal" | "warning" | "critical" {
 export function StatusBar() {
   const editorStatus = useAppStore((s) => s.editorStatus);
   const editorActions = useAppStore((s) => s.editorActions);
+  const chordPending = useAppStore((s) => s.chordPending);
 
   const indentLabel = editorStatus
     ? editorStatus.insertSpaces
@@ -70,7 +71,13 @@ export function StatusBar() {
         <MonitoringStatus />
         <CredentialStoreIndicator />
       </div>
-      <div className="status-bar__section status-bar__section--center" />
+      <div className="status-bar__section status-bar__section--center">
+        {chordPending && (
+          <span className="status-bar__item" data-testid="chord-pending-indicator">
+            ({chordPending}) was pressed. Waiting for second key...
+          </span>
+        )}
+      </div>
       <div className="status-bar__section status-bar__section--right">
         {editorStatus && (
           <>
