@@ -328,6 +328,7 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
                   <ContextMenu.Item
                     className="context-menu__item"
                     onSelect={() => copyTerminalToClipboard(tab.id)}
+                    data-testid="terminal-context-copy-all"
                   >
                     <ClipboardCopy size={14} /> Copy All
                   </ContextMenu.Item>

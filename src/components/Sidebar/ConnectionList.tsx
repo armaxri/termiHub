@@ -610,7 +610,10 @@ export function ConnectionList() {
           className={`connection-list__group${!localCollapsed ? " connection-list__group--expanded" : ""}`}
           style={connExpandedIdx >= 0 ? { flex: flexValues[connExpandedIdx] } : undefined}
         >
-          <div className="connection-list__group-header">
+          <div
+            className="connection-list__group-header"
+            data-testid="sidebar-group-header-connections"
+          >
             <button
               className="connection-list__group-toggle"
               onClick={() => setLocalCollapsed((v) => !v)}
@@ -673,7 +676,11 @@ export function ConnectionList() {
             const agentExpandedIdx = expandedIndexMap[i + 1];
             return (
               <Fragment key={agent.id}>
-                <div className="connection-list__resize-handle" {...getResizeHandleProps(i)} />
+                <div
+                  className="connection-list__resize-handle"
+                  data-testid={`sidebar-group-separator-${i}`}
+                  {...getResizeHandleProps(i)}
+                />
                 <AgentNode
                   agent={agent}
                   style={agentExpandedIdx >= 0 ? { flex: flexValues[agentExpandedIdx] } : undefined}

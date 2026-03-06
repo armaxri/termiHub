@@ -165,6 +165,7 @@ export const RENAME_DIALOG_APPLY = '[data-testid="rename-dialog-apply"]';
 
 // --- File Editor ---
 export const FILE_EDITOR_SAVE = '[data-testid="file-editor-save"]';
+export const FILE_EDITOR_REMOTE_BADGE = '[data-testid="file-editor-remote-badge"]';
 
 // --- Customize Layout Dialog ---
 export const LAYOUT_AB_VISIBLE = '[data-testid="layout-ab-visible"]';
@@ -227,6 +228,18 @@ export const IMPORT_PASSWORD = '[data-testid="import-password"]';
 export const IMPORT_WITHOUT_CREDENTIALS = '[data-testid="import-without-credentials"]';
 export const IMPORT_WITH_CREDENTIALS = '[data-testid="import-with-credentials"]';
 export const IMPORT_SUBMIT = '[data-testid="import-submit"]';
+
+// --- Sidebar Group Sections ---
+export const SIDEBAR_GROUP_HEADER_CONNECTIONS = '[data-testid="sidebar-group-header-connections"]';
+export const sidebarGroupSeparator = (index) => `[data-testid="sidebar-group-separator-${index}"]`;
+
+// --- External Files Settings ---
+export const SETTINGS_EXTERNAL_FILES = '[data-testid="settings-external-files"]';
+
+// --- Terminal Context Menu (terminal area) ---
+export const TERMINAL_CTX_PASTE = '[data-testid="terminal-context-paste"]';
+export const TERMINAL_CTX_COPY_SELECTION = '[data-testid="terminal-context-copy-selection"]';
+export const TERMINAL_CTX_COPY_ALL = '[data-testid="terminal-context-copy-all"]';
 
 // --- Advanced Settings Toggles ---
 export const TOGGLE_POWER_MONITORING = '[data-testid="toggle-power-monitoring"]';
