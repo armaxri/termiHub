@@ -1,0 +1,151 @@
+.shortcuts-overlay__backdrop {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  z-index: 1000;
+}
+
+.shortcuts-overlay__content {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 90vw;
+  max-width: 700px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-lg, 8px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  z-index: 1001;
+  overflow: hidden;
+}
+
+.shortcuts-overlay__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--spacing-md) var(--spacing-lg);
+  border-bottom: 1px solid var(--border-primary);
+  flex-shrink: 0;
+}
+
+.shortcuts-overlay__title {
+  font-size: var(--font-size-lg, 16px);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.shortcuts-overlay__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.shortcuts-overlay__close:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.shortcuts-overlay__search {
+  padding: var(--spacing-sm) var(--spacing-lg);
+  border-bottom: 1px solid var(--border-primary);
+  flex-shrink: 0;
+}
+
+.shortcuts-overlay__search-input {
+  width: 100%;
+  height: 28px;
+  padding: 0 var(--spacing-sm);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  outline: none;
+  box-sizing: border-box;
+}
+
+.shortcuts-overlay__search-input:focus {
+  border-color: var(--accent-color);
+}
+
+.shortcuts-overlay__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--spacing-md) var(--spacing-lg);
+}
+
+.shortcuts-overlay__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+}
+
+.shortcuts-overlay__table th {
+  text-align: left;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  color: var(--text-secondary);
+  font-weight: 500;
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.shortcuts-overlay__table td {
+  padding: var(--spacing-xs) var(--spacing-sm);
+}
+
+.shortcuts-overlay__group-row td {
+  padding-top: var(--spacing-md);
+}
+
+.shortcuts-overlay__group-label {
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--border-primary);
+  padding-bottom: var(--spacing-xs);
+}
+
+.shortcuts-overlay__action {
+  color: var(--text-primary);
+  width: 40%;
+}
+
+.shortcuts-overlay__binding {
+  width: 30%;
+  font-family: monospace;
+  color: var(--text-secondary);
+}
+
+.shortcuts-overlay__binding kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-primary);
+  font-family: monospace;
+  font-size: var(--font-size-xs, 11px);
+  color: var(--text-primary);
+}
+
+.shortcuts-overlay__highlight {
+  font-weight: 600;
+}
+
+.shortcuts-overlay__highlight kbd {
+  border-color: var(--accent-color);
+  background-color: var(--accent-bg, rgba(0, 120, 212, 0.08));
+}
