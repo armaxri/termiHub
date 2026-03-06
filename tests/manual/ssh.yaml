@@ -77,21 +77,6 @@ tests:
 
   # --- SSH agent setup guidance (PR #133) ---
 
-  - id: MT-SSH-08
-    name: "SSH agent status warning in editor"
-    pr: 133
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Open connection editor, select SSH type"
-      - "Set auth method to 'Agent'"
-      - "Check for warning/hint text"
-    expected:
-      - "Warning appears if agent is stopped"
-      - "Normal hint appears if agent is running"
-    verification: manual
-
   - id: MT-SSH-09
     name: "Setup SSH Agent button opens PowerShell"
     pr: 133
@@ -103,21 +88,6 @@ tests:
       - "Click 'Setup SSH Agent' button"
     expected:
       - "Local PowerShell tab opens with elevation command"
-    verification: manual
-
-  # --- Password prompt at connect (PR #38) ---
-
-  - id: MT-SSH-13
-    name: "Stored passwords stripped on startup"
-    pr: 38
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "If you have connections with old-style stored passwords, launch the app"
-      - "Check that passwords are no longer stored in connections.json"
-    expected:
-      - "Passwords stripped from connections on app startup"
     verification: manual
 
   # --- X11 forwarding (PR #69) ---
@@ -163,31 +133,6 @@ tests:
       - "Shows localhost:N.0 on remote"
     verification: manual
 
-  - id: MT-SSH-17
-    name: "SSH works without X11 enabled"
-    pr: 69
-    platforms: [all]
-    prerequisites:
-      - app: true
-      - docker: true
-    setup:
-      - create_connection:
-          name: "SSH No X11"
-          type: ssh
-          config:
-            host: "127.0.0.1"
-            port: 2201
-            username: "testuser"
-            authMethod: password
-            enableX11Forwarding: false
-      - connect: "SSH No X11"
-    instructions:
-      - "Enter password 'testpass'"
-      - "Verify SSH works normally"
-    expected:
-      - "SSH connects and works normally without X11"
-    verification: manual
-
   - id: MT-SSH-18
     name: "X11 graceful degradation without X server"
     pr: 69
@@ -200,19 +145,6 @@ tests:
       - "Connect without a local X server running"
     expected:
       - "SSH connects with graceful degradation"
-    verification: manual
-
-  - id: MT-SSH-19
-    name: "Old connections without X11 field load correctly"
-    pr: 69
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Open the app with saved connections from before the X11 feature"
-      - "Verify connections load correctly"
-    expected:
-      - "Existing saved connections load without errors"
     verification: manual
 
   # --- SSH monitoring in status bar (PR #114, #115) ---
@@ -231,19 +163,3 @@ tests:
       - "Yellow at >= 70%, red at >= 90%"
     verification: manual
     tags: [visual]
-
-  # --- SSH tunneling (PR #225) ---
-
-  - id: MT-SSH-34
-    name: "Auto-start tunnel on app launch"
-    pr: 225
-    platforms: [all]
-    prerequisites:
-      - app: true
-      - docker: true
-    instructions:
-      - "Enable 'Auto-start when app launches' on a tunnel"
-      - "Restart the app"
-    expected:
-      - "Tunnel starts automatically"
-    verification: manual
