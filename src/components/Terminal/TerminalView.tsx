@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from "react";
-import { Plus, Columns2, X, PanelLeft } from "lucide-react";
+import { Plus, Columns2, Rows2, X, PanelLeft } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { useAppStore } from "@/store/appStore";
 import { TerminalTab } from "@/types/terminal";
@@ -73,8 +73,12 @@ export function TerminalView() {
     addTab("Terminal", "local");
   };
 
-  const handleSplit = () => {
+  const handleSplitHorizontal = () => {
     splitPanel("horizontal");
+  };
+
+  const handleSplitVertical = () => {
+    splitPanel("vertical");
   };
 
   const handleClosePanel = () => {
@@ -98,11 +102,19 @@ export function TerminalView() {
             </button>
             <button
               className="terminal-view__toolbar-btn"
-              onClick={handleSplit}
-              title="Split Terminal"
-              data-testid="terminal-view-split"
+              onClick={handleSplitHorizontal}
+              title="Split Terminal Right"
+              data-testid="terminal-view-split-horizontal"
             >
               <Columns2 size={16} />
+            </button>
+            <button
+              className="terminal-view__toolbar-btn"
+              onClick={handleSplitVertical}
+              title="Split Terminal Down"
+              data-testid="terminal-view-split-vertical"
+            >
+              <Rows2 size={16} />
             </button>
             {allLeaves.length > 1 && (
               <button

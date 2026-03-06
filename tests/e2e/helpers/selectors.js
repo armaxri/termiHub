@@ -91,7 +91,8 @@ export const TAB_CTX_SET_COLOR = '[data-testid="tab-context-set-color"]';
 
 // --- Terminal View Toolbar ---
 export const TOOLBAR_NEW_TERMINAL = '[data-testid="terminal-view-new-terminal"]';
-export const TOOLBAR_SPLIT = '[data-testid="terminal-view-split"]';
+export const TOOLBAR_SPLIT_HORIZONTAL = '[data-testid="terminal-view-split-horizontal"]';
+export const TOOLBAR_SPLIT_VERTICAL = '[data-testid="terminal-view-split-vertical"]';
 export const TOOLBAR_CLOSE_PANEL = '[data-testid="terminal-view-close-panel"]';
 export const TOOLBAR_TOGGLE_SIDEBAR = '[data-testid="terminal-view-toggle-sidebar"]';
 
