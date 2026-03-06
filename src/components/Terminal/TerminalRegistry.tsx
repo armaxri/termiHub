@@ -5,6 +5,9 @@ import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { readText as readClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import { sendInput } from "@/services/api";
 import { SessionId } from "@/types/terminal";
+import { useAppStore } from "@/store/appStore";
+
+const LARGE_PASTE_THRESHOLD = 5000;
 
 interface TerminalRegistryContextType {
   /** Register a terminal's xterm container element and xterm instance. */
@@ -163,8 +166,24 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     const sessionId = sessionRegistryRef.current.get(tabId);
     if (!sessionId) return;
     const text = await readClipboard();
-    if (text) {
-      await sendInput(sessionId, text);
+    if (!text) return;
+
+    const doPaste = async () => {
+      const xterm = xtermRegistryRef.current.get(tabId);
+      let payload = text;
+
+      // Wrap in bracketed paste escape sequences if the terminal supports it
+      if (xterm && xterm.modes.bracketedPasteMode) {
+        payload = `\x1b[200~${text}\x1b[201~`;
+      }
+
+      await sendInput(sessionId, payload);
+    };
+
+    if (text.length > LARGE_PASTE_THRESHOLD) {
+      useAppStore.getState().showLargePasteDialog(text.length, doPaste);
+    } else {
+      await doPaste();
     }
   }, []);
 

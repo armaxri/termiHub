@@ -11,6 +11,7 @@ import { UnlockDialog } from "@/components/UnlockDialog";
 import { MasterPasswordSetup } from "@/components/MasterPasswordSetup";
 import { RecoveryDialog } from "@/components/Settings/RecoveryDialog";
 import { ShortcutsOverlay } from "@/components/KeyboardShortcuts/ShortcutsOverlay";
+import { LargePasteDialog } from "@/components/Terminal/LargePasteDialog";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useTunnelEvents } from "@/hooks/useTunnelEvents";
 import { useCredentialStoreEvents } from "@/hooks/useCredentialStoreEvents";
@@ -98,6 +99,8 @@ function App() {
   const setRecoveryDialogOpen = useAppStore((s) => s.setRecoveryDialogOpen);
   const shortcutsOverlayOpen = useAppStore((s) => s.shortcutsOverlayOpen);
   const setShortcutsOverlayOpen = useAppStore((s) => s.setShortcutsOverlayOpen);
+  const largePasteDialog = useAppStore((s) => s.largePasteDialog);
+  const closeLargePasteDialog = useAppStore((s) => s.closeLargePasteDialog);
 
   useEffect(() => {
     loadFromBackend();
@@ -141,6 +144,15 @@ function App() {
           warnings={recoveryWarnings}
         />
         <ShortcutsOverlay open={shortcutsOverlayOpen} onOpenChange={setShortcutsOverlayOpen} />
+        <LargePasteDialog
+          open={largePasteDialog.open}
+          charCount={largePasteDialog.charCount}
+          onConfirm={() => {
+            largePasteDialog.onConfirm?.();
+            closeLargePasteDialog();
+          }}
+          onCancel={closeLargePasteDialog}
+        />
       </div>
     </ErrorBoundary>
   );

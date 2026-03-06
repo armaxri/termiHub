@@ -202,6 +202,11 @@ interface AppState {
   chordPending: string | null;
   setChordPending: (pending: string | null) => void;
 
+  // Large paste confirmation
+  largePasteDialog: { open: boolean; charCount: number; onConfirm: (() => void) | null };
+  showLargePasteDialog: (charCount: number, onConfirm: () => void) => void;
+  closeLargePasteDialog: () => void;
+
   // Export/Import dialogs
   exportDialogOpen: boolean;
   setExportDialogOpen: (open: boolean) => void;
@@ -935,6 +940,13 @@ export const useAppStore = create<AppState>((set, get) => {
     // Chord pending indicator
     chordPending: null,
     setChordPending: (pending) => set({ chordPending: pending }),
+
+    // Large paste confirmation
+    largePasteDialog: { open: false, charCount: 0, onConfirm: null },
+    showLargePasteDialog: (charCount, onConfirm) =>
+      set({ largePasteDialog: { open: true, charCount, onConfirm } }),
+    closeLargePasteDialog: () =>
+      set({ largePasteDialog: { open: false, charCount: 0, onConfirm: null } }),
 
     // Export/Import dialogs
     exportDialogOpen: false,
