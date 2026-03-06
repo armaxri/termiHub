@@ -95,12 +95,26 @@ if defined CROSS_CONTAINER_ENGINE (
     REM sometimes appear as real files (e.g. from Git Bash output redirections)
     REM cannot be opened for reading by cross-rs and cause error 87.  Remove any
     REM such files now so the workspace copy succeeds.
-    bash -c "for f in NUL CON PRN AUX COM1 COM2 COM3 COM4 COM5 COM6 COM7 COM8 COM9 LPT1 LPT2 LPT3 LPT4 LPT5 LPT6 LPT7 LPT8 LPT9; do [ -f \"$f\" ] && rm -f \"$f\" && echo \"  Removed stray Windows device file: $f\"; done 2>/dev/null || true"
+    REM Note: `bash -c` may resolve to WSL bash, which cannot chdir to Windows
+    REM paths (/mnt/c/...) and would run in the wrong directory, silently skipping
+    REM the deletion.  Pass the project dir via an env var using Windows-style
+    REM forward-slash path so bash can cd there explicitly.  Git Bash accepts
+    REM "C:/path" style; WSL bash will fail the cd gracefully and skip deletion
+    REM (correct — WSL does not see the Windows NUL file).
+    set "_CROSS_WORKDIR=%CD:\=/%"
+    bash -c "cd \"$_CROSS_WORKDIR\" 2>/dev/null; for f in NUL CON PRN AUX COM1 COM2 COM3 COM4 COM5 COM6 COM7 COM8 COM9 LPT1 LPT2 LPT3 LPT4 LPT5 LPT6 LPT7 LPT8 LPT9; do [ -f \"$f\" ] && rm -f \"$f\" && echo \"  Removed stray Windows device file: $f\"; done 2>/dev/null || true"
+    set "_CROSS_WORKDIR="
 )
 
 REM Point cross-rs at the agent-specific Cross.toml so pre-build hooks
 REM (libudev-dev installation) are applied for each target.
 set CROSS_CONFIG=agent\Cross.toml
+
+REM Prune stopped containers from any previous failed builds so they do not
+REM consume memory in Podman Machine and cause subsequent targets to be OOM-killed.
+if defined CROSS_CONTAINER_ENGINE (
+    podman container prune -f >nul 2>&1
+)
 
 set BUILT=0
 set FAILED=0
@@ -134,6 +148,11 @@ cross build --release --target %1 -p termihub-agent
 if errorlevel 1 (
     echo   FAILED: %1
     set /a FAILED+=1
+    REM Prune stopped containers so the failed build does not leave containers that
+    REM consume Podman Machine memory and cause the next target to be OOM-killed.
+    if defined CROSS_CONTAINER_ENGINE (
+        podman container prune -f >nul 2>&1
+    )
     exit /b 0
 )
 
