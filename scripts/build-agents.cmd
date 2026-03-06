@@ -72,6 +72,30 @@ if defined CROSS_CONTAINER_ENGINE (
     set CROSS_REMOTE=1
     echo Using remote volume mode ^(CROSS_REMOTE=1^) to avoid Windows path mount issues
     echo.
+    REM CROSS_REMOTE=1 copies the workspace to a Windows temp directory, then
+    REM podman-copies it to the container.  cross-rs uses copy_dir() which
+    REM recursively follows Windows junction points (they appear as directories),
+    REM causing an infinite hang when it enters node_modules\.pnpm.
+    REM
+    REM cross-rs respects the CACHEDIR spec (bford.info/cachedir/): any directory
+    REM containing a CACHEDIR.TAG file with the required signature is skipped.
+    REM Create that marker in node_modules (and dist if present) so the copy
+    REM finishes quickly without touching junction-point-laden directories.
+    REM target\ is already tagged by cargo; no action needed there.
+    if exist node_modules (
+        echo Signature: 8a477f597d28d172789f06886806bc55>node_modules\CACHEDIR.TAG
+        echo   Marked node_modules\ as cache directory to skip junction-point traversal
+    )
+    if exist dist (
+        echo Signature: 8a477f597d28d172789f06886806bc55>dist\CACHEDIR.TAG
+        echo   Marked dist\ as cache directory ^(frontend artifacts not needed for agent build^)
+    )
+    echo.
+    REM Windows reserved device names (NUL, CON, PRN, AUX, COMn, LPTn) that
+    REM sometimes appear as real files (e.g. from Git Bash output redirections)
+    REM cannot be opened for reading by cross-rs and cause error 87.  Remove any
+    REM such files now so the workspace copy succeeds.
+    bash -c "for f in NUL CON PRN AUX COM1 COM2 COM3 COM4 COM5 COM6 COM7 COM8 COM9 LPT1 LPT2 LPT3 LPT4 LPT5 LPT6 LPT7 LPT8 LPT9; do [ -f \"$f\" ] && rm -f \"$f\" && echo \"  Removed stray Windows device file: $f\"; done 2>/dev/null || true"
 )
 
 REM Point cross-rs at the agent-specific Cross.toml so pre-build hooks
