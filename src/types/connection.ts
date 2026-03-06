@@ -1,5 +1,6 @@
 import { ConnectionConfig, RemoteAgentConfig, TerminalOptions } from "./terminal";
 import { SettingsSchema, Capabilities } from "./schema";
+import { KeybindingOverrideEntry } from "./keybindings";
 
 export interface SavedConnection {
   id: string;
@@ -127,6 +128,7 @@ export interface AppSettings {
   credentialStorageMode?: "keychain" | "master_password" | "none";
   credentialAutoLockMinutes?: number;
   rightClickBehavior?: "contextMenu" | "quickAction";
+  keybindingOverrides?: KeybindingOverrideEntry[];
 }
 
 export interface FileEntry {

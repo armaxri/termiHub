@@ -82,6 +82,7 @@ import {
 } from "@/services/tunnelApi";
 import { SystemStats } from "@/types/monitoring";
 import { applyTheme, onThemeChange } from "@/themes";
+import { setOverrides as setKeybindingOverrides } from "@/services/keybindings";
 import {
   createLeafPanel,
   findLeaf,
@@ -974,6 +975,9 @@ export const useAppStore = create<AppState>((set, get) => {
         const layoutConfig = settings.layout ?? DEFAULT_LAYOUT;
         set({ connections, folders, settings, remoteAgents, layoutConfig });
         applyTheme(settings.theme);
+        if (settings.keybindingOverrides) {
+          setKeybindingOverrides(settings.keybindingOverrides);
+        }
         // Re-render terminals when OS theme changes in system mode
         onThemeChange(() => {
           set({});
