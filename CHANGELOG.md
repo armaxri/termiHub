@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Keyboard shortcuts for terminal clipboard operations — macOS uses Cmd+C/V, Windows/Linux uses Ctrl+Shift+C/V; xterm.js key handler intercepts these before the terminal processes them, fixing the longstanding issue where Ctrl+V on Windows sent a raw control character instead of pasting (#418)
+- Select All keyboard shortcut for terminals — Cmd+A on macOS, Ctrl+Shift+A on Windows/Linux (#418)
+
+### Fixed
+
+- Keyboard shortcuts now use platform-aware modifier detection — Ctrl+B on macOS no longer toggles the sidebar (it correctly passes through to the terminal as a control character); Cmd+B is used on macOS instead (#418)
+
 ### Improved
 
 - Terminal right-click context menu now shows "Copy Selection" first when text is selected, otherwise "Paste" is the first option — previously "Copy All" appeared before "Paste" (#425)
