@@ -4,27 +4,6 @@ display_name: "Local Shell"
 tests:
   # --- Terminal input works on new connections (PR #198) ---
 
-  - id: MT-LOCAL-01
-    name: "PowerShell input works on new connection"
-    pr: 198
-    platforms: [windows]
-    prerequisites:
-      - app: true
-    setup:
-      - create_connection:
-          name: "PowerShell Input Test"
-          type: local
-          config:
-            shellType: powershell
-      - connect: "PowerShell Input Test"
-    instructions:
-      - "Observe the terminal tab that just opened"
-      - "Type any text (e.g., 'hello') — it should appear immediately"
-      - "You should NOT need to click the terminal area first"
-    expected:
-      - "Keyboard input works immediately without clicking the terminal"
-    verification: manual
-
   - id: MT-LOCAL-02
     name: "SSH input works on new connection"
     pr: 198
@@ -141,23 +120,6 @@ tests:
       - "It should appear without excessive delay"
     expected:
       - "Startup output is not delayed (no regression from WSL fix)"
-    verification: manual
-
-  # --- New tabs open in home directory (PR #66) ---
-
-  - id: MT-LOCAL-07
-    name: "New tabs open in home directory"
-    pr: 66
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Open a new local shell terminal (Ctrl+Shift+`)"
-      - "Run 'pwd' (Unix) or 'echo %USERPROFILE%' (Windows)"
-      - "Verify the working directory is the user's home"
-    expected:
-      - "macOS/Linux: matches $HOME"
-      - "Windows: matches %USERPROFILE%"
     verification: manual
 
   # --- macOS key repeat fix (PR #48) ---

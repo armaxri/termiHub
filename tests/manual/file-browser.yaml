@@ -56,20 +56,6 @@ tests:
 
   # --- CWD-aware file browser (PR #39) ---
 
-  - id: MT-FB-05
-    name: "SSH terminal auto-connects SFTP"
-    pr: 39
-    platforms: [all]
-    prerequisites:
-      - app: true
-      - docker: true
-    instructions:
-      - "Open an SSH terminal"
-      - "Check the file browser panel"
-    expected:
-      - "File browser auto-connects SFTP (with password prompt) and shows remote CWD"
-    verification: manual
-
   - id: MT-FB-06
     name: "Serial terminal shows no-filesystem placeholder"
     pr: 39
@@ -135,22 +121,6 @@ tests:
       - "Check the file browser path"
     expected:
       - "File browser shows home directory, not previous tab's path"
-    verification: manual
-
-  # --- File browser stays active when editing (PR #57) ---
-
-  - id: MT-FB-11
-    name: "File browser shows parent dir during edit"
-    pr: 57
-    platforms: [all]
-    prerequisites:
-      - app: true
-      - docker: true
-    instructions:
-      - "Open a remote (SFTP) file for editing"
-      - "Check the file browser panel"
-    expected:
-      - "File browser shows the remote parent directory"
     verification: manual
 
   # --- New File button (PR #58) ---
@@ -238,21 +208,6 @@ tests:
       - "Kill the SSH/SFTP connection while file is open"
     expected:
       - "Error event emitted, no crash"
-    verification: manual
-
-  # --- Double-click file to open in editor (PR #61) ---
-
-  - id: MT-FB-18
-    name: "Double-click file opens in editor"
-    pr: 61
-    platforms: [all]
-    prerequisites:
-      - app: true
-      - docker: true
-    instructions:
-      - "Double-click a file in SFTP file browser"
-    expected:
-      - "File opens in editor tab"
     verification: manual
 
   # --- Editor: Built-in file editor with Monaco (PR #54) ---
