@@ -10,6 +10,7 @@ import { terminalDispatcher } from "@/services/events";
 import { useTerminalRegistry } from "./TerminalRegistry";
 import { useAppStore } from "@/store/appStore";
 import { getXtermTheme } from "@/themes";
+import { isCopyShortcut, isPasteShortcut, isSelectAllShortcut } from "@/utils/keybindingHelpers";
 
 const HORIZONTAL_SCROLL_COLS = 500;
 
@@ -114,8 +115,15 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
   const lastInputTimeRef = useRef(0);
   const contentDirtyRef = useRef(false);
   const pendingCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const { register, unregister, registerSession, unregisterSession, parkingRef } =
-    useTerminalRegistry();
+  const {
+    register,
+    unregister,
+    registerSession,
+    unregisterSession,
+    copySelectionToClipboard,
+    pasteToTerminal,
+    parkingRef,
+  } = useTerminalRegistry();
 
   const setupTerminal = useCallback(
     async (xterm: XTerm, fitAddon: FitAddon, isCanceled: () => boolean) => {
@@ -289,6 +297,26 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
 
     xterm.open(el);
 
+    // Intercept clipboard shortcuts before xterm processes them
+    xterm.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+      if (e.type !== "keydown") return true;
+
+      if (isCopyShortcut(e)) {
+        copySelectionToClipboard(tabId);
+        return false;
+      }
+      if (isPasteShortcut(e)) {
+        pasteToTerminal(tabId);
+        return false;
+      }
+      if (isSelectAllShortcut(e)) {
+        xterm.selectAll();
+        return false;
+      }
+
+      return true;
+    });
+
     // Track CWD via OSC 7 escape sequences (sent by zsh/bash on macOS/Linux)
     const osc7Disposable = xterm.parser.registerOscHandler(7, (data: string) => {
       try {
@@ -353,7 +381,15 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
       xtermRef.current = null;
       fitAddonRef.current = null;
     };
-  }, [tabId, setupTerminal, register, unregister, parkingRef]);
+  }, [
+    tabId,
+    setupTerminal,
+    register,
+    unregister,
+    copySelectionToClipboard,
+    pasteToTerminal,
+    parkingRef,
+  ]);
 
   // Re-fit and focus when visibility changes
   useEffect(() => {
