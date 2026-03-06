@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useAppStore } from "@/store/appStore";
 import { getAllLeaves } from "@/utils/panelTree";
+import { isMac } from "@/utils/platform";
 
 /**
  * Global keyboard shortcuts for the application.
@@ -15,7 +16,7 @@ export function useKeyboardShortcuts() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const isMod = e.metaKey || e.ctrlKey;
+      const isMod = isMac() ? e.metaKey : e.ctrlKey;
       const allLeaves = getAllLeaves(rootPanel);
 
       // Ctrl/Cmd+B — Toggle sidebar
