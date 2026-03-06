@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   serializeCombo,
   serializeBinding,
@@ -13,6 +13,9 @@ import {
   setOverride,
   checkConflict,
   getDefaultBindings,
+  processKeyEvent,
+  cancelChord,
+  isChordPending,
   DEFAULT_BINDINGS,
 } from "./keybindings";
 import { KeyCombo } from "@/types/keybindings";
@@ -263,5 +266,68 @@ describe("getEffectiveCombo (macOS context)", () => {
 
   it("returns null for unknown action", () => {
     expect(getEffectiveCombo("nonexistent")).toBeNull();
+  });
+});
+
+describe("processKeyEvent (chord support)", () => {
+  beforeEach(() => {
+    clearOverrides();
+    cancelChord();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    cancelChord();
+    vi.useRealTimers();
+  });
+
+  it("returns single-combo action for non-chord bindings", () => {
+    const event = makeKeyEvent("b", { ctrl: true });
+    expect(processKeyEvent(event)).toBe("toggle-sidebar");
+  });
+
+  it("returns chord-pending on first key of a chord", () => {
+    // Ctrl+K is the first key of show-shortcuts chord on Win/Linux
+    const event = makeKeyEvent("k", { ctrl: true });
+    expect(processKeyEvent(event)).toBe("chord-pending");
+    expect(isChordPending()).toBe(true);
+  });
+
+  it("completes chord on second key", () => {
+    const first = makeKeyEvent("k", { ctrl: true });
+    processKeyEvent(first);
+
+    const second = makeKeyEvent("s", { ctrl: true });
+    expect(processKeyEvent(second)).toBe("show-shortcuts");
+    expect(isChordPending()).toBe(false);
+  });
+
+  it("cancels chord on wrong second key", () => {
+    const first = makeKeyEvent("k", { ctrl: true });
+    processKeyEvent(first);
+
+    // Wrong second key — should cancel chord and try single-combo match
+    const second = makeKeyEvent("b", { ctrl: true });
+    const result = processKeyEvent(second);
+    expect(result).toBe("toggle-sidebar"); // Falls through to single-combo match
+    expect(isChordPending()).toBe(false);
+  });
+
+  it("cancels chord after timeout", () => {
+    const first = makeKeyEvent("k", { ctrl: true });
+    processKeyEvent(first);
+    expect(isChordPending()).toBe(true);
+
+    vi.advanceTimersByTime(1500);
+    expect(isChordPending()).toBe(false);
+  });
+
+  it("cancelChord clears pending state", () => {
+    const first = makeKeyEvent("k", { ctrl: true });
+    processKeyEvent(first);
+    expect(isChordPending()).toBe(true);
+
+    cancelChord();
+    expect(isChordPending()).toBe(false);
   });
 });

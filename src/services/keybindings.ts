@@ -341,3 +341,81 @@ function combosEqual(a: KeyCombo, b: KeyCombo): boolean {
 export function getDefaultBindings(): KeyBinding[] {
   return DEFAULT_BINDINGS;
 }
+
+// --- Chord state machine ---
+
+const CHORD_TIMEOUT_MS = 1500;
+
+/** Pending first combo of a chord sequence, or null if not in chord mode. */
+let pendingChordCombo: KeyCombo | null = null;
+let chordTimerId: ReturnType<typeof setTimeout> | null = null;
+let chordStateCallback: ((pending: string | null) => void) | null = null;
+
+/** Register a callback that is invoked when chord pending state changes. */
+export function onChordStateChange(cb: (pending: string | null) => void): void {
+  chordStateCallback = cb;
+}
+
+/** Cancel any pending chord sequence. */
+export function cancelChord(): void {
+  if (chordTimerId !== null) {
+    clearTimeout(chordTimerId);
+    chordTimerId = null;
+  }
+  pendingChordCombo = null;
+  chordStateCallback?.(null);
+}
+
+/**
+ * Process a keyboard event through the chord-aware state machine.
+ * Returns the matched action name, or null if no match.
+ *
+ * - If no chord is pending, first checks single-combo bindings.
+ *   If the event matches the first combo of a chord binding, enters chord mode.
+ * - If a chord is pending, checks if the event completes any chord binding.
+ *   If not, cancels the chord and falls through to single-combo matching.
+ */
+export function processKeyEvent(event: KeyboardEvent): string | null {
+  // If chord pending, try to complete it
+  if (pendingChordCombo !== null) {
+    const first = pendingChordCombo;
+    cancelChord();
+
+    for (const binding of DEFAULT_BINDINGS) {
+      const combo = getEffectiveCombo(binding.action);
+      if (!combo || !Array.isArray(combo) || combo.length < 2) continue;
+
+      if (combosEqual(first, combo[0]) && eventMatchesCombo(event, combo[1])) {
+        return binding.action;
+      }
+    }
+
+    // Chord didn't complete — fall through to single-combo matching
+    return findMatchingAction(event);
+  }
+
+  // Check if event starts a chord
+  for (const binding of DEFAULT_BINDINGS) {
+    const combo = getEffectiveCombo(binding.action);
+    if (!combo || !Array.isArray(combo) || combo.length < 2) continue;
+
+    if (eventMatchesCombo(event, combo[0])) {
+      pendingChordCombo = combo[0];
+      chordStateCallback?.(serializeCombo(combo[0]));
+
+      chordTimerId = setTimeout(() => {
+        cancelChord();
+      }, CHORD_TIMEOUT_MS);
+
+      return "chord-pending";
+    }
+  }
+
+  // Regular single-combo matching
+  return findMatchingAction(event);
+}
+
+/** Check if a chord is currently pending (for testing). */
+export function isChordPending(): boolean {
+  return pendingChordCombo !== null;
+}
