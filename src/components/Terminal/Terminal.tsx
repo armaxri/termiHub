@@ -10,7 +10,7 @@ import { terminalDispatcher } from "@/services/events";
 import { useTerminalRegistry } from "./TerminalRegistry";
 import { useAppStore } from "@/store/appStore";
 import { getXtermTheme } from "@/themes";
-import { isCopyShortcut, isPasteShortcut, isSelectAllShortcut } from "@/utils/keybindingHelpers";
+import { findMatchingAction, isAppShortcut } from "@/services/keybindings";
 
 const HORIZONTAL_SCROLL_COLS = 500;
 
@@ -297,20 +297,26 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
 
     xterm.open(el);
 
-    // Intercept clipboard shortcuts before xterm processes them
+    // Intercept application shortcuts before xterm processes them
     xterm.attachCustomKeyEventHandler((e: KeyboardEvent) => {
       if (e.type !== "keydown") return true;
 
-      if (isCopyShortcut(e)) {
+      const action = findMatchingAction(e);
+      if (action === "copy") {
         copySelectionToClipboard(tabId);
         return false;
       }
-      if (isPasteShortcut(e)) {
+      if (action === "paste") {
         pasteToTerminal(tabId);
         return false;
       }
-      if (isSelectAllShortcut(e)) {
+      if (action === "select-all") {
         xterm.selectAll();
+        return false;
+      }
+
+      // Block any other app shortcut from reaching xterm
+      if (isAppShortcut(e)) {
         return false;
       }
 
