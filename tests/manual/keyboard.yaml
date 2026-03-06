@@ -1,0 +1,147 @@
+category: keyboard
+display_name: "Keyboard Shortcuts"
+
+tests:
+  # --- Clipboard shortcuts (PR #418) ---
+
+  - id: MT-KB-01
+    name: "macOS: Cmd+C copies terminal selection"
+    pr: 418
+    platforms: [macos]
+    prerequisites:
+      - app: true
+      - terminal: true
+    instructions:
+      - "Open a terminal and produce some output (e.g., run 'ls')"
+      - "Select text in the terminal by clicking and dragging"
+      - "Press Cmd+C"
+      - "Paste into a text editor to verify"
+    expected:
+      - "Selected text is copied to clipboard"
+      - "Ctrl+C still sends SIGINT (does not copy)"
+    verification: manual
+    tags: [clipboard, platform]
+
+  - id: MT-KB-02
+    name: "macOS: Cmd+V pastes into terminal"
+    pr: 418
+    platforms: [macos]
+    prerequisites:
+      - app: true
+      - terminal: true
+    instructions:
+      - "Copy some text to clipboard"
+      - "Click on a terminal to focus it"
+      - "Press Cmd+V"
+    expected:
+      - "Clipboard text is pasted into the terminal"
+    verification: manual
+    tags: [clipboard, platform]
+
+  - id: MT-KB-03
+    name: "Windows/Linux: Ctrl+Shift+C copies terminal selection"
+    pr: 418
+    platforms: [windows, linux]
+    prerequisites:
+      - app: true
+      - terminal: true
+    instructions:
+      - "Open a terminal and produce some output"
+      - "Select text in the terminal by clicking and dragging"
+      - "Press Ctrl+Shift+C"
+      - "Paste into a text editor to verify"
+    expected:
+      - "Selected text is copied to clipboard"
+      - "Ctrl+C still sends SIGINT to the terminal"
+    verification: manual
+    tags: [clipboard, platform]
+
+  - id: MT-KB-04
+    name: "Windows/Linux: Ctrl+Shift+V pastes into terminal"
+    pr: 418
+    platforms: [windows, linux]
+    prerequisites:
+      - app: true
+      - terminal: true
+    instructions:
+      - "Copy some text to clipboard"
+      - "Click on a terminal to focus it"
+      - "Press Ctrl+Shift+V"
+    expected:
+      - "Clipboard text is pasted into the terminal"
+      - "Ctrl+V sends literal ^V to terminal (not paste)"
+    verification: manual
+    tags: [clipboard, platform]
+
+  - id: MT-KB-05
+    name: "Large paste confirmation dialog"
+    pr: 418
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - terminal: true
+    instructions:
+      - "Copy more than 5000 characters to clipboard (e.g., a large file)"
+      - "Paste into a terminal using the platform paste shortcut"
+    expected:
+      - "A confirmation dialog appears showing the character count"
+      - "Clicking 'Cancel' does not paste"
+      - "Clicking 'Paste' performs the paste"
+    verification: manual
+    tags: [clipboard]
+
+  - id: MT-KB-06
+    name: "Keyboard shortcuts overlay via chord"
+    pr: 418
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Press Ctrl+K (on macOS: Cmd+K)"
+      - "Observe the status bar shows chord pending indicator"
+      - "Then press Ctrl+S (on macOS: Cmd+S) within 1.5 seconds"
+    expected:
+      - "Status bar shows '(Ctrl+K) was pressed. Waiting for second key...' after first key"
+      - "Shortcuts overlay opens after Ctrl+K Ctrl+S chord completes"
+      - "Overlay shows all shortcuts in two columns (Win/Linux and macOS)"
+      - "Search bar filters shortcuts"
+    verification: manual
+    tags: [ui, chord]
+
+  - id: MT-KB-07
+    name: "Keyboard settings panel"
+    pr: 418
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open Settings and navigate to the Keyboard category"
+      - "Click on a keybinding cell to enter recording mode"
+      - "Press a new key combination"
+      - "Verify the binding is updated"
+      - "Click Reset to restore the default"
+    expected:
+      - "Keyboard settings shows all shortcuts grouped by category"
+      - "Recording mode captures the key combination"
+      - "Conflict warning appears if the new binding conflicts with an existing one"
+      - "Reset restores the default binding"
+      - "Changes persist after restarting the app"
+    verification: manual
+    tags: [settings]
+
+  - id: MT-KB-08
+    name: "Platform-aware modifier keys"
+    pr: 418
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - terminal: true
+    instructions:
+      - "On macOS: press Cmd+B to toggle sidebar"
+      - "On Windows/Linux: press Ctrl+B to toggle sidebar"
+      - "Verify that the non-platform modifier does not trigger the shortcut"
+    expected:
+      - "macOS: Cmd+B toggles sidebar, Ctrl+B sends control character to terminal"
+      - "Windows/Linux: Ctrl+B toggles sidebar"
+    verification: manual
+    tags: [platform]
