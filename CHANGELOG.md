@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Switchable right-click terminal behavior — new "Right-Click Behavior" setting in Terminal settings lets users choose between "Context Menu" (macOS/Linux default) and "Quick Copy/Paste" (Windows default, copies selection or pastes if nothing selected); uses Tauri clipboard plugin for native clipboard access (#419)
+- "Copy All Logs" option in the LogViewer context menu — copies all filtered log entries to clipboard (#419)
+- Frontend debug logging utility (`frontendLog`) that emits messages into the LogViewer for in-app debugging (#419)
 - Right-click "Paste" option in the terminal context menu — reads clipboard text and sends it as terminal input (#416)
 - File browser CWD tracking for bash/WSL sessions — the app now injects an OSC 7 `PROMPT_COMMAND` hook when spawning bash, Git Bash, or WSL sessions, so the file browser automatically follows the terminal's working directory; zsh already emits OSC 7 natively and is unaffected (#408)
 - Right-click context menu on the terminal area with "Copy Selection" to copy only the selected text, plus "Copy All" for the entire buffer — previously only the tab context menu's "Copy to Clipboard" (entire history) was available (#407)
