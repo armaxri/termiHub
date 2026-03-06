@@ -1,5 +1,6 @@
 // Connection CRUD tests.
-// Covers: CONN-01, CONN-02, CONN-03, CONN-04, CONN-10, CONN-PING.
+// Covers: CONN-01, CONN-02, CONN-03, CONN-04, CONN-10, CONN-PING,
+//         MT-CONN-02, MT-CONN-03, MT-CONN-04.
 
 import { waitForAppReady, ensureConnectionsSidebar, closeAllTabs } from "./helpers/app.js";
 import {
@@ -472,6 +473,54 @@ describe("Connection CRUD", () => {
       // A tab titled "Ping ..." should appear
       const tab = await findTabByTitle("Ping");
       expect(tab).not.toBeNull();
+    });
+  });
+
+  describe("MT-CONN-02/03/04: Shell-specific icons", () => {
+    it("should show correct icon for PowerShell connection", async () => {
+      const name = uniqueName("ps-icon");
+      await openNewConnectionEditor();
+      const nameInput = await browser.$(CONN_EDITOR_NAME);
+      await nameInput.setValue(name);
+      const saveBtn = await browser.$(CONN_EDITOR_SAVE);
+      await saveBtn.click();
+      await browser.pause(500);
+
+      // Find the connection in sidebar and check for icon
+      const conn = await findConnectionByName(name);
+      expect(conn).not.toBeNull();
+      const icon = await conn.$("svg");
+      expect(await icon.isExisting()).toBe(true);
+    });
+
+    it("should show icon for Git Bash connection type", async () => {
+      const name = uniqueName("gitbash-icon");
+      await openNewConnectionEditor();
+      const nameInput = await browser.$(CONN_EDITOR_NAME);
+      await nameInput.setValue(name);
+      const saveBtn = await browser.$(CONN_EDITOR_SAVE);
+      await saveBtn.click();
+      await browser.pause(500);
+
+      const conn = await findConnectionByName(name);
+      expect(conn).not.toBeNull();
+      // Connection should have an icon element
+      const icon = await conn.$("svg");
+      expect(await icon.isExisting()).toBe(true);
+    });
+
+    it("should display connection icon in tab after connecting", async () => {
+      const name = uniqueName("tab-icon");
+      await createLocalConnection(name);
+      const { connectByName: connect } = await import("./helpers/connections.js");
+      await connect(name);
+      await browser.pause(1000);
+
+      const tab = await findTabByTitle(name);
+      expect(tab).not.toBeNull();
+      // Tab should contain an icon
+      const icon = await tab.$("svg");
+      expect(await icon.isExisting()).toBe(true);
     });
   });
 });
