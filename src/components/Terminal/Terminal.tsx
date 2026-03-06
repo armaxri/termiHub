@@ -10,7 +10,7 @@ import { terminalDispatcher } from "@/services/events";
 import { useTerminalRegistry } from "./TerminalRegistry";
 import { useAppStore } from "@/store/appStore";
 import { getXtermTheme } from "@/themes";
-import { findMatchingAction, isAppShortcut } from "@/services/keybindings";
+import { processKeyEvent, isAppShortcut, isChordPending } from "@/services/keybindings";
 
 const HORIZONTAL_SCROLL_COLS = 500;
 
@@ -301,7 +301,15 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
     xterm.attachCustomKeyEventHandler((e: KeyboardEvent) => {
       if (e.type !== "keydown") return true;
 
-      const action = findMatchingAction(e);
+      // If a chord is pending, block the key from xterm
+      if (isChordPending()) {
+        return false;
+      }
+
+      const action = processKeyEvent(e);
+      if (action === "chord-pending") {
+        return false;
+      }
       if (action === "copy") {
         copySelectionToClipboard(tabId);
         return false;

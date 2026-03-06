@@ -1,11 +1,11 @@
 import { useEffect } from "react";
 import { useAppStore } from "@/store/appStore";
 import { getAllLeaves } from "@/utils/panelTree";
-import { findMatchingAction } from "@/services/keybindings";
+import { processKeyEvent, onChordStateChange, cancelChord } from "@/services/keybindings";
 
 /**
  * Global keyboard shortcuts for the application.
- * Uses the KeybindingService to match events against configured bindings.
+ * Uses the KeybindingService's chord-aware processKeyEvent() for matching.
  */
 export function useKeyboardShortcuts() {
   const addTab = useAppStore((s) => s.addTab);
@@ -16,9 +16,20 @@ export function useKeyboardShortcuts() {
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
 
   useEffect(() => {
+    // Wire chord state changes to the store for StatusBar display
+    onChordStateChange((pending) => {
+      useAppStore.getState().setChordPending(pending);
+    });
+
     const handleKeyDown = (e: KeyboardEvent) => {
-      const action = findMatchingAction(e);
+      const action = processKeyEvent(e);
       if (!action) return;
+
+      // chord-pending means the first key of a chord was pressed — just block it
+      if (action === "chord-pending") {
+        e.preventDefault();
+        return;
+      }
 
       const allLeaves = getAllLeaves(rootPanel);
 
@@ -61,10 +72,18 @@ export function useKeyboardShortcuts() {
           setActiveTab(panel.tabs[prevIdx].id, panel.id);
           break;
         }
+
+        case "show-shortcuts":
+          e.preventDefault();
+          useAppStore.getState().setShortcutsOverlayOpen(true);
+          break;
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      cancelChord();
+    };
   }, [addTab, rootPanel, activePanelId, closeTab, setActiveTab, toggleSidebar]);
 }
