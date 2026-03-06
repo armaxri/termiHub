@@ -6,6 +6,7 @@ import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { LogEntry } from "@/types/terminal";
 import { getLogs, clearLogs } from "@/services/api";
 import { onLogEntry } from "@/services/events";
+import { onFrontendLog } from "@/utils/frontendLog";
 import "./LogViewer.css";
 
 const MAX_ENTRIES = 2000;
@@ -37,7 +38,7 @@ export function LogViewer({ isVisible }: LogViewerProps) {
       })
       .catch(() => {});
 
-    const unlistenPromise = onLogEntry((entry) => {
+    const addEntry = (entry: LogEntry) => {
       if (!cancelled) {
         setEntries((prev) => {
           const next = [...prev, entry];
@@ -47,11 +48,15 @@ export function LogViewer({ isVisible }: LogViewerProps) {
           return next;
         });
       }
-    });
+    };
+
+    const unlistenPromise = onLogEntry(addEntry);
+    const unsubFrontend = onFrontendLog(addEntry);
 
     return () => {
       cancelled = true;
       unlistenPromise.then((unlisten) => unlisten()).catch(() => {});
+      unsubFrontend();
     };
   }, []);
 
@@ -101,6 +106,15 @@ export function LogViewer({ isVisible }: LogViewerProps) {
   const handleCopyEntry = useCallback(async (entry: LogEntry) => {
     try {
       await navigator.clipboard.writeText(formatEntry(entry));
+    } catch {
+      // Ignore errors
+    }
+  }, []);
+
+  const handleCopyAll = useCallback(async (entriesToCopy: LogEntry[]) => {
+    try {
+      const content = entriesToCopy.map(formatEntry).join("\n");
+      await navigator.clipboard.writeText(content);
     } catch {
       // Ignore errors
     }
@@ -184,6 +198,12 @@ export function LogViewer({ isVisible }: LogViewerProps) {
                     onSelect={() => handleCopyEntry(entry)}
                   >
                     <ClipboardCopy size={14} /> Copy Entry
+                  </ContextMenu.Item>
+                  <ContextMenu.Item
+                    className="context-menu__item"
+                    onSelect={() => handleCopyAll(filteredEntries)}
+                  >
+                    <ClipboardCopy size={14} /> Copy All Logs
                   </ContextMenu.Item>
                   <ContextMenu.Separator className="context-menu__separator" />
                   <ContextMenu.Item
