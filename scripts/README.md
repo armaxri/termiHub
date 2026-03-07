@@ -2,21 +2,21 @@
 
 Helper scripts for common development tasks. Each script has a `.sh` (Unix/macOS) and `.cmd` (Windows) variant. All scripts can be run from anywhere in the repo.
 
-| Script                | What it does                                                                                                             |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `setup`               | Install all dependencies and do an initial build                                                                         |
-| `dev`                 | Start the app in development mode with hot-reload                                                                        |
-| `build`               | Build the app for production (creates platform installer); on macOS also cross-compiles agent for Linux x86_64 + aarch64 |
-| `test`                | Run all unit tests (frontend + backend + agent)                                                                          |
-| `check`               | Read-only quality checks mirroring CI (formatting, linting, clippy)                                                      |
-| `format`              | Auto-fix all formatting issues (Prettier + cargo fmt)                                                                    |
-| `clean`               | Remove all build artifacts for a fresh start                                                                             |
-| `test-system`         | Start Docker infra + virtual serial ports and run system-level E2E tests                                                 |
-| `test-system-mac`     | macOS system test orchestration: Docker containers, unit tests, Rust integration tests (no E2E)                          |
-| `test-system-linux`   | Linux system test orchestration: Docker containers, unit tests, integration tests, E2E tests                             |
-| `test-system-windows` | Windows system test orchestration via WSL/Git Bash: Docker, unit tests, integration tests, E2E                           |
-| `setup-agent-cross`   | Install cross-compilation toolchains for building the agent for 6 Linux targets                                          |
-| `build-agents`        | Cross-compile the remote agent for up to 6 Linux targets (x64/ARM64/ARMv7 × glibc/musl)                                  |
+| Script                | What it does                                                                                                               |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `setup`               | Install all dependencies and do an initial build                                                                           |
+| `dev`                 | Start the app in development mode with hot-reload                                                                          |
+| `build`               | Build the app for production (creates platform installer); on macOS also cross-compiles agent for Linux x86_64 + aarch64   |
+| `test`                | Run all unit tests (frontend + backend + agent)                                                                            |
+| `check`               | Read-only quality checks mirroring CI (formatting, linting, clippy)                                                        |
+| `format`              | Auto-fix all formatting issues (Prettier + cargo fmt)                                                                      |
+| `clean`               | Remove all build artifacts for a fresh start                                                                               |
+| `test-system`         | Start Docker infra + virtual serial ports and run system-level E2E tests                                                   |
+| `test-system-mac`     | macOS system test orchestration: Docker containers, unit tests, Rust integration tests (no E2E)                            |
+| `test-system-linux`   | Linux system test orchestration: Docker containers, unit tests, integration tests, E2E tests                               |
+| `test-system-windows` | Windows system test orchestration via WSL/Git Bash: Docker, unit tests, integration tests, E2E                             |
+| `setup-agent-cross`   | Install cross-compilation toolchains for building the agent for 2 Linux targets (musl)                                     |
+| `build-agents`        | Cross-compile the remote agent for Linux targets (x64/ARM64, static musl binaries)                                         |
 | `test-manual.py`      | Guided manual test runner — walks through manual tests from `tests/manual/*.yaml` with platform filtering and JSON reports |
 
 ## Typical workflow
@@ -49,8 +49,8 @@ Helper scripts for common development tasks. Each script has a `.sh` (Unix/macOS
 
 # Agent cross-compilation (one-time setup + build)
 ./scripts/setup-agent-cross.sh        # Install cross-compilation toolchains
-./scripts/build-agents.sh             # Build agent for all 6 Linux targets
-./scripts/build-agents.sh --targets aarch64-unknown-linux-gnu  # Build specific target
+./scripts/build-agents.sh             # Build agent for all Linux targets
+./scripts/build-agents.sh --targets aarch64-unknown-linux-musl  # Build specific target
 
 # Guided manual tests
 python scripts/test-manual.py                     # Run all manual tests for current platform

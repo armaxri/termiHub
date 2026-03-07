@@ -10,20 +10,8 @@
 # Docker image at compile time, which fails on Windows with Podman because
 # Podman Machine (WSL2) cannot access Windows-side build contexts (/mnt/c/...).
 
-[target.x86_64-unknown-linux-gnu]
-image = "localhost/termihub-cross:x86_64-unknown-linux-gnu"
-
-[target.aarch64-unknown-linux-gnu]
-image = "localhost/termihub-cross:aarch64-unknown-linux-gnu"
-
-[target.armv7-unknown-linux-gnueabihf]
-image = "localhost/termihub-cross:armv7-unknown-linux-gnueabihf"
-
 [target.x86_64-unknown-linux-musl]
 image = "localhost/termihub-cross:x86_64-unknown-linux-musl"
 
 [target.aarch64-unknown-linux-musl]
 image = "localhost/termihub-cross:aarch64-unknown-linux-musl"
-
-[target.armv7-unknown-linux-musleabihf]
-image = "localhost/termihub-cross:armv7-unknown-linux-musleabihf"

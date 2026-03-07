@@ -479,18 +479,14 @@ See [Architecture Documentation](architecture.md#level-2-agent-modules) for the 
 
 ## Agent Cross-Compilation
 
-The remote agent (`termihub-agent`) runs on Linux hosts (servers, ARM devices, NAS boxes). You can cross-compile it for 6 Linux targets from any host OS.
+The remote agent (`termihub-agent`) runs on Linux hosts (servers, ARM devices, NAS boxes). You can cross-compile it for Linux targets from any host OS. All agent binaries are statically linked with musl for maximum portability — they run on any Linux distribution with zero runtime dependencies.
 
 ### Targets
 
-| Triple                           | Arch  | libc  | Use Case                          |
-| -------------------------------- | ----- | ----- | --------------------------------- |
-| `x86_64-unknown-linux-gnu`       | x64   | glibc | Standard servers                  |
-| `aarch64-unknown-linux-gnu`      | ARM64 | glibc | ARM64 servers, Raspberry Pi 3/4/5 |
-| `armv7-unknown-linux-gnueabihf`  | ARMv7 | glibc | ARMv7 devices, older Raspberry Pi |
-| `x86_64-unknown-linux-musl`      | x64   | musl  | Static x64 binaries               |
-| `aarch64-unknown-linux-musl`     | ARM64 | musl  | Static ARM64 binaries             |
-| `armv7-unknown-linux-musleabihf` | ARMv7 | musl  | Static ARMv7 binaries             |
+| Triple                       | Arch  | libc | Use Case                                         |
+| ---------------------------- | ----- | ---- | ------------------------------------------------ |
+| `x86_64-unknown-linux-musl`  | x64   | musl | Standard servers, static portable binary         |
+| `aarch64-unknown-linux-musl` | ARM64 | musl | ARM64 servers, Raspberry Pi 3/4/5, static binary |
 
 ### Quick Start
 
@@ -499,32 +495,23 @@ The remote agent (`termihub-agent`) runs on Linux hosts (servers, ARM devices, N
 ./scripts/setup-agent-cross.sh    # Linux/macOS
 scripts\setup-agent-cross.cmd     # Windows
 
-# 2. Build all 6 targets
+# 2. Build all targets
 ./scripts/build-agents.sh         # Linux/macOS
 scripts\build-agents.cmd          # Windows
 ```
 
 ### Platform-Specific Notes
 
-**Linux (Debian/Ubuntu):**
+**All platforms:**
 
-- GNU targets use native cross-compilers (`gcc-aarch64-linux-gnu`, `gcc-arm-linux-gnueabihf`) — fast, no Docker needed
-- Musl targets use `cross-rs` (Docker-based) because musl packages don't include `libudev`
-- The setup script installs multi-arch `libudev-dev` for ARM64 and ARMv7
-
-**macOS / Windows:**
-
-- All targets use `cross-rs` (Docker-based) since no native Linux cross-compilers are available
-- Docker Desktop must be running before building
+- All targets use `cross-rs` (Docker/Podman-based) which builds inside containers with the correct musl toolchain and libudev-dev
+- Docker Desktop or Podman Desktop must be running before building
 
 ### Build Options (Unix)
 
 ```bash
-# Build specific targets only
-./scripts/build-agents.sh --targets aarch64-unknown-linux-gnu,armv7-unknown-linux-gnueabihf
-
-# Force cross-rs for all targets (skip native toolchains)
-./scripts/build-agents.sh --cross-only
+# Build specific target only
+./scripts/build-agents.sh --targets aarch64-unknown-linux-musl
 ```
 
 ### Output
@@ -535,7 +522,7 @@ Binaries are placed in:
 agent/target/<triple>/release/termihub-agent
 ```
 
-For example: `agent/target/aarch64-unknown-linux-gnu/release/termihub-agent`
+For example: `agent/target/aarch64-unknown-linux-musl/release/termihub-agent`
 
 ### Deploying the Remote Agent
 
