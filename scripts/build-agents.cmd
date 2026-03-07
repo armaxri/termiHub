@@ -101,8 +101,11 @@ if defined CROSS_CONTAINER_ENGINE (
     REM forward-slash path so bash can cd there explicitly.  Git Bash accepts
     REM "C:/path" style; WSL bash will fail the cd gracefully and skip deletion
     REM (correct — WSL does not see the Windows NUL file).
+    REM Redirect stderr of the entire bash invocation to nul so WSL relay
+    REM diagnostic messages (e.g. "chdir failed") are not shown to the user;
+    REM the echo statements inside the script go to stdout and remain visible.
     set "_CROSS_WORKDIR=%CD:\=/%"
-    bash -c "cd \"$_CROSS_WORKDIR\" 2>/dev/null; for f in NUL CON PRN AUX COM1 COM2 COM3 COM4 COM5 COM6 COM7 COM8 COM9 LPT1 LPT2 LPT3 LPT4 LPT5 LPT6 LPT7 LPT8 LPT9; do [ -f \"$f\" ] && rm -f \"$f\" && echo \"  Removed stray Windows device file: $f\"; done 2>/dev/null || true"
+    bash -c "cd \"$_CROSS_WORKDIR\" 2>/dev/null; for f in NUL CON PRN AUX COM1 COM2 COM3 COM4 COM5 COM6 COM7 COM8 COM9 LPT1 LPT2 LPT3 LPT4 LPT5 LPT6 LPT7 LPT8 LPT9; do [ -f \"$f\" ] && rm -f \"$f\" && echo \"  Removed stray Windows device file: $f\"; done 2>/dev/null || true" 2>nul
     set "_CROSS_WORKDIR="
 )
 
