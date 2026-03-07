@@ -37,14 +37,10 @@
 /* The scrollable element defaults to position: relative and only covers the
    canvas area (rows × cellHeight).  Due to Math.floor rounding in FitAddon
    there is almost always a small gap at the bottom of the .xterm container.
-   Wheel events in that gap would miss the scrollable element entirely and
-   the terminal could not be scrolled from there.  Stretching it to fill the
-   full .xterm area ensures wheel events are captured everywhere.
-   !important is needed to override the inline style set by xterm.js. */
-.terminal-container .xterm-scrollable-element {
-  position: absolute !important;
-  inset: 0;
-}
+   Wheel events in that gap are forwarded to xterm programmatically in
+   Terminal.tsx.  Do NOT stretch this element to fill the container — that
+   would make xterm miscalculate the visible row count and prevent scrolling
+   to the newest output line. */
 
 /* Horizontal scrolling: the outer wrapper scrolls, .xterm is made wider via JS.
    Use 'scroll' (not 'auto') so the scrollbar is always present and never

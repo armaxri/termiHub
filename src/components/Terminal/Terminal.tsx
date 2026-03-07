@@ -365,6 +365,23 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
     // Wire to backend
     setupTerminal(xterm, fitAddon, () => canceled);
 
+    // Forward wheel events from the gap below the canvas to xterm.
+    // FitAddon rounds rows down, so there is almost always a small gap
+    // between the canvas bottom and the container edge.  The scrollable
+    // element only covers the canvas area, so wheel events in the gap
+    // would be lost.  We catch them on the container and scroll xterm.
+    const handleGapWheel = (e: WheelEvent) => {
+      const scrollable = el.querySelector(".xterm-scrollable-element");
+      if (scrollable && !scrollable.contains(e.target as Node)) {
+        const lines = Math.round(e.deltaY / 25);
+        if (lines !== 0) {
+          xterm.scrollLines(lines);
+          e.preventDefault();
+        }
+      }
+    };
+    el.addEventListener("wheel", handleGapWheel, { passive: false });
+
     // ResizeObserver follows the element even when reparented
     const resizeObserver = new ResizeObserver(() => {
       try {
@@ -388,6 +405,7 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
     return () => {
       canceled = true;
       resizeObserver.disconnect();
+      el.removeEventListener("wheel", handleGapWheel);
       osc7Disposable.dispose();
       unregister(tabId);
       if (cleanupRef.current) {

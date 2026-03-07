@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Paste (Cmd+V) inserting text twice on macOS — the native browser paste event was reaching xterm.js in addition to the custom paste handler, causing doubled input (#444)
+- Terminal not scrolling to the newest output line — stretching the scrollable element to fill the container made xterm miscalculate visible rows; replaced with programmatic wheel event forwarding for the bottom gap (#429)
 
 ### Changed
 
