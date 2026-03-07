@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useAppStore } from "@/store/appStore";
-import { getAllLeaves } from "@/utils/panelTree";
+import { getAllLeaves, findAdjacentLeaf, FocusDirection } from "@/utils/panelTree";
 import { processKeyEvent, onChordStateChange, cancelChord } from "@/services/keybindings";
 
 /**
@@ -112,6 +112,28 @@ export function useKeyboardShortcuts() {
           e.preventDefault();
           useAppStore.getState().zoomReset();
           break;
+
+        case "focus-up":
+        case "focus-down":
+        case "focus-left":
+        case "focus-right": {
+          e.preventDefault();
+          const dir = action.replace("focus-", "") as FocusDirection;
+          const currentPanel = allLeaves.find((p) => p.id === activePanelId);
+          if (!currentPanel) break;
+          const target = findAdjacentLeaf(rootPanel, currentPanel.id, dir);
+          if (target) {
+            useAppStore.getState().setActivePanel(target.id);
+            if (target.activeTabId) {
+              window.dispatchEvent(
+                new CustomEvent("termihub:focus-terminal", {
+                  detail: { tabId: target.activeTabId },
+                })
+              );
+            }
+          }
+          break;
+        }
       }
     };
 
