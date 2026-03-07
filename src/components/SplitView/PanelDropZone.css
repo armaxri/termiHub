@@ -9,14 +9,9 @@
 .panel-drop-zone__center {
   position: absolute;
   pointer-events: auto;
-  border: 2px dashed transparent;
-  border-radius: var(--radius-sm);
-  transition:
-    background-color 150ms ease,
-    border-color 150ms ease;
 }
 
-/* Edge zones — 20% strips from each side */
+/* Edge zones — invisible hit areas (20% strips from each side) */
 .panel-drop-zone__edge--left {
   top: 0;
   left: 0;
@@ -45,7 +40,7 @@
   height: 20%;
 }
 
-/* Center zone — the remaining middle area */
+/* Center zone — invisible hit area (remaining middle) */
 .panel-drop-zone__center {
   top: 20%;
   left: 20%;
@@ -53,14 +48,62 @@
   bottom: 20%;
 }
 
-/* Highlight when hovering over an edge zone */
-.panel-drop-zone__edge--active {
+/* ── Preview overlay ─────────────────────────────────────────────────── */
+/* Shows the full resulting area, like VS Code's split preview.         */
+
+.panel-drop-zone__preview {
+  position: absolute;
+  pointer-events: none;
   background-color: rgba(38, 132, 255, 0.15);
-  border-color: rgba(38, 132, 255, 0.5);
+  border: 2px solid rgba(38, 132, 255, 0.5);
+  border-radius: var(--radius-sm);
+  transition:
+    top 150ms ease,
+    left 150ms ease,
+    right 150ms ease,
+    bottom 150ms ease,
+    width 150ms ease,
+    height 150ms ease;
 }
 
-/* Highlight when hovering over center zone */
-.panel-drop-zone__center--active {
+/* Left split — highlight left 50% */
+.panel-drop-zone__preview--left {
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 50%;
+}
+
+/* Right split — highlight right 50% */
+.panel-drop-zone__preview--right {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 50%;
+}
+
+/* Top split — highlight top 50% */
+.panel-drop-zone__preview--top {
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 50%;
+}
+
+/* Bottom split — highlight bottom 50% */
+.panel-drop-zone__preview--bottom {
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 50%;
+}
+
+/* Center (tab move) — highlight entire panel */
+.panel-drop-zone__preview--center {
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
   background-color: rgba(38, 132, 255, 0.08);
   border-color: rgba(38, 132, 255, 0.3);
 }
