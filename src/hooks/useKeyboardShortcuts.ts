@@ -97,6 +97,21 @@ export function useKeyboardShortcuts() {
           e.preventDefault();
           useAppStore.getState().splitPanel("horizontal");
           break;
+
+        case "zoom-in":
+          e.preventDefault();
+          useAppStore.getState().zoomIn();
+          break;
+
+        case "zoom-out":
+          e.preventDefault();
+          useAppStore.getState().zoomOut();
+          break;
+
+        case "zoom-reset":
+          e.preventDefault();
+          useAppStore.getState().zoomReset();
+          break;
       }
     };
 

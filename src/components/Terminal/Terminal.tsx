@@ -277,10 +277,12 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
 
     const appSettings = useAppStore.getState().settings;
     const tabOpts = useAppStore.getState().tabTerminalOptions[tabId];
+    const currentZoomDelta = useAppStore.getState().zoomDelta;
+    const baseFontSize = tabOpts?.fontSize ?? appSettings.fontSize ?? DEFAULT_FONT_SIZE;
     const xterm = new XTerm({
       theme: getXtermTheme(),
       fontFamily: tabOpts?.fontFamily || appSettings.fontFamily || DEFAULT_FONT_FAMILY,
-      fontSize: tabOpts?.fontSize ?? appSettings.fontSize ?? DEFAULT_FONT_SIZE,
+      fontSize: baseFontSize + currentZoomDelta,
       lineHeight: 1.2,
       scrollback: tabOpts?.scrollbackBuffer ?? appSettings.scrollbackBuffer ?? DEFAULT_SCROLLBACK,
       cursorBlink: tabOpts?.cursorBlink ?? appSettings.cursorBlink ?? DEFAULT_CURSOR_BLINK,
@@ -481,6 +483,7 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
   const cursorStyle = useAppStore((s) => s.settings.cursorStyle);
   const scrollbackBuffer = useAppStore((s) => s.settings.scrollbackBuffer);
   const tabTermOpts = useAppStore((s) => s.tabTerminalOptions[tabId]);
+  const zoomDelta = useAppStore((s) => s.zoomDelta);
 
   useEffect(() => {
     const xterm = xtermRef.current;
@@ -489,7 +492,7 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
 
     xterm.options.theme = getXtermTheme();
     xterm.options.fontFamily = tabTermOpts?.fontFamily || fontFamily || DEFAULT_FONT_FAMILY;
-    xterm.options.fontSize = tabTermOpts?.fontSize ?? fontSize ?? DEFAULT_FONT_SIZE;
+    xterm.options.fontSize = (tabTermOpts?.fontSize ?? fontSize ?? DEFAULT_FONT_SIZE) + zoomDelta;
     xterm.options.cursorBlink = tabTermOpts?.cursorBlink ?? cursorBlink ?? DEFAULT_CURSOR_BLINK;
     xterm.options.cursorStyle = tabTermOpts?.cursorStyle ?? cursorStyle ?? DEFAULT_CURSOR_STYLE;
     xterm.options.scrollback =
@@ -505,7 +508,17 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
         // Ignore fit errors
       }
     }
-  }, [theme, fontFamily, fontSize, cursorBlink, cursorStyle, scrollbackBuffer, tabTermOpts, tabId]);
+  }, [
+    theme,
+    fontFamily,
+    fontSize,
+    cursorBlink,
+    cursorStyle,
+    scrollbackBuffer,
+    tabTermOpts,
+    tabId,
+    zoomDelta,
+  ]);
 
   // Terminal renders nothing — TerminalSlot handles display
   return null;
