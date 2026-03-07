@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useAppStore } from "@/store/appStore";
-import { getAllLeaves } from "@/utils/panelTree";
+import { getAllLeaves, findAdjacentLeaf, FocusDirection } from "@/utils/panelTree";
 import { processKeyEvent, onChordStateChange, cancelChord } from "@/services/keybindings";
 
 /**
@@ -77,6 +77,73 @@ export function useKeyboardShortcuts() {
           e.preventDefault();
           useAppStore.getState().setShortcutsOverlayOpen(true);
           break;
+
+        case "open-settings":
+          e.preventDefault();
+          useAppStore.getState().openSettingsTab();
+          break;
+
+        case "clear-terminal": {
+          e.preventDefault();
+          const panel = allLeaves.find((p) => p.id === activePanelId);
+          const tabId = panel?.activeTabId;
+          if (tabId) {
+            window.dispatchEvent(new CustomEvent("termihub:clear-terminal", { detail: { tabId } }));
+          }
+          break;
+        }
+
+        case "split-right":
+          e.preventDefault();
+          useAppStore.getState().splitPanel("horizontal");
+          break;
+
+        case "zoom-in":
+          e.preventDefault();
+          useAppStore.getState().zoomIn();
+          break;
+
+        case "zoom-out":
+          e.preventDefault();
+          useAppStore.getState().zoomOut();
+          break;
+
+        case "zoom-reset":
+          e.preventDefault();
+          useAppStore.getState().zoomReset();
+          break;
+
+        case "focus-up":
+        case "focus-down":
+        case "focus-left":
+        case "focus-right": {
+          e.preventDefault();
+          const dir = action.replace("focus-", "") as FocusDirection;
+          const currentPanel = allLeaves.find((p) => p.id === activePanelId);
+          if (!currentPanel) break;
+          const target = findAdjacentLeaf(rootPanel, currentPanel.id, dir);
+          if (target) {
+            useAppStore.getState().setActivePanel(target.id);
+            if (target.activeTabId) {
+              window.dispatchEvent(
+                new CustomEvent("termihub:focus-terminal", {
+                  detail: { tabId: target.activeTabId },
+                })
+              );
+            }
+          }
+          break;
+        }
+
+        case "find-in-terminal": {
+          e.preventDefault();
+          const panel = allLeaves.find((p) => p.id === activePanelId);
+          const activeTab = panel?.tabs.find((t) => t.id === panel.activeTabId);
+          if (activeTab?.contentType === "terminal") {
+            useAppStore.getState().toggleTerminalSearch(activeTab.id);
+          }
+          break;
+        }
       }
     };
 

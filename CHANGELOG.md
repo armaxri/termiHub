@@ -10,8 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Agent cross-compilation reduced from 6 targets (3 glibc + 3 musl) to 2 static musl-only targets (`x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`) — agent binaries are now fully portable with zero runtime dependencies; removed armv7 and all glibc targets from build scripts, CI, and release workflows
+- Focus Next/Previous Panel shortcuts replaced with directional panel navigation — Cmd/Ctrl+Alt+Arrow keys now navigate up/down/left/right between split panels (#445)
+- Clear Terminal macOS shortcut changed from Cmd+K to Cmd+Shift+K to avoid conflict with the Keyboard Shortcuts chord (Cmd+K Cmd+S) (#445)
 
 ### Added
+
+- Open Settings (Cmd/Ctrl+,), Clear Terminal (Cmd/Ctrl+Shift+K), and Split Right (Cmd/Ctrl+\\) keyboard shortcuts now work (#445)
+- Zoom In (Cmd/Ctrl+=), Zoom Out (Cmd/Ctrl+-), and Reset Zoom (Cmd/Ctrl+0) keyboard shortcuts — zoom level applies across all terminal instances as a runtime offset to the configured font size (#445)
+- Find in Terminal (Cmd+F on macOS, Ctrl+Shift+F on Win/Linux) — inline search bar with case-sensitive and regex toggle, previous/next navigation, powered by @xterm/addon-search (#445)
 
 - Comprehensive keyboard shortcut system with platform-aware defaults — macOS uses Cmd-based shortcuts, Windows/Linux uses Ctrl-based shortcuts; all shortcuts are centralized in a KeybindingService with 18 default bindings across 4 categories (General, Clipboard, Terminal, Navigation) (#418)
 - Keyboard shortcuts for terminal clipboard operations — macOS uses Cmd+C/V, Windows/Linux uses Ctrl+Shift+C/V; xterm.js key handler intercepts these before the terminal processes them, fixing the longstanding issue where Ctrl+V on Windows sent a raw control character instead of pasting (#418)
