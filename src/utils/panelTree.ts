@@ -1,4 +1,6 @@
-import { LeafPanel, PanelNode, DropEdge } from "@/types/terminal";
+import { LeafPanel, PanelNode, SplitContainer, DropEdge } from "@/types/terminal";
+
+export type FocusDirection = "up" | "down" | "left" | "right";
 
 let panelCounter = 0;
 
@@ -163,4 +165,67 @@ export function edgeToSplit(
     case "center":
       return null;
   }
+}
+
+/**
+ * Build the path from root to a leaf, returning the list of ancestor nodes
+ * and the child index at each level.
+ */
+function buildPath(
+  root: PanelNode,
+  leafId: string
+): { node: SplitContainer; childIndex: number }[] | null {
+  if (root.type === "leaf") {
+    return root.id === leafId ? [] : null;
+  }
+  for (let i = 0; i < root.children.length; i++) {
+    const sub = buildPath(root.children[i], leafId);
+    if (sub !== null) {
+      return [{ node: root, childIndex: i }, ...sub];
+    }
+  }
+  return null;
+}
+
+/** Get the first leaf by walking into the first/last child recursively. */
+function edgeLeaf(node: PanelNode, side: "first" | "last"): LeafPanel {
+  if (node.type === "leaf") return node;
+  const idx = side === "first" ? 0 : node.children.length - 1;
+  return edgeLeaf(node.children[idx], side);
+}
+
+/**
+ * Find the adjacent leaf panel in the given direction.
+ * Returns null if there is no panel in that direction.
+ *
+ * - left/right navigate across horizontal splits
+ * - up/down navigate across vertical splits
+ */
+export function findAdjacentLeaf(
+  root: PanelNode,
+  currentLeafId: string,
+  direction: FocusDirection
+): LeafPanel | null {
+  const path = buildPath(root, currentLeafId);
+  if (!path) return null;
+
+  // Determine which split axis and which direction along it
+  const axis: "horizontal" | "vertical" =
+    direction === "left" || direction === "right" ? "horizontal" : "vertical";
+  const delta = direction === "right" || direction === "down" ? 1 : -1;
+
+  // Walk up the path to find the nearest ancestor split matching the axis
+  for (let i = path.length - 1; i >= 0; i--) {
+    const { node: split, childIndex } = path[i];
+    if (split.direction !== axis) continue;
+
+    const siblingIndex = childIndex + delta;
+    if (siblingIndex < 0 || siblingIndex >= split.children.length) continue;
+
+    // Walk into the sibling subtree to the nearest edge
+    const entrySide = delta > 0 ? "first" : "last";
+    return edgeLeaf(split.children[siblingIndex], entrySide);
+  }
+
+  return null;
 }

@@ -10,6 +10,7 @@ import {
   splitLeaf,
   simplifyTree,
   edgeToSplit,
+  findAdjacentLeaf,
 } from "./panelTree";
 
 /** Create a minimal tab for testing. */
@@ -239,5 +240,101 @@ describe("edgeToSplit", () => {
 
   it("returns null for center", () => {
     expect(edgeToSplit("center")).toBeNull();
+  });
+});
+
+describe("findAdjacentLeaf", () => {
+  it("returns null for a single leaf", () => {
+    const leaf = makeLeaf("leaf-1");
+    expect(findAdjacentLeaf(leaf, "leaf-1", "left")).toBeNull();
+    expect(findAdjacentLeaf(leaf, "leaf-1", "right")).toBeNull();
+    expect(findAdjacentLeaf(leaf, "leaf-1", "up")).toBeNull();
+    expect(findAdjacentLeaf(leaf, "leaf-1", "down")).toBeNull();
+  });
+
+  it("navigates left/right in a horizontal split", () => {
+    const leaf1 = makeLeaf("leaf-1");
+    const leaf2 = makeLeaf("leaf-2");
+    const root = makeSplit("s", "horizontal", [leaf1, leaf2]);
+
+    expect(findAdjacentLeaf(root, "leaf-1", "right")).toBe(leaf2);
+    expect(findAdjacentLeaf(root, "leaf-2", "left")).toBe(leaf1);
+  });
+
+  it("returns null for left/right at the edge of a horizontal split", () => {
+    const leaf1 = makeLeaf("leaf-1");
+    const leaf2 = makeLeaf("leaf-2");
+    const root = makeSplit("s", "horizontal", [leaf1, leaf2]);
+
+    expect(findAdjacentLeaf(root, "leaf-1", "left")).toBeNull();
+    expect(findAdjacentLeaf(root, "leaf-2", "right")).toBeNull();
+  });
+
+  it("navigates up/down in a vertical split", () => {
+    const leaf1 = makeLeaf("leaf-1");
+    const leaf2 = makeLeaf("leaf-2");
+    const root = makeSplit("s", "vertical", [leaf1, leaf2]);
+
+    expect(findAdjacentLeaf(root, "leaf-1", "down")).toBe(leaf2);
+    expect(findAdjacentLeaf(root, "leaf-2", "up")).toBe(leaf1);
+  });
+
+  it("returns null for up/down in a horizontal split", () => {
+    const leaf1 = makeLeaf("leaf-1");
+    const leaf2 = makeLeaf("leaf-2");
+    const root = makeSplit("s", "horizontal", [leaf1, leaf2]);
+
+    expect(findAdjacentLeaf(root, "leaf-1", "up")).toBeNull();
+    expect(findAdjacentLeaf(root, "leaf-1", "down")).toBeNull();
+  });
+
+  it("navigates across nested splits", () => {
+    // Layout:
+    //   horizontal split
+    //     leaf-1
+    //     vertical split
+    //       leaf-2
+    //       leaf-3
+    const leaf1 = makeLeaf("leaf-1");
+    const leaf2 = makeLeaf("leaf-2");
+    const leaf3 = makeLeaf("leaf-3");
+    const innerVertical = makeSplit("v", "vertical", [leaf2, leaf3]);
+    const root = makeSplit("h", "horizontal", [leaf1, innerVertical]);
+
+    // leaf-1 → right enters the vertical split at its first child (leaf-2)
+    expect(findAdjacentLeaf(root, "leaf-1", "right")).toBe(leaf2);
+
+    // leaf-2 → left exits the vertical split to leaf-1
+    expect(findAdjacentLeaf(root, "leaf-2", "left")).toBe(leaf1);
+
+    // leaf-3 → left also exits the vertical split to leaf-1
+    expect(findAdjacentLeaf(root, "leaf-3", "left")).toBe(leaf1);
+
+    // leaf-2 → down goes to leaf-3 within the vertical split
+    expect(findAdjacentLeaf(root, "leaf-2", "down")).toBe(leaf3);
+
+    // leaf-3 → up goes to leaf-2
+    expect(findAdjacentLeaf(root, "leaf-3", "up")).toBe(leaf2);
+
+    // leaf-1 has no neighbor up/down
+    expect(findAdjacentLeaf(root, "leaf-1", "up")).toBeNull();
+    expect(findAdjacentLeaf(root, "leaf-1", "down")).toBeNull();
+  });
+
+  it("enters subtree at correct edge", () => {
+    // Layout:
+    //   horizontal split
+    //     vertical split
+    //       leaf-1
+    //       leaf-2
+    //     leaf-3
+    const leaf1 = makeLeaf("leaf-1");
+    const leaf2 = makeLeaf("leaf-2");
+    const leaf3 = makeLeaf("leaf-3");
+    const innerVertical = makeSplit("v", "vertical", [leaf1, leaf2]);
+    const root = makeSplit("h", "horizontal", [innerVertical, leaf3]);
+
+    // leaf-3 → left enters the vertical split, should pick last child (leaf-2)
+    expect(findAdjacentLeaf(root, "leaf-3", "left")).toBe(leaf2);
   });
 });

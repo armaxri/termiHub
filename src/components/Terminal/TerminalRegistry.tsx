@@ -1,5 +1,6 @@
 import { createContext, useContext, useRef, useCallback, useMemo, ReactNode } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
+import { SearchAddon, type ISearchOptions } from "@xterm/addon-search";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { readText as readClipboard } from "@tauri-apps/plugin-clipboard-manager";
@@ -36,6 +37,14 @@ interface TerminalRegistryContextType {
   unregisterSession: (tabId: string) => void;
   /** Paste clipboard text into a terminal by sending it as input. */
   pasteToTerminal: (tabId: string) => Promise<void>;
+  /** Register a search addon for a terminal tab. */
+  registerSearchAddon: (tabId: string, addon: SearchAddon) => void;
+  /** Search forward in the terminal. */
+  findNext: (tabId: string, query: string, options?: ISearchOptions) => boolean;
+  /** Search backward in the terminal. */
+  findPrevious: (tabId: string, query: string, options?: ISearchOptions) => boolean;
+  /** Clear search decorations in the terminal. */
+  clearSearchDecorations: (tabId: string) => void;
   /** Ref to the off-screen parking div for orphaned terminal elements. */
   parkingRef: React.RefObject<HTMLDivElement | null>;
 }
@@ -57,6 +66,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
   const registryRef = useRef(new Map<string, HTMLDivElement>());
   const xtermRegistryRef = useRef(new Map<string, XTerm>());
   const sessionRegistryRef = useRef(new Map<string, SessionId>());
+  const searchAddonRegistryRef = useRef(new Map<string, SearchAddon>());
   const parkingRef = useRef<HTMLDivElement | null>(null);
 
   const register = useCallback((tabId: string, element: HTMLDivElement, xterm: XTerm) => {
@@ -68,6 +78,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     registryRef.current.delete(tabId);
     xtermRegistryRef.current.delete(tabId);
     sessionRegistryRef.current.delete(tabId);
+    searchAddonRegistryRef.current.delete(tabId);
   }, []);
 
   const getElement = useCallback((tabId: string) => {
@@ -187,6 +198,33 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const registerSearchAddon = useCallback((tabId: string, addon: SearchAddon) => {
+    searchAddonRegistryRef.current.set(tabId, addon);
+  }, []);
+
+  const findNext = useCallback(
+    (tabId: string, query: string, options?: ISearchOptions): boolean => {
+      const addon = searchAddonRegistryRef.current.get(tabId);
+      if (!addon || !query) return false;
+      return addon.findNext(query, options);
+    },
+    []
+  );
+
+  const findPrevious = useCallback(
+    (tabId: string, query: string, options?: ISearchOptions): boolean => {
+      const addon = searchAddonRegistryRef.current.get(tabId);
+      if (!addon || !query) return false;
+      return addon.findPrevious(query, options);
+    },
+    []
+  );
+
+  const clearSearchDecorations = useCallback((tabId: string) => {
+    const addon = searchAddonRegistryRef.current.get(tabId);
+    if (addon) addon.clearDecorations();
+  }, []);
+
   const ctx = useMemo(
     () => ({
       register,
@@ -202,6 +240,10 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       registerSession,
       unregisterSession,
       pasteToTerminal,
+      registerSearchAddon,
+      findNext,
+      findPrevious,
+      clearSearchDecorations,
       parkingRef,
     }),
     [
@@ -218,6 +260,10 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       registerSession,
       unregisterSession,
       pasteToTerminal,
+      registerSearchAddon,
+      findNext,
+      findPrevious,
+      clearSearchDecorations,
     ]
   );
 
