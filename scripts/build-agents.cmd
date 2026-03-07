@@ -1,6 +1,6 @@
 @echo off
-REM Cross-compile the remote agent (termihub-agent) for 6 Linux targets.
-REM Uses cross-rs exclusively (no native Linux toolchains on Windows).
+REM Cross-compile the remote agent (termihub-agent) for Linux targets (musl, static).
+REM Uses cross-rs exclusively.
 REM
 REM Usage: scripts\build-agents.cmd [--help]
 REM
@@ -14,15 +14,11 @@ goto :start
 :usage
 echo Usage: build-agents.cmd
 echo.
-echo Cross-compile the remote agent for 6 Linux targets using cross-rs.
+echo Cross-compile the remote agent for Linux targets using cross-rs (static musl binaries).
 echo.
 echo Targets:
-echo   x86_64-unknown-linux-gnu        Standard x64 servers (glibc)
-echo   aarch64-unknown-linux-gnu       Raspberry Pi 3/4/5, ARM servers (glibc)
-echo   armv7-unknown-linux-gnueabihf   Raspberry Pi 2, older ARM (glibc)
 echo   x86_64-unknown-linux-musl       Static x64 binaries (musl)
 echo   aarch64-unknown-linux-musl      Static ARM64 binaries (musl)
-echo   armv7-unknown-linux-musleabihf  Static ARMv7 binaries (musl)
 echo.
 echo Prerequisites:
 echo   - Rust toolchain (rustup)
@@ -33,7 +29,7 @@ exit /b 0
 :start
 cd /d "%~dp0\.."
 
-echo === Building agent for 6 Linux targets ===
+echo === Building agent for 2 Linux targets ===
 echo.
 
 REM Verify cross-rs
@@ -123,12 +119,8 @@ set BUILT=0
 set FAILED=0
 
 for %%T in (
-    x86_64-unknown-linux-gnu
-    aarch64-unknown-linux-gnu
-    armv7-unknown-linux-gnueabihf
     x86_64-unknown-linux-musl
     aarch64-unknown-linux-musl
-    armv7-unknown-linux-musleabihf
 ) do (
     call :build_target %%T
 )
