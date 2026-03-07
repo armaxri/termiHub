@@ -77,6 +77,26 @@ export function useKeyboardShortcuts() {
           e.preventDefault();
           useAppStore.getState().setShortcutsOverlayOpen(true);
           break;
+
+        case "open-settings":
+          e.preventDefault();
+          useAppStore.getState().openSettingsTab();
+          break;
+
+        case "clear-terminal": {
+          e.preventDefault();
+          const panel = allLeaves.find((p) => p.id === activePanelId);
+          const tabId = panel?.activeTabId;
+          if (tabId) {
+            window.dispatchEvent(new CustomEvent("termihub:clear-terminal", { detail: { tabId } }));
+          }
+          break;
+        }
+
+        case "split-right":
+          e.preventDefault();
+          useAppStore.getState().splitPanel("horizontal");
+          break;
       }
     };
 

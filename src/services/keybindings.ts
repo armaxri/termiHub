@@ -77,7 +77,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     action: "clear-terminal",
     label: "Clear Terminal",
     category: "terminal",
-    macDefault: { key: "k", meta: true },
+    macDefault: { key: "K", meta: true, shift: true },
     winLinuxDefault: { key: "K", ctrl: true, shift: true },
     configurable: true,
   },

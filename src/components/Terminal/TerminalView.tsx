@@ -5,6 +5,7 @@ import { useAppStore } from "@/store/appStore";
 import { TerminalTab } from "@/types/terminal";
 import { getAllLeaves } from "@/utils/panelTree";
 import { TerminalPortalProvider } from "./TerminalRegistry";
+import { TerminalCommandBridge } from "./TerminalCommandBridge";
 import { Terminal } from "./Terminal";
 import { SplitView } from "@/components/SplitView";
 import { terminalDispatcher } from "@/services/events";
@@ -89,6 +90,7 @@ export function TerminalView() {
 
   return (
     <TerminalPortalProvider>
+      <TerminalCommandBridge />
       <div className="terminal-view">
         <div className="terminal-view__toolbar">
           <div className="terminal-view__toolbar-actions">
