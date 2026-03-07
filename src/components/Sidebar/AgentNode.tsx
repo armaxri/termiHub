@@ -7,6 +7,8 @@
  */
 
 import { useState, useCallback, useMemo } from "react";
+import { useSortable } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import {
   ChevronDown,
@@ -324,6 +326,25 @@ interface AgentNodeProps {
 }
 
 export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef: setSortableRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
+    id: agent.id,
+    data: { type: "agent" },
+  });
+
+  const sortableStyle: React.CSSProperties = {
+    ...style,
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
   const toggleRemoteAgent = useAppStore((s) => s.toggleRemoteAgent);
   const connectRemoteAgent = useAppStore((s) => s.connectRemoteAgent);
   const disconnectRemoteAgent = useAppStore((s) => s.disconnectRemoteAgent);
@@ -494,16 +515,24 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
   const hasContent =
     agentSessions.length > 0 || agentDefinitions.length > 0 || agentFolders.length > 0;
 
+  const combinedRef = useCallback(
+    (el: HTMLDivElement | null) => {
+      setSortableRef(el);
+      sectionRef?.(el);
+    },
+    [setSortableRef, sectionRef]
+  );
+
   return (
     <div
-      ref={sectionRef}
+      ref={combinedRef}
       className={`connection-list__group${agent.isExpanded ? " connection-list__group--expanded" : ""}`}
-      style={style}
+      style={sortableStyle}
       data-testid={`agent-node-${agent.id}`}
     >
       <ContextMenu.Root>
         <ContextMenu.Trigger asChild>
-          <div className="connection-list__group-header">
+          <div className="connection-list__group-header" {...attributes} {...listeners}>
             <button
               className="connection-list__group-toggle"
               onClick={() => toggleRemoteAgent(agent.id)}

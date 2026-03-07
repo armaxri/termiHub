@@ -33,10 +33,10 @@ pub fn rename(old_path: &str, new_path: &str) -> Result<(), TerminalError> {
 
 /// Return the current user's home directory.
 pub fn home_dir() -> Result<String, TerminalError> {
-    use termihub_core::files::utils::normalize_path_separators;
+    use termihub_core::files::utils::normalize_platform_path;
     std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
-        .map(|p| normalize_path_separators(&p))
+        .map(|p| normalize_platform_path(&p))
         .map_err(|e| TerminalError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, e)))
 }
 

@@ -22,7 +22,7 @@ import {
   SHELL_SELECT,
   STARTING_DIRECTORY,
   TOOLBAR_NEW_TERMINAL,
-  TOOLBAR_SPLIT,
+  TOOLBAR_SPLIT_HORIZONTAL,
   FILE_BROWSER_CURRENT_PATH,
 } from "./helpers/selectors.js";
 
@@ -220,7 +220,7 @@ describe("Local Shell — Extended", () => {
       await browser.pause(800);
 
       // Split the view
-      const splitBtn = await browser.$(TOOLBAR_SPLIT);
+      const splitBtn = await browser.$(TOOLBAR_SPLIT_HORIZONTAL);
       await splitBtn.waitForDisplayed({ timeout: 3000 });
       await splitBtn.click();
       await browser.pause(500);

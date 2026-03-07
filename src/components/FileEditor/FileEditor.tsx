@@ -259,7 +259,7 @@ export function FileEditor({ tabId, meta, isVisible }: FileEditorProps) {
       <div className="file-editor__toolbar">
         <div className="file-editor__path">
           {meta.isRemote && (
-            <span className="file-editor__remote-badge">
+            <span className="file-editor__remote-badge" data-testid="file-editor-remote-badge">
               <Globe size={12} />
               Remote
             </span>

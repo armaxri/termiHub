@@ -635,14 +635,6 @@ cargo test -p termihub-core --all-features --test network_resilience -- --nocapt
 
 Each test uses a `FaultGuard` that automatically resets faults on drop (including panics).
 
-## Next Steps
-
-1. **Phase 1** (Now): Add `data-testid` attributes to all components
-2. **Phase 2**: Write E2E tests for critical paths
-3. **Phase 3**: Add component tests for complex components
-4. **Phase 4**: Integrate into CI/CD
-5. **Phase 5**: Add visual regression tests
-
 ## Related Documentation
 
 - [Contributing](contributing.md) — Development setup, building, workflow, coding standards, and performance profiling
@@ -657,55 +649,26 @@ Each test uses a `FaultGuard` that automatically resets faults on drop (includin
 
 Manual test procedures for verifying user-facing features before releases and after major changes. Tests already covered by automated suites (unit, integration, E2E) have been removed from this list.
 
-### E2E Automation Coverage Analysis
+### E2E Automation Coverage
 
-Analysis of which manual test items can be covered by WebdriverIO E2E tests (tauri-driver on Linux/Windows, Docker on macOS). Each subsection below is annotated with a `> E2E coverage` note.
+Manual tests that can be automated have been moved to WebdriverIO E2E tests. The YAML files now contain only items that truly require manual verification. See the [E2E Coverage Map](#e2e-coverage-map) below for the mapping from manual test IDs to E2E test files.
 
-#### Feasibility Categories
+**75 manual test items remain** across 11 YAML files. These cannot be automated due to:
 
-- **E2E** — Fully automatable with the existing WebdriverIO + tauri-driver infrastructure
-- **E2E/infra** — Automatable but requires Docker test containers (SSH, serial, telnet, agent)
-- **Partial** — Some aspects automatable (e.g., element visibility), others need manual verification (visual rendering, drag-and-drop precision)
-- **Manual** — Cannot be automated: platform-specific (macOS/Windows/WSL), native OS dialogs, visual rendering, external app integration, OS-level features
+| Reason                                | Items | Examples                                                         |
+| ------------------------------------- | ----- | ---------------------------------------------------------------- |
+| Visual rendering verification         | ~16   | Powerline glyphs, white flash, 1px borders, cursor blink         |
+| Keyboard shortcuts                    | ~8    | Chord bindings, rebinding, shortcut conflicts                    |
+| OS-level behavior                     | ~10   | macOS key repeat, accent picker, custom app icon, app updater    |
+| Native OS dialogs (file picker, save) | ~6    | Import/export connections, SSH key browse, save terminal to file |
+| Drag-and-drop                         | ~8    | Tab reorder, split view drag, connection folder drag             |
+| External app integration              | ~7    | Open in VS Code (local + SFTP), VS Code not installed            |
+| Right-click behavior                  | ~5    | Quick copy/paste, context menu, setting persistence              |
+| OS credential store                   | ~3    | Windows Credential Manager, macOS Keychain, Linux Secret Service |
+| Platform-specific SSH/agent           | ~5    | SSH agent setup, X11 forwarding, Windows WSL file browser paths  |
+| Cross-platform (external window)      | ~1    | X11 forwarding displays remote window                            |
 
-#### Summary
-
-| Area                  | Automated | Pending E2E | E2E/infra | Partial | Manual  | Total   |
-| --------------------- | --------- | ----------- | --------- | ------- | ------- | ------- |
-| Local Shell           | 14        | 0           | 1         | 0       | 21      | 36      |
-| SSH                   | 58        | 3           | 0         | 4       | 20      | 85      |
-| Serial                | 5         | 0           | 0         | 0       | 2       | 7       |
-| Telnet                | 3         | 0           | 0         | 0       | 0       | 3       |
-| Tab Management        | 8         | 1           | 0         | 6       | 5       | 20      |
-| Connection Management | 54        | 18          | 0         | 8       | 13      | 93      |
-| Split Views           | 4         | 0           | 0         | 2       | 0       | 6       |
-| File Browser          | 31        | 0           | 0         | 0       | 11      | 42      |
-| Editor                | 22        | 0           | 0         | 1       | 0       | 23      |
-| UI / Layout           | 27        | 0           | 0         | 6       | 17      | 50      |
-| Remote Agent          | 10        | 0           | 7         | 3       | 5       | 25      |
-| Credential Store      | 15        | 0           | 0         | 3       | 5       | 23      |
-| Cross-Platform        | 0         | 0           | 0         | 0       | 3       | 3       |
-| **Total**             | **251**   | **22**      | **8**     | **33**  | **102** | **416** |
-
-**251 test items (60%) are now covered by automated E2E tests** across 28 test files. An additional 30 items are fully automatable (22 pending E2E, 8 requiring Docker infrastructure with a live remote agent). The remaining 102 items (25%) require manual testing.
-
-#### Manual-Only Reasons Breakdown
-
-| Reason                                | Items | Examples                                                                |
-| ------------------------------------- | ----- | ----------------------------------------------------------------------- |
-| Platform-specific (macOS/Windows/WSL) | ~50   | macOS key repeat, WSL file browser, Windows shell interception          |
-| Native OS dialogs (file picker, save) | ~20   | Import/export connections, SSH key browse button, save terminal to file |
-| Visual rendering verification         | ~18   | Powerline glyphs, white flash timing, 1px panel borders, black bar fix  |
-| External app integration              | ~4    | Open in VS Code                                                         |
-| OS-level features                     | ~5    | Keychain integration, custom app icon, key repeat accent picker         |
-
-#### Highest-Value Remaining Automation Targets
-
-These areas have the most remaining automatable items:
-
-1. **Connection Management** (18 pending E2E items) — External connection files, storage file selector
-2. **Remote Agent with live agent** (7 E2E/infra items) — Agent connect, shell sessions, reconnect, context menu with connected agent (requires pre-installed agent binary in Docker)
-3. **Local Shell** (1 E2E/infra item) — Remaining infrastructure test
+E2E test coverage: **45 test files** (28 UI suite + 17 infrastructure suite)
 
 ### Test Environment Setup
 
@@ -738,19 +701,45 @@ See [scripts/README.md](../scripts/README.md) for all options. Reports are saved
 
 ### Test Categories
 
-| Category               | YAML File                                                                  | ID Prefix     | Tests   |
-| ---------------------- | -------------------------------------------------------------------------- | ------------- | ------- |
-| Local Shell            | [`local-shell.yaml`](../tests/manual/local-shell.yaml)                     | `MT-LOCAL`    | 20      |
-| SSH                    | [`ssh.yaml`](../tests/manual/ssh.yaml)                                     | `MT-SSH`      | 35      |
-| Serial                 | [`serial.yaml`](../tests/manual/serial.yaml)                               | `MT-SER`      | 2       |
-| Tab Management         | [`tab-management.yaml`](../tests/manual/tab-management.yaml)               | `MT-TAB`      | 17      |
-| Connection Management  | [`connection-management.yaml`](../tests/manual/connection-management.yaml) | `MT-CONN`     | 32      |
-| File Browser + Editor  | [`file-browser.yaml`](../tests/manual/file-browser.yaml)                   | `MT-FB`       | 20      |
-| UI / Layout            | [`ui-layout.yaml`](../tests/manual/ui-layout.yaml)                         | `MT-UI`       | 25      |
-| Remote Agent           | [`remote-agent.yaml`](../tests/manual/remote-agent.yaml)                   | `MT-AGENT`    | 8       |
-| Credential Store       | [`credential-store.yaml`](../tests/manual/credential-store.yaml)           | `MT-CRED`     | 8       |
-| Cross-Platform         | [`cross-platform.yaml`](../tests/manual/cross-platform.yaml)               | `MT-XPLAT`    | 3       |
-| Configuration Recovery | [`config-recovery.yaml`](../tests/manual/config-recovery.yaml)             | `MT-RECOVERY` | 12      |
-| **Total**              |                                                                            |               | **182** |
+| Category              | YAML File                                                                  | ID Prefix  | Tests  |
+| --------------------- | -------------------------------------------------------------------------- | ---------- | ------ |
+| Local Shell           | [`local-shell.yaml`](../tests/manual/local-shell.yaml)                     | `MT-LOCAL` | 3      |
+| SSH                   | [`ssh.yaml`](../tests/manual/ssh.yaml)                                     | `MT-SSH`   | 10     |
+| Serial                | [`serial.yaml`](../tests/manual/serial.yaml)                               | `MT-SER`   | 2      |
+| Tab Management        | [`tab-management.yaml`](../tests/manual/tab-management.yaml)               | `MT-TAB`   | 7      |
+| Connection Management | [`connection-management.yaml`](../tests/manual/connection-management.yaml) | `MT-CONN`  | 10     |
+| File Browser + Editor | [`file-browser.yaml`](../tests/manual/file-browser.yaml)                   | `MT-FB`    | 10     |
+| UI / Layout           | [`ui-layout.yaml`](../tests/manual/ui-layout.yaml)                         | `MT-UI`    | 19     |
+| Remote Agent          | [`remote-agent.yaml`](../tests/manual/remote-agent.yaml)                   | `MT-AGENT` | 2      |
+| Credential Store      | [`credential-store.yaml`](../tests/manual/credential-store.yaml)           | `MT-CRED`  | 3      |
+| Keyboard Shortcuts    | [`keyboard.yaml`](../tests/manual/keyboard.yaml)                           | `MT-KB`    | 8      |
+| Cross-Platform        | [`cross-platform.yaml`](../tests/manual/cross-platform.yaml)               | `MT-XPLAT` | 1      |
+| **Total**             |                                                                            |            | **75** |
 
 When adding new manual tests, add the YAML definition to the appropriate file in `tests/manual/` — the YAML files are the **source of truth** for guided testing.
+
+### E2E Coverage Map
+
+Mapping of manual test IDs that have been automated to their E2E test files:
+
+| Manual Test IDs                | E2E Test File                                                |
+| ------------------------------ | ------------------------------------------------------------ |
+| MT-LOCAL-01, 07                | `local-shell.test.js`                                        |
+| MT-LOCAL-09, 10                | `cross-platform.test.js`                                     |
+| MT-LOCAL-02, 04, 06, 11–20     | `infrastructure/windows-shells.test.js`                      |
+| MT-SSH-04–06, 10–12, 20–33, 35 | `infrastructure/ssh*.test.js`                                |
+| MT-SSH-08, 19                  | `ssh-agent-warning.test.js`                                  |
+| MT-SSH-13, 17, 34              | `infrastructure/ssh-extended.test.js`                        |
+| MT-TAB-06, 07, 15, 18          | `tab-management.test.js`                                     |
+| MT-TAB-08–14, 19–21            | `tab-horizontal-scroll.test.js`                              |
+| MT-CONN-02–07, 25–30           | `connection-crud.test.js`, `connection-forms.test.js`        |
+| MT-CONN-10–12, 14–16           | `encrypted-export-import.test.js`                            |
+| MT-CONN-20–22, 31              | `external-files.test.js`                                     |
+| MT-FB-01–03, 06, 13, 17, 19    | `infrastructure/sftp-extended.test.js`                       |
+| MT-FB-05, 11, 18               | `file-browser-local.test.js`                                 |
+| MT-UI-06–08, 17, 18, 20        | `ui-state.test.js`                                           |
+| MT-UI-21–25                    | `sidebar-sections.test.js`                                   |
+| MT-AGENT-01–03, 05, 06, 08     | `infrastructure/remote-agent.test.js`                        |
+| MT-CRED-04–08                  | `credential-store.test.js`, `credential-store-infra.test.js` |
+| MT-RECOVERY-01–12              | `infrastructure/config-recovery.test.js`                     |
+| MT-XPLAT-01, 02                | `cross-platform.test.js`                                     |

@@ -96,7 +96,7 @@ export function ExternalFilesSettings() {
   }, [reloadExternalConnections]);
 
   return (
-    <div className="settings-panel__category">
+    <div className="settings-panel__category" data-testid="settings-external-files">
       <div className="settings-panel__section">
         <div className="settings-panel__section-header">
           <h3 className="settings-panel__section-title">External Connection Files</h3>

@@ -2,6 +2,7 @@ export type SettingsCategory =
   | "general"
   | "appearance"
   | "terminal"
+  | "keyboard"
   | "security"
   | "external-files";
 
@@ -22,6 +23,7 @@ export const CATEGORIES: CategoryDefinition[] = [
   { id: "general", label: "General" },
   { id: "appearance", label: "Appearance" },
   { id: "terminal", label: "Terminal" },
+  { id: "keyboard", label: "Keyboard" },
   { id: "security", label: "Security" },
   { id: "external-files", label: "External Files" },
 ];
@@ -96,6 +98,20 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     description: "Whether the terminal cursor blinks",
     category: "terminal",
     keywords: ["cursor", "blink", "animation", "flash"],
+  },
+  {
+    id: "rightClickBehavior",
+    label: "Right-Click Behavior",
+    description: "Terminal right-click action: context menu or quick copy/paste",
+    category: "terminal",
+    keywords: ["right-click", "context menu", "copy", "paste", "quick action", "mouse"],
+  },
+  {
+    id: "keybindings",
+    label: "Keyboard Shortcuts",
+    description: "Customize keyboard shortcuts and key bindings",
+    category: "keyboard",
+    keywords: ["keyboard", "shortcut", "keybinding", "hotkey", "key combination", "binding"],
   },
   {
     id: "credentialStorageMode",

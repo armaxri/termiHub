@@ -112,7 +112,7 @@ describe("Sidebar Toggle (PR #194)", () => {
     await browser.pause(500);
 
     // Split the view
-    const splitBtn = await browser.$('[data-testid="terminal-view-split"]');
+    const splitBtn = await browser.$('[data-testid="terminal-view-split-horizontal"]');
     if ((await splitBtn.isExisting()) && (await splitBtn.isDisplayed())) {
       await splitBtn.click();
       await browser.pause(500);

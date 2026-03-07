@@ -365,6 +365,25 @@ describe("api service", () => {
       expect(result).toBe("sftp-session-1");
     });
 
+    it("sftpOpen passes config with array-style env to backend", async () => {
+      mockedInvoke.mockResolvedValue("sftp-session-2");
+      const config = {
+        host: "pi.local",
+        port: 22,
+        username: "pi",
+        authMethod: "password",
+        env: [
+          { key: "FOO", value: "bar" },
+          { key: "BAZ", value: "qux" },
+        ],
+      };
+
+      const result = await sftpOpen(config);
+
+      expect(mockedInvoke).toHaveBeenCalledWith("sftp_open", { config });
+      expect(result).toBe("sftp-session-2");
+    });
+
     it("sftpClose invokes with session ID", async () => {
       mockedInvoke.mockResolvedValue(undefined);
 

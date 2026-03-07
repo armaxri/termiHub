@@ -13,7 +13,7 @@ import {
   SETTINGS_MENU_CUSTOMIZE_LAYOUT,
   LAYOUT_CLOSE,
   TOOLBAR_NEW_TERMINAL,
-  TOOLBAR_SPLIT,
+  TOOLBAR_SPLIT_HORIZONTAL,
   TOOLBAR_CLOSE_PANEL,
 } from "./helpers/selectors.js";
 
@@ -512,7 +512,7 @@ describe("Theme & Layout", () => {
       await newBtn.click();
       await browser.pause(500);
 
-      const splitBtn = await browser.$(TOOLBAR_SPLIT);
+      const splitBtn = await browser.$(TOOLBAR_SPLIT_HORIZONTAL);
       await splitBtn.click();
       await browser.pause(500);
 
@@ -547,7 +547,7 @@ describe("Theme & Layout", () => {
       await newBtn.click();
       await browser.pause(500);
 
-      const splitBtn = await browser.$(TOOLBAR_SPLIT);
+      const splitBtn = await browser.$(TOOLBAR_SPLIT_HORIZONTAL);
       await splitBtn.click();
       await browser.pause(500);
 
@@ -590,7 +590,7 @@ describe("Theme & Layout", () => {
       await newBtn.click();
       await browser.pause(500);
 
-      const splitBtn = await browser.$(TOOLBAR_SPLIT);
+      const splitBtn = await browser.$(TOOLBAR_SPLIT_HORIZONTAL);
       await splitBtn.click();
       await browser.pause(500);
 
@@ -628,7 +628,7 @@ describe("Theme & Layout", () => {
       await newBtn.click();
       await browser.pause(500);
 
-      const splitBtn = await browser.$(TOOLBAR_SPLIT);
+      const splitBtn = await browser.$(TOOLBAR_SPLIT_HORIZONTAL);
       await splitBtn.click();
       await browser.pause(500);
 
@@ -647,7 +647,7 @@ describe("Theme & Layout", () => {
       await browser.pause(500);
 
       // Split the view
-      const splitBtn = await browser.$(TOOLBAR_SPLIT);
+      const splitBtn = await browser.$(TOOLBAR_SPLIT_HORIZONTAL);
       await splitBtn.click();
       await browser.pause(500);
 
@@ -667,7 +667,7 @@ describe("Theme & Layout", () => {
       await browser.pause(500);
 
       // First split
-      const splitBtn = await browser.$(TOOLBAR_SPLIT);
+      const splitBtn = await browser.$(TOOLBAR_SPLIT_HORIZONTAL);
       await splitBtn.click();
       await browser.pause(500);
 

@@ -69,6 +69,44 @@ pub fn normalize_path_separators(path: &str) -> String {
     path.replace('\\', "/")
 }
 
+/// Convert MSYS-style Unix paths (e.g. `/c/Users/...`) to Windows paths (`C:/Users/...`).
+///
+/// Git Bash on Windows sets `$HOME` to paths like `/c/Users/username`.
+/// Windows APIs cannot resolve these, so we detect the pattern (a single
+/// ASCII letter after the leading `/`) and rewrite it to a drive letter.
+#[cfg(windows)]
+fn convert_msys_path(path: &str) -> String {
+    let bytes = path.as_bytes();
+    // Match `/x` or `/x/...` where x is a single ASCII letter
+    if bytes.len() >= 2
+        && bytes[0] == b'/'
+        && bytes[1].is_ascii_alphabetic()
+        && (bytes.len() == 2 || bytes[2] == b'/')
+    {
+        let drive = (bytes[1] as char).to_ascii_uppercase();
+        format!("{}:/{}", drive, &path[2..].trim_start_matches('/'))
+    } else {
+        path.to_string()
+    }
+}
+
+/// Normalize a filesystem path for the current platform.
+///
+/// On Windows this converts MSYS-style Unix paths (`/c/Users/...`) to Windows
+/// drive paths (`C:/Users/...`) and replaces backslashes with forward slashes.
+/// On other platforms this is equivalent to [`normalize_path_separators`].
+pub fn normalize_platform_path(path: &str) -> String {
+    #[cfg(windows)]
+    {
+        let converted = convert_msys_path(path);
+        normalize_path_separators(&converted)
+    }
+    #[cfg(not(windows))]
+    {
+        normalize_path_separators(path)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,5 +177,76 @@ mod tests {
     #[test]
     fn normalize_path_separators_empty_string() {
         assert_eq!(normalize_path_separators(""), "");
+    }
+
+    // ── normalize_platform_path tests ──────────────────────────────────
+
+    #[cfg(windows)]
+    mod platform_path_windows {
+        use super::super::*;
+
+        #[test]
+        fn converts_msys_drive_path() {
+            assert_eq!(normalize_platform_path("/c/Users/foo"), "C:/Users/foo");
+        }
+
+        #[test]
+        fn converts_msys_uppercase_drive() {
+            assert_eq!(normalize_platform_path("/D/projects"), "D:/projects");
+        }
+
+        #[test]
+        fn converts_bare_drive_letter() {
+            assert_eq!(normalize_platform_path("/c"), "C:/");
+        }
+
+        #[test]
+        fn does_not_convert_non_drive_unix_path() {
+            // /usr is not a single-letter drive, leave as-is
+            assert_eq!(normalize_platform_path("/usr/bin"), "/usr/bin");
+        }
+
+        #[test]
+        fn passes_through_normal_windows_path() {
+            assert_eq!(
+                normalize_platform_path(r"C:\Users\foo\bar"),
+                "C:/Users/foo/bar"
+            );
+        }
+
+        #[test]
+        fn handles_empty_string() {
+            assert_eq!(normalize_platform_path(""), "");
+        }
+
+        #[test]
+        fn converts_backslashes_in_msys_path() {
+            // Unlikely but handles mixed separators
+            assert_eq!(
+                normalize_platform_path("/c/Users\\foo\\bar"),
+                "C:/Users/foo/bar"
+            );
+        }
+    }
+
+    #[cfg(not(windows))]
+    mod platform_path_unix {
+        use super::super::*;
+
+        #[test]
+        fn preserves_unix_paths() {
+            assert_eq!(normalize_platform_path("/home/user"), "/home/user");
+        }
+
+        #[test]
+        fn preserves_single_letter_unix_paths() {
+            // On Unix, /c/Users is a valid path — don't transform it
+            assert_eq!(normalize_platform_path("/c/Users/foo"), "/c/Users/foo");
+        }
+
+        #[test]
+        fn handles_empty_string() {
+            assert_eq!(normalize_platform_path(""), "");
+        }
     }
 }

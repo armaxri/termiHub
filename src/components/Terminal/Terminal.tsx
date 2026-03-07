@@ -10,6 +10,7 @@ import { terminalDispatcher } from "@/services/events";
 import { useTerminalRegistry } from "./TerminalRegistry";
 import { useAppStore } from "@/store/appStore";
 import { getXtermTheme } from "@/themes";
+import { processKeyEvent, isAppShortcut, isChordPending } from "@/services/keybindings";
 
 const HORIZONTAL_SCROLL_COLS = 500;
 
@@ -114,7 +115,15 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
   const lastInputTimeRef = useRef(0);
   const contentDirtyRef = useRef(false);
   const pendingCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const { register, unregister, parkingRef } = useTerminalRegistry();
+  const {
+    register,
+    unregister,
+    registerSession,
+    unregisterSession,
+    copySelectionToClipboard,
+    pasteToTerminal,
+    parkingRef,
+  } = useTerminalRegistry();
 
   const setupTerminal = useCallback(
     async (xterm: XTerm, fitAddon: FitAddon, isCanceled: () => boolean) => {
@@ -144,6 +153,7 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
         }
 
         sessionIdRef.current = sessionId;
+        registerSession(tabId, sessionId);
 
         // Output batching: buffer chunks and flush in a single RAF callback
         const outputBuffer: Uint8Array[] = [];
@@ -182,6 +192,7 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
         const unsubExit = terminalDispatcher.subscribeExit(sessionId, () => {
           xterm.writeln("\r\n\x1b[90m[Process exited]\x1b[0m");
           sessionIdRef.current = null;
+          unregisterSession(tabId);
         });
 
         // Send user input to backend
@@ -244,7 +255,7 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
         }
       }
     },
-    [config, existingSessionId]
+    [config, existingSessionId, tabId, registerSession, unregisterSession]
   );
 
   // Create the terminal element, xterm instance, and register
@@ -285,6 +296,40 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
     xterm.unicode.activeVersion = "11";
 
     xterm.open(el);
+
+    // Intercept application shortcuts before xterm processes them
+    xterm.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+      if (e.type !== "keydown") return true;
+
+      // If a chord is pending, block the key from xterm
+      if (isChordPending()) {
+        return false;
+      }
+
+      const action = processKeyEvent(e);
+      if (action === "chord-pending") {
+        return false;
+      }
+      if (action === "copy") {
+        copySelectionToClipboard(tabId);
+        return false;
+      }
+      if (action === "paste") {
+        pasteToTerminal(tabId);
+        return false;
+      }
+      if (action === "select-all") {
+        xterm.selectAll();
+        return false;
+      }
+
+      // Block any other app shortcut from reaching xterm
+      if (isAppShortcut(e)) {
+        return false;
+      }
+
+      return true;
+    });
 
     // Track CWD via OSC 7 escape sequences (sent by zsh/bash on macOS/Linux)
     const osc7Disposable = xterm.parser.registerOscHandler(7, (data: string) => {
@@ -350,7 +395,15 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
       xtermRef.current = null;
       fitAddonRef.current = null;
     };
-  }, [tabId, setupTerminal, register, unregister, parkingRef]);
+  }, [
+    tabId,
+    setupTerminal,
+    register,
+    unregister,
+    copySelectionToClipboard,
+    pasteToTerminal,
+    parkingRef,
+  ]);
 
   // Re-fit and focus when visibility changes
   useEffect(() => {

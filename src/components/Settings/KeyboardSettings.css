@@ -1,0 +1,135 @@
+.keyboard-settings__search {
+  margin-bottom: var(--spacing-md);
+}
+
+.keyboard-settings__search-input {
+  width: 100%;
+  height: 28px;
+  padding: 0 var(--spacing-sm);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  outline: none;
+  box-sizing: border-box;
+}
+
+.keyboard-settings__search-input:focus {
+  border-color: var(--accent-color);
+}
+
+.keyboard-settings__conflict {
+  padding: var(--spacing-sm) var(--spacing-md);
+  margin-bottom: var(--spacing-md);
+  background-color: var(--bg-warning, rgba(255, 165, 0, 0.1));
+  border: 1px solid var(--border-warning, orange);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+}
+
+.keyboard-settings__group {
+  margin-bottom: var(--spacing-lg);
+}
+
+.keyboard-settings__group-title {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0 0 var(--spacing-sm) 0;
+  padding-bottom: var(--spacing-xs);
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.keyboard-settings__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+}
+
+.keyboard-settings__table th {
+  text-align: left;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  color: var(--text-secondary);
+  font-weight: 500;
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.keyboard-settings__table td {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-bottom: 1px solid var(--border-subtle, var(--border-primary));
+}
+
+.keyboard-settings__action-cell {
+  width: 45%;
+  color: var(--text-primary);
+}
+
+.keyboard-settings__binding-cell {
+  width: 45%;
+  cursor: pointer;
+  padding: 2px var(--spacing-sm);
+  border-radius: var(--radius-sm);
+  font-family: monospace;
+  color: var(--text-primary);
+}
+
+.keyboard-settings__binding-cell:hover {
+  background-color: var(--bg-hover);
+}
+
+.keyboard-settings__binding-cell--recording {
+  background-color: var(--accent-color);
+  color: var(--accent-fg, #fff);
+  cursor: default;
+}
+
+.keyboard-settings__binding-cell--recording:hover {
+  background-color: var(--accent-color);
+}
+
+.keyboard-settings__reset-cell {
+  width: 10%;
+  text-align: center;
+}
+
+.keyboard-settings__reset-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.keyboard-settings__reset-btn:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.keyboard-settings__reset-all {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-xs) var(--spacing-md);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  margin-top: var(--spacing-md);
+}
+
+.keyboard-settings__reset-all:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}

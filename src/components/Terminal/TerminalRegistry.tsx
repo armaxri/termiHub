@@ -2,6 +2,12 @@ import { createContext, useContext, useRef, useCallback, useMemo, ReactNode } fr
 import { Terminal as XTerm } from "@xterm/xterm";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
+import { readText as readClipboard } from "@tauri-apps/plugin-clipboard-manager";
+import { sendInput } from "@/services/api";
+import { SessionId } from "@/types/terminal";
+import { useAppStore } from "@/store/appStore";
+
+const LARGE_PASTE_THRESHOLD = 5000;
 
 interface TerminalRegistryContextType {
   /** Register a terminal's xterm container element and xterm instance. */
@@ -20,8 +26,16 @@ interface TerminalRegistryContextType {
   copyTerminalToClipboard: (tabId: string) => Promise<void>;
   /** Get the current text selection in a terminal, or undefined if none. */
   getTerminalSelection: (tabId: string) => string | undefined;
+  /** Clear the current text selection in a terminal. */
+  clearTerminalSelection: (tabId: string) => void;
   /** Copy the current text selection to the clipboard (no-op if nothing selected). */
   copySelectionToClipboard: (tabId: string) => Promise<void>;
+  /** Associate a backend session ID with a tab for paste support. */
+  registerSession: (tabId: string, sessionId: SessionId) => void;
+  /** Remove the session ID association for a tab. */
+  unregisterSession: (tabId: string) => void;
+  /** Paste clipboard text into a terminal by sending it as input. */
+  pasteToTerminal: (tabId: string) => Promise<void>;
   /** Ref to the off-screen parking div for orphaned terminal elements. */
   parkingRef: React.RefObject<HTMLDivElement | null>;
 }
@@ -42,6 +56,7 @@ export function useTerminalRegistry() {
 export function TerminalPortalProvider({ children }: { children: ReactNode }) {
   const registryRef = useRef(new Map<string, HTMLDivElement>());
   const xtermRegistryRef = useRef(new Map<string, XTerm>());
+  const sessionRegistryRef = useRef(new Map<string, SessionId>());
   const parkingRef = useRef<HTMLDivElement | null>(null);
 
   const register = useCallback((tabId: string, element: HTMLDivElement, xterm: XTerm) => {
@@ -52,6 +67,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
   const unregister = useCallback((tabId: string) => {
     registryRef.current.delete(tabId);
     xtermRegistryRef.current.delete(tabId);
+    sessionRegistryRef.current.delete(tabId);
   }, []);
 
   const getElement = useCallback((tabId: string) => {
@@ -123,6 +139,11 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     return xterm.getSelection();
   }, []);
 
+  const clearTerminalSelection = useCallback((tabId: string) => {
+    const xterm = xtermRegistryRef.current.get(tabId);
+    if (xterm) xterm.clearSelection();
+  }, []);
+
   const copySelectionToClipboard = useCallback(
     async (tabId: string) => {
       const selection = getTerminalSelection(tabId);
@@ -132,6 +153,39 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     },
     [getTerminalSelection]
   );
+
+  const registerSession = useCallback((tabId: string, sessionId: SessionId) => {
+    sessionRegistryRef.current.set(tabId, sessionId);
+  }, []);
+
+  const unregisterSession = useCallback((tabId: string) => {
+    sessionRegistryRef.current.delete(tabId);
+  }, []);
+
+  const pasteToTerminal = useCallback(async (tabId: string) => {
+    const sessionId = sessionRegistryRef.current.get(tabId);
+    if (!sessionId) return;
+    const text = await readClipboard();
+    if (!text) return;
+
+    const doPaste = async () => {
+      const xterm = xtermRegistryRef.current.get(tabId);
+      let payload = text;
+
+      // Wrap in bracketed paste escape sequences if the terminal supports it
+      if (xterm && xterm.modes.bracketedPasteMode) {
+        payload = `\x1b[200~${text}\x1b[201~`;
+      }
+
+      await sendInput(sessionId, payload);
+    };
+
+    if (text.length > LARGE_PASTE_THRESHOLD) {
+      useAppStore.getState().showLargePasteDialog(text.length, doPaste);
+    } else {
+      await doPaste();
+    }
+  }, []);
 
   const ctx = useMemo(
     () => ({
@@ -143,7 +197,11 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       saveTerminalToFile,
       copyTerminalToClipboard,
       getTerminalSelection,
+      clearTerminalSelection,
       copySelectionToClipboard,
+      registerSession,
+      unregisterSession,
+      pasteToTerminal,
       parkingRef,
     }),
     [
@@ -155,7 +213,11 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       saveTerminalToFile,
       copyTerminalToClipboard,
       getTerminalSelection,
+      clearTerminalSelection,
       copySelectionToClipboard,
+      registerSession,
+      unregisterSession,
+      pasteToTerminal,
     ]
   );
 

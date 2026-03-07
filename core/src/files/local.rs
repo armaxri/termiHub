@@ -2,14 +2,15 @@ use std::path::Path;
 
 use crate::errors::FileError;
 
-use super::utils::{chrono_from_epoch, normalize_path_separators};
+use super::utils::{chrono_from_epoch, normalize_path_separators, normalize_platform_path};
 use super::{FileBackend, FileEntry};
 
 /// List directory contents, filtering out `.` and `..`.
 ///
 /// Results are sorted with directories first, then by name (case-insensitive).
 pub fn list_dir_sync(path: &str) -> Result<Vec<FileEntry>, std::io::Error> {
-    let dir = Path::new(path);
+    let normalized = normalize_platform_path(path);
+    let dir = Path::new(&normalized);
     let entries = std::fs::read_dir(dir)?;
 
     let mut result = Vec::new();
@@ -83,7 +84,8 @@ fn map_io_error(e: std::io::Error, path: &str) -> FileError {
 
 /// Synchronous stat for a single path.
 fn stat_sync(path: &str) -> Result<FileEntry, FileError> {
-    let p = Path::new(path);
+    let normalized = normalize_platform_path(path);
+    let p = Path::new(&normalized);
     let metadata = std::fs::metadata(p).map_err(|e| map_io_error(e, path))?;
 
     let name = p

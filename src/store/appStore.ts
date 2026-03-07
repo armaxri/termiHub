@@ -36,6 +36,7 @@ import {
   removeFolder,
   persistAgent,
   removeAgent,
+  reorderAgents as persistAgentOrder,
   getSettings,
   saveSettings as persistSettings,
   reloadExternalConnections as apiReloadExternalConnections,
@@ -81,6 +82,7 @@ import {
 } from "@/services/tunnelApi";
 import { SystemStats } from "@/types/monitoring";
 import { applyTheme, onThemeChange } from "@/themes";
+import { setOverrides as setKeybindingOverrides } from "@/services/keybindings";
 import {
   createLeafPanel,
   findLeaf,
@@ -192,6 +194,19 @@ interface AppState {
   updateLayoutConfig: (partial: Partial<LayoutConfig>) => void;
   applyLayoutPreset: (preset: "default" | "focus" | "zen") => void;
 
+  // Shortcuts overlay
+  shortcutsOverlayOpen: boolean;
+  setShortcutsOverlayOpen: (open: boolean) => void;
+
+  // Chord pending indicator
+  chordPending: string | null;
+  setChordPending: (pending: string | null) => void;
+
+  // Large paste confirmation
+  largePasteDialog: { open: boolean; charCount: number; onConfirm: (() => void) | null };
+  showLargePasteDialog: (charCount: number, onConfirm: () => void) => void;
+  closeLargePasteDialog: () => void;
+
   // Export/Import dialogs
   exportDialogOpen: boolean;
   setExportDialogOpen: (open: boolean) => void;
@@ -261,6 +276,7 @@ interface AppState {
   addRemoteAgent: (agent: RemoteAgentDefinition) => void;
   updateRemoteAgent: (agent: RemoteAgentDefinition) => void;
   deleteRemoteAgent: (agentId: string) => void;
+  reorderRemoteAgents: (oldIndex: number, newIndex: number) => void;
   toggleRemoteAgent: (agentId: string) => void;
   connectRemoteAgent: (agentId: string, password?: string) => Promise<void>;
   disconnectRemoteAgent: (agentId: string) => Promise<void>;
@@ -917,6 +933,21 @@ export const useAppStore = create<AppState>((set, get) => {
 
     setLayoutDialogOpen: (open) => set({ layoutDialogOpen: open }),
 
+    // Shortcuts overlay
+    shortcutsOverlayOpen: false,
+    setShortcutsOverlayOpen: (open) => set({ shortcutsOverlayOpen: open }),
+
+    // Chord pending indicator
+    chordPending: null,
+    setChordPending: (pending) => set({ chordPending: pending }),
+
+    // Large paste confirmation
+    largePasteDialog: { open: false, charCount: 0, onConfirm: null },
+    showLargePasteDialog: (charCount, onConfirm) =>
+      set({ largePasteDialog: { open: true, charCount, onConfirm } }),
+    closeLargePasteDialog: () =>
+      set({ largePasteDialog: { open: false, charCount: 0, onConfirm: null } }),
+
     // Export/Import dialogs
     exportDialogOpen: false,
     setExportDialogOpen: (open) => set({ exportDialogOpen: open }),
@@ -972,6 +1003,9 @@ export const useAppStore = create<AppState>((set, get) => {
         const layoutConfig = settings.layout ?? DEFAULT_LAYOUT;
         set({ connections, folders, settings, remoteAgents, layoutConfig });
         applyTheme(settings.theme);
+        if (settings.keybindingOverrides) {
+          setKeybindingOverrides(settings.keybindingOverrides);
+        }
         // Re-render terminals when OS theme changes in system mode
         onThemeChange(() => {
           set({});
@@ -1339,6 +1373,19 @@ export const useAppStore = create<AppState>((set, get) => {
       }));
       persistAgent({ id: agent.id, name: agent.name, config: agent.config }).catch((err) =>
         console.error("Failed to persist agent update:", err)
+      );
+    },
+
+    reorderRemoteAgents: (oldIndex, newIndex) => {
+      set((state) => {
+        const agents = [...state.remoteAgents];
+        const [moved] = agents.splice(oldIndex, 1);
+        agents.splice(newIndex, 0, moved);
+        return { remoteAgents: agents };
+      });
+      const agentIds = get().remoteAgents.map((a) => a.id);
+      persistAgentOrder(agentIds).catch((err) =>
+        console.error("Failed to persist agent reorder:", err)
       );
     },
 

@@ -19,6 +19,7 @@ import {
   Pencil,
   FileDown,
   ClipboardCopy,
+  ClipboardPaste,
   Copy,
   Eraser,
   ArrowRightLeft,
@@ -28,6 +29,8 @@ import {
 import { useAppStore } from "@/store/appStore";
 import { PanelNode, LeafPanel, TerminalTab, DropEdge } from "@/types/terminal";
 import { getAllLeaves, findLeafByTab } from "@/utils/panelTree";
+import { isWindows } from "@/utils/platform";
+import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import { ConnectionIcon } from "@/utils/connectionIcons";
 import { useTerminalRegistry } from "@/components/Terminal/TerminalRegistry";
 import { TabBar } from "@/components/Terminal/TabBar";
@@ -188,17 +191,51 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
   const setTabHorizontalScrolling = useAppStore((s) => s.setTabHorizontalScrolling);
   const tabColors = useAppStore((s) => s.tabColors);
   const setTabColor = useAppStore((s) => s.setTabColor);
+  const rightClickBehavior = useAppStore((s) => s.settings.rightClickBehavior);
+  const useQuickAction =
+    rightClickBehavior === "quickAction" || (!rightClickBehavior && isWindows());
+
   const {
     clearTerminal,
     saveTerminalToFile,
     copyTerminalToClipboard,
     getTerminalSelection,
+    clearTerminalSelection,
     copySelectionToClipboard,
+    pasteToTerminal,
   } = useTerminalRegistry();
 
   const [colorPickerTabId, setColorPickerTabId] = useState<string | null>(null);
   const [renameTabId, setRenameTabId] = useState<string | null>(null);
   const [contextMenuTabSelection, setContextMenuTabSelection] = useState<string | null>(null);
+
+  // Capture selection BEFORE right-click modifies it (xterm auto-selects word on right-click)
+  const preRightClickSelectionRef = useRef<string | null>(null);
+
+  const captureSelectionBeforeRightClick = useCallback(
+    (e: React.PointerEvent, tabId: string) => {
+      if (e.button === 2) {
+        preRightClickSelectionRef.current = getTerminalSelection(tabId) ?? null;
+      }
+    },
+    [getTerminalSelection]
+  );
+
+  const handleQuickAction = useCallback(
+    (e: React.MouseEvent, tabId: string) => {
+      e.preventDefault();
+      const selection = preRightClickSelectionRef.current;
+      preRightClickSelectionRef.current = null;
+      if (selection) {
+        writeClipboard(selection);
+        clearTerminalSelection(tabId);
+      } else {
+        clearTerminalSelection(tabId);
+        pasteToTerminal(tabId);
+      }
+    },
+    [clearTerminalSelection, pasteToTerminal]
+  );
 
   const renameTabData = renameTabId ? panel.tabs.find((t) => t.id === renameTabId) : null;
 
@@ -237,6 +274,19 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
               meta={tab.tunnelEditorMeta}
               isVisible={tab.id === panel.activeTabId}
             />
+          ) : useQuickAction ? (
+            <div
+              key={tab.id}
+              className={
+                tab.id === panel.activeTabId
+                  ? "terminal-context-trigger"
+                  : "terminal-context-trigger terminal-context-trigger--hidden"
+              }
+              onPointerDownCapture={(e) => captureSelectionBeforeRightClick(e, tab.id)}
+              onContextMenu={(e) => handleQuickAction(e, tab.id)}
+            >
+              <TerminalSlot tabId={tab.id} isVisible={tab.id === panel.activeTabId} />
+            </div>
           ) : (
             <ContextMenu.Root
               key={tab.id}
@@ -270,7 +320,15 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
                   )}
                   <ContextMenu.Item
                     className="context-menu__item"
+                    onSelect={() => pasteToTerminal(tab.id)}
+                    data-testid="terminal-context-paste"
+                  >
+                    <ClipboardPaste size={14} /> Paste
+                  </ContextMenu.Item>
+                  <ContextMenu.Item
+                    className="context-menu__item"
                     onSelect={() => copyTerminalToClipboard(tab.id)}
+                    data-testid="terminal-context-copy-all"
                   >
                     <ClipboardCopy size={14} /> Copy All
                   </ContextMenu.Item>

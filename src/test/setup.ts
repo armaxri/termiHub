@@ -19,3 +19,8 @@ vi.mock("@tauri-apps/plugin-fs", () => ({
   readTextFile: vi.fn(),
   writeTextFile: vi.fn(),
 }));
+
+vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({
+  readText: vi.fn().mockResolvedValue(""),
+  writeText: vi.fn().mockResolvedValue(undefined),
+}));
