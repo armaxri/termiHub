@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
+import { SearchAddon } from "@xterm/addon-search";
 import "@xterm/xterm/css/xterm.css";
 import "./Terminal.css";
 import { ConnectionConfig } from "@/types/terminal";
@@ -122,6 +123,7 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
     unregisterSession,
     copySelectionToClipboard,
     pasteToTerminal,
+    registerSearchAddon,
     parkingRef,
   } = useTerminalRegistry();
 
@@ -297,6 +299,10 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
     xterm.loadAddon(unicode11Addon);
     xterm.unicode.activeVersion = "11";
 
+    const searchAddon = new SearchAddon();
+    xterm.loadAddon(searchAddon);
+    registerSearchAddon(tabId, searchAddon);
+
     xterm.open(el);
 
     // Intercept application shortcuts before xterm processes them
@@ -404,6 +410,7 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
     unregister,
     copySelectionToClipboard,
     pasteToTerminal,
+    registerSearchAddon,
     parkingRef,
   ]);
 

@@ -41,6 +41,7 @@ import { FileEditor } from "@/components/FileEditor";
 import { ConnectionEditor } from "@/components/ConnectionEditor/ConnectionEditor";
 import { LogViewer } from "@/components/LogViewer";
 import { TunnelEditor } from "@/components/TunnelEditor";
+import { TerminalSearchBar } from "@/components/Terminal/TerminalSearchBar";
 import { PanelDropZone } from "./PanelDropZone";
 import "./SplitView.css";
 
@@ -285,6 +286,7 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
               onPointerDownCapture={(e) => captureSelectionBeforeRightClick(e, tab.id)}
               onContextMenu={(e) => handleQuickAction(e, tab.id)}
             >
+              <TerminalSearchBar tabId={tab.id} />
               <TerminalSlot tabId={tab.id} isVisible={tab.id === panel.activeTabId} />
             </div>
           ) : (
@@ -304,6 +306,7 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
                       : "terminal-context-trigger terminal-context-trigger--hidden"
                   }
                 >
+                  <TerminalSearchBar tabId={tab.id} />
                   <TerminalSlot tabId={tab.id} isVisible={tab.id === panel.activeTabId} />
                 </div>
               </ContextMenu.Trigger>

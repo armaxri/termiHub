@@ -134,6 +134,16 @@ export function useKeyboardShortcuts() {
           }
           break;
         }
+
+        case "find-in-terminal": {
+          e.preventDefault();
+          const panel = allLeaves.find((p) => p.id === activePanelId);
+          const activeTab = panel?.tabs.find((t) => t.id === panel.activeTabId);
+          if (activeTab?.contentType === "terminal") {
+            useAppStore.getState().toggleTerminalSearch(activeTab.id);
+          }
+          break;
+        }
       }
     };
 
