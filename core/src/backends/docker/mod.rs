@@ -115,7 +115,7 @@ fn podman_socket_uri() -> Option<String> {
         }
     }
     // Podman machine default socket (~/.local/share/containers/...)
-    if let Some(home) = std::env::var("HOME").ok() {
+    if let Ok(home) = std::env::var("HOME") {
         let path = format!(
             "{home}/.local/share/containers/podman/machine/podman-machine-default/podman.sock"
         );
