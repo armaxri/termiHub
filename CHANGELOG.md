@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Keyboard shortcuts now use platform-aware modifier detection — Ctrl+B on macOS no longer toggles the sidebar (it correctly passes through to the terminal as a control character); Cmd+B is used on macOS instead (#418)
+- Dev server no longer spams `EMFILE: too many open files` on Windows — Vite's dep scanner and file watcher now exclude the `target/` directory (Rust build artifacts)
 
 ### Improved
 
