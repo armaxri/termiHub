@@ -82,6 +82,7 @@ import {
 } from "@/services/tunnelApi";
 import { SystemStats } from "@/types/monitoring";
 import { applyTheme, onThemeChange } from "@/themes";
+import { setOverrides as setKeybindingOverrides } from "@/services/keybindings";
 import {
   createLeafPanel,
   findLeaf,
@@ -192,6 +193,19 @@ interface AppState {
   setLayoutDialogOpen: (open: boolean) => void;
   updateLayoutConfig: (partial: Partial<LayoutConfig>) => void;
   applyLayoutPreset: (preset: "default" | "focus" | "zen") => void;
+
+  // Shortcuts overlay
+  shortcutsOverlayOpen: boolean;
+  setShortcutsOverlayOpen: (open: boolean) => void;
+
+  // Chord pending indicator
+  chordPending: string | null;
+  setChordPending: (pending: string | null) => void;
+
+  // Large paste confirmation
+  largePasteDialog: { open: boolean; charCount: number; onConfirm: (() => void) | null };
+  showLargePasteDialog: (charCount: number, onConfirm: () => void) => void;
+  closeLargePasteDialog: () => void;
 
   // Export/Import dialogs
   exportDialogOpen: boolean;
@@ -919,6 +933,21 @@ export const useAppStore = create<AppState>((set, get) => {
 
     setLayoutDialogOpen: (open) => set({ layoutDialogOpen: open }),
 
+    // Shortcuts overlay
+    shortcutsOverlayOpen: false,
+    setShortcutsOverlayOpen: (open) => set({ shortcutsOverlayOpen: open }),
+
+    // Chord pending indicator
+    chordPending: null,
+    setChordPending: (pending) => set({ chordPending: pending }),
+
+    // Large paste confirmation
+    largePasteDialog: { open: false, charCount: 0, onConfirm: null },
+    showLargePasteDialog: (charCount, onConfirm) =>
+      set({ largePasteDialog: { open: true, charCount, onConfirm } }),
+    closeLargePasteDialog: () =>
+      set({ largePasteDialog: { open: false, charCount: 0, onConfirm: null } }),
+
     // Export/Import dialogs
     exportDialogOpen: false,
     setExportDialogOpen: (open) => set({ exportDialogOpen: open }),
@@ -974,6 +1003,9 @@ export const useAppStore = create<AppState>((set, get) => {
         const layoutConfig = settings.layout ?? DEFAULT_LAYOUT;
         set({ connections, folders, settings, remoteAgents, layoutConfig });
         applyTheme(settings.theme);
+        if (settings.keybindingOverrides) {
+          setKeybindingOverrides(settings.keybindingOverrides);
+        }
         // Re-render terminals when OS theme changes in system mode
         onThemeChange(() => {
           set({});

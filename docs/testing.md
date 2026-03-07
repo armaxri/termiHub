@@ -679,10 +679,11 @@ Analysis of which manual test items can be covered by WebdriverIO E2E tests (tau
 | UI / Layout           | 27        | 0           | 0         | 6       | 22      | 55      |
 | Remote Agent          | 10        | 0           | 7         | 3       | 5       | 25      |
 | Credential Store      | 15        | 0           | 0         | 3       | 5       | 23      |
+| Keyboard Shortcuts    | 0         | 0           | 0         | 0       | 8       | 8       |
 | Cross-Platform        | 0         | 0           | 0         | 0       | 3       | 3       |
-| **Total**             | **251**   | **22**      | **8**     | **33**  | **107** | **421** |
+| **Total**             | **251**   | **22**      | **8**     | **33**  | **115** | **429** |
 
-**251 test items (60%) are now covered by automated E2E tests** across 28 test files. An additional 30 items are fully automatable (22 pending E2E, 8 requiring Docker infrastructure with a live remote agent). The remaining 107 items (25%) require manual testing.
+**251 test items (58%) are now covered by automated E2E tests** across 28 test files. An additional 30 items are fully automatable (22 pending E2E, 8 requiring Docker infrastructure with a live remote agent). The remaining 115 items (27%) require manual testing.
 
 #### Manual-Only Reasons Breakdown
 
