@@ -315,6 +315,11 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
         return false;
       }
       if (action === "paste") {
+        // Prevent the browser's default Cmd+V / Ctrl+Shift+V action so
+        // that no native paste event fires on xterm's internal textarea.
+        // Without this, the clipboard text is sent twice: once by our
+        // pasteToTerminal() and once by xterm's internal paste handler.
+        e.preventDefault();
         pasteToTerminal(tabId);
         return false;
       }

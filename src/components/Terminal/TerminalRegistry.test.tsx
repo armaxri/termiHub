@@ -176,4 +176,27 @@ describe("pasteToTerminal", () => {
     expect(mockReadClipboard).not.toHaveBeenCalled();
     expect(sendInput).not.toHaveBeenCalled();
   });
+
+  it("sends input exactly once per paste (no double-paste)", async () => {
+    mockReadClipboard.mockResolvedValue("hello");
+    vi.mocked(sendInput).mockClear();
+
+    const xterm = {
+      ...createMockXterm(),
+      modes: { bracketedPasteMode: false },
+    } as unknown as XTerm;
+    const el = document.createElement("div");
+
+    act(() => {
+      registryActions.register("tab-dup", el, xterm);
+      registryActions.registerSession("tab-dup", "session-dup");
+    });
+
+    await act(async () => {
+      await registryActions.pasteToTerminal("tab-dup");
+    });
+
+    expect(sendInput).toHaveBeenCalledTimes(1);
+    expect(sendInput).toHaveBeenCalledWith("session-dup", "hello");
+  });
 });

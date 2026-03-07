@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Paste (Cmd+V) inserting text twice on macOS — the native browser paste event was reaching xterm.js in addition to the custom paste handler, causing doubled input (#444)
+
 ### Changed
 
 - Agent cross-compilation reduced from 6 targets (3 glibc + 3 musl) to 2 static musl-only targets (`x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`) — agent binaries are now fully portable with zero runtime dependencies; removed armv7 and all glibc targets from build scripts, CI, and release workflows
