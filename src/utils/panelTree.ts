@@ -187,6 +187,31 @@ function buildPath(
   return null;
 }
 
+/**
+ * Mark every ancestor SplitContainer of the given leaf with `lastActiveLeafId`.
+ * Returns a new tree (immutable). If the leaf is not found, returns the tree unchanged.
+ */
+export function markActiveLeaf(root: PanelNode, leafId: string): PanelNode {
+  if (root.type === "leaf") return root;
+
+  let changed = false;
+  const newChildren = root.children.map((child) => {
+    const updated = markActiveLeaf(child, leafId);
+    if (updated !== child) changed = true;
+    return updated;
+  });
+
+  // Check if the leaf is somewhere in this subtree
+  const containsLeaf = findLeaf(root, leafId) !== null;
+  if (!containsLeaf) {
+    return changed ? { ...root, children: newChildren } : root;
+  }
+
+  // Update lastActiveLeafId if it changed
+  if (root.lastActiveLeafId === leafId && !changed) return root;
+  return { ...root, children: newChildren, lastActiveLeafId: leafId };
+}
+
 /** Get the first leaf by walking into the first/last child recursively. */
 function edgeLeaf(node: PanelNode, side: "first" | "last"): LeafPanel {
   if (node.type === "leaf") return node;
@@ -195,8 +220,25 @@ function edgeLeaf(node: PanelNode, side: "first" | "last"): LeafPanel {
 }
 
 /**
+ * Return the preferred leaf when entering a subtree: if the node has a
+ * `lastActiveLeafId` that still exists in the subtree, return that leaf.
+ * Otherwise fall back to the edge leaf (first or last).
+ */
+function preferredLeaf(node: PanelNode, fallbackSide: "first" | "last"): LeafPanel {
+  if (node.type === "leaf") return node;
+  if (node.lastActiveLeafId) {
+    const remembered = findLeaf(node, node.lastActiveLeafId);
+    if (remembered) return remembered;
+  }
+  return edgeLeaf(node, fallbackSide);
+}
+
+/**
  * Find the adjacent leaf panel in the given direction.
  * Returns null if there is no panel in that direction.
+ *
+ * When entering a subtree, prefers the last-focused leaf within that subtree
+ * (via `lastActiveLeafId`), falling back to the nearest edge leaf.
  *
  * - left/right navigate across horizontal splits
  * - up/down navigate across vertical splits
@@ -222,9 +264,9 @@ export function findAdjacentLeaf(
     const siblingIndex = childIndex + delta;
     if (siblingIndex < 0 || siblingIndex >= split.children.length) continue;
 
-    // Walk into the sibling subtree to the nearest edge
-    const entrySide = delta > 0 ? "first" : "last";
-    return edgeLeaf(split.children[siblingIndex], entrySide);
+    // Walk into the sibling subtree, preferring the last-focused leaf
+    const fallbackSide = delta > 0 ? "first" : "last";
+    return preferredLeaf(split.children[siblingIndex], fallbackSide);
   }
 
   return null;

@@ -111,6 +111,8 @@ export interface SplitContainer {
   id: string;
   direction: "horizontal" | "vertical";
   children: PanelNode[];
+  /** The last leaf that was focused within this subtree. Used by directional navigation. */
+  lastActiveLeafId?: string;
 }
 
 export type PanelNode = LeafPanel | SplitContainer;

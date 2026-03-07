@@ -93,6 +93,7 @@ import {
   splitLeaf,
   simplifyTree,
   edgeToSplit,
+  markActiveLeaf,
 } from "@/utils/panelTree";
 
 export type SidebarView = "connections" | "files" | "tunnels";
@@ -1903,6 +1904,18 @@ export const useAppStore = create<AppState>((set, get) => {
       set({ masterPasswordSetupOpen: true, masterPasswordSetupMode: mode }),
     closeMasterPasswordSetup: () => set({ masterPasswordSetupOpen: false }),
   };
+});
+
+// Track last-focused leaf in split containers for directional navigation (#448).
+// When activePanelId changes, mark all ancestor SplitContainers so that
+// navigating back into a subtree restores the last-focused panel.
+useAppStore.subscribe((state, prev) => {
+  if (state.activePanelId && state.activePanelId !== prev.activePanelId) {
+    const updated = markActiveLeaf(state.rootPanel, state.activePanelId);
+    if (updated !== state.rootPanel) {
+      useAppStore.setState({ rootPanel: updated });
+    }
+  }
 });
 
 /**
