@@ -98,6 +98,11 @@ export function useKeyboardShortcuts() {
           useAppStore.getState().splitPanel("horizontal");
           break;
 
+        case "split-down":
+          e.preventDefault();
+          useAppStore.getState().splitPanel("vertical");
+          break;
+
         case "zoom-in":
           e.preventDefault();
           useAppStore.getState().zoomIn();
