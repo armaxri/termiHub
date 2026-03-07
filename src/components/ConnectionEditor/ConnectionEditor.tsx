@@ -14,7 +14,12 @@ import type { ConnectionTypeInfo } from "@/services/api";
 import { SavedConnection, RemoteAgentDefinition } from "@/types/connection";
 import { SettingsNav } from "@/components/Settings";
 import { ConnectionSettingsForm, AGENT_SCHEMA } from "@/components/DynamicForm";
-import { buildDefaults, findPasswordPromptInfo } from "@/utils/schemaDefaults";
+import {
+  buildDefaults,
+  findPasswordPromptInfo,
+  filterRuntimeOptions,
+} from "@/utils/schemaDefaults";
+import { useAvailableRuntimes } from "@/hooks/useAvailableRuntimes";
 import { ConnectionTerminalSettings } from "./ConnectionTerminalSettings";
 import { ConnectionAppearanceSettings } from "./ConnectionAppearanceSettings";
 import { findLeafByTab } from "@/utils/panelTree";
@@ -524,7 +529,36 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
 
   const enabledExternalFiles = settings.externalConnectionFiles.filter((f) => f.enabled);
 
-  const currentSchema = isAgentTransportMode ? AGENT_SCHEMA : currentTypeInfo?.schema;
+  // Filter Docker runtime options based on what's actually installed
+  const { dockerAvailable, podmanAvailable, loading: runtimesLoading } = useAvailableRuntimes();
+
+  const currentSchema = useMemo(() => {
+    const base = isAgentTransportMode ? AGENT_SCHEMA : currentTypeInfo?.schema;
+    if (!base || selectedType !== "docker" || runtimesLoading) return base;
+    return filterRuntimeOptions(base, dockerAvailable, podmanAvailable);
+  }, [
+    isAgentTransportMode,
+    currentTypeInfo?.schema,
+    selectedType,
+    runtimesLoading,
+    dockerAvailable,
+    podmanAvailable,
+  ]);
+
+  // Auto-set the runtime value when only one option remains
+  useEffect(() => {
+    if (selectedType !== "docker" || runtimesLoading || !currentSchema) return;
+
+    for (const group of currentSchema.groups) {
+      for (const field of group.fields) {
+        if (field.key !== "runtime" || field.fieldType.type !== "select") continue;
+        const options = field.fieldType.options;
+        if (options.length === 1 && connSettings.runtime !== options[0].value) {
+          setConnSettings((prev) => ({ ...prev, runtime: options[0].value }));
+        }
+      }
+    }
+  }, [selectedType, runtimesLoading, currentSchema, connSettings.runtime]);
 
   const renderConnectionContent = () => (
     <div className="connection-editor__form">

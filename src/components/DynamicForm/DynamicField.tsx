@@ -141,12 +141,14 @@ function SelectField({
   onChange,
   fieldType,
 }: FieldProps & { fieldType: { type: "select"; options: { value: string; label: string }[] } }) {
+  const isLocked = fieldType.options.length <= 1;
   return (
     <>
       <span className="settings-form__label">{field.label}</span>
       <select
         value={(value as string) ?? ""}
         onChange={(e) => onChange(e.target.value)}
+        disabled={isLocked}
         data-testid={`field-${field.key}`}
       >
         {fieldType.options.map((opt) => (

@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Improved
 
 - Terminal right-click context menu now shows "Copy Selection" first when text is selected, otherwise "Paste" is the first option — previously "Copy All" appeared before "Paste" (#425)
+- Docker connection editor now filters the Runtime dropdown to only show runtimes installed on the system; when only one runtime is available, the dropdown is auto-selected and locked (#440)
 
 ### Changed
 

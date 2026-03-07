@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import type { SettingsSchema, SettingsField } from "@/types/schema";
-import { buildDefaults, isFieldVisible, findPasswordPromptInfo } from "./schemaDefaults";
+import {
+  buildDefaults,
+  isFieldVisible,
+  findPasswordPromptInfo,
+  filterRuntimeOptions,
+} from "./schemaDefaults";
 
 function textField(key: string, opts: Partial<SettingsField> = {}): SettingsField {
   return {
@@ -249,5 +254,89 @@ describe("findPasswordPromptInfo", () => {
       usernameKey: "username",
       passwordKey: "password",
     });
+  });
+});
+
+const RUNTIME_SCHEMA: SettingsSchema = {
+  groups: [
+    {
+      key: "container",
+      label: "Container",
+      fields: [
+        textField("image", { default: "ubuntu:22.04" }),
+        {
+          key: "runtime",
+          label: "Runtime",
+          fieldType: {
+            type: "select",
+            options: [
+              { value: "auto", label: "Auto" },
+              { value: "docker", label: "Docker" },
+              { value: "podman", label: "Podman" },
+            ],
+          },
+          required: true,
+          default: "auto",
+        },
+      ],
+    },
+  ],
+};
+
+describe("filterRuntimeOptions", () => {
+  it("keeps all options when both runtimes are available", () => {
+    const result = filterRuntimeOptions(RUNTIME_SCHEMA, true, true);
+    const runtimeField = result.groups[0].fields.find((f) => f.key === "runtime");
+    expect(runtimeField?.fieldType).toEqual({
+      type: "select",
+      options: [
+        { value: "auto", label: "Auto" },
+        { value: "docker", label: "Docker" },
+        { value: "podman", label: "Podman" },
+      ],
+    });
+  });
+
+  it("shows only Docker when only Docker is available", () => {
+    const result = filterRuntimeOptions(RUNTIME_SCHEMA, true, false);
+    const runtimeField = result.groups[0].fields.find((f) => f.key === "runtime");
+    expect(runtimeField?.fieldType).toEqual({
+      type: "select",
+      options: [{ value: "docker", label: "Docker" }],
+    });
+  });
+
+  it("shows only Podman when only Podman is available", () => {
+    const result = filterRuntimeOptions(RUNTIME_SCHEMA, false, true);
+    const runtimeField = result.groups[0].fields.find((f) => f.key === "runtime");
+    expect(runtimeField?.fieldType).toEqual({
+      type: "select",
+      options: [{ value: "podman", label: "Podman" }],
+    });
+  });
+
+  it("keeps all options when neither runtime is available (fallback)", () => {
+    const result = filterRuntimeOptions(RUNTIME_SCHEMA, false, false);
+    const runtimeField = result.groups[0].fields.find((f) => f.key === "runtime");
+    expect(runtimeField?.fieldType).toEqual({
+      type: "select",
+      options: [
+        { value: "auto", label: "Auto" },
+        { value: "docker", label: "Docker" },
+        { value: "podman", label: "Podman" },
+      ],
+    });
+  });
+
+  it("does not mutate the original schema", () => {
+    const original = JSON.parse(JSON.stringify(RUNTIME_SCHEMA));
+    filterRuntimeOptions(RUNTIME_SCHEMA, true, false);
+    expect(RUNTIME_SCHEMA).toEqual(original);
+  });
+
+  it("leaves non-runtime fields unchanged", () => {
+    const result = filterRuntimeOptions(RUNTIME_SCHEMA, true, false);
+    const imageField = result.groups[0].fields.find((f) => f.key === "image");
+    expect(imageField).toEqual(RUNTIME_SCHEMA.groups[0].fields[0]);
   });
 });
