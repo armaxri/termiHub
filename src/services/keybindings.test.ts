@@ -233,6 +233,28 @@ describe("getDefaultBindings", () => {
       expect(b.winLinuxDefault).toBeDefined();
     }
   });
+
+  it("has directional focus bindings", () => {
+    const actions = DEFAULT_BINDINGS.map((b) => b.action);
+    expect(actions).toContain("focus-up");
+    expect(actions).toContain("focus-down");
+    expect(actions).toContain("focus-left");
+    expect(actions).toContain("focus-right");
+  });
+
+  it("does not have focus-next-panel or focus-prev-panel", () => {
+    const actions = DEFAULT_BINDINGS.map((b) => b.action);
+    expect(actions).not.toContain("focus-next-panel");
+    expect(actions).not.toContain("focus-prev-panel");
+  });
+
+  it("clear-terminal macOS binding uses Shift to avoid chord conflict", () => {
+    const binding = DEFAULT_BINDINGS.find((b) => b.action === "clear-terminal");
+    expect(binding).toBeDefined();
+    const macCombo = binding!.macDefault as KeyCombo;
+    expect(macCombo.shift).toBe(true);
+    expect(macCombo.meta).toBe(true);
+  });
 });
 
 describe("getEffectiveCombo (macOS context)", () => {
