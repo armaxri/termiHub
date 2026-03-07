@@ -113,3 +113,47 @@ function findFieldKey(schema: SettingsSchema, key: string): string | null {
   }
   return null;
 }
+
+/**
+ * Filter the `runtime` select options in a Docker connection schema based on
+ * which container runtimes are actually available on the system.
+ *
+ * Rules:
+ * - "auto" is kept only when both Docker and Podman are available
+ * - "docker" is kept only when Docker is available
+ * - "podman" is kept only when Podman is available
+ * - If neither is available, all options are kept (fallback — the backend
+ *   will produce a proper error when the user tries to connect)
+ *
+ * Returns a shallow-cloned schema with filtered options. The original schema
+ * is never mutated.
+ */
+export function filterRuntimeOptions(
+  schema: SettingsSchema,
+  dockerAvailable: boolean,
+  podmanAvailable: boolean
+): SettingsSchema {
+  // Fallback: if neither is available, don't filter anything
+  if (!dockerAvailable && !podmanAvailable) return schema;
+
+  return {
+    groups: schema.groups.map((group) => ({
+      ...group,
+      fields: group.fields.map((field) => {
+        if (field.key !== "runtime" || field.fieldType.type !== "select") return field;
+
+        const filtered = field.fieldType.options.filter((opt) => {
+          if (opt.value === "auto") return dockerAvailable && podmanAvailable;
+          if (opt.value === "docker") return dockerAvailable;
+          if (opt.value === "podman") return podmanAvailable;
+          return true;
+        });
+
+        return {
+          ...field,
+          fieldType: { ...field.fieldType, options: filtered },
+        };
+      }),
+    })),
+  };
+}

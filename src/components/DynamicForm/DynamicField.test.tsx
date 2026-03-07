@@ -189,6 +189,23 @@ describe("DynamicField", () => {
       expect(select.options.length).toBe(2);
       expect(select.options[0].text).toBe("SSH Key");
       expect(select.options[1].text).toBe("Password");
+      expect(select.disabled).toBe(false);
+    });
+
+    it("disables select when only one option exists", () => {
+      const field: SettingsField = {
+        key: "runtime",
+        label: "Runtime",
+        fieldType: {
+          type: "select",
+          options: [{ value: "docker", label: "Docker" }],
+        },
+        required: true,
+      };
+      renderField(field, "docker", vi.fn());
+      const select = query("field-runtime") as HTMLSelectElement;
+      expect(select.disabled).toBe(true);
+      expect(select.options.length).toBe(1);
     });
   });
 
