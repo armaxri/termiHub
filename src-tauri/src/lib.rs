@@ -213,6 +213,8 @@ pub fn run() {
             commands::session::check_ssh_agent_status,
             commands::session::check_docker_available,
             commands::session::list_docker_images,
+            commands::session::check_podman_available,
+            commands::session::list_podman_images,
             commands::session::validate_ssh_key,
             // Session-based file browsing (stubs for now)
             commands::session::session_list_files,

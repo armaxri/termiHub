@@ -5,7 +5,7 @@ Comprehensive Docker-based test containers for automated system testing.
 ## Quick Start
 
 ```bash
-# Start core test containers
+# Start core test containers (Docker)
 docker compose -f tests/docker/docker-compose.yml up -d
 
 # Start everything (including fault injection + stress tests)
@@ -13,6 +13,21 @@ docker compose -f tests/docker/docker-compose.yml --profile all up -d
 
 # Stop all
 docker compose -f tests/docker/docker-compose.yml down
+```
+
+## Podman
+
+The test infrastructure supports Podman as a drop-in replacement for Docker:
+
+```bash
+# Auto-detection: the test scripts detect Podman when Docker is not available
+./scripts/test-system-linux.sh
+
+# Force Podman explicitly
+CONTAINER_CMD=podman ./scripts/test-system-linux.sh
+
+# Or run compose commands directly with Podman
+podman compose -f tests/docker/docker-compose.yml up -d
 ```
 
 ## Containers

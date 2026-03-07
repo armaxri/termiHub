@@ -19,13 +19,14 @@ Linux (Debian/Ubuntu):
 
 macOS:
   - cross-rs (via cargo install) for all targets
-  - Verifies Docker is available
+  - Verifies Docker or Podman is available
   - Rust targets for all 6 architectures
 
 Prerequisites:
   - Rust toolchain (rustup)
-  - Docker (required for cross-rs on all platforms; also used for musl
-    targets on Linux)
+  - Docker or Podman (required for cross-rs on all platforms; also used for
+    musl targets on Linux)
+  - Set CROSS_CONTAINER_ENGINE=podman to use Podman with cross-rs
 USAGE
     exit 0
 fi
@@ -82,16 +83,24 @@ if [ "$OS" = "Linux" ]; then
     fi
 
     echo ""
-    echo "--- Checking Docker ---"
+    echo "--- Checking container runtime ---"
     if command -v docker >/dev/null 2>&1; then
         echo "  Docker found: $(docker --version)"
+        if ! docker info >/dev/null 2>&1; then
+            echo "  WARNING: Docker daemon not running. Try Podman or start Docker Desktop."
+        fi
+    elif command -v podman >/dev/null 2>&1; then
+        echo "  Podman found: $(podman --version)"
+        export CROSS_CONTAINER_ENGINE=podman
+        echo "  Using Podman for cross-rs (CROSS_CONTAINER_ENGINE=podman)"
     else
-        echo "  WARNING: Docker not found. cross-rs needs Docker for musl targets."
+        echo "  WARNING: Neither Docker nor Podman found. cross-rs needs a container runtime for musl targets."
         echo "  Install Docker: https://docs.docker.com/engine/install/"
+        echo "  Or Podman: https://podman.io/docs/installation"
     fi
 
 elif [ "$OS" = "Darwin" ]; then
-    echo "--- Installing cross-rs (all targets use Docker on macOS) ---"
+    echo "--- Installing cross-rs (all targets use a container runtime on macOS) ---"
     if command -v cross >/dev/null 2>&1; then
         echo "  cross is already installed: $(cross --version 2>/dev/null || echo 'unknown version')"
     else
@@ -100,15 +109,20 @@ elif [ "$OS" = "Darwin" ]; then
     fi
 
     echo ""
-    echo "--- Checking Docker ---"
+    echo "--- Checking container runtime ---"
     if command -v docker >/dev/null 2>&1; then
         echo "  Docker found: $(docker --version)"
         if ! docker info >/dev/null 2>&1; then
             echo "  WARNING: Docker daemon is not running. Start Docker Desktop before building."
         fi
+    elif command -v podman >/dev/null 2>&1; then
+        echo "  Podman found: $(podman --version)"
+        export CROSS_CONTAINER_ENGINE=podman
+        echo "  Using Podman for cross-rs (CROSS_CONTAINER_ENGINE=podman)"
     else
-        echo "  ERROR: Docker not found. cross-rs requires Docker on macOS."
+        echo "  ERROR: Neither Docker nor Podman found. cross-rs requires a container runtime on macOS."
         echo "  Install Docker Desktop: https://www.docker.com/products/docker-desktop/"
+        echo "  Or Podman Desktop: https://podman-desktop.io/"
         exit 1
     fi
 
@@ -116,6 +130,46 @@ else
     echo "Unsupported OS: $OS"
     echo "Use setup-agent-cross.cmd on Windows."
     exit 1
+fi
+
+# --- Build custom cross-rs images ---
+# Detect which container command is available.
+CONTAINER_CMD=""
+if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    CONTAINER_CMD=docker
+elif command -v podman >/dev/null 2>&1 && podman info >/dev/null 2>&1; then
+    CONTAINER_CMD=podman
+fi
+
+if [ -n "$CONTAINER_CMD" ]; then
+    echo ""
+    echo "--- Building custom cross-rs images ---"
+    echo "  Images extend ghcr.io/cross-rs/<target>:main with libudev-dev for serialport."
+    echo ""
+
+    build_failed=0
+    for target in "${TARGETS[@]}"; do
+        echo "  localhost/termihub-cross:$target ..."
+        if "$CONTAINER_CMD" build \
+            -t "localhost/termihub-cross:$target" \
+            -f "agent/docker/Dockerfile.$target" \
+            agent/docker; then
+            echo "  OK"
+        else
+            echo "  FAILED: localhost/termihub-cross:$target"
+            build_failed=$((build_failed + 1))
+        fi
+        echo ""
+    done
+
+    if [ "$build_failed" -gt 0 ]; then
+        echo "ERROR: $build_failed image(s) failed to build. Resolve the errors above and retry."
+        exit 1
+    fi
+else
+    echo ""
+    echo "WARNING: No running container runtime found — skipping custom image build."
+    echo "  Start Docker or Podman and re-run this script before running build-agents.sh."
 fi
 
 echo ""

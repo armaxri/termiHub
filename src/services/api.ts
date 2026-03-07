@@ -123,6 +123,16 @@ export async function listDockerImages(): Promise<string[]> {
   return await invoke<string[]>("list_docker_images");
 }
 
+/** Check if Podman is available on the local system. */
+export async function checkPodmanAvailable(): Promise<boolean> {
+  return await invoke<boolean>("check_podman_available");
+}
+
+/** List locally available Podman images. */
+export async function listPodmanImages(): Promise<string[]> {
+  return await invoke<string[]>("list_podman_images");
+}
+
 // --- Connection persistence commands ---
 
 /** Saved remote agent (persisted form, no ephemeral state). */

@@ -79,6 +79,16 @@ if command -v cross >/dev/null 2>&1; then
     HAS_CROSS=true
 fi
 
+# If Podman is the container engine (explicit override or auto-detected), disable
+# cross-rs rootless handling.  Without this, cross-rs adds --user UID:GID to the
+# podman run command which causes the injected cargo/rustc toolchain to be
+# non-executable inside the container ("Permission denied").
+if [ "${CROSS_CONTAINER_ENGINE:-}" = "podman" ] || \
+   ( [ -z "${CROSS_CONTAINER_ENGINE:-}" ] && ! docker info >/dev/null 2>&1 && podman info >/dev/null 2>&1 ); then
+    export CROSS_CONTAINER_ENGINE=podman
+    export CROSS_ROOTLESS_CONTAINER_ENGINE=false
+fi
+
 # --- Linker lookup for native builds ---
 # Maps target triples to their GCC cross-compiler name.
 get_native_linker() {

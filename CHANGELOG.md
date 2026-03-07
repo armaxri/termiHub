@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Keyboard shortcuts now use platform-aware modifier detection — Ctrl+B on macOS no longer toggles the sidebar (it correctly passes through to the terminal as a control character); Cmd+B is used on macOS instead (#418)
+- Dev server no longer spams `EMFILE: too many open files` on Windows — Vite's dep scanner and file watcher now exclude the `target/` directory (Rust build artifacts)
 
 ### Improved
 
@@ -32,6 +33,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Podman Desktop support — Docker sessions now have a **Runtime** dropdown (Auto / Docker / Podman); Auto detects whichever daemon is available; Podman is shown as "Podman: image" in tab titles; existing connections with no runtime field default to Auto for backwards compatibility (#420)
+- `CONTAINER_CMD` detection in all test scripts (`test-system.sh`, `test-system-linux.sh`, `test-system-mac.sh`, `test-system-windows.sh`) — auto-detects Docker or Podman; override via `CONTAINER_CMD=podman` env var (#420)
+- `setup-agent-cross.sh` / `setup-agent-cross.cmd` now detect Podman as a fallback for cross-rs when Docker is not available; sets `CROSS_CONTAINER_ENGINE=podman` automatically (#420)
+- `build-agents.cmd` and `build-agents.sh` now set `CROSS_ROOTLESS_CONTAINER_ENGINE=false` when Podman is detected, fixing "cargo: Permission denied" inside cross-rs containers caused by Podman's rootless `--user` flag making the injected toolchain non-executable (#420)
+- `build-agents.cmd` now sets `CROSS_REMOTE=1` when Podman is the container runtime, avoiding the "statfs /mnt/c/…: input/output error" workspace bind-mount failure; also explicitly sets `CROSS_CONFIG=agent\Cross.toml` (#420)
+- `agent/Cross.toml` replaced `pre-build` shell hooks with `image` directives pointing to locally pre-built `localhost/termihub-cross:<target>` images — avoids cross-rs building custom Docker images at compile time (which fails on Windows/Podman because Podman Machine cannot `faccessat` Windows-side build contexts) (#420)
+- `setup-agent-cross.cmd` and `setup-agent-cross.sh` now build the six `localhost/termihub-cross:<target>` images as part of setup; on Windows with Podman the images are built via `podman machine ssh` so the Dockerfile is delivered over stdin inside the WSL2 machine, bypassing Windows path access entirely (#420)
+- Added `agent/docker/Dockerfile.<target>` files (one per cross-compilation target) that extend the official `ghcr.io/cross-rs/<target>:main` base images with `libudev-dev` and, for ARM targets, the target-architecture `pkg-config` wrapper (#420)
 - Switchable right-click terminal behavior — new "Right-Click Behavior" setting in Terminal settings lets users choose between "Context Menu" (macOS/Linux default) and "Quick Copy/Paste" (Windows default, copies selection or pastes if nothing selected); uses Tauri clipboard plugin for native clipboard access (#419)
 - "Copy All Logs" option in the LogViewer context menu — copies all filtered log entries to clipboard (#419)
 - Frontend debug logging utility (`frontendLog`) that emits messages into the LogViewer for in-app debugging (#419)
@@ -47,6 +56,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- All six `agent/docker/Dockerfile.*` images now install `lld` so that GCC's `-fuse-ld=lld` flag (emitted by Rust's gnu-lld linker flavour) can find `ld.lld` in PATH when Rust's bundled `rust-lld` wrapper lacks execute permission after being injected from Windows via `podman cp` (DrvFs strips all +x bits); the entrypoint chmod loop also now scans `/root` in addition to `/cross` to cover `~/.rustup` toolchain placements (#420)
+- `build-agents.cmd` CROSS_REMOTE workspace copy fails with "Falscher Parameter (os error 87)" when a file named `NUL` (or other Windows reserved device names) exists in the project root — the previous `bash -c` cleanup ran in the wrong directory when `bash` resolved to WSL bash (which cannot `chdir` to `/mnt/c/…`), silently skipping deletion; fixed by passing the project dir to bash via an env var (`_CROSS_WORKDIR=%CD:\=/%`) so bash explicitly `cd`s there — Git Bash accepts `C:/path`-style paths, WSL bash silently fails and skips deletion; also added `podman container prune -f` before the build loop (and after each failure) to remove stopped containers from previous failed builds and prevent OOM pressure on Podman Machine that caused subsequent targets to be killed with a signal (#420)
 - File browser fails in Git Bash on Windows — Git Bash sets `$HOME` to MSYS-style Unix paths like `/c/Users/username` which Windows APIs cannot resolve; now detects and converts MSYS drive paths to native Windows paths (`C:/Users/username`) in `home_dir()` and filesystem operations (#422)
 - Build warning on Windows: unused `socket_path` variable in X11 forwarding code — inlined into the `#[cfg(unix)]` branch so it's not created on non-unix platforms (#434)
 - SFTP file browser and monitoring fail on SSH connections with `invalid type: sequence, expected a map` — the `sftp_open` and `monitoring_open` Tauri commands tried to deserialize the frontend config directly as `SshConfig`, but the `env` field is stored as an array of `{key, value}` pairs by the schema-driven form; now both commands accept raw JSON and use `parse_ssh_settings` (the same parser used by `create_connection`) for consistent handling (#421)

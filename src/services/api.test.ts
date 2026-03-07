@@ -53,6 +53,8 @@ import {
   validateSshKey,
   checkDockerAvailable,
   listDockerImages,
+  checkPodmanAvailable,
+  listPodmanImages,
   setupRemoteAgent,
   getLogs,
   clearLogs,
@@ -684,6 +686,43 @@ describe("api service", () => {
       mockedInvoke.mockResolvedValue([]);
 
       const result = await listDockerImages();
+
+      expect(result).toEqual([]);
+    });
+  });
+
+  describe("podman commands", () => {
+    it("checkPodmanAvailable invokes correct command", async () => {
+      mockedInvoke.mockResolvedValue(true);
+
+      const result = await checkPodmanAvailable();
+
+      expect(mockedInvoke).toHaveBeenCalledWith("check_podman_available");
+      expect(result).toBe(true);
+    });
+
+    it("checkPodmanAvailable returns false when unavailable", async () => {
+      mockedInvoke.mockResolvedValue(false);
+
+      const result = await checkPodmanAvailable();
+
+      expect(result).toBe(false);
+    });
+
+    it("listPodmanImages invokes correct command", async () => {
+      const images = ["ubuntu:22.04", "node:18-alpine"];
+      mockedInvoke.mockResolvedValue(images);
+
+      const result = await listPodmanImages();
+
+      expect(mockedInvoke).toHaveBeenCalledWith("list_podman_images");
+      expect(result).toEqual(images);
+    });
+
+    it("listPodmanImages returns empty array when none available", async () => {
+      mockedInvoke.mockResolvedValue([]);
+
+      const result = await listPodmanImages();
 
       expect(result).toEqual([]);
     });

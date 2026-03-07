@@ -329,7 +329,15 @@ impl SessionManager {
                     .get("image")
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown");
-                format!("Docker: {image}")
+                let runtime = settings
+                    .get("runtime")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("auto");
+                match runtime {
+                    "docker" => format!("Docker: {image}"),
+                    "podman" => format!("Podman: {image}"),
+                    _ => format!("Container: {image}"),
+                }
             }
             "wsl" => {
                 let distro = settings
@@ -446,5 +454,45 @@ impl SessionManager {
         }
 
         info!("Session ended: {session_id}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_title_docker_explicit_runtime() {
+        let settings = serde_json::json!({"image": "ubuntu:22.04", "runtime": "docker"});
+        let title = SessionManager::build_title("docker", &settings, None);
+        assert_eq!(title, "Docker: ubuntu:22.04");
+    }
+
+    #[test]
+    fn build_title_docker_podman_runtime() {
+        let settings = serde_json::json!({"image": "alpine", "runtime": "podman"});
+        let title = SessionManager::build_title("docker", &settings, None);
+        assert_eq!(title, "Podman: alpine");
+    }
+
+    #[test]
+    fn build_title_docker_auto_runtime() {
+        let settings = serde_json::json!({"image": "nginx", "runtime": "auto"});
+        let title = SessionManager::build_title("docker", &settings, None);
+        assert_eq!(title, "Container: nginx");
+    }
+
+    #[test]
+    fn build_title_docker_missing_runtime_defaults_to_container() {
+        let settings = serde_json::json!({"image": "redis"});
+        let title = SessionManager::build_title("docker", &settings, None);
+        assert_eq!(title, "Container: redis");
+    }
+
+    #[test]
+    fn build_title_docker_missing_image() {
+        let settings = serde_json::json!({"runtime": "docker"});
+        let title = SessionManager::build_title("docker", &settings, None);
+        assert_eq!(title, "Docker: unknown");
     }
 }

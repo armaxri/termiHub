@@ -14,6 +14,12 @@ export default defineConfig(async () => ({
     },
   },
 
+  // Exclude Rust build artifacts from dependency scanning
+  optimizeDeps: {
+    exclude: [],
+    entries: ["src/**/*.{ts,tsx}"],
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent vite from obscuring rust errors
@@ -31,8 +37,8 @@ export default defineConfig(async () => ({
         }
       : undefined,
     watch: {
-      // 3. tell vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      // 3. tell vite to ignore watching `src-tauri` and Rust build artifacts
+      ignored: ["**/src-tauri/**", "**/target/**"],
     },
   },
 }));

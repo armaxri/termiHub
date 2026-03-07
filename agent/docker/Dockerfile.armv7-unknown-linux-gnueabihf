@@ -1,0 +1,21 @@
+FROM ghcr.io/cross-rs/armv7-unknown-linux-gnueabihf:main
+# lld: system LLD linker fallback for when Rust's bundled rust-lld lacks execute
+# permission after being copied from Windows via podman cp (DrvFs strips +x bits).
+RUN dpkg --add-architecture armhf \
+    && apt-get update \
+    && apt-get install -y libudev-dev:armhf lld \
+    && printf '#!/bin/sh\nPKG_CONFIG_PATH=/usr/lib/arm-linux-gnueabihf/pkgconfig PKG_CONFIG_ALLOW_SYSTEM_LIBS=1 exec pkg-config "$@"\n' \
+       > /usr/local/bin/arm-linux-gnueabihf-pkg-config \
+    && chmod +x /usr/local/bin/arm-linux-gnueabihf-pkg-config
+
+# Podman+Windows fix: cross-rs copies the Rust toolchain from the Windows
+# filesystem via `podman cp`, which strips execute bits from ELF binaries
+# (DrvFs->container limitation).  This entrypoint runs a tight background loop
+# that restores +x on any injected bin/ files before the build command runs.
+RUN printf '#!/bin/sh\n( while true; do find /cross /root -maxdepth 12 -path "*/bin/*" -type f ! -perm /0111 -exec chmod +x {} + 2>/dev/null || true; sleep 1; done ) &\nexec "$@"\n' > /entrypoint.sh \
+    && chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
+# Default CMD keeps the container alive in TTY mode (CROSS_REMOTE=1 on Windows).
+# When cross-rs detects a TTY it omits the explicit "sleep infinity" command and
+# relies on the image CMD instead; without this the container exits immediately.
+CMD ["sleep", "infinity"]

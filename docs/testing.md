@@ -561,8 +561,10 @@ termiHub includes a comprehensive test infrastructure with 13 Docker containers 
 ### Quick Start
 
 ```bash
-# Start all Docker containers
+# Start all containers (Docker or Podman — auto-detected)
 docker compose -f tests/docker/docker-compose.yml up -d
+# Or with Podman:
+podman compose -f tests/docker/docker-compose.yml up -d
 
 # Run all Rust integration tests
 cargo test -p termihub-core --all-features -- --nocapture
@@ -581,6 +583,9 @@ cargo test -p termihub-core --all-features --test sftp_stress -- --nocapture
 # Stop all containers
 docker compose -f tests/docker/docker-compose.yml --profile all down
 ```
+
+> **Podman users:** The test system scripts auto-detect Podman when Docker is not available.
+> You can also force a specific runtime: `CONTAINER_CMD=podman ./scripts/test-system-linux.sh`
 
 ### Test Suites
 
