@@ -15,6 +15,7 @@ import { LargePasteDialog } from "@/components/Terminal/LargePasteDialog";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useTunnelEvents } from "@/hooks/useTunnelEvents";
 import { useCredentialStoreEvents } from "@/hooks/useCredentialStoreEvents";
+import { useWebviewZoom } from "@/hooks/useWebviewZoom";
 import { useAppStore } from "@/store/appStore";
 import "./App.css";
 
@@ -87,6 +88,7 @@ function App() {
   useKeyboardShortcuts();
   useTunnelEvents();
   useCredentialStoreEvents();
+  useWebviewZoom();
   const loadFromBackend = useAppStore((s) => s.loadFromBackend);
   const layoutConfig = useAppStore((s) => s.layoutConfig);
   const unlockDialogOpen = useAppStore((s) => s.unlockDialogOpen);
