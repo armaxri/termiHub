@@ -181,12 +181,10 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
 
           // xterm.js 6's SmoothScrollableElement does not reliably auto-scroll
           // on new output in WKWebView (macOS Tauri). Explicitly scroll to the
-          // bottom after writing, but only if the user hasn't scrolled up to
-          // read history (viewportY === baseY means viewport is at the bottom).
-          const buf = xterm.buffer.active;
-          if (buf.viewportY === buf.baseY) {
-            xterm.scrollToBottom();
-          }
+          // bottom after each write. Conditional checks (viewportY === baseY)
+          // don't work because the SmoothScrollableElement never syncs ydisp
+          // back to the buffer in WKWebView, so ydisp always lags behind ybase.
+          xterm.scrollToBottom();
         };
 
         // Subscribe to output events via singleton dispatcher (O(1) routing)
