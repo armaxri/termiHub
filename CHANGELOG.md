@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- WSL file browser — browse, read, write, rename, and delete files in WSL distributions via `\\wsl$\<distro>\` UNC paths (#484)
 - Session-based file browsing — file listing, reading, writing, deleting, and renaming now work through a session's `ConnectionType` trait, enabling file operations on remote agent connections (#482)
 - Post-install smoke test script (`scripts/smoke-test.sh` / `.cmd`) — launches the built app, verifies basic UI functionality via WebDriver (Linux/Windows) or osascript (macOS), and confirms clean shutdown (#457)
 - Open Settings (Cmd/Ctrl+,), Clear Terminal (Cmd/Ctrl+Shift+K), and Split Right (Cmd/Ctrl+\\) keyboard shortcuts now work (#445)
