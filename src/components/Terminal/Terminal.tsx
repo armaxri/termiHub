@@ -165,8 +165,19 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
           rafId = null;
           if (outputBuffer.length === 0) return;
 
+          // xterm.js 6's SmoothScrollableElement updates its scroll range
+          // during the render pass (requestAnimationFrame), which runs
+          // AFTER the write callback.  Calling scrollToBottom() in the
+          // write callback is too early — the scroll range still reflects
+          // the old content height.  Defer to a RAF so the render pass
+          // completes first and scrollToBottom() targets the correct
+          // position.
+          const scrollAfterWrite = () => {
+            requestAnimationFrame(() => xterm.scrollToBottom());
+          };
+
           if (outputBuffer.length === 1) {
-            xterm.write(outputBuffer[0]);
+            xterm.write(outputBuffer[0], scrollAfterWrite);
           } else {
             // Concatenate all buffered chunks into one write
             let totalLen = 0;
@@ -177,16 +188,9 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
               merged.set(chunk, offset);
               offset += chunk.length;
             }
-            xterm.write(merged);
+            xterm.write(merged, scrollAfterWrite);
           }
           outputBuffer.length = 0;
-
-          // xterm.js 6's SmoothScrollableElement does not reliably auto-scroll
-          // on new output in WKWebView (macOS Tauri). Explicitly scroll to the
-          // bottom after each write. Conditional checks (viewportY === baseY)
-          // don't work because the SmoothScrollableElement never syncs ydisp
-          // back to the buffer in WKWebView, so ydisp always lags behind ybase.
-          xterm.scrollToBottom();
         };
 
         // Subscribe to output events via singleton dispatcher (O(1) routing)
@@ -219,12 +223,18 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
           }
         });
 
-        // Initial resize after connection
+        // Initial resize after connection.  The ResizeObserver may have
+        // already fitted xterm to the correct dimensions while the async
+        // createTerminal() was in-flight — but at that point sessionIdRef
+        // was still null, so the resize was never sent to the backend PTY.
+        // Always send the current dimensions explicitly to ensure the PTY
+        // matches the visible viewport.
         try {
           fitAddon.fit();
         } catch {
           // Container might not have dimensions yet
         }
+        resizeTerminal(sessionId, xterm.cols, xterm.rows);
 
         cleanupRef.current = () => {
           unsubOutput();
@@ -397,7 +407,12 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
     };
     el.addEventListener("wheel", handleGapWheel, { passive: false });
 
-    // ResizeObserver follows the element even when reparented
+    // ResizeObserver follows the element even when reparented.
+    // When the terminal element moves from parking into the visible slot,
+    // the observer fires and we re-fit xterm to the real container size.
+    // After fitting, kick the SmoothScrollableElement so it recalculates
+    // its viewport height — it may have cached stale dimensions from when
+    // the element was in parking (hidden, zero-size).
     const resizeObserver = new ResizeObserver(() => {
       try {
         if (horizontalScrollingRef.current) {
@@ -411,6 +426,10 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
         } else {
           fitAddon.fit();
         }
+        // Force SmoothScrollableElement to refresh its layout after the
+        // viewport dimensions change.  Without this, the first output
+        // after terminal creation cannot be scrolled to the bottom.
+        requestAnimationFrame(() => xterm.scrollToBottom());
       } catch {
         // Ignore fit errors during transitions
       }
