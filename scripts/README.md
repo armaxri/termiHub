@@ -17,6 +17,7 @@ Helper scripts for common development tasks. Each script has a `.sh` (Unix/macOS
 | `test-system-windows` | Windows system test orchestration via WSL/Git Bash: Docker, unit tests, integration tests, E2E                             |
 | `setup-agent-cross`   | Install cross-compilation toolchains for building the agent for 2 Linux targets (musl)                                     |
 | `build-agents`        | Cross-compile the remote agent for Linux targets (x64/ARM64, static musl binaries)                                         |
+| `release-check`       | Validate release readiness — version consistency, changelog, tests, quality checks, git state, branch, and code markers    |
 | `test-manual.py`      | Guided manual test runner — walks through manual tests from `tests/manual/*.yaml` with platform filtering and JSON reports |
 
 ## Typical workflow

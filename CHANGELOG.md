@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Zoom In (Cmd/Ctrl+=), Zoom Out (Cmd/Ctrl+-), and Reset Zoom (Cmd/Ctrl+0) keyboard shortcuts — zoom scales the entire application UI via Tauri webview zoom (#445)
 - Find in Terminal (Cmd+F on macOS, Ctrl+Shift+F on Win/Linux) — inline search bar with case-sensitive and regex toggle, previous/next navigation, powered by @xterm/addon-search (#445)
 - Split Down keyboard shortcut (Cmd+Shift+\\ on macOS, Ctrl+Shift+\\ on Win/Linux) — splits the active panel vertically, complementing the existing Split Right shortcut (#446)
+- Release readiness checklist script (`scripts/release-check.sh` / `.cmd`) — validates version consistency across all manifest files, changelog formatting, test suite, quality checks, git state, branch, and code markers in a single command (#456)
 
 - Comprehensive keyboard shortcut system with platform-aware defaults — macOS uses Cmd-based shortcuts, Windows/Linux uses Ctrl-based shortcuts; all shortcuts are centralized in a KeybindingService with 18 default bindings across 4 categories (General, Clipboard, Terminal, Navigation) (#418)
 - Keyboard shortcuts for terminal clipboard operations — macOS uses Cmd+C/V, Windows/Linux uses Ctrl+Shift+C/V; xterm.js key handler intercepts these before the terminal processes them, fixing the longstanding issue where Ctrl+V on Windows sent a raw control character instead of pasting (#418)
