@@ -126,6 +126,14 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     configurable: true,
   },
   {
+    action: "split-down",
+    label: "Split Down",
+    category: "navigation",
+    macDefault: { key: "\\", meta: true, shift: true },
+    winLinuxDefault: { key: "\\", ctrl: true, shift: true },
+    configurable: true,
+  },
+  {
     action: "focus-up",
     label: "Focus Panel Above",
     category: "navigation",

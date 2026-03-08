@@ -131,6 +131,16 @@ describe("findMatchingAction (Linux/Win context)", () => {
     expect(findMatchingAction(event)).toBe("copy");
   });
 
+  it("finds split-right for Ctrl+\\", () => {
+    const event = makeKeyEvent("\\", { ctrl: true });
+    expect(findMatchingAction(event)).toBe("split-right");
+  });
+
+  it("finds split-down for Ctrl+Shift+\\", () => {
+    const event = makeKeyEvent("\\", { ctrl: true, shift: true });
+    expect(findMatchingAction(event)).toBe("split-down");
+  });
+
   it("finds paste for Ctrl+Shift+V", () => {
     const event = makeKeyEvent("V", { ctrl: true, shift: true });
     expect(findMatchingAction(event)).toBe("paste");
@@ -240,6 +250,25 @@ describe("getDefaultBindings", () => {
     expect(actions).toContain("focus-down");
     expect(actions).toContain("focus-left");
     expect(actions).toContain("focus-right");
+  });
+
+  it("has split-right and split-down bindings", () => {
+    const actions = DEFAULT_BINDINGS.map((b) => b.action);
+    expect(actions).toContain("split-right");
+    expect(actions).toContain("split-down");
+  });
+
+  it("split-down uses Shift modifier to distinguish from split-right", () => {
+    const binding = DEFAULT_BINDINGS.find((b) => b.action === "split-down");
+    expect(binding).toBeDefined();
+    const macCombo = binding!.macDefault as KeyCombo;
+    expect(macCombo.meta).toBe(true);
+    expect(macCombo.shift).toBe(true);
+    expect(macCombo.key).toBe("\\");
+    const winCombo = binding!.winLinuxDefault as KeyCombo;
+    expect(winCombo.ctrl).toBe(true);
+    expect(winCombo.shift).toBe(true);
+    expect(winCombo.key).toBe("\\");
   });
 
   it("does not have focus-next-panel or focus-prev-panel", () => {
