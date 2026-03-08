@@ -203,8 +203,8 @@ interface AppState {
   chordPending: string | null;
   setChordPending: (pending: string | null) => void;
 
-  // Zoom (runtime-only, not persisted)
-  zoomDelta: number;
+  // Zoom (runtime-only, not persisted) — scale factor for webview zoom
+  zoomLevel: number;
   zoomIn: () => void;
   zoomOut: () => void;
   zoomReset: () => void;
@@ -956,11 +956,13 @@ export const useAppStore = create<AppState>((set, get) => {
     chordPending: null,
     setChordPending: (pending) => set({ chordPending: pending }),
 
-    // Zoom (runtime-only, not persisted)
-    zoomDelta: 0,
-    zoomIn: () => set((s) => ({ zoomDelta: Math.min(s.zoomDelta + 1, 20) })),
-    zoomOut: () => set((s) => ({ zoomDelta: Math.max(s.zoomDelta - 1, -10) })),
-    zoomReset: () => set({ zoomDelta: 0 }),
+    // Zoom (runtime-only, not persisted) — scale factor for webview zoom
+    zoomLevel: 1.0,
+    zoomIn: () =>
+      set((s) => ({ zoomLevel: Math.min(parseFloat((s.zoomLevel * 1.1).toFixed(2)), 3.0) })),
+    zoomOut: () =>
+      set((s) => ({ zoomLevel: Math.max(parseFloat((s.zoomLevel / 1.1).toFixed(2)), 0.5) })),
+    zoomReset: () => set({ zoomLevel: 1.0 }),
 
     // Terminal search (runtime-only)
     terminalSearchVisible: {},

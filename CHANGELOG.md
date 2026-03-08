@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Zoom shortcuts (Cmd/Ctrl+=/-/0) now scale the entire application UI uniformly using Tauri webview zoom, instead of only adjusting terminal font size (#447)
 - Directional panel navigation (Cmd/Ctrl+Alt+Arrow) now remembers and restores the last-focused panel when entering a split group, instead of always selecting the first/last child (#448)
 
 ### Changed
@@ -20,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Open Settings (Cmd/Ctrl+,), Clear Terminal (Cmd/Ctrl+Shift+K), and Split Right (Cmd/Ctrl+\\) keyboard shortcuts now work (#445)
-- Zoom In (Cmd/Ctrl+=), Zoom Out (Cmd/Ctrl+-), and Reset Zoom (Cmd/Ctrl+0) keyboard shortcuts — zoom level applies across all terminal instances as a runtime offset to the configured font size (#445)
+- Zoom In (Cmd/Ctrl+=), Zoom Out (Cmd/Ctrl+-), and Reset Zoom (Cmd/Ctrl+0) keyboard shortcuts — zoom scales the entire application UI via Tauri webview zoom (#445)
 - Find in Terminal (Cmd+F on macOS, Ctrl+Shift+F on Win/Linux) — inline search bar with case-sensitive and regex toggle, previous/next navigation, powered by @xterm/addon-search (#445)
 - Split Down keyboard shortcut (Cmd+Shift+\\ on macOS, Ctrl+Shift+\\ on Win/Linux) — splits the active panel vertically, complementing the existing Split Right shortcut (#446)
 
