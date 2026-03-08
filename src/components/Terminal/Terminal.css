@@ -23,27 +23,8 @@
   height: 100%;
 }
 
-/* In xterm.js 6 the viewport element is no longer used for scrolling — the
-   SmoothScrollableElement (custom VS-Code-style scrollbar) handles it instead.
-   The viewport still covers the full .xterm area (position: absolute, inset: 0)
-   and would intercept wheel events in the gap below the canvas if left
-   scrollable.  Making it inert prevents it from swallowing those events. */
 .terminal-container .xterm-viewport {
-  overflow-y: hidden;
-  pointer-events: none;
   background-color: var(--terminal-bg);
-}
-
-/* The scrollable element defaults to position: relative and only covers the
-   canvas area (rows × cellHeight).  Due to Math.floor rounding in FitAddon
-   there is almost always a small gap at the bottom of the .xterm container.
-   Wheel events in that gap would miss the scrollable element entirely and
-   the terminal could not be scrolled from there.  Stretching it to fill the
-   full .xterm area ensures wheel events are captured everywhere.
-   !important is needed to override the inline style set by xterm.js. */
-.terminal-container .xterm-scrollable-element {
-  position: absolute !important;
-  inset: 0;
 }
 
 /* Horizontal scrolling: the outer wrapper scrolls, .xterm is made wider via JS.

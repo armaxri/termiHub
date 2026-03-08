@@ -165,8 +165,19 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
           rafId = null;
           if (outputBuffer.length === 0) return;
 
+          // xterm.js 6's SmoothScrollableElement updates its scroll range
+          // during the render pass (requestAnimationFrame), which runs
+          // AFTER the write callback.  Calling scrollToBottom() in the
+          // write callback is too early — the scroll range still reflects
+          // the old content height.  Defer to a RAF so the render pass
+          // completes first and scrollToBottom() targets the correct
+          // position.
+          const scrollAfterWrite = () => {
+            requestAnimationFrame(() => xterm.scrollToBottom());
+          };
+
           if (outputBuffer.length === 1) {
-            xterm.write(outputBuffer[0]);
+            xterm.write(outputBuffer[0], scrollAfterWrite);
           } else {
             // Concatenate all buffered chunks into one write
             let totalLen = 0;
@@ -177,7 +188,7 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
               merged.set(chunk, offset);
               offset += chunk.length;
             }
-            xterm.write(merged);
+            xterm.write(merged, scrollAfterWrite);
           }
           outputBuffer.length = 0;
         };
@@ -212,12 +223,18 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
           }
         });
 
-        // Initial resize after connection
+        // Initial resize after connection.  The ResizeObserver may have
+        // already fitted xterm to the correct dimensions while the async
+        // createTerminal() was in-flight — but at that point sessionIdRef
+        // was still null, so the resize was never sent to the backend PTY.
+        // Always send the current dimensions explicitly to ensure the PTY
+        // matches the visible viewport.
         try {
           fitAddon.fit();
         } catch {
           // Container might not have dimensions yet
         }
+        resizeTerminal(sessionId, xterm.cols, xterm.rows);
 
         cleanupRef.current = () => {
           unsubOutput();
@@ -322,6 +339,11 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
         return false;
       }
       if (action === "paste") {
+        // Prevent the browser's default Cmd+V / Ctrl+Shift+V action so
+        // that no native paste event fires on xterm's internal textarea.
+        // Without this, the clipboard text is sent twice: once by our
+        // pasteToTerminal() and once by xterm's internal paste handler.
+        e.preventDefault();
         pasteToTerminal(tabId);
         return false;
       }
@@ -367,7 +389,29 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
     // Wire to backend
     setupTerminal(xterm, fitAddon, () => canceled);
 
-    // ResizeObserver follows the element even when reparented
+    // Forward wheel events from the gap below the canvas to xterm.
+    // FitAddon rounds rows down, so there is almost always a small gap
+    // between the canvas bottom and the container edge.  The scrollable
+    // element only covers the canvas area, so wheel events in the gap
+    // would be lost.  We catch them on the container and scroll xterm.
+    const handleGapWheel = (e: WheelEvent) => {
+      const scrollable = el.querySelector(".xterm-scrollable-element");
+      if (scrollable && !scrollable.contains(e.target as Node)) {
+        const lines = Math.round(e.deltaY / 25);
+        if (lines !== 0) {
+          xterm.scrollLines(lines);
+          e.preventDefault();
+        }
+      }
+    };
+    el.addEventListener("wheel", handleGapWheel, { passive: false });
+
+    // ResizeObserver follows the element even when reparented.
+    // When the terminal element moves from parking into the visible slot,
+    // the observer fires and we re-fit xterm to the real container size.
+    // After fitting, kick the SmoothScrollableElement so it recalculates
+    // its viewport height — it may have cached stale dimensions from when
+    // the element was in parking (hidden, zero-size).
     const resizeObserver = new ResizeObserver(() => {
       try {
         if (horizontalScrollingRef.current) {
@@ -381,6 +425,10 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
         } else {
           fitAddon.fit();
         }
+        // Force SmoothScrollableElement to refresh its layout after the
+        // viewport dimensions change.  Without this, the first output
+        // after terminal creation cannot be scrolled to the bottom.
+        requestAnimationFrame(() => xterm.scrollToBottom());
       } catch {
         // Ignore fit errors during transitions
       }
@@ -390,6 +438,7 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
     return () => {
       canceled = true;
       resizeObserver.disconnect();
+      el.removeEventListener("wheel", handleGapWheel);
       osc7Disposable.dispose();
       unregister(tabId);
       if (cleanupRef.current) {
