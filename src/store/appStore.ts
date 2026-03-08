@@ -93,6 +93,7 @@ import {
   splitLeaf,
   simplifyTree,
   edgeToSplit,
+  markActiveLeaf,
 } from "@/utils/panelTree";
 
 export type SidebarView = "connections" | "files" | "tunnels";
@@ -201,6 +202,17 @@ interface AppState {
   // Chord pending indicator
   chordPending: string | null;
   setChordPending: (pending: string | null) => void;
+
+  // Zoom (runtime-only, not persisted)
+  zoomDelta: number;
+  zoomIn: () => void;
+  zoomOut: () => void;
+  zoomReset: () => void;
+
+  // Terminal search (runtime-only)
+  terminalSearchVisible: Record<string, boolean>;
+  setTerminalSearchVisible: (tabId: string, visible: boolean) => void;
+  toggleTerminalSearch: (tabId: string) => void;
 
   // Large paste confirmation
   largePasteDialog: { open: boolean; charCount: number; onConfirm: (() => void) | null };
@@ -726,6 +738,7 @@ export const useAppStore = create<AppState>((set, get) => {
         const { [tabId]: _removedDirty, ...remainingDirty } = state.editorDirtyTabs;
         const { [tabId]: _removedColor, ...remainingColors } = state.tabColors;
         const { [tabId]: _removedOpts, ...remainingOpts } = state.tabTerminalOptions;
+        const { [tabId]: _removedSearch, ...remainingSearch } = state.terminalSearchVisible;
 
         let rootPanel = updateLeaf(state.rootPanel, panelId, (leaf) =>
           removeTabFromLeaf(leaf, tabId)
@@ -748,6 +761,7 @@ export const useAppStore = create<AppState>((set, get) => {
             editorDirtyTabs: remainingDirty,
             tabColors: remainingColors,
             tabTerminalOptions: remainingOpts,
+            terminalSearchVisible: remainingSearch,
           };
         }
 
@@ -758,6 +772,7 @@ export const useAppStore = create<AppState>((set, get) => {
           editorDirtyTabs: remainingDirty,
           tabColors: remainingColors,
           tabTerminalOptions: remainingOpts,
+          terminalSearchVisible: remainingSearch,
         };
       }),
 
@@ -940,6 +955,24 @@ export const useAppStore = create<AppState>((set, get) => {
     // Chord pending indicator
     chordPending: null,
     setChordPending: (pending) => set({ chordPending: pending }),
+
+    // Zoom (runtime-only, not persisted)
+    zoomDelta: 0,
+    zoomIn: () => set((s) => ({ zoomDelta: Math.min(s.zoomDelta + 1, 20) })),
+    zoomOut: () => set((s) => ({ zoomDelta: Math.max(s.zoomDelta - 1, -10) })),
+    zoomReset: () => set({ zoomDelta: 0 }),
+
+    // Terminal search (runtime-only)
+    terminalSearchVisible: {},
+    setTerminalSearchVisible: (tabId, visible) =>
+      set((s) => ({ terminalSearchVisible: { ...s.terminalSearchVisible, [tabId]: visible } })),
+    toggleTerminalSearch: (tabId) =>
+      set((s) => ({
+        terminalSearchVisible: {
+          ...s.terminalSearchVisible,
+          [tabId]: !s.terminalSearchVisible[tabId],
+        },
+      })),
 
     // Large paste confirmation
     largePasteDialog: { open: false, charCount: 0, onConfirm: null },
@@ -1871,6 +1904,18 @@ export const useAppStore = create<AppState>((set, get) => {
       set({ masterPasswordSetupOpen: true, masterPasswordSetupMode: mode }),
     closeMasterPasswordSetup: () => set({ masterPasswordSetupOpen: false }),
   };
+});
+
+// Track last-focused leaf in split containers for directional navigation (#448).
+// When activePanelId changes, mark all ancestor SplitContainers so that
+// navigating back into a subtree restores the last-focused panel.
+useAppStore.subscribe((state, prev) => {
+  if (state.activePanelId && state.activePanelId !== prev.activePanelId) {
+    const updated = markActiveLeaf(state.rootPanel, state.activePanelId);
+    if (updated !== state.rootPanel) {
+      useAppStore.setState({ rootPanel: updated });
+    }
+  }
 });
 
 /**

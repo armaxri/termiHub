@@ -131,6 +131,16 @@ describe("findMatchingAction (Linux/Win context)", () => {
     expect(findMatchingAction(event)).toBe("copy");
   });
 
+  it("finds split-right for Ctrl+\\", () => {
+    const event = makeKeyEvent("\\", { ctrl: true });
+    expect(findMatchingAction(event)).toBe("split-right");
+  });
+
+  it("finds split-down for Ctrl+Shift+\\", () => {
+    const event = makeKeyEvent("\\", { ctrl: true, shift: true });
+    expect(findMatchingAction(event)).toBe("split-down");
+  });
+
   it("finds paste for Ctrl+Shift+V", () => {
     const event = makeKeyEvent("V", { ctrl: true, shift: true });
     expect(findMatchingAction(event)).toBe("paste");
@@ -232,6 +242,47 @@ describe("getDefaultBindings", () => {
       expect(b.macDefault).toBeDefined();
       expect(b.winLinuxDefault).toBeDefined();
     }
+  });
+
+  it("has directional focus bindings", () => {
+    const actions = DEFAULT_BINDINGS.map((b) => b.action);
+    expect(actions).toContain("focus-up");
+    expect(actions).toContain("focus-down");
+    expect(actions).toContain("focus-left");
+    expect(actions).toContain("focus-right");
+  });
+
+  it("has split-right and split-down bindings", () => {
+    const actions = DEFAULT_BINDINGS.map((b) => b.action);
+    expect(actions).toContain("split-right");
+    expect(actions).toContain("split-down");
+  });
+
+  it("split-down uses Shift modifier to distinguish from split-right", () => {
+    const binding = DEFAULT_BINDINGS.find((b) => b.action === "split-down");
+    expect(binding).toBeDefined();
+    const macCombo = binding!.macDefault as KeyCombo;
+    expect(macCombo.meta).toBe(true);
+    expect(macCombo.shift).toBe(true);
+    expect(macCombo.key).toBe("\\");
+    const winCombo = binding!.winLinuxDefault as KeyCombo;
+    expect(winCombo.ctrl).toBe(true);
+    expect(winCombo.shift).toBe(true);
+    expect(winCombo.key).toBe("\\");
+  });
+
+  it("does not have focus-next-panel or focus-prev-panel", () => {
+    const actions = DEFAULT_BINDINGS.map((b) => b.action);
+    expect(actions).not.toContain("focus-next-panel");
+    expect(actions).not.toContain("focus-prev-panel");
+  });
+
+  it("clear-terminal macOS binding uses Shift to avoid chord conflict", () => {
+    const binding = DEFAULT_BINDINGS.find((b) => b.action === "clear-terminal");
+    expect(binding).toBeDefined();
+    const macCombo = binding!.macDefault as KeyCombo;
+    expect(macCombo.shift).toBe(true);
+    expect(macCombo.meta).toBe(true);
   });
 });
 
