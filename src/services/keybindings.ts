@@ -252,16 +252,40 @@ export function parseBinding(str: string): KeyCombo | KeyCombo[] {
   return parts.map(parseCombo);
 }
 
+/**
+ * Map of keys produced by holding Shift to their unshifted base key.
+ * Used so that e.g. Cmd+Shift+= (producing "+") matches a binding for "=".
+ */
+const SHIFT_KEY_TO_BASE: Record<string, string> = {
+  "+": "=",
+  _: "-",
+};
+
 /** Check if a KeyboardEvent matches a single KeyCombo. */
 export function eventMatchesCombo(event: KeyboardEvent, combo: KeyCombo): boolean {
-  if (event.key !== combo.key && event.key.toLowerCase() !== combo.key.toLowerCase()) {
-    return false;
+  const keyMatches = event.key === combo.key || event.key.toLowerCase() === combo.key.toLowerCase();
+
+  if (keyMatches) {
+    if (!!combo.ctrl !== event.ctrlKey) return false;
+    if (!!combo.shift !== event.shiftKey) return false;
+    if (!!combo.alt !== event.altKey) return false;
+    if (!!combo.meta !== event.metaKey) return false;
+    return true;
   }
-  if (!!combo.ctrl !== event.ctrlKey) return false;
-  if (!!combo.shift !== event.shiftKey) return false;
-  if (!!combo.alt !== event.altKey) return false;
-  if (!!combo.meta !== event.metaKey) return false;
-  return true;
+
+  // Check shift-equivalence: if the event key is a shifted variant of the combo key,
+  // accept the match with shift allowed even if the combo doesn't require it.
+  if (event.shiftKey && !combo.shift) {
+    const baseKey = SHIFT_KEY_TO_BASE[event.key];
+    if (baseKey && baseKey.toLowerCase() === combo.key.toLowerCase()) {
+      if (!!combo.ctrl !== event.ctrlKey) return false;
+      if (!!combo.alt !== event.altKey) return false;
+      if (!!combo.meta !== event.metaKey) return false;
+      return true;
+    }
+  }
+
+  return false;
 }
 
 /** Get the effective combo for an action (user override or platform default). */
