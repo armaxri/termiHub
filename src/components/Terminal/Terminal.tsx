@@ -178,6 +178,15 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
             xterm.write(merged);
           }
           outputBuffer.length = 0;
+
+          // xterm.js 6's SmoothScrollableElement does not reliably auto-scroll
+          // on new output in WKWebView (macOS Tauri). Explicitly scroll to the
+          // bottom after writing, but only if the user hasn't scrolled up to
+          // read history (viewportY === baseY means viewport is at the bottom).
+          const buf = xterm.buffer.active;
+          if (buf.viewportY === buf.baseY) {
+            xterm.scrollToBottom();
+          }
         };
 
         // Subscribe to output events via singleton dispatcher (O(1) routing)
