@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Directional panel navigation (Cmd/Ctrl+Alt+Arrow) now remembers and restores the last-focused panel when entering a split group, instead of always selecting the first/last child (#448)
+
 ### Changed
 
 - Agent cross-compilation reduced from 6 targets (3 glibc + 3 musl) to 2 static musl-only targets (`x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`) — agent binaries are now fully portable with zero runtime dependencies; removed armv7 and all glibc targets from build scripts, CI, and release workflows
