@@ -6,12 +6,15 @@
 //! remote connections use [`RemoteProxy`](super::remote_proxy::RemoteProxy).
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use tokio::sync::Mutex;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use termihub_core::connection::{ConnectionType, ConnectionTypeInfo, ConnectionTypeRegistry};
+use termihub_core::files::FileEntry;
 use termihub_core::output::coalescer::OutputCoalescer;
 use termihub_core::output::screen_clear::contains_screen_clear;
 use tracing::{error, info};
@@ -110,10 +113,7 @@ impl SessionManager {
     ) -> Result<String, TerminalError> {
         // Enforce session limit.
         {
-            let sessions = self
-                .sessions
-                .lock()
-                .map_err(|e| TerminalError::SpawnFailed(format!("Failed to lock sessions: {e}")))?;
+            let sessions = self.sessions.lock().await;
             if sessions.len() >= MAX_SESSIONS {
                 return Err(TerminalError::SpawnFailed(format!(
                     "Maximum number of sessions ({MAX_SESSIONS}) reached"
@@ -163,10 +163,7 @@ impl SessionManager {
 
         // Store session.
         {
-            let mut sessions = self
-                .sessions
-                .lock()
-                .map_err(|e| TerminalError::SpawnFailed(format!("Failed to lock sessions: {e}")))?;
+            let mut sessions = self.sessions.lock().await;
             sessions.insert(
                 session_id.clone(),
                 SessionEntry {
@@ -207,11 +204,10 @@ impl SessionManager {
             let cmd = cmd.to_string();
             tokio::spawn(async move {
                 tokio::time::sleep(Duration::from_millis(200)).await;
-                if let Ok(sessions) = sessions.lock() {
-                    if let Some(entry) = sessions.get(&sid) {
-                        let input = format!("{cmd}\n");
-                        let _ = entry.connection.write(input.as_bytes());
-                    }
+                let sessions = sessions.lock().await;
+                if let Some(entry) = sessions.get(&sid) {
+                    let input = format!("{cmd}\n");
+                    let _ = entry.connection.write(input.as_bytes());
                 }
             });
         }
@@ -221,11 +217,8 @@ impl SessionManager {
     }
 
     /// Send input data to a session.
-    pub fn send_input(&self, session_id: &str, data: &[u8]) -> Result<(), TerminalError> {
-        let sessions = self
-            .sessions
-            .lock()
-            .map_err(|e| TerminalError::WriteFailed(format!("Failed to lock sessions: {e}")))?;
+    pub async fn send_input(&self, session_id: &str, data: &[u8]) -> Result<(), TerminalError> {
+        let sessions = self.sessions.lock().await;
         let entry = sessions
             .get(session_id)
             .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
@@ -236,11 +229,13 @@ impl SessionManager {
     }
 
     /// Resize a session's terminal.
-    pub fn resize(&self, session_id: &str, cols: u16, rows: u16) -> Result<(), TerminalError> {
-        let sessions = self
-            .sessions
-            .lock()
-            .map_err(|e| TerminalError::ResizeFailed(format!("Failed to lock sessions: {e}")))?;
+    pub async fn resize(
+        &self,
+        session_id: &str,
+        cols: u16,
+        rows: u16,
+    ) -> Result<(), TerminalError> {
+        let sessions = self.sessions.lock().await;
         let entry = sessions
             .get(session_id)
             .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
@@ -251,11 +246,8 @@ impl SessionManager {
     }
 
     /// Close a session.
-    pub fn close_session(&self, session_id: &str) -> Result<(), TerminalError> {
-        let mut sessions = self
-            .sessions
-            .lock()
-            .map_err(|e| TerminalError::WriteFailed(format!("Failed to lock sessions: {e}")))?;
+    pub async fn close_session(&self, session_id: &str) -> Result<(), TerminalError> {
+        let mut sessions = self.sessions.lock().await;
         if let Some(_entry) = sessions.remove(session_id) {
             // Connection will be dropped, triggering cleanup.
             // For async disconnect, we'd need to spawn a task, but drop
@@ -267,11 +259,8 @@ impl SessionManager {
 
     /// List all active sessions.
     #[allow(dead_code)]
-    pub fn list_sessions(&self) -> Vec<SessionInfo> {
-        let sessions = match self.sessions.lock() {
-            Ok(s) => s,
-            Err(_) => return Vec::new(),
-        };
+    pub async fn list_sessions(&self) -> Vec<SessionInfo> {
+        let sessions = self.sessions.lock().await;
         sessions
             .values()
             .map(|entry| {
@@ -280,6 +269,100 @@ impl SessionManager {
                 info
             })
             .collect()
+    }
+
+    /// List directory contents via a session's file browser capability.
+    pub async fn list_files(
+        &self,
+        session_id: &str,
+        path: &str,
+    ) -> Result<Vec<FileEntry>, TerminalError> {
+        let sessions = self.sessions.lock().await;
+        let entry = sessions
+            .get(session_id)
+            .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
+        let browser = entry
+            .connection
+            .file_browser()
+            .ok_or_else(|| TerminalError::RemoteError("No file browser capability".to_string()))?;
+        browser
+            .list_dir(path)
+            .await
+            .map_err(|e| TerminalError::RemoteError(e.to_string()))
+    }
+
+    /// Read a file via a session's file browser capability.
+    pub async fn read_file(&self, session_id: &str, path: &str) -> Result<Vec<u8>, TerminalError> {
+        let sessions = self.sessions.lock().await;
+        let entry = sessions
+            .get(session_id)
+            .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
+        let browser = entry
+            .connection
+            .file_browser()
+            .ok_or_else(|| TerminalError::RemoteError("No file browser capability".to_string()))?;
+        browser
+            .read_file(path)
+            .await
+            .map_err(|e| TerminalError::RemoteError(e.to_string()))
+    }
+
+    /// Write a file via a session's file browser capability.
+    pub async fn write_file(
+        &self,
+        session_id: &str,
+        path: &str,
+        data: &[u8],
+    ) -> Result<(), TerminalError> {
+        let sessions = self.sessions.lock().await;
+        let entry = sessions
+            .get(session_id)
+            .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
+        let browser = entry
+            .connection
+            .file_browser()
+            .ok_or_else(|| TerminalError::RemoteError("No file browser capability".to_string()))?;
+        browser
+            .write_file(path, data)
+            .await
+            .map_err(|e| TerminalError::RemoteError(e.to_string()))
+    }
+
+    /// Delete a file via a session's file browser capability.
+    pub async fn delete_file(&self, session_id: &str, path: &str) -> Result<(), TerminalError> {
+        let sessions = self.sessions.lock().await;
+        let entry = sessions
+            .get(session_id)
+            .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
+        let browser = entry
+            .connection
+            .file_browser()
+            .ok_or_else(|| TerminalError::RemoteError("No file browser capability".to_string()))?;
+        browser
+            .delete(path)
+            .await
+            .map_err(|e| TerminalError::RemoteError(e.to_string()))
+    }
+
+    /// Rename a file via a session's file browser capability.
+    pub async fn rename_file(
+        &self,
+        session_id: &str,
+        from: &str,
+        to: &str,
+    ) -> Result<(), TerminalError> {
+        let sessions = self.sessions.lock().await;
+        let entry = sessions
+            .get(session_id)
+            .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
+        let browser = entry
+            .connection
+            .file_browser()
+            .ok_or_else(|| TerminalError::RemoteError("No file browser capability".to_string()))?;
+        browser
+            .rename(from, to)
+            .await
+            .map_err(|e| TerminalError::RemoteError(e.to_string()))
     }
 
     /// Get the list of available connection types from the registry.
@@ -381,7 +464,7 @@ impl SessionManager {
                     }
                     Ok(None) => {
                         // Channel closed during startup.
-                        Self::emit_and_cleanup(&session_id, buffer, &app_handle, &sessions);
+                        Self::emit_and_cleanup(&session_id, buffer, &app_handle, &sessions).await;
                         return;
                     }
                     Err(_) => break, // Timeout
@@ -425,11 +508,11 @@ impl SessionManager {
             }
         }
 
-        Self::emit_and_cleanup(&session_id, Vec::new(), &app_handle, &sessions);
+        Self::emit_and_cleanup(&session_id, Vec::new(), &app_handle, &sessions).await;
     }
 
     /// Emit remaining data (if any), send the exit event, and remove the session.
-    fn emit_and_cleanup(
+    async fn emit_and_cleanup(
         session_id: &str,
         data: Vec<u8>,
         app_handle: &AppHandle,
@@ -449,7 +532,8 @@ impl SessionManager {
         };
         let _ = app_handle.emit("terminal-exit", &exit_event);
 
-        if let Ok(mut sessions) = sessions.lock() {
+        {
+            let mut sessions = sessions.lock().await;
             sessions.remove(session_id);
         }
 
@@ -460,6 +544,125 @@ impl SessionManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use termihub_core::connection::{Capabilities, OutputReceiver, SettingsSchema};
+    use termihub_core::errors::SessionError;
+    use termihub_core::files::FileBrowser;
+    use termihub_core::monitoring::MonitoringProvider;
+
+    /// A minimal mock connection without file browser capability.
+    struct MockConnection;
+
+    #[async_trait::async_trait]
+    impl ConnectionType for MockConnection {
+        fn type_id(&self) -> &str {
+            "mock"
+        }
+        fn display_name(&self) -> &str {
+            "Mock"
+        }
+        fn settings_schema(&self) -> SettingsSchema {
+            SettingsSchema { groups: vec![] }
+        }
+        fn capabilities(&self) -> Capabilities {
+            Capabilities {
+                monitoring: false,
+                file_browser: false,
+                resize: true,
+                persistent: false,
+            }
+        }
+        async fn connect(&mut self, _settings: serde_json::Value) -> Result<(), SessionError> {
+            Ok(())
+        }
+        async fn disconnect(&mut self) -> Result<(), SessionError> {
+            Ok(())
+        }
+        fn is_connected(&self) -> bool {
+            true
+        }
+        fn write(&self, _data: &[u8]) -> Result<(), SessionError> {
+            Ok(())
+        }
+        fn resize(&self, _cols: u16, _rows: u16) -> Result<(), SessionError> {
+            Ok(())
+        }
+        fn subscribe_output(&self) -> OutputReceiver {
+            let (_tx, rx) = tokio::sync::mpsc::channel(1);
+            rx
+        }
+        fn monitoring(&self) -> Option<&dyn MonitoringProvider> {
+            None
+        }
+        fn file_browser(&self) -> Option<&dyn FileBrowser> {
+            None
+        }
+    }
+
+    /// Helper to create a sessions map and insert a mock session.
+    async fn sessions_with_mock(session_id: &str) -> Arc<Mutex<HashMap<String, SessionEntry>>> {
+        let sessions = Arc::new(Mutex::new(HashMap::new()));
+        let mut map = sessions.lock().await;
+        map.insert(
+            session_id.to_string(),
+            SessionEntry {
+                connection: Box::new(MockConnection),
+                info: SessionInfo {
+                    id: session_id.to_string(),
+                    title: "Mock".to_string(),
+                    connection_type: "mock".to_string(),
+                    alive: true,
+                },
+            },
+        );
+        drop(map);
+        sessions
+    }
+
+    /// Test that file browser access returns an error when the connection
+    /// has no file browser capability.
+    #[tokio::test]
+    async fn file_browser_returns_none_for_mock_connection() {
+        let sessions = sessions_with_mock("sess-1").await;
+        let sessions_guard = sessions.lock().await;
+        let entry = sessions_guard.get("sess-1").unwrap();
+        assert!(
+            entry.connection.file_browser().is_none(),
+            "MockConnection should not have file browser capability"
+        );
+    }
+
+    /// Test that looking up a nonexistent session returns SessionNotFound.
+    #[tokio::test]
+    async fn nonexistent_session_returns_not_found() {
+        let sessions: Arc<Mutex<HashMap<String, SessionEntry>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let sessions_guard = sessions.lock().await;
+        let result = sessions_guard.get("nonexistent");
+        assert!(result.is_none());
+    }
+
+    /// Test write and resize work on mock connection.
+    #[tokio::test]
+    async fn write_and_resize_on_mock_session() {
+        let sessions = sessions_with_mock("sess-1").await;
+        let sessions_guard = sessions.lock().await;
+        let entry = sessions_guard.get("sess-1").unwrap();
+        assert!(entry.connection.write(b"hello").is_ok());
+        assert!(entry.connection.resize(80, 24).is_ok());
+    }
+
+    /// Test session removal.
+    #[tokio::test]
+    async fn remove_session() {
+        let sessions = sessions_with_mock("sess-1").await;
+        {
+            let mut sessions_guard = sessions.lock().await;
+            sessions_guard.remove("sess-1");
+        }
+        let sessions_guard = sessions.lock().await;
+        assert!(!sessions_guard.contains_key("sess-1"));
+    }
 
     #[test]
     fn build_title_docker_explicit_runtime() {

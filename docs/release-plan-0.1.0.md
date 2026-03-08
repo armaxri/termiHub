@@ -635,7 +635,7 @@ Each session should be 1–3 hours. Suggested session plan:
 | 10      | 1 h      | Phase 4: Release                                       |
 | 11      | 1 h      | Phase 5: Post-release verification                     |
 
-**Total: ~16–19 hours across 11 sessions**
+Total: \~16–19 hours across 11 sessions
 
 ---
 

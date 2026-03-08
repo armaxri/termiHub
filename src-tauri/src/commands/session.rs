@@ -42,35 +42,35 @@ pub fn get_connection_types(manager: State<'_, SessionManager>) -> Vec<Connectio
 
 /// Send input data to a session.
 #[tauri::command]
-pub fn send_input(
+pub async fn send_input(
     session_id: String,
     data: String,
     manager: State<'_, SessionManager>,
 ) -> Result<(), TerminalError> {
     debug!(session_id, "Sending input");
-    manager.send_input(&session_id, data.as_bytes())
+    manager.send_input(&session_id, data.as_bytes()).await
 }
 
 /// Resize a session's terminal.
 #[tauri::command]
-pub fn resize_terminal(
+pub async fn resize_terminal(
     session_id: String,
     cols: u16,
     rows: u16,
     manager: State<'_, SessionManager>,
 ) -> Result<(), TerminalError> {
     debug!(session_id, cols, rows, "Resizing terminal");
-    manager.resize(&session_id, cols, rows)
+    manager.resize(&session_id, cols, rows).await
 }
 
 /// Close a session.
 #[tauri::command]
-pub fn close_terminal(
+pub async fn close_terminal(
     session_id: String,
     manager: State<'_, SessionManager>,
 ) -> Result<(), TerminalError> {
     info!(session_id, "Closing session");
-    manager.close_session(&session_id)
+    manager.close_session(&session_id).await
 }
 
 /// List available shells on this platform.
@@ -148,14 +148,10 @@ pub async fn validate_ssh_key(path: String) -> crate::utils::ssh_key_validate::S
 pub async fn session_list_files(
     session_id: String,
     path: String,
-    _manager: State<'_, SessionManager>,
+    manager: State<'_, SessionManager>,
 ) -> Result<Vec<FileEntry>, TerminalError> {
     debug!(session_id, path, "Session file list");
-    // TODO: Access file_browser() through the session's ConnectionType.
-    // For now, return an error as the trait reference pattern needs work.
-    Err(TerminalError::RemoteError(
-        "File browsing not yet implemented through session".to_string(),
-    ))
+    manager.list_files(&session_id, &path).await
 }
 
 /// Read a file via a session's file browser capability.
@@ -163,12 +159,10 @@ pub async fn session_list_files(
 pub async fn session_read_file(
     session_id: String,
     path: String,
-    _manager: State<'_, SessionManager>,
+    manager: State<'_, SessionManager>,
 ) -> Result<Vec<u8>, TerminalError> {
     debug!(session_id, path, "Session file read");
-    Err(TerminalError::RemoteError(
-        "File reading not yet implemented through session".to_string(),
-    ))
+    manager.read_file(&session_id, &path).await
 }
 
 /// Write a file via a session's file browser capability.
@@ -176,13 +170,11 @@ pub async fn session_read_file(
 pub async fn session_write_file(
     session_id: String,
     path: String,
-    _data: Vec<u8>,
-    _manager: State<'_, SessionManager>,
+    data: Vec<u8>,
+    manager: State<'_, SessionManager>,
 ) -> Result<(), TerminalError> {
     debug!(session_id, path, "Session file write");
-    Err(TerminalError::RemoteError(
-        "File writing not yet implemented through session".to_string(),
-    ))
+    manager.write_file(&session_id, &path, &data).await
 }
 
 /// Delete a file via a session's file browser capability.
@@ -190,12 +182,10 @@ pub async fn session_write_file(
 pub async fn session_delete_file(
     session_id: String,
     path: String,
-    _manager: State<'_, SessionManager>,
+    manager: State<'_, SessionManager>,
 ) -> Result<(), TerminalError> {
     debug!(session_id, path, "Session file delete");
-    Err(TerminalError::RemoteError(
-        "File deletion not yet implemented through session".to_string(),
-    ))
+    manager.delete_file(&session_id, &path).await
 }
 
 /// Rename a file via a session's file browser capability.
@@ -204,10 +194,8 @@ pub async fn session_rename_file(
     session_id: String,
     old_path: String,
     new_path: String,
-    _manager: State<'_, SessionManager>,
+    manager: State<'_, SessionManager>,
 ) -> Result<(), TerminalError> {
     debug!(session_id, old_path, new_path, "Session file rename");
-    Err(TerminalError::RemoteError(
-        "File renaming not yet implemented through session".to_string(),
-    ))
+    manager.rename_file(&session_id, &old_path, &new_path).await
 }
