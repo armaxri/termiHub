@@ -635,6 +635,41 @@ cargo test -p termihub-core --all-features --test network_resilience -- --nocapt
 
 Each test uses a `FaultGuard` that automatically resets faults on drop (including panics).
 
+## Smoke Testing
+
+The smoke test script (`scripts/smoke-test.sh` / `.cmd`) provides a quick post-install verification that the built app launches, renders its UI, and shuts down cleanly. It is intended to run after `pnpm tauri build` or after installing a release binary.
+
+### Usage
+
+```bash
+# Linux — built binary
+./scripts/smoke-test.sh ./src-tauri/target/release/termihub
+
+# macOS — installed app bundle
+./scripts/smoke-test.sh /Applications/termiHub.app
+
+# Windows — built binary
+scripts\smoke-test.cmd src-tauri\target\release\termihub.exe
+```
+
+### What It Checks
+
+| Check | Description            | Linux/Windows (WebDriver)                | Linux/Windows (fallback) | macOS                  |
+| ----- | ---------------------- | ---------------------------------------- | ------------------------ | ---------------------- |
+| 1     | App launches           | WebDriver session create                 | Process start            | `open` + pgrep         |
+| 2     | Window/UI visible      | Activity bar element found               | Process stable after 10s | osascript window query |
+| 3     | Create local shell     | Click new-connection, fill form, connect | Skipped                  | Skipped                |
+| 4     | Terminal I/O           | Send `echo smoke-test-ok`, verify output | Skipped                  | Skipped                |
+| 5     | Open Settings          | Click activity-bar-settings              | Skipped                  | Skipped                |
+| 6     | Open connection editor | Click new-connection button              | Skipped                  | Skipped                |
+| 7     | Clean shutdown         | WebDriver session delete                 | SIGTERM + verify exit    | osascript quit         |
+
+### Platform Details
+
+- **Linux/Windows with tauri-driver**: Full 7-check suite using W3C WebDriver protocol via `curl` (no Node.js required). Requires `tauri-driver` installed (`cargo install tauri-driver`).
+- **Linux/Windows without tauri-driver**: Falls back to process-based checks — verifies app launches, stays alive, and exits cleanly. UI interaction checks (3-6) are skipped.
+- **macOS**: Uses `osascript` for window verification. UI interaction checks (3-6) are skipped because tauri-driver does not support macOS (no WKWebView driver). See [E2E platform constraint](testing.md#platform-support).
+
 ## Related Documentation
 
 - [Contributing](contributing.md) — Development setup, building, workflow, coding standards, and performance profiling
