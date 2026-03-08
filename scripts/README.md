@@ -18,6 +18,7 @@ Helper scripts for common development tasks. Each script has a `.sh` (Unix/macOS
 | `setup-agent-cross`   | Install cross-compilation toolchains for building the agent for 2 Linux targets (musl)                                     |
 | `build-agents`        | Cross-compile the remote agent for Linux targets (x64/ARM64, static musl binaries)                                         |
 | `release-check`       | Validate release readiness — version consistency, changelog, tests, quality checks, git state, branch, and code markers    |
+| `smoke-test`          | Post-install smoke test — launches the built app, verifies basic UI functionality, and confirms clean shutdown             |
 | `test-manual.py`      | Guided manual test runner — walks through manual tests from `tests/manual/*.yaml` with platform filtering and JSON reports |
 
 ## Typical workflow
@@ -60,4 +61,8 @@ python scripts/test-manual.py --category ssh      # Run SSH tests only
 python scripts/test-manual.py --test MT-LOCAL-03  # Run a single test
 python scripts/test-manual.py --keep-infra        # Keep Docker containers after session
 python scripts/test-manual.py --resume tests/reports/manual-*.json  # Resume previous session
+
+# Post-install smoke test
+./scripts/smoke-test.sh ./src-tauri/target/release/termihub       # Linux
+./scripts/smoke-test.sh /Applications/termiHub.app                 # macOS
 ```
