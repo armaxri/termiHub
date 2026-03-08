@@ -25,6 +25,7 @@ SUITE="${E2E_SUITE:-infra}"
 # ─── Cleanup trap ─────────────────────────────────────────────────────────────
 
 SOCAT_SSH_PID=""
+SOCAT_SSH_KEYS_PID=""
 SOCAT_TELNET_PID=""
 SOCAT_SERIAL_PID=""
 ECHO_SERVER_PID=""
@@ -34,7 +35,7 @@ cleanup() {
     echo ""
     echo "=== Cleanup ==="
 
-    for pid_var in ECHO_SERVER_PID SOCAT_SERIAL_PID SOCAT_TELNET_PID SOCAT_SSH_PID XVFB_PID; do
+    for pid_var in ECHO_SERVER_PID SOCAT_SERIAL_PID SOCAT_TELNET_PID SOCAT_SSH_KEYS_PID SOCAT_SSH_PID XVFB_PID; do
         pid="${!pid_var}"
         if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
             echo "  Stopping $pid_var (PID $pid)..."
@@ -106,6 +107,39 @@ if ! nc -z 127.0.0.1 2323 2>/dev/null; then
     echo "ERROR: Telnet port forward failed to bind on 127.0.0.1:2323"
     exit 1
 fi
+
+# Forward port 2203 to test-target:22 for key-based auth tests
+# (matches the ssh-keys container port used in Linux-native E2E)
+socat TCP-LISTEN:2203,fork,reuseaddr TCP:test-target:22 &
+SOCAT_SSH_KEYS_PID=$!
+echo "  127.0.0.1:2203 -> test-target:22 (SSH keys) [PID $SOCAT_SSH_KEYS_PID]"
+
+sleep 0.5
+if ! nc -z 127.0.0.1 2203 2>/dev/null; then
+    echo "ERROR: SSH keys port forward failed to bind on 127.0.0.1:2203"
+    exit 1
+fi
+
+# ─── Wait for generated SSH test key ─────────────────────────────────────────
+# test-target generates an ed25519 key pair at startup and writes it to
+# /shared-keys (a Docker volume shared with this container).
+
+echo ""
+echo "=== Waiting for SSH test key ==="
+WAITED=0
+echo -n "  Waiting for /shared-keys/test_ed25519..."
+while [ ! -f /shared-keys/test_ed25519 ]; do
+    sleep 0.5
+    WAITED=$((WAITED + 1))
+    if [ "$WAITED" -ge 30 ]; then
+        echo " TIMEOUT"
+        echo "ERROR: SSH test key did not appear within 15s."
+        exit 1
+    fi
+done
+echo " ready."
+cp /shared-keys/test_ed25519 /tmp/e2e-ssh-test-key
+chmod 600 /tmp/e2e-ssh-test-key
 
 # ─── Virtual serial ports ────────────────────────────────────────────────────
 
@@ -205,6 +239,8 @@ echo "  E2E Test Environment Ready (Docker)"
 echo "==========================================="
 echo ""
 echo "  SSH:      127.0.0.1:2222 -> test-target:22"
+echo "  SSH keys: 127.0.0.1:2203 -> test-target:22"
+echo "  SSH key:  /tmp/e2e-ssh-test-key"
 echo "  Telnet:   127.0.0.1:2323 -> test-target:23"
 if [ "$SKIP_SERIAL" -eq 0 ]; then
 echo "  Serial A: /tmp/termihub-serial-a"

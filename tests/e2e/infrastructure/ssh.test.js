@@ -8,14 +8,20 @@
 //   - Built app binary (pnpm tauri build)
 //   - tauri-driver installed (cargo install tauri-driver)
 
-import { waitForAppReady, ensureConnectionsSidebar, closeAllTabs } from '../helpers/app.js';
-import { uniqueName, connectByName, createLocalConnection, connectionContextAction } from '../helpers/connections.js';
-import { findTabByTitle, getActiveTab, getTabCount } from '../helpers/tabs.js';
+import { waitForAppReady, ensureConnectionsSidebar, closeAllTabs } from "../helpers/app.js";
+import {
+  uniqueName,
+  connectByName,
+  createLocalConnection,
+  connectionContextAction,
+} from "../helpers/connections.js";
+import { findTabByTitle, getActiveTab, getTabCount } from "../helpers/tabs.js";
 import {
   createSshConnection,
+  createSshKeyConnection,
   handlePasswordPrompt,
   verifyTerminalRendered,
-} from '../helpers/infrastructure.js';
+} from "../helpers/infrastructure.js";
 import {
   MONITORING_CONNECT_BTN,
   MONITORING_LOADING,
@@ -23,9 +29,9 @@ import {
   PASSWORD_PROMPT_INPUT,
   PASSWORD_PROMPT_CANCEL,
   CTX_CONNECTION_CONNECT,
-} from '../helpers/selectors.js';
+} from "../helpers/selectors.js";
 
-describe('SSH Connections (requires live server)', () => {
+describe("SSH Connections (requires live server)", () => {
   before(async () => {
     await waitForAppReady();
     await ensureConnectionsSidebar();
@@ -35,21 +41,21 @@ describe('SSH Connections (requires live server)', () => {
     await closeAllTabs();
   });
 
-  describe('SSH-01: Password authentication', () => {
-    it('should connect with password auth and open a terminal tab', async () => {
-      const name = uniqueName('ssh-pass');
+  describe("SSH-01: Password authentication", () => {
+    it("should connect with password auth and open a terminal tab", async () => {
+      const name = uniqueName("ssh-pass");
       await createSshConnection(name, {
-        host: '127.0.0.1',
-        port: '2222',
-        username: 'testuser',
-        authMethod: 'password',
+        host: "127.0.0.1",
+        port: "2222",
+        username: "testuser",
+        authMethod: "password",
       });
 
       // Double-click to initiate connection
       await connectByName(name);
 
       // Handle the password prompt
-      await handlePasswordPrompt('testpass');
+      await handlePasswordPrompt("testpass");
 
       // Verify a terminal tab appeared
       const tab = await findTabByTitle(name);
@@ -61,16 +67,16 @@ describe('SSH Connections (requires live server)', () => {
       expect(activeText).toContain(name);
     });
 
-    it('should render an xterm terminal after SSH connection', async () => {
-      const name = uniqueName('ssh-xterm');
+    it("should render an xterm terminal after SSH connection", async () => {
+      const name = uniqueName("ssh-xterm");
       await createSshConnection(name, {
-        host: '127.0.0.1',
-        port: '2222',
-        username: 'testuser',
+        host: "127.0.0.1",
+        port: "2222",
+        username: "testuser",
       });
 
       await connectByName(name);
-      await handlePasswordPrompt('testpass');
+      await handlePasswordPrompt("testpass");
 
       // Verify xterm rendered
       const rendered = await verifyTerminalRendered();
@@ -78,14 +84,14 @@ describe('SSH Connections (requires live server)', () => {
     });
   });
 
-  describe('SSH-PASSWORD: Password prompt flow (PR #38)', () => {
-    it('should show password prompt dialog when connecting via context menu', async () => {
-      const name = uniqueName('ssh-prompt');
+  describe("SSH-PASSWORD: Password prompt flow (PR #38)", () => {
+    it("should show password prompt dialog when connecting via context menu", async () => {
+      const name = uniqueName("ssh-prompt");
       await createSshConnection(name, {
-        host: '127.0.0.1',
-        port: '2222',
-        username: 'testuser',
-        authMethod: 'password',
+        host: "127.0.0.1",
+        port: "2222",
+        username: "testuser",
+        authMethod: "password",
       });
 
       // Right-click > Connect
@@ -102,13 +108,13 @@ describe('SSH Connections (requires live server)', () => {
       await browser.pause(300);
     });
 
-    it('should not create a tab when password dialog is cancelled', async () => {
-      const name = uniqueName('ssh-cancel');
+    it("should not create a tab when password dialog is cancelled", async () => {
+      const name = uniqueName("ssh-cancel");
       await createSshConnection(name, {
-        host: '127.0.0.1',
-        port: '2222',
-        username: 'testuser',
-        authMethod: 'password',
+        host: "127.0.0.1",
+        port: "2222",
+        username: "testuser",
+        authMethod: "password",
       });
 
       const tabsBefore = await getTabCount();
@@ -125,34 +131,72 @@ describe('SSH Connections (requires live server)', () => {
       expect(tabsAfter).toBe(tabsBefore);
     });
 
-    it('should connect successfully after entering password', async () => {
-      const name = uniqueName('ssh-enter');
+    it("should connect successfully after entering password", async () => {
+      const name = uniqueName("ssh-enter");
       await createSshConnection(name, {
-        host: '127.0.0.1',
-        port: '2222',
-        username: 'testuser',
-        authMethod: 'password',
+        host: "127.0.0.1",
+        port: "2222",
+        username: "testuser",
+        authMethod: "password",
       });
 
       await connectByName(name);
-      await handlePasswordPrompt('testpass');
+      await handlePasswordPrompt("testpass");
 
       const tab = await findTabByTitle(name);
       expect(tab).not.toBeNull();
     });
   });
 
-  // Key-based auth requires SSH key infrastructure in the Docker container.
-  // TODO: Generate a key pair in the Docker entrypoint and mount it for tests.
-  it('SSH-02: should connect with key auth');
+  describe("SSH-02: Key-based authentication", () => {
+    /**
+     * Resolve the SSH private key path for the current environment.
+     * - Docker E2E: uses the generated key from the shared volume
+     * - Linux native: uses fixture keys from the repo
+     */
+    function resolveKeyPath() {
+      const fs = require("fs");
+      const path = require("path");
 
-  describe('SSH-03: Connection failure', () => {
-    it('should handle connection to unreachable host gracefully', async () => {
-      const name = uniqueName('ssh-fail');
+      // Docker E2E: key generated by test-target entrypoint, copied by e2e-runner
+      const dockerKey = "/tmp/e2e-ssh-test-key";
+      if (fs.existsSync(dockerKey)) {
+        return dockerKey;
+      }
+
+      // Linux native: use fixture key (ssh-keys container on port 2203)
+      return path.resolve(process.cwd(), "tests/fixtures/ssh-keys/ed25519");
+    }
+
+    it("should connect with key auth and open a terminal tab", async () => {
+      const name = uniqueName("ssh-key");
+      const keyPath = resolveKeyPath();
+
+      await createSshKeyConnection(name, {
+        host: "127.0.0.1",
+        port: "2203",
+        username: "testuser",
+        keyPath,
+      });
+
+      await connectByName(name);
+
+      // Key auth should not require a password prompt
+      const tab = await findTabByTitle(name);
+      expect(tab).not.toBeNull();
+
+      const rendered = await verifyTerminalRendered();
+      expect(rendered).toBe(true);
+    });
+  });
+
+  describe("SSH-03: Connection failure", () => {
+    it("should handle connection to unreachable host gracefully", async () => {
+      const name = uniqueName("ssh-fail");
       await createSshConnection(name, {
-        host: '127.0.0.1',
-        port: '19999', // No server listening here
-        username: 'testuser',
+        host: "127.0.0.1",
+        port: "19999", // No server listening here
+        username: "testuser",
       });
 
       const tabsBefore = await getTabCount();
@@ -176,40 +220,40 @@ describe('SSH Connections (requires live server)', () => {
     });
   });
 
-  describe('SSH-05: Session output', () => {
-    it('should display a functional terminal with xterm canvas', async () => {
-      const name = uniqueName('ssh-output');
+  describe("SSH-05: Session output", () => {
+    it("should display a functional terminal with xterm canvas", async () => {
+      const name = uniqueName("ssh-output");
       await createSshConnection(name, {
-        host: '127.0.0.1',
-        port: '2222',
-        username: 'testuser',
+        host: "127.0.0.1",
+        port: "2222",
+        username: "testuser",
       });
 
       await connectByName(name);
-      await handlePasswordPrompt('testpass');
+      await handlePasswordPrompt("testpass");
 
       // Wait for terminal to fully initialize
       await browser.pause(2000);
 
       // Verify the xterm container is present
-      const xtermContainer = await browser.$('.xterm');
+      const xtermContainer = await browser.$(".xterm");
       expect(await xtermContainer.isExisting()).toBe(true);
 
       // Verify the terminal canvas is rendering
-      const canvas = await browser.$('.xterm-screen canvas');
+      const canvas = await browser.$(".xterm-screen canvas");
       const canvasExists = await canvas.isExisting();
-      expect(await xtermContainer.isExisting() || canvasExists).toBe(true);
+      expect((await xtermContainer.isExisting()) || canvasExists).toBe(true);
     });
   });
 
   // Disconnect handling requires stopping the Docker container mid-test,
   // which would break other tests in the suite.
-  it('SSH-06: should handle server disconnect');
+  it("SSH-06: should handle server disconnect");
 
   // X11 forwarding requires an X server running on the test machine.
-  it('SSH-07: should forward X11 applications');
+  it("SSH-07: should forward X11 applications");
 
-  describe('SSH-08: Monitoring hides on non-SSH tab', () => {
+  describe("SSH-08: Monitoring hides on non-SSH tab", () => {
     /**
      * Check whether any monitoring UI element is present in the DOM.
      * Monitoring may be in connect-button, loading, or connected state —
@@ -225,17 +269,17 @@ describe('SSH Connections (requires live server)', () => {
       return false;
     }
 
-    it('should show monitoring when SSH tab is active', async () => {
-      const name = uniqueName('ssh-mon-vis');
+    it("should show monitoring when SSH tab is active", async () => {
+      const name = uniqueName("ssh-mon-vis");
       await createSshConnection(name, {
-        host: '127.0.0.1',
-        port: '2222',
-        username: 'testuser',
-        authMethod: 'password',
+        host: "127.0.0.1",
+        port: "2222",
+        username: "testuser",
+        authMethod: "password",
       });
 
       await connectByName(name);
-      await handlePasswordPrompt('testpass');
+      await handlePasswordPrompt("testpass");
 
       // Wait for terminal + monitoring auto-connect to settle
       await browser.pause(3000);
@@ -243,19 +287,19 @@ describe('SSH Connections (requires live server)', () => {
       expect(await isMonitoringVisible()).toBe(true);
     });
 
-    it('should hide monitoring when switching to a local shell tab', async () => {
-      const sshName = uniqueName('ssh-mon-hide');
-      const localName = uniqueName('local-mon-hide');
+    it("should hide monitoring when switching to a local shell tab", async () => {
+      const sshName = uniqueName("ssh-mon-hide");
+      const localName = uniqueName("local-mon-hide");
 
       // Create and connect SSH
       await createSshConnection(sshName, {
-        host: '127.0.0.1',
-        port: '2222',
-        username: 'testuser',
-        authMethod: 'password',
+        host: "127.0.0.1",
+        port: "2222",
+        username: "testuser",
+        authMethod: "password",
       });
       await connectByName(sshName);
-      await handlePasswordPrompt('testpass');
+      await handlePasswordPrompt("testpass");
       await browser.pause(3000);
 
       // Monitoring should be visible on the SSH tab
@@ -275,19 +319,19 @@ describe('SSH Connections (requires live server)', () => {
       expect(await isMonitoringVisible()).toBe(false);
     });
 
-    it('should reappear when switching back to SSH tab', async () => {
-      const sshName = uniqueName('ssh-mon-back');
-      const localName = uniqueName('local-mon-back');
+    it("should reappear when switching back to SSH tab", async () => {
+      const sshName = uniqueName("ssh-mon-back");
+      const localName = uniqueName("local-mon-back");
 
       // Create and connect SSH
       await createSshConnection(sshName, {
-        host: '127.0.0.1',
-        port: '2222',
-        username: 'testuser',
-        authMethod: 'password',
+        host: "127.0.0.1",
+        port: "2222",
+        username: "testuser",
+        authMethod: "password",
       });
       await connectByName(sshName);
-      await handlePasswordPrompt('testpass');
+      await handlePasswordPrompt("testpass");
       await browser.pause(3000);
 
       expect(await isMonitoringVisible()).toBe(true);
