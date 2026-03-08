@@ -218,6 +218,45 @@ describe("appStore", () => {
     });
   });
 
+  describe("zoom", () => {
+    it("initializes zoomLevel to 1.0", () => {
+      expect(useAppStore.getState().zoomLevel).toBe(1.0);
+    });
+
+    it("zoomIn multiplies by 1.1", () => {
+      useAppStore.getState().zoomIn();
+      expect(useAppStore.getState().zoomLevel).toBeCloseTo(1.1, 2);
+    });
+
+    it("zoomOut divides by 1.1", () => {
+      useAppStore.getState().zoomOut();
+      expect(useAppStore.getState().zoomLevel).toBeCloseTo(0.91, 2);
+    });
+
+    it("zoomReset sets level back to 1.0", () => {
+      useAppStore.getState().zoomIn();
+      useAppStore.getState().zoomIn();
+      useAppStore.getState().zoomReset();
+      expect(useAppStore.getState().zoomLevel).toBe(1.0);
+    });
+
+    it("caps zoomLevel at 3.0", () => {
+      // Zoom in many times to exceed cap
+      for (let i = 0; i < 30; i++) {
+        useAppStore.getState().zoomIn();
+      }
+      expect(useAppStore.getState().zoomLevel).toBeLessThanOrEqual(3.0);
+    });
+
+    it("floors zoomLevel at 0.5", () => {
+      // Zoom out many times to exceed floor
+      for (let i = 0; i < 30; i++) {
+        useAppStore.getState().zoomOut();
+      }
+      expect(useAppStore.getState().zoomLevel).toBeGreaterThanOrEqual(0.5);
+    });
+  });
+
   describe("openLogViewerTab", () => {
     it("creates a log-viewer tab", () => {
       useAppStore.getState().openLogViewerTab();

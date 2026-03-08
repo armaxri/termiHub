@@ -107,6 +107,24 @@ describe("eventMatchesCombo", () => {
     const event = makeKeyEvent("C", { ctrl: true, shift: true });
     expect(eventMatchesCombo(event, combo)).toBe(true);
   });
+
+  it("matches Shift+= (producing +) against = binding via shift-key equivalence", () => {
+    const combo: KeyCombo = { key: "=", meta: true };
+    const event = makeKeyEvent("+", { meta: true, shift: true });
+    expect(eventMatchesCombo(event, combo)).toBe(true);
+  });
+
+  it("matches Shift+- (producing _) against - binding via shift-key equivalence", () => {
+    const combo: KeyCombo = { key: "-", ctrl: true };
+    const event = makeKeyEvent("_", { ctrl: true, shift: true });
+    expect(eventMatchesCombo(event, combo)).toBe(true);
+  });
+
+  it("does not match shift-equivalent when other modifiers differ", () => {
+    const combo: KeyCombo = { key: "=", meta: true };
+    const event = makeKeyEvent("+", { ctrl: true, shift: true });
+    expect(eventMatchesCombo(event, combo)).toBe(false);
+  });
 });
 
 describe("findMatchingAction (Linux/Win context)", () => {
@@ -144,6 +162,16 @@ describe("findMatchingAction (Linux/Win context)", () => {
   it("finds paste for Ctrl+Shift+V", () => {
     const event = makeKeyEvent("V", { ctrl: true, shift: true });
     expect(findMatchingAction(event)).toBe("paste");
+  });
+
+  it("finds zoom-in for Ctrl+= (base key)", () => {
+    const event = makeKeyEvent("=", { ctrl: true });
+    expect(findMatchingAction(event)).toBe("zoom-in");
+  });
+
+  it("finds zoom-in for Ctrl+Shift+= (producing +) via shift-key equivalence", () => {
+    const event = makeKeyEvent("+", { ctrl: true, shift: true });
+    expect(findMatchingAction(event)).toBe("zoom-in");
   });
 
   it("returns null for unrecognized keys", () => {
