@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Paste (Cmd+V) inserting text twice on macOS — the native browser paste event was reaching xterm.js in addition to the custom paste handler, causing doubled input (#444)
 - Terminal not auto-scrolling to the newest output line — xterm.js 6's SmoothScrollableElement does not reliably auto-scroll in WKWebView (macOS Tauri); added explicit `scrollToBottom()` after output writes (#444)
+- Terminal output not fully scrollable to the bottom on first command after creation — the SmoothScrollableElement cached stale viewport dimensions from the hidden parking element; fixed by deferring `scrollToBottom()` to after the render pass, sending an explicit resize after session creation, and refreshing the scroll layout on every resize (#444)
 - Zoom In shortcut now also triggers when pressing Cmd/Ctrl+Shift+= (producing "+"), not just Cmd/Ctrl+= (#452)
 - Zoom shortcuts (Cmd/Ctrl+=/-/0) now scale the entire application UI uniformly using Tauri webview zoom, instead of only adjusting terminal font size (#447)
 - Directional panel navigation (Cmd/Ctrl+Alt+Arrow) now remembers and restores the last-focused panel when entering a split group, instead of always selecting the first/last child (#448)
