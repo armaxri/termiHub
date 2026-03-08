@@ -107,6 +107,9 @@ pub fn setup_remote_agent(
     let app_handle_clone = app_handle.clone();
     let sm = session_manager.clone();
 
+    // Capture the tokio runtime handle for async calls from the background thread.
+    let rt_handle = handle.clone();
+
     // Spawn background thread to do SFTP upload + command injection
     std::thread::spawn(move || {
         run_setup_background(
@@ -116,6 +119,7 @@ pub fn setup_remote_agent(
             &setup_config_clone,
             &app_handle_clone,
             &sm,
+            &rt_handle,
         );
     });
 
@@ -130,6 +134,7 @@ fn run_setup_background(
     setup_config: &AgentSetupConfig,
     app_handle: &AppHandle,
     session_manager: &SessionManager,
+    rt_handle: &tokio::runtime::Handle,
 ) {
     // Wait for the shell to initialize
     std::thread::sleep(std::time::Duration::from_millis(SHELL_INIT_DELAY_MS));
@@ -155,7 +160,12 @@ fn run_setup_background(
                 "error",
                 &format!("SFTP connection failed: {}", e),
             );
-            inject_error_inline(session_manager, session_id, "SFTP connection failed");
+            inject_error_inline(
+                session_manager,
+                session_id,
+                "SFTP connection failed",
+                rt_handle,
+            );
             return;
         }
     };
@@ -189,7 +199,13 @@ fn run_setup_background(
                             );
                             error!("Agent setup: {}", msg);
                             emit_progress(app_handle, agent_id, "error", &msg);
-                            inject_error_script(&sftp_session, session_manager, session_id, &msg);
+                            inject_error_script(
+                                &sftp_session,
+                                session_manager,
+                                session_id,
+                                &msg,
+                                rt_handle,
+                            );
                             return;
                         }
                         info!("Agent setup: binary arch {} matches remote", binary_arch);
@@ -202,7 +218,13 @@ fn run_setup_background(
                     };
                     error!("Agent setup: {}", msg);
                     emit_progress(app_handle, agent_id, "error", &msg);
-                    inject_error_script(&sftp_session, session_manager, session_id, &msg);
+                    inject_error_script(
+                        &sftp_session,
+                        session_manager,
+                        session_id,
+                        &msg,
+                        rt_handle,
+                    );
                     return;
                 }
             }
@@ -243,6 +265,7 @@ fn run_setup_background(
                 session_manager,
                 session_id,
                 &format!("Upload failed: {}", e),
+                rt_handle,
             );
             return;
         }
@@ -273,6 +296,7 @@ fn run_setup_background(
                 session_manager,
                 session_id,
                 &format!("Script upload failed: {}", e),
+                rt_handle,
             );
             return;
         }
@@ -281,7 +305,7 @@ fn run_setup_background(
     // Execute the setup script in the visible terminal
     emit_progress(app_handle, agent_id, "install", "Running setup script...");
     let exec_command = format!("sh {}; rm -f {}\n", TEMP_SCRIPT_PATH, TEMP_SCRIPT_PATH);
-    inject_commands(session_manager, session_id, &exec_command);
+    inject_commands(session_manager, session_id, &exec_command, rt_handle);
 
     emit_progress(
         app_handle,
@@ -401,8 +425,14 @@ echo ""
 "#;
 
 /// Inject commands into the visible terminal session via the SessionManager.
-fn inject_commands(session_manager: &SessionManager, session_id: &str, commands: &str) {
-    if let Err(e) = session_manager.send_input(session_id, commands.as_bytes()) {
+fn inject_commands(
+    session_manager: &SessionManager,
+    session_id: &str,
+    commands: &str,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    if let Err(e) = rt_handle.block_on(session_manager.send_input(session_id, commands.as_bytes()))
+    {
         error!("Agent setup: failed to inject commands: {}", e);
     }
 }
@@ -417,17 +447,18 @@ fn inject_error_script(
     session_manager: &SessionManager,
     session_id: &str,
     message: &str,
+    rt_handle: &tokio::runtime::Handle,
 ) {
     let script = generate_error_script(message);
     match upload_bytes_via_sftp(sftp_session, script.as_bytes(), TEMP_SCRIPT_PATH) {
         Ok(_) => {
             let cmd = format!("sh {}; rm -f {}\n", TEMP_SCRIPT_PATH, TEMP_SCRIPT_PATH);
-            inject_commands(session_manager, session_id, &cmd);
+            inject_commands(session_manager, session_id, &cmd, rt_handle);
         }
         Err(e) => {
             // Fallback: inject commands directly if upload fails
             error!("Agent setup: error script upload failed: {}", e);
-            inject_error_inline(session_manager, session_id, message);
+            inject_error_inline(session_manager, session_id, message, rt_handle);
         }
     }
 }
@@ -435,7 +466,12 @@ fn inject_error_script(
 /// Inject a red error banner directly into the terminal (fallback).
 ///
 /// Used only when SFTP is unavailable (e.g. connection failed).
-fn inject_error_inline(session_manager: &SessionManager, session_id: &str, message: &str) {
+fn inject_error_inline(
+    session_manager: &SessionManager,
+    session_id: &str,
+    message: &str,
+    rt_handle: &tokio::runtime::Handle,
+) {
     let safe_msg = message.replace('\'', "'\\''");
     let cmd = format!(
         "printf '\\033[31m\\342\\235\\214 Error: %s\\033[0m\\n' '{}'\n\
@@ -443,7 +479,7 @@ fn inject_error_inline(session_manager: &SessionManager, session_id: &str, messa
          printf '\\033[31m\\342\\235\\214 === Setup Failed ===\\033[0m\\n'\n",
         safe_msg
     );
-    inject_commands(session_manager, session_id, &cmd);
+    inject_commands(session_manager, session_id, &cmd, rt_handle);
 }
 
 /// Generate a small POSIX error script matching the setup script's `fail()` style.

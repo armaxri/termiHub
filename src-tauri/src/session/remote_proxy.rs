@@ -8,6 +8,12 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 
+// Note: `Mutex` is used only for fields that need interior mutability
+// through `&self` (remote_session_id, remote_type_id, etc.).
+// `file_browser_proxy` and `monitoring_proxy` use plain `Option` because
+// they are only set in `connect(&mut self)` and cleared in
+// `disconnect(&mut self)`, so mutable access is guaranteed.
+
 use serde_json::Value;
 use tracing::debug;
 
@@ -38,9 +44,9 @@ pub struct RemoteProxy {
     /// Whether the proxy is connected to a remote session.
     connected: AtomicBool,
     /// File browser proxy (set during connect if supported).
-    file_browser_proxy: Mutex<Option<RemoteFileBrowserProxy>>,
+    file_browser_proxy: Option<RemoteFileBrowserProxy>,
     /// Monitoring proxy (set during connect if supported).
-    monitoring_proxy: Mutex<Option<RemoteMonitoringProxy>>,
+    monitoring_proxy: Option<RemoteMonitoringProxy>,
 }
 
 impl RemoteProxy {
@@ -63,8 +69,8 @@ impl RemoteProxy {
             }),
             std_output_rx: Mutex::new(None),
             connected: AtomicBool::new(false),
-            file_browser_proxy: Mutex::new(None),
-            monitoring_proxy: Mutex::new(None),
+            file_browser_proxy: None,
+            monitoring_proxy: None,
         }
     }
 
@@ -182,23 +188,19 @@ impl ConnectionType for RemoteProxy {
                                 }
                                 // Set up file browser proxy if supported.
                                 if parsed.file_browser {
-                                    if let Ok(mut fb) = self.file_browser_proxy.lock() {
-                                        *fb = Some(RemoteFileBrowserProxy {
-                                            agent_id: self.agent_id.clone(),
-                                            remote_session_id: remote_sid.clone(),
-                                            agent_manager: self.agent_manager.clone(),
-                                        });
-                                    }
+                                    self.file_browser_proxy = Some(RemoteFileBrowserProxy {
+                                        agent_id: self.agent_id.clone(),
+                                        remote_session_id: remote_sid.clone(),
+                                        agent_manager: self.agent_manager.clone(),
+                                    });
                                 }
                                 // Set up monitoring proxy if supported.
                                 if parsed.monitoring {
-                                    if let Ok(mut mp) = self.monitoring_proxy.lock() {
-                                        *mp = Some(RemoteMonitoringProxy {
-                                            agent_id: self.agent_id.clone(),
-                                            remote_session_id: remote_sid.clone(),
-                                            agent_manager: self.agent_manager.clone(),
-                                        });
-                                    }
+                                    self.monitoring_proxy = Some(RemoteMonitoringProxy {
+                                        agent_id: self.agent_id.clone(),
+                                        remote_session_id: remote_sid.clone(),
+                                        agent_manager: self.agent_manager.clone(),
+                                    });
                                 }
                             }
                         }
@@ -238,12 +240,8 @@ impl ConnectionType for RemoteProxy {
         if let Ok(mut rx) = self.std_output_rx.lock() {
             *rx = None;
         }
-        if let Ok(mut fb) = self.file_browser_proxy.lock() {
-            *fb = None;
-        }
-        if let Ok(mut mp) = self.monitoring_proxy.lock() {
-            *mp = None;
-        }
+        self.file_browser_proxy = None;
+        self.monitoring_proxy = None;
 
         self.connected.store(false, Ordering::SeqCst);
         debug!(agent_id = self.agent_id(), "Remote proxy disconnected");
@@ -292,34 +290,21 @@ impl ConnectionType for RemoteProxy {
     }
 
     fn monitoring(&self) -> Option<&dyn MonitoringProvider> {
-        // Safety: we need a stable reference. The proxy lives as long as
-        // the connection, so the Option contents don't change after connect.
-        // We use an unsafe trick to return a reference to the inner value
-        // without holding the lock. This is safe because:
-        // 1. The Option is set once during connect() and cleared during disconnect()
-        // 2. monitoring() is only called while connected
-        // 3. The MonitoringProxy itself is Send and uses Arc internally
-        //
-        // Actually, let's use a simpler approach: return None and handle
-        // monitoring through explicit commands instead.
-        // TODO: Revisit if we need to support monitoring through the trait.
-        None
+        self.monitoring_proxy
+            .as_ref()
+            .map(|p| p as &dyn MonitoringProvider)
     }
 
     fn file_browser(&self) -> Option<&dyn FileBrowser> {
-        // Same reasoning as monitoring() — returning a reference from behind
-        // a Mutex is not straightforward. We'll handle file browsing through
-        // explicit session-based commands in the Tauri layer.
-        // TODO: Revisit if we need to support file_browser through the trait.
-        None
+        self.file_browser_proxy
+            .as_ref()
+            .map(|p| p as &dyn FileBrowser)
     }
 }
 
 /// File browser proxy that forwards operations to a remote agent.
 ///
-/// Used by session-level file commands rather than through the
-/// `ConnectionType::file_browser()` trait method (which cannot easily
-/// return references from behind a Mutex).
+/// Returned by `ConnectionType::file_browser()` on `RemoteProxy`.
 pub struct RemoteFileBrowserProxy {
     agent_id: String,
     remote_session_id: String,
@@ -502,5 +487,13 @@ mod tests {
     #[test]
     fn remote_monitoring_proxy_is_send() {
         _assert_send::<RemoteMonitoringProxy>();
+    }
+
+    /// Compile-time verification that `file_browser()` returns a trait
+    /// reference (not `None` unconditionally) — i.e. the `Option<&dyn
+    /// FileBrowser>` return compiles from `Option<RemoteFileBrowserProxy>`.
+    fn _assert_file_browser_compiles(proxy: &RemoteProxy) {
+        let _: Option<&dyn FileBrowser> = proxy.file_browser();
+        let _: Option<&dyn MonitoringProvider> = proxy.monitoring();
     }
 }
