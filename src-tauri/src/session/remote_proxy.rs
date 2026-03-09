@@ -224,7 +224,14 @@ impl ConnectionType for RemoteProxy {
         let remote_sid = self.remote_session_id();
 
         if let Some(ref sid) = remote_sid {
-            // Detach from output first.
+            // Unregister monitoring channel if monitoring was active.
+            if self.monitoring_proxy.is_some() {
+                let _ = self
+                    .agent_manager
+                    .unregister_monitoring_output(self.agent_id(), sid);
+            }
+
+            // Detach from output.
             let _ = self
                 .agent_manager
                 .unregister_session_output(self.agent_id(), sid);
@@ -425,6 +432,11 @@ impl MonitoringProvider for RemoteMonitoringProxy {
     async fn subscribe(&self) -> Result<MonitoringReceiver, CoreError> {
         let (tx, rx) = tokio::sync::mpsc::channel(16);
 
+        // Register monitoring channel so agent_manager routes notifications to it.
+        self.agent_manager
+            .register_monitoring_output(&self.agent_id, &self.remote_session_id, tx)
+            .map_err(|e| CoreError::Other(e.to_string()))?;
+
         // Send subscribe request to agent.
         self.agent_manager
             .send_request(
@@ -437,15 +449,15 @@ impl MonitoringProvider for RemoteMonitoringProxy {
             )
             .map_err(|e| CoreError::Other(e.to_string()))?;
 
-        // TODO: Route monitoring data notifications from agent to this channel.
-        // For now, the channel stays open but won't receive data until
-        // the agent_manager notification routing is extended.
-        let _ = tx;
-
         Ok(rx)
     }
 
     async fn unsubscribe(&self) -> Result<(), CoreError> {
+        // Unregister monitoring channel before telling the agent to stop.
+        let _ = self
+            .agent_manager
+            .unregister_monitoring_output(&self.agent_id, &self.remote_session_id);
+
         self.agent_manager
             .send_request(
                 &self.agent_id,
