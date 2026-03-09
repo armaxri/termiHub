@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- SSH key-based authentication E2E test (SSH-02) — Docker entrypoint generates an ed25519 key pair shared with the test runner via a Docker volume, enabling key-based auth tests in both Linux-native and Docker E2E environments (#485)
+
 ### Fixed
 
 - Paste (Cmd+V) inserting text twice on macOS — the native browser paste event was reaching xterm.js in addition to the custom paste handler, causing doubled input (#444)
