@@ -16,6 +16,10 @@ tests:
     expected:
       - "Connection moves into the folder correctly"
     verification: manual
+    automation_note: >
+      Moving a connection into a folder via the editor folder selector is covered
+      by MT-CONN-06 E2E in tests/e2e/connection-crud.test.js (#458).
+      Drag-and-drop specifically remains a manual test.
 
   # --- Import/export connections (PR #33) ---
 
@@ -32,6 +36,9 @@ tests:
       - "File open dialog appears, imports JSON, connection list refreshes"
     verification: manual
     tags: [native-dialog]
+    automation_note: >
+      Menu item activation covered by MT-CONN-07 E2E in tests/e2e/connection-crud.test.js (#458).
+      Full import flow (native file dialog + connection list refresh) remains manual.
 
   - id: MT-CONN-09
     name: "Export connections to file"
@@ -46,6 +53,10 @@ tests:
       - "File save dialog appears, saves JSON"
     verification: manual
     tags: [native-dialog]
+    automation_note: >
+      Export dialog UI (title and mode selection) covered by MT-CONN-08 E2E
+      in tests/e2e/connection-crud.test.js (#458).
+      Native file save dialog and actual file output remain manual.
 
   # --- Encrypted export/import (PR #322) ---
 
