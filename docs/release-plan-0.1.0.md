@@ -27,20 +27,22 @@
 | -------------------- | ---------------------- | ------ | ------ | -------------------------------------------------------------------------------------------------- |
 | **Mac** (personal)   | macOS (Apple Silicon)  | Yes    | Yes    | Primary dev, macOS build verification, UI quality testing, agent cross-compilation (compile check) |
 | **Windows notebook** | Windows (company)      | No     | Yes    | Windows build verification, Windows-specific manual tests, SSH to company machines                 |
-| **Linux tower**      | Linux (company)        | Yes    | No     | Build machine, full E2E suite (tauri-driver), real SSH + agent testing to Raspi (basic X11 UI)     |
+| **WSL on Windows**   | Ubuntu (WSL2 on above) | Yes    | No     | Full E2E suite (tauri-driver), SSH + agent testing to Raspi via WSLg, Linux smoke tests            |
+| **Linux tower**      | Linux (company)        | Yes    | No     | Final bare-metal Linux validation only (demoted — bad X11 UI connection)                           |
 | **Raspi**            | Ubuntu ARM64 (company) | Yes    | No     | ARM64 agent target, SSH target for deployment testing                                              |
 
 ### Network Topology (Important)
 
 - **Mac is isolated** — personal home network, **cannot reach** any company machine
-- **Company machines** (Windows, Linux tower, Raspi) are on the **same network**
+- **Company machines** (Windows, WSL, Linux tower, Raspi) are on the **same network**
   and can reach each other via SSH
-- **Linux tower is the primary machine** for real SSH + agent deployment testing
-  (it can SSH to the Raspi and Windows notebook)
+- **WSL on Windows is the primary machine** for interactive Linux testing —
+  it has WSLg (verified working), Docker, and network access to the Raspi
+- **Linux tower is demoted** to a final bare-metal validation pass only.
+  Its X11 forwarding has limited quality, making interactive UI testing impractical.
+  Most tasks previously assigned to the tower now run in WSL instead.
 - Mac tests only against **local Docker containers** for SSH, never against
   real remote hosts
-- Linux tower has X11 forwarding but with limited quality — sufficient for
-  basic UI verification and SSH/agent testing, not for detailed UI layout checks
 
 ---
 
@@ -224,9 +226,14 @@ cd tests/docker && docker compose down
 
 **How to resume**: Re-run the same command. Tests are idempotent.
 
-### 4.2 Linux Tower — ~45 min wall clock
+### 4.2 WSL on Windows — ~45 min wall clock
+
+WSL2 replaces the Linux tower for interactive Linux testing. It has
+Docker, WSLg (verified), and network access to the Raspi.
 
 ```bash
+# Run all commands inside WSL
+
 # 1. Full system test suite including E2E (40 min)
 ./scripts/test-system.sh --with-all
 
@@ -262,19 +269,19 @@ serial ports. If not, serial tests are skipped (acceptable for beta).
 ./scripts/test-system.cmd --skip-serial
 ```
 
-If Podman system tests don't work: skip and rely on the Linux tower
+If Podman system tests don't work: skip and rely on WSL
 for integration test coverage. Windows-specific behavior will be
 covered by manual tests.
 
 ### 4.4 Raspi (ARM64 Ubuntu) — ~20 min wall clock
 
 The Raspi is primarily a **target** for agent deployment, not a build host.
-All steps run from the **Linux tower** (same company network).
+All steps run from **WSL** (same company network).
 
 ```bash
-# All steps run on: Linux tower → Raspi
+# All steps run on: WSL → Raspi
 
-# 1. Build the ARM64 agent on Linux tower (has Docker for cross-rs)
+# 1. Build the ARM64 agent in WSL (has Docker for cross-rs)
 ./scripts/build-agents.sh --targets aarch64-unknown-linux-musl
 
 # 2. Copy the ARM64 agent binary to the Raspi
@@ -286,25 +293,47 @@ chmod +x ~/termihub-agent
 ~/termihub-agent --version
 ldd ~/termihub-agent   # Expected: "not a dynamic executable"
 
-# 4. Test agent connectivity from Linux tower
-# (Open termiHub on Linux tower, create SSH connection to Raspi,
+# 4. Test agent connectivity from WSL
+# (Open termiHub in WSL via WSLg, create SSH connection to Raspi,
 # verify agent deploys and sessions/SFTP/monitoring work)
 ```
 
-**Note**: The Mac cannot reach the Raspi (isolated network). The Linux
-tower is the only machine that can perform this test.
+**Note**: The Mac cannot reach the Raspi (isolated network). WSL on the
+Windows notebook is the primary machine for this test.
 
 **How to stop/resume**: These are quick manual checks. No long-running
 processes.
 
-### 4.5 Record Results
+### 4.5 Linux Tower — Final Bare-Metal Validation (~15–30 min)
+
+The Linux tower is only used for a final confirmation pass on native Linux,
+after WSL has been used for all interactive testing and debugging.
+
+```bash
+# 1. Quick unit + quality check (10 min)
+./scripts/test.sh
+./scripts/check.sh
+
+# 2. Build the app (10 min)
+./scripts/build.sh
+
+# 3. Quick launch test — verify the built binary starts
+# (basic X11 is sufficient for this)
+```
+
+**Note**: If all E2E and system tests pass in WSL, this step is a
+confidence check only. Skip if the tower is unavailable — WSL coverage
+is sufficient for the beta release.
+
+### 4.6 Record Results
 
 Create a test results tracking file:
 
 ```bash
 # After each platform, record results
 echo "Mac: PASS/FAIL - $(date)" >> docs/release-0.1.0-results.md
-echo "Linux: PASS/FAIL - $(date)" >> docs/release-0.1.0-results.md
+echo "WSL: PASS/FAIL - $(date)" >> docs/release-0.1.0-results.md
+echo "Linux (bare-metal): PASS/FAIL - $(date)" >> docs/release-0.1.0-results.md
 echo "Windows: PASS/FAIL - $(date)" >> docs/release-0.1.0-results.md
 echo "Raspi: PASS/FAIL - $(date)" >> docs/release-0.1.0-results.md
 ```
@@ -357,11 +386,14 @@ python scripts/test-manual.py \
 # Count: 10 + 10 + 3 = 23 tests
 ```
 
-#### Session 3: Linux Tower or Mac — SSH & Remote (~1.5 h)
+#### Session 3: WSL or Mac — SSH & Remote (~1.5 h)
 
-Requires Docker containers running for SSH targets.
+Requires Docker containers running for SSH targets. WSL is preferred
+over the Linux tower for this session — WSLg provides a proper GUI
+for interactive testing, and WSL can SSH to the Raspi directly.
 
 ```bash
+# Run inside WSL
 # Start test infrastructure
 cd tests/docker && docker compose up -d && cd ../..
 
@@ -536,13 +568,13 @@ This avoids version string mismatches between the tag and the binary.
 
 ### 7.1 Download & Install on Each Platform
 
-| Platform    | Artifact    | Install Method                  | Machine          |
-| ----------- | ----------- | ------------------------------- | ---------------- |
-| macOS ARM   | `.dmg`      | Mount DMG, drag to Applications | Mac              |
-| Windows x64 | `.msi`      | Double-click installer          | Windows notebook |
-| Linux x64   | `.AppImage` | `chmod +x`, run directly        | Linux tower      |
-| Linux x64   | `.deb`      | `sudo dpkg -i termihub_*.deb`   | Linux tower      |
-| Linux ARM64 | `.deb`      | `sudo dpkg -i termihub_*.deb`   | Raspi            |
+| Platform    | Artifact    | Install Method                  | Machine                                  |
+| ----------- | ----------- | ------------------------------- | ---------------------------------------- |
+| macOS ARM   | `.dmg`      | Mount DMG, drag to Applications | Mac                                      |
+| Windows x64 | `.msi`      | Double-click installer          | Windows notebook                         |
+| Linux x64   | `.AppImage` | `chmod +x`, run directly        | WSL (primary), Linux tower (final check) |
+| Linux x64   | `.deb`      | `sudo dpkg -i termihub_*.deb`   | WSL (primary), Linux tower (final check) |
+| Linux ARM64 | `.deb`      | `sudo dpkg -i termihub_*.deb`   | Raspi                                    |
 
 ### 7.2 Smoke Tests on Each Platform
 
@@ -563,7 +595,7 @@ If the smoke test script from Phase 0 is ready, use it:
 
 ### 7.3 Agent Deployment Verification
 
-1. From the Mac (or Linux tower), create an SSH connection to the Raspi
+1. From WSL (or Mac via Docker), create an SSH connection to the Raspi
 2. Verify the agent binary deploys automatically
 3. Open a shell session through the agent
 4. Test file browsing through SFTP
@@ -621,36 +653,38 @@ This is a hobby project. Here's how to safely stop and resume at any point.
 
 Each session should be 1–3 hours. Suggested session plan:
 
-| Session | Duration | Content                                                |
-| ------- | -------- | ------------------------------------------------------ |
-| 1       | 2–3 h    | Phase 0: Write release-check.sh + smoke-test.sh        |
-| 2       | 2–3 h    | Phase 0: Migrate manual tests to E2E                   |
-| 3       | 2 h      | Phase 1: CHANGELOG, docs, release branch               |
-| 4       | 1 h      | Phase 2: Automated tests on Mac                        |
-| 5       | 1 h      | Phase 2: Automated tests on Linux + Windows (parallel) |
-| 6       | 2 h      | Phase 3: Manual tests on Mac (Session 1)               |
-| 7       | 1.5 h    | Phase 3: Manual tests on Mac (Session 2)               |
-| 8       | 1.5 h    | Phase 3: Manual tests on Linux (SSH/agent)             |
-| 9       | 1 h      | Phase 3: Manual tests on Windows                       |
-| 10      | 1 h      | Phase 4: Release                                       |
-| 11      | 1 h      | Phase 5: Post-release verification                     |
+| Session | Duration | Content                                              |
+| ------- | -------- | ---------------------------------------------------- |
+| 1       | 2–3 h    | Phase 0: Write release-check.sh + smoke-test.sh      |
+| 2       | 2–3 h    | Phase 0: Migrate manual tests to E2E                 |
+| 3       | 2 h      | Phase 1: CHANGELOG, docs, release branch             |
+| 4       | 1 h      | Phase 2: Automated tests on Mac                      |
+| 5       | 1 h      | Phase 2: Automated tests on WSL + Windows (parallel) |
+| 6       | 2 h      | Phase 3: Manual tests on Mac (Session 1)             |
+| 7       | 1.5 h    | Phase 3: Manual tests on Mac (Session 2)             |
+| 8       | 1.5 h    | Phase 3: Manual tests on WSL (SSH/agent)             |
+| 9       | 1 h      | Phase 3: Manual tests on Windows                     |
+| 10      | 0.5 h    | Phase 2: Final bare-metal validation on Linux tower  |
+| 11      | 1 h      | Phase 4: Release                                     |
+| 12      | 1 h      | Phase 5: Post-release verification                   |
 
-Total: \~16–19 hours across 11 sessions
+Total: \~16–19 hours across 12 sessions
 
 ---
 
 ## 9. Risk Register
 
-| Risk                                            | Impact                            | Likelihood           | Mitigation                                                             |
-| ----------------------------------------------- | --------------------------------- | -------------------- | ---------------------------------------------------------------------- |
-| CI build fails on one platform                  | Delays release by 1–4 h           | Medium               | Test locally first (Phase 2); have fallback to build locally           |
-| macOS unsigned binary rejected by Gatekeeper    | Users can't open app              | High (expected)      | Document workaround in README + release notes                          |
-| Windows SmartScreen blocks .msi                 | Users can't install               | High (expected)      | Document workaround in release notes                                   |
-| Podman on Windows doesn't work with test infra  | Can't run system tests on Windows | Medium               | Fall back to manual testing on Windows; Linux covers integration tests |
-| SSH agent deployment fails on Raspi             | ARM64 agent not validated         | Low                  | Test binary manually; cross-compilation is already proven in CI        |
-| Release workflow regex doesn't match beta tag   | CI doesn't trigger                | Low                  | Verify regex before tagging; use `v0.1.0` without suffix as fallback   |
-| Company network blocks GitHub release downloads | Can't verify on company machines  | Low                  | Use VPN or download on Mac and transfer via USB/network share          |
-| Long test runs get interrupted                  | Lost progress                     | High (hobby project) | Resume capability in manual runner; idempotent automated tests         |
+| Risk                                            | Impact                            | Likelihood           | Mitigation                                                           |
+| ----------------------------------------------- | --------------------------------- | -------------------- | -------------------------------------------------------------------- |
+| CI build fails on one platform                  | Delays release by 1–4 h           | Medium               | Test locally first (Phase 2); have fallback to build locally         |
+| macOS unsigned binary rejected by Gatekeeper    | Users can't open app              | High (expected)      | Document workaround in README + release notes                        |
+| Windows SmartScreen blocks .msi                 | Users can't install               | High (expected)      | Document workaround in release notes                                 |
+| Podman on Windows doesn't work with test infra  | Can't run system tests on Windows | Medium               | Fall back to manual testing on Windows; WSL covers integration tests |
+| WSLg rendering issues                           | Can't do UI testing in WSL        | Low                  | Fall back to Linux tower's X11; WSLg already verified working        |
+| SSH agent deployment fails on Raspi             | ARM64 agent not validated         | Low                  | Test binary manually; cross-compilation is already proven in CI      |
+| Release workflow regex doesn't match beta tag   | CI doesn't trigger                | Low                  | Verify regex before tagging; use `v0.1.0` without suffix as fallback |
+| Company network blocks GitHub release downloads | Can't verify on company machines  | Low                  | Use VPN or download on Mac and transfer via USB/network share        |
+| Long test runs get interrupted                  | Lost progress                     | High (hobby project) | Resume capability in manual runner; idempotent automated tests       |
 
 ---
 
@@ -756,10 +790,15 @@ graph LR
         M5[Smoke Test: DMG]
     end
 
+    subgraph "WSL on Windows (Company)"
+        WL1[Full System Tests + E2E]
+        WL2[Manual Tests: SSH, Agent]
+        WL3[Smoke Test: AppImage + .deb]
+        WL4[Agent Build + Deploy to Raspi]
+    end
+
     subgraph "Linux Tower (Company)"
-        L1[Full System Tests + E2E]
-        L2[Manual Tests: SSH, Agent]
-        L3[Smoke Test: AppImage + .deb]
+        L1[Final Bare-Metal Validation]
     end
 
     subgraph "Windows (Company)"
