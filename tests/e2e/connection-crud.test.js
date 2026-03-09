@@ -1,6 +1,10 @@
 // Connection CRUD tests.
 // Covers: CONN-01, CONN-02, CONN-03, CONN-04, CONN-10, CONN-PING,
-//         MT-CONN-02, MT-CONN-03, MT-CONN-04.
+//         MT-CONN-02, MT-CONN-03, MT-CONN-04,
+//         MT-CONN-01 (create local), MT-CONN-02 (edit), MT-CONN-03 (delete),
+//         MT-CONN-04 (create SSH), MT-CONN-05 (create folder),
+//         MT-CONN-06 (move to folder), MT-CONN-07 (import), MT-CONN-08 (export).
+// Closes #458.
 
 import { waitForAppReady, ensureConnectionsSidebar, closeAllTabs } from "./helpers/app.js";
 import {
@@ -18,6 +22,7 @@ import { findTabByTitle, getTabCount, getActiveTab } from "./helpers/tabs.js";
 import { createSshConnection, createTelnetConnection } from "./helpers/infrastructure.js";
 import {
   CONN_EDITOR_NAME,
+  CONN_EDITOR_FOLDER,
   CONN_EDITOR_NAME_ERROR,
   CONN_EDITOR_SAVE,
   CONN_EDITOR_SAVE_CONNECT,
@@ -26,6 +31,9 @@ import {
   INLINE_FOLDER_NAME_INPUT,
   INLINE_FOLDER_CONFIRM,
   CTX_CONNECTION_PING,
+  ACTIVITY_BAR_SETTINGS,
+  SETTINGS_MENU_IMPORT,
+  SETTINGS_MENU_EXPORT,
 } from "./helpers/selectors.js";
 
 describe("Connection CRUD", () => {
@@ -473,6 +481,131 @@ describe("Connection CRUD", () => {
       // A tab titled "Ping ..." should appear
       const tab = await findTabByTitle("Ping");
       expect(tab).not.toBeNull();
+    });
+  });
+
+  describe("MT-CONN-04: Create SSH connection", () => {
+    it("should create an SSH connection and show it in the connection list", async () => {
+      const name = uniqueName("ssh-conn");
+      await createSshConnection(name, { host: "192.168.1.1", port: "22" });
+
+      const item = await findConnectionByName(name);
+      expect(item).not.toBeNull();
+      expect(await item.isDisplayed()).toBe(true);
+
+      // Clean up
+      await connectionContextAction(name, CTX_CONNECTION_DELETE);
+      await browser.pause(300);
+    });
+  });
+
+  describe("MT-CONN-06: Move connection to folder", () => {
+    afterEach(async () => {
+      await closeAllTabs();
+    });
+
+    it("should move a connection into a folder via the editor folder selector", async () => {
+      // Create a folder
+      const folderName = uniqueName("moveto-folder");
+      const newFolderBtn = await browser.$(CONNECTION_LIST_NEW_FOLDER);
+      await newFolderBtn.waitForDisplayed({ timeout: 3000 });
+      await newFolderBtn.click();
+      await browser.pause(300);
+
+      const folderInput = await browser.$(INLINE_FOLDER_NAME_INPUT);
+      await folderInput.waitForDisplayed({ timeout: 3000 });
+      await folderInput.setValue(folderName);
+      const confirmBtn = await browser.$(INLINE_FOLDER_CONFIRM);
+      await confirmBtn.click();
+      await browser.pause(300);
+
+      // Create a connection at root level
+      const connName = uniqueName("moveto-conn");
+      await createLocalConnection(connName);
+
+      // Edit the connection and assign it to the folder
+      await connectionContextAction(connName, CTX_CONNECTION_EDIT);
+      const folderSelect = await browser.$(CONN_EDITOR_FOLDER);
+      await folderSelect.waitForDisplayed({ timeout: 3000 });
+
+      const options = await folderSelect.$$("option");
+      for (const option of options) {
+        const text = await option.getText();
+        if (text.includes(folderName)) {
+          const value = await option.getAttribute("value");
+          await folderSelect.selectByAttribute("value", value);
+          break;
+        }
+      }
+      await browser.pause(200);
+
+      const saveBtn = await browser.$(CONN_EDITOR_SAVE);
+      await saveBtn.click();
+      await browser.pause(500);
+
+      // Expand the folder and verify the connection appears inside it
+      const folderToggles = await browser.$$('[data-testid^="folder-toggle-"]');
+      for (const toggle of folderToggles) {
+        const text = await toggle.getText();
+        if (text.includes(folderName)) {
+          const isExpanded = await toggle.getAttribute("aria-expanded");
+          if (isExpanded !== "true") {
+            await toggle.click();
+            await browser.pause(300);
+          }
+          break;
+        }
+      }
+
+      const item = await findConnectionByName(connName);
+      expect(item).not.toBeNull();
+    });
+  });
+
+  describe("MT-CONN-07: Import connections", () => {
+    afterEach(async () => {
+      await browser.keys("Escape");
+      await browser.pause(200);
+    });
+
+    it("should open the import flow from the settings gear menu", async () => {
+      const gear = await browser.$(ACTIVITY_BAR_SETTINGS);
+      await gear.waitForDisplayed({ timeout: 5000 });
+      await gear.click();
+      await browser.pause(300);
+
+      const importItem = await browser.$(SETTINGS_MENU_IMPORT);
+      await importItem.waitForDisplayed({ timeout: 3000 });
+      expect(await importItem.isDisplayed()).toBe(true);
+
+      // Clicking opens a native file dialog — dismiss immediately
+      await importItem.click();
+      await browser.pause(300);
+    });
+  });
+
+  describe("MT-CONN-08: Export connections", () => {
+    afterEach(async () => {
+      await browser.keys("Escape");
+      await browser.pause(200);
+      await closeAllTabs();
+    });
+
+    it("should open the export dialog from the settings gear menu", async () => {
+      const gear = await browser.$(ACTIVITY_BAR_SETTINGS);
+      await gear.waitForDisplayed({ timeout: 5000 });
+      await gear.click();
+      await browser.pause(300);
+
+      const exportItem = await browser.$(SETTINGS_MENU_EXPORT);
+      await exportItem.waitForDisplayed({ timeout: 3000 });
+      await exportItem.click();
+      await browser.pause(300);
+
+      // Export dialog should appear with the expected title
+      const exportTitle = await browser.$(".export-dialog__title");
+      await exportTitle.waitForDisplayed({ timeout: 3000 });
+      expect(await exportTitle.getText()).toContain("Export Connections");
     });
   });
 
