@@ -17,6 +17,8 @@ use ssh2::Session;
 use tauri::{AppHandle, Emitter};
 use tracing::{error, info, warn};
 
+use termihub_core::monitoring::{MonitoringSender, SystemStats};
+
 use crate::terminal::backend::{OutputSender, RemoteAgentConfig, RemoteStateChangeEvent};
 use crate::terminal::jsonrpc;
 use crate::utils::errors::TerminalError;
@@ -138,6 +140,13 @@ enum AgentIoCommand {
     },
     /// Unregister a session's output sender.
     UnregisterSession { session_id: String },
+    /// Register a monitoring sender for a session.
+    RegisterMonitoring {
+        session_id: String,
+        monitoring_tx: MonitoringSender,
+    },
+    /// Unregister a session's monitoring sender.
+    UnregisterMonitoring { session_id: String },
     /// Disconnect the agent.
     Disconnect,
 }
@@ -648,6 +657,53 @@ impl AgentConnectionManager {
             .map_err(|_| TerminalError::RemoteError("Agent I/O thread gone".to_string()))
     }
 
+    /// Register a monitoring channel for a remote session so that
+    /// `connection.monitoring.data` notifications are forwarded to it.
+    pub fn register_monitoring_output(
+        &self,
+        agent_id: &str,
+        remote_session_id: &str,
+        monitoring_tx: MonitoringSender,
+    ) -> Result<(), TerminalError> {
+        let agents = self
+            .agents
+            .lock()
+            .map_err(|e| TerminalError::RemoteError(format!("Lock failed: {}", e)))?;
+
+        let conn = agents.get(agent_id).ok_or_else(|| {
+            TerminalError::RemoteError(format!("Agent {} not connected", agent_id))
+        })?;
+
+        conn.command_tx
+            .send(AgentIoCommand::RegisterMonitoring {
+                session_id: remote_session_id.to_string(),
+                monitoring_tx,
+            })
+            .map_err(|_| TerminalError::RemoteError("Agent I/O thread gone".to_string()))
+    }
+
+    /// Unregister the monitoring channel for a remote session.
+    pub fn unregister_monitoring_output(
+        &self,
+        agent_id: &str,
+        remote_session_id: &str,
+    ) -> Result<(), TerminalError> {
+        let agents = self
+            .agents
+            .lock()
+            .map_err(|e| TerminalError::RemoteError(format!("Lock failed: {}", e)))?;
+
+        let conn = agents.get(agent_id).ok_or_else(|| {
+            TerminalError::RemoteError(format!("Agent {} not connected", agent_id))
+        })?;
+
+        conn.command_tx
+            .send(AgentIoCommand::UnregisterMonitoring {
+                session_id: remote_session_id.to_string(),
+            })
+            .map_err(|_| TerminalError::RemoteError("Agent I/O thread gone".to_string()))
+    }
+
     /// Send input to a session on the agent (fire-and-forget).
     pub fn send_session_input(
         &self,
@@ -729,6 +785,7 @@ fn agent_io_thread(
     let mut line_buf = String::new();
     let mut read_buf = [0u8; 4096];
     let mut session_outputs: HashMap<String, OutputSender> = HashMap::new();
+    let mut monitoring_outputs: HashMap<String, MonitoringSender> = HashMap::new();
     let mut pending_responses: HashMap<u64, mpsc::Sender<Result<Value, String>>> = HashMap::new();
 
     'outer: loop {
@@ -791,6 +848,15 @@ fn agent_io_thread(
                     AgentIoCommand::UnregisterSession { session_id } => {
                         session_outputs.remove(&session_id);
                     }
+                    AgentIoCommand::RegisterMonitoring {
+                        session_id,
+                        monitoring_tx,
+                    } => {
+                        monitoring_outputs.insert(session_id, monitoring_tx);
+                    }
+                    AgentIoCommand::UnregisterMonitoring { session_id } => {
+                        monitoring_outputs.remove(&session_id);
+                    }
                     AgentIoCommand::Disconnect => {
                         alive.store(false, Ordering::SeqCst);
                         return;
@@ -829,7 +895,13 @@ fn agent_io_thread(
                                 }
                             }
                             Ok(jsonrpc::JsonRpcMessage::Notification { method, params }) => {
-                                handle_notification(&method, &params, &session_outputs, &b64);
+                                handle_notification(
+                                    &method,
+                                    &params,
+                                    &session_outputs,
+                                    &monitoring_outputs,
+                                    &b64,
+                                );
                             }
                             Err(e) => {
                                 warn!("Agent {}: failed to parse message: {}", agent_id, e);
@@ -885,30 +957,49 @@ fn agent_io_thread(
     }
 }
 
-/// Handle an output notification from the agent.
+/// Handle a notification from the agent.
+///
+/// Routes `connection.output` to session output channels and
+/// `connection.monitoring.data` to monitoring channels.
 fn handle_notification(
     method: &str,
     params: &Value,
     session_outputs: &HashMap<String, OutputSender>,
+    monitoring_outputs: &HashMap<String, MonitoringSender>,
     b64: &base64::engine::GeneralPurpose,
 ) {
-    if method != "connection.output" {
-        return;
-    }
-    let session_id = match params["session_id"].as_str() {
-        Some(s) => s,
-        None => return,
-    };
-    let data_b64 = match params["data"].as_str() {
-        Some(s) => s,
-        None => return,
-    };
-    let data = match b64.decode(data_b64) {
-        Ok(d) => d,
-        Err(_) => return,
-    };
-    if let Some(output_tx) = session_outputs.get(session_id) {
-        let _ = output_tx.send(data);
+    match method {
+        "connection.output" => {
+            let session_id = match params["session_id"].as_str() {
+                Some(s) => s,
+                None => return,
+            };
+            let data_b64 = match params["data"].as_str() {
+                Some(s) => s,
+                None => return,
+            };
+            let data = match b64.decode(data_b64) {
+                Ok(d) => d,
+                Err(_) => return,
+            };
+            if let Some(output_tx) = session_outputs.get(session_id) {
+                let _ = output_tx.send(data);
+            }
+        }
+        "connection.monitoring.data" => {
+            let host = match params["host"].as_str() {
+                Some(s) => s,
+                None => return,
+            };
+            let stats: SystemStats = match serde_json::from_value(params.clone()) {
+                Ok(s) => s,
+                Err(_) => return,
+            };
+            if let Some(monitoring_tx) = monitoring_outputs.get(host) {
+                let _ = monitoring_tx.try_send(stats);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -1239,5 +1330,77 @@ mod tests {
         assert_eq!(v["folders"].as_array().unwrap().len(), 1);
         assert_eq!(v["connections"][0]["sessionType"], "shell");
         assert_eq!(v["folders"][0]["parentId"], Value::Null);
+    }
+
+    /// handle_notification routes `connection.monitoring.data` to the
+    /// correct monitoring channel based on the `host` field.
+    #[test]
+    fn handle_notification_routes_monitoring_data() {
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let session_outputs: HashMap<String, OutputSender> = HashMap::new();
+        let mut monitoring_outputs: HashMap<String, MonitoringSender> = HashMap::new();
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+        monitoring_outputs.insert("session-42".to_string(), tx);
+
+        let params = json!({
+            "host": "session-42",
+            "hostname": "myhost",
+            "uptimeSeconds": 1234.5,
+            "loadAverage": [0.1, 0.2, 0.3],
+            "cpuUsagePercent": 50.0,
+            "memoryTotalKb": 8000000,
+            "memoryAvailableKb": 4000000,
+            "memoryUsedPercent": 50.0,
+            "diskTotalKb": 100000000,
+            "diskUsedKb": 50000000,
+            "diskUsedPercent": 50.0,
+            "osInfo": "Linux 6.1"
+        });
+
+        handle_notification(
+            "connection.monitoring.data",
+            &params,
+            &session_outputs,
+            &monitoring_outputs,
+            &b64,
+        );
+
+        let stats = rx.try_recv().expect("should have received monitoring data");
+        assert_eq!(stats.hostname, "myhost");
+        assert!((stats.cpu_usage_percent - 50.0).abs() < f64::EPSILON);
+        assert_eq!(stats.os_info, "Linux 6.1");
+    }
+
+    /// handle_notification silently ignores monitoring data for unknown hosts.
+    #[test]
+    fn handle_notification_ignores_unknown_monitoring_host() {
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let session_outputs: HashMap<String, OutputSender> = HashMap::new();
+        let monitoring_outputs: HashMap<String, MonitoringSender> = HashMap::new();
+
+        let params = json!({
+            "host": "unknown-host",
+            "hostname": "myhost",
+            "uptimeSeconds": 0.0,
+            "loadAverage": [0.0, 0.0, 0.0],
+            "cpuUsagePercent": 0.0,
+            "memoryTotalKb": 0,
+            "memoryAvailableKb": 0,
+            "memoryUsedPercent": 0.0,
+            "diskTotalKb": 0,
+            "diskUsedKb": 0,
+            "diskUsedPercent": 0.0,
+            "osInfo": ""
+        });
+
+        // Should not panic — just silently drops the data.
+        handle_notification(
+            "connection.monitoring.data",
+            &params,
+            &session_outputs,
+            &monitoring_outputs,
+            &b64,
+        );
     }
 }
