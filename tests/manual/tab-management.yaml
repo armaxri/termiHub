@@ -2,9 +2,9 @@ category: tab-management
 display_name: "Tab Management"
 
 tests:
-  # --- Baseline ---
+  # --- Drag reorder (stays manual — WebDriver drag-and-drop is unreliable) ---
 
-  - id: MT-TAB-01
+  - id: MT-TAB-05
     name: "Drag tab to new position"
     platforms: [all]
     prerequisites:
@@ -16,21 +16,32 @@ tests:
       - "Tab moves to new position, order persists"
     verification: manual
 
-  - id: MT-TAB-02
-    name: "Drag-and-drop tabs works correctly"
+  - id: MT-TAB-06
+    name: "Drag tab to edge creates new split"
     platforms: [all]
     prerequisites:
       - app: true
     instructions:
-      - "Open multiple tabs"
-      - "Drag and drop tabs between different positions"
+      - "Drag a tab to the edge of another panel"
     expected:
-      - "Drag-and-drop tabs works correctly"
+      - "New split created, tab moves to new panel"
+    verification: manual
+
+  - id: MT-TAB-07
+    name: "Drag tab between groups"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open multiple tabs in a split view"
+      - "Drag a tab from one group to another"
+    expected:
+      - "Tab moves to the target group"
     verification: manual
 
   # --- Save terminal content to file (PR #35) ---
 
-  - id: MT-TAB-03
+  - id: MT-TAB-08
     name: "Save to File — native dialog opens"
     pr: 35
     platforms: [all]
@@ -45,7 +56,7 @@ tests:
     verification: manual
     tags: [native-dialog]
 
-  - id: MT-TAB-04
+  - id: MT-TAB-09
     name: "Save to File — file is written"
     pr: 35
     platforms: [all]
@@ -58,7 +69,7 @@ tests:
       - "File is written with the terminal's text content"
     verification: manual
 
-  - id: MT-TAB-05
+  - id: MT-TAB-10
     name: "Save to File — cancel does nothing"
     pr: 35
     platforms: [all]
@@ -82,15 +93,4 @@ tests:
       - "Drag the divider between split panels"
     expected:
       - "Panels resize, terminals re-fit"
-    verification: manual
-
-  - id: MT-TAB-17
-    name: "Drag tab to edge creates new split"
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Drag a tab to the edge of another panel"
-    expected:
-      - "New split created, tab moves to new panel"
     verification: manual

@@ -1,11 +1,15 @@
 // Tab management tests.
-// Covers: TAB-01, TAB-02, TAB-03, TAB-04, TAB-05, TAB-06.
+// Covers: MT-TAB-01 (open from connection), MT-TAB-02 (close), MT-TAB-03 (rename),
+//         MT-TAB-04 (switch), plus TAB-01, TAB-03, TAB-05, context menu, and other
+//         tab feature tests.
 
 import { waitForAppReady, ensureConnectionsSidebar, closeAllTabs } from './helpers/app.js';
 import {
   uniqueName,
   createLocalConnection,
   connectByName,
+  connectionContextAction,
+  CTX_CONNECTION_CONNECT,
 } from './helpers/connections.js';
 import {
   getAllTabs,
@@ -31,7 +35,49 @@ describe('Tab Management', () => {
     await closeAllTabs();
   });
 
-  describe('TAB-01: Create tabs', () => {
+  describe('MT-TAB-01: Open tab from connection', () => {
+    it('should open a tab by double-clicking a connection in the sidebar', async () => {
+      const name = uniqueName('open-conn');
+      await createLocalConnection(name);
+      const countBefore = await getTabCount();
+
+      await connectByName(name);
+
+      const countAfter = await getTabCount();
+      expect(countAfter).toBe(countBefore + 1);
+
+      const tab = await findTabByTitle(name);
+      expect(tab).not.toBeNull();
+    });
+
+    it('should open a tab via context menu Connect', async () => {
+      const name = uniqueName('open-ctx');
+      await createLocalConnection(name);
+      const countBefore = await getTabCount();
+
+      await connectionContextAction(name, CTX_CONNECTION_CONNECT);
+
+      const countAfter = await getTabCount();
+      expect(countAfter).toBe(countBefore + 1);
+
+      const tab = await findTabByTitle(name);
+      expect(tab).not.toBeNull();
+    });
+
+    it('should set the opened tab as active', async () => {
+      const name = uniqueName('open-active');
+      await createLocalConnection(name);
+
+      await connectByName(name);
+
+      const active = await getActiveTab();
+      expect(active).not.toBeNull();
+      const activeText = await active.getText();
+      expect(activeText).toContain(name);
+    });
+  });
+
+  describe('TAB-01: Create tabs via New Terminal', () => {
     it('should open multiple tabs via the New Terminal button', async () => {
       const initialCount = await getTabCount();
 
@@ -67,7 +113,7 @@ describe('Tab Management', () => {
     });
   });
 
-  describe('TAB-02: Close tab', () => {
+  describe('MT-TAB-02 / TAB-02: Close tab', () => {
     it('should close a tab when its close button is clicked', async () => {
       // Create a connection and open it to get a named tab
       const name = uniqueName('close');
@@ -122,7 +168,7 @@ describe('Tab Management', () => {
     });
   });
 
-  describe('TAB-04: Switch tabs', () => {
+  describe('MT-TAB-04 / TAB-04: Switch tabs', () => {
     it('should switch active tab when clicking a different tab', async () => {
       const name1 = uniqueName('switch1');
       const name2 = uniqueName('switch2');
@@ -383,7 +429,7 @@ describe('Tab Management', () => {
     });
   });
 
-  describe('TAB-06: Rename tab (PR #156)', () => {
+  describe('MT-TAB-03 / TAB-06: Rename tab (PR #156)', () => {
     it('should show "Rename" in the tab context menu', async () => {
       const name = uniqueName('rename-menu');
       await createLocalConnection(name);
