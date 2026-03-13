@@ -5,16 +5,18 @@ REM
 REM Usage: scripts\test-system.cmd [OPTIONS]
 REM
 REM Options:
-REM   --skip-build    Skip cargo/pnpm build steps
-REM   --skip-unit     Skip unit tests (integration only)
-REM   --skip-serial   No-op on Windows (serial ports not available; accepted for
-REM                   compatibility with cross-platform invocations)
-REM   --skip-e2e      Skip E2E tests
-REM   --with-fault    Include network fault injection tests (profile: fault)
-REM   --with-stress   Include SFTP stress tests (profile: stress)
-REM   --with-all      Include all profiles (fault + stress)
-REM   --keep-infra    Keep Docker/Podman containers running after tests
-REM   --help, -h      Show this help message
+REM   --skip-build         Skip cargo/pnpm build steps
+REM   --skip-unit          Skip unit tests (integration only)
+REM   --skip-serial        No-op on Windows (serial ports not available; accepted
+REM                        for compatibility with cross-platform invocations)
+REM   --skip-e2e           Skip E2E tests
+REM   --skip-integration   Skip Rust integration tests (no containers needed);
+REM                        use with Podman when docker buildx is unavailable
+REM   --with-fault         Include network fault injection tests (profile: fault)
+REM   --with-stress        Include SFTP stress tests (profile: stress)
+REM   --with-all           Include all profiles (fault + stress)
+REM   --keep-infra         Keep Docker/Podman containers running after tests
+REM   --help, -h           Show this help message
 
 if "%~1"=="--help" goto :usage
 if "%~1"=="-h" goto :usage
@@ -27,15 +29,20 @@ echo Run system-level tests with container infrastructure (SSH, Telnet).
 echo Delegates to scripts\test-system-windows.sh via Git Bash or WSL.
 echo.
 echo Options:
-echo   --skip-build    Skip cargo/pnpm build steps
-echo   --skip-unit     Skip unit tests (integration only)
-echo   --skip-serial   No-op on Windows (serial ports not available)
-echo   --skip-e2e      Skip E2E tests
-echo   --with-fault    Include network fault injection tests
-echo   --with-stress   Include SFTP stress tests
-echo   --with-all      Include all profiles (fault + stress)
-echo   --keep-infra    Keep containers running after tests
-echo   --help, -h      Show this help message
+echo   --skip-build         Skip cargo/pnpm build steps
+echo   --skip-unit          Skip unit tests (integration only)
+echo   --skip-serial        No-op on Windows (serial ports not available)
+echo   --skip-e2e           Skip E2E tests
+echo   --skip-integration   Skip Rust integration tests (no containers needed)
+echo   --with-fault         Include network fault injection tests
+echo   --with-stress        Include SFTP stress tests
+echo   --with-all           Include all profiles (fault + stress)
+echo   --keep-infra         Keep containers running after tests
+echo   --help, -h           Show this help message
+echo.
+echo Podman on Windows note:
+echo   Building test images requires Docker Desktop (docker buildx).
+echo   With Podman only, use --skip-integration to run unit tests alone.
 echo.
 echo Prerequisites:
 echo   - Git for Windows (Git Bash): https://git-scm.com/download/win

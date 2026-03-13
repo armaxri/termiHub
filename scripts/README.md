@@ -48,8 +48,9 @@ Helper scripts for common development tasks. Each script has a `.sh` (Unix/macOS
 ./scripts/test-system-linux.sh --with-fault     # Include network fault tests
 ./scripts/test-system-windows.sh                # Windows via WSL/Git Bash
 ./scripts/test-system-windows.sh --skip-unit    # Integration tests only
-scripts\test-system.cmd                         # Windows via cmd.exe (dispatches to above)
-scripts\test-system.cmd --skip-serial --skip-e2e  # Unit + integration tests only
+scripts\test-system.cmd                                        # Windows via cmd.exe (dispatches to above)
+scripts\test-system.cmd --skip-serial --skip-e2e              # Unit + integration tests only (Docker Desktop)
+scripts\test-system.cmd --skip-serial --skip-e2e --skip-integration  # Unit tests only (Podman — no docker buildx)
 
 # Agent cross-compilation (one-time setup + build)
 ./scripts/setup-agent-cross.sh        # Install cross-compilation toolchains
