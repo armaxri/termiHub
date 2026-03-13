@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Kill any process listening on the given port, then verify it is free.
-// Usage: node scripts/kill-port.cjs [port]
+// Usage: node scripts/internal/kill-port.cjs [port]
 const { execSync } = require("child_process");
 const net = require("net");
 
