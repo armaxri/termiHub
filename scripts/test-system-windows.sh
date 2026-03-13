@@ -19,6 +19,8 @@
 # Options:
 #   --skip-build      Skip cargo/pnpm build steps
 #   --skip-unit       Skip unit tests (run integration tests only)
+#   --skip-serial     No-op on Windows (serial ports not available; accepted for
+#                     compatibility with cross-platform invocations)
 #   --skip-e2e        Skip E2E tests
 #   --with-fault      Include network fault injection tests (profile: fault)
 #   --with-stress     Include SFTP stress tests (profile: stress)
@@ -43,6 +45,7 @@ for arg in "$@"; do
     case "$arg" in
         --skip-build)  SKIP_BUILD=1 ;;
         --skip-unit)   SKIP_UNIT=1 ;;
+        --skip-serial) ;;  # No-op on Windows — serial ports are always unavailable
         --skip-e2e)    SKIP_E2E=1 ;;
         --with-fault)  WITH_FAULT=1 ;;
         --with-stress) WITH_STRESS=1 ;;
@@ -54,11 +57,12 @@ for arg in "$@"; do
             echo "Options:"
             echo "  --skip-build    Skip cargo/pnpm build steps"
             echo "  --skip-unit     Skip unit tests (integration only)"
+            echo "  --skip-serial   No-op on Windows (serial ports not available)"
             echo "  --skip-e2e      Skip E2E tests"
             echo "  --with-fault    Include network fault injection tests"
             echo "  --with-stress   Include SFTP stress tests"
             echo "  --with-all      Include all test profiles"
-            echo "  --keep-infra    Keep Docker containers after tests"
+            echo "  --keep-infra    Keep Docker/Podman containers after tests"
             echo "  --help, -h      Show this help message"
             exit 0
             ;;
@@ -80,6 +84,12 @@ fi
 
 # ─── Detect container runtime ───────────────────────────────────────────────
 # Allow override via env: CONTAINER_CMD=podman ./scripts/test-system-windows.sh
+#
+# Detection order:
+#   1. docker (Docker Desktop running)
+#   2. docker.exe (WSL only — Docker Desktop socket bridged into WSL)
+#   3. podman / podman.exe (Podman Desktop running)
+#   4. fallback to "docker" — will produce a clear error below
 
 if [ -z "${CONTAINER_CMD:-}" ]; then
     if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
@@ -88,9 +98,31 @@ if [ -z "${CONTAINER_CMD:-}" ]; then
         CONTAINER_CMD="docker.exe"
     elif command -v podman &>/dev/null && podman info &>/dev/null 2>&1; then
         CONTAINER_CMD="podman"
+    elif command -v podman.exe &>/dev/null && podman.exe info &>/dev/null 2>&1; then
+        # podman.exe reachable from Git Bash when Podman Desktop is installed and
+        # the Podman Machine is running, but 'podman' (without .exe) is not in PATH
+        CONTAINER_CMD="podman.exe"
     else
         CONTAINER_CMD="docker"  # will fail below with a clear error
     fi
+fi
+
+# ─── Detect compose sub-command ─────────────────────────────────────────────
+# Docker Compose v2 uses "docker compose" (space, not hyphen).
+# Podman uses the same pattern: "podman compose".
+# Verify compose is available before attempting to start containers.
+
+if ! $CONTAINER_CMD compose version &>/dev/null 2>&1; then
+    echo "ERROR: '$CONTAINER_CMD compose' is not available."
+    echo ""
+    if [[ "$CONTAINER_CMD" == podman* ]]; then
+        echo "Podman requires Docker Compose CLI to be installed for 'podman compose'."
+        echo "  Install Docker Compose: https://docs.docker.com/compose/install/"
+        echo "  Or upgrade Podman Desktop, which bundles Docker Compose."
+    else
+        echo "Install Docker Desktop (includes Compose v2): https://www.docker.com/products/docker-desktop/"
+    fi
+    exit 1
 fi
 
 # ─── Cleanup trap ───────────────────────────────────────────────────────────
