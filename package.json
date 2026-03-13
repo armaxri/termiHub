@@ -55,7 +55,8 @@
   },
   "pnpm": {
     "overrides": {
-      "dompurify": "^3.3.3"
+      "dompurify": "^3.3.3",
+      "serialize-javascript": "^7.0.4"
     }
   },
   "devDependencies": {
