@@ -91,6 +91,7 @@ agent/                        # Remote agent (JSON-RPC over SSH)
     transport.rs              # Core trait adapters (OutputSink, ProcessSpawner, etc.)
     main.rs                   # Entry point (--stdio, --listen, --daemon)
 scripts/                      # Dev helper scripts (.sh + .cmd variants)
+  internal/                   # Non-user-facing helpers (autoformat hook, kill-port utility)
 docs/                         # All documentation
   concepts/                   # Concept documents for "Concept" labeled issues
 tests/e2e/                    # WebdriverIO E2E tests
@@ -191,7 +192,6 @@ All scripts live in `scripts/` with `.sh` (Unix/macOS) and `.cmd` (Windows) vari
 | `./scripts/test.sh`              | Run all unit tests (frontend + backend + agent)                                                                    |
 | `./scripts/check.sh`             | Read-only quality checks mirroring CI (formatting, linting, clippy)                                                |
 | `./scripts/format.sh`            | Auto-fix all formatting issues (Prettier + cargo fmt)                                                              |
-| `./scripts/autoformat.sh`        | Auto-format a single file (called by PostToolUse hook — do not run manually)                                       |
 | `./scripts/clean.sh`             | Remove all build artifacts for a fresh start                                                                       |
 | `./scripts/build-agents.sh`      | Build remote agent binaries (cross-compilation targets)                                                            |
 | `./scripts/setup-agent-cross.sh` | Set up cross-compilation toolchain for agent builds                                                                |
@@ -201,7 +201,7 @@ All scripts live in `scripts/` with `.sh` (Unix/macOS) and `.cmd` (Windows) vari
 
 ### Auto-Formatting Hook
 
-A PostToolUse hook in `.claude/settings.json` runs `scripts/autoformat.sh` after every Edit/Write, automatically applying Prettier (TS/JS/CSS) and rustfmt (Rust). No manual formatting step is needed during development.
+A PostToolUse hook in `.claude/settings.json` runs `scripts/internal/autoformat.sh` after every Edit/Write, automatically applying Prettier (TS/JS/CSS) and rustfmt (Rust). No manual formatting step is needed during development.
 
 ### Pre-Push Checklist (Internal Tasks)
 
