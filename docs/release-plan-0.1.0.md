@@ -266,7 +266,7 @@ serial ports. If not, serial tests are skipped (acceptable for beta).
 
 ```bash
 # Uses podman compose
-./scripts/test-system.cmd --skip-serial
+scripts\test-system-windows.cmd --skip-serial
 ```
 
 If Podman system tests don't work: skip and rely on WSL

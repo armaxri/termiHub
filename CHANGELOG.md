@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - E2E tests for connection management CRUD scenarios MT-CONN-01 through MT-CONN-08 — covers create local/SSH connection, edit, delete, create folder, move connection to folder, and import/export menu flow; manual test YAML updated with automation coverage notes (#458)
 - SSH key-based authentication E2E test (SSH-02) — Docker entrypoint generates an ed25519 key pair shared with the test runner via a Docker volume, enabling key-based auth tests in both Linux-native and Docker E2E environments (#485)
+- `test-system-windows.cmd` wrapper for running Windows system tests from a native CMD prompt (delegates to WSL or Git Bash)
+
+### Changed
+
+- Scripts directory reorganized — internal helpers (`autoformat.sh`, `kill-port.cjs`) moved to `scripts/internal/` to separate them from user-facing dev scripts
 
 ### Fixed
 

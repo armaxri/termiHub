@@ -66,3 +66,12 @@ python scripts/test-manual.py --resume tests/reports/manual-*.json  # Resume pre
 ./scripts/smoke-test.sh ./src-tauri/target/release/termihub       # Linux
 ./scripts/smoke-test.sh /Applications/termiHub.app                 # macOS
 ```
+
+## Internal helpers
+
+The `internal/` subdirectory contains scripts that are **not** intended for direct use. They are invoked by other scripts or by tooling. See [`internal/README.md`](internal/README.md) for details.
+
+| File                     | Used by                                  | Purpose                                             |
+| ------------------------ | ---------------------------------------- | --------------------------------------------------- |
+| `internal/autoformat.sh` | `.claude/settings.json` PostToolUse hook | Auto-format a single file (Prettier / rustfmt)      |
+| `internal/kill-port.cjs` | `dev.sh` / `dev.cmd`                     | Kill any process occupying the Vite dev server port |
