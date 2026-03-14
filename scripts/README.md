@@ -41,17 +41,26 @@ Helper scripts for common development tasks. Each script has a `.sh` (Unix/macOS
 ./scripts/test-system.sh --skip-serial # SSH/Telnet only, no serial port setup
 ./scripts/test-system.sh --keep-infra  # Keep Docker containers after tests
 
-# Per-machine comprehensive system tests
+# Per-machine comprehensive system tests (macOS / Linux)
 ./scripts/test-system-mac.sh                    # macOS (unit + integration, no E2E)
 ./scripts/test-system-mac.sh --with-all         # Include fault + stress profiles
 ./scripts/test-system-linux.sh                  # Linux (unit + integration + E2E)
 ./scripts/test-system-linux.sh --with-fault     # Include network fault tests
 ./scripts/test-system-windows.sh                # Windows via WSL/Git Bash
-./scripts/test-system-windows.sh --skip-unit    # Integration tests only
-scripts\test-system.cmd                                        # Windows via cmd.exe (dispatches to above)
-scripts\test-system.cmd --skip-serial --skip-e2e              # Unit + integration tests only (Docker Desktop)
-scripts\test-system.cmd --skip-serial --skip-e2e --skip-integration  # Unit tests only (Podman — no docker buildx)
+```
 
+```cmd
+REM Per-machine comprehensive system tests (Windows — cmd.exe)
+scripts\test-system-windows.cmd                                          REM Full run
+scripts\test-system-windows.cmd --skip-unit                              REM Integration tests only
+scripts\test-system-windows.cmd --skip-integration                       REM Unit tests only (Podman — no docker buildx)
+scripts\test-system-windows.cmd --skip-e2e                               REM Unit + integration, no E2E
+
+REM Simple general dispatcher (also callable from cmd.exe)
+scripts\test-system.cmd                                                  REM Delegates to test-system-windows.sh
+```
+
+```bash
 # Agent cross-compilation (one-time setup + build)
 ./scripts/setup-agent-cross.sh        # Install cross-compilation toolchains
 ./scripts/build-agents.sh             # Build agent for all Linux targets
@@ -69,3 +78,12 @@ python scripts/test-manual.py --resume tests/reports/manual-*.json  # Resume pre
 ./scripts/smoke-test.sh ./src-tauri/target/release/termihub       # Linux
 ./scripts/smoke-test.sh /Applications/termiHub.app                 # macOS
 ```
+
+## Internal helpers
+
+The `internal/` subdirectory contains scripts that are **not** intended for direct use. They are invoked by other scripts or by tooling. See [`internal/README.md`](internal/README.md) for details.
+
+| File                     | Used by                                  | Purpose                                             |
+| ------------------------ | ---------------------------------------- | --------------------------------------------------- |
+| `internal/autoformat.sh` | `.claude/settings.json` PostToolUse hook | Auto-format a single file (Prettier / rustfmt)      |
+| `internal/kill-port.cjs` | `dev.sh` / `dev.cmd`                     | Kill any process occupying the Vite dev server port |
