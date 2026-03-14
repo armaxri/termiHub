@@ -137,6 +137,35 @@ if [ -z "${CONTAINER_CMD:-}" ]; then
     fi
 fi
 
+# ─── Detect Podman + BuildKit capability ────────────────────────────────────
+# The docker-compose.yml uses 'additional_contexts', which requires BuildKit.
+# Docker Compose (docker-compose.exe) v2 needs 'docker buildx' for BuildKit.
+# With Podman on Windows (no Docker Desktop), 'docker buildx' is unavailable,
+# so image builds will fail.  We detect this upfront and auto-skip integration
+# tests with a clear explanation, rather than letting compose fail mid-run.
+#
+# Detection logic:
+#   IS_PODMAN=1  when CONTAINER_CMD is podman or podman.exe
+#   HAS_BUILDX=1 when 'docker buildx version' succeeds (Docker Desktop present)
+#   PODMAN_NO_BUILDKIT=1 when Podman is in use AND docker buildx is absent
+
+IS_PODMAN=0
+if [[ "$CONTAINER_CMD" == podman* ]]; then
+    IS_PODMAN=1
+fi
+
+HAS_BUILDX=0
+if command -v docker &>/dev/null && docker buildx version &>/dev/null 2>&1; then
+    HAS_BUILDX=1
+elif command -v docker.exe &>/dev/null && docker.exe buildx version &>/dev/null 2>&1; then
+    HAS_BUILDX=1
+fi
+
+PODMAN_NO_BUILDKIT=0
+if [ "$IS_PODMAN" -eq 1 ] && [ "$HAS_BUILDX" -eq 0 ]; then
+    PODMAN_NO_BUILDKIT=1
+fi
+
 # ─── Detect compose sub-command ─────────────────────────────────────────────
 # Docker Compose v2 uses "docker compose" (space, not hyphen).
 # Podman uses the same pattern: "podman compose".
@@ -286,6 +315,28 @@ fi
 
 # ─── Start Docker containers (skipped with --skip-integration) ──────────────
 
+# Auto-skip integration when Podman is in use but docker buildx is unavailable.
+# The docker-compose.yml images use 'additional_contexts' which requires BuildKit;
+# docker-compose.exe v2 (the Podman compose provider on Windows) needs 'docker
+# buildx' for BuildKit, which is only present with Docker Desktop.
+if [ "$SKIP_INTEGRATION" -eq 0 ] && [ "$PODMAN_NO_BUILDKIT" -eq 1 ]; then
+    echo ""
+    echo "=== Podman on Windows: integration tests auto-skipped ==="
+    echo ""
+    echo "  Reason: The test container images require BuildKit's 'additional_contexts'"
+    echo "          feature. Docker Compose (docker-compose.exe) v2 delegates builds"
+    echo "          to 'docker buildx', which is only available with Docker Desktop."
+    echo "          Podman Desktop alone does not provide 'docker buildx'."
+    echo ""
+    echo "  Impact: SSH / telnet / monitoring integration tests will not run."
+    echo "          Unit tests (frontend + backend + agent) will still run."
+    echo ""
+    echo "  Full integration test coverage is provided by Linux CI (GitHub Actions)."
+    echo "  To suppress this message, pass --skip-integration explicitly."
+    echo ""
+    SKIP_INTEGRATION=1
+fi
+
 if [ "$SKIP_INTEGRATION" -eq 0 ]; then
     echo ""
     echo "=== Starting container test infrastructure ==="
@@ -293,10 +344,6 @@ if [ "$SKIP_INTEGRATION" -eq 0 ]; then
     # Ensure BuildKit is enabled.  The docker-compose.exe that Podman delegates to
     # may use the legacy builder by default; DOCKER_BUILDKIT=1 activates BuildKit
     # which is required for 'additional_contexts' in docker-compose.yml.
-    # NOTE: With Podman on Windows, docker-compose.exe requires 'docker buildx'
-    # for BuildKit, which is only available with Docker Desktop.  If image build
-    # fails here, re-run with --skip-integration (unit tests only) and refer to
-    # the "Podman on Windows — known limitations" section at the top of this file.
     export DOCKER_BUILDKIT=1
 
     # Build compose args for profiles
@@ -367,6 +414,8 @@ fi
 if [ "$SKIP_INTEGRATION" -eq 0 ]; then
 echo "  SSH:        127.0.0.1:2201-2208"
 echo "  Telnet:     127.0.0.1:2301"
+elif [ "$PODMAN_NO_BUILDKIT" -eq 1 ]; then
+echo "  Containers: skipped (Podman on Windows — no docker buildx)"
 else
 echo "  Containers: skipped (--skip-integration)"
 fi
@@ -472,7 +521,11 @@ if [ "$SKIP_INTEGRATION" -eq 0 ]; then
     fi
 else
     echo ""
-    echo "=== Integration tests skipped (--skip-integration) ==="
+    if [ "$PODMAN_NO_BUILDKIT" -eq 1 ]; then
+        echo "=== Integration tests skipped (Podman on Windows — no docker buildx) ==="
+    else
+        echo "=== Integration tests skipped (--skip-integration) ==="
+    fi
     echo "    NOTE: Integration tests require Docker Desktop for image builds"
     echo "    with 'additional_contexts'. With Podman on Windows, 'docker buildx'"
     echo "    (bundled with Docker Desktop) is required. Linux CI covers this coverage."
