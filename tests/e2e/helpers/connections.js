@@ -42,10 +42,15 @@ export async function createLocalConnection(name) {
   await openNewConnectionEditor();
   // Type defaults to "local" (first option), so no need to change type
   const nameInput = await browser.$(CONN_EDITOR_NAME);
+  // Click first to ensure focus, then setValue to trigger React onChange
+  await nameInput.click();
   await nameInput.setValue(name);
+  // Wait briefly for React state to settle before clicking save
+  await browser.pause(200);
   const saveBtn = await browser.$(CONN_EDITOR_SAVE);
   await saveBtn.click();
-  await browser.pause(300);
+  // Wait for the editor to close and sidebar to re-render
+  await browser.pause(800);
   return name;
 }
 
@@ -57,21 +62,33 @@ export async function createLocalConnection(name) {
 export async function setConnectionType(type) {
   const select = await browser.$(CONN_EDITOR_TYPE);
   await select.selectByAttribute('value', type);
-  await browser.pause(200);
+  // Wait for the form to re-render with type-specific fields under WebKitGTK
+  await browser.pause(500);
 }
 
 /**
- * Find a connection item in the sidebar by its visible name text.
- * Returns the WebdriverIO element, or null if not found.
+ * Find a connection item in the sidebar by its visible name.
+ * Uses the `title` attribute (`"Double-click to connect: <name>"`) which is
+ * always the full untruncated name, making it reliable under WebKit where
+ * getText() can return CSS-truncated text.
+ * Retries for up to `timeout` ms to allow the sidebar list to refresh after a save.
+ * Returns the WebdriverIO element, or null if not found within the timeout.
  * @param {string} name
+ * @param {number} timeout - Max wait in ms (default 5000)
  */
-export async function findConnectionByName(name) {
-  const items = await browser.$$('[data-testid^="connection-item-"]');
-  for (const item of items) {
-    const text = await item.getText();
-    if (text.includes(name)) {
-      return item;
-    }
+export async function findConnectionByName(name, timeout = 5000) {
+  // Regular connections: title="Double-click to connect: <name>"
+  // Remote agent headers: title="Remote agent: <name>"
+  // Both use title*= selector for reliable matching even when display text is truncated.
+  const selector = [
+    `[data-testid^="connection-item-"][title*="${name}"]`,
+    `[data-testid^="agent-header-"][title*="${name}"]`,
+  ].join(', ');
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const item = await browser.$(selector);
+    if (await item.isExisting()) return item;
+    await browser.pause(300);
   }
   return null;
 }

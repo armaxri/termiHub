@@ -10,19 +10,23 @@
 //   pnpm test:e2e:local    — local shell + local file browser
 //   pnpm test:e2e:infra    — SSH, serial, telnet (requires live servers)
 
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
+import { waitForAppReady, ensureConnectionsSidebar, cleanupE2EConnections } from "./tests/e2e/helpers/app.js";
 
 let tauriDriver;
+let xvfb;
+
+const DISPLAY_NUM = ":99";
 
 function appBinaryPath() {
   if (process.platform === "win32") {
-    return "./src-tauri/target/release/termihub.exe";
+    return "./target/release/termihub.exe";
   }
   if (process.platform === "darwin") {
-    return "./src-tauri/target/release/bundle/macos/termiHub.app/Contents/MacOS/termiHub";
+    return "./target/release/bundle/macos/termiHub.app/Contents/MacOS/termiHub";
   }
-  return "./src-tauri/target/release/termihub";
+  return "./target/release/termihub";
 }
 
 export const config = {
@@ -65,16 +69,20 @@ export const config = {
     perf: ["./tests/e2e/performance.test.js"],
   },
 
+  // Point WDIO directly at the tauri-driver WebDriver server (port 4444).
+  // tauri-driver acts as a WebDriver proxy in front of the native driver
+  // (WebKitWebDriver on Linux, WebView2 on Windows). Do NOT use
+  // goog:chromeOptions.debuggerAddress — that attaches to an already-running
+  // Chrome DevTools port, which is unrelated to tauri-driver.
+  hostname: "localhost",
+  port: 4444,
+  path: "/",
+
   maxInstances: 1,
 
   capabilities: [
     {
       maxInstances: 1,
-      browserName: "chrome",
-      "goog:chromeOptions": {
-        // Tell WebDriver to connect to the tauri-driver WebDriver proxy
-        debuggerAddress: "127.0.0.1:4444",
-      },
       "tauri:options": {
         application: appBinaryPath(),
       },
@@ -92,26 +100,76 @@ export const config = {
 
   // --- Hooks ---
 
-  onPrepare() {
-    // Start tauri-driver before all workers
-    tauriDriver = spawn("tauri-driver", [], {
+  async onPrepare() {
+    // On Linux/WSL2 there is no display server by default. Start Xvfb so that
+    // WebKitWebDriver (and the Tauri app) have a virtual framebuffer to render
+    // into. If DISPLAY is already set (e.g. a real desktop), skip Xvfb.
+    if (!process.env.DISPLAY) {
+      process.env.DISPLAY = DISPLAY_NUM;
+      xvfb = spawn("Xvfb", [DISPLAY_NUM, "-screen", "0", "1280x800x24"], {
+        stdio: "ignore",
+      });
+      xvfb.on("error", (err) =>
+        console.error("[xvfb]", err.message),
+      );
+      // Give Xvfb time to initialise before anything tries to connect
+      await sleep(1000);
+    }
+
+    // Start tauri-driver before all workers.
+    // Pass --native-driver with the absolute path so tauri-driver can find
+    // WebKitWebDriver even when /usr/bin is not on Node.js's PATH (WSL2).
+    const nativeDriver =
+      process.env.WEBKIT_DRIVER_PATH ||
+      (() => {
+        try {
+          return execFileSync("which", ["WebKitWebDriver"], {
+            encoding: "utf8",
+          }).trim();
+        } catch {
+          return "WebKitWebDriver";
+        }
+      })();
+    tauriDriver = spawn("tauri-driver", ["--native-driver", nativeDriver], {
       stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env },
     });
 
     tauriDriver.stderr.on("data", (data) => {
-      const msg = data.toString();
-      if (msg.includes("error") || msg.includes("Error")) {
-        console.error("[tauri-driver]", msg.trim());
+      console.error("[tauri-driver]", data.toString().trim());
+    });
+
+    tauriDriver.on("error", (err) =>
+      console.error("[tauri-driver] failed to start:", err.message),
+    );
+
+    tauriDriver.on("exit", (code) => {
+      if (code !== null && code !== 0) {
+        console.error("[tauri-driver] exited with code", code);
       }
     });
 
-    // Give tauri-driver time to start listening
-    return sleep(500);
+    // Give tauri-driver time to start listening on port 4444
+    await sleep(1500);
   },
 
   before: async function () {
-    // Wait for the Tauri app to fully render
-    await browser.pause(3000);
+    // Wait for the Tauri app to fully render (longer under Xvfb/WebKitGTK)
+    await browser.pause(5000);
+    // Dismiss any "Configuration Recovery" dialog that may appear on startup
+    // (e.g., if the connections.json was corrupt or had an unexpected format).
+    const recoveryOkBtn = await browser.$('[data-testid="recovery-dialog-close"]');
+    const recoveryVisible = await recoveryOkBtn.isDisplayed().catch(() => false);
+    if (recoveryVisible) {
+      await recoveryOkBtn.click();
+      await browser.pause(500);
+    }
+    // Ensure the connections sidebar is visible
+    await waitForAppReady();
+    await ensureConnectionsSidebar();
+    // Remove E2E connections left over from previous test runs so each worker
+    // starts with a clean connection list and findConnectionByName is fast.
+    await cleanupE2EConnections();
   },
 
   afterTest: async function (test, _context, { passed }) {
@@ -131,6 +189,10 @@ export const config = {
     if (tauriDriver) {
       tauriDriver.kill();
       tauriDriver = null;
+    }
+    if (xvfb) {
+      xvfb.kill();
+      xvfb = null;
     }
   },
 
