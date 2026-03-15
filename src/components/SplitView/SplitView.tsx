@@ -339,6 +339,7 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
                   <ContextMenu.Item
                     className="context-menu__item"
                     onSelect={() => setRenameTabId(tab.id)}
+                    data-testid="tab-context-rename"
                   >
                     <Pencil size={14} /> Rename
                   </ContextMenu.Item>

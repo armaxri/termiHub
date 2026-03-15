@@ -11,11 +11,15 @@
 //   pnpm test:e2e:infra    — SSH, serial, telnet (requires live servers)
 
 import { spawn, execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { waitForAppReady, ensureConnectionsSidebar, cleanupE2EConnections } from "./tests/e2e/helpers/app.js";
+import { waitForAppReady, ensureConnectionsSidebar } from "./tests/e2e/helpers/app.js";
 
 let tauriDriver;
 let xvfb;
+let e2eConfigDir;
 
 const DISPLAY_NUM = ":99";
 
@@ -101,6 +105,12 @@ export const config = {
   // --- Hooks ---
 
   async onPrepare() {
+    // Create a fresh isolated config directory for this test run so the app
+    // starts with no connections or credentials. This avoids leftover state
+    // from previous runs and keeps the connection list short and fast.
+    e2eConfigDir = mkdtempSync(join(tmpdir(), "termihub-e2e-"));
+    process.env.TERMIHUB_CONFIG_DIR = e2eConfigDir;
+
     // On Linux/WSL2 there is no display server by default. Start Xvfb so that
     // WebKitWebDriver (and the Tauri app) have a virtual framebuffer to render
     // into. If DISPLAY is already set (e.g. a real desktop), skip Xvfb.
@@ -154,22 +164,14 @@ export const config = {
   },
 
   before: async function () {
-    // Wait for the Tauri app to fully render (longer under Xvfb/WebKitGTK)
-    await browser.pause(5000);
-    // Dismiss any "Configuration Recovery" dialog that may appear on startup
-    // (e.g., if the connections.json was corrupt or had an unexpected format).
-    const recoveryOkBtn = await browser.$('[data-testid="recovery-dialog-close"]');
-    const recoveryVisible = await recoveryOkBtn.isDisplayed().catch(() => false);
-    if (recoveryVisible) {
-      await recoveryOkBtn.click();
-      await browser.pause(500);
-    }
+    // Wait for the Tauri app to fully render (longer under Xvfb/WebKitGTK).
+    // A freshly-built binary with a large JS bundle can take 15–20s for
+    // WebKitGTK to parse and execute under Xvfb; once the bundle is in the
+    // WebKit disk cache subsequent runs are faster.
+    await browser.pause(8000);
     // Ensure the connections sidebar is visible
     await waitForAppReady();
     await ensureConnectionsSidebar();
-    // Remove E2E connections left over from previous test runs so each worker
-    // starts with a clean connection list and findConnectionByName is fast.
-    await cleanupE2EConnections();
   },
 
   afterTest: async function (test, _context, { passed }) {
@@ -193,6 +195,15 @@ export const config = {
     if (xvfb) {
       xvfb.kill();
       xvfb = null;
+    }
+    // Clean up the isolated config directory created for this test run
+    if (e2eConfigDir) {
+      try {
+        rmSync(e2eConfigDir, { recursive: true, force: true });
+      } catch {
+        // Non-fatal — OS will clean it up eventually
+      }
+      e2eConfigDir = null;
     }
   },
 

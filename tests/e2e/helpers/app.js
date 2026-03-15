@@ -10,9 +10,11 @@ const CTX_AGENT_DELETE = '[data-testid="context-agent-delete"]';
  * Call once in a top-level `before` hook.
  */
 export async function waitForAppReady() {
-  // Wait for the activity bar to appear (signals the React tree is mounted)
+  // Wait for the activity bar to appear (signals the React tree is mounted).
+  // Allow up to 20 s — a cold-start with a freshly-built bundle can be slow
+  // under WebKitGTK/Xvfb; the WebKit disk cache makes subsequent runs faster.
   const activityBtn = await browser.$(ACTIVITY_BAR_CONNECTIONS);
-  await activityBtn.waitForDisplayed({ timeout: 10000 });
+  await activityBtn.waitForDisplayed({ timeout: 20000 });
 }
 
 /**

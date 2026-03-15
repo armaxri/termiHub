@@ -42,9 +42,23 @@ export async function createLocalConnection(name) {
   await openNewConnectionEditor();
   // Type defaults to "local" (first option), so no need to change type
   const nameInput = await browser.$(CONN_EDITOR_NAME);
-  // Click first to ensure focus, then setValue to trigger React onChange
-  await nameInput.click();
-  await nameInput.setValue(name);
+  // Use JavaScript to set the input value instead of keyboard events.
+  // After a terminal session, WebKitGTK keyboard state can become corrupted
+  // (e.g. Shift stuck), causing setValue() to produce wrong-case characters.
+  // Directly setting the React-controlled input via the native value setter
+  // and dispatching an 'input' event reliably triggers React's onChange.
+  await browser.execute(
+    (el, val) => {
+      const nativeSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value',
+      ).set;
+      nativeSetter.call(el, val);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    },
+    nameInput,
+    name,
+  );
   // Wait briefly for React state to settle before clicking save
   await browser.pause(200);
   const saveBtn = await browser.$(CONN_EDITOR_SAVE);
@@ -95,23 +109,31 @@ export async function findConnectionByName(name, timeout = 5000) {
 
 /**
  * Double-click a connection by name to open it.
+ * Scrolls the element into view using JavaScript first, since the connection
+ * list can be long and WdIO's built-in scroll may not reach nested containers.
  * @param {string} name
  */
 export async function connectByName(name) {
   const item = await findConnectionByName(name);
   if (!item) throw new Error(`Connection "${name}" not found in sidebar`);
+  await browser.execute((el) => el.scrollIntoView({ block: 'center', inline: 'nearest' }), item);
+  await browser.pause(300);
   await item.doubleClick();
   await browser.pause(500);
 }
 
 /**
  * Right-click a connection by name and select a context menu action.
+ * Scrolls the element into view using JavaScript first, since the connection
+ * list can be long and WdIO's built-in scroll may not reach nested containers.
  * @param {string} name
  * @param {string} menuSelector - One of the CTX_CONNECTION_* selectors
  */
 export async function connectionContextAction(name, menuSelector) {
   const item = await findConnectionByName(name);
   if (!item) throw new Error(`Connection "${name}" not found in sidebar`);
+  await browser.execute((el) => el.scrollIntoView({ block: 'center', inline: 'nearest' }), item);
+  await browser.pause(300);
   await item.click({ button: 'right' });
   await browser.pause(300);
   const menuItem = await browser.$(menuSelector);

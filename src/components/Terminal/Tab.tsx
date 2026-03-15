@@ -82,6 +82,7 @@ export function Tab({
       style={style}
       className={`tab ${tab.isActive ? "tab--active" : ""}`}
       onClick={onActivate}
+      title={tab.title}
       data-testid={`tab-${tab.id}`}
       {...attributes}
       {...listeners}

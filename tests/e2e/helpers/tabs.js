@@ -26,15 +26,17 @@ export async function getTabCount() {
 }
 
 /**
- * Find a tab by its visible title text.
+ * Find a tab by its title.
+ * Uses the `title` attribute (full untruncated name set by the Tab component)
+ * rather than getText(), which can return CSS-truncated text under WebKit.
  * @param {string} title
  * @returns {Promise<WebdriverIO.Element|null>}
  */
 export async function findTabByTitle(title) {
   const tabs = await getAllTabs();
   for (const t of tabs) {
-    const text = await t.getText();
-    if (text.includes(title)) {
+    const tabTitle = await t.getAttribute('title');
+    if (tabTitle && tabTitle.includes(title)) {
       return t;
     }
   }

@@ -72,7 +72,8 @@ describe('Tab Management', () => {
 
       const active = await getActiveTab();
       expect(active).not.toBeNull();
-      const activeText = await active.getText();
+      // Use title attribute — getText() returns CSS-truncated text under WebKit
+      const activeText = await active.getAttribute('title');
       expect(activeText).toContain(name);
     });
   });
@@ -179,8 +180,9 @@ describe('Tab Management', () => {
 
       // Tab 2 should be active
       let active = await getActiveTab();
-      let activeText = await active.getText();
-      expect(activeText).toContain(name2);
+      // Use title attribute — getText() returns CSS-truncated text under WebKit
+      let activeTitle = await active.getAttribute('title');
+      expect(activeTitle).toContain(name2);
 
       // Click tab 1
       const tab1 = await findTabByTitle(name1);
@@ -189,8 +191,8 @@ describe('Tab Management', () => {
 
       // Tab 1 should now be active
       active = await getActiveTab();
-      activeText = await active.getText();
-      expect(activeText).toContain(name1);
+      activeTitle = await active.getAttribute('title');
+      expect(activeTitle).toContain(name1);
     });
   });
 
@@ -405,14 +407,11 @@ describe('Tab Management', () => {
     });
 
     it('should not show context menu on Settings tab', async () => {
-      // Open settings tab
-      const gear = await browser.$('[data-testid="activity-bar-settings"]');
-      await gear.click();
-      await browser.pause(300);
-      const openItem = await browser.$('[data-testid="settings-menu-open"]');
-      await openItem.waitForDisplayed({ timeout: 3000 });
-      await openItem.click();
-      await browser.pause(300);
+      // Open settings tab via keyboard shortcut (Ctrl+,) — avoids the Radix
+      // DropdownMenu trigger which is unreliable under WebKitGTK after terminal
+      // sessions alter the app's pointer/focus state.
+      await browser.keys(['Control', ',']);
+      await browser.pause(500);
 
       // Find the Settings tab and right-click it
       const settingsTab = await findTabByTitle('Settings');
@@ -463,8 +462,20 @@ describe('Tab Management', () => {
       // Rename dialog should appear with input
       const input = await browser.$(RENAME_DIALOG_INPUT);
       await input.waitForDisplayed({ timeout: 3000 });
-      await input.clearValue();
-      await input.setValue(newName);
+      // Use JS to set value — keyboard events can corrupt case after a terminal
+      // session under WebKitGTK (Shift state stuck)
+      await browser.execute(
+        (el, val) => {
+          const nativeSetter = Object.getOwnPropertyDescriptor(
+            window.HTMLInputElement.prototype,
+            'value',
+          ).set;
+          nativeSetter.call(el, val);
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+        },
+        input,
+        newName,
+      );
 
       const applyBtn = await browser.$(RENAME_DIALOG_APPLY);
       await applyBtn.click();
