@@ -532,7 +532,13 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
     >
       <ContextMenu.Root>
         <ContextMenu.Trigger asChild>
-          <div className="connection-list__group-header" {...attributes} {...listeners}>
+          <div
+            className="connection-list__group-header"
+            data-testid={`agent-header-${agent.id}`}
+            title={`Remote agent: ${agent.name}`}
+            {...attributes}
+            {...listeners}
+          >
             <button
               className="connection-list__group-toggle"
               onClick={() => toggleRemoteAgent(agent.id)}

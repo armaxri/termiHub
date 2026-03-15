@@ -28,29 +28,35 @@ export const CONN_EDITOR_NAME_ERROR = '[data-testid="connection-editor-name-erro
 export const CONN_SETTINGS_FORM = '[data-testid="connection-settings-form"]';
 
 // --- Local Shell Settings ---
-export const SHELL_SELECT = '[data-testid="connection-settings-shell-select"]';
-export const STARTING_DIRECTORY = '[data-testid="connection-settings-starting-directory"]';
+// DynamicForm renders these as field-{key} from the backend schema
+export const SHELL_SELECT = '[data-testid="field-shell"]';
+export const STARTING_DIRECTORY = '[data-testid="field-startingDirectory"]';
 
 // --- SSH Settings ---
-export const SSH_HOST = '[data-testid="ssh-settings-host-input"]';
-export const SSH_PORT = '[data-testid="ssh-settings-port-input"]';
-export const SSH_USERNAME = '[data-testid="ssh-settings-username-input"]';
-export const SSH_AUTH_METHOD = '[data-testid="ssh-settings-auth-method-select"]';
-export const SSH_KEY_PATH = '[data-testid="ssh-settings-key-path-input"]';
-export const SSH_X11_CHECKBOX = '[data-testid="ssh-settings-x11-checkbox"]';
+// DynamicForm renders these as field-{key} from the backend schema
+export const SSH_HOST = '[data-testid="field-host"]';
+export const SSH_PORT = '[data-testid="field-port"]';
+export const SSH_USERNAME = '[data-testid="field-username"]';
+export const SSH_AUTH_METHOD = '[data-testid="field-authMethod"]';
+export const SSH_KEY_PATH = '[data-testid="field-keyPath"]';
+export const SSH_X11_CHECKBOX = '[data-testid="field-x11Forwarding"]';
 
 // --- Serial Settings ---
-export const SERIAL_PORT_SELECT = '[data-testid="serial-settings-port-select"]';
-export const SERIAL_PORT_INPUT = '[data-testid="serial-settings-port-input"]';
-export const SERIAL_BAUD_RATE = '[data-testid="serial-settings-baud-rate-select"]';
-export const SERIAL_DATA_BITS = '[data-testid="serial-settings-data-bits-select"]';
-export const SERIAL_STOP_BITS = '[data-testid="serial-settings-stop-bits-select"]';
-export const SERIAL_PARITY = '[data-testid="serial-settings-parity-select"]';
-export const SERIAL_FLOW_CONTROL = '[data-testid="serial-settings-flow-control-select"]';
+// DynamicForm renders these as field-{key} from the backend schema.
+// The serial port is always a text input (FieldType::Text in the schema).
+// SERIAL_PORT_SELECT is kept for backwards-compat but won't match any element.
+export const SERIAL_PORT_SELECT = '[data-testid="field-port-select"]';
+export const SERIAL_PORT_INPUT = '[data-testid="field-port"]';
+export const SERIAL_BAUD_RATE = '[data-testid="field-baudRate"]';
+export const SERIAL_DATA_BITS = '[data-testid="field-dataBits"]';
+export const SERIAL_STOP_BITS = '[data-testid="field-stopBits"]';
+export const SERIAL_PARITY = '[data-testid="field-parity"]';
+export const SERIAL_FLOW_CONTROL = '[data-testid="field-flowControl"]';
 
 // --- Telnet Settings ---
-export const TELNET_HOST = '[data-testid="telnet-settings-host-input"]';
-export const TELNET_PORT = '[data-testid="telnet-settings-port-input"]';
+// DynamicForm renders these as field-{key} from the backend schema
+export const TELNET_HOST = '[data-testid="field-host"]';
+export const TELNET_PORT = '[data-testid="field-port"]';
 
 // --- Connection List ---
 export const CONNECTION_LIST_NEW_FOLDER = '[data-testid="connection-list-new-folder"]';
