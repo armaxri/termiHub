@@ -770,7 +770,8 @@ Mapping of manual test IDs that have been automated to their E2E test files:
 | MT-CONN-02–07, 25–30           | `connection-crud.test.js`, `connection-forms.test.js`        |
 | MT-CONN-10–12, 14–16           | `encrypted-export-import.test.js`                            |
 | MT-CONN-20–22, 31              | `external-files.test.js`                                     |
-| MT-FB-01–03, 06, 13, 17, 19    | `infrastructure/sftp-extended.test.js`                       |
+| MT-FB-01, 02                   | `file-browser-local.test.js`                                 |
+| MT-FB-03, 06, 13, 17, 19       | `infrastructure/sftp-extended.test.js`                       |
 | MT-FB-05, 11, 18               | `file-browser-local.test.js`                                 |
 | MT-UI-06–08, 17, 18, 20        | `ui-state.test.js`                                           |
 | MT-UI-21–25                    | `sidebar-sections.test.js`                                   |
