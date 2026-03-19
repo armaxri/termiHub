@@ -334,26 +334,22 @@ fn info_from_parsed(host: Option<String>, display_number: u32) -> LocalXServerIn
     match host {
         None => {
             // Local display `:N` — try Unix socket first, fall back to TCP.
-            let socket_path = format!("/tmp/.X11-unix/X{display_number}");
-            if std::path::Path::new(&socket_path).exists() {
-                LocalXServerInfo {
-                    display_number,
-                    #[cfg(unix)]
-                    connection: LocalXConnection::UnixSocket(socket_path),
-                    #[cfg(not(unix))]
-                    connection: LocalXConnection::Tcp(
-                        "localhost".to_string(),
-                        6000 + display_number as u16,
-                    ),
+            #[cfg(unix)]
+            {
+                let socket_path = format!("/tmp/.X11-unix/X{display_number}");
+                if std::path::Path::new(&socket_path).exists() {
+                    return LocalXServerInfo {
+                        display_number,
+                        connection: LocalXConnection::UnixSocket(socket_path),
+                    };
                 }
-            } else {
-                LocalXServerInfo {
-                    display_number,
-                    connection: LocalXConnection::Tcp(
-                        "localhost".to_string(),
-                        6000 + display_number as u16,
-                    ),
-                }
+            }
+            LocalXServerInfo {
+                display_number,
+                connection: LocalXConnection::Tcp(
+                    "localhost".to_string(),
+                    6000 + display_number as u16,
+                ),
             }
         }
         Some(ref h) if h.starts_with('/') => {
@@ -378,20 +374,19 @@ fn info_from_parsed(host: Option<String>, display_number: u32) -> LocalXServerIn
             }
         }
         Some(ref h) if h == "localhost" || h == "127.0.0.1" || h == "::1" => {
-            let socket_path = format!("/tmp/.X11-unix/X{display_number}");
-            if std::path::Path::new(&socket_path).exists() {
-                LocalXServerInfo {
-                    display_number,
-                    #[cfg(unix)]
-                    connection: LocalXConnection::UnixSocket(socket_path),
-                    #[cfg(not(unix))]
-                    connection: LocalXConnection::Tcp(h.clone(), 6000 + display_number as u16),
+            #[cfg(unix)]
+            {
+                let socket_path = format!("/tmp/.X11-unix/X{display_number}");
+                if std::path::Path::new(&socket_path).exists() {
+                    return LocalXServerInfo {
+                        display_number,
+                        connection: LocalXConnection::UnixSocket(socket_path),
+                    };
                 }
-            } else {
-                LocalXServerInfo {
-                    display_number,
-                    connection: LocalXConnection::Tcp(h.clone(), 6000 + display_number as u16),
-                }
+            }
+            LocalXServerInfo {
+                display_number,
+                connection: LocalXConnection::Tcp(h.clone(), 6000 + display_number as u16),
             }
         }
         Some(h) => {
