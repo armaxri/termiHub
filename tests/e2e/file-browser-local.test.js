@@ -54,15 +54,13 @@ describe('File Browser (Local)', () => {
       await connectByName(name);
       await browser.pause(1000);
 
-      // Navigate to a known directory so the file browser has a predictable path to show.
-      await browser.keys('cd /tmp\n');
-      await browser.pause(800);
-
       await switchToFilesSidebar();
       await browser.pause(500);
 
       // Use textContent via execute() — getText() returns innerText which can be
       // empty when the element's layout box is zero-width due to flex constraints.
+      // The shell starts in the home directory, so the path is guaranteed to be a
+      // non-empty absolute path — no need to cd anywhere first.
       const pathText = await browser.execute(() => {
         const el = document.querySelector('[data-testid="file-browser-current-path"]');
         return el ? el.textContent : '';
