@@ -765,7 +765,7 @@ Mapping of manual test IDs that have been automated to their E2E test files:
 | MT-SSH-04–06, 10–12, 20–33, 35 | `infrastructure/ssh*.test.js`                                |
 | MT-SSH-08, 19                  | `ssh-agent-warning.test.js`                                  |
 | MT-SSH-13, 17, 34              | `infrastructure/ssh-extended.test.js`                        |
-| MT-TAB-06, 07, 15, 18          | `tab-management.test.js`                                     |
+| MT-TAB-01–04, 15, 18           | `tab-management.test.js`                                     |
 | MT-TAB-08–14, 19–21            | `tab-horizontal-scroll.test.js`                              |
 | MT-CONN-02–07, 25–30           | `connection-crud.test.js`, `connection-forms.test.js`        |
 | MT-CONN-10–12, 14–16           | `encrypted-export-import.test.js`                            |

@@ -1,11 +1,15 @@
 // Tab management tests.
-// Covers: TAB-01, TAB-02, TAB-03, TAB-04, TAB-05, TAB-06.
+// Covers: MT-TAB-01 (open from connection), MT-TAB-02 (close), MT-TAB-03 (rename),
+//         MT-TAB-04 (switch), plus TAB-01, TAB-03, TAB-05, context menu, and other
+//         tab feature tests.
 
 import { waitForAppReady, ensureConnectionsSidebar, closeAllTabs } from './helpers/app.js';
 import {
   uniqueName,
   createLocalConnection,
   connectByName,
+  connectionContextAction,
+  CTX_CONNECTION_CONNECT,
 } from './helpers/connections.js';
 import {
   getAllTabs,
@@ -31,7 +35,50 @@ describe('Tab Management', () => {
     await closeAllTabs();
   });
 
-  describe('TAB-01: Create tabs', () => {
+  describe('MT-TAB-01: Open tab from connection', () => {
+    it('should open a tab by double-clicking a connection in the sidebar', async () => {
+      const name = uniqueName('open-conn');
+      await createLocalConnection(name);
+      const countBefore = await getTabCount();
+
+      await connectByName(name);
+
+      const countAfter = await getTabCount();
+      expect(countAfter).toBe(countBefore + 1);
+
+      const tab = await findTabByTitle(name);
+      expect(tab).not.toBeNull();
+    });
+
+    it('should open a tab via context menu Connect', async () => {
+      const name = uniqueName('open-ctx');
+      await createLocalConnection(name);
+      const countBefore = await getTabCount();
+
+      await connectionContextAction(name, CTX_CONNECTION_CONNECT);
+
+      const countAfter = await getTabCount();
+      expect(countAfter).toBe(countBefore + 1);
+
+      const tab = await findTabByTitle(name);
+      expect(tab).not.toBeNull();
+    });
+
+    it('should set the opened tab as active', async () => {
+      const name = uniqueName('open-active');
+      await createLocalConnection(name);
+
+      await connectByName(name);
+
+      const active = await getActiveTab();
+      expect(active).not.toBeNull();
+      // Use title attribute — getText() returns CSS-truncated text under WebKit
+      const activeText = await active.getAttribute('title');
+      expect(activeText).toContain(name);
+    });
+  });
+
+  describe('TAB-01: Create tabs via New Terminal', () => {
     it('should open multiple tabs via the New Terminal button', async () => {
       const initialCount = await getTabCount();
 
@@ -67,7 +114,7 @@ describe('Tab Management', () => {
     });
   });
 
-  describe('TAB-02: Close tab', () => {
+  describe('MT-TAB-02 / TAB-02: Close tab', () => {
     it('should close a tab when its close button is clicked', async () => {
       // Create a connection and open it to get a named tab
       const name = uniqueName('close');
@@ -122,7 +169,7 @@ describe('Tab Management', () => {
     });
   });
 
-  describe('TAB-04: Switch tabs', () => {
+  describe('MT-TAB-04 / TAB-04: Switch tabs', () => {
     it('should switch active tab when clicking a different tab', async () => {
       const name1 = uniqueName('switch1');
       const name2 = uniqueName('switch2');
@@ -133,8 +180,9 @@ describe('Tab Management', () => {
 
       // Tab 2 should be active
       let active = await getActiveTab();
-      let activeText = await active.getText();
-      expect(activeText).toContain(name2);
+      // Use title attribute — getText() returns CSS-truncated text under WebKit
+      let activeTitle = await active.getAttribute('title');
+      expect(activeTitle).toContain(name2);
 
       // Click tab 1
       const tab1 = await findTabByTitle(name1);
@@ -143,8 +191,8 @@ describe('Tab Management', () => {
 
       // Tab 1 should now be active
       active = await getActiveTab();
-      activeText = await active.getText();
-      expect(activeText).toContain(name1);
+      activeTitle = await active.getAttribute('title');
+      expect(activeTitle).toContain(name1);
     });
   });
 
@@ -359,14 +407,11 @@ describe('Tab Management', () => {
     });
 
     it('should not show context menu on Settings tab', async () => {
-      // Open settings tab
-      const gear = await browser.$('[data-testid="activity-bar-settings"]');
-      await gear.click();
-      await browser.pause(300);
-      const openItem = await browser.$('[data-testid="settings-menu-open"]');
-      await openItem.waitForDisplayed({ timeout: 3000 });
-      await openItem.click();
-      await browser.pause(300);
+      // Open settings tab via keyboard shortcut (Ctrl+,) — avoids the Radix
+      // DropdownMenu trigger which is unreliable under WebKitGTK after terminal
+      // sessions alter the app's pointer/focus state.
+      await browser.keys(['Control', ',']);
+      await browser.pause(500);
 
       // Find the Settings tab and right-click it
       const settingsTab = await findTabByTitle('Settings');
@@ -383,7 +428,7 @@ describe('Tab Management', () => {
     });
   });
 
-  describe('TAB-06: Rename tab (PR #156)', () => {
+  describe('MT-TAB-03 / TAB-06: Rename tab (PR #156)', () => {
     it('should show "Rename" in the tab context menu', async () => {
       const name = uniqueName('rename-menu');
       await createLocalConnection(name);
@@ -417,8 +462,20 @@ describe('Tab Management', () => {
       // Rename dialog should appear with input
       const input = await browser.$(RENAME_DIALOG_INPUT);
       await input.waitForDisplayed({ timeout: 3000 });
-      await input.clearValue();
-      await input.setValue(newName);
+      // Use JS to set value — keyboard events can corrupt case after a terminal
+      // session under WebKitGTK (Shift state stuck)
+      await browser.execute(
+        (el, val) => {
+          const nativeSetter = Object.getOwnPropertyDescriptor(
+            window.HTMLInputElement.prototype,
+            'value',
+          ).set;
+          nativeSetter.call(el, val);
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+        },
+        input,
+        newName,
+      );
 
       const applyBtn = await browser.$(RENAME_DIALOG_APPLY);
       await applyBtn.click();

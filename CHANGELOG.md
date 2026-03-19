@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scripts/test-system.cmd` — Windows cmd.exe dispatcher for system tests; delegates to `test-system-windows.sh` via Git Bash or WSL, enabling `scripts\test-system.cmd --skip-serial --skip-e2e` from a standard Windows terminal (#462)
 - Podman support in `test-system-windows.sh` — compose availability check with actionable error, `podman.exe` detection for Git Bash contexts, and `--skip-serial` flag accepted as a no-op for cross-platform compatibility (#462)
 - Podman-on-Windows BuildKit auto-detection in `test-system-windows.sh` — detects when Podman is in use without `docker buildx` (no Docker Desktop), auto-skips integration tests with a clear explanation, and continues running unit tests; eliminates cryptic `docker-compose.exe` failures when Docker Desktop is absent (#462)
-
+- E2E tests for tab management MT-TAB-01 through MT-TAB-04 — covers open tab from connection (double-click and context menu), close tab, rename tab, and switch between tabs; manual test YAML restructured with updated IDs for remaining drag and save-to-file tests (#459)
 - E2E tests for connection management CRUD scenarios MT-CONN-01 through MT-CONN-08 — covers create local/SSH connection, edit, delete, create folder, move connection to folder, and import/export menu flow; manual test YAML updated with automation coverage notes (#458)
 - SSH key-based authentication E2E test (SSH-02) — Docker entrypoint generates an ed25519 key pair shared with the test runner via a Docker volume, enabling key-based auth tests in both Linux-native and Docker E2E environments (#485)
 - `test-system-windows.cmd` wrapper for running Windows system tests from a native CMD prompt (delegates to WSL or Git Bash)

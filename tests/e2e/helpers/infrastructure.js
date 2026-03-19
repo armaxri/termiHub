@@ -39,11 +39,15 @@ export async function createSshConnection(name, opts = {}) {
 
   await openNewConnectionEditor();
   const nameInput = await browser.$(CONN_EDITOR_NAME);
+  await nameInput.click();
   await nameInput.setValue(name);
+  await browser.pause(200);
 
   await setConnectionType("ssh");
 
+  // Wait for SSH-specific fields to appear after type change
   const hostInput = await browser.$(SSH_HOST);
+  await hostInput.waitForDisplayed({ timeout: 5000 });
   await hostInput.clearValue();
   await hostInput.setValue(host);
 
@@ -66,7 +70,7 @@ export async function createSshConnection(name, opts = {}) {
 
   const saveBtn = await browser.$(CONN_EDITOR_SAVE);
   await saveBtn.click();
-  await browser.pause(300);
+  await browser.pause(800);
   return name;
 }
 
@@ -83,11 +87,15 @@ export async function createTelnetConnection(name, opts = {}) {
 
   await openNewConnectionEditor();
   const nameInput = await browser.$(CONN_EDITOR_NAME);
+  await nameInput.click();
   await nameInput.setValue(name);
+  await browser.pause(200);
 
   await setConnectionType("telnet");
 
+  // Wait for Telnet-specific fields to appear after type change
   const hostInput = await browser.$(TELNET_HOST);
+  await hostInput.waitForDisplayed({ timeout: 5000 });
   await hostInput.clearValue();
   await hostInput.setValue(host);
 
@@ -97,7 +105,7 @@ export async function createTelnetConnection(name, opts = {}) {
 
   const saveBtn = await browser.$(CONN_EDITOR_SAVE);
   await saveBtn.click();
-  await browser.pause(300);
+  await browser.pause(800);
   return name;
 }
 
@@ -114,7 +122,9 @@ export async function createSerialConnection(name, opts = {}) {
 
   await openNewConnectionEditor();
   const nameInput = await browser.$(CONN_EDITOR_NAME);
+  await nameInput.click();
   await nameInput.setValue(name);
+  await browser.pause(200);
 
   await setConnectionType("serial");
 
@@ -149,7 +159,7 @@ export async function createSerialConnection(name, opts = {}) {
 
   const saveBtn = await browser.$(CONN_EDITOR_SAVE);
   await saveBtn.click();
-  await browser.pause(300);
+  await browser.pause(800);
   return name;
 }
 
@@ -202,11 +212,15 @@ export async function createSshKeyConnection(name, opts = {}) {
 
   await openNewConnectionEditor();
   const nameInput = await browser.$(CONN_EDITOR_NAME);
+  await nameInput.click();
   await nameInput.setValue(name);
+  await browser.pause(200);
 
   await setConnectionType("ssh");
 
+  // Wait for SSH-specific fields to appear after type change
   const hostInput = await browser.$(SSH_HOST);
+  await hostInput.waitForDisplayed({ timeout: 5000 });
   await hostInput.clearValue();
   await hostInput.setValue(host);
 
@@ -236,7 +250,7 @@ export async function createSshKeyConnection(name, opts = {}) {
 
   const saveBtn = await browser.$(CONN_EDITOR_SAVE);
   await saveBtn.click();
-  await browser.pause(300);
+  await browser.pause(800);
   return name;
 }
 
@@ -259,7 +273,9 @@ export async function createRemoteAgentConnection(name, opts = {}) {
 
   await openNewConnectionEditor();
   const nameInput = await browser.$(CONN_EDITOR_NAME);
+  await nameInput.click();
   await nameInput.setValue(name);
+  await browser.pause(200);
 
   await setConnectionType("remote");
 
@@ -287,7 +303,7 @@ export async function createRemoteAgentConnection(name, opts = {}) {
 
   const saveBtn = await browser.$(CONN_EDITOR_SAVE);
   await saveBtn.click();
-  await browser.pause(300);
+  await browser.pause(800);
   return name;
 }
 

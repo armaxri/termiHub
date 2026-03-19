@@ -66,6 +66,12 @@ describe("Config Recovery (requires app restart capability)", () => {
       await openSettingsTab();
       await browser.pause(500);
 
+      // Navigate to the External Files category in the settings nav
+      const externalFilesNav = await browser.$('[data-testid="settings-nav-external-files"]');
+      await externalFilesNav.waitForDisplayed({ timeout: 3000 });
+      await externalFilesNav.click();
+      await browser.pause(300);
+
       const externalSection = await browser.$(SETTINGS_EXTERNAL_FILES);
       expect(await externalSection.isDisplayed()).toBe(true);
     });

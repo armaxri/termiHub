@@ -59,6 +59,7 @@ export function SettingsNav<T extends string = string>({
             className={`settings-nav__item ${isActive ? "settings-nav__item--active" : ""} ${!isHighlighted ? "settings-nav__item--dimmed" : ""}`}
             onClick={() => onCategoryChange(cat.id as T)}
             tabIndex={isActive ? 0 : -1}
+            data-testid={`settings-nav-${cat.id}`}
           >
             <Icon size={16} />
             <span className="settings-nav__label">{cat.label}</span>
