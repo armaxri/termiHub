@@ -54,16 +54,21 @@ describe('File Browser (Local)', () => {
       await connectByName(name);
       await browser.pause(1000);
 
+      // Navigate to a known directory so the file browser has a predictable path to show.
+      await browser.keys('cd /tmp\n');
+      await browser.pause(800);
+
       await switchToFilesSidebar();
       await browser.pause(500);
 
-      // The current path element must be present and show a valid absolute path
-      const currentPath = await browser.$(FILE_BROWSER_CURRENT_PATH);
-      if ((await currentPath.isExisting()) && (await currentPath.isDisplayed())) {
-        const pathText = await currentPath.getText();
-        expect(pathText.length).toBeGreaterThan(0);
-        expect(pathText.startsWith('/')).toBe(true);
-      }
+      // Use textContent via execute() — getText() returns innerText which can be
+      // empty when the element's layout box is zero-width due to flex constraints.
+      const pathText = await browser.execute(() => {
+        const el = document.querySelector('[data-testid="file-browser-current-path"]');
+        return el ? el.textContent : '';
+      });
+      expect(pathText.length).toBeGreaterThan(0);
+      expect(pathText.startsWith('/')).toBe(true);
     });
 
     it('should list file entries from the current working directory', async () => {

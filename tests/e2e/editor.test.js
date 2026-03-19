@@ -2,11 +2,13 @@
 // Covers: EDITOR-01 (PR #54), EDITOR-STATUS (PR #65), EDITOR-INDENT (PR #111),
 //         EDITOR-LANG (PR #113).
 
-import { waitForAppReady, closeAllTabs } from "./helpers/app.js";
+import { waitForAppReady, ensureConnectionsSidebar } from "./helpers/app.js";
 import { switchToFilesSidebar } from "./helpers/sidebar.js";
+import { uniqueName, createLocalConnection, connectByName } from "./helpers/connections.js";
 import { findTabByTitle, getTabCount, closeTabByTitle, getActiveTab } from "./helpers/tabs.js";
 import {
   FILE_BROWSER_CURRENT_PATH,
+  FILE_BROWSER_REFRESH,
   FILE_BROWSER_NEW_FILE,
   FILE_BROWSER_NEW_FILE_INPUT,
   FILE_BROWSER_NEW_FILE_CONFIRM,
@@ -112,22 +114,78 @@ async function isTabDirty(tabEl) {
 describe("Built-in File Editor (Monaco)", () => {
   const testTsFile = `e2e-editor-test-${Date.now()}.ts`;
   const testJsonFile = `e2e-editor-test-${Date.now()}.json`;
+  let editorConnName;
 
   before(async () => {
     await waitForAppReady();
-    await switchToFilesSidebar();
-    await browser.pause(500);
+    await ensureConnectionsSidebar();
 
-    // Create test files that will be used across the describe blocks
+    // A local terminal must be active before the file browser shows its toolbar.
+    editorConnName = uniqueName("editor-setup");
+    await createLocalConnection(editorConnName);
+    await connectByName(editorConnName);
+    await browser.pause(1500);
+
+    // Switch to file browser. The shell starts in the home dir and emits OSC 7 so
+    // the file browser auto-navigates there — no manual cd needed.
+    await switchToFilesSidebar();
+
+    // Wait for auto-navigate to complete (same pattern as afterEach).
+    await browser.pause(2000);
+    const setupRefreshBtn = await browser.$(FILE_BROWSER_REFRESH);
+    await setupRefreshBtn.waitForDisplayed({ timeout: 8000 });
+    await setupRefreshBtn.click();
+    await browser.pause(1500);
+
+    // Create test files in the home directory (the file browser's natural landing spot).
     await createFileViaBrowser(testTsFile);
     await createFileViaBrowser(testJsonFile);
   });
 
   afterEach(async () => {
-    await closeAllTabs();
-    // Ensure we are on the file browser sidebar for the next test
+    // Close ALL tabs (including any extra terminals opened by tests), then reconnect.
+    // Dismiss any dirty-file confirm dialogs so all tabs close cleanly.
+    const MAX_CLOSE_ITERS = 80;
+    for (let i = 0; i < MAX_CLOSE_ITERS; i++) {
+      const closeBtns = await browser.$$('[data-testid^="tab-close-"]');
+      const visible = [];
+      for (const btn of closeBtns) {
+        if (await btn.isDisplayed().catch(() => false)) visible.push(btn);
+      }
+      if (visible.length === 0) break;
+      await visible[0].click();
+      await browser.pause(200);
+      // Accept any dirty-file window.confirm that may appear
+      await browser.acceptAlert().catch(() => {});
+      await browser.pause(100);
+    }
+
+    // Reconnect the editor terminal: the shell starts in the home dir and emits OSC 7,
+    // so the file browser auto-navigates there (where the test files live).
+    await ensureConnectionsSidebar();
+    await connectByName(editorConnName);
+    // Give the shell extra time to start and emit OSC 7 before switching to the file
+    // browser — the auto-navigate effect only fires when sidebarView === "files",
+    // so OSC 7 must have arrived before the switch for a synchronous cwd-based
+    // navigate; otherwise the effect falls back to getHomeDir() which is slower.
+    await browser.pause(2500);
+
+    // Switch to file browser.
     await switchToFilesSidebar();
-    await browser.pause(300);
+
+    // Wait for the auto-navigate effect to complete.  The effect fires when
+    // sidebarView changes to "files" and calls navigateLocal(cwd) — an async
+    // Tauri IPC.  The refresh button may appear before the navigation finishes
+    // (it shows as soon as fileBrowserMode === "local"), so we must pause first.
+    await browser.pause(2000);
+
+    // Sanity-check that the toolbar is rendered (confirms active local connection).
+    const refreshBtn = await browser.$(FILE_BROWSER_REFRESH);
+    await refreshBtn.waitForDisplayed({ timeout: 5000 });
+
+    // Force a fresh directory listing so we see the current home-dir contents.
+    await refreshBtn.click();
+    await browser.pause(1500);
   });
 
   // -----------------------------------------------------------------------
