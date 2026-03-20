@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Shell support: PowerShell (`pwsh`) detection on macOS and Linux — detects via Homebrew, snap, and apt installation paths
+- Shell support: Fish and Nushell detection on macOS and Linux with proper `--login` flags
+- Shell support: Custom shell path option — select "Custom..." in the shell dropdown and provide an arbitrary shell executable path
 - File browser: Copy, Cut, and Paste operations for files and directories — works within local mode, within SFTP mode, and cross-mode (local↔SFTP) (#500)
 - File browser: Download now available in local mode (save file to a user-chosen location via save dialog) (#500)
 - File browser: Paste toolbar button with tooltip showing clipboard contents and operation type (#500)

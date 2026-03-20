@@ -14,7 +14,7 @@ use tracing::{debug, info};
 
 use crate::config::ShellConfig;
 use crate::connection::{
-    Capabilities, ConnectionType, FieldType, FilePathKind, OutputReceiver, OutputSender,
+    Capabilities, Condition, ConnectionType, FieldType, FilePathKind, OutputReceiver, OutputSender,
     SelectOption, SettingsField, SettingsGroup, SettingsSchema,
 };
 use crate::errors::SessionError;
@@ -84,7 +84,7 @@ impl ConnectionType for LocalShell {
         let shells = detect_available_shells();
         let default_shell = detect_default_shell();
 
-        let shell_options: Vec<SelectOption> = shells
+        let mut shell_options: Vec<SelectOption> = shells
             .iter()
             .map(|s| {
                 let label = if default_shell.as_deref() == Some(s.as_str()) {
@@ -98,6 +98,11 @@ impl ConnectionType for LocalShell {
                 }
             })
             .collect();
+
+        shell_options.push(SelectOption {
+            value: "custom".to_string(),
+            label: "Custom...".to_string(),
+        });
 
         SettingsSchema {
             groups: vec![SettingsGroup {
@@ -117,6 +122,21 @@ impl ConnectionType for LocalShell {
                         supports_env_expansion: false,
                         supports_tilde_expansion: false,
                         visible_when: None,
+                    },
+                    SettingsField {
+                        key: "customShellPath".to_string(),
+                        label: "Shell Executable Path".to_string(),
+                        description: Some("Full path to the shell executable".to_string()),
+                        field_type: FieldType::Text,
+                        required: false,
+                        default: None,
+                        placeholder: Some("/usr/local/bin/myshell".to_string()),
+                        supports_env_expansion: true,
+                        supports_tilde_expansion: true,
+                        visible_when: Some(Condition {
+                            field: "shell".to_string(),
+                            equals: serde_json::json!("custom"),
+                        }),
                     },
                     SettingsField {
                         key: "startingDirectory".to_string(),
@@ -172,6 +192,17 @@ impl ConnectionType for LocalShell {
             .or_else(|| settings.get("shellType"))
             .and_then(|v| v.as_str())
             .map(String::from);
+
+        // When "custom" is selected, use the customShellPath value instead.
+        let shell = if shell.as_deref() == Some("custom") {
+            settings
+                .get("customShellPath")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+        } else {
+            shell
+        };
         let starting_directory = settings
             .get("startingDirectory")
             .and_then(|v| v.as_str())
@@ -475,6 +506,46 @@ mod tests {
         } else {
             panic!("expected Select field type for shell");
         }
+    }
+
+    #[test]
+    fn schema_includes_custom_shell_option() {
+        let shell = LocalShell::new();
+        let schema = shell.settings_schema();
+        let shell_field = schema.groups[0]
+            .fields
+            .iter()
+            .find(|f| f.key == "shell")
+            .unwrap();
+        if let FieldType::Select { options } = &shell_field.field_type {
+            let custom_opt = options.iter().find(|o| o.value == "custom");
+            assert!(
+                custom_opt.is_some(),
+                "expected 'custom' option in shell select"
+            );
+            assert_eq!(custom_opt.unwrap().label, "Custom...");
+        } else {
+            panic!("expected Select field type for shell");
+        }
+    }
+
+    #[test]
+    fn schema_has_custom_shell_path_field() {
+        let shell = LocalShell::new();
+        let schema = shell.settings_schema();
+        let fields = &schema.groups[0].fields;
+        let path_field = fields.iter().find(|f| f.key == "customShellPath");
+        assert!(path_field.is_some(), "expected customShellPath field");
+        let f = path_field.unwrap();
+        assert!(f.supports_tilde_expansion);
+        assert!(f.supports_env_expansion);
+        assert!(
+            f.visible_when.is_some(),
+            "customShellPath should have visible_when condition"
+        );
+        let condition = f.visible_when.as_ref().unwrap();
+        assert_eq!(condition.field, "shell");
+        assert_eq!(condition.equals, serde_json::json!("custom"));
     }
 
     #[test]
