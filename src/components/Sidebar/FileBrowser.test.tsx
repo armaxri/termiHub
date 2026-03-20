@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { act } from "react";
+import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
-import { FileBrowser } from "./FileBrowser";
+import { FileBrowser, FileMenuItems } from "./FileBrowser";
 import type { TerminalTab, LeafPanel } from "@/types/terminal";
+import type { FileEntry } from "@/types/connection";
 
 vi.mock("@/themes", () => ({
   applyTheme: vi.fn(),
@@ -280,5 +281,200 @@ describe("FileBrowser – useFileBrowserSync", () => {
     await flushAsync();
 
     expect(useAppStore.getState().localCurrentPath).toBe("C:/Users/richtera");
+  });
+});
+
+/** Simple wrapper that renders items as plain divs (bypassing Radix portal issues in JSDOM). */
+function SimpleItem({
+  children,
+  onSelect,
+  ...rest
+}: {
+  children: React.ReactNode;
+  onSelect?: () => void;
+  [key: string]: unknown;
+}) {
+  return (
+    <div role="menuitem" onClick={onSelect} {...rest}>
+      {children}
+    </div>
+  );
+}
+function SimpleSeparator(props: Record<string, unknown>) {
+  return <hr {...props} />;
+}
+
+describe("FileBrowser – Copy Name / Copy Path", () => {
+  const fileEntry: FileEntry = {
+    name: "notes.txt",
+    path: "/home/user/notes.txt",
+    isDirectory: false,
+    size: 42,
+    modified: "2026-01-01T00:00:00Z",
+    permissions: null,
+  };
+  const dirEntry: FileEntry = {
+    name: "projects",
+    path: "/home/user/projects",
+    isDirectory: true,
+    size: 0,
+    modified: "2026-01-01T00:00:00Z",
+    permissions: null,
+  };
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("shows Copy Name and Copy Path items for a file", () => {
+    const onAction = vi.fn();
+    act(() => {
+      root.render(
+        <FileMenuItems
+          entry={fileEntry}
+          mode="local"
+          vscodeAvailable={false}
+          onNavigate={vi.fn()}
+          onContextAction={onAction}
+          Item={SimpleItem}
+          Separator={SimpleSeparator}
+          testIdPrefix="file-menu"
+        />
+      );
+    });
+
+    expect(container.querySelector('[data-testid="file-menu-copy-name"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="file-menu-copy-path"]')).toBeTruthy();
+  });
+
+  it("shows Copy Name and Copy Path items for a directory", () => {
+    const onAction = vi.fn();
+    act(() => {
+      root.render(
+        <FileMenuItems
+          entry={dirEntry}
+          mode="local"
+          vscodeAvailable={false}
+          onNavigate={vi.fn()}
+          onContextAction={onAction}
+          Item={SimpleItem}
+          Separator={SimpleSeparator}
+          testIdPrefix="file-menu"
+        />
+      );
+    });
+
+    expect(container.querySelector('[data-testid="file-menu-copy-name"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="file-menu-copy-path"]')).toBeTruthy();
+  });
+
+  it("triggers copyName action when Copy Name is clicked", () => {
+    const onAction = vi.fn();
+    act(() => {
+      root.render(
+        <FileMenuItems
+          entry={fileEntry}
+          mode="local"
+          vscodeAvailable={false}
+          onNavigate={vi.fn()}
+          onContextAction={onAction}
+          Item={SimpleItem}
+          Separator={SimpleSeparator}
+          testIdPrefix="file-menu"
+        />
+      );
+    });
+
+    const item = container.querySelector('[data-testid="file-menu-copy-name"]') as HTMLElement;
+    act(() => {
+      item.click();
+    });
+
+    expect(onAction).toHaveBeenCalledWith(fileEntry, "copyName");
+  });
+
+  it("triggers copyPath action when Copy Path is clicked", () => {
+    const onAction = vi.fn();
+    act(() => {
+      root.render(
+        <FileMenuItems
+          entry={fileEntry}
+          mode="local"
+          vscodeAvailable={false}
+          onNavigate={vi.fn()}
+          onContextAction={onAction}
+          Item={SimpleItem}
+          Separator={SimpleSeparator}
+          testIdPrefix="file-menu"
+        />
+      );
+    });
+
+    const item = container.querySelector('[data-testid="file-menu-copy-path"]') as HTMLElement;
+    act(() => {
+      item.click();
+    });
+
+    expect(onAction).toHaveBeenCalledWith(fileEntry, "copyPath");
+  });
+
+  it("triggers copyName action for a directory", () => {
+    const onAction = vi.fn();
+    act(() => {
+      root.render(
+        <FileMenuItems
+          entry={dirEntry}
+          mode="local"
+          vscodeAvailable={false}
+          onNavigate={vi.fn()}
+          onContextAction={onAction}
+          Item={SimpleItem}
+          Separator={SimpleSeparator}
+          testIdPrefix="file-menu"
+        />
+      );
+    });
+
+    const item = container.querySelector('[data-testid="file-menu-copy-name"]') as HTMLElement;
+    act(() => {
+      item.click();
+    });
+
+    expect(onAction).toHaveBeenCalledWith(dirEntry, "copyName");
+  });
+
+  it("triggers copyPath action for a directory", () => {
+    const onAction = vi.fn();
+    act(() => {
+      root.render(
+        <FileMenuItems
+          entry={dirEntry}
+          mode="local"
+          vscodeAvailable={false}
+          onNavigate={vi.fn()}
+          onContextAction={onAction}
+          Item={SimpleItem}
+          Separator={SimpleSeparator}
+          testIdPrefix="file-menu"
+        />
+      );
+    });
+
+    const item = container.querySelector('[data-testid="file-menu-copy-path"]') as HTMLElement;
+    act(() => {
+      item.click();
+    });
+
+    expect(onAction).toHaveBeenCalledWith(dirEntry, "copyPath");
   });
 });

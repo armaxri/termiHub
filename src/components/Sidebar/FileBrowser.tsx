@@ -2,6 +2,7 @@ import { useCallback, useState, useEffect } from "react";
 import { Virtuoso } from "react-virtuoso";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import {
   Folder,
   File,
@@ -21,6 +22,7 @@ import {
   CodeXml,
   FileEdit,
   FilePlus,
+  Copy,
 } from "lucide-react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
@@ -52,7 +54,7 @@ interface FileRowProps {
  * Renders identically in both the DropdownMenu (kebab) and ContextMenu (right-click)
  * by accepting the Radix Item/Separator components as props.
  */
-function FileMenuItems({
+export function FileMenuItems({
   entry,
   mode,
   vscodeAvailable,
@@ -109,6 +111,21 @@ function FileMenuItems({
           <CodeXml size={14} /> Open in VS Code
         </Item>
       )}
+      <Separator className="context-menu__separator" />
+      <Item
+        className="context-menu__item"
+        onSelect={() => onContextAction(entry, "copyName")}
+        data-testid={`${testIdPrefix}-copy-name`}
+      >
+        <Copy size={14} /> Copy Name
+      </Item>
+      <Item
+        className="context-menu__item"
+        onSelect={() => onContextAction(entry, "copyPath")}
+        data-testid={`${testIdPrefix}-copy-path`}
+      >
+        <Copy size={14} /> Copy Path
+      </Item>
       <Separator className="context-menu__separator" />
       <Item
         className="context-menu__item"
@@ -471,6 +488,12 @@ export function FileBrowser() {
           openInVscode(entry.path).catch((err: unknown) =>
             console.error("Open in VS Code failed:", err)
           );
+          break;
+        case "copyName":
+          writeClipboard(entry.name);
+          break;
+        case "copyPath":
+          writeClipboard(entry.path);
           break;
         case "rename": {
           const newName = window.prompt("New name:", entry.name);
