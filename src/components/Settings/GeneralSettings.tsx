@@ -12,6 +12,9 @@ const SHELL_LABELS: Record<string, string> = {
   cmd: "Command Prompt",
   powershell: "PowerShell",
   gitbash: "Git Bash",
+  fish: "Fish",
+  nushell: "Nushell",
+  custom: "Custom",
 };
 
 function getShellLabel(shell: ShellType, defaultShell: ShellType): string {

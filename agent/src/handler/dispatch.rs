@@ -1025,6 +1025,9 @@ const SHELL_CANDIDATES: &[&str] = &[
     "/usr/local/bin/bash",
     "/usr/local/bin/zsh",
     "/usr/local/bin/fish",
+    "/usr/local/bin/nu",
+    "/usr/bin/nu",
+    "/snap/bin/nu",
     "/usr/local/bin/pwsh",
     "/usr/bin/pwsh",
     "/snap/bin/pwsh",
@@ -2114,6 +2117,23 @@ mod tests {
         assert!(
             candidates.contains(&"/snap/bin/pwsh"),
             "expected /snap/bin/pwsh in SHELL_CANDIDATES"
+        );
+    }
+
+    #[test]
+    fn shell_candidates_includes_nushell_paths() {
+        let candidates: Vec<&str> = SHELL_CANDIDATES.to_vec();
+        assert!(
+            candidates.contains(&"/usr/local/bin/nu"),
+            "expected /usr/local/bin/nu in SHELL_CANDIDATES"
+        );
+        assert!(
+            candidates.contains(&"/usr/bin/nu"),
+            "expected /usr/bin/nu in SHELL_CANDIDATES"
+        );
+        assert!(
+            candidates.contains(&"/snap/bin/nu"),
+            "expected /snap/bin/nu in SHELL_CANDIDATES"
         );
     }
 }

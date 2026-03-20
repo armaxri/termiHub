@@ -100,7 +100,17 @@ pub fn shell_to_command(shell: &str) -> (String, Vec<String>) {
         "cmd" => ("cmd.exe".into(), vec![]),
         "powershell" => resolve_powershell(),
         "gitbash" => resolve_git_bash(),
-        _ => ("sh".into(), vec![]),
+        "fish" => ("fish".into(), vec!["--login".into()]),
+        "nushell" => ("nu".into(), vec!["--login".into()]),
+        _ => {
+            // If the value looks like a file path, use it as a literal executable.
+            // This supports custom shell paths (e.g. "/opt/myshell/bin/mysh").
+            if shell.contains('/') || shell.contains('\\') {
+                (shell.to_string(), vec![])
+            } else {
+                ("sh".into(), vec![])
+            }
+        }
     }
 }
 
@@ -233,6 +243,12 @@ pub fn detect_available_shells() -> Vec<String> {
             ("/bin/bash", "bash"),
             ("/usr/bin/bash", "bash"),
             ("/bin/sh", "sh"),
+            ("/usr/local/bin/fish", "fish"),
+            ("/usr/bin/fish", "fish"),
+            ("/opt/homebrew/bin/fish", "fish"),
+            ("/usr/local/bin/nu", "nushell"),
+            ("/usr/bin/nu", "nushell"),
+            ("/opt/homebrew/bin/nu", "nushell"),
             ("/usr/local/bin/pwsh", "powershell"),
             ("/usr/bin/pwsh", "powershell"),
             ("/snap/bin/pwsh", "powershell"),
@@ -514,8 +530,36 @@ mod tests {
 
     #[test]
     fn shell_to_command_unknown_falls_back_to_sh() {
-        let (cmd, args) = shell_to_command("fish");
+        let (cmd, args) = shell_to_command("unknown_shell");
         assert_eq!(cmd, "sh");
+        assert!(args.is_empty());
+    }
+
+    #[test]
+    fn shell_to_command_fish() {
+        let (cmd, args) = shell_to_command("fish");
+        assert_eq!(cmd, "fish");
+        assert_eq!(args, vec!["--login"]);
+    }
+
+    #[test]
+    fn shell_to_command_nushell() {
+        let (cmd, args) = shell_to_command("nushell");
+        assert_eq!(cmd, "nu");
+        assert_eq!(args, vec!["--login"]);
+    }
+
+    #[test]
+    fn shell_to_command_custom_path() {
+        let (cmd, args) = shell_to_command("/usr/local/bin/myshell");
+        assert_eq!(cmd, "/usr/local/bin/myshell");
+        assert!(args.is_empty());
+    }
+
+    #[test]
+    fn shell_to_command_windows_custom_path() {
+        let (cmd, args) = shell_to_command(r"C:\shells\myshell.exe");
+        assert_eq!(cmd, r"C:\shells\myshell.exe");
         assert!(args.is_empty());
     }
 
