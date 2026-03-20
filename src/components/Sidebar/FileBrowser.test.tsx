@@ -282,3 +282,123 @@ describe("FileBrowser – useFileBrowserSync", () => {
     expect(useAppStore.getState().localCurrentPath).toBe("C:/Users/richtera");
   });
 });
+
+describe("FileBrowser – Copy/Cut/Paste UI", () => {
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState(useAppStore.getInitialState());
+
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "local_list_dir")
+        return Promise.resolve([
+          { name: "test.txt", path: "/home/test.txt", isDirectory: false, size: 10 },
+          { name: "mydir", path: "/home/mydir", isDirectory: true, size: 0 },
+        ]);
+      return Promise.resolve(undefined);
+    });
+  });
+
+  afterEach(() => {
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+    vi.clearAllMocks();
+  });
+
+  it("renders paste button in toolbar when in local mode", async () => {
+    const localTab = makeTab({
+      connectionType: "local",
+      config: { type: "local", config: {} },
+    });
+    setActiveTab(localTab);
+    useAppStore.setState({ sidebarView: "files" });
+
+    await act(async () => {
+      root.render(<FileBrowser />);
+    });
+    await flushAsync();
+
+    const pasteBtn = container.querySelector('[data-testid="file-browser-paste"]');
+    expect(pasteBtn).toBeTruthy();
+    expect((pasteBtn as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("enables paste button when clipboard has content", async () => {
+    const localTab = makeTab({
+      connectionType: "local",
+      config: { type: "local", config: {} },
+    });
+    setActiveTab(localTab);
+    useAppStore.setState({
+      sidebarView: "files",
+      fileClipboard: {
+        entry: { name: "copied.txt", path: "/home/copied.txt", isDirectory: false, size: 5 },
+        operation: "copy",
+        sourceMode: "local",
+        sourcePath: "/home",
+        sftpSessionId: null,
+      },
+    });
+
+    await act(async () => {
+      root.render(<FileBrowser />);
+    });
+    await flushAsync();
+
+    const pasteBtn = container.querySelector('[data-testid="file-browser-paste"]');
+    expect(pasteBtn).toBeTruthy();
+    expect((pasteBtn as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("sets clipboard state via store setFileClipboard for copy", () => {
+    const entry = { name: "test.txt", path: "/home/test.txt", isDirectory: false, size: 10 };
+    useAppStore.getState().setFileClipboard({
+      entry,
+      operation: "copy",
+      sourceMode: "local",
+      sourcePath: "/home",
+      sftpSessionId: null,
+    });
+
+    const clipboard = useAppStore.getState().fileClipboard;
+    expect(clipboard).not.toBeNull();
+    expect(clipboard?.entry.name).toBe("test.txt");
+    expect(clipboard?.operation).toBe("copy");
+    expect(clipboard?.sourceMode).toBe("local");
+  });
+
+  it("sets clipboard state via store setFileClipboard for cut", () => {
+    const entry = { name: "mydir", path: "/home/mydir", isDirectory: true, size: 0 };
+    useAppStore.getState().setFileClipboard({
+      entry,
+      operation: "cut",
+      sourceMode: "local",
+      sourcePath: "/home",
+      sftpSessionId: null,
+    });
+
+    const clipboard = useAppStore.getState().fileClipboard;
+    expect(clipboard).not.toBeNull();
+    expect(clipboard?.entry.name).toBe("mydir");
+    expect(clipboard?.operation).toBe("cut");
+    expect(clipboard?.sourceMode).toBe("local");
+  });
+
+  it("clears clipboard when setFileClipboard is called with null", () => {
+    const entry = { name: "test.txt", path: "/home/test.txt", isDirectory: false, size: 10 };
+    useAppStore.getState().setFileClipboard({
+      entry,
+      operation: "copy",
+      sourceMode: "local",
+      sourcePath: "/home",
+      sftpSessionId: null,
+    });
+    expect(useAppStore.getState().fileClipboard).not.toBeNull();
+
+    useAppStore.getState().setFileClipboard(null);
+    expect(useAppStore.getState().fileClipboard).toBeNull();
+  });
+});

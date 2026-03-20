@@ -36,6 +36,9 @@ export function useFileBrowser() {
     deleteEntry: async () => {},
     renameEntry: async () => {},
     openInVscode: async () => {},
+    copyEntry: () => {},
+    cutEntry: () => {},
+    pasteEntry: async () => {},
     mode: "none" as const,
   };
 }

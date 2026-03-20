@@ -1,12 +1,16 @@
 import { useCallback } from "react";
+import { save } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "@/store/appStore";
 import {
   localMkdir,
   localDelete,
   localRename,
   localWriteFile,
+  localCopyFile,
   vscodeOpenLocal,
+  sftpDownload,
 } from "@/services/api";
+import { FileEntry } from "@/types/connection";
 
 /**
  * Hook for local filesystem operations.
@@ -77,6 +81,70 @@ export function useLocalFileSystem() {
     await vscodeOpenLocal(path);
   }, []);
 
+  const downloadFile = useCallback(async (filePath: string, fileName: string) => {
+    const localPath = await save({ title: "Save file as...", defaultPath: fileName });
+    if (!localPath) return;
+    const isDir =
+      useAppStore.getState().localFileEntries.find((e) => e.path === filePath)?.isDirectory ??
+      false;
+    await localCopyFile(filePath, localPath, isDir);
+  }, []);
+
+  const copyEntry = useCallback(
+    (entry: FileEntry) => {
+      useAppStore.getState().setFileClipboard({
+        entry,
+        operation: "copy",
+        sourceMode: "local",
+        sourcePath: currentPath,
+        sftpSessionId: null,
+      });
+    },
+    [currentPath]
+  );
+
+  const cutEntry = useCallback(
+    (entry: FileEntry) => {
+      useAppStore.getState().setFileClipboard({
+        entry,
+        operation: "cut",
+        sourceMode: "local",
+        sourcePath: currentPath,
+        sftpSessionId: null,
+      });
+    },
+    [currentPath]
+  );
+
+  const pasteEntry = useCallback(async () => {
+    const clipboard = useAppStore.getState().fileClipboard;
+    if (!clipboard) return;
+
+    const destDir = currentPath;
+    const destPath =
+      destDir === "/" ? `/${clipboard.entry.name}` : `${destDir}/${clipboard.entry.name}`;
+
+    if (clipboard.sourceMode === "local") {
+      // local→local
+      if (clipboard.operation === "cut") {
+        await localRename(clipboard.entry.path, destPath);
+        useAppStore.getState().setFileClipboard(null);
+      } else {
+        await localCopyFile(clipboard.entry.path, destPath, clipboard.entry.isDirectory);
+      }
+    } else {
+      // sftp→local: download remote file to local destination
+      if (clipboard.sftpSessionId) {
+        await sftpDownload(clipboard.sftpSessionId, clipboard.entry.path, destPath);
+        if (clipboard.operation === "cut") {
+          useAppStore.getState().setFileClipboard(null);
+        }
+      }
+    }
+
+    refreshLocal();
+  }, [currentPath, refreshLocal]);
+
   return {
     fileEntries,
     currentPath,
@@ -86,9 +154,7 @@ export function useLocalFileSystem() {
     navigateTo,
     navigateUp,
     refresh,
-    downloadFile: async () => {
-      /* no-op: files are already local */
-    },
+    downloadFile,
     uploadFile: async () => {
       /* no-op: files are already local */
     },
@@ -97,5 +163,8 @@ export function useLocalFileSystem() {
     deleteEntry,
     renameEntry,
     openInVscode,
+    copyEntry,
+    cutEntry,
+    pasteEntry,
   };
 }

@@ -20,6 +20,9 @@ import {
   CodeXml,
   FileEdit,
   FilePlus,
+  Copy,
+  Scissors,
+  ClipboardPaste,
 } from "lucide-react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
@@ -40,7 +43,6 @@ function formatFileSize(bytes: number): string {
 
 interface FileRowProps {
   entry: FileEntry;
-  mode: "local" | "sftp" | "none";
   vscodeAvailable: boolean;
   onNavigate: (entry: FileEntry) => void;
   onContextAction: (entry: FileEntry, action: string) => void;
@@ -52,14 +54,12 @@ interface FileRowProps {
  */
 function FileMenuItems({
   entry,
-  mode,
   vscodeAvailable,
   onNavigate,
   onContextAction,
   onClose,
 }: {
   entry: FileEntry;
-  mode: "local" | "sftp" | "none";
   vscodeAvailable: boolean;
   onNavigate: (entry: FileEntry) => void;
   onContextAction: (entry: FileEntry, action: string) => void;
@@ -79,7 +79,7 @@ function FileMenuItems({
           <FolderOpen size={14} /> Open
         </button>
       )}
-      {!entry.isDirectory && mode === "sftp" && (
+      {!entry.isDirectory && (
         <button
           className="file-browser__context-item"
           onClick={() => {
@@ -119,6 +119,26 @@ function FileMenuItems({
         className="file-browser__context-item"
         onClick={() => {
           onClose();
+          onContextAction(entry, "copy");
+        }}
+        data-testid="file-menu-copy"
+      >
+        <Copy size={14} /> Copy
+      </button>
+      <button
+        className="file-browser__context-item"
+        onClick={() => {
+          onClose();
+          onContextAction(entry, "cut");
+        }}
+        data-testid="file-menu-cut"
+      >
+        <Scissors size={14} /> Cut
+      </button>
+      <button
+        className="file-browser__context-item"
+        onClick={() => {
+          onClose();
           onContextAction(entry, "rename");
         }}
         data-testid="file-menu-rename"
@@ -139,7 +159,7 @@ function FileMenuItems({
   );
 }
 
-function FileRow({ entry, mode, vscodeAvailable, onNavigate, onContextAction }: FileRowProps) {
+function FileRow({ entry, vscodeAvailable, onNavigate, onContextAction }: FileRowProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -154,7 +174,7 @@ function FileRow({ entry, mode, vscodeAvailable, onNavigate, onContextAction }: 
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [menuOpen]);
 
-  const menuItemProps = { entry, mode, vscodeAvailable, onNavigate, onContextAction };
+  const menuItemProps = { entry, vscodeAvailable, onNavigate, onContextAction };
 
   return (
     <ContextMenu.Root>
@@ -215,7 +235,7 @@ function FileRow({ entry, mode, vscodeAvailable, onNavigate, onContextAction }: 
               <FolderOpen size={14} /> Open
             </ContextMenu.Item>
           )}
-          {!entry.isDirectory && mode === "sftp" && (
+          {!entry.isDirectory && (
             <ContextMenu.Item
               className="context-menu__item"
               onSelect={() => onContextAction(entry, "download")}
@@ -242,6 +262,21 @@ function FileRow({ entry, mode, vscodeAvailable, onNavigate, onContextAction }: 
               <CodeXml size={14} /> Open in VS Code
             </ContextMenu.Item>
           )}
+          <ContextMenu.Separator className="context-menu__separator" />
+          <ContextMenu.Item
+            className="context-menu__item"
+            onSelect={() => onContextAction(entry, "copy")}
+            data-testid="context-file-copy"
+          >
+            <Copy size={14} /> Copy
+          </ContextMenu.Item>
+          <ContextMenu.Item
+            className="context-menu__item"
+            onSelect={() => onContextAction(entry, "cut")}
+            data-testid="context-file-cut"
+          >
+            <Scissors size={14} /> Cut
+          </ContextMenu.Item>
           <ContextMenu.Separator className="context-menu__separator" />
           <ContextMenu.Item
             className="context-menu__item"
@@ -482,11 +517,15 @@ export function FileBrowser() {
     deleteEntry,
     renameEntry,
     openInVscode,
+    copyEntry,
+    cutEntry,
+    pasteEntry,
     mode,
   } = useFileBrowser();
 
   const disconnectSftp = useAppStore((s) => s.disconnectSftp);
   const vscodeAvailable = useAppStore((s) => s.vscodeAvailable);
+  const fileClipboard = useAppStore((s) => s.fileClipboard);
   const [newDirName, setNewDirName] = useState<string | null>(null);
   const [newFileName, setNewFileName] = useState<string | null>(null);
 
@@ -537,6 +576,12 @@ export function FileBrowser() {
             console.error("Open in VS Code failed:", err)
           );
           break;
+        case "copy":
+          copyEntry(entry);
+          break;
+        case "cut":
+          cutEntry(entry);
+          break;
         case "rename": {
           const newName = window.prompt("New name:", entry.name);
           if (newName && newName !== entry.name) {
@@ -559,8 +604,12 @@ export function FileBrowser() {
         }
       }
     },
-    [mode, sftpSessionId, downloadFile, openInVscode, renameEntry, deleteEntry]
+    [mode, sftpSessionId, downloadFile, openInVscode, copyEntry, cutEntry, renameEntry, deleteEntry]
   );
+
+  const handlePaste = useCallback(() => {
+    pasteEntry().catch((err: unknown) => console.error("Paste failed:", err));
+  }, [pasteEntry]);
 
   const handleCreateDir = useCallback(() => {
     if (newDirName && newDirName.trim()) {
@@ -660,6 +709,19 @@ export function FileBrowser() {
           )}
           <button
             className="file-browser__btn"
+            onClick={handlePaste}
+            disabled={!fileClipboard}
+            title={
+              fileClipboard
+                ? `Paste "${fileClipboard.entry.name}" (${fileClipboard.operation})`
+                : "Paste"
+            }
+            data-testid="file-browser-paste"
+          >
+            <ClipboardPaste size={14} />
+          </button>
+          <button
+            className="file-browser__btn"
             onClick={() => setNewFileName("")}
             title="New File"
             data-testid="file-browser-new-file"
@@ -756,7 +818,6 @@ export function FileBrowser() {
             itemContent={(index) => (
               <FileRow
                 entry={sortedEntries[index]}
-                mode={mode}
                 vscodeAvailable={vscodeAvailable}
                 onNavigate={handleNavigate}
                 onContextAction={handleContextAction}
