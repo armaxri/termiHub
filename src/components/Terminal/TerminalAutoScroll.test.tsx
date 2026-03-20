@@ -164,7 +164,7 @@ function renderTerminal() {
   act(() => {
     root.render(
       <TerminalPortalProvider>
-        <Terminal tabId="tab-1" config={{ type: "local", name: "Test" }} isVisible={true} />
+        <Terminal tabId="tab-1" config={{ type: "local", config: {} }} isVisible={true} />
       </TerminalPortalProvider>
     );
   });
