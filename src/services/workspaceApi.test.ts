@@ -12,6 +12,9 @@ import {
   deleteWorkspace,
   duplicateWorkspace,
   getCliWorkspace,
+  exportWorkspaces,
+  importWorkspaces,
+  previewImportWorkspaces,
 } from "./workspaceApi";
 
 const mockedInvoke = vi.mocked(invoke);
@@ -67,5 +70,29 @@ describe("workspaceApi", () => {
     mockedInvoke.mockResolvedValue(null);
     const result = await getCliWorkspace();
     expect(result).toBeNull();
+  });
+
+  it("exportWorkspaces invokes correct command", async () => {
+    mockedInvoke.mockResolvedValue('{"version":"1","workspaces":[]}');
+    const result = await exportWorkspaces();
+    expect(mockedInvoke).toHaveBeenCalledWith("export_workspaces");
+    expect(result).toContain("version");
+  });
+
+  it("importWorkspaces invokes correct command with json", async () => {
+    mockedInvoke.mockResolvedValue(2);
+    const json = '{"version":"1","workspaces":[]}';
+    const result = await importWorkspaces(json);
+    expect(mockedInvoke).toHaveBeenCalledWith("import_workspaces", { json });
+    expect(result).toBe(2);
+  });
+
+  it("previewImportWorkspaces invokes correct command", async () => {
+    const preview = { workspaceCount: 3, totalTabCount: 7 };
+    mockedInvoke.mockResolvedValue(preview);
+    const json = '{"version":"1","workspaces":[]}';
+    const result = await previewImportWorkspaces(json);
+    expect(mockedInvoke).toHaveBeenCalledWith("preview_import_workspaces", { json });
+    expect(result).toEqual(preview);
   });
 });

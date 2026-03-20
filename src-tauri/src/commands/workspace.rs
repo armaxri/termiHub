@@ -1,8 +1,11 @@
+use std::collections::HashMap;
+
 use tauri::State;
 use tauri_plugin_cli::CliExt;
 
+use crate::connection::manager::ConnectionManager;
 use crate::utils::errors::TerminalError;
-use crate::workspace::config::{WorkspaceDefinition, WorkspaceSummary};
+use crate::workspace::config::{WorkspaceDefinition, WorkspaceImportPreview, WorkspaceSummary};
 use crate::workspace::manager::WorkspaceManager;
 
 /// Get all workspace summaries for sidebar display.
@@ -93,4 +96,60 @@ pub fn get_cli_workspace(
     }
 
     Ok(None)
+}
+
+/// Build a connection ID → name mapping from the connection manager.
+fn build_id_to_name_map(
+    connection_manager: &ConnectionManager,
+) -> Result<HashMap<String, String>, TerminalError> {
+    let flat = connection_manager
+        .get_all()
+        .map_err(|e| TerminalError::WorkspaceError(format!("Cannot read connections: {e}")))?;
+    Ok(flat
+        .connections
+        .iter()
+        .map(|c| (c.id.clone(), c.name.clone()))
+        .collect())
+}
+
+/// Build a connection name → ID mapping from the connection manager.
+fn build_name_to_id_map(
+    connection_manager: &ConnectionManager,
+) -> Result<HashMap<String, String>, TerminalError> {
+    let flat = connection_manager
+        .get_all()
+        .map_err(|e| TerminalError::WorkspaceError(format!("Cannot read connections: {e}")))?;
+    Ok(flat
+        .connections
+        .iter()
+        .map(|c| (c.name.clone(), c.id.clone()))
+        .collect())
+}
+
+/// Export all workspaces as portable JSON (connection IDs replaced with names).
+#[tauri::command]
+pub fn export_workspaces(
+    workspace_manager: State<'_, WorkspaceManager>,
+    connection_manager: State<'_, ConnectionManager>,
+) -> Result<String, TerminalError> {
+    let id_to_name = build_id_to_name_map(&connection_manager)?;
+    workspace_manager.export_json(&id_to_name)
+}
+
+/// Import workspaces from portable JSON (connection names resolved to IDs).
+/// Returns the number of workspaces imported.
+#[tauri::command]
+pub fn import_workspaces(
+    json: String,
+    workspace_manager: State<'_, WorkspaceManager>,
+    connection_manager: State<'_, ConnectionManager>,
+) -> Result<usize, TerminalError> {
+    let name_to_id = build_name_to_id_map(&connection_manager)?;
+    workspace_manager.import_json(&json, &name_to_id)
+}
+
+/// Preview a workspace import file without importing.
+#[tauri::command]
+pub fn preview_import_workspaces(json: String) -> Result<WorkspaceImportPreview, TerminalError> {
+    WorkspaceManager::preview_import_json(&json)
 }

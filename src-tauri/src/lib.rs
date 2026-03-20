@@ -361,6 +361,9 @@ pub fn run() {
             commands::workspace::delete_workspace,
             commands::workspace::duplicate_workspace,
             commands::workspace::get_cli_workspace,
+            commands::workspace::export_workspaces,
+            commands::workspace::import_workspaces,
+            commands::workspace::preview_import_workspaces,
             // Credentials
             commands::credential::get_credential_store_status,
             commands::credential::unlock_credential_store,

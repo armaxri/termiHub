@@ -96,6 +96,33 @@ pub struct WorkspaceStore {
     pub workspaces: Vec<WorkspaceDefinition>,
 }
 
+/// Export format for portable workspace definitions.
+/// Connection IDs are replaced with connection names for portability.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceExportData {
+    pub version: String,
+    pub workspaces: Vec<WorkspaceExportEntry>,
+}
+
+/// A single workspace entry in the export format (no internal ID).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceExportEntry {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub layout: WorkspaceLayoutNode,
+}
+
+/// Preview of a workspace import file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceImportPreview {
+    pub workspace_count: usize,
+    pub total_tab_count: usize,
+}
+
 impl Default for WorkspaceStore {
     fn default() -> Self {
         Self {

@@ -41,3 +41,9 @@ export interface WorkspaceSummary {
   description?: string;
   connectionCount: number;
 }
+
+/** Preview of a workspace import file. */
+export interface WorkspaceImportPreview {
+  workspaceCount: number;
+  totalTabCount: number;
+}

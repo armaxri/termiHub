@@ -1,6 +1,9 @@
 import { useCallback, useState } from "react";
-import { Plus, Save } from "lucide-react";
+import { Plus, Save, Download, Upload } from "lucide-react";
+import { save, open } from "@tauri-apps/plugin-dialog";
+import { writeTextFile, readTextFile } from "@tauri-apps/plugin-fs";
 import { useAppStore } from "@/store/appStore";
+import { exportWorkspaces, importWorkspaces } from "@/services/workspaceApi";
 import { WorkspaceListItem } from "./WorkspaceListItem";
 import { SaveWorkspaceDialog } from "./SaveWorkspaceDialog";
 import "./WorkspaceSidebar.css";
@@ -55,6 +58,37 @@ export function WorkspaceSidebar() {
     [saveCurrentAsWorkspace]
   );
 
+  const loadWorkspaces = useAppStore((s) => s.loadWorkspaces);
+
+  const handleExport = useCallback(async () => {
+    try {
+      const json = await exportWorkspaces();
+      const filePath = await save({
+        defaultPath: "termihub-workspaces.json",
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (!filePath) return;
+      await writeTextFile(filePath, json);
+    } catch {
+      // Export cancelled or failed
+    }
+  }, []);
+
+  const handleImport = useCallback(async () => {
+    try {
+      const filePath = await open({
+        multiple: false,
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (!filePath) return;
+      const json = await readTextFile(filePath);
+      await importWorkspaces(json);
+      await loadWorkspaces();
+    } catch {
+      // Import cancelled or failed
+    }
+  }, [loadWorkspaces]);
+
   return (
     <div className="workspace-sidebar" data-testid="workspace-sidebar">
       <div className="workspace-sidebar__actions">
@@ -75,6 +109,22 @@ export function WorkspaceSidebar() {
         >
           <Save size={14} />
           Save Current
+        </button>
+        <button
+          className="workspace-sidebar__add-btn"
+          onClick={handleExport}
+          title="Export Workspaces"
+          data-testid="workspace-export-btn"
+        >
+          <Download size={14} />
+        </button>
+        <button
+          className="workspace-sidebar__add-btn"
+          onClick={handleImport}
+          title="Import Workspaces"
+          data-testid="workspace-import-btn"
+        >
+          <Upload size={14} />
         </button>
       </div>
       {workspaces.length === 0 ? (
