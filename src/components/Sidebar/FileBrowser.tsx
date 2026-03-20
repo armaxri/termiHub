@@ -23,6 +23,8 @@ import {
   FileEdit,
   FilePlus,
   Copy,
+  Scissors,
+  ClipboardPaste,
 } from "lucide-react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
@@ -43,10 +45,11 @@ function formatFileSize(bytes: number): string {
 
 interface FileRowProps {
   entry: FileEntry;
-  mode: "local" | "sftp" | "none";
   vscodeAvailable: boolean;
   onNavigate: (entry: FileEntry) => void;
   onContextAction: (entry: FileEntry, action: string) => void;
+  onPaste: () => void;
+  hasClipboard: boolean;
 }
 
 /**
@@ -56,19 +59,21 @@ interface FileRowProps {
  */
 export function FileMenuItems({
   entry,
-  mode,
   vscodeAvailable,
   onNavigate,
   onContextAction,
+  onPaste,
+  hasClipboard,
   Item,
   Separator,
   testIdPrefix,
 }: {
   entry: FileEntry;
-  mode: "local" | "sftp" | "none";
   vscodeAvailable: boolean;
   onNavigate: (entry: FileEntry) => void;
   onContextAction: (entry: FileEntry, action: string) => void;
+  onPaste: () => void;
+  hasClipboard: boolean;
   Item: React.ElementType;
   Separator: React.ElementType;
   testIdPrefix: string;
@@ -84,7 +89,7 @@ export function FileMenuItems({
           <FolderOpen size={14} /> Open
         </Item>
       )}
-      {!entry.isDirectory && mode === "sftp" && (
+      {!entry.isDirectory && (
         <Item
           className="context-menu__item"
           onSelect={() => onContextAction(entry, "download")}
@@ -112,6 +117,28 @@ export function FileMenuItems({
         </Item>
       )}
       <Separator className="context-menu__separator" />
+      <Item
+        className="context-menu__item"
+        onSelect={() => onContextAction(entry, "copy")}
+        data-testid={`${testIdPrefix}-copy`}
+      >
+        <Copy size={14} /> Copy
+      </Item>
+      <Item
+        className="context-menu__item"
+        onSelect={() => onContextAction(entry, "cut")}
+        data-testid={`${testIdPrefix}-cut`}
+      >
+        <Scissors size={14} /> Cut
+      </Item>
+      <Item
+        className="context-menu__item"
+        disabled={!hasClipboard}
+        onSelect={onPaste}
+        data-testid={`${testIdPrefix}-paste`}
+      >
+        <ClipboardPaste size={14} /> Paste
+      </Item>
       <Item
         className="context-menu__item"
         onSelect={() => onContextAction(entry, "copyName")}
@@ -145,8 +172,22 @@ export function FileMenuItems({
   );
 }
 
-function FileRow({ entry, mode, vscodeAvailable, onNavigate, onContextAction }: FileRowProps) {
-  const menuItemProps = { entry, mode, vscodeAvailable, onNavigate, onContextAction };
+function FileRow({
+  entry,
+  vscodeAvailable,
+  onNavigate,
+  onContextAction,
+  onPaste,
+  hasClipboard,
+}: FileRowProps) {
+  const menuItemProps = {
+    entry,
+    vscodeAvailable,
+    onNavigate,
+    onContextAction,
+    onPaste,
+    hasClipboard,
+  };
 
   return (
     <ContextMenu.Root>
@@ -434,11 +475,15 @@ export function FileBrowser() {
     deleteEntry,
     renameEntry,
     openInVscode,
+    copyEntry,
+    cutEntry,
+    pasteEntry,
     mode,
   } = useFileBrowser();
 
   const disconnectSftp = useAppStore((s) => s.disconnectSftp);
   const vscodeAvailable = useAppStore((s) => s.vscodeAvailable);
+  const fileClipboard = useAppStore((s) => s.fileClipboard);
   const [newDirName, setNewDirName] = useState<string | null>(null);
   const [newFileName, setNewFileName] = useState<string | null>(null);
 
@@ -489,6 +534,12 @@ export function FileBrowser() {
             console.error("Open in VS Code failed:", err)
           );
           break;
+        case "copy":
+          copyEntry(entry);
+          break;
+        case "cut":
+          cutEntry(entry);
+          break;
         case "copyName":
           writeClipboard(entry.name);
           break;
@@ -517,8 +568,12 @@ export function FileBrowser() {
         }
       }
     },
-    [mode, sftpSessionId, downloadFile, openInVscode, renameEntry, deleteEntry]
+    [mode, sftpSessionId, downloadFile, openInVscode, copyEntry, cutEntry, renameEntry, deleteEntry]
   );
+
+  const handlePaste = useCallback(() => {
+    pasteEntry().catch((err: unknown) => console.error("Paste failed:", err));
+  }, [pasteEntry]);
 
   const handleCreateDir = useCallback(() => {
     if (newDirName && newDirName.trim()) {
@@ -618,6 +673,19 @@ export function FileBrowser() {
           )}
           <button
             className="file-browser__btn"
+            onClick={handlePaste}
+            disabled={!fileClipboard}
+            title={
+              fileClipboard
+                ? `Paste "${fileClipboard.entry.name}" (${fileClipboard.operation})`
+                : "Paste"
+            }
+            data-testid="file-browser-paste"
+          >
+            <ClipboardPaste size={14} />
+          </button>
+          <button
+            className="file-browser__btn"
             onClick={() => setNewFileName("")}
             title="New File"
             data-testid="file-browser-new-file"
@@ -702,28 +770,60 @@ export function FileBrowser() {
         </div>
       )}
 
-      {isLoading && fileEntries.length === 0 ? (
-        <div className="file-browser__loading">
-          <Loader2 size={20} className="file-browser__spinner" />
-          <span>Loading...</span>
-        </div>
-      ) : (
-        <div className="file-browser__list">
-          <Virtuoso
-            totalCount={sortedEntries.length}
-            itemContent={(index) => (
-              <FileRow
-                entry={sortedEntries[index]}
-                mode={mode}
-                vscodeAvailable={vscodeAvailable}
-                onNavigate={handleNavigate}
-                onContextAction={handleContextAction}
+      <ContextMenu.Root>
+        <ContextMenu.Trigger asChild>
+          {isLoading && fileEntries.length === 0 ? (
+            <div className="file-browser__loading">
+              <Loader2 size={20} className="file-browser__spinner" />
+              <span>Loading...</span>
+            </div>
+          ) : (
+            <div className="file-browser__list">
+              <Virtuoso
+                totalCount={sortedEntries.length}
+                itemContent={(index) => (
+                  <FileRow
+                    entry={sortedEntries[index]}
+                    vscodeAvailable={vscodeAvailable}
+                    onNavigate={handleNavigate}
+                    onContextAction={handleContextAction}
+                    onPaste={handlePaste}
+                    hasClipboard={fileClipboard !== null}
+                  />
+                )}
+                style={{ height: "100%" }}
               />
-            )}
-            style={{ height: "100%" }}
-          />
-        </div>
-      )}
+            </div>
+          )}
+        </ContextMenu.Trigger>
+        <ContextMenu.Portal>
+          <ContextMenu.Content className="context-menu__content">
+            <ContextMenu.Item
+              className="context-menu__item"
+              disabled={!fileClipboard}
+              onSelect={handlePaste}
+              data-testid="context-bg-paste"
+            >
+              <ClipboardPaste size={14} /> Paste
+            </ContextMenu.Item>
+            <ContextMenu.Separator className="context-menu__separator" />
+            <ContextMenu.Item
+              className="context-menu__item"
+              onSelect={() => setNewFileName("")}
+              data-testid="context-bg-new-file"
+            >
+              <FilePlus size={14} /> New File
+            </ContextMenu.Item>
+            <ContextMenu.Item
+              className="context-menu__item"
+              onSelect={() => setNewDirName("")}
+              data-testid="context-bg-new-folder"
+            >
+              <FolderPlus size={14} /> New Folder
+            </ContextMenu.Item>
+          </ContextMenu.Content>
+        </ContextMenu.Portal>
+      </ContextMenu.Root>
     </div>
   );
 }

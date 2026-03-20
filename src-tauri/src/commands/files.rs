@@ -115,6 +115,16 @@ pub fn sftp_rename(
 
 // --- Local filesystem commands ---
 
+/// Copy a file or directory on the local filesystem.
+#[tauri::command]
+pub fn local_copy(
+    src_path: String,
+    dest_path: String,
+    is_directory: bool,
+) -> Result<(), TerminalError> {
+    crate::files::local::copy_file(&src_path, &dest_path, is_directory)
+}
+
 /// Return the current user's home directory path.
 #[tauri::command]
 pub fn get_home_dir() -> Result<String, TerminalError> {

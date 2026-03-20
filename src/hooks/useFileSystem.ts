@@ -10,6 +10,7 @@ import {
   sftpWriteFileContent,
   vscodeOpenRemote,
 } from "@/services/api";
+import { FileEntry } from "@/types/connection";
 
 /**
  * Hook for SFTP file system operations.
@@ -108,6 +109,71 @@ export function useFileSystem() {
     [sftpSessionId]
   );
 
+  const copyEntry = useCallback(
+    (entry: FileEntry) => {
+      useAppStore.getState().setFileClipboard({
+        entry,
+        operation: "copy",
+        sourceMode: "sftp",
+        sourcePath: currentPath,
+        sftpSessionId,
+      });
+    },
+    [currentPath, sftpSessionId]
+  );
+
+  const cutEntry = useCallback(
+    (entry: FileEntry) => {
+      useAppStore.getState().setFileClipboard({
+        entry,
+        operation: "cut",
+        sourceMode: "sftp",
+        sourcePath: currentPath,
+        sftpSessionId,
+      });
+    },
+    [currentPath, sftpSessionId]
+  );
+
+  const pasteEntry = useCallback(async () => {
+    const clipboard = useAppStore.getState().fileClipboard;
+    if (!clipboard || !sftpSessionId) return;
+
+    const destDir = currentPath;
+    const destPath =
+      destDir === "/" ? `/${clipboard.entry.name}` : `${destDir}/${clipboard.entry.name}`;
+
+    if (clipboard.sourceMode === "sftp") {
+      // sftp→sftp
+      if (clipboard.operation === "cut") {
+        if (clipboard.sftpSessionId === sftpSessionId) {
+          await sftpRename(sftpSessionId, clipboard.entry.path, destPath);
+        } else {
+          // Different SFTP session — download to temp then upload
+          const tempPath = `/tmp/termihub-paste-${Date.now()}-${clipboard.entry.name}`;
+          await sftpDownload(clipboard.sftpSessionId!, clipboard.entry.path, tempPath);
+          await sftpUpload(sftpSessionId, tempPath, destPath);
+        }
+        useAppStore.getState().setFileClipboard(null);
+      } else {
+        // Copy within SFTP: download to temp, re-upload
+        const tempPath = `/tmp/termihub-paste-${Date.now()}-${clipboard.entry.name}`;
+        if (clipboard.sftpSessionId) {
+          await sftpDownload(clipboard.sftpSessionId, clipboard.entry.path, tempPath);
+          await sftpUpload(sftpSessionId, tempPath, destPath);
+        }
+      }
+    } else {
+      // local→sftp: upload local file to remote destination
+      await sftpUpload(sftpSessionId, clipboard.entry.path, destPath);
+      if (clipboard.operation === "cut") {
+        useAppStore.getState().setFileClipboard(null);
+      }
+    }
+
+    refreshSftp();
+  }, [sftpSessionId, currentPath, refreshSftp]);
+
   return {
     fileEntries,
     currentPath,
@@ -124,5 +190,8 @@ export function useFileSystem() {
     deleteEntry,
     renameEntry,
     openInVscode,
+    copyEntry,
+    cutEntry,
+    pasteEntry,
   };
 }

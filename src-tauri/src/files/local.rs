@@ -31,6 +31,40 @@ pub fn rename(old_path: &str, new_path: &str) -> Result<(), TerminalError> {
     Ok(())
 }
 
+/// Copy a file or directory to a new location.
+///
+/// For files, uses `std::fs::copy`. For directories, performs a recursive copy
+/// preserving the directory structure.
+pub fn copy_file(src: &str, dest: &str, is_directory: bool) -> Result<(), TerminalError> {
+    if is_directory {
+        copy_dir_recursive(std::path::Path::new(src), std::path::Path::new(dest))
+    } else {
+        // Ensure parent directory exists
+        if let Some(parent) = std::path::Path::new(dest).parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::copy(src, dest)?;
+        Ok(())
+    }
+}
+
+/// Recursively copy a directory and all its contents.
+fn copy_dir_recursive(src: &std::path::Path, dest: &std::path::Path) -> Result<(), TerminalError> {
+    std::fs::create_dir_all(dest)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let src_path = entry.path();
+        let dest_path = dest.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_dir_recursive(&src_path, &dest_path)?;
+        } else {
+            std::fs::copy(&src_path, &dest_path)?;
+        }
+    }
+    Ok(())
+}
+
 /// Return the current user's home directory.
 pub fn home_dir() -> Result<String, TerminalError> {
     use termihub_core::files::utils::normalize_platform_path;
@@ -119,6 +153,56 @@ mod tests {
         assert!(!old.exists());
         assert!(new_path.exists());
         assert_eq!(std::fs::read_to_string(&new_path).unwrap(), "content");
+    }
+
+    #[test]
+    fn copy_file_preserves_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("source.txt");
+        let dest = dir.path().join("dest.txt");
+        std::fs::write(&src, "copy me").unwrap();
+
+        copy_file(src.to_str().unwrap(), dest.to_str().unwrap(), false).unwrap();
+        assert!(dest.exists());
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "copy me");
+        // Source should still exist (it's a copy, not move)
+        assert!(src.exists());
+    }
+
+    #[test]
+    fn copy_directory_recursively() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src_dir");
+        std::fs::create_dir_all(src.join("sub")).unwrap();
+        std::fs::write(src.join("file.txt"), "hello").unwrap();
+        std::fs::write(src.join("sub/nested.txt"), "nested").unwrap();
+
+        let dest = dir.path().join("dest_dir");
+        copy_file(src.to_str().unwrap(), dest.to_str().unwrap(), true).unwrap();
+
+        assert!(dest.is_dir());
+        assert_eq!(
+            std::fs::read_to_string(dest.join("file.txt")).unwrap(),
+            "hello"
+        );
+        assert!(dest.join("sub").is_dir());
+        assert_eq!(
+            std::fs::read_to_string(dest.join("sub/nested.txt")).unwrap(),
+            "nested"
+        );
+        // Source should still exist
+        assert!(src.is_dir());
+    }
+
+    #[test]
+    fn copy_file_creates_parent_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("source.txt");
+        let dest = dir.path().join("a/b/c/dest.txt");
+        std::fs::write(&src, "deep copy").unwrap();
+
+        copy_file(src.to_str().unwrap(), dest.to_str().unwrap(), false).unwrap();
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "deep copy");
     }
 
     #[test]

@@ -98,6 +98,15 @@ import {
 
 export type SidebarView = "connections" | "files" | "tunnels";
 
+/** Clipboard state for file browser copy/cut operations. */
+export interface FileClipboard {
+  entry: FileEntry;
+  operation: "copy" | "cut";
+  sourceMode: "local" | "sftp";
+  sourcePath: string;
+  sftpSessionId: string | null;
+}
+
 /**
  * Strip password from connection configs so it is never persisted,
  * unless `savePassword` is true (password will be routed to the backend
@@ -319,6 +328,10 @@ interface AppState {
   // File browser mode
   fileBrowserMode: "local" | "sftp" | "none";
   setFileBrowserMode: (mode: "local" | "sftp" | "none") => void;
+
+  // File clipboard (copy/cut)
+  fileClipboard: FileClipboard | null;
+  setFileClipboard: (clipboard: FileClipboard | null) => void;
 
   // VS Code availability
   vscodeAvailable: boolean;
@@ -1701,6 +1714,10 @@ export const useAppStore = create<AppState>((set, get) => {
     // File browser mode
     fileBrowserMode: "none",
     setFileBrowserMode: (mode) => set({ fileBrowserMode: mode }),
+
+    // File clipboard (copy/cut)
+    fileClipboard: null,
+    setFileClipboard: (clipboard) => set({ fileClipboard: clipboard }),
 
     // VS Code availability
     vscodeAvailable: false,

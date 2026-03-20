@@ -253,6 +253,7 @@ pub fn run() {
             commands::files::sftp_rename,
             commands::files::get_home_dir,
             commands::files::local_list_dir,
+            commands::files::local_copy,
             commands::files::local_mkdir,
             commands::files::local_delete,
             commands::files::local_rename,
