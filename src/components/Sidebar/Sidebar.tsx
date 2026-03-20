@@ -2,12 +2,14 @@ import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
 import { FileBrowser } from "./FileBrowser";
 import { TunnelSidebar } from "@/components/TunnelSidebar";
+import { WorkspaceSidebar } from "@/components/WorkspaceSidebar";
 import "./Sidebar.css";
 
 const VIEW_TITLES: Record<string, string> = {
   connections: "Connections",
   files: "File Browser",
   tunnels: "SSH Tunnels",
+  workspaces: "Workspaces",
 };
 
 interface SidebarProps {
@@ -29,6 +31,7 @@ export function Sidebar({ width }: SidebarProps) {
         {sidebarView === "connections" && <ConnectionList />}
         {sidebarView === "files" && <FileBrowser />}
         {sidebarView === "tunnels" && <TunnelSidebar />}
+        {sidebarView === "workspaces" && <WorkspaceSidebar />}
       </div>
     </div>
   );
