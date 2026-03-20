@@ -8,6 +8,8 @@ import {
   WorkspaceSplitNode,
   WorkspaceTabDef,
 } from "@/types/workspace";
+import { PanelNode, ConnectionConfig, TerminalTab } from "@/types/terminal";
+import { SavedConnection } from "@/types/connection";
 
 /** Get all leaf nodes from a workspace layout tree. */
 export function getWorkspaceLeaves(node: WorkspaceLayoutNode): WorkspaceLeafNode[] {
@@ -205,5 +207,156 @@ function updateTabAtIndex(
     children: node.children.map((child) =>
       updateTabAtIndex(child, targetLeaf, tabIndex, updater, counter)
     ),
+  };
+}
+
+// --- Panel tree building/capture for workspace launch ---
+
+let panelIdCounter = 0;
+
+function generatePanelId(): string {
+  panelIdCounter++;
+  return `ws-panel-${panelIdCounter}`;
+}
+
+let tabIdCounter = 0;
+
+function generateTabId(): string {
+  tabIdCounter++;
+  return `ws-tab-${tabIdCounter}`;
+}
+
+/**
+ * Build a PanelNode tree from a workspace layout definition.
+ * Resolves connection refs to saved connections, falling back to inline configs.
+ */
+export function buildPanelTreeFromWorkspace(
+  layout: WorkspaceLayoutNode,
+  savedConnections: SavedConnection[],
+  defaultShell: string
+): PanelNode {
+  if (layout.type === "leaf") {
+    const panelId = generatePanelId();
+    const tabs: TerminalTab[] = layout.tabs.map((tabDef) => {
+      const tabId = generateTabId();
+      const { config, title, connectionType } = resolveTabConfig(
+        tabDef,
+        savedConnections,
+        defaultShell
+      );
+      return {
+        id: tabId,
+        sessionId: null,
+        title,
+        connectionType,
+        contentType: "terminal" as const,
+        config,
+        panelId,
+        isActive: false,
+        initialCommand: tabDef.initialCommand,
+      };
+    });
+
+    // Mark first tab as active
+    if (tabs.length > 0) {
+      tabs[0].isActive = true;
+    }
+
+    return {
+      type: "leaf",
+      id: panelId,
+      tabs,
+      activeTabId: tabs[0]?.id ?? null,
+    };
+  }
+
+  return {
+    type: "split",
+    id: generatePanelId(),
+    direction: layout.direction,
+    children: layout.children.map((child) =>
+      buildPanelTreeFromWorkspace(child, savedConnections, defaultShell)
+    ),
+  };
+}
+
+function resolveTabConfig(
+  tabDef: WorkspaceTabDef,
+  savedConnections: SavedConnection[],
+  defaultShell: string
+): { config: ConnectionConfig; title: string; connectionType: string } {
+  // Try to resolve by connection ref
+  if (tabDef.connectionRef) {
+    const saved = savedConnections.find((c) => c.id === tabDef.connectionRef);
+    if (saved) {
+      return {
+        config: saved.config,
+        title: tabDef.title ?? saved.name,
+        connectionType: saved.config.type,
+      };
+    }
+  }
+
+  // Fall back to inline config
+  if (tabDef.inlineConfig) {
+    return {
+      config: tabDef.inlineConfig as ConnectionConfig,
+      title: tabDef.title ?? "Terminal",
+      connectionType: (tabDef.inlineConfig as ConnectionConfig).type ?? "local",
+    };
+  }
+
+  // Default: local shell
+  return {
+    config: { type: "local", config: { shell: defaultShell } },
+    title: tabDef.title ?? "Terminal",
+    connectionType: "local",
+  };
+}
+
+/**
+ * Capture the current live panel tree as a workspace layout definition.
+ * Matches tabs to saved connection IDs where possible.
+ */
+export function captureCurrentLayout(
+  rootPanel: PanelNode,
+  savedConnections: SavedConnection[]
+): WorkspaceLayoutNode {
+  if (rootPanel.type === "leaf") {
+    return {
+      type: "leaf",
+      tabs: rootPanel.tabs
+        .filter((tab) => tab.contentType === "terminal")
+        .map((tab) => captureTab(tab, savedConnections)),
+    };
+  }
+
+  return {
+    type: "split",
+    direction: rootPanel.direction,
+    children: rootPanel.children.map((child) => captureCurrentLayout(child, savedConnections)),
+  };
+}
+
+function captureTab(tab: TerminalTab, savedConnections: SavedConnection[]): WorkspaceTabDef {
+  // Try to match to a saved connection by config type and matching fields
+  const matchedConnection = savedConnections.find(
+    (c) =>
+      c.config.type === tab.config.type &&
+      JSON.stringify(c.config.config) === JSON.stringify(tab.config.config)
+  );
+
+  if (matchedConnection) {
+    return {
+      connectionRef: matchedConnection.id,
+      title: tab.title !== matchedConnection.name ? tab.title : undefined,
+      initialCommand: tab.initialCommand,
+    };
+  }
+
+  return {
+    inlineConfig: tab.config as { type: string; config: Record<string, unknown> },
+    title: tab.title,
+    initialCommand: tab.initialCommand,
   };
 }

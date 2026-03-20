@@ -99,6 +99,8 @@ interface TerminalProps {
   config: ConnectionConfig;
   isVisible: boolean;
   existingSessionId?: string | null;
+  /** Optional command to send after the session connects. */
+  initialCommand?: string;
 }
 
 /**
@@ -106,7 +108,13 @@ interface TerminalProps {
  * Creates an imperative DOM element registered with the TerminalRegistry.
  * Renders nothing — TerminalSlot handles display by adopting the DOM element.
  */
-export function Terminal({ tabId, config, isVisible, existingSessionId }: TerminalProps) {
+export function Terminal({
+  tabId,
+  config,
+  isVisible,
+  existingSessionId,
+  initialCommand,
+}: TerminalProps) {
   const terminalElRef = useRef<HTMLDivElement | null>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -238,6 +246,13 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
           // Container might not have dimensions yet
         }
         resizeTerminal(sessionId, xterm.cols, xterm.rows);
+
+        // Send initial command after session connects (used by workspace launch)
+        if (initialCommand && !existingSessionId) {
+          setTimeout(() => {
+            sendInput(sessionId, initialCommand + "\n");
+          }, 200);
+        }
 
         cleanupRef.current = () => {
           unsubOutput();

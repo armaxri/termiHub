@@ -1,7 +1,8 @@
-import { useCallback } from "react";
-import { Plus } from "lucide-react";
+import { useCallback, useState } from "react";
+import { Plus, Save } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { WorkspaceListItem } from "./WorkspaceListItem";
+import { SaveWorkspaceDialog } from "./SaveWorkspaceDialog";
 import "./WorkspaceSidebar.css";
 
 export function WorkspaceSidebar() {
@@ -9,10 +10,21 @@ export function WorkspaceSidebar() {
   const deleteWorkspace = useAppStore((s) => s.deleteWorkspaceFromBackend);
   const duplicateWorkspace = useAppStore((s) => s.duplicateWorkspaceInBackend);
   const openWorkspaceEditorTab = useAppStore((s) => s.openWorkspaceEditorTab);
+  const launchWorkspace = useAppStore((s) => s.launchWorkspace);
+  const saveCurrentAsWorkspace = useAppStore((s) => s.saveCurrentAsWorkspace);
+
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
 
   const handleNew = useCallback(() => {
     openWorkspaceEditorTab(null);
   }, [openWorkspaceEditorTab]);
+
+  const handleLaunch = useCallback(
+    (workspaceId: string) => {
+      launchWorkspace(workspaceId);
+    },
+    [launchWorkspace]
+  );
 
   const handleEdit = useCallback(
     (workspaceId: string) => {
@@ -35,6 +47,14 @@ export function WorkspaceSidebar() {
     [deleteWorkspace]
   );
 
+  const handleSaveCurrent = useCallback(
+    (name: string, description?: string) => {
+      saveCurrentAsWorkspace(name, description);
+      setShowSaveDialog(false);
+    },
+    [saveCurrentAsWorkspace]
+  );
+
   return (
     <div className="workspace-sidebar" data-testid="workspace-sidebar">
       <div className="workspace-sidebar__actions">
@@ -46,6 +66,15 @@ export function WorkspaceSidebar() {
         >
           <Plus size={14} />
           New Workspace
+        </button>
+        <button
+          className="workspace-sidebar__add-btn"
+          onClick={() => setShowSaveDialog(true)}
+          title="Save Current Layout"
+          data-testid="workspace-save-current-btn"
+        >
+          <Save size={14} />
+          Save Current
         </button>
       </div>
       {workspaces.length === 0 ? (
@@ -59,12 +88,16 @@ export function WorkspaceSidebar() {
             <WorkspaceListItem
               key={workspace.id}
               workspace={workspace}
+              onLaunch={handleLaunch}
               onEdit={handleEdit}
               onDuplicate={handleDuplicate}
               onDelete={handleDelete}
             />
           ))}
         </div>
+      )}
+      {showSaveDialog && (
+        <SaveWorkspaceDialog onSave={handleSaveCurrent} onCancel={() => setShowSaveDialog(false)} />
       )}
     </div>
   );

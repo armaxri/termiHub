@@ -84,10 +84,12 @@ import {
 import { WorkspaceSummary } from "@/types/workspace";
 import {
   getWorkspaces as apiGetWorkspaces,
+  loadWorkspace as apiLoadWorkspace,
   saveWorkspace as apiSaveWorkspace,
   deleteWorkspace as apiDeleteWorkspace,
   duplicateWorkspace as apiDuplicateWorkspace,
 } from "@/services/workspaceApi";
+import { buildPanelTreeFromWorkspace, captureCurrentLayout } from "@/utils/workspaceLayout";
 import { SystemStats } from "@/types/monitoring";
 import { applyTheme, onThemeChange } from "@/themes";
 import { setOverrides as setKeybindingOverrides } from "@/services/keybindings";
@@ -385,6 +387,8 @@ interface AppState {
   deleteWorkspaceFromBackend: (workspaceId: string) => Promise<void>;
   duplicateWorkspaceInBackend: (workspaceId: string) => Promise<void>;
   openWorkspaceEditorTab: (workspaceId: string | null) => void;
+  launchWorkspace: (workspaceId: string) => Promise<void>;
+  saveCurrentAsWorkspace: (name: string, description?: string) => Promise<void>;
 
   // Credential store
   credentialStoreStatus: CredentialStoreStatusInfo | null;
@@ -2020,6 +2024,46 @@ export const useAppStore = create<AppState>((set, get) => {
         });
         return { rootPanel, activePanelId: targetPanelId };
       }),
+
+    launchWorkspace: async (workspaceId) => {
+      try {
+        const definition = await apiLoadWorkspace(workspaceId);
+        const state = get();
+        const rootPanel = buildPanelTreeFromWorkspace(
+          definition.layout,
+          state.connections,
+          state.defaultShell
+        );
+        const firstLeaf =
+          rootPanel.type === "leaf" ? rootPanel : (getAllLeaves(rootPanel)[0] ?? null);
+        set({
+          rootPanel,
+          activePanelId: firstLeaf?.id ?? null,
+          activeWorkspaceName: definition.name,
+        });
+      } catch (err) {
+        console.error("Failed to launch workspace:", err);
+      }
+    },
+
+    saveCurrentAsWorkspace: async (name, description) => {
+      try {
+        const state = get();
+        const layout = captureCurrentLayout(state.rootPanel, state.connections);
+        const id = `ws-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        await apiSaveWorkspace({
+          id,
+          name,
+          description,
+          layout,
+        });
+        await get().loadWorkspaces();
+        set({ activeWorkspaceName: name });
+      } catch (err) {
+        console.error("Failed to save current layout as workspace:", err);
+        throw err;
+      }
+    },
 
     // Credential store
     credentialStoreStatus: null,

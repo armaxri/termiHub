@@ -123,3 +123,125 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Save Workspace Dialog */
+.save-workspace-dialog__overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.save-workspace-dialog {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  width: 360px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.save-workspace-dialog__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.save-workspace-dialog__title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.save-workspace-dialog__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.save-workspace-dialog__close:hover {
+  background: var(--bg-hover);
+}
+
+.save-workspace-dialog__form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.save-workspace-dialog__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.save-workspace-dialog__field label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.save-workspace-dialog__field input {
+  padding: 6px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+}
+
+.save-workspace-dialog__field input:focus {
+  border-color: var(--color-accent);
+}
+
+.save-workspace-dialog__actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.save-workspace-dialog__btn {
+  padding: 6px 16px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.save-workspace-dialog__btn:hover {
+  background: var(--bg-hover);
+}
+
+.save-workspace-dialog__btn--primary {
+  background: var(--color-accent);
+  color: white;
+  border-color: var(--color-accent);
+}
+
+.save-workspace-dialog__btn--primary:hover {
+  opacity: 0.9;
+}
+
+.save-workspace-dialog__btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
