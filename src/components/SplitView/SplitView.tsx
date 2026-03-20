@@ -16,6 +16,7 @@ import {
   SquarePen,
   ScrollText,
   ArrowLeftRight,
+  LayoutGrid,
   Pencil,
   FileDown,
   ClipboardCopy,
@@ -41,6 +42,7 @@ import { FileEditor } from "@/components/FileEditor";
 import { ConnectionEditor } from "@/components/ConnectionEditor/ConnectionEditor";
 import { LogViewer } from "@/components/LogViewer";
 import { TunnelEditor } from "@/components/TunnelEditor";
+import { WorkspaceEditor } from "@/components/WorkspaceEditor";
 import { TerminalSearchBar } from "@/components/Terminal/TerminalSearchBar";
 import { PanelDropZone } from "./PanelDropZone";
 import "./SplitView.css";
@@ -275,6 +277,13 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
               meta={tab.tunnelEditorMeta}
               isVisible={tab.id === panel.activeTabId}
             />
+          ) : tab.contentType === "workspace-editor" && tab.workspaceEditorMeta ? (
+            <WorkspaceEditor
+              key={tab.id}
+              tabId={tab.id}
+              meta={tab.workspaceEditorMeta}
+              isVisible={tab.id === panel.activeTabId}
+            />
           ) : useQuickAction ? (
             <div
               key={tab.id}
@@ -476,7 +485,9 @@ function TabDragOverlay({ tab }: { tab: TerminalTab }) {
             ? SquarePen
             : tab.contentType === "tunnel-editor"
               ? ArrowLeftRight
-              : null;
+              : tab.contentType === "workspace-editor"
+                ? LayoutGrid
+                : null;
   return (
     <div className="tab tab--drag-overlay">
       {NonTerminalIcon ? (
