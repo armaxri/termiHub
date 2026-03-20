@@ -100,7 +100,10 @@ pub fn shell_to_command(shell: &str) -> (String, Vec<String>) {
         "cmd" => ("cmd.exe".into(), vec![]),
         "powershell" => resolve_powershell(),
         "gitbash" => resolve_git_bash(),
-        _ => ("sh".into(), vec![]),
+        // Pass through unknown shell names as-is (e.g. "nu", "fish", "pwsh",
+        // "elvish"). This lets any shell that's in PATH work instead of
+        // silently falling back to sh.
+        other => (other.into(), vec![]),
     }
 }
 
@@ -367,7 +370,8 @@ fn resolve_powershell() -> (String, Vec<String>) {
             }
         }
     }
-    ("powershell.exe".into(), vec!["-NoLogo".into()])
+    // On macOS/Linux, PowerShell Core is installed as "pwsh", not "powershell.exe".
+    ("pwsh".into(), vec!["-NoLogo".into()])
 }
 
 /// Resolve the full path to Git Bash on Windows.
@@ -480,7 +484,7 @@ mod tests {
             "expected absolute path, got: {cmd}"
         );
         #[cfg(not(windows))]
-        assert_eq!(cmd, "powershell.exe");
+        assert_eq!(cmd, "pwsh");
     }
 
     #[test]
@@ -503,9 +507,16 @@ mod tests {
     }
 
     #[test]
-    fn shell_to_command_unknown_falls_back_to_sh() {
+    fn shell_to_command_unknown_passes_through() {
         let (cmd, args) = shell_to_command("fish");
-        assert_eq!(cmd, "sh");
+        assert_eq!(cmd, "fish");
+        assert!(args.is_empty());
+    }
+
+    #[test]
+    fn shell_to_command_nushell_passes_through() {
+        let (cmd, args) = shell_to_command("nu");
+        assert_eq!(cmd, "nu");
         assert!(args.is_empty());
     }
 
