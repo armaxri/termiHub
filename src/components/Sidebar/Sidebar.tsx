@@ -10,14 +10,18 @@ const VIEW_TITLES: Record<string, string> = {
   tunnels: "SSH Tunnels",
 };
 
-export function Sidebar() {
+interface SidebarProps {
+  width?: number;
+}
+
+export function Sidebar({ width }: SidebarProps) {
   const sidebarView = useAppStore((s) => s.sidebarView);
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
 
   if (sidebarCollapsed) return null;
 
   return (
-    <div className="sidebar">
+    <div className="sidebar" data-testid="sidebar" style={width != null ? { width } : undefined}>
       <div className="sidebar__header">
         <span className="sidebar__title">{VIEW_TITLES[sidebarView]}</span>
       </div>

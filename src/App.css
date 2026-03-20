@@ -24,3 +24,29 @@
 .app__main--ab-top {
   flex-direction: row;
 }
+
+/* --- Sidebar resize handle --- */
+.sidebar-resize-handle {
+  width: var(--resize-handle-width);
+  cursor: col-resize;
+  background: var(--resize-handle-color);
+  position: relative;
+  flex-shrink: 0;
+  z-index: 1;
+  transition: background var(--transition-fast);
+}
+
+.sidebar-resize-handle:hover,
+.sidebar-resize-handle--active {
+  background: var(--resize-handle-hover-color);
+}
+
+/* Extended hitbox for easier grabbing */
+.sidebar-resize-handle::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  right: -3px;
+}
