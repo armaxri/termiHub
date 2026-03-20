@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Terminal auto-scroll overriding user scroll position — scrolling up during active output (e.g., Claude Code thinking phase) no longer snaps the viewport back to the bottom; auto-scroll resumes when the user scrolls back to the bottom (#504)
 - Remote monitoring data never reaching the frontend — the `RemoteMonitoringProxy` created a tokio channel but immediately dropped the sender, and `handle_notification()` in `agent_manager` silently ignored `connection.monitoring.data` notifications; now monitoring notifications are routed through the agent I/O thread to registered monitoring channels (#483)
 - Paste (Cmd+V) inserting text twice on macOS — the native browser paste event was reaching xterm.js in addition to the custom paste handler, causing doubled input (#444)
 - Terminal not auto-scrolling to the newest output line — xterm.js 6's SmoothScrollableElement does not reliably auto-scroll in WKWebView (macOS Tauri); added explicit `scrollToBottom()` after output writes (#444)

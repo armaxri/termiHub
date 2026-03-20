@@ -113,6 +113,7 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
   const sessionIdRef = useRef<string | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
   const horizontalScrollingRef = useRef(false);
+  const userScrolledUpRef = useRef(false);
   const lastInputTimeRef = useRef(0);
   const contentDirtyRef = useRef(false);
   const pendingCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -173,7 +174,9 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
           // completes first and scrollToBottom() targets the correct
           // position.
           const scrollAfterWrite = () => {
-            requestAnimationFrame(() => xterm.scrollToBottom());
+            if (!userScrolledUpRef.current) {
+              requestAnimationFrame(() => xterm.scrollToBottom());
+            }
           };
 
           if (outputBuffer.length === 1) {
@@ -373,6 +376,16 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
       return true;
     });
 
+    // Track whether the user has scrolled away from the bottom.
+    // Auto-scroll on new output is suppressed while the user is scrolled up.
+    const onScrollDisposable = xterm.onScroll(() => {
+      const buf = xterm.buffer.active;
+      userScrolledUpRef.current = buf.viewportY < buf.baseY;
+    });
+
+    // Expose xterm instance on the DOM element for E2E test access
+    (el as HTMLDivElement & { _xtermInstance?: XTerm })._xtermInstance = xterm;
+
     // Register element and xterm instance with the portal registry
     register(tabId, el, xterm);
 
@@ -428,7 +441,9 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
         // Force SmoothScrollableElement to refresh its layout after the
         // viewport dimensions change.  Without this, the first output
         // after terminal creation cannot be scrolled to the bottom.
-        requestAnimationFrame(() => xterm.scrollToBottom());
+        if (!userScrolledUpRef.current) {
+          requestAnimationFrame(() => xterm.scrollToBottom());
+        }
       } catch {
         // Ignore fit errors during transitions
       }
@@ -439,6 +454,7 @@ export function Terminal({ tabId, config, isVisible, existingSessionId }: Termin
       canceled = true;
       resizeObserver.disconnect();
       el.removeEventListener("wheel", handleGapWheel);
+      onScrollDisposable.dispose();
       osc7Disposable.dispose();
       unregister(tabId);
       if (cleanupRef.current) {
