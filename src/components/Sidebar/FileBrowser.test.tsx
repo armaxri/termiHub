@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
 import { FileBrowser, FileMenuItems } from "./FileBrowser";
 import type { TerminalTab, LeafPanel } from "@/types/terminal";
+import type { FileEntry } from "@/types/connection";
 
 vi.mock("@/themes", () => ({
   applyTheme: vi.fn(),
@@ -304,17 +305,21 @@ function SimpleSeparator(props: Record<string, unknown>) {
 }
 
 describe("FileBrowser – Copy Name / Copy Path", () => {
-  const fileEntry = {
+  const fileEntry: FileEntry = {
     name: "notes.txt",
     path: "/home/user/notes.txt",
     isDirectory: false,
     size: 42,
+    modified: "2026-01-01T00:00:00Z",
+    permissions: null,
   };
-  const dirEntry = {
+  const dirEntry: FileEntry = {
     name: "projects",
     path: "/home/user/projects",
     isDirectory: true,
     size: 0,
+    modified: "2026-01-01T00:00:00Z",
+    permissions: null,
   };
 
   beforeEach(() => {
