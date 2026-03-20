@@ -292,7 +292,7 @@ export function Terminal({
         }
       }
     },
-    [config, existingSessionId, tabId, registerSession, unregisterSession]
+    [config, existingSessionId, tabId, registerSession, unregisterSession, initialCommand]
   );
 
   // Create the terminal element, xterm instance, and register
