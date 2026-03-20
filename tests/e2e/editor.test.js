@@ -2,11 +2,11 @@
 // Covers: EDITOR-01 (PR #54), EDITOR-STATUS (PR #65), EDITOR-INDENT (PR #111),
 //         EDITOR-LANG (PR #113).
 
-import { waitForAppReady, closeAllTabs } from "./helpers/app.js";
+import { waitForAppReady, ensureConnectionsSidebar } from "./helpers/app.js";
 import { switchToFilesSidebar } from "./helpers/sidebar.js";
-import { findTabByTitle, getTabCount, closeTabByTitle, getActiveTab } from "./helpers/tabs.js";
+import { uniqueName, createLocalConnection, connectByName } from "./helpers/connections.js";
+import { findTabByTitle, getTabCount, closeTabByTitle } from "./helpers/tabs.js";
 import {
-  FILE_BROWSER_CURRENT_PATH,
   FILE_BROWSER_NEW_FILE,
   FILE_BROWSER_NEW_FILE_INPUT,
   FILE_BROWSER_NEW_FILE_CONFIRM,
@@ -15,7 +15,6 @@ import {
   STATUS_BAR_EOL,
   STATUS_BAR_LANGUAGE,
   LANG_MENU_SEARCH,
-  FILE_MENU_EDIT,
   CTX_FILE_EDIT,
   fileRow,
 } from "./helpers/selectors.js";
@@ -52,10 +51,22 @@ async function createFileViaBrowser(name) {
  */
 async function openFileInEditor(name) {
   const row = await browser.$(fileRow(name));
-  await row.waitForDisplayed({ timeout: 5000 });
+  // Wait for the row to appear in the listing; use a generous timeout to
+  // handle slow async refreshLocal() completion under Xvfb/WebKitGTK.
+  await row.waitForDisplayed({ timeout: 10000 });
+  // Scroll the row into the visible area of the sidebar scroller so that
+  // the right-click target is definitely in view (important under WebKitGTK
+  // where click coordinates are viewport-relative).
+  await row.scrollIntoView();
+  await browser.pause(200);
 
-  // Right-click to open the context menu
-  await row.click({ button: "right" });
+  // Right-click to open the context menu.
+  // Use JS contextmenu dispatch to bypass WebDriver's "element not interactable"
+  // check which can fail under WebKitGTK.
+  await browser.execute(
+    (el) => el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2 })),
+    row
+  );
   await browser.pause(300);
 
   // Click "Edit" in the context menu
@@ -84,9 +95,15 @@ async function waitForMonacoEditor() {
  * @param {string} text - Text to type
  */
 async function typeInMonacoEditor(text) {
-  const editor = await browser.$(".monaco-editor .view-lines");
-  await editor.click();
-  await browser.pause(200);
+  // Monaco uses a hidden textarea (.inputarea) for all keyboard input.
+  // Focusing .view-lines does not set up Monaco's internal focus state, so
+  // browser.keys() ends up going to the wrong element.  Focus the textarea
+  // directly so that browser.keys() is routed to Monaco's input handler.
+  const inputArea = await browser.$(".monaco-editor .inputarea");
+  await inputArea.waitForExist({ timeout: 5000 });
+  // JS focus is more reliable than WebDriver click under WebKitGTK.
+  await browser.execute((el) => el.focus(), inputArea);
+  await browser.pause(300);
   await browser.keys(text);
   await browser.pause(300);
 }
@@ -97,11 +114,14 @@ async function typeInMonacoEditor(text) {
  * @returns {Promise<boolean>}
  */
 async function isTabDirty(tabEl) {
+  // The dirty indicator is a child <span class="tab__dirty-dot"> inside the tab.
+  const dirtyDot = await tabEl.$(".tab__dirty-dot");
+  if (await dirtyDot.isExisting()) return true;
+  // Fallback: check class and text for common dirty patterns
   const cls = await tabEl.getAttribute("class");
   const text = await tabEl.getText();
-  // The dirty indicator is typically a dot or "modified" class on the tab
   return (
-    (cls && cls.includes("dirty")) || (cls && cls.includes("modified")) || text.includes("\u25CF")
+    (cls && (cls.includes("dirty") || cls.includes("modified"))) || text.includes("\u25CF")
   );
 }
 
@@ -112,22 +132,126 @@ async function isTabDirty(tabEl) {
 describe("Built-in File Editor (Monaco)", () => {
   const testTsFile = `e2e-editor-test-${Date.now()}.ts`;
   const testJsonFile = `e2e-editor-test-${Date.now()}.json`;
+  let editorConnName;
+  let wsDir;
 
   before(async () => {
     await waitForAppReady();
+    await ensureConnectionsSidebar();
+
+    // Create workspace under the home directory — the file browser always starts
+    // there, so we can find the workspace dir row without any cd navigation.
+    const homeDir = await browser.executeAsync(function (done) {
+      window.__TAURI_INTERNALS__
+        .invoke("get_home_dir")
+        .then((h) => done(h))
+        .catch(() => done("/tmp"));
+    });
+    wsDir = `${homeDir}/e2e-ws-${Date.now()}`;
+    await browser.executeAsync(function (dir, tsPath, jsonPath, done) {
+      const inv = window.__TAURI_INTERNALS__.invoke;
+      inv("local_mkdir", { path: dir })
+        .then(() => inv("local_write_file", { path: tsPath, content: "" }))
+        .then(() => inv("local_write_file", { path: jsonPath, content: "" }))
+        .then(() => done("ok"))
+        .catch((e) => done({ error: String(e) }));
+    }, wsDir, `${wsDir}/${testTsFile}`, `${wsDir}/${testJsonFile}`);
+
+    // Create a plain local connection and open the terminal.
+    editorConnName = uniqueName("editor-setup");
+    await createLocalConnection(editorConnName);
+    await connectByName(editorConnName);
+    await browser.pause(1500);
+
+    // Switch to the Files sidebar — the file browser navigates to the home dir by
+    // default, and our workspace dir is there.
     await switchToFilesSidebar();
+    // Wait until file rows appear (plain list renders immediately)
+    await browser.waitUntil(
+      async () => {
+        const count = await browser.execute(function () {
+          return document.querySelectorAll('[data-testid^="file-row-"]').length;
+        });
+        return count > 0;
+      },
+      { timeout: 15000, interval: 500 },
+    );
+
+    const wsDirName = wsDir.split("/").pop();
+    const wsDirRow = await browser.$(fileRow(wsDirName));
+    await wsDirRow.waitForExist({ timeout: 5000 });
+    await browser.execute(
+      (el) => el.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, detail: 2 })),
+      wsDirRow
+    );
     await browser.pause(500);
 
-    // Create test files that will be used across the describe blocks
-    await createFileViaBrowser(testTsFile);
-    await createFileViaBrowser(testJsonFile);
+    // Wait for the test file to appear inside wsDir.
+    const testFileRow = await browser.$(fileRow(testTsFile));
+    await testFileRow.waitForExist({ timeout: 5000 });
   });
 
   afterEach(async () => {
-    await closeAllTabs();
-    // Ensure we are on the file browser sidebar for the next test
+    // Close ALL tabs (including any extra terminals opened by tests), then reconnect.
+    // Dismiss any dirty-file confirm dialogs so all tabs close cleanly.
+    const MAX_CLOSE_ITERS = 80;
+    for (let i = 0; i < MAX_CLOSE_ITERS; i++) {
+      const closeBtns = await browser.$$('[data-testid^="tab-close-"]');
+      const visible = [];
+      for (const btn of closeBtns) {
+        if (await btn.isExisting().catch(() => false)) visible.push(btn);
+      }
+      if (visible.length === 0) break;
+      // Use JS click to bypass pointer-events CSS (close buttons hidden until hover
+      // under WebKitGTK, which causes WebDriver "element not interactable" errors).
+      await browser.execute((el) => el.click(), visible[0]);
+      await browser.pause(200);
+      // Accept any dirty-file window.confirm that may appear
+      await browser.acceptAlert().catch(() => {});
+      await browser.pause(100);
+    }
+
+    // Reconnect the editor terminal.
+    await ensureConnectionsSidebar();
+    await connectByName(editorConnName);
+    await browser.pause(1500);
+
     await switchToFilesSidebar();
-    await browser.pause(300);
+    await browser.waitUntil(
+      async () => {
+        const count = await browser.execute(function () {
+          return document.querySelectorAll('[data-testid^="file-row-"]').length;
+        });
+        return count > 0;
+      },
+      { timeout: 15000, interval: 500 },
+    );
+    const wsDirNameAE = wsDir.split("/").pop();
+    const wsDirRowAE = await browser.$(fileRow(wsDirNameAE));
+    await wsDirRowAE.waitForExist({ timeout: 5000 });
+    await browser.execute(
+      (el) => el.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, detail: 2 })),
+      wsDirRowAE
+    );
+    await browser.pause(500);
+
+    // Wait until the test-file row exists inside wsDir.
+    const testFileRowEl = await browser.$(fileRow(testTsFile));
+    await testFileRowEl.waitForExist({ timeout: 5000 });
+  });
+
+  after(async () => {
+    // Clean up the workspace directory after all editor tests complete.
+    if (wsDir) {
+      await browser
+        .executeAsync(function (dir, done) {
+          window.__TAURI_INTERNALS__
+            .invoke("local_delete", { path: dir, isDirectory: true })
+            .then(() => done("ok"))
+            .catch(() => done("skip")); // tolerate failure (dir may already be gone)
+        }, wsDir)
+        .catch(() => {});
+    }
   });
 
   // -----------------------------------------------------------------------
@@ -139,11 +263,11 @@ describe("Built-in File Editor (Monaco)", () => {
 
       // Monaco editor should be present
       const monaco = await browser.$(".monaco-editor");
-      expect(await monaco.isDisplayed()).toBe(true);
+      await expect(await monaco.isDisplayed()).toBe(true);
 
       // A tab with the file name should exist
       const tab = await findTabByTitle(testTsFile);
-      expect(tab).not.toBeNull();
+      await expect(tab).not.toBeNull();
     });
 
     it("should show dirty dot after editing, and clear it after Ctrl+S", async () => {
@@ -154,9 +278,9 @@ describe("Built-in File Editor (Monaco)", () => {
 
       // Tab should show dirty indicator
       let tab = await findTabByTitle(testTsFile);
-      expect(tab).not.toBeNull();
+      await expect(tab).not.toBeNull();
       const dirty = await isTabDirty(tab);
-      expect(dirty).toBe(true);
+      await expect(dirty).toBe(true);
 
       // Save with Ctrl+S
       await browser.keys(["Control", "s"]);
@@ -164,9 +288,9 @@ describe("Built-in File Editor (Monaco)", () => {
 
       // Dirty indicator should be cleared
       tab = await findTabByTitle(testTsFile);
-      expect(tab).not.toBeNull();
+      await expect(tab).not.toBeNull();
       const stillDirty = await isTabDirty(tab);
-      expect(stillDirty).toBe(false);
+      await expect(stillDirty).toBe(false);
     });
 
     it("should save via the Save button in the toolbar", async () => {
@@ -175,7 +299,7 @@ describe("Built-in File Editor (Monaco)", () => {
 
       // Tab should be dirty
       let tab = await findTabByTitle(testTsFile);
-      expect(await isTabDirty(tab)).toBe(true);
+      await expect(await isTabDirty(tab)).toBe(true);
 
       // Click the Save button
       const saveBtn = await browser.$(FILE_EDITOR_SAVE);
@@ -185,7 +309,7 @@ describe("Built-in File Editor (Monaco)", () => {
 
       // Dirty indicator should be cleared
       tab = await findTabByTitle(testTsFile);
-      expect(await isTabDirty(tab)).toBe(false);
+      await expect(await isTabDirty(tab)).toBe(false);
     });
 
     it("should show confirmation dialog when closing a dirty tab", async () => {
@@ -194,24 +318,38 @@ describe("Built-in File Editor (Monaco)", () => {
 
       // Tab should be dirty
       const tab = await findTabByTitle(testTsFile);
-      expect(await isTabDirty(tab)).toBe(true);
+      await expect(await isTabDirty(tab)).toBe(true);
+
+      // Override window.confirm before clicking close — WebKitGTK does not surface
+      // window.confirm() as a WebDriver alert, so we capture it via JavaScript.
+      // Save the original so afterEach can close dirty tabs normally.
+      await browser.execute(() => {
+        window.__e2eOrigConfirm = window.confirm;
+        window.__e2eConfirmMsg = null;
+        window.confirm = (msg) => {
+          window.__e2eConfirmMsg = msg || "";
+          return false; // Cancel: keep the tab open so we can verify the message
+        };
+      });
 
       // Attempt to close the tab
       const testId = await tab.getAttribute("data-testid");
       const uuid = testId.replace("tab-", "");
       const closeBtn = await browser.$(`[data-testid="tab-close-${uuid}"]`);
-      await closeBtn.click();
+      await browser.execute((el) => el.click(), closeBtn);
       await browser.pause(500);
 
-      // A confirmation dialog should appear (look for common dialog patterns)
-      const dialog = await browser.$(
-        '.confirm-dialog, [role="dialog"], [data-testid="confirm-dialog"]'
-      );
-      const dialogVisible = (await dialog.isExisting()) && (await dialog.isDisplayed());
-      expect(dialogVisible).toBe(true);
+      // Verify the confirm was called with a message about unsaved changes
+      const msg = await browser.execute(() => window.__e2eConfirmMsg);
+      await expect(msg).not.toBeNull();
+      await expect(msg.toLowerCase()).toContain("unsaved");
 
-      // Dismiss the dialog (press Escape or click cancel/discard)
-      await browser.keys("Escape");
+      // Restore native confirm so afterEach can close the dirty tab normally
+      await browser.execute(() => {
+        window.confirm = window.__e2eOrigConfirm;
+        delete window.__e2eOrigConfirm;
+        delete window.__e2eConfirmMsg;
+      });
       await browser.pause(300);
     });
 
@@ -224,21 +362,24 @@ describe("Built-in File Editor (Monaco)", () => {
       const countAfter = await getTabCount();
 
       // Tab should have been closed immediately without dialog
-      expect(countAfter).toBe(countBefore - 1);
+      await expect(countAfter).toBe(countBefore - 1);
     });
 
     it("should reuse existing editor tab when opening the same file twice", async () => {
       await openFileInEditor(testTsFile);
       const countAfterFirst = await getTabCount();
 
-      // Switch back to file browser and open the same file again
+      // Switch back to file browser and open the same file again.
+      // Must switch to connections first to avoid toggling the files sidebar
+      // closed (clicking the active icon collapses the sidebar).
+      await ensureConnectionsSidebar();
       await switchToFilesSidebar();
       await browser.pause(300);
       await openFileInEditor(testTsFile);
       const countAfterSecond = await getTabCount();
 
       // No new tab should have been created
-      expect(countAfterSecond).toBe(countAfterFirst);
+      await expect(countAfterSecond).toBe(countAfterFirst);
     });
 
     it("should show a graceful error for binary/non-UTF-8 files", async () => {
@@ -313,20 +454,30 @@ describe("Built-in File Editor (Monaco)", () => {
     });
 
     it("should update Ln/Col when the cursor moves", async () => {
-      await openFileInEditor(testTsFile);
+      // Write multi-line content directly via Tauri API — browser.keys("Enter")
+      // does not reliably produce newlines in Monaco under WebKitGTK WebDriver.
+      const filePath = `${wsDir}/${testTsFile}`;
+      await browser.executeAsync(function (fp, done) {
+        window.__TAURI_INTERNALS__
+          .invoke("local_write_file", { path: fp, content: "line one\nline two\nline three\n" })
+          .then(() => done("ok"))
+          .catch((e) => done({ error: String(e) }));
+      }, filePath);
 
-      // Type some multi-line content
-      await typeInMonacoEditor("line one");
-      await browser.keys("Enter");
-      await typeInMonacoEditor("line two");
-      await browser.keys("Enter");
-      await typeInMonacoEditor("line three");
+      await openFileInEditor(testTsFile);
+      await browser.pause(500);
+
+      // Focus the Monaco input area then move cursor to end of file
+      const inputArea = await browser.$(".monaco-editor .inputarea");
+      await browser.execute((el) => el.focus(), inputArea);
+      await browser.pause(300);
+      await browser.keys(["Control", "End"]);
       await browser.pause(300);
 
       const statusBar = await browser.$(".status-bar");
       const statusText = await statusBar.getText();
 
-      // After typing three lines, cursor should be on line 3+
+      // After Ctrl+End on a 3-line file, cursor should be on line 3+
       expect(statusText).toMatch(/Ln\s+[3-9]\d*/);
 
       // Move cursor to beginning of file
@@ -478,17 +629,34 @@ describe("Built-in File Editor (Monaco)", () => {
 
       const tabSize = await browser.$(STATUS_BAR_TAB_SIZE);
       await tabSize.waitForDisplayed({ timeout: 5000 });
-      await tabSize.click();
-      await browser.pause(500);
+      // Radix DropdownMenu.Trigger opens on pointerdown, not click.
+      // Dispatch a pointerdown event so the Radix handler fires.
+      await browser.execute((el) => {
+        el.dispatchEvent(
+          new PointerEvent("pointerdown", {
+            bubbles: true,
+            cancelable: true,
+            button: 0,
+            buttons: 1,
+            pointerId: 1,
+            pointerType: "mouse",
+            ctrlKey: false,
+          })
+        );
+      }, tabSize);
+      await browser.pause(800);
 
-      // A dropdown should appear with indent options
-      const spacesOption = await browser.$("*=Spaces");
-      const tabsOption = await browser.$("*=Tab");
-
-      const spacesVisible = (await spacesOption.isExisting()) && (await spacesOption.isDisplayed());
-      const tabsVisible = (await tabsOption.isExisting()) && (await tabsOption.isDisplayed());
-
-      expect(spacesVisible || tabsVisible).toBe(true);
+      // Radix UI DropdownMenu.Portal renders items in document.body — use
+      // document.querySelector() since isExisting() may not find portal elements
+      // under WebKitGTK WebDriver.
+      const found = await browser.execute(
+        () =>
+          !!(
+            document.querySelector('[data-testid^="indent-spaces-"]') ||
+            document.querySelector('[data-testid^="indent-tabs-"]')
+          )
+      );
+      expect(found).toBe(true);
 
       await browser.keys("Escape");
     });
@@ -543,48 +711,71 @@ describe("Built-in File Editor (Monaco)", () => {
   // EDITOR-LANG: Language mode selector (PR #113)
   // -----------------------------------------------------------------------
   describe("EDITOR-LANG: Language mode selector (PR #113)", () => {
-    it("should show a dropdown with search and language list when clicking the language name", async () => {
-      await openFileInEditor(testTsFile);
-
+    /**
+     * Open the language dropdown via JS click (more reliable than WebDriver
+     * click on status bar buttons under WebKitGTK) and wait for the portal
+     * search input to appear using document.querySelector.
+     */
+    async function openLangDropdown() {
       const lang = await browser.$(STATUS_BAR_LANGUAGE);
       await lang.waitForDisplayed({ timeout: 5000 });
-      await lang.click();
+      // Radix DropdownMenu.Trigger opens on pointerdown, not click. Dispatch a
+      // synthetic pointerdown event so the Radix handler fires correctly.
+      await browser.execute((el) => {
+        el.dispatchEvent(
+          new PointerEvent("pointerdown", {
+            bubbles: true,
+            cancelable: true,
+            button: 0,
+            buttons: 1,
+            pointerId: 1,
+            pointerType: "mouse",
+            ctrlKey: false,
+          })
+        );
+      }, lang);
       await browser.pause(500);
+      // Radix DropdownMenu.Portal renders in document.body outside the component
+      // tree; use document.querySelector() to detect it, as waitForExist() may
+      // time out under WebKitGTK even when the element is present in the DOM.
+      await browser.waitUntil(
+        async () =>
+          await browser.execute(() => !!document.querySelector('[data-testid="lang-menu-search"]')),
+        { timeout: 5000, interval: 200 }
+      );
+    }
 
-      // Search input should be visible in the language dropdown
-      const searchInput = await browser.$(LANG_MENU_SEARCH);
-      expect(await searchInput.isDisplayed()).toBe(true);
+    it("should show a dropdown with search and language list when clicking the language name", async () => {
+      await openFileInEditor(testTsFile);
+      await openLangDropdown();
+
+      const found = await browser.execute(
+        () => !!document.querySelector('[data-testid="lang-menu-search"]')
+      );
+      expect(found).toBe(true);
 
       await browser.keys("Escape");
     });
 
     it("should filter languages in real time when typing in the search field", async () => {
       await openFileInEditor(testTsFile);
+      await openLangDropdown();
 
-      const lang = await browser.$(STATUS_BAR_LANGUAGE);
-      await lang.click();
-      await browser.pause(500);
-
-      const searchInput = await browser.$(LANG_MENU_SEARCH);
-      await searchInput.waitForDisplayed({ timeout: 3000 });
-
-      // Get the initial count of visible language items
-      const initialItems = await browser.$$(
-        '.lang-menu-item, [data-testid^="lang-menu-item"], [class*="language-item"]'
+      // Count items before filtering — items have class "lang-menu__item"
+      const initialCount = await browser.execute(
+        () => document.querySelectorAll(".lang-menu__item").length
       );
-      const initialCount = initialItems.length;
 
-      // Type a filter term
+      // Type a filter term into the search input
+      const searchInput = await browser.$(LANG_MENU_SEARCH);
       await searchInput.setValue("python");
       await browser.pause(300);
 
-      // The filtered list should have fewer items
-      const filteredItems = await browser.$$(
-        '.lang-menu-item, [data-testid^="lang-menu-item"], [class*="language-item"]'
+      // The filtered list should have fewer items (or at least 1 match)
+      const filteredCount = await browser.execute(
+        () => document.querySelectorAll(".lang-menu__item").length
       );
-      const filteredCount = filteredItems.length;
 
-      // Filtered results should be fewer than the full list (or at least 1 match)
       expect(filteredCount).toBeLessThanOrEqual(initialCount);
       expect(filteredCount).toBeGreaterThanOrEqual(1);
 
@@ -596,27 +787,27 @@ describe("Built-in File Editor (Monaco)", () => {
 
       const lang = await browser.$(STATUS_BAR_LANGUAGE);
       const initialLang = await lang.getText();
-      await lang.click();
-      await browser.pause(500);
 
+      await openLangDropdown();
+
+      // Search for and select "JavaScript" via the search input
       const searchInput = await browser.$(LANG_MENU_SEARCH);
-      await searchInput.waitForDisplayed({ timeout: 3000 });
-
-      // Search for and select "JavaScript"
       await searchInput.setValue("javascript");
       await browser.pause(300);
 
-      // Click the first matching result
-      const items = await browser.$$(
-        '.lang-menu-item, [data-testid^="lang-menu-item"], [class*="language-item"]'
-      );
-      for (const item of items) {
-        const text = await item.getText();
-        if (text.toLowerCase().includes("javascript")) {
-          await item.click();
-          await browser.pause(500);
-          break;
+      // Click the first matching lang-menu__item via JS (portal element)
+      const clicked = await browser.execute(() => {
+        const items = document.querySelectorAll(".lang-menu__item");
+        for (const item of items) {
+          if (item.textContent && item.textContent.toLowerCase().includes("javascript")) {
+            item.click();
+            return true;
+          }
         }
+        return false;
+      });
+      if (clicked) {
+        await browser.pause(500);
       }
 
       // The language label should have changed
@@ -627,24 +818,44 @@ describe("Built-in File Editor (Monaco)", () => {
 
     it("should close the language dropdown on selection or clicking outside", async () => {
       await openFileInEditor(testTsFile);
+      await openLangDropdown();
 
-      const lang = await browser.$(STATUS_BAR_LANGUAGE);
-      await lang.click();
-      await browser.pause(500);
+      // Confirm the dropdown is open
+      let found = await browser.execute(
+        () => !!document.querySelector('[data-testid="lang-menu-search"]')
+      );
+      expect(found).toBe(true);
 
-      // Dropdown should be open
-      let searchInput = await browser.$(LANG_MENU_SEARCH);
-      expect(await searchInput.isDisplayed()).toBe(true);
-
-      // Click outside the dropdown to dismiss it
+      // Dismiss the dropdown by dispatching a pointerdown outside it.
+      // Radix's DismissableLayer listens for document pointerdown events to
+      // detect outside clicks — a plain el.click() is not sufficient.
       const editor = await browser.$(".monaco-editor");
-      await editor.click();
-      await browser.pause(300);
+      await browser.execute((el) => {
+        el.dispatchEvent(
+          new PointerEvent("pointerdown", {
+            bubbles: true,
+            cancelable: true,
+            button: 0,
+            buttons: 1,
+            pointerId: 1,
+            pointerType: "mouse",
+          })
+        );
+      }, editor);
+      // Wait for Radix to unmount the portal content
+      await browser.waitUntil(
+        async () =>
+          await browser.execute(
+            () => !document.querySelector('[data-testid="lang-menu-search"]')
+          ),
+        { timeout: 3000, interval: 200 }
+      );
 
-      // Dropdown should be closed
-      searchInput = await browser.$(LANG_MENU_SEARCH);
-      const stillVisible = (await searchInput.isExisting()) && (await searchInput.isDisplayed());
-      expect(stillVisible).toBe(false);
+      // Dropdown should be closed (portal content removed from DOM)
+      found = await browser.execute(
+        () => !!document.querySelector('[data-testid="lang-menu-search"]')
+      );
+      expect(found).toBe(false);
     });
   });
 });

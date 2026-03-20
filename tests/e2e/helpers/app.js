@@ -97,7 +97,8 @@ export async function closeAllTabs() {
       }
     }
     if (visible.length === 0) break;
-    await visible[0].click();
+    // Use JS click to bypass pointer-events CSS (buttons hidden until hover under WebKitGTK).
+    await browser.execute((el) => el.click(), visible[0]);
     await browser.pause(200);
   }
 }

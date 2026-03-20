@@ -58,9 +58,13 @@ describe("File Browser — Extended", () => {
       await browser.pause(500);
 
       // The file browser current path should reflect /tmp
-      const currentPath = await browser.$(FILE_BROWSER_CURRENT_PATH);
-      if ((await currentPath.isExisting()) && (await currentPath.isDisplayed())) {
-        const pathText = await currentPath.getText();
+      // Use textContent via execute() — getText() returns "" when the element's
+      // layout box is zero-width due to flex constraints.
+      const pathText = await browser.execute(() => {
+        const el = document.querySelector('[data-testid="file-browser-current-path"]');
+        return el ? el.textContent : "";
+      });
+      if (pathText) {
         expect(pathText).toContain("/tmp");
       }
     });
@@ -88,9 +92,11 @@ describe("File Browser — Extended", () => {
       await browser.pause(500);
 
       // Tab2 is active — file browser should show /var
-      const currentPath = await browser.$(FILE_BROWSER_CURRENT_PATH);
-      if ((await currentPath.isExisting()) && (await currentPath.isDisplayed())) {
-        let pathText = await currentPath.getText();
+      let pathText = await browser.execute(() => {
+        const el = document.querySelector('[data-testid="file-browser-current-path"]');
+        return el ? el.textContent : "";
+      });
+      if (pathText) {
         expect(pathText).toContain("/var");
 
         // Switch to tab1
@@ -100,7 +106,10 @@ describe("File Browser — Extended", () => {
         await browser.pause(500);
 
         // File browser should now show /tmp
-        pathText = await currentPath.getText();
+        pathText = await browser.execute(() => {
+          const el = document.querySelector('[data-testid="file-browser-current-path"]');
+          return el ? el.textContent : "";
+        });
         expect(pathText).toContain("/tmp");
       }
     });
@@ -120,9 +129,11 @@ describe("File Browser — Extended", () => {
       await browser.pause(500);
 
       // Verify current path shows /tmp
-      let currentPath = await browser.$(FILE_BROWSER_CURRENT_PATH);
-      if ((await currentPath.isExisting()) && (await currentPath.isDisplayed())) {
-        let pathText = await currentPath.getText();
+      let pathText = await browser.execute(() => {
+        const el = document.querySelector('[data-testid="file-browser-current-path"]');
+        return el ? el.textContent : "";
+      });
+      if (pathText) {
         expect(pathText).toContain("/tmp");
       }
 
@@ -136,9 +147,11 @@ describe("File Browser — Extended", () => {
       await browser.pause(500);
 
       // Current path should still show /tmp
-      currentPath = await browser.$(FILE_BROWSER_CURRENT_PATH);
-      if ((await currentPath.isExisting()) && (await currentPath.isDisplayed())) {
-        const pathText = await currentPath.getText();
+      pathText = await browser.execute(() => {
+        const el = document.querySelector('[data-testid="file-browser-current-path"]');
+        return el ? el.textContent : "";
+      });
+      if (pathText) {
         expect(pathText).toContain("/tmp");
       }
     });
@@ -268,9 +281,13 @@ describe("File Browser — Extended", () => {
       await browser.pause(500);
 
       // The current path should show the home directory, not root "/"
-      const currentPath = await browser.$(FILE_BROWSER_CURRENT_PATH);
-      if ((await currentPath.isExisting()) && (await currentPath.isDisplayed())) {
-        const pathText = await currentPath.getText();
+      // Use textContent via execute() — getText() returns "" when the element's
+      // layout box is zero-width due to flex constraints.
+      const pathText = await browser.execute(() => {
+        const el = document.querySelector('[data-testid="file-browser-current-path"]');
+        return el ? el.textContent : "";
+      });
+      if (pathText) {
         expect(pathText.length).toBeGreaterThan(1);
         expect(pathText.startsWith("/")).toBe(true);
         // Should not be stuck at root — home dirs are typically /home/*, /root, or /Users/*
@@ -295,9 +312,13 @@ describe("File Browser — Extended", () => {
       await browser.pause(500);
 
       // The file browser should still show a valid directory, not root
-      const currentPath = await browser.$(FILE_BROWSER_CURRENT_PATH);
-      if ((await currentPath.isExisting()) && (await currentPath.isDisplayed())) {
-        const pathText = await currentPath.getText();
+      // Use textContent via execute() — getText() returns "" when the element's
+      // layout box is zero-width due to flex constraints.
+      const pathText = await browser.execute(() => {
+        const el = document.querySelector('[data-testid="file-browser-current-path"]');
+        return el ? el.textContent : "";
+      });
+      if (pathText) {
         expect(pathText.length).toBeGreaterThan(1);
         expect(pathText.startsWith("/")).toBe(true);
       }

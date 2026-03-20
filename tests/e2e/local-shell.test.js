@@ -26,8 +26,10 @@ describe('Local Shell', () => {
       expect(tab).not.toBeNull();
 
       const active = await getActiveTab();
-      const activeText = await active.getText();
-      expect(activeText).toContain(name);
+      // Use title attribute — getText() can return empty under WebKitGTK due to
+      // CSS text truncation. The title attribute holds the full untruncated name.
+      const activeTitle = await active.getAttribute("title");
+      expect(activeTitle).toContain(name);
     });
 
     it('should render an xterm canvas element in the terminal area', async () => {

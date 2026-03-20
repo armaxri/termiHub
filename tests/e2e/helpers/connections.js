@@ -6,6 +6,7 @@ import {
   CONN_EDITOR_TYPE,
   CONN_EDITOR_SAVE,
   CONN_EDITOR_CANCEL,
+  STARTING_DIRECTORY,
   CTX_CONNECTION_CONNECT,
   CTX_CONNECTION_EDIT,
   CTX_CONNECTION_DUPLICATE,
@@ -69,6 +70,51 @@ export async function createLocalConnection(name) {
 }
 
 /**
+ * Create a local shell connection with a specific starting directory.
+ * Assumes the Connections sidebar is already visible.
+ * @param {string} name - Connection name
+ * @param {string} startingDir - Absolute path for the starting directory
+ */
+export async function createLocalConnectionInDir(name, startingDir) {
+  await openNewConnectionEditor();
+  const nameInput = await browser.$(CONN_EDITOR_NAME);
+  await browser.execute(
+    (el, val) => {
+      const nativeSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value',
+      ).set;
+      nativeSetter.call(el, val);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    },
+    nameInput,
+    name,
+  );
+  await browser.pause(200);
+  // Set the starting directory field if it exists
+  const dirInput = await browser.$(STARTING_DIRECTORY);
+  if (await dirInput.isExisting()) {
+    await browser.execute(
+      (el, val) => {
+        const nativeSetter = Object.getOwnPropertyDescriptor(
+          window.HTMLInputElement.prototype,
+          'value',
+        ).set;
+        nativeSetter.call(el, val);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      },
+      dirInput,
+      startingDir,
+    );
+    await browser.pause(200);
+  }
+  const saveBtn = await browser.$(CONN_EDITOR_SAVE);
+  await saveBtn.click();
+  await browser.pause(800);
+  return name;
+}
+
+/**
  * Set the connection type in the editor dropdown.
  * The editor must already be open.
  * @param {'local'|'ssh'|'serial'|'telnet'} type
@@ -118,7 +164,12 @@ export async function connectByName(name) {
   if (!item) throw new Error(`Connection "${name}" not found in sidebar`);
   await browser.execute((el) => el.scrollIntoView({ block: 'center', inline: 'nearest' }), item);
   await browser.pause(300);
-  await item.doubleClick();
+  // Use JS double-click dispatch to bypass WebDriver's "element not interactable"
+  // check which can fail under WebKitGTK when pointer-events CSS is conditional.
+  await browser.execute(
+    (el) => el.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, detail: 2 })),
+    item
+  );
   await browser.pause(500);
 }
 

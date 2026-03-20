@@ -1,5 +1,4 @@
 import { useCallback, useState, useEffect } from "react";
-import { Virtuoso } from "react-virtuoso";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
@@ -779,20 +778,17 @@ export function FileBrowser() {
             </div>
           ) : (
             <div className="file-browser__list">
-              <Virtuoso
-                totalCount={sortedEntries.length}
-                itemContent={(index) => (
-                  <FileRow
-                    entry={sortedEntries[index]}
-                    vscodeAvailable={vscodeAvailable}
-                    onNavigate={handleNavigate}
-                    onContextAction={handleContextAction}
-                    onPaste={handlePaste}
-                    hasClipboard={fileClipboard !== null}
-                  />
-                )}
-                style={{ height: "100%" }}
-              />
+              {sortedEntries.map((entry) => (
+                <FileRow
+                  key={entry.path}
+                  entry={entry}
+                  vscodeAvailable={vscodeAvailable}
+                  onNavigate={handleNavigate}
+                  onContextAction={handleContextAction}
+                  onPaste={handlePaste}
+                  hasClipboard={fileClipboard !== null}
+                />
+              ))}
             </div>
           )}
         </ContextMenu.Trigger>
