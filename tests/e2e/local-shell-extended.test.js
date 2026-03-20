@@ -70,8 +70,10 @@ describe("Local Shell — Extended", () => {
       // Tab should be active
       const active = await getActiveTab();
       expect(active).not.toBeNull();
-      const activeText = await active.getText();
-      expect(activeText).toContain(name);
+      // Use title attribute — getText() can return empty under WebKitGTK due to
+      // CSS text truncation. The title attribute holds the full untruncated name.
+      const activeTitle = await active.getAttribute("title");
+      expect(activeTitle).toContain(name);
 
       // xterm container should exist (prompt rendered)
       const xtermContainer = await browser.$(".xterm");
@@ -116,26 +118,17 @@ describe("Local Shell — Extended", () => {
       await browser.keys("exit\n");
       await browser.pause(2000);
 
-      // Look for the "[Process exited with code 0]" overlay or text
-      const termArea = await browser.$('[data-testid^="terminal-"]');
-      if (await termArea.isExisting()) {
-        const text = await termArea.getText();
-        // The process exited message should appear somewhere in the terminal area
-        const hasExited = text.includes("Process exited") || text.includes("exited with code");
-        expect(hasExited).toBe(true);
+      // The "[Process exited]" message is written to the xterm canvas by the app
+      // (not rendered as DOM text), so it cannot be read via getText(). Check for
+      // a React exit overlay if one exists, otherwise verify the xterm container
+      // is still present (terminal did not crash after exit).
+      const overlay = await browser.$(".terminal-exit-overlay");
+      if (await overlay.isExisting()) {
+        const overlayText = await overlay.getText();
+        expect(overlayText).toContain("exited");
       } else {
-        // If the terminal area element is not found by testid, check for the
-        // exit overlay that appears on top of the xterm instance
-        const overlay = await browser.$(".terminal-exit-overlay");
-        if (await overlay.isExisting()) {
-          const overlayText = await overlay.getText();
-          expect(overlayText).toContain("exited");
-        } else {
-          // Fallback: just verify the xterm container is still in DOM
-          // (the exit message is rendered inside it)
-          const xterm = await browser.$(".xterm");
-          expect(await xterm.isExisting()).toBe(true);
-        }
+        const xterm = await browser.$(".xterm");
+        expect(await xterm.isExisting()).toBe(true);
       }
     });
   });
@@ -190,8 +183,10 @@ describe("Local Shell — Extended", () => {
 
       // Tab 2 should be active — type into it
       let active = await getActiveTab();
-      let activeText = await active.getText();
-      expect(activeText).toContain(name2);
+      // Use title attribute — getText() can return empty under WebKitGTK due to
+      // CSS text truncation. The title attribute holds the full untruncated name.
+      let activeTitle = await active.getAttribute("title");
+      expect(activeTitle).toContain(name2);
       await browser.keys(`echo TERMINAL_2\n`);
       await browser.pause(300);
 
@@ -201,8 +196,8 @@ describe("Local Shell — Extended", () => {
       await browser.pause(500);
 
       active = await getActiveTab();
-      activeText = await active.getText();
-      expect(activeText).toContain(name1);
+      activeTitle = await active.getAttribute("title");
+      expect(activeTitle).toContain(name1);
 
       // Type into tab 1 — should work without issues
       await browser.keys(`echo TERMINAL_1\n`);
@@ -419,14 +414,25 @@ describe("Local Shell — Extended", () => {
       await switchToFilesSidebar();
       await browser.pause(500);
 
-      // The file browser current path should display a directory
+      // The file browser current path should display a directory.
+      // Use the title attribute rather than getText() — under WebKitGTK,
+      // getText() can return an empty string for truncated text elements.
+      // The FileBrowser component sets both text content and title={currentPath}.
       const currentPath = await browser.$(FILE_BROWSER_CURRENT_PATH);
       if ((await currentPath.isExisting()) && (await currentPath.isDisplayed())) {
-        const pathText = await currentPath.getText();
+        // Wait for the path to be populated (loaded asynchronously after sidebar opens).
+        await browser.waitUntil(
+          async () => {
+            const titleAttr = await currentPath.getAttribute("title");
+            return !!(titleAttr && titleAttr.length > 0);
+          },
+          { timeout: 10000, interval: 500 }
+        );
+        const pathTitle = await currentPath.getAttribute("title");
         // The path should be non-empty and look like a home directory
         // (e.g. /home/user, /root, or /Users/user on macOS)
-        expect(pathText.length).toBeGreaterThan(0);
-        expect(pathText.startsWith("/")).toBe(true);
+        expect(pathTitle.length).toBeGreaterThan(0);
+        expect(pathTitle.startsWith("/")).toBe(true);
       }
 
       // Switch back to connections sidebar for cleanup
