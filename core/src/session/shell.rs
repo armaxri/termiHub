@@ -100,10 +100,19 @@ pub fn shell_to_command(shell: &str) -> (String, Vec<String>) {
         "cmd" => ("cmd.exe".into(), vec![]),
         "powershell" => resolve_powershell(),
         "gitbash" => resolve_git_bash(),
-        // Pass through unknown shell names as-is (e.g. "nu", "fish", "pwsh",
-        // "elvish"). This lets any shell that's in PATH work instead of
-        // silently falling back to sh.
-        other => (other.into(), vec![]),
+        "fish" => ("fish".into(), vec!["--login".into()]),
+        "nushell" => ("nu".into(), vec!["--login".into()]),
+        other => {
+            // If the value looks like a file path, use it as a literal executable.
+            // This supports custom shell paths (e.g. "/opt/myshell/bin/mysh").
+            // Otherwise, pass through the name as-is so any shell in PATH works
+            // instead of silently falling back to sh.
+            if other.contains('/') || other.contains('\\') {
+                (other.to_string(), vec![])
+            } else {
+                (other.into(), vec![])
+            }
+        }
     }
 }
 
@@ -236,6 +245,15 @@ pub fn detect_available_shells() -> Vec<String> {
             ("/bin/bash", "bash"),
             ("/usr/bin/bash", "bash"),
             ("/bin/sh", "sh"),
+            ("/usr/local/bin/fish", "fish"),
+            ("/usr/bin/fish", "fish"),
+            ("/opt/homebrew/bin/fish", "fish"),
+            ("/usr/local/bin/nu", "nushell"),
+            ("/usr/bin/nu", "nushell"),
+            ("/opt/homebrew/bin/nu", "nushell"),
+            ("/usr/local/bin/pwsh", "powershell"),
+            ("/usr/bin/pwsh", "powershell"),
+            ("/snap/bin/pwsh", "powershell"),
         ];
         let mut seen = std::collections::HashSet::new();
         for (path, name) in &candidates {
@@ -353,9 +371,10 @@ fn resolve_bash() -> (String, Vec<String>) {
     ("bash".into(), vec!["--login".into()])
 }
 
-/// Resolve the full path to PowerShell on Windows.
+/// Resolve the full path to PowerShell.
 ///
-/// Falls back to the bare name on non-Windows platforms.
+/// On Windows, prefers the absolute path under `SYSTEMROOT`.
+/// On Unix, uses `pwsh` (the cross-platform PowerShell executable name).
 fn resolve_powershell() -> (String, Vec<String>) {
     #[cfg(windows)]
     {
@@ -369,9 +388,14 @@ fn resolve_powershell() -> (String, Vec<String>) {
                 return (full, vec!["-NoLogo".into()]);
             }
         }
+        return ("powershell.exe".into(), vec!["-NoLogo".into()]);
     }
-    // On macOS/Linux, PowerShell Core is installed as "pwsh", not "powershell.exe".
-    ("pwsh".into(), vec!["-NoLogo".into()])
+    #[cfg(unix)]
+    {
+        return ("pwsh".into(), vec!["-NoLogo".into()]);
+    }
+    #[allow(unreachable_code)]
+    ("powershell.exe".into(), vec!["-NoLogo".into()])
 }
 
 /// Resolve the full path to Git Bash on Windows.
@@ -483,7 +507,7 @@ mod tests {
             cmd.ends_with(r"\powershell.exe"),
             "expected absolute path, got: {cmd}"
         );
-        #[cfg(not(windows))]
+        #[cfg(unix)]
         assert_eq!(cmd, "pwsh");
     }
 
@@ -508,15 +532,36 @@ mod tests {
 
     #[test]
     fn shell_to_command_unknown_passes_through() {
-        let (cmd, args) = shell_to_command("fish");
-        assert_eq!(cmd, "fish");
+        let (cmd, args) = shell_to_command("elvish");
+        assert_eq!(cmd, "elvish");
         assert!(args.is_empty());
     }
 
     #[test]
-    fn shell_to_command_nushell_passes_through() {
-        let (cmd, args) = shell_to_command("nu");
+    fn shell_to_command_fish() {
+        let (cmd, args) = shell_to_command("fish");
+        assert_eq!(cmd, "fish");
+        assert_eq!(args, vec!["--login"]);
+    }
+
+    #[test]
+    fn shell_to_command_nushell() {
+        let (cmd, args) = shell_to_command("nushell");
         assert_eq!(cmd, "nu");
+        assert_eq!(args, vec!["--login"]);
+    }
+
+    #[test]
+    fn shell_to_command_custom_path() {
+        let (cmd, args) = shell_to_command("/usr/local/bin/myshell");
+        assert_eq!(cmd, "/usr/local/bin/myshell");
+        assert!(args.is_empty());
+    }
+
+    #[test]
+    fn shell_to_command_windows_custom_path() {
+        let (cmd, args) = shell_to_command(r"C:\shells\myshell.exe");
+        assert_eq!(cmd, r"C:\shells\myshell.exe");
         assert!(args.is_empty());
     }
 
@@ -848,6 +893,14 @@ mod tests {
             "expected powershell in detected shells: {:?}",
             shells
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_powershell_returns_pwsh_on_unix() {
+        let (cmd, args) = resolve_powershell();
+        assert_eq!(cmd, "pwsh", "expected 'pwsh' on Unix, got: {cmd}");
+        assert_eq!(args, vec!["-NoLogo"]);
     }
 
     /// Regression test for #400: WSL distros must not appear in local shells.

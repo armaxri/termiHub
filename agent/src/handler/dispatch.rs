@@ -1025,6 +1025,12 @@ const SHELL_CANDIDATES: &[&str] = &[
     "/usr/local/bin/bash",
     "/usr/local/bin/zsh",
     "/usr/local/bin/fish",
+    "/usr/local/bin/nu",
+    "/usr/bin/nu",
+    "/snap/bin/nu",
+    "/usr/local/bin/pwsh",
+    "/usr/bin/pwsh",
+    "/snap/bin/pwsh",
 ];
 
 /// Detect available shells by checking which candidate paths exist on disk.
@@ -2093,5 +2099,41 @@ mod tests {
         assert!(!result.is_shutdown());
         let json = result.to_json();
         assert_eq!(json["error"]["code"], errors::NOT_INITIALIZED);
+    }
+
+    // ── Shell candidate tests ─────────────────────────────────────────
+
+    #[test]
+    fn shell_candidates_includes_pwsh_paths() {
+        let candidates: Vec<&str> = SHELL_CANDIDATES.to_vec();
+        assert!(
+            candidates.contains(&"/usr/local/bin/pwsh"),
+            "expected /usr/local/bin/pwsh in SHELL_CANDIDATES"
+        );
+        assert!(
+            candidates.contains(&"/usr/bin/pwsh"),
+            "expected /usr/bin/pwsh in SHELL_CANDIDATES"
+        );
+        assert!(
+            candidates.contains(&"/snap/bin/pwsh"),
+            "expected /snap/bin/pwsh in SHELL_CANDIDATES"
+        );
+    }
+
+    #[test]
+    fn shell_candidates_includes_nushell_paths() {
+        let candidates: Vec<&str> = SHELL_CANDIDATES.to_vec();
+        assert!(
+            candidates.contains(&"/usr/local/bin/nu"),
+            "expected /usr/local/bin/nu in SHELL_CANDIDATES"
+        );
+        assert!(
+            candidates.contains(&"/usr/bin/nu"),
+            "expected /usr/bin/nu in SHELL_CANDIDATES"
+        );
+        assert!(
+            candidates.contains(&"/snap/bin/nu"),
+            "expected /snap/bin/nu in SHELL_CANDIDATES"
+        );
     }
 }

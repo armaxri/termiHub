@@ -1,6 +1,15 @@
 export type SessionId = string;
 
-export type ShellType = "zsh" | "bash" | "cmd" | "powershell" | "gitbash" | `wsl:${string}`;
+export type ShellType =
+  | "zsh"
+  | "bash"
+  | "cmd"
+  | "powershell"
+  | "gitbash"
+  | "fish"
+  | "nushell"
+  | "custom"
+  | `wsl:${string}`;
 
 export type ConnectionType =
   | "local"
