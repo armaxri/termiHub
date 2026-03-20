@@ -1,5 +1,4 @@
 import { useCallback, useState, useRef, useEffect } from "react";
-import { Virtuoso } from "react-virtuoso";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import {
   Folder,
@@ -751,19 +750,16 @@ export function FileBrowser() {
         </div>
       ) : (
         <div className="file-browser__list">
-          <Virtuoso
-            totalCount={sortedEntries.length}
-            itemContent={(index) => (
-              <FileRow
-                entry={sortedEntries[index]}
-                mode={mode}
-                vscodeAvailable={vscodeAvailable}
-                onNavigate={handleNavigate}
-                onContextAction={handleContextAction}
-              />
-            )}
-            style={{ height: "100%" }}
-          />
+          {sortedEntries.map((entry) => (
+            <FileRow
+              key={entry.path}
+              entry={entry}
+              mode={mode}
+              vscodeAvailable={vscodeAvailable}
+              onNavigate={handleNavigate}
+              onContextAction={handleContextAction}
+            />
+          ))}
         </div>
       )}
     </div>
