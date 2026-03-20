@@ -47,6 +47,8 @@ interface FileRowProps {
   vscodeAvailable: boolean;
   onNavigate: (entry: FileEntry) => void;
   onContextAction: (entry: FileEntry, action: string) => void;
+  onPaste: () => void;
+  hasClipboard: boolean;
 }
 
 /**
@@ -59,6 +61,8 @@ function FileMenuItems({
   vscodeAvailable,
   onNavigate,
   onContextAction,
+  onPaste,
+  hasClipboard,
   Item,
   Separator,
   testIdPrefix,
@@ -67,6 +71,8 @@ function FileMenuItems({
   vscodeAvailable: boolean;
   onNavigate: (entry: FileEntry) => void;
   onContextAction: (entry: FileEntry, action: string) => void;
+  onPaste: () => void;
+  hasClipboard: boolean;
   Item: React.ElementType;
   Separator: React.ElementType;
   testIdPrefix: string;
@@ -124,6 +130,14 @@ function FileMenuItems({
       >
         <Scissors size={14} /> Cut
       </Item>
+      <Item
+        className="context-menu__item"
+        disabled={!hasClipboard}
+        onSelect={onPaste}
+        data-testid={`${testIdPrefix}-paste`}
+      >
+        <ClipboardPaste size={14} /> Paste
+      </Item>
       <Separator className="context-menu__separator" />
       <Item
         className="context-menu__item"
@@ -143,8 +157,22 @@ function FileMenuItems({
   );
 }
 
-function FileRow({ entry, vscodeAvailable, onNavigate, onContextAction }: FileRowProps) {
-  const menuItemProps = { entry, vscodeAvailable, onNavigate, onContextAction };
+function FileRow({
+  entry,
+  vscodeAvailable,
+  onNavigate,
+  onContextAction,
+  onPaste,
+  hasClipboard,
+}: FileRowProps) {
+  const menuItemProps = {
+    entry,
+    vscodeAvailable,
+    onNavigate,
+    onContextAction,
+    onPaste,
+    hasClipboard,
+  };
 
   return (
     <ContextMenu.Root>
@@ -721,27 +749,60 @@ export function FileBrowser() {
         </div>
       )}
 
-      {isLoading && fileEntries.length === 0 ? (
-        <div className="file-browser__loading">
-          <Loader2 size={20} className="file-browser__spinner" />
-          <span>Loading...</span>
-        </div>
-      ) : (
-        <div className="file-browser__list">
-          <Virtuoso
-            totalCount={sortedEntries.length}
-            itemContent={(index) => (
-              <FileRow
-                entry={sortedEntries[index]}
-                vscodeAvailable={vscodeAvailable}
-                onNavigate={handleNavigate}
-                onContextAction={handleContextAction}
+      <ContextMenu.Root>
+        <ContextMenu.Trigger asChild>
+          {isLoading && fileEntries.length === 0 ? (
+            <div className="file-browser__loading">
+              <Loader2 size={20} className="file-browser__spinner" />
+              <span>Loading...</span>
+            </div>
+          ) : (
+            <div className="file-browser__list">
+              <Virtuoso
+                totalCount={sortedEntries.length}
+                itemContent={(index) => (
+                  <FileRow
+                    entry={sortedEntries[index]}
+                    vscodeAvailable={vscodeAvailable}
+                    onNavigate={handleNavigate}
+                    onContextAction={handleContextAction}
+                    onPaste={handlePaste}
+                    hasClipboard={fileClipboard !== null}
+                  />
+                )}
+                style={{ height: "100%" }}
               />
-            )}
-            style={{ height: "100%" }}
-          />
-        </div>
-      )}
+            </div>
+          )}
+        </ContextMenu.Trigger>
+        <ContextMenu.Portal>
+          <ContextMenu.Content className="context-menu__content">
+            <ContextMenu.Item
+              className="context-menu__item"
+              disabled={!fileClipboard}
+              onSelect={handlePaste}
+              data-testid="context-bg-paste"
+            >
+              <ClipboardPaste size={14} /> Paste
+            </ContextMenu.Item>
+            <ContextMenu.Separator className="context-menu__separator" />
+            <ContextMenu.Item
+              className="context-menu__item"
+              onSelect={() => setNewFileName("")}
+              data-testid="context-bg-new-file"
+            >
+              <FilePlus size={14} /> New File
+            </ContextMenu.Item>
+            <ContextMenu.Item
+              className="context-menu__item"
+              onSelect={() => setNewDirName("")}
+              data-testid="context-bg-new-folder"
+            >
+              <FolderPlus size={14} /> New Folder
+            </ContextMenu.Item>
+          </ContextMenu.Content>
+        </ContextMenu.Portal>
+      </ContextMenu.Root>
     </div>
   );
 }
