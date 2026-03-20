@@ -43,6 +43,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_cli::init())
         .manage(SftpManager::new())
         .manage(MonitoringManager::new())
         .manage(log_buffer)
@@ -212,6 +213,45 @@ pub fn run() {
                 }
             }
 
+            // Handle --list-workspaces CLI flag: print workspace list and exit
+            {
+                use tauri_plugin_cli::CliExt;
+                if let Ok(matches) = app.cli().matches() {
+                    if let Some(arg) = matches.args.get("list-workspaces") {
+                        if arg.occurrences > 0 {
+                            if let Some(mgr) =
+                                app.try_state::<workspace::manager::WorkspaceManager>()
+                            {
+                                match mgr.get_workspaces() {
+                                    Ok(workspaces) if workspaces.is_empty() => {
+                                        println!("No workspaces configured.");
+                                    }
+                                    Ok(workspaces) => {
+                                        for ws in &workspaces {
+                                            let desc =
+                                                ws.description.as_deref().unwrap_or("");
+                                            println!(
+                                                "{}\t{}\t{} tab(s)\t{}",
+                                                ws.id,
+                                                ws.name,
+                                                ws.connection_count,
+                                                desc
+                                            );
+                                        }
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Error listing workspaces: {e}");
+                                    }
+                                }
+                            } else {
+                                eprintln!("Workspace manager not available.");
+                            }
+                            std::process::exit(0);
+                        }
+                    }
+                }
+            }
+
             // Store recovery warnings so the frontend can retrieve them
             app.manage(Mutex::new(recovery_warnings));
 
@@ -320,6 +360,7 @@ pub fn run() {
             commands::workspace::save_workspace,
             commands::workspace::delete_workspace,
             commands::workspace::duplicate_workspace,
+            commands::workspace::get_cli_workspace,
             // Credentials
             commands::credential::get_credential_store_status,
             commands::credential::unlock_credential_store,

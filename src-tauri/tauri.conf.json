@@ -24,6 +24,29 @@
       "csp": null
     }
   },
+  "plugins": {
+    "cli": {
+      "description": "termiHub — cross-platform terminal hub",
+      "args": [
+        {
+          "name": "workspace",
+          "short": "w",
+          "takesValue": true,
+          "description": "Launch a workspace by name"
+        },
+        {
+          "name": "workspace-file",
+          "takesValue": true,
+          "description": "Launch a workspace from a JSON definition file"
+        },
+        {
+          "name": "list-workspaces",
+          "takesValue": false,
+          "description": "List all saved workspaces and exit"
+        }
+      ]
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",

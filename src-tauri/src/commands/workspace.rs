@@ -1,4 +1,5 @@
 use tauri::State;
+use tauri_plugin_cli::CliExt;
 
 use crate::utils::errors::TerminalError;
 use crate::workspace::config::{WorkspaceDefinition, WorkspaceSummary};
@@ -46,4 +47,50 @@ pub fn duplicate_workspace(
     manager: State<'_, WorkspaceManager>,
 ) -> Result<String, TerminalError> {
     manager.duplicate_workspace(&workspace_id)
+}
+
+/// Check CLI arguments for a workspace to launch.
+/// Returns the workspace name if `--workspace` or `--workspace-file` was provided.
+#[tauri::command]
+pub fn get_cli_workspace(
+    app_handle: tauri::AppHandle,
+    manager: State<'_, WorkspaceManager>,
+) -> Result<Option<String>, TerminalError> {
+    let matches = match app_handle.cli().matches() {
+        Ok(m) => m,
+        Err(_) => return Ok(None),
+    };
+
+    // Check --workspace flag
+    if let Some(arg) = matches.args.get("workspace") {
+        if let serde_json::Value::String(name) = &arg.value {
+            if !name.is_empty() {
+                return Ok(Some(name.clone()));
+            }
+        }
+    }
+
+    // Check --workspace-file flag: read file, save workspace, return name
+    if let Some(arg) = matches.args.get("workspace-file") {
+        if let serde_json::Value::String(path) = &arg.value {
+            if !path.is_empty() {
+                let content = std::fs::read_to_string(path).map_err(|e| {
+                    TerminalError::WorkspaceError(format!(
+                        "Cannot read workspace file '{path}': {e}"
+                    ))
+                })?;
+                let definition: WorkspaceDefinition =
+                    serde_json::from_str(&content).map_err(|e| {
+                        TerminalError::WorkspaceError(format!(
+                            "Invalid workspace file '{path}': {e}"
+                        ))
+                    })?;
+                let name = definition.name.clone();
+                manager.save_workspace(definition)?;
+                return Ok(Some(name));
+            }
+        }
+    }
+
+    Ok(None)
 }

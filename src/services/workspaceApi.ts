@@ -29,3 +29,8 @@ export async function deleteWorkspace(workspaceId: string): Promise<void> {
 export async function duplicateWorkspace(workspaceId: string): Promise<string> {
   return await invoke<string>("duplicate_workspace", { workspaceId });
 }
+
+/** Check CLI arguments for a workspace to launch. Returns workspace name or null. */
+export async function getCliWorkspace(): Promise<string | null> {
+  return await invoke<string | null>("get_cli_workspace");
+}

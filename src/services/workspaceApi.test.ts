@@ -11,6 +11,7 @@ import {
   saveWorkspace,
   deleteWorkspace,
   duplicateWorkspace,
+  getCliWorkspace,
 } from "./workspaceApi";
 
 const mockedInvoke = vi.mocked(invoke);
@@ -53,5 +54,18 @@ describe("workspaceApi", () => {
     const result = await duplicateWorkspace("ws-1");
     expect(mockedInvoke).toHaveBeenCalledWith("duplicate_workspace", { workspaceId: "ws-1" });
     expect(result).toBe("ws-2");
+  });
+
+  it("getCliWorkspace invokes correct command", async () => {
+    mockedInvoke.mockResolvedValue("my-workspace");
+    const result = await getCliWorkspace();
+    expect(mockedInvoke).toHaveBeenCalledWith("get_cli_workspace");
+    expect(result).toBe("my-workspace");
+  });
+
+  it("getCliWorkspace returns null when no CLI arg", async () => {
+    mockedInvoke.mockResolvedValue(null);
+    const result = await getCliWorkspace();
+    expect(result).toBeNull();
   });
 });
