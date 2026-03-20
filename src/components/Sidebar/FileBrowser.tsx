@@ -1,5 +1,7 @@
-import { useCallback, useState, useRef, useEffect } from "react";
+import { useCallback, useState, useEffect } from "react";
 import * as ContextMenu from "@radix-ui/react-context-menu";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import {
   Folder,
   File,
@@ -19,6 +21,9 @@ import {
   CodeXml,
   FileEdit,
   FilePlus,
+  Copy,
+  Scissors,
+  ClipboardPaste,
 } from "lucide-react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
@@ -39,121 +44,149 @@ function formatFileSize(bytes: number): string {
 
 interface FileRowProps {
   entry: FileEntry;
-  mode: "local" | "sftp" | "none";
   vscodeAvailable: boolean;
   onNavigate: (entry: FileEntry) => void;
   onContextAction: (entry: FileEntry, action: string) => void;
+  onPaste: () => void;
+  hasClipboard: boolean;
 }
 
 /**
  * Shared menu items for file/directory actions.
- * Used by both the three-dots dropdown and the right-click context menu.
+ * Renders identically in both the DropdownMenu (kebab) and ContextMenu (right-click)
+ * by accepting the Radix Item/Separator components as props.
  */
-function FileMenuItems({
+export function FileMenuItems({
   entry,
-  mode,
   vscodeAvailable,
   onNavigate,
   onContextAction,
-  onClose,
+  onPaste,
+  hasClipboard,
+  Item,
+  Separator,
+  testIdPrefix,
 }: {
   entry: FileEntry;
-  mode: "local" | "sftp" | "none";
   vscodeAvailable: boolean;
   onNavigate: (entry: FileEntry) => void;
   onContextAction: (entry: FileEntry, action: string) => void;
-  onClose: () => void;
+  onPaste: () => void;
+  hasClipboard: boolean;
+  Item: React.ElementType;
+  Separator: React.ElementType;
+  testIdPrefix: string;
 }) {
   return (
     <>
       {entry.isDirectory && (
-        <button
-          className="file-browser__context-item"
-          onClick={() => {
-            onClose();
-            onNavigate(entry);
-          }}
-          data-testid="file-menu-open"
+        <Item
+          className="context-menu__item"
+          onSelect={() => onNavigate(entry)}
+          data-testid={`${testIdPrefix}-open`}
         >
           <FolderOpen size={14} /> Open
-        </button>
-      )}
-      {!entry.isDirectory && mode === "sftp" && (
-        <button
-          className="file-browser__context-item"
-          onClick={() => {
-            onClose();
-            onContextAction(entry, "download");
-          }}
-          data-testid="file-menu-download"
-        >
-          <Download size={14} /> Download
-        </button>
+        </Item>
       )}
       {!entry.isDirectory && (
-        <button
-          className="file-browser__context-item"
-          onClick={() => {
-            onClose();
-            onContextAction(entry, "edit");
-          }}
-          data-testid="file-menu-edit"
+        <Item
+          className="context-menu__item"
+          onSelect={() => onContextAction(entry, "download")}
+          data-testid={`${testIdPrefix}-download`}
+        >
+          <Download size={14} /> Download
+        </Item>
+      )}
+      {!entry.isDirectory && (
+        <Item
+          className="context-menu__item"
+          onSelect={() => onContextAction(entry, "edit")}
+          data-testid={`${testIdPrefix}-edit`}
         >
           <FileEdit size={14} /> Edit
-        </button>
+        </Item>
       )}
       {!entry.isDirectory && vscodeAvailable && (
-        <button
-          className="file-browser__context-item"
-          onClick={() => {
-            onClose();
-            onContextAction(entry, "vscode");
-          }}
-          data-testid="file-menu-vscode"
+        <Item
+          className="context-menu__item"
+          onSelect={() => onContextAction(entry, "vscode")}
+          data-testid={`${testIdPrefix}-vscode`}
         >
           <CodeXml size={14} /> Open in VS Code
-        </button>
+        </Item>
       )}
-      <button
-        className="file-browser__context-item"
-        onClick={() => {
-          onClose();
-          onContextAction(entry, "rename");
-        }}
-        data-testid="file-menu-rename"
+      <Separator className="context-menu__separator" />
+      <Item
+        className="context-menu__item"
+        onSelect={() => onContextAction(entry, "copy")}
+        data-testid={`${testIdPrefix}-copy`}
+      >
+        <Copy size={14} /> Copy
+      </Item>
+      <Item
+        className="context-menu__item"
+        onSelect={() => onContextAction(entry, "cut")}
+        data-testid={`${testIdPrefix}-cut`}
+      >
+        <Scissors size={14} /> Cut
+      </Item>
+      <Item
+        className="context-menu__item"
+        disabled={!hasClipboard}
+        onSelect={onPaste}
+        data-testid={`${testIdPrefix}-paste`}
+      >
+        <ClipboardPaste size={14} /> Paste
+      </Item>
+      <Item
+        className="context-menu__item"
+        onSelect={() => onContextAction(entry, "copyName")}
+        data-testid={`${testIdPrefix}-copy-name`}
+      >
+        <Copy size={14} /> Copy Name
+      </Item>
+      <Item
+        className="context-menu__item"
+        onSelect={() => onContextAction(entry, "copyPath")}
+        data-testid={`${testIdPrefix}-copy-path`}
+      >
+        <Copy size={14} /> Copy Path
+      </Item>
+      <Separator className="context-menu__separator" />
+      <Item
+        className="context-menu__item"
+        onSelect={() => onContextAction(entry, "rename")}
+        data-testid={`${testIdPrefix}-rename`}
       >
         <Pencil size={14} /> Rename
-      </button>
-      <button
-        className="file-browser__context-item file-browser__context-item--danger"
-        onClick={() => {
-          onClose();
-          onContextAction(entry, "delete");
-        }}
-        data-testid="file-menu-delete"
+      </Item>
+      <Item
+        className="context-menu__item context-menu__item--danger"
+        onSelect={() => onContextAction(entry, "delete")}
+        data-testid={`${testIdPrefix}-delete`}
       >
         <Trash2 size={14} /> Delete
-      </button>
+      </Item>
     </>
   );
 }
 
-function FileRow({ entry, mode, vscodeAvailable, onNavigate, onContextAction }: FileRowProps) {
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!menuOpen) return;
-    function handleClickOutside(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [menuOpen]);
-
-  const menuItemProps = { entry, mode, vscodeAvailable, onNavigate, onContextAction };
+function FileRow({
+  entry,
+  vscodeAvailable,
+  onNavigate,
+  onContextAction,
+  onPaste,
+  hasClipboard,
+}: FileRowProps) {
+  const menuItemProps = {
+    entry,
+    vscodeAvailable,
+    onNavigate,
+    onContextAction,
+    onPaste,
+    hasClipboard,
+  };
 
   return (
     <ContextMenu.Root>
@@ -183,79 +216,39 @@ function FileRow({ entry, mode, vscodeAvailable, onNavigate, onContextAction }: 
               <span className="file-browser__permissions">{entry.permissions}</span>
             )}
           </button>
-          <div className="file-browser__row-menu" ref={menuRef}>
-            <button
-              className="file-browser__btn file-browser__btn--menu"
-              onClick={(e) => {
-                e.stopPropagation();
-                setMenuOpen(!menuOpen);
-              }}
-              title="Actions"
-              data-testid={`file-row-menu-${entry.name}`}
-            >
-              <MoreHorizontal size={14} />
-            </button>
-            {menuOpen && (
-              <div className="file-browser__context-menu">
-                <FileMenuItems {...menuItemProps} onClose={() => setMenuOpen(false)} />
-              </div>
-            )}
+          <div className="file-browser__row-menu">
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger asChild>
+                <button
+                  className="file-browser__btn file-browser__btn--menu"
+                  title="Actions"
+                  data-testid={`file-row-menu-${entry.name}`}
+                >
+                  <MoreHorizontal size={14} />
+                </button>
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content className="context-menu__content" align="end">
+                  <FileMenuItems
+                    {...menuItemProps}
+                    Item={DropdownMenu.Item}
+                    Separator={DropdownMenu.Separator}
+                    testIdPrefix="file-menu"
+                  />
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
           </div>
         </div>
       </ContextMenu.Trigger>
       <ContextMenu.Portal>
         <ContextMenu.Content className="context-menu__content">
-          {entry.isDirectory && (
-            <ContextMenu.Item
-              className="context-menu__item"
-              onSelect={() => onNavigate(entry)}
-              data-testid="context-file-open"
-            >
-              <FolderOpen size={14} /> Open
-            </ContextMenu.Item>
-          )}
-          {!entry.isDirectory && mode === "sftp" && (
-            <ContextMenu.Item
-              className="context-menu__item"
-              onSelect={() => onContextAction(entry, "download")}
-              data-testid="context-file-download"
-            >
-              <Download size={14} /> Download
-            </ContextMenu.Item>
-          )}
-          {!entry.isDirectory && (
-            <ContextMenu.Item
-              className="context-menu__item"
-              onSelect={() => onContextAction(entry, "edit")}
-              data-testid="context-file-edit"
-            >
-              <FileEdit size={14} /> Edit
-            </ContextMenu.Item>
-          )}
-          {!entry.isDirectory && vscodeAvailable && (
-            <ContextMenu.Item
-              className="context-menu__item"
-              onSelect={() => onContextAction(entry, "vscode")}
-              data-testid="context-file-vscode"
-            >
-              <CodeXml size={14} /> Open in VS Code
-            </ContextMenu.Item>
-          )}
-          <ContextMenu.Separator className="context-menu__separator" />
-          <ContextMenu.Item
-            className="context-menu__item"
-            onSelect={() => onContextAction(entry, "rename")}
-            data-testid="context-file-rename"
-          >
-            <Pencil size={14} /> Rename
-          </ContextMenu.Item>
-          <ContextMenu.Item
-            className="context-menu__item context-menu__item--danger"
-            onSelect={() => onContextAction(entry, "delete")}
-            data-testid="context-file-delete"
-          >
-            <Trash2 size={14} /> Delete
-          </ContextMenu.Item>
+          <FileMenuItems
+            {...menuItemProps}
+            Item={ContextMenu.Item}
+            Separator={ContextMenu.Separator}
+            testIdPrefix="context-file"
+          />
         </ContextMenu.Content>
       </ContextMenu.Portal>
     </ContextMenu.Root>
@@ -481,11 +474,15 @@ export function FileBrowser() {
     deleteEntry,
     renameEntry,
     openInVscode,
+    copyEntry,
+    cutEntry,
+    pasteEntry,
     mode,
   } = useFileBrowser();
 
   const disconnectSftp = useAppStore((s) => s.disconnectSftp);
   const vscodeAvailable = useAppStore((s) => s.vscodeAvailable);
+  const fileClipboard = useAppStore((s) => s.fileClipboard);
   const [newDirName, setNewDirName] = useState<string | null>(null);
   const [newFileName, setNewFileName] = useState<string | null>(null);
 
@@ -536,6 +533,18 @@ export function FileBrowser() {
             console.error("Open in VS Code failed:", err)
           );
           break;
+        case "copy":
+          copyEntry(entry);
+          break;
+        case "cut":
+          cutEntry(entry);
+          break;
+        case "copyName":
+          writeClipboard(entry.name);
+          break;
+        case "copyPath":
+          writeClipboard(entry.path);
+          break;
         case "rename": {
           const newName = window.prompt("New name:", entry.name);
           if (newName && newName !== entry.name) {
@@ -558,8 +567,12 @@ export function FileBrowser() {
         }
       }
     },
-    [mode, sftpSessionId, downloadFile, openInVscode, renameEntry, deleteEntry]
+    [mode, sftpSessionId, downloadFile, openInVscode, copyEntry, cutEntry, renameEntry, deleteEntry]
   );
+
+  const handlePaste = useCallback(() => {
+    pasteEntry().catch((err: unknown) => console.error("Paste failed:", err));
+  }, [pasteEntry]);
 
   const handleCreateDir = useCallback(() => {
     if (newDirName && newDirName.trim()) {
@@ -659,6 +672,19 @@ export function FileBrowser() {
           )}
           <button
             className="file-browser__btn"
+            onClick={handlePaste}
+            disabled={!fileClipboard}
+            title={
+              fileClipboard
+                ? `Paste "${fileClipboard.entry.name}" (${fileClipboard.operation})`
+                : "Paste"
+            }
+            data-testid="file-browser-paste"
+          >
+            <ClipboardPaste size={14} />
+          </button>
+          <button
+            className="file-browser__btn"
             onClick={() => setNewFileName("")}
             title="New File"
             data-testid="file-browser-new-file"
@@ -743,25 +769,57 @@ export function FileBrowser() {
         </div>
       )}
 
-      {isLoading && fileEntries.length === 0 ? (
-        <div className="file-browser__loading">
-          <Loader2 size={20} className="file-browser__spinner" />
-          <span>Loading...</span>
-        </div>
-      ) : (
-        <div className="file-browser__list">
-          {sortedEntries.map((entry) => (
-            <FileRow
-              key={entry.path}
-              entry={entry}
-              mode={mode}
-              vscodeAvailable={vscodeAvailable}
-              onNavigate={handleNavigate}
-              onContextAction={handleContextAction}
-            />
-          ))}
-        </div>
-      )}
+      <ContextMenu.Root>
+        <ContextMenu.Trigger asChild>
+          {isLoading && fileEntries.length === 0 ? (
+            <div className="file-browser__loading">
+              <Loader2 size={20} className="file-browser__spinner" />
+              <span>Loading...</span>
+            </div>
+          ) : (
+            <div className="file-browser__list">
+              {sortedEntries.map((entry) => (
+                <FileRow
+                  key={entry.path}
+                  entry={entry}
+                  vscodeAvailable={vscodeAvailable}
+                  onNavigate={handleNavigate}
+                  onContextAction={handleContextAction}
+                  onPaste={handlePaste}
+                  hasClipboard={fileClipboard !== null}
+                />
+              ))}
+            </div>
+          )}
+        </ContextMenu.Trigger>
+        <ContextMenu.Portal>
+          <ContextMenu.Content className="context-menu__content">
+            <ContextMenu.Item
+              className="context-menu__item"
+              disabled={!fileClipboard}
+              onSelect={handlePaste}
+              data-testid="context-bg-paste"
+            >
+              <ClipboardPaste size={14} /> Paste
+            </ContextMenu.Item>
+            <ContextMenu.Separator className="context-menu__separator" />
+            <ContextMenu.Item
+              className="context-menu__item"
+              onSelect={() => setNewFileName("")}
+              data-testid="context-bg-new-file"
+            >
+              <FilePlus size={14} /> New File
+            </ContextMenu.Item>
+            <ContextMenu.Item
+              className="context-menu__item"
+              onSelect={() => setNewDirName("")}
+              data-testid="context-bg-new-folder"
+            >
+              <FolderPlus size={14} /> New Folder
+            </ContextMenu.Item>
+          </ContextMenu.Content>
+        </ContextMenu.Portal>
+      </ContextMenu.Root>
     </div>
   );
 }

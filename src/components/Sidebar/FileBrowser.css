@@ -123,45 +123,6 @@
   font-family: monospace;
 }
 
-/* Context menu */
-.file-browser__context-menu {
-  position: absolute;
-  top: 100%;
-  right: 0;
-  z-index: 100;
-  min-width: 140px;
-  padding: 4px 0;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-secondary);
-  border-radius: var(--radius-sm);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-}
-
-.file-browser__context-item {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  width: 100%;
-  padding: 4px 10px;
-  font-size: var(--font-size-sm);
-  color: var(--text-primary);
-  text-align: left;
-  white-space: nowrap;
-  transition: background-color var(--transition-fast);
-}
-
-.file-browser__context-item:hover {
-  background-color: var(--bg-hover);
-}
-
-.file-browser__context-item--danger {
-  color: var(--color-error);
-}
-
-.file-browser__context-item--danger:hover {
-  background-color: rgba(244, 71, 71, 0.1);
-}
-
 /* Connection picker */
 .file-browser__picker {
   display: flex;

@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { act } from "react";
+import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
-import { FileBrowser } from "./FileBrowser";
+import { FileBrowser, FileMenuItems } from "./FileBrowser";
 import type { TerminalTab, LeafPanel } from "@/types/terminal";
+import type { FileEntry } from "@/types/connection";
 
 vi.mock("@/themes", () => ({
   applyTheme: vi.fn(),
@@ -280,5 +281,354 @@ describe("FileBrowser – useFileBrowserSync", () => {
     await flushAsync();
 
     expect(useAppStore.getState().localCurrentPath).toBe("C:/Users/richtera");
+  });
+});
+
+/** Simple wrapper that renders items as plain divs (bypassing Radix portal issues in JSDOM). */
+function SimpleItem({
+  children,
+  onSelect,
+  ...rest
+}: {
+  children: React.ReactNode;
+  onSelect?: () => void;
+  [key: string]: unknown;
+}) {
+  return (
+    <div role="menuitem" onClick={onSelect} {...rest}>
+      {children}
+    </div>
+  );
+}
+function SimpleSeparator(props: Record<string, unknown>) {
+  return <hr {...props} />;
+}
+
+describe("FileBrowser – Copy/Cut/Paste UI", () => {
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState(useAppStore.getInitialState());
+
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "local_list_dir")
+        return Promise.resolve([
+          { name: "test.txt", path: "/home/test.txt", isDirectory: false, size: 10 },
+          { name: "mydir", path: "/home/mydir", isDirectory: true, size: 0 },
+        ]);
+      return Promise.resolve(undefined);
+    });
+  });
+
+  afterEach(() => {
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+    vi.clearAllMocks();
+  });
+
+  it("renders paste button in toolbar when in local mode", async () => {
+    const localTab = makeTab({
+      connectionType: "local",
+      config: { type: "local", config: {} },
+    });
+    setActiveTab(localTab);
+    useAppStore.setState({ sidebarView: "files" });
+
+    await act(async () => {
+      root.render(<FileBrowser />);
+    });
+    await flushAsync();
+
+    const pasteBtn = container.querySelector('[data-testid="file-browser-paste"]');
+    expect(pasteBtn).toBeTruthy();
+    expect((pasteBtn as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("enables paste button when clipboard has content", async () => {
+    const localTab = makeTab({
+      connectionType: "local",
+      config: { type: "local", config: {} },
+    });
+    setActiveTab(localTab);
+    useAppStore.setState({
+      sidebarView: "files",
+      fileClipboard: {
+        entry: {
+          name: "copied.txt",
+          path: "/home/copied.txt",
+          isDirectory: false,
+          size: 5,
+          modified: "",
+          permissions: null,
+        },
+        operation: "copy",
+        sourceMode: "local",
+        sourcePath: "/home",
+        sftpSessionId: null,
+      },
+    });
+
+    await act(async () => {
+      root.render(<FileBrowser />);
+    });
+    await flushAsync();
+
+    const pasteBtn = container.querySelector('[data-testid="file-browser-paste"]');
+    expect(pasteBtn).toBeTruthy();
+    expect((pasteBtn as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("sets clipboard state via store setFileClipboard for copy", () => {
+    const entry: FileEntry = {
+      name: "test.txt",
+      path: "/home/test.txt",
+      isDirectory: false,
+      size: 10,
+      modified: "",
+      permissions: null,
+    };
+    useAppStore.getState().setFileClipboard({
+      entry,
+      operation: "copy",
+      sourceMode: "local",
+      sourcePath: "/home",
+      sftpSessionId: null,
+    });
+
+    const clipboard = useAppStore.getState().fileClipboard;
+    expect(clipboard).not.toBeNull();
+    expect(clipboard?.entry.name).toBe("test.txt");
+    expect(clipboard?.operation).toBe("copy");
+    expect(clipboard?.sourceMode).toBe("local");
+  });
+
+  it("sets clipboard state via store setFileClipboard for cut", () => {
+    const entry: FileEntry = {
+      name: "mydir",
+      path: "/home/mydir",
+      isDirectory: true,
+      size: 0,
+      modified: "",
+      permissions: null,
+    };
+    useAppStore.getState().setFileClipboard({
+      entry,
+      operation: "cut",
+      sourceMode: "local",
+      sourcePath: "/home",
+      sftpSessionId: null,
+    });
+
+    const clipboard = useAppStore.getState().fileClipboard;
+    expect(clipboard).not.toBeNull();
+    expect(clipboard?.entry.name).toBe("mydir");
+    expect(clipboard?.operation).toBe("cut");
+    expect(clipboard?.sourceMode).toBe("local");
+  });
+
+  it("clears clipboard when setFileClipboard is called with null", () => {
+    const entry: FileEntry = {
+      name: "test.txt",
+      path: "/home/test.txt",
+      isDirectory: false,
+      size: 10,
+      modified: "",
+      permissions: null,
+    };
+    useAppStore.getState().setFileClipboard({
+      entry,
+      operation: "copy",
+      sourceMode: "local",
+      sourcePath: "/home",
+      sftpSessionId: null,
+    });
+    expect(useAppStore.getState().fileClipboard).not.toBeNull();
+
+    useAppStore.getState().setFileClipboard(null);
+    expect(useAppStore.getState().fileClipboard).toBeNull();
+  });
+});
+
+describe("FileBrowser – Copy Name / Copy Path", () => {
+  const fileEntry: FileEntry = {
+    name: "notes.txt",
+    path: "/home/user/notes.txt",
+    isDirectory: false,
+    size: 42,
+    modified: "2026-01-01T00:00:00Z",
+    permissions: null,
+  };
+  const dirEntry: FileEntry = {
+    name: "projects",
+    path: "/home/user/projects",
+    isDirectory: true,
+    size: 0,
+    modified: "2026-01-01T00:00:00Z",
+    permissions: null,
+  };
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("shows Copy Name and Copy Path items for a file", () => {
+    const onAction = vi.fn();
+    act(() => {
+      root.render(
+        <FileMenuItems
+          entry={fileEntry}
+          vscodeAvailable={false}
+          onNavigate={vi.fn()}
+          onContextAction={onAction}
+          onPaste={vi.fn()}
+          hasClipboard={false}
+          Item={SimpleItem}
+          Separator={SimpleSeparator}
+          testIdPrefix="file-menu"
+        />
+      );
+    });
+
+    expect(container.querySelector('[data-testid="file-menu-copy-name"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="file-menu-copy-path"]')).toBeTruthy();
+  });
+
+  it("shows Copy Name and Copy Path items for a directory", () => {
+    const onAction = vi.fn();
+    act(() => {
+      root.render(
+        <FileMenuItems
+          entry={dirEntry}
+          vscodeAvailable={false}
+          onNavigate={vi.fn()}
+          onContextAction={onAction}
+          onPaste={vi.fn()}
+          hasClipboard={false}
+          Item={SimpleItem}
+          Separator={SimpleSeparator}
+          testIdPrefix="file-menu"
+        />
+      );
+    });
+
+    expect(container.querySelector('[data-testid="file-menu-copy-name"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="file-menu-copy-path"]')).toBeTruthy();
+  });
+
+  it("triggers copyName action when Copy Name is clicked", () => {
+    const onAction = vi.fn();
+    act(() => {
+      root.render(
+        <FileMenuItems
+          entry={fileEntry}
+          vscodeAvailable={false}
+          onNavigate={vi.fn()}
+          onContextAction={onAction}
+          onPaste={vi.fn()}
+          hasClipboard={false}
+          Item={SimpleItem}
+          Separator={SimpleSeparator}
+          testIdPrefix="file-menu"
+        />
+      );
+    });
+
+    const item = container.querySelector('[data-testid="file-menu-copy-name"]') as HTMLElement;
+    act(() => {
+      item.click();
+    });
+
+    expect(onAction).toHaveBeenCalledWith(fileEntry, "copyName");
+  });
+
+  it("triggers copyPath action when Copy Path is clicked", () => {
+    const onAction = vi.fn();
+    act(() => {
+      root.render(
+        <FileMenuItems
+          entry={fileEntry}
+          vscodeAvailable={false}
+          onNavigate={vi.fn()}
+          onContextAction={onAction}
+          onPaste={vi.fn()}
+          hasClipboard={false}
+          Item={SimpleItem}
+          Separator={SimpleSeparator}
+          testIdPrefix="file-menu"
+        />
+      );
+    });
+
+    const item = container.querySelector('[data-testid="file-menu-copy-path"]') as HTMLElement;
+    act(() => {
+      item.click();
+    });
+
+    expect(onAction).toHaveBeenCalledWith(fileEntry, "copyPath");
+  });
+
+  it("triggers copyName action for a directory", () => {
+    const onAction = vi.fn();
+    act(() => {
+      root.render(
+        <FileMenuItems
+          entry={dirEntry}
+          vscodeAvailable={false}
+          onNavigate={vi.fn()}
+          onContextAction={onAction}
+          onPaste={vi.fn()}
+          hasClipboard={false}
+          Item={SimpleItem}
+          Separator={SimpleSeparator}
+          testIdPrefix="file-menu"
+        />
+      );
+    });
+
+    const item = container.querySelector('[data-testid="file-menu-copy-name"]') as HTMLElement;
+    act(() => {
+      item.click();
+    });
+
+    expect(onAction).toHaveBeenCalledWith(dirEntry, "copyName");
+  });
+
+  it("triggers copyPath action for a directory", () => {
+    const onAction = vi.fn();
+    act(() => {
+      root.render(
+        <FileMenuItems
+          entry={dirEntry}
+          vscodeAvailable={false}
+          onNavigate={vi.fn()}
+          onContextAction={onAction}
+          onPaste={vi.fn()}
+          hasClipboard={false}
+          Item={SimpleItem}
+          Separator={SimpleSeparator}
+          testIdPrefix="file-menu"
+        />
+      );
+    });
+
+    const item = container.querySelector('[data-testid="file-menu-copy-path"]') as HTMLElement;
+    act(() => {
+      item.click();
+    });
+
+    expect(onAction).toHaveBeenCalledWith(dirEntry, "copyPath");
   });
 });

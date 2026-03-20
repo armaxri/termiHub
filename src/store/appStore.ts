@@ -98,6 +98,15 @@ import {
 
 export type SidebarView = "connections" | "files" | "tunnels";
 
+/** Clipboard state for file browser copy/cut operations. */
+export interface FileClipboard {
+  entry: FileEntry;
+  operation: "copy" | "cut";
+  sourceMode: "local" | "sftp";
+  sourcePath: string;
+  sftpSessionId: string | null;
+}
+
 /**
  * Strip password from connection configs so it is never persisted,
  * unless `savePassword` is true (password will be routed to the backend
@@ -133,8 +142,10 @@ interface AppState {
   // Sidebar
   sidebarView: SidebarView;
   sidebarCollapsed: boolean;
+  sidebarWidth: number;
   setSidebarView: (view: SidebarView) => void;
   toggleSidebar: () => void;
+  setSidebarWidth: (width: number) => void;
 
   // Password prompt
   passwordPromptOpen: boolean;
@@ -318,6 +329,10 @@ interface AppState {
   fileBrowserMode: "local" | "sftp" | "none";
   setFileBrowserMode: (mode: "local" | "sftp" | "none") => void;
 
+  // File clipboard (copy/cut)
+  fileClipboard: FileClipboard | null;
+  setFileClipboard: (clipboard: FileClipboard | null) => void;
+
   // VS Code availability
   vscodeAvailable: boolean;
   checkVscodeAvailability: () => Promise<void>;
@@ -422,12 +437,14 @@ export const useAppStore = create<AppState>((set, get) => {
     // Sidebar
     sidebarView: "connections",
     sidebarCollapsed: false,
+    sidebarWidth: 260,
     setSidebarView: (view) =>
       set((state) => ({
         sidebarView: view,
         sidebarCollapsed: state.sidebarView === view && !state.sidebarCollapsed ? true : false,
       })),
     toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
+    setSidebarWidth: (width) => set({ sidebarWidth: width }),
 
     // Password prompt
     passwordPromptOpen: false,
@@ -1697,6 +1714,10 @@ export const useAppStore = create<AppState>((set, get) => {
     // File browser mode
     fileBrowserMode: "none",
     setFileBrowserMode: (mode) => set({ fileBrowserMode: mode }),
+
+    // File clipboard (copy/cut)
+    fileClipboard: null,
+    setFileClipboard: (clipboard) => set({ fileClipboard: clipboard }),
 
     // VS Code availability
     vscodeAvailable: false,

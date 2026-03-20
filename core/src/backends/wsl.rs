@@ -739,10 +739,7 @@ mod tests {
 
     #[test]
     fn map_io_error_other() {
-        let err = super::map_io_error(
-            std::io::Error::new(std::io::ErrorKind::Other, "boom"),
-            "/some/path",
-        );
+        let err = super::map_io_error(std::io::Error::other("boom"), "/some/path");
         assert!(matches!(err, FileError::OperationFailed(_)));
     }
 

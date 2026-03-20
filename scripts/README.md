@@ -14,7 +14,7 @@ Helper scripts for common development tasks. Each script has a `.sh` (Unix/macOS
 | `test-system`         | Start Docker infra + virtual serial ports and run system-level E2E tests                                                   |
 | `test-system-mac`     | macOS system test orchestration: Docker containers, unit tests, Rust integration tests (no E2E)                            |
 | `test-system-linux`   | Linux system test orchestration: Docker containers, unit tests, integration tests, E2E tests                               |
-| `test-system-windows` | Windows system test orchestration via WSL/Git Bash: Docker, unit tests, integration tests, E2E                             |
+| `test-system-windows` | Windows system test orchestration via WSL/Git Bash: Docker or Podman, unit tests, integration tests, E2E                  |
 | `setup-agent-cross`   | Install cross-compilation toolchains for building the agent for 2 Linux targets (musl)                                     |
 | `build-agents`        | Cross-compile the remote agent for Linux targets (x64/ARM64, static musl binaries)                                         |
 | `release-check`       | Validate release readiness — version consistency, changelog, tests, quality checks, git state, branch, and code markers    |
@@ -41,14 +41,26 @@ Helper scripts for common development tasks. Each script has a `.sh` (Unix/macOS
 ./scripts/test-system.sh --skip-serial # SSH/Telnet only, no serial port setup
 ./scripts/test-system.sh --keep-infra  # Keep Docker containers after tests
 
-# Per-machine comprehensive system tests
+# Per-machine comprehensive system tests (macOS / Linux)
 ./scripts/test-system-mac.sh                    # macOS (unit + integration, no E2E)
 ./scripts/test-system-mac.sh --with-all         # Include fault + stress profiles
 ./scripts/test-system-linux.sh                  # Linux (unit + integration + E2E)
 ./scripts/test-system-linux.sh --with-fault     # Include network fault tests
 ./scripts/test-system-windows.sh                # Windows via WSL/Git Bash
-./scripts/test-system-windows.sh --skip-unit    # Integration tests only
+```
 
+```cmd
+REM Per-machine comprehensive system tests (Windows — cmd.exe)
+scripts\test-system-windows.cmd                                          REM Full run
+scripts\test-system-windows.cmd --skip-unit                              REM Integration tests only
+scripts\test-system-windows.cmd --skip-integration                       REM Unit tests only (Podman — no docker buildx)
+scripts\test-system-windows.cmd --skip-e2e                               REM Unit + integration, no E2E
+
+REM Simple general dispatcher (also callable from cmd.exe)
+scripts\test-system.cmd                                                  REM Delegates to test-system-windows.sh
+```
+
+```bash
 # Agent cross-compilation (one-time setup + build)
 ./scripts/setup-agent-cross.sh        # Install cross-compilation toolchains
 ./scripts/build-agents.sh             # Build agent for all Linux targets

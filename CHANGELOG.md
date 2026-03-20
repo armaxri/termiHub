@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Shell support: PowerShell (`pwsh`) detection on macOS and Linux — detects via Homebrew, snap, and apt installation paths
+- Shell support: Fish and Nushell detection on macOS and Linux with proper `--login` flags
+- Shell support: Custom shell path option — select "Custom..." in the shell dropdown and provide an arbitrary shell executable path
+- File browser: Copy, Cut, and Paste operations for files and directories — works within local mode, within SFTP mode, and cross-mode (local↔SFTP) (#500)
+- File browser: Download now available in local mode (save file to a user-chosen location via save dialog) (#500)
+- File browser: Paste toolbar button with tooltip showing clipboard contents and operation type (#500)
+- File Browser "Copy Name" / "Copy Path" context menu actions — right-click or use the kebab menu on any file or directory to copy its name or full path to the clipboard (#502)
+- Resizable sidebar — drag the edge handle to adjust sidebar width between 170px and 600px, width persists across collapse/expand cycles (#499)
+- `scripts/test-system.cmd` — Windows cmd.exe dispatcher for system tests; delegates to `test-system-windows.sh` via Git Bash or WSL, enabling `scripts\test-system.cmd --skip-serial --skip-e2e` from a standard Windows terminal (#462)
+- Podman support in `test-system-windows.sh` — compose availability check with actionable error, `podman.exe` detection for Git Bash contexts, and `--skip-serial` flag accepted as a no-op for cross-platform compatibility (#462)
+- Podman-on-Windows BuildKit auto-detection in `test-system-windows.sh` — detects when Podman is in use without `docker buildx` (no Docker Desktop), auto-skips integration tests with a clear explanation, and continues running unit tests; eliminates cryptic `docker-compose.exe` failures when Docker Desktop is absent (#462)
 - E2E tests for local file browser MT-FB-01 (Browse local files) and MT-FB-02 (Navigate directories) — covers toolbar visibility, current path display, file entry listing, Up button navigation, double-click directory entry, and round-trip navigation; manual test YAML updated with automation coverage notes (#460)
 - E2E tests for tab management MT-TAB-01 through MT-TAB-04 — covers open tab from connection (double-click and context menu), close tab, rename tab, and switch between tabs; manual test YAML restructured with updated IDs for remaining drag and save-to-file tests (#459)
 - E2E tests for connection management CRUD scenarios MT-CONN-01 through MT-CONN-08 — covers create local/SSH connection, edit, delete, create folder, move connection to folder, and import/export menu flow; manual test YAML updated with automation coverage notes (#458)
@@ -17,10 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- File Browser menus unified — the three-dot kebab dropdown now uses the same Radix DropdownMenu component and shared CSS classes as the right-click context menu, giving both menus identical styling (accent hover, separator before Rename/Delete, danger highlight on Delete) (#501)
 - Scripts directory reorganized — internal helpers (`autoformat.sh`, `kill-port.cjs`) moved to `scripts/internal/` to separate them from user-facing dev scripts
 
 ### Fixed
 
+- Terminal auto-scroll overriding user scroll position — scrolling up during active output (e.g., Claude Code thinking phase) no longer snaps the viewport back to the bottom; auto-scroll resumes when the user scrolls back to the bottom (#504)
 - Remote monitoring data never reaching the frontend — the `RemoteMonitoringProxy` created a tokio channel but immediately dropped the sender, and `handle_notification()` in `agent_manager` silently ignored `connection.monitoring.data` notifications; now monitoring notifications are routed through the agent I/O thread to registered monitoring channels (#483)
 - Paste (Cmd+V) inserting text twice on macOS — the native browser paste event was reaching xterm.js in addition to the custom paste handler, causing doubled input (#444)
 - Terminal not auto-scrolling to the newest output line — xterm.js 6's SmoothScrollableElement does not reliably auto-scroll in WKWebView (macOS Tauri); added explicit `scrollToBottom()` after output writes (#444)

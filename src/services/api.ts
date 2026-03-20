@@ -343,6 +343,15 @@ export async function localListDir(path: string): Promise<FileEntry[]> {
   return await invoke<FileEntry[]>("local_list_dir", { path });
 }
 
+/** Copy a file or directory on the local filesystem. */
+export async function localCopyFile(
+  srcPath: string,
+  destPath: string,
+  isDirectory: boolean
+): Promise<void> {
+  await invoke("local_copy", { srcPath, destPath, isDirectory });
+}
+
 /** Create a directory on the local filesystem. */
 export async function localMkdir(path: string): Promise<void> {
   await invoke("local_mkdir", { path });

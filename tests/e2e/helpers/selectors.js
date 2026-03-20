@@ -235,6 +235,10 @@ export const IMPORT_WITHOUT_CREDENTIALS = '[data-testid="import-without-credenti
 export const IMPORT_WITH_CREDENTIALS = '[data-testid="import-with-credentials"]';
 export const IMPORT_SUBMIT = '[data-testid="import-submit"]';
 
+// --- Sidebar ---
+export const SIDEBAR = '[data-testid="sidebar"]';
+export const SIDEBAR_RESIZE_HANDLE = '[data-testid="sidebar-resize-handle"]';
+
 // --- Sidebar Group Sections ---
 export const SIDEBAR_GROUP_HEADER_CONNECTIONS = '[data-testid="sidebar-group-header-connections"]';
 export const sidebarGroupSeparator = (index) => `[data-testid="sidebar-group-separator-${index}"]`;

@@ -16,6 +16,7 @@ import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useTunnelEvents } from "@/hooks/useTunnelEvents";
 import { useCredentialStoreEvents } from "@/hooks/useCredentialStoreEvents";
 import { useWebviewZoom } from "@/hooks/useWebviewZoom";
+import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { useAppStore } from "@/store/appStore";
 import "./App.css";
 
@@ -91,6 +92,8 @@ function App() {
   useWebviewZoom();
   const loadFromBackend = useAppStore((s) => s.loadFromBackend);
   const layoutConfig = useAppStore((s) => s.layoutConfig);
+  const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
+  const { sidebarWidth, handleProps, isResizing } = useSidebarResize(layoutConfig.sidebarPosition);
   const unlockDialogOpen = useAppStore((s) => s.unlockDialogOpen);
   const setUnlockDialogOpen = useAppStore((s) => s.setUnlockDialogOpen);
   const masterPasswordSetupOpen = useAppStore((s) => s.masterPasswordSetupOpen);
@@ -122,9 +125,31 @@ function App() {
         {layoutConfig.activityBarPosition === "top" && <ActivityBar horizontal />}
         <div className={`app__main app__main--ab-${layoutConfig.activityBarPosition}`}>
           {layoutConfig.activityBarPosition === "left" && <ActivityBar />}
-          {layoutConfig.sidebarPosition === "left" && layoutConfig.sidebarVisible && <Sidebar />}
+          {layoutConfig.sidebarPosition === "left" && layoutConfig.sidebarVisible && (
+            <>
+              <Sidebar width={sidebarWidth} />
+              {!sidebarCollapsed && (
+                <div
+                  className={`sidebar-resize-handle${isResizing ? " sidebar-resize-handle--active" : ""}`}
+                  data-testid="sidebar-resize-handle"
+                  {...handleProps}
+                />
+              )}
+            </>
+          )}
           <TerminalView />
-          {layoutConfig.sidebarPosition === "right" && layoutConfig.sidebarVisible && <Sidebar />}
+          {layoutConfig.sidebarPosition === "right" && layoutConfig.sidebarVisible && (
+            <>
+              {!sidebarCollapsed && (
+                <div
+                  className={`sidebar-resize-handle${isResizing ? " sidebar-resize-handle--active" : ""}`}
+                  data-testid="sidebar-resize-handle"
+                  {...handleProps}
+                />
+              )}
+              <Sidebar width={sidebarWidth} />
+            </>
+          )}
           {layoutConfig.activityBarPosition === "right" && <ActivityBar />}
         </div>
         {layoutConfig.statusBarVisible && <StatusBar />}
