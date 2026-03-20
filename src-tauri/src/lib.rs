@@ -7,6 +7,7 @@ mod session;
 mod terminal;
 mod tunnel;
 mod utils;
+mod workspace;
 
 use std::sync::{Arc, Mutex};
 
@@ -194,6 +195,23 @@ pub fn run() {
                 }
             }
 
+            // Initialize workspace manager with recovery loading.
+            // On failure, the app still starts but workspaces are unavailable.
+            match workspace::manager::WorkspaceManager::new(app.handle()) {
+                Ok(manager) => {
+                    recovery_warnings.extend(manager.take_recovery_warnings());
+                    app.manage(manager);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to initialize workspace manager: {e}");
+                    recovery_warnings.push(RecoveryWarning {
+                        file_name: "workspaces.json".to_string(),
+                        message: "Could not initialize workspace storage. Workspaces are unavailable until the app is restarted.".to_string(),
+                        details: Some(e.to_string()),
+                    });
+                }
+            }
+
             // Store recovery warnings so the frontend can retrieve them
             app.manage(Mutex::new(recovery_warnings));
 
@@ -296,6 +314,12 @@ pub fn run() {
             commands::tunnel::get_tunnel_statuses,
             commands::tunnel::start_tunnel,
             commands::tunnel::stop_tunnel,
+            // Workspaces
+            commands::workspace::get_workspaces,
+            commands::workspace::load_workspace,
+            commands::workspace::save_workspace,
+            commands::workspace::delete_workspace,
+            commands::workspace::duplicate_workspace,
             // Credentials
             commands::credential::get_credential_store_status,
             commands::credential::unlock_credential_store,

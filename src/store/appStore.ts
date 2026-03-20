@@ -11,6 +11,7 @@ import {
   EditorTabMeta,
   ConnectionEditorMeta,
   TunnelEditorMeta,
+  WorkspaceEditorMeta,
   EditorStatus,
   EditorActions,
 } from "@/types/terminal";
@@ -80,6 +81,13 @@ import {
   stopTunnel as apiStopTunnel,
   getTunnelStatuses,
 } from "@/services/tunnelApi";
+import { WorkspaceSummary } from "@/types/workspace";
+import {
+  getWorkspaces as apiGetWorkspaces,
+  saveWorkspace as apiSaveWorkspace,
+  deleteWorkspace as apiDeleteWorkspace,
+  duplicateWorkspace as apiDuplicateWorkspace,
+} from "@/services/workspaceApi";
 import { SystemStats } from "@/types/monitoring";
 import { applyTheme, onThemeChange } from "@/themes";
 import { setOverrides as setKeybindingOverrides } from "@/services/keybindings";
@@ -96,7 +104,7 @@ import {
   markActiveLeaf,
 } from "@/utils/panelTree";
 
-export type SidebarView = "connections" | "files" | "tunnels";
+export type SidebarView = "connections" | "files" | "tunnels" | "workspaces";
 
 /** Clipboard state for file browser copy/cut operations. */
 export interface FileClipboard {
@@ -363,6 +371,20 @@ interface AppState {
   stopTunnel: (tunnelId: string) => Promise<void>;
   updateTunnelState: (state: TunnelState) => void;
   openTunnelEditorTab: (tunnelId: string | null) => void;
+
+  // Workspaces
+  workspaces: WorkspaceSummary[];
+  activeWorkspaceName: string | null;
+  loadWorkspaces: () => Promise<void>;
+  saveWorkspaceToBackend: (definition: {
+    id: string;
+    name: string;
+    description?: string;
+    layout: unknown;
+  }) => Promise<void>;
+  deleteWorkspaceFromBackend: (workspaceId: string) => Promise<void>;
+  duplicateWorkspaceInBackend: (workspaceId: string) => Promise<void>;
+  openWorkspaceEditorTab: (workspaceId: string | null) => void;
 
   // Credential store
   credentialStoreStatus: CredentialStoreStatusInfo | null;
@@ -1086,6 +1108,8 @@ export const useAppStore = create<AppState>((set, get) => {
       }
       // Load SSH tunnels
       get().loadTunnels();
+      // Load workspaces
+      get().loadWorkspaces();
       // Load credential store status and auto-open unlock dialog if locked
       await get().loadCredentialStoreStatus();
       const credStatus = get().credentialStoreStatus;
@@ -1899,6 +1923,95 @@ export const useAppStore = create<AppState>((set, get) => {
         const meta: TunnelEditorMeta = { tunnelId };
         const newTab = createTab(title, "local", dummyConfig, targetPanelId, "tunnel-editor");
         newTab.tunnelEditorMeta = meta;
+
+        const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
+          const tabs = leaf.tabs.map((t) => ({ ...t, isActive: false }));
+          tabs.push(newTab);
+          return { ...leaf, tabs, activeTabId: newTab.id };
+        });
+        return { rootPanel, activePanelId: targetPanelId };
+      }),
+
+    // Workspaces
+    workspaces: [],
+    activeWorkspaceName: null,
+
+    loadWorkspaces: async () => {
+      try {
+        const workspaces = await apiGetWorkspaces();
+        set({ workspaces });
+      } catch (err) {
+        console.error("Failed to load workspaces:", err);
+      }
+    },
+
+    saveWorkspaceToBackend: async (definition) => {
+      try {
+        await apiSaveWorkspace(definition as Parameters<typeof apiSaveWorkspace>[0]);
+        await get().loadWorkspaces();
+      } catch (err) {
+        console.error("Failed to save workspace:", err);
+        throw err;
+      }
+    },
+
+    deleteWorkspaceFromBackend: async (workspaceId) => {
+      try {
+        await apiDeleteWorkspace(workspaceId);
+        set((state) => ({
+          workspaces: state.workspaces.filter((ws) => ws.id !== workspaceId),
+        }));
+      } catch (err) {
+        console.error("Failed to delete workspace:", err);
+      }
+    },
+
+    duplicateWorkspaceInBackend: async (workspaceId) => {
+      try {
+        await apiDuplicateWorkspace(workspaceId);
+        await get().loadWorkspaces();
+      } catch (err) {
+        console.error("Failed to duplicate workspace:", err);
+      }
+    },
+
+    openWorkspaceEditorTab: (workspaceId) =>
+      set((state) => {
+        const allLeaves = getAllLeaves(state.rootPanel);
+
+        // Look for an existing workspace-editor tab for this workspace
+        for (const leaf of allLeaves) {
+          const existing = leaf.tabs.find(
+            (t) =>
+              t.contentType === "workspace-editor" &&
+              t.workspaceEditorMeta?.workspaceId === workspaceId
+          );
+          if (existing) {
+            const rootPanel = updateLeaf(state.rootPanel, leaf.id, (l) => ({
+              ...l,
+              tabs: l.tabs.map((t) => ({ ...t, isActive: t.id === existing.id })),
+              activeTabId: existing.id,
+            }));
+            return { rootPanel, activePanelId: leaf.id };
+          }
+        }
+
+        // Create new workspace-editor tab in the active panel
+        const targetPanelId = state.activePanelId ?? allLeaves[0]?.id;
+        if (!targetPanelId) return state;
+
+        let title = "New Workspace";
+        if (workspaceId) {
+          const ws = state.workspaces.find((w) => w.id === workspaceId);
+          if (ws) {
+            title = `Edit: ${ws.name}`;
+          }
+        }
+
+        const dummyConfig: ConnectionConfig = { type: "local", config: { shell: "zsh" } };
+        const meta: WorkspaceEditorMeta = { workspaceId };
+        const newTab = createTab(title, "local", dummyConfig, targetPanelId, "workspace-editor");
+        newTab.workspaceEditorMeta = meta;
 
         const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
           const tabs = leaf.tabs.map((t) => ({ ...t, isActive: false }));

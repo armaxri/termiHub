@@ -18,7 +18,8 @@ export type TabContentType =
   | "editor"
   | "connection-editor"
   | "log-viewer"
-  | "tunnel-editor";
+  | "tunnel-editor"
+  | "workspace-editor";
 
 export interface EditorTabMeta {
   filePath: string;
@@ -37,6 +38,10 @@ export interface ConnectionEditorMeta {
 
 export interface TunnelEditorMeta {
   tunnelId: string | null;
+}
+
+export interface WorkspaceEditorMeta {
+  workspaceId: string | null;
 }
 
 export interface TerminalOptions {
@@ -97,6 +102,9 @@ export interface TerminalTab {
   editorMeta?: EditorTabMeta;
   connectionEditorMeta?: ConnectionEditorMeta;
   tunnelEditorMeta?: TunnelEditorMeta;
+  workspaceEditorMeta?: WorkspaceEditorMeta;
+  /** Optional command to send after the terminal session connects. */
+  initialCommand?: string;
 }
 
 export interface LeafPanel {

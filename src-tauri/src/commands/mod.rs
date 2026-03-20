@@ -6,3 +6,4 @@ pub mod logs;
 pub mod monitoring;
 pub mod session;
 pub mod tunnel;
+pub mod workspace;
