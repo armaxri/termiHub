@@ -55,7 +55,8 @@ export async function closeTabByTitle(title) {
   // testId is "tab-<uuid>", close button is "tab-close-<uuid>"
   const uuid = testId.replace('tab-', '');
   const closeBtn = await browser.$(`[data-testid="tab-close-${uuid}"]`);
-  await closeBtn.click();
+  // Use JS click to bypass pointer-events CSS (buttons hidden until hover under WebKitGTK).
+  await browser.execute((el) => el.click(), closeBtn);
   await browser.pause(200);
 }
 
