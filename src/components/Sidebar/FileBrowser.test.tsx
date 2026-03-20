@@ -356,7 +356,14 @@ describe("FileBrowser – Copy/Cut/Paste UI", () => {
     useAppStore.setState({
       sidebarView: "files",
       fileClipboard: {
-        entry: { name: "copied.txt", path: "/home/copied.txt", isDirectory: false, size: 5 },
+        entry: {
+          name: "copied.txt",
+          path: "/home/copied.txt",
+          isDirectory: false,
+          size: 5,
+          modified: "",
+          permissions: null,
+        },
         operation: "copy",
         sourceMode: "local",
         sourcePath: "/home",
@@ -375,7 +382,14 @@ describe("FileBrowser – Copy/Cut/Paste UI", () => {
   });
 
   it("sets clipboard state via store setFileClipboard for copy", () => {
-    const entry = { name: "test.txt", path: "/home/test.txt", isDirectory: false, size: 10 };
+    const entry: FileEntry = {
+      name: "test.txt",
+      path: "/home/test.txt",
+      isDirectory: false,
+      size: 10,
+      modified: "",
+      permissions: null,
+    };
     useAppStore.getState().setFileClipboard({
       entry,
       operation: "copy",
@@ -392,7 +406,14 @@ describe("FileBrowser – Copy/Cut/Paste UI", () => {
   });
 
   it("sets clipboard state via store setFileClipboard for cut", () => {
-    const entry = { name: "mydir", path: "/home/mydir", isDirectory: true, size: 0 };
+    const entry: FileEntry = {
+      name: "mydir",
+      path: "/home/mydir",
+      isDirectory: true,
+      size: 0,
+      modified: "",
+      permissions: null,
+    };
     useAppStore.getState().setFileClipboard({
       entry,
       operation: "cut",
@@ -409,7 +430,14 @@ describe("FileBrowser – Copy/Cut/Paste UI", () => {
   });
 
   it("clears clipboard when setFileClipboard is called with null", () => {
-    const entry = { name: "test.txt", path: "/home/test.txt", isDirectory: false, size: 10 };
+    const entry: FileEntry = {
+      name: "test.txt",
+      path: "/home/test.txt",
+      isDirectory: false,
+      size: 10,
+      modified: "",
+      permissions: null,
+    };
     useAppStore.getState().setFileClipboard({
       entry,
       operation: "copy",
