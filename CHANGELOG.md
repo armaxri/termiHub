@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Workspaces — reusable terminal layouts with pre-configured connections that open automatically; create, edit, duplicate, delete, launch, and save the current layout as a workspace (#503)
+- Workspace editor — visual layout designer for building workspace panel trees with split/tab management and connection picker (#503)
+- Workspace sidebar — dedicated sidebar view in the activity bar listing all workspaces with launch, edit, duplicate, and delete actions (#503)
+- Workspace CLI integration — launch a workspace by name with `--workspace`/`-w`, list all workspaces with `--list-workspaces`, or load from a JSON file with `--workspace-file` (#503)
+- Workspace import/export — export workspaces as portable JSON with connection names (instead of IDs) for sharing across machines; import resolves names back to local connections (#503)
+- Initial command support — workspace tabs can specify a command to run automatically after the terminal session connects (#503)
 - Shell support: PowerShell (`pwsh`) detection on macOS and Linux — detects via Homebrew, snap, and apt installation paths
 - Shell support: Fish and Nushell detection on macOS and Linux with proper `--login` flags
 - Shell support: Custom shell path option — select "Custom..." in the shell dropdown and provide an arbitrary shell executable path

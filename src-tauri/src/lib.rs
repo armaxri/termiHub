@@ -7,6 +7,7 @@ mod session;
 mod terminal;
 mod tunnel;
 mod utils;
+mod workspace;
 
 use std::sync::{Arc, Mutex};
 
@@ -42,6 +43,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_cli::init())
         .manage(SftpManager::new())
         .manage(MonitoringManager::new())
         .manage(log_buffer)
@@ -194,6 +196,62 @@ pub fn run() {
                 }
             }
 
+            // Initialize workspace manager with recovery loading.
+            // On failure, the app still starts but workspaces are unavailable.
+            match workspace::manager::WorkspaceManager::new(app.handle()) {
+                Ok(manager) => {
+                    recovery_warnings.extend(manager.take_recovery_warnings());
+                    app.manage(manager);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to initialize workspace manager: {e}");
+                    recovery_warnings.push(RecoveryWarning {
+                        file_name: "workspaces.json".to_string(),
+                        message: "Could not initialize workspace storage. Workspaces are unavailable until the app is restarted.".to_string(),
+                        details: Some(e.to_string()),
+                    });
+                }
+            }
+
+            // Handle --list-workspaces CLI flag: print workspace list and exit
+            {
+                use tauri_plugin_cli::CliExt;
+                if let Ok(matches) = app.cli().matches() {
+                    if let Some(arg) = matches.args.get("list-workspaces") {
+                        if arg.occurrences > 0 {
+                            if let Some(mgr) =
+                                app.try_state::<workspace::manager::WorkspaceManager>()
+                            {
+                                match mgr.get_workspaces() {
+                                    Ok(workspaces) if workspaces.is_empty() => {
+                                        println!("No workspaces configured.");
+                                    }
+                                    Ok(workspaces) => {
+                                        for ws in &workspaces {
+                                            let desc =
+                                                ws.description.as_deref().unwrap_or("");
+                                            println!(
+                                                "{}\t{}\t{} tab(s)\t{}",
+                                                ws.id,
+                                                ws.name,
+                                                ws.connection_count,
+                                                desc
+                                            );
+                                        }
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Error listing workspaces: {e}");
+                                    }
+                                }
+                            } else {
+                                eprintln!("Workspace manager not available.");
+                            }
+                            std::process::exit(0);
+                        }
+                    }
+                }
+            }
+
             // Store recovery warnings so the frontend can retrieve them
             app.manage(Mutex::new(recovery_warnings));
 
@@ -296,6 +354,16 @@ pub fn run() {
             commands::tunnel::get_tunnel_statuses,
             commands::tunnel::start_tunnel,
             commands::tunnel::stop_tunnel,
+            // Workspaces
+            commands::workspace::get_workspaces,
+            commands::workspace::load_workspace,
+            commands::workspace::save_workspace,
+            commands::workspace::delete_workspace,
+            commands::workspace::duplicate_workspace,
+            commands::workspace::get_cli_workspace,
+            commands::workspace::export_workspaces,
+            commands::workspace::import_workspaces,
+            commands::workspace::preview_import_workspaces,
             // Credentials
             commands::credential::get_credential_store_status,
             commands::credential::unlock_credential_store,

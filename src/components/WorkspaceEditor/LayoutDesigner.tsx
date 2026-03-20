@@ -1,0 +1,273 @@
+import { useCallback, useMemo, useState } from "react";
+import { SplitSquareHorizontal, SplitSquareVertical, Plus, X } from "lucide-react";
+import { WorkspaceLayoutNode, WorkspaceTabDef } from "@/types/workspace";
+import {
+  getWorkspaceLeaves,
+  splitWorkspaceLeaf,
+  addTabToLeaf,
+  removeTabFromLeaf,
+  removeWorkspaceLeaf,
+} from "@/utils/workspaceLayout";
+import { ConnectionPicker } from "./ConnectionPicker";
+
+/**
+ * Build a map from leaf node reference to its depth-first index.
+ * This is computed once per layout change and passed through the tree,
+ * avoiding mutable counters that break under React StrictMode double-renders.
+ */
+function buildLeafIndexMap(node: WorkspaceLayoutNode): Map<WorkspaceLayoutNode, number> {
+  const map = new Map<WorkspaceLayoutNode, number>();
+  const leaves = getWorkspaceLeaves(node);
+  leaves.forEach((leaf, idx) => map.set(leaf, idx));
+  return map;
+}
+
+interface LayoutDesignerProps {
+  layout: WorkspaceLayoutNode;
+  onChange: (layout: WorkspaceLayoutNode) => void;
+}
+
+export function LayoutDesigner({ layout, onChange }: LayoutDesignerProps) {
+  const [selectedLeaf, setSelectedLeaf] = useState<number>(0);
+  const [pickerLeafIdx, setPickerLeafIdx] = useState<number | null>(null);
+  const leafIndexMap = useMemo(() => buildLeafIndexMap(layout), [layout]);
+  const leafCount = leafIndexMap.size;
+
+  const handleSplit = useCallback(
+    (leafIdx: number, direction: "horizontal" | "vertical") => {
+      const { node, newLeafIndex } = splitWorkspaceLeaf(layout, leafIdx, direction);
+      onChange(node);
+      setSelectedLeaf(newLeafIndex);
+    },
+    [layout, onChange]
+  );
+
+  const handleAddTab = useCallback(
+    (leafIdx: number, tab: WorkspaceTabDef) => {
+      const result = addTabToLeaf(layout, leafIdx, tab);
+      onChange(result);
+      setPickerLeafIdx(null);
+    },
+    [layout, onChange]
+  );
+
+  const handleRemoveTab = useCallback(
+    (leafIdx: number, tabIdx: number) => {
+      const result = removeTabFromLeaf(layout, leafIdx, tabIdx);
+      onChange(result);
+    },
+    [layout, onChange]
+  );
+
+  const handleRemoveLeaf = useCallback(
+    (leafIdx: number) => {
+      const result = removeWorkspaceLeaf(layout, leafIdx);
+      if (result) {
+        onChange(result);
+        if (selectedLeaf >= getWorkspaceLeaves(result).length) {
+          setSelectedLeaf(Math.max(0, getWorkspaceLeaves(result).length - 1));
+        }
+      }
+    },
+    [layout, selectedLeaf, onChange]
+  );
+
+  return (
+    <div className="layout-designer" data-testid="layout-designer">
+      <div className="layout-designer__canvas" data-testid="layout-canvas">
+        <LayoutNodePreview
+          node={layout}
+          leafIndexMap={leafIndexMap}
+          selectedLeaf={selectedLeaf}
+          leafCount={leafCount}
+          onSelectLeaf={setSelectedLeaf}
+          onRemoveTab={handleRemoveTab}
+          onRemoveLeaf={handleRemoveLeaf}
+          onSplit={handleSplit}
+          onAddTab={setPickerLeafIdx}
+        />
+      </div>
+
+      {pickerLeafIdx !== null && (
+        <ConnectionPicker
+          onSelect={(tab) => handleAddTab(pickerLeafIdx, tab)}
+          onCancel={() => setPickerLeafIdx(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+interface LayoutNodePreviewProps {
+  node: WorkspaceLayoutNode;
+  leafIndexMap: Map<WorkspaceLayoutNode, number>;
+  selectedLeaf: number;
+  leafCount: number;
+  onSelectLeaf: (idx: number) => void;
+  onRemoveTab: (leafIdx: number, tabIdx: number) => void;
+  onRemoveLeaf: (leafIdx: number) => void;
+  onSplit: (leafIdx: number, direction: "horizontal" | "vertical") => void;
+  onAddTab: (leafIdx: number) => void;
+}
+
+function LayoutNodePreview({
+  node,
+  leafIndexMap,
+  selectedLeaf,
+  leafCount,
+  onSelectLeaf,
+  onRemoveTab,
+  onRemoveLeaf,
+  onSplit,
+  onAddTab,
+}: LayoutNodePreviewProps) {
+  if (node.type === "leaf") {
+    const idx = leafIndexMap.get(node) ?? 0;
+
+    return (
+      <LeafPanel
+        node={node}
+        idx={idx}
+        isSelected={idx === selectedLeaf}
+        leafCount={leafCount}
+        onSelect={() => onSelectLeaf(idx)}
+        onRemoveTab={(tabIdx) => onRemoveTab(idx, tabIdx)}
+        onRemove={() => onRemoveLeaf(idx)}
+        onSplitH={() => onSplit(idx, "horizontal")}
+        onSplitV={() => onSplit(idx, "vertical")}
+        onAddTab={() => onAddTab(idx)}
+      />
+    );
+  }
+
+  return (
+    <div
+      className={`layout-split layout-split--${node.direction}`}
+      data-testid={`layout-split-${node.direction}`}
+    >
+      {node.children.map((child, i) => (
+        <LayoutNodePreview
+          key={i}
+          node={child}
+          leafIndexMap={leafIndexMap}
+          selectedLeaf={selectedLeaf}
+          leafCount={leafCount}
+          onSelectLeaf={onSelectLeaf}
+          onRemoveTab={onRemoveTab}
+          onRemoveLeaf={onRemoveLeaf}
+          onSplit={onSplit}
+          onAddTab={onAddTab}
+        />
+      ))}
+    </div>
+  );
+}
+
+interface LeafPanelProps {
+  node: WorkspaceLayoutNode & { type: "leaf" };
+  idx: number;
+  isSelected: boolean;
+  leafCount: number;
+  onSelect: () => void;
+  onRemoveTab: (tabIdx: number) => void;
+  onRemove: () => void;
+  onSplitH: () => void;
+  onSplitV: () => void;
+  onAddTab: () => void;
+}
+
+function LeafPanel({
+  node,
+  idx,
+  isSelected,
+  leafCount,
+  onSelect,
+  onRemoveTab,
+  onRemove,
+  onSplitH,
+  onSplitV,
+  onAddTab,
+}: LeafPanelProps) {
+  const className = ["layout-leaf", isSelected && "layout-leaf--selected"]
+    .filter(Boolean)
+    .join(" ");
+
+  return (
+    <div className={className} onClick={onSelect} data-testid={`layout-leaf-${idx}`}>
+      <div className="layout-leaf__header">
+        <div className="layout-leaf__actions">
+          <button
+            className="layout-leaf__action-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              onSplitH();
+            }}
+            title="Split Horizontal"
+            data-testid={`layout-leaf-split-h-${idx}`}
+          >
+            <SplitSquareHorizontal size={10} />
+          </button>
+          <button
+            className="layout-leaf__action-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              onSplitV();
+            }}
+            title="Split Vertical"
+            data-testid={`layout-leaf-split-v-${idx}`}
+          >
+            <SplitSquareVertical size={10} />
+          </button>
+          <button
+            className="layout-leaf__action-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              onAddTab();
+            }}
+            title="Add Connection"
+            data-testid={`layout-leaf-add-tab-${idx}`}
+          >
+            <Plus size={10} />
+          </button>
+        </div>
+        {leafCount > 1 && (
+          <button
+            className="layout-leaf__remove"
+            onClick={(e) => {
+              e.stopPropagation();
+              onRemove();
+            }}
+            title="Remove Panel"
+            data-testid={`layout-remove-leaf-${idx}`}
+          >
+            <X size={10} />
+          </button>
+        )}
+      </div>
+      <div className="layout-leaf__tabs">
+        {node.tabs.length === 0 ? (
+          <span className="layout-leaf__empty">Click + to add a connection</span>
+        ) : (
+          node.tabs.map((tab, tabIdx) => (
+            <div key={tabIdx} className="layout-tab">
+              <span className="layout-tab__name">
+                {tab.title ?? tab.connectionRef ?? "Inline Connection"}
+              </span>
+              <button
+                className="layout-tab__remove"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRemoveTab(tabIdx);
+                }}
+                title="Remove Tab"
+                data-testid={`layout-remove-tab-${idx}-${tabIdx}`}
+              >
+                <X size={10} />
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}

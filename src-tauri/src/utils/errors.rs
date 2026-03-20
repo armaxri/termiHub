@@ -49,6 +49,9 @@ pub enum TerminalError {
     #[error("Tunnel error: {0}")]
     TunnelError(String),
 
+    #[error("Workspace error: {0}")]
+    WorkspaceError(String),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }

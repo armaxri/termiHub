@@ -18,6 +18,7 @@ import { useCredentialStoreEvents } from "@/hooks/useCredentialStoreEvents";
 import { useWebviewZoom } from "@/hooks/useWebviewZoom";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { useAppStore } from "@/store/appStore";
+import { getCliWorkspace } from "@/services/workspaceApi";
 import "./App.css";
 
 interface ErrorBoundaryState {
@@ -108,7 +109,23 @@ function App() {
   const closeLargePasteDialog = useAppStore((s) => s.closeLargePasteDialog);
 
   useEffect(() => {
-    loadFromBackend();
+    (async () => {
+      await loadFromBackend();
+      try {
+        const cliWorkspaceName = await getCliWorkspace();
+        if (cliWorkspaceName) {
+          const { workspaces, launchWorkspace } = useAppStore.getState();
+          const ws = workspaces.find(
+            (w) => w.name.toLowerCase() === cliWorkspaceName.toLowerCase()
+          );
+          if (ws) {
+            launchWorkspace(ws.id);
+          }
+        }
+      } catch {
+        // CLI plugin not available (e.g., browser dev mode)
+      }
+    })();
   }, [loadFromBackend]);
 
   // Suppress the browser's default context menu globally so only custom

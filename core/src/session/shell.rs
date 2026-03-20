@@ -102,13 +102,15 @@ pub fn shell_to_command(shell: &str) -> (String, Vec<String>) {
         "gitbash" => resolve_git_bash(),
         "fish" => ("fish".into(), vec!["--login".into()]),
         "nushell" => ("nu".into(), vec!["--login".into()]),
-        _ => {
+        other => {
             // If the value looks like a file path, use it as a literal executable.
             // This supports custom shell paths (e.g. "/opt/myshell/bin/mysh").
-            if shell.contains('/') || shell.contains('\\') {
-                (shell.to_string(), vec![])
+            // Otherwise, pass through the name as-is so any shell in PATH works
+            // instead of silently falling back to sh.
+            if other.contains('/') || other.contains('\\') {
+                (other.to_string(), vec![])
             } else {
-                ("sh".into(), vec![])
+                (other.into(), vec![])
             }
         }
     }
@@ -529,9 +531,9 @@ mod tests {
     }
 
     #[test]
-    fn shell_to_command_unknown_falls_back_to_sh() {
-        let (cmd, args) = shell_to_command("unknown_shell");
-        assert_eq!(cmd, "sh");
+    fn shell_to_command_unknown_passes_through() {
+        let (cmd, args) = shell_to_command("elvish");
+        assert_eq!(cmd, "elvish");
         assert!(args.is_empty());
     }
 
