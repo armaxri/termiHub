@@ -180,9 +180,14 @@
   color: #ffffff;
 }
 
+.context-menu__item--danger {
+  color: var(--color-error);
+}
+
 .context-menu__item--danger:hover,
 .context-menu__item--danger[data-highlighted] {
   background-color: var(--color-error);
+  color: #ffffff;
 }
 
 .context-menu__separator {

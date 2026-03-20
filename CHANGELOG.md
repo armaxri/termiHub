@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- File Browser menus unified — the three-dot kebab dropdown now uses the same Radix DropdownMenu component and shared CSS classes as the right-click context menu, giving both menus identical styling (accent hover, separator before Rename/Delete, danger highlight on Delete) (#501)
 - Scripts directory reorganized — internal helpers (`autoformat.sh`, `kill-port.cjs`) moved to `scripts/internal/` to separate them from user-facing dev scripts
 
 ### Fixed
