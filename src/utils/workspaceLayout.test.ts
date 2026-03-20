@@ -12,6 +12,7 @@ import {
   updateTabInLeaf,
   buildPanelTreeFromWorkspace,
   captureCurrentLayout,
+  moveTabBetweenLeaves,
 } from "./workspaceLayout";
 
 function tab(ref?: string): WorkspaceTabDef {
@@ -212,6 +213,64 @@ describe("updateTabInLeaf", () => {
     const leaves = getWorkspaceLeaves(result);
     expect(leaves[0].tabs[0].title).toBe("X");
     expect(leaves[1].tabs[0].title).toBeUndefined();
+  });
+});
+
+describe("moveTabBetweenLeaves", () => {
+  it("moves a tab from one leaf to another in a horizontal split", () => {
+    const node = hsplit(leaf(tab("a"), tab("b")), leaf(tab("c")));
+    const result = moveTabBetweenLeaves(node, 0, 1, 1);
+    const leaves = getWorkspaceLeaves(result);
+    expect(leaves[0].tabs).toHaveLength(1);
+    expect(leaves[0].tabs[0].connectionRef).toBe("a");
+    expect(leaves[1].tabs).toHaveLength(2);
+    expect(leaves[1].tabs[1].connectionRef).toBe("b");
+  });
+
+  it("removes empty source leaf when moving last tab", () => {
+    const node = hsplit(leaf(tab("a")), leaf(tab("b")));
+    const result = moveTabBetweenLeaves(node, 0, 0, 1);
+    // Source leaf had one tab, should be removed — collapses to single leaf
+    expect(result.type).toBe("leaf");
+    if (result.type === "leaf") {
+      expect(result.tabs).toHaveLength(2);
+      expect(result.tabs[0].connectionRef).toBe("b");
+      expect(result.tabs[1].connectionRef).toBe("a");
+    }
+  });
+
+  it("moves a tab to an empty leaf", () => {
+    const node = hsplit(leaf(tab("a"), tab("b")), leaf());
+    const result = moveTabBetweenLeaves(node, 0, 0, 1);
+    const leaves = getWorkspaceLeaves(result);
+    expect(leaves[0].tabs).toHaveLength(1);
+    expect(leaves[0].tabs[0].connectionRef).toBe("b");
+    expect(leaves[1].tabs).toHaveLength(1);
+    expect(leaves[1].tabs[0].connectionRef).toBe("a");
+  });
+
+  it("returns original node for same leaf index", () => {
+    const node = hsplit(leaf(tab("a")), leaf(tab("b")));
+    const result = moveTabBetweenLeaves(node, 0, 0, 0);
+    expect(result).toBe(node);
+  });
+
+  it("returns original node for invalid from index", () => {
+    const node = hsplit(leaf(tab("a")), leaf(tab("b")));
+    const result = moveTabBetweenLeaves(node, 5, 0, 0);
+    expect(result).toBe(node);
+  });
+
+  it("returns original node for invalid to index", () => {
+    const node = hsplit(leaf(tab("a")), leaf(tab("b")));
+    const result = moveTabBetweenLeaves(node, 0, 0, 5);
+    expect(result).toBe(node);
+  });
+
+  it("returns original node for invalid tab index", () => {
+    const node = hsplit(leaf(tab("a")), leaf(tab("b")));
+    const result = moveTabBetweenLeaves(node, 0, 5, 1);
+    expect(result).toBe(node);
   });
 });
 

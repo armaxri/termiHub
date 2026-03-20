@@ -9,7 +9,7 @@
   display: flex;
   padding: 4px 8px;
   gap: 4px;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-primary);
 }
 
 .workspace-sidebar__add-btn {
@@ -140,7 +140,7 @@
 
 .save-workspace-dialog {
   background: var(--bg-primary);
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--border-primary);
   border-radius: 8px;
   width: 360px;
   padding: 16px;
@@ -199,7 +199,7 @@
 
 .save-workspace-dialog__field input {
   padding: 6px 8px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--border-primary);
   border-radius: 4px;
   background: var(--bg-secondary);
   color: var(--text-primary);
@@ -208,7 +208,7 @@
 }
 
 .save-workspace-dialog__field input:focus {
-  border-color: var(--color-accent);
+  border-color: var(--accent-color);
 }
 
 .save-workspace-dialog__actions {
@@ -219,7 +219,7 @@
 
 .save-workspace-dialog__btn {
   padding: 6px 16px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--border-primary);
   border-radius: 4px;
   background: var(--bg-secondary);
   color: var(--text-primary);
@@ -232,9 +232,9 @@
 }
 
 .save-workspace-dialog__btn--primary {
-  background: var(--color-accent);
+  background: var(--accent-color);
   color: white;
-  border-color: var(--color-accent);
+  border-color: var(--accent-color);
 }
 
 .save-workspace-dialog__btn--primary:hover {

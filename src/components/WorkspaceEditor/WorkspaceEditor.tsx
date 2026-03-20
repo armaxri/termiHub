@@ -3,6 +3,7 @@ import { useAppStore } from "@/store/appStore";
 import { WorkspaceEditorMeta } from "@/types/terminal";
 import { WorkspaceDefinition, WorkspaceLayoutNode } from "@/types/workspace";
 import { loadWorkspace } from "@/services/workspaceApi";
+import { getWorkspaceLeaves, countWorkspaceTabs } from "@/utils/workspaceLayout";
 import { LayoutDesigner } from "./LayoutDesigner";
 import "./WorkspaceEditor.css";
 
@@ -14,7 +15,7 @@ interface WorkspaceEditorProps {
 
 const DEFAULT_LAYOUT: WorkspaceLayoutNode = {
   type: "leaf",
-  tabs: [{ connectionRef: undefined, title: "Terminal" }],
+  tabs: [],
 };
 
 export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps) {
@@ -119,7 +120,16 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
         </div>
 
         <div className="workspace-editor__layout-section">
-          <label className="workspace-editor__label">Layout</label>
+          <div className="workspace-editor__layout-header">
+            <label className="workspace-editor__label">Layout</label>
+            <span className="workspace-editor__layout-info">
+              {(() => {
+                const leaves = getWorkspaceLeaves(layout);
+                const tabs = countWorkspaceTabs(layout);
+                return `${leaves.length} ${leaves.length === 1 ? "panel" : "panels"}, ${tabs} ${tabs === 1 ? "tab" : "tabs"}`;
+              })()}
+            </span>
+          </div>
           <LayoutDesigner layout={layout} onChange={setLayout} />
         </div>
       </div>

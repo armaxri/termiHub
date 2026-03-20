@@ -210,6 +210,45 @@ function updateTabAtIndex(
   };
 }
 
+/**
+ * Move a tab from one leaf to another.
+ * If the source leaf becomes empty and there are other leaves, it is removed.
+ * Returns the updated layout, or the original if indices are invalid.
+ */
+export function moveTabBetweenLeaves(
+  node: WorkspaceLayoutNode,
+  fromLeafIndex: number,
+  tabIndex: number,
+  toLeafIndex: number
+): WorkspaceLayoutNode {
+  if (fromLeafIndex === toLeafIndex) return node;
+
+  const leaves = getWorkspaceLeaves(node);
+  const fromLeaf = leaves[fromLeafIndex];
+  const toLeaf = leaves[toLeafIndex];
+  if (!fromLeaf || !toLeaf) return node;
+  if (tabIndex < 0 || tabIndex >= fromLeaf.tabs.length) return node;
+
+  const tab = fromLeaf.tabs[tabIndex];
+
+  // Add the tab to the target leaf
+  let result = addTabToLeaf(node, toLeafIndex, tab);
+
+  // Remove the tab from the source leaf — adjust index if target is before source
+  // because addTabToLeaf doesn't change leaf ordering
+  result = removeTabFromLeaf(result, fromLeafIndex, tabIndex);
+
+  // If the source leaf is now empty and there's more than one leaf, remove it
+  const updatedLeaves = getWorkspaceLeaves(result);
+  const sourceLeaf = updatedLeaves[fromLeafIndex];
+  if (sourceLeaf && sourceLeaf.tabs.length === 0 && updatedLeaves.length > 1) {
+    const cleaned = removeWorkspaceLeaf(result, fromLeafIndex);
+    if (cleaned) result = cleaned;
+  }
+
+  return result;
+}
+
 // --- Panel tree building/capture for workspace launch ---
 
 let panelIdCounter = 0;
