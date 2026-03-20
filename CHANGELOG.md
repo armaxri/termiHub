@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Workspaces — reusable terminal layouts with pre-configured connections that open automatically; create, edit, duplicate, delete, launch, and save the current layout as a workspace (#503)
+- Workspace editor — visual layout designer for building workspace panel trees with split/tab management and connection picker (#503)
+- Workspace sidebar — dedicated sidebar view in the activity bar listing all workspaces with launch, edit, duplicate, and delete actions (#503)
+- Workspace CLI integration — launch a workspace by name with `--workspace`/`-w`, list all workspaces with `--list-workspaces`, or load from a JSON file with `--workspace-file` (#503)
+- Workspace import/export — export workspaces as portable JSON with connection names (instead of IDs) for sharing across machines; import resolves names back to local connections (#503)
+- Initial command support — workspace tabs can specify a command to run automatically after the terminal session connects (#503)
 - File browser: Copy, Cut, and Paste operations for files and directories — works within local mode, within SFTP mode, and cross-mode (local↔SFTP) (#500)
 - File browser: Download now available in local mode (save file to a user-chosen location via save dialog) (#500)
 - File browser: Paste toolbar button with tooltip showing clipboard contents and operation type (#500)
