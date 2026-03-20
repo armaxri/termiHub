@@ -19,6 +19,7 @@
   --sidebar-bg: #252526;
   --sidebar-width: 260px;
   --sidebar-min-width: 170px;
+  --sidebar-max-width: 600px;
   --sidebar-header-bg: #252526;
 
   /* Tab bar */

@@ -142,8 +142,10 @@ interface AppState {
   // Sidebar
   sidebarView: SidebarView;
   sidebarCollapsed: boolean;
+  sidebarWidth: number;
   setSidebarView: (view: SidebarView) => void;
   toggleSidebar: () => void;
+  setSidebarWidth: (width: number) => void;
 
   // Password prompt
   passwordPromptOpen: boolean;
@@ -435,12 +437,14 @@ export const useAppStore = create<AppState>((set, get) => {
     // Sidebar
     sidebarView: "connections",
     sidebarCollapsed: false,
+    sidebarWidth: 260,
     setSidebarView: (view) =>
       set((state) => ({
         sidebarView: view,
         sidebarCollapsed: state.sidebarView === view && !state.sidebarCollapsed ? true : false,
       })),
     toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
+    setSidebarWidth: (width) => set({ sidebarWidth: width }),
 
     // Password prompt
     passwordPromptOpen: false,

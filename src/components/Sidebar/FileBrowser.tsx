@@ -2,6 +2,7 @@ import { useCallback, useState, useEffect } from "react";
 import { Virtuoso } from "react-virtuoso";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import {
   Folder,
   File,
@@ -56,7 +57,7 @@ interface FileRowProps {
  * Renders identically in both the DropdownMenu (kebab) and ContextMenu (right-click)
  * by accepting the Radix Item/Separator components as props.
  */
-function FileMenuItems({
+export function FileMenuItems({
   entry,
   vscodeAvailable,
   onNavigate,
@@ -137,6 +138,20 @@ function FileMenuItems({
         data-testid={`${testIdPrefix}-paste`}
       >
         <ClipboardPaste size={14} /> Paste
+      </Item>
+      <Item
+        className="context-menu__item"
+        onSelect={() => onContextAction(entry, "copyName")}
+        data-testid={`${testIdPrefix}-copy-name`}
+      >
+        <Copy size={14} /> Copy Name
+      </Item>
+      <Item
+        className="context-menu__item"
+        onSelect={() => onContextAction(entry, "copyPath")}
+        data-testid={`${testIdPrefix}-copy-path`}
+      >
+        <Copy size={14} /> Copy Path
       </Item>
       <Separator className="context-menu__separator" />
       <Item
@@ -524,6 +539,12 @@ export function FileBrowser() {
           break;
         case "cut":
           cutEntry(entry);
+          break;
+        case "copyName":
+          writeClipboard(entry.name);
+          break;
+        case "copyPath":
+          writeClipboard(entry.path);
           break;
         case "rename": {
           const newName = window.prompt("New name:", entry.name);

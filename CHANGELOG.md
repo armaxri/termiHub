@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - File browser: Copy, Cut, and Paste operations for files and directories — works within local mode, within SFTP mode, and cross-mode (local↔SFTP) (#500)
 - File browser: Download now available in local mode (save file to a user-chosen location via save dialog) (#500)
 - File browser: Paste toolbar button with tooltip showing clipboard contents and operation type (#500)
+- File Browser "Copy Name" / "Copy Path" context menu actions — right-click or use the kebab menu on any file or directory to copy its name or full path to the clipboard (#502)
+- Resizable sidebar — drag the edge handle to adjust sidebar width between 170px and 600px, width persists across collapse/expand cycles (#499)
 - `scripts/test-system.cmd` — Windows cmd.exe dispatcher for system tests; delegates to `test-system-windows.sh` via Git Bash or WSL, enabling `scripts\test-system.cmd --skip-serial --skip-e2e` from a standard Windows terminal (#462)
 - Podman support in `test-system-windows.sh` — compose availability check with actionable error, `podman.exe` detection for Git Bash contexts, and `--skip-serial` flag accepted as a no-op for cross-platform compatibility (#462)
 - Podman-on-Windows BuildKit auto-detection in `test-system-windows.sh` — detects when Podman is in use without `docker buildx` (no Docker Desktop), auto-skips integration tests with a clear explanation, and continues running unit tests; eliminates cryptic `docker-compose.exe` failures when Docker Desktop is absent (#462)
