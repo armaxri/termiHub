@@ -4,6 +4,10 @@ All completed concept documents have been moved to [`handled/`](handled/) — th
 
 ## Open Concepts
 
+### ssh-jump-host.md (Issue #520)
+
+Concept for first-class SSH jump host / gateway support in the connection editor. Allows users to configure proxy hops (single or multi-hop) directly in the SSH connection settings without requiring remote agent deployment. Covers UI design for saved-connection references and inline gateway configuration, session pooling across shared gateways, credential handling per hop, tunnel compatibility, and visual indicators in the connection tree and status bar.
+
 ### key-combinations.md (Issue #418)
 
 Concept for correct handling of key combinations across operating systems. Addresses Ctrl+V not pasting on Windows and defines a structured approach to platform-aware keyboard shortcuts, clipboard operations, key event routing, and user-customizable bindings.
