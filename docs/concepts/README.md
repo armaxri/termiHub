@@ -4,6 +4,10 @@ All completed concept documents have been moved to [`handled/`](handled/) — th
 
 ## Open Concepts
 
+### embedded-unix-windows.md (Issue #519)
+
+Concept for bundling a minimal Unix command environment (bash, coreutils, curl, ssh, rsync, etc.) with the Windows build of termiHub. Uses BusyBox-w32 as the core with supplementary standalone tools, providing zero-setup Unix tools with isolated PATH management and independent update capability.
+
 ### key-combinations.md (Issue #418)
 
 Concept for correct handling of key combinations across operating systems. Addresses Ctrl+V not pasting on Windows and defines a structured approach to platform-aware keyboard shortcuts, clipboard operations, key event routing, and user-customizable bindings.
