@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { SplitSquareHorizontal, SplitSquareVertical, Plus, X } from "lucide-react";
+import { SplitSquareHorizontal, SplitSquareVertical, Plus, X, RotateCcw } from "lucide-react";
 import { WorkspaceLayoutNode, WorkspaceSplitNode, WorkspaceTabDef } from "@/types/workspace";
 import {
   getWorkspaceLeaves,
@@ -9,6 +9,7 @@ import {
   removeWorkspaceLeaf,
   addLeafToSplit,
   wrapSplitInNewDirection,
+  updateSplitSizes,
 } from "@/utils/workspaceLayout";
 import { ConnectionPicker } from "./ConnectionPicker";
 
@@ -87,6 +88,14 @@ export function LayoutDesigner({ layout, onChange }: LayoutDesignerProps) {
     [layout, onChange]
   );
 
+  const handleUpdateSizes = useCallback(
+    (splitNode: WorkspaceSplitNode, sizes: number[] | null) => {
+      const result = updateSplitSizes(layout, splitNode, sizes);
+      onChange(result);
+    },
+    [layout, onChange]
+  );
+
   return (
     <div className="layout-designer" data-testid="layout-designer">
       <div className="layout-designer__canvas" data-testid="layout-canvas">
@@ -101,6 +110,7 @@ export function LayoutDesigner({ layout, onChange }: LayoutDesignerProps) {
           onSplit={handleSplit}
           onAddTab={setPickerLeafIdx}
           onSplitContainer={handleSplitContainer}
+          onUpdateSizes={handleUpdateSizes}
         />
       </div>
 
@@ -125,6 +135,7 @@ interface LayoutNodePreviewProps {
   onSplit: (leafIdx: number, direction: "horizontal" | "vertical") => void;
   onAddTab: (leafIdx: number) => void;
   onSplitContainer: (splitNode: WorkspaceSplitNode, direction: "horizontal" | "vertical") => void;
+  onUpdateSizes: (splitNode: WorkspaceSplitNode, sizes: number[] | null) => void;
 }
 
 function LayoutNodePreview({
@@ -138,6 +149,7 @@ function LayoutNodePreview({
   onSplit,
   onAddTab,
   onSplitContainer,
+  onUpdateSizes,
 }: LayoutNodePreviewProps) {
   if (node.type === "leaf") {
     const idx = leafIndexMap.get(node) ?? 0;
@@ -161,6 +173,7 @@ function LayoutNodePreview({
   const directionLabel = node.direction === "horizontal" ? "Horizontal" : "Vertical";
   const DirectionIcon =
     node.direction === "horizontal" ? SplitSquareHorizontal : SplitSquareVertical;
+  const hasSizes = !!node.sizes;
 
   return (
     <div className="layout-split-container" data-testid={`layout-split-${node.direction}`}>
@@ -170,6 +183,16 @@ function LayoutNodePreview({
           {directionLabel}
         </span>
         <div className="layout-split-container__actions">
+          {hasSizes && (
+            <button
+              className="layout-split-container__action-btn"
+              onClick={() => onUpdateSizes(node, null)}
+              title="Reset to Equal"
+              data-testid="layout-size-reset"
+            >
+              <RotateCcw size={10} />
+            </button>
+          )}
           <button
             className="layout-split-container__action-btn"
             onClick={() => onSplitContainer(node, "horizontal")}
@@ -189,23 +212,113 @@ function LayoutNodePreview({
       <div
         className={`layout-split-container__content layout-split-container__content--${node.direction}`}
       >
-        {node.children.map((child, i) => (
-          <LayoutNodePreview
-            key={i}
-            node={child}
-            leafIndexMap={leafIndexMap}
-            selectedLeaf={selectedLeaf}
-            leafCount={leafCount}
-            onSelectLeaf={onSelectLeaf}
-            onRemoveTab={onRemoveTab}
-            onRemoveLeaf={onRemoveLeaf}
-            onSplit={onSplit}
-            onAddTab={onAddTab}
-            onSplitContainer={onSplitContainer}
-          />
-        ))}
+        {node.children.map((child, i) => {
+          const size = node.sizes?.[i] ?? 100 / node.children.length;
+          return (
+            <div key={i} className="layout-split-container__child" style={{ flex: size }}>
+              <SizeBadge
+                size={size}
+                isCustom={hasSizes}
+                splitNode={node}
+                childIndex={i}
+                onUpdateSizes={onUpdateSizes}
+              />
+              <LayoutNodePreview
+                node={child}
+                leafIndexMap={leafIndexMap}
+                selectedLeaf={selectedLeaf}
+                leafCount={leafCount}
+                onSelectLeaf={onSelectLeaf}
+                onRemoveTab={onRemoveTab}
+                onRemoveLeaf={onRemoveLeaf}
+                onSplit={onSplit}
+                onAddTab={onAddTab}
+                onSplitContainer={onSplitContainer}
+                onUpdateSizes={onUpdateSizes}
+              />
+            </div>
+          );
+        })}
       </div>
     </div>
+  );
+}
+
+interface SizeBadgeProps {
+  size: number;
+  isCustom: boolean;
+  splitNode: WorkspaceSplitNode;
+  childIndex: number;
+  onUpdateSizes: (splitNode: WorkspaceSplitNode, sizes: number[] | null) => void;
+}
+
+function SizeBadge({ size, isCustom, splitNode, childIndex, onUpdateSizes }: SizeBadgeProps) {
+  const [editing, setEditing] = useState(false);
+  const [editValue, setEditValue] = useState("");
+
+  const handleStartEdit = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditValue(Math.round(size).toString());
+    setEditing(true);
+  };
+
+  const handleCommit = () => {
+    setEditing(false);
+    const newSize = parseFloat(editValue);
+    if (isNaN(newSize) || newSize < 10) return;
+
+    const count = splitNode.children.length;
+    const currentSizes = splitNode.sizes ?? Array(count).fill(100 / count);
+    const oldSize = currentSizes[childIndex];
+    const diff = newSize - oldSize;
+
+    // Redistribute the difference proportionally among siblings
+    const otherTotal = currentSizes.reduce((sum, s, i) => (i === childIndex ? sum : sum + s), 0);
+    const newSizes = currentSizes.map((s, i) => {
+      if (i === childIndex) return newSize;
+      if (otherTotal === 0) return (100 - newSize) / (count - 1);
+      return Math.max(10, s - (diff * s) / otherTotal);
+    });
+
+    // Normalize to sum to 100
+    const total = newSizes.reduce((a, b) => a + b, 0);
+    const normalized = newSizes.map((s) => (s / total) * 100);
+
+    onUpdateSizes(splitNode, normalized);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") handleCommit();
+    if (e.key === "Escape") setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <input
+        className="layout-size-input"
+        type="number"
+        min={10}
+        max={90}
+        value={editValue}
+        onChange={(e) => setEditValue(e.target.value)}
+        onBlur={handleCommit}
+        onKeyDown={handleKeyDown}
+        autoFocus
+        onClick={(e) => e.stopPropagation()}
+        data-testid="layout-size-input"
+      />
+    );
+  }
+
+  return (
+    <button
+      className={`layout-size-badge ${isCustom ? "layout-size-badge--custom" : ""}`}
+      onClick={handleStartEdit}
+      title="Click to edit size"
+      data-testid="layout-size-badge"
+    >
+      {Math.round(size)}%
+    </button>
   );
 }
 

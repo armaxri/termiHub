@@ -21,6 +21,8 @@ export interface WorkspaceSplitNode {
   type: "split";
   direction: "horizontal" | "vertical";
   children: WorkspaceLayoutNode[];
+  /** Optional percentage sizes for each child (must sum to 100, length must match children). */
+  sizes?: number[];
 }
 
 /** Recursive layout tree for a workspace. */
