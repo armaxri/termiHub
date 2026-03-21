@@ -8,6 +8,10 @@ All completed concept documents have been moved to [`handled/`](handled/) — th
 
 Concept for correct handling of key combinations across operating systems. Addresses Ctrl+V not pasting on Windows and defines a structured approach to platform-aware keyboard shortcuts, clipboard operations, key event routing, and user-customizable bindings.
 
+### vnc-sessions.md (Issue #514)
+
+Concept for built-in VNC session support. Defines how to embed remote graphical desktops in termiHub tabs using noVNC (canvas-based JavaScript VNC client) with a Rust WebSocket-to-TCP proxy, SSH tunnel integration, credential store support, clipboard sync, and connection editor integration.
+
 ## Handled Concepts
 
 The following live in [`handled/`](handled/) because their concept issues are closed.
