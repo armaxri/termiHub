@@ -7,6 +7,7 @@ All completed concept documents have been moved to [`handled/`](handled/) — th
 ### ssh-jump-host.md (Issue #520)
 
 Concept for first-class SSH jump host / gateway support in the connection editor. Allows users to configure proxy hops (single or multi-hop) directly in the SSH connection settings without requiring remote agent deployment. Covers UI design for saved-connection references and inline gateway configuration, session pooling across shared gateways, credential handling per hop, tunnel compatibility, and visual indicators in the connection tree and status bar.
+
 ### embedded-unix-windows.md (Issue #519)
 
 Concept for bundling a minimal Unix command environment (bash, coreutils, curl, ssh, rsync, etc.) with the Windows build of termiHub. Uses BusyBox-w32 as the core with supplementary standalone tools, providing zero-setup Unix tools with isolated PATH management and independent update capability.
@@ -18,6 +19,10 @@ Concept for correct handling of key combinations across operating systems. Addre
 ### vnc-sessions.md (Issue #514)
 
 Concept for built-in VNC session support. Defines how to embed remote graphical desktops in termiHub tabs using noVNC (canvas-based JavaScript VNC client) with a Rust WebSocket-to-TCP proxy, SSH tunnel integration, credential store support, clipboard sync, and connection editor integration.
+
+### package-manager.md (Issue #521)
+
+Concept for a package manager for extensions and tools. Builds on the plugin system concept to add repository browsing, dependency resolution, automatic updates, and tool packages (CLI utilities). Covers two package types (plugins and tools), static HTTPS repository format, multi-source priority resolution, download verification, PATH management for tool binaries, disk usage tracking, and offline mode.
 
 ## Handled Concepts
 

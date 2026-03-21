@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Concept: Package manager for extensions and tools — design document covering repository browsing, dependency resolution, automatic updates, tool packages, and size management (#521)
 - Workspaces — reusable terminal layouts with pre-configured connections that open automatically; create, edit, duplicate, delete, launch, and save the current layout as a workspace (#503)
 - Workspace editor — visual layout designer for building workspace panel trees with split/tab management and connection picker (#503)
 - Workspace sidebar — dedicated sidebar view in the activity bar listing all workspaces with launch, edit, duplicate, and delete actions (#503)
