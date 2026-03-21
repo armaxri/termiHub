@@ -261,12 +261,14 @@ fn replace_connection_ids_with_names(
         WorkspaceLayoutNode::Split {
             direction,
             children,
+            sizes,
         } => WorkspaceLayoutNode::Split {
             direction: direction.clone(),
             children: children
                 .iter()
                 .map(|c| replace_connection_ids_with_names(c, id_to_name))
                 .collect(),
+            sizes: sizes.clone(),
         },
     }
 }
@@ -294,12 +296,14 @@ fn resolve_connection_names_to_ids(
         WorkspaceLayoutNode::Split {
             direction,
             children,
+            sizes,
         } => WorkspaceLayoutNode::Split {
             direction: direction.clone(),
             children: children
                 .iter()
                 .map(|c| resolve_connection_names_to_ids(c, name_to_id))
                 .collect(),
+            sizes: sizes.clone(),
         },
     }
 }
@@ -412,6 +416,7 @@ mod tests {
                         }],
                     },
                 ],
+                sizes: None,
             },
         };
         mgr.save_workspace(ws).unwrap();

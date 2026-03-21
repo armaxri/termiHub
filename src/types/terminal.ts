@@ -128,6 +128,8 @@ export interface SplitContainer {
   id: string;
   direction: "horizontal" | "vertical";
   children: PanelNode[];
+  /** Optional percentage sizes for each child (must sum to 100, length must match children). */
+  sizes?: number[];
   /** The last leaf that was focused within this subtree. Used by directional navigation. */
   lastActiveLeafId?: string;
 }

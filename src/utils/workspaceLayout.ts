@@ -65,13 +65,31 @@ function splitAtIndex(
   }
 
   let foundIndex: number | null = null;
-  const newChildren = node.children.map((child) => {
+  let foundChildIdx: number | null = null;
+  const newChildren = node.children.map((child, i) => {
     const result = splitAtIndex(child, targetIndex, direction, counter);
-    if (result.newLeafIndex !== null) foundIndex = result.newLeafIndex;
+    if (result.newLeafIndex !== null) {
+      foundIndex = result.newLeafIndex;
+      foundChildIdx = i;
+    }
     return result.node;
   });
 
-  return { node: { ...node, children: newChildren }, newLeafIndex: foundIndex };
+  // If a child was split and this split has sizes, recalculate
+  let newSizes = node.sizes;
+  if (foundChildIdx !== null && newSizes) {
+    newSizes = [...newSizes];
+    const halfSize = newSizes[foundChildIdx] / 2;
+    newSizes[foundChildIdx] = halfSize;
+    // The split created a new split child (replacing the leaf), so sizes stay same length
+    // unless the new split direction matches this node's direction — in that case the
+    // splitAtIndex created a nested split, not an inline sibling, so sizes are unchanged.
+  }
+
+  return {
+    node: { ...node, children: newChildren, ...(newSizes ? { sizes: newSizes } : {}) },
+    newLeafIndex: foundIndex,
+  };
 }
 
 /** Add a tab to a leaf at the given index. */
@@ -163,13 +181,36 @@ function removeLeafAtIndex(
     return node;
   }
 
-  const newChildren = node.children
-    .map((child) => removeLeafAtIndex(child, targetIndex, counter))
-    .filter((child): child is WorkspaceLayoutNode => child !== null);
+  const results = node.children.map((child) => removeLeafAtIndex(child, targetIndex, counter));
+  const newChildren = results.filter((child): child is WorkspaceLayoutNode => child !== null);
 
   if (newChildren.length === 0) return null;
   if (newChildren.length === 1) return newChildren[0];
-  return { ...node, children: newChildren };
+
+  // Recalculate sizes if present
+  let newSizes: number[] | undefined;
+  if (node.sizes) {
+    newSizes = [];
+    let removedSize = 0;
+    for (let i = 0; i < results.length; i++) {
+      if (results[i] === null) {
+        removedSize += node.sizes[i] ?? 0;
+      } else {
+        newSizes.push(node.sizes[i] ?? 0);
+      }
+    }
+    // Distribute removed size proportionally among remaining
+    if (newSizes.length > 0 && removedSize > 0) {
+      const remainingTotal = newSizes.reduce((a, b) => a + b, 0);
+      if (remainingTotal > 0) {
+        newSizes = newSizes.map((s) => s + (removedSize * s) / remainingTotal);
+      } else {
+        newSizes = newSizes.map(() => 100 / newSizes!.length);
+      }
+    }
+  }
+
+  return { ...node, children: newChildren, ...(newSizes ? { sizes: newSizes } : {}) };
 }
 
 /** Update a tab at a specific leaf and tab index. */
@@ -249,6 +290,87 @@ export function moveTabBetweenLeaves(
   return result;
 }
 
+/**
+ * Add a new empty leaf panel as a child of a specific split node.
+ * Identifies the target split by reference equality.
+ */
+export function addLeafToSplit(
+  root: WorkspaceLayoutNode,
+  targetSplit: WorkspaceSplitNode
+): WorkspaceLayoutNode {
+  if (root.type === "leaf") return root;
+
+  if (root === targetSplit) {
+    const newLeaf: WorkspaceLeafNode = { type: "leaf", tabs: [] };
+    // Recalculate sizes: take fair share from existing panels
+    let newSizes: number[] | undefined;
+    if (root.sizes) {
+      const newCount = root.children.length + 1;
+      const fairShare = 100 / newCount;
+      const scaleFactor = (100 - fairShare) / 100;
+      newSizes = root.sizes.map((s) => s * scaleFactor);
+      newSizes.push(fairShare);
+    }
+    return {
+      ...root,
+      children: [...root.children, newLeaf],
+      ...(newSizes ? { sizes: newSizes } : {}),
+    };
+  }
+
+  return {
+    ...root,
+    children: root.children.map((child) => addLeafToSplit(child, targetSplit)),
+  };
+}
+
+/**
+ * Wrap a specific split node in a new split of a different direction,
+ * adding a new empty leaf sibling. Identifies the target by reference equality.
+ */
+export function wrapSplitInNewDirection(
+  root: WorkspaceLayoutNode,
+  targetSplit: WorkspaceSplitNode,
+  direction: "horizontal" | "vertical"
+): WorkspaceLayoutNode {
+  if (root === targetSplit) {
+    const newLeaf: WorkspaceLeafNode = { type: "leaf", tabs: [] };
+    return { type: "split", direction, children: [root, newLeaf] };
+  }
+
+  if (root.type === "leaf") return root;
+
+  return {
+    ...root,
+    children: root.children.map((child) => wrapSplitInNewDirection(child, targetSplit, direction)),
+  };
+}
+
+/**
+ * Update or clear the sizes array on a split node identified by reference equality.
+ * Pass `null` to clear sizes (revert to equal distribution).
+ */
+export function updateSplitSizes(
+  root: WorkspaceLayoutNode,
+  targetSplit: WorkspaceSplitNode,
+  sizes: number[] | null
+): WorkspaceLayoutNode {
+  if (root === targetSplit) {
+    if (sizes === null) {
+      const { sizes: _removed, ...rest } = root;
+      return rest as WorkspaceSplitNode;
+    }
+    return { ...root, sizes };
+  }
+
+  if (root.type === "leaf") return root;
+
+  return {
+    ...root,
+    children: root.children.map((child) => updateSplitSizes(child, targetSplit, sizes)),
+  };
+}
+
 // --- Panel tree building/capture for workspace launch ---
 
 let panelIdCounter = 0;
@@ -316,6 +438,7 @@ export function buildPanelTreeFromWorkspace(
     children: layout.children.map((child) =>
       buildPanelTreeFromWorkspace(child, savedConnections, defaultShell)
     ),
+    ...(layout.sizes ? { sizes: [...layout.sizes] } : {}),
   };
 }
 
@@ -374,6 +497,7 @@ export function captureCurrentLayout(
     type: "split",
     direction: rootPanel.direction,
     children: rootPanel.children.map((child) => captureCurrentLayout(child, savedConnections)),
+    ...(rootPanel.sizes ? { sizes: [...rootPanel.sizes] } : {}),
   };
 }
 

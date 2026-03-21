@@ -156,7 +156,7 @@ function PanelNodeRenderer({ node, setActivePanel, activeDragTab }: PanelNodeRen
   return (
     <Group orientation={orientation} className="split-view">
       {node.children.map((child, index) => (
-        <SplitChild key={child.id} index={index}>
+        <SplitChild key={child.id} index={index} defaultSize={node.sizes?.[index]}>
           <PanelNodeRenderer
             node={child}
             setActivePanel={setActivePanel}
@@ -168,11 +168,21 @@ function PanelNodeRenderer({ node, setActivePanel, activeDragTab }: PanelNodeRen
   );
 }
 
-function SplitChild({ index, children }: { index: number; children: React.ReactNode }) {
+function SplitChild({
+  index,
+  defaultSize,
+  children,
+}: {
+  index: number;
+  defaultSize?: number;
+  children: React.ReactNode;
+}) {
   return (
     <>
       {index > 0 && <Separator className="split-view__resize-handle" />}
-      <Panel minSize={10}>{children}</Panel>
+      <Panel minSize={10} defaultSize={defaultSize}>
+        {children}
+      </Panel>
     </>
   );
 }

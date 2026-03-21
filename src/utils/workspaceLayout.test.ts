@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { WorkspaceLayoutNode, WorkspaceLeafNode, WorkspaceTabDef } from "@/types/workspace";
+import {
+  WorkspaceLayoutNode,
+  WorkspaceLeafNode,
+  WorkspaceSplitNode,
+  WorkspaceTabDef,
+} from "@/types/workspace";
 import { SavedConnection } from "@/types/connection";
 import { PanelNode } from "@/types/terminal";
 import {
@@ -10,9 +15,12 @@ import {
   removeTabFromLeaf,
   removeWorkspaceLeaf,
   updateTabInLeaf,
+  addLeafToSplit,
+  wrapSplitInNewDirection,
   buildPanelTreeFromWorkspace,
   captureCurrentLayout,
   moveTabBetweenLeaves,
+  updateSplitSizes,
 } from "./workspaceLayout";
 
 function tab(ref?: string): WorkspaceTabDef {
@@ -23,12 +31,20 @@ function leaf(...tabs: WorkspaceTabDef[]): WorkspaceLeafNode {
   return { type: "leaf", tabs };
 }
 
-function hsplit(...children: WorkspaceLayoutNode[]): WorkspaceLayoutNode {
+function hsplit(...children: WorkspaceLayoutNode[]): WorkspaceSplitNode {
   return { type: "split", direction: "horizontal", children };
 }
 
-function vsplit(...children: WorkspaceLayoutNode[]): WorkspaceLayoutNode {
+function vsplit(...children: WorkspaceLayoutNode[]): WorkspaceSplitNode {
   return { type: "split", direction: "vertical", children };
+}
+
+function hsplitSized(sizes: number[], ...children: WorkspaceLayoutNode[]): WorkspaceSplitNode {
+  return { type: "split", direction: "horizontal", children, sizes };
+}
+
+function vsplitSized(sizes: number[], ...children: WorkspaceLayoutNode[]): WorkspaceSplitNode {
+  return { type: "split", direction: "vertical", children, sizes };
 }
 
 describe("getWorkspaceLeaves", () => {
@@ -274,6 +290,83 @@ describe("moveTabBetweenLeaves", () => {
   });
 });
 
+describe("addLeafToSplit", () => {
+  it("adds a new empty leaf to a horizontal split", () => {
+    const split = hsplit(leaf(tab("a")), leaf(tab("b"))) as WorkspaceSplitNode;
+    const result = addLeafToSplit(split, split);
+    expect(result.type).toBe("split");
+    if (result.type === "split") {
+      expect(result.children).toHaveLength(3);
+      expect(result.children[2].type).toBe("leaf");
+      if (result.children[2].type === "leaf") {
+        expect(result.children[2].tabs).toHaveLength(0);
+      }
+    }
+  });
+
+  it("adds a leaf to a nested split by reference", () => {
+    const inner = vsplit(leaf(tab("b")), leaf(tab("c"))) as WorkspaceSplitNode;
+    const root = hsplit(leaf(tab("a")), inner);
+    const result = addLeafToSplit(root, inner);
+    const leaves = getWorkspaceLeaves(result);
+    expect(leaves).toHaveLength(4);
+  });
+
+  it("returns unchanged tree if target not found", () => {
+    const root = hsplit(leaf(tab("a")), leaf(tab("b")));
+    const unrelated = vsplit(leaf(tab("x"))) as WorkspaceSplitNode;
+    const result = addLeafToSplit(root, unrelated);
+    expect(getWorkspaceLeaves(result)).toHaveLength(2);
+  });
+
+  it("returns leaf unchanged when root is leaf", () => {
+    const root = leaf(tab("a"));
+    const target = vsplit(leaf(tab("x"))) as WorkspaceSplitNode;
+    const result = addLeafToSplit(root, target);
+    expect(result).toBe(root);
+  });
+});
+
+describe("wrapSplitInNewDirection", () => {
+  it("wraps a horizontal split in a vertical split", () => {
+    const split = hsplit(leaf(tab("a")), leaf(tab("b"))) as WorkspaceSplitNode;
+    const result = wrapSplitInNewDirection(split, split, "vertical");
+    expect(result.type).toBe("split");
+    if (result.type === "split") {
+      expect(result.direction).toBe("vertical");
+      expect(result.children).toHaveLength(2);
+      expect(result.children[0].type).toBe("split");
+      expect(result.children[1].type).toBe("leaf");
+    }
+  });
+
+  it("wraps a nested split by reference", () => {
+    const inner = vsplit(leaf(tab("b")), leaf(tab("c"))) as WorkspaceSplitNode;
+    const root = hsplit(leaf(tab("a")), inner);
+    const result = wrapSplitInNewDirection(root, inner, "horizontal");
+    expect(result.type).toBe("split");
+    if (result.type === "split") {
+      expect(result.direction).toBe("horizontal");
+      // First child is still leaf "a", second child is now a new horizontal split
+      expect(result.children[0].type).toBe("leaf");
+      const wrapped = result.children[1];
+      expect(wrapped.type).toBe("split");
+      if (wrapped.type === "split") {
+        expect(wrapped.direction).toBe("horizontal");
+        expect(wrapped.children[0]).toBe(inner);
+        expect(wrapped.children[1].type).toBe("leaf");
+      }
+    }
+  });
+
+  it("returns unchanged tree if target not found", () => {
+    const root = hsplit(leaf(tab("a")), leaf(tab("b")));
+    const unrelated = vsplit(leaf(tab("x"))) as WorkspaceSplitNode;
+    const result = wrapSplitInNewDirection(root, unrelated, "vertical");
+    expect(getWorkspaceLeaves(result)).toHaveLength(2);
+  });
+});
+
 // --- Panel tree build/capture tests ---
 
 const savedConnections: SavedConnection[] = [
@@ -493,6 +586,219 @@ describe("captureCurrentLayout", () => {
     const result = captureCurrentLayout(panel, savedConnections);
     if (result.type === "leaf") {
       expect(result.tabs).toHaveLength(1);
+    }
+  });
+});
+
+// --- Sizes propagation and manipulation tests ---
+
+describe("sizes propagation in buildPanelTreeFromWorkspace", () => {
+  it("propagates sizes from workspace split to runtime split", () => {
+    const layout = hsplitSized(
+      [60, 40],
+      leaf({ connectionRef: "conn-1" }),
+      leaf({ connectionRef: "conn-2" })
+    );
+    const result = buildPanelTreeFromWorkspace(layout, savedConnections, "bash");
+    expect(result.type).toBe("split");
+    if (result.type === "split") {
+      expect(result.sizes).toEqual([60, 40]);
+    }
+  });
+
+  it("does not add sizes when absent", () => {
+    const layout = hsplit(leaf({ connectionRef: "conn-1" }), leaf({ connectionRef: "conn-2" }));
+    const result = buildPanelTreeFromWorkspace(layout, savedConnections, "bash");
+    if (result.type === "split") {
+      expect(result.sizes).toBeUndefined();
+    }
+  });
+});
+
+describe("sizes propagation in captureCurrentLayout", () => {
+  it("propagates sizes from runtime split to workspace split", () => {
+    const panel: PanelNode = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      sizes: [70, 30],
+      children: [
+        {
+          type: "leaf",
+          id: "p1",
+          tabs: [
+            {
+              id: "t1",
+              sessionId: null,
+              title: "Dev Server",
+              connectionType: "ssh",
+              contentType: "terminal",
+              config: { type: "ssh", config: { host: "dev.example.com" } },
+              panelId: "p1",
+              isActive: true,
+            },
+          ],
+          activeTabId: "t1",
+        },
+        {
+          type: "leaf",
+          id: "p2",
+          tabs: [
+            {
+              id: "t2",
+              sessionId: null,
+              title: "Local Shell",
+              connectionType: "local",
+              contentType: "terminal",
+              config: { type: "local", config: { shell: "bash" } },
+              panelId: "p2",
+              isActive: true,
+            },
+          ],
+          activeTabId: "t2",
+        },
+      ],
+    };
+    const result = captureCurrentLayout(panel, savedConnections);
+    expect(result.type).toBe("split");
+    if (result.type === "split") {
+      expect(result.sizes).toEqual([70, 30]);
+    }
+  });
+
+  it("does not add sizes when runtime split has no sizes", () => {
+    const panel: PanelNode = {
+      type: "split",
+      id: "s1",
+      direction: "horizontal",
+      children: [
+        {
+          type: "leaf",
+          id: "p1",
+          tabs: [
+            {
+              id: "t1",
+              sessionId: null,
+              title: "Dev Server",
+              connectionType: "ssh",
+              contentType: "terminal",
+              config: { type: "ssh", config: { host: "dev.example.com" } },
+              panelId: "p1",
+              isActive: true,
+            },
+          ],
+          activeTabId: "t1",
+        },
+        {
+          type: "leaf",
+          id: "p2",
+          tabs: [
+            {
+              id: "t2",
+              sessionId: null,
+              title: "Local Shell",
+              connectionType: "local",
+              contentType: "terminal",
+              config: { type: "local", config: { shell: "bash" } },
+              panelId: "p2",
+              isActive: true,
+            },
+          ],
+          activeTabId: "t2",
+        },
+      ],
+    };
+    const result = captureCurrentLayout(panel, savedConnections);
+    if (result.type === "split") {
+      expect(result.sizes).toBeUndefined();
+    }
+  });
+});
+
+describe("removeWorkspaceLeaf with sizes", () => {
+  it("redistributes sizes when removing a child from a sized split", () => {
+    const node = hsplitSized([50, 25, 25], leaf(tab("a")), leaf(tab("b")), leaf(tab("c")));
+    const result = removeWorkspaceLeaf(node, 0);
+    expect(result).not.toBeNull();
+    if (result?.type === "split") {
+      expect(result.children).toHaveLength(2);
+      expect(result.sizes).toBeDefined();
+      const total = result.sizes!.reduce((a, b) => a + b, 0);
+      expect(total).toBeCloseTo(100);
+    }
+  });
+
+  it("drops sizes when collapsing to single leaf", () => {
+    const node = hsplitSized([60, 40], leaf(tab("a")), leaf(tab("b")));
+    const result = removeWorkspaceLeaf(node, 0);
+    expect(result).not.toBeNull();
+    expect(result!.type).toBe("leaf");
+  });
+});
+
+describe("addLeafToSplit with sizes", () => {
+  it("assigns fair share from existing panels when sizes present", () => {
+    const split = hsplitSized([60, 40], leaf(tab("a")), leaf(tab("b")));
+    const result = addLeafToSplit(split, split);
+    if (result.type === "split") {
+      expect(result.children).toHaveLength(3);
+      expect(result.sizes).toBeDefined();
+      const total = result.sizes!.reduce((a, b) => a + b, 0);
+      expect(total).toBeCloseTo(100);
+      // New panel gets ~33.3%, existing scale down proportionally
+      expect(result.sizes![2]).toBeCloseTo(100 / 3, 0);
+    }
+  });
+
+  it("does not add sizes when split has no sizes", () => {
+    const split = hsplit(leaf(tab("a")), leaf(tab("b"))) as WorkspaceSplitNode;
+    const result = addLeafToSplit(split, split);
+    if (result.type === "split") {
+      expect(result.sizes).toBeUndefined();
+    }
+  });
+});
+
+describe("updateSplitSizes", () => {
+  it("sets sizes on a split node", () => {
+    const split = hsplit(leaf(tab("a")), leaf(tab("b"))) as WorkspaceSplitNode;
+    const result = updateSplitSizes(split, split, [70, 30]);
+    if (result.type === "split") {
+      expect(result.sizes).toEqual([70, 30]);
+    }
+  });
+
+  it("clears sizes when null passed", () => {
+    const split = hsplitSized([60, 40], leaf(tab("a")), leaf(tab("b")));
+    const result = updateSplitSizes(split, split, null);
+    if (result.type === "split") {
+      expect(result.sizes).toBeUndefined();
+    }
+  });
+
+  it("updates nested split by reference", () => {
+    const inner = vsplitSized([30, 70], leaf(tab("b")), leaf(tab("c")));
+    const root = hsplit(leaf(tab("a")), inner);
+    const result = updateSplitSizes(root, inner, [50, 50]);
+    if (result.type === "split") {
+      const updatedInner = result.children[1];
+      if (updatedInner.type === "split") {
+        expect(updatedInner.sizes).toEqual([50, 50]);
+      }
+    }
+  });
+});
+
+describe("splitWorkspaceLeaf with sized parent", () => {
+  it("splitting a leaf inside a sized split does not break sizes length", () => {
+    const node = hsplitSized([60, 40], leaf(tab("a")), leaf(tab("b")));
+    // Splitting leaf 0 vertically creates a nested vsplit inside the hsplit
+    const { node: result } = splitWorkspaceLeaf(node, 0, "vertical");
+    if (result.type === "split") {
+      // The hsplit still has 2 direct children (one is now a vsplit)
+      expect(result.children).toHaveLength(2);
+      // Sizes should still be valid (same length as children)
+      expect(result.sizes).toHaveLength(2);
     }
   });
 });

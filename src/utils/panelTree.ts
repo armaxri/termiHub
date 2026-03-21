@@ -2,6 +2,13 @@ import { LeafPanel, PanelNode, SplitContainer, DropEdge } from "@/types/terminal
 
 export type FocusDirection = "up" | "down" | "left" | "right";
 
+/** Normalize an array of sizes so they sum to exactly 100. */
+export function normalizeSizes(sizes: number[]): number[] {
+  const total = sizes.reduce((a, b) => a + b, 0);
+  if (total === 0) return sizes.map(() => 100 / sizes.length);
+  return sizes.map((s) => (s / total) * 100);
+}
+
 let panelCounter = 0;
 
 /** Generate a unique panel ID. */
@@ -73,17 +80,35 @@ export function removeLeaf(root: PanelNode, leafId: string): PanelNode | null {
     return root.id === leafId ? null : root;
   }
 
-  const newChildren: PanelNode[] = [];
-  for (const child of root.children) {
-    const result = removeLeaf(child, leafId);
-    if (result !== null) {
-      newChildren.push(result);
-    }
-  }
+  const results: (PanelNode | null)[] = root.children.map((child) => removeLeaf(child, leafId));
+  const newChildren = results.filter((child): child is PanelNode => child !== null);
 
   if (newChildren.length === 0) return null;
   if (newChildren.length === 1) return newChildren[0];
-  return { ...root, children: newChildren };
+
+  // Recalculate sizes if present
+  let newSizes: number[] | undefined;
+  if (root.sizes) {
+    newSizes = [];
+    let removedSize = 0;
+    for (let i = 0; i < results.length; i++) {
+      if (results[i] === null) {
+        removedSize += root.sizes[i] ?? 0;
+      } else {
+        newSizes.push(root.sizes[i] ?? 0);
+      }
+    }
+    if (newSizes.length > 0 && removedSize > 0) {
+      const remainingTotal = newSizes.reduce((a, b) => a + b, 0);
+      if (remainingTotal > 0) {
+        newSizes = normalizeSizes(newSizes.map((s) => s + (removedSize * s) / remainingTotal));
+      } else {
+        newSizes = newSizes.map(() => 100 / newSizes!.length);
+      }
+    }
+  }
+
+  return { ...root, children: newChildren, ...(newSizes ? { sizes: newSizes } : {}) };
 }
 
 /**
@@ -114,7 +139,15 @@ export function splitLeaf(
     const insertIdx = position === "before" ? targetIndex : targetIndex + 1;
     const newChildren = [...root.children];
     newChildren.splice(insertIdx, 0, newLeaf);
-    return { ...root, children: newChildren };
+    // Recalculate sizes: halve the target child's size for the new sibling
+    let newSizes: number[] | undefined;
+    if (root.sizes) {
+      newSizes = [...root.sizes];
+      const halfSize = newSizes[targetIndex] / 2;
+      newSizes[targetIndex] = halfSize;
+      newSizes.splice(insertIdx, 0, halfSize);
+    }
+    return { ...root, children: newChildren, ...(newSizes ? { sizes: newSizes } : {}) };
   }
 
   // Recurse into children

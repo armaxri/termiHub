@@ -28,6 +28,9 @@ pub enum WorkspaceLayoutNode {
     Split {
         direction: SplitDirection,
         children: Vec<WorkspaceLayoutNode>,
+        /// Optional percentage sizes for each child (must sum to 100, length must match children).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sizes: Option<Vec<f64>>,
     },
 }
 
@@ -172,6 +175,7 @@ mod tests {
                         ],
                     },
                 ],
+                sizes: None,
             },
         }
     }
@@ -231,12 +235,14 @@ mod tests {
                     }],
                 },
             ],
+            sizes: None,
         };
         let json = serde_json::to_string(&split).unwrap();
         let deserialized: WorkspaceLayoutNode = serde_json::from_str(&json).unwrap();
         if let WorkspaceLayoutNode::Split {
             direction,
             children,
+            ..
         } = deserialized
         {
             assert_eq!(direction, SplitDirection::Vertical);
@@ -341,6 +347,7 @@ mod tests {
                             }],
                         },
                     ],
+                    sizes: None,
                 },
                 WorkspaceLayoutNode::Leaf {
                     tabs: vec![WorkspaceTabDef {
@@ -351,6 +358,7 @@ mod tests {
                     }],
                 },
             ],
+            sizes: None,
         };
         assert_eq!(count_tabs(&layout), 4);
     }
@@ -388,5 +396,63 @@ mod tests {
         };
         let json = serde_json::to_string(&ws).unwrap();
         assert!(!json.contains("description"));
+    }
+
+    #[test]
+    fn split_with_sizes_serde_round_trip() {
+        let split = WorkspaceLayoutNode::Split {
+            direction: SplitDirection::Horizontal,
+            children: vec![
+                WorkspaceLayoutNode::Leaf {
+                    tabs: vec![WorkspaceTabDef {
+                        connection_ref: Some("conn-1".to_string()),
+                        inline_config: None,
+                        title: None,
+                        initial_command: None,
+                    }],
+                },
+                WorkspaceLayoutNode::Leaf {
+                    tabs: vec![WorkspaceTabDef {
+                        connection_ref: Some("conn-2".to_string()),
+                        inline_config: None,
+                        title: None,
+                        initial_command: None,
+                    }],
+                },
+            ],
+            sizes: Some(vec![60.0, 40.0]),
+        };
+        let json = serde_json::to_string(&split).unwrap();
+        assert!(json.contains("\"sizes\""));
+        let deserialized: WorkspaceLayoutNode = serde_json::from_str(&json).unwrap();
+        if let WorkspaceLayoutNode::Split { sizes, .. } = deserialized {
+            assert_eq!(sizes, Some(vec![60.0, 40.0]));
+        } else {
+            panic!("Expected Split");
+        }
+    }
+
+    #[test]
+    fn split_without_sizes_serde_backward_compat() {
+        // JSON without sizes field should deserialize with sizes = None
+        let json =
+            r#"{"type":"split","direction":"horizontal","children":[{"type":"leaf","tabs":[]}]}"#;
+        let node: WorkspaceLayoutNode = serde_json::from_str(json).unwrap();
+        if let WorkspaceLayoutNode::Split { sizes, .. } = node {
+            assert_eq!(sizes, None);
+        } else {
+            panic!("Expected Split");
+        }
+    }
+
+    #[test]
+    fn split_sizes_omitted_when_none_in_json() {
+        let split = WorkspaceLayoutNode::Split {
+            direction: SplitDirection::Horizontal,
+            children: vec![WorkspaceLayoutNode::Leaf { tabs: vec![] }],
+            sizes: None,
+        };
+        let json = serde_json::to_string(&split).unwrap();
+        assert!(!json.contains("sizes"));
     }
 }
