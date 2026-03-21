@@ -4,6 +4,9 @@ All completed concept documents have been moved to [`handled/`](handled/) — th
 
 ## Open Concepts
 
+### ssh-jump-host.md (Issue #520)
+
+Concept for first-class SSH jump host / gateway support in the connection editor. Allows users to configure proxy hops (single or multi-hop) directly in the SSH connection settings without requiring remote agent deployment. Covers UI design for saved-connection references and inline gateway configuration, session pooling across shared gateways, credential handling per hop, tunnel compatibility, and visual indicators in the connection tree and status bar.
 ### embedded-unix-windows.md (Issue #519)
 
 Concept for bundling a minimal Unix command environment (bash, coreutils, curl, ssh, rsync, etc.) with the Windows build of termiHub. Uses BusyBox-w32 as the core with supplementary standalone tools, providing zero-setup Unix tools with isolated PATH management and independent update capability.
