@@ -1,12 +1,14 @@
 import { useCallback, useMemo, useState } from "react";
 import { SplitSquareHorizontal, SplitSquareVertical, Plus, X } from "lucide-react";
-import { WorkspaceLayoutNode, WorkspaceTabDef } from "@/types/workspace";
+import { WorkspaceLayoutNode, WorkspaceSplitNode, WorkspaceTabDef } from "@/types/workspace";
 import {
   getWorkspaceLeaves,
   splitWorkspaceLeaf,
   addTabToLeaf,
   removeTabFromLeaf,
   removeWorkspaceLeaf,
+  addLeafToSplit,
+  wrapSplitInNewDirection,
 } from "@/utils/workspaceLayout";
 import { ConnectionPicker } from "./ConnectionPicker";
 
@@ -72,6 +74,19 @@ export function LayoutDesigner({ layout, onChange }: LayoutDesignerProps) {
     [layout, selectedLeaf, onChange]
   );
 
+  const handleSplitContainer = useCallback(
+    (splitNode: WorkspaceSplitNode, direction: "horizontal" | "vertical") => {
+      if (splitNode.direction === direction) {
+        const result = addLeafToSplit(layout, splitNode);
+        onChange(result);
+      } else {
+        const result = wrapSplitInNewDirection(layout, splitNode, direction);
+        onChange(result);
+      }
+    },
+    [layout, onChange]
+  );
+
   return (
     <div className="layout-designer" data-testid="layout-designer">
       <div className="layout-designer__canvas" data-testid="layout-canvas">
@@ -85,6 +100,7 @@ export function LayoutDesigner({ layout, onChange }: LayoutDesignerProps) {
           onRemoveLeaf={handleRemoveLeaf}
           onSplit={handleSplit}
           onAddTab={setPickerLeafIdx}
+          onSplitContainer={handleSplitContainer}
         />
       </div>
 
@@ -108,6 +124,7 @@ interface LayoutNodePreviewProps {
   onRemoveLeaf: (leafIdx: number) => void;
   onSplit: (leafIdx: number, direction: "horizontal" | "vertical") => void;
   onAddTab: (leafIdx: number) => void;
+  onSplitContainer: (splitNode: WorkspaceSplitNode, direction: "horizontal" | "vertical") => void;
 }
 
 function LayoutNodePreview({
@@ -120,6 +137,7 @@ function LayoutNodePreview({
   onRemoveLeaf,
   onSplit,
   onAddTab,
+  onSplitContainer,
 }: LayoutNodePreviewProps) {
   if (node.type === "leaf") {
     const idx = leafIndexMap.get(node) ?? 0;
@@ -140,25 +158,53 @@ function LayoutNodePreview({
     );
   }
 
+  const directionLabel = node.direction === "horizontal" ? "Horizontal" : "Vertical";
+  const DirectionIcon =
+    node.direction === "horizontal" ? SplitSquareHorizontal : SplitSquareVertical;
+
   return (
-    <div
-      className={`layout-split layout-split--${node.direction}`}
-      data-testid={`layout-split-${node.direction}`}
-    >
-      {node.children.map((child, i) => (
-        <LayoutNodePreview
-          key={i}
-          node={child}
-          leafIndexMap={leafIndexMap}
-          selectedLeaf={selectedLeaf}
-          leafCount={leafCount}
-          onSelectLeaf={onSelectLeaf}
-          onRemoveTab={onRemoveTab}
-          onRemoveLeaf={onRemoveLeaf}
-          onSplit={onSplit}
-          onAddTab={onAddTab}
-        />
-      ))}
+    <div className="layout-split-container" data-testid={`layout-split-${node.direction}`}>
+      <div className="layout-split-container__header">
+        <span className="layout-split-container__label">
+          <DirectionIcon size={10} />
+          {directionLabel}
+        </span>
+        <div className="layout-split-container__actions">
+          <button
+            className="layout-split-container__action-btn"
+            onClick={() => onSplitContainer(node, "horizontal")}
+            title="Split Horizontal"
+          >
+            <SplitSquareHorizontal size={10} />
+          </button>
+          <button
+            className="layout-split-container__action-btn"
+            onClick={() => onSplitContainer(node, "vertical")}
+            title="Split Vertical"
+          >
+            <SplitSquareVertical size={10} />
+          </button>
+        </div>
+      </div>
+      <div
+        className={`layout-split-container__content layout-split-container__content--${node.direction}`}
+      >
+        {node.children.map((child, i) => (
+          <LayoutNodePreview
+            key={i}
+            node={child}
+            leafIndexMap={leafIndexMap}
+            selectedLeaf={selectedLeaf}
+            leafCount={leafCount}
+            onSelectLeaf={onSelectLeaf}
+            onRemoveTab={onRemoveTab}
+            onRemoveLeaf={onRemoveLeaf}
+            onSplit={onSplit}
+            onAddTab={onAddTab}
+            onSplitContainer={onSplitContainer}
+          />
+        ))}
+      </div>
     </div>
   );
 }

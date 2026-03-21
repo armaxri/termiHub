@@ -249,6 +249,49 @@ export function moveTabBetweenLeaves(
   return result;
 }
 
+/**
+ * Add a new empty leaf panel as a child of a specific split node.
+ * Identifies the target split by reference equality.
+ */
+export function addLeafToSplit(
+  root: WorkspaceLayoutNode,
+  targetSplit: WorkspaceSplitNode
+): WorkspaceLayoutNode {
+  if (root.type === "leaf") return root;
+
+  if (root === targetSplit) {
+    const newLeaf: WorkspaceLeafNode = { type: "leaf", tabs: [] };
+    return { ...root, children: [...root.children, newLeaf] };
+  }
+
+  return {
+    ...root,
+    children: root.children.map((child) => addLeafToSplit(child, targetSplit)),
+  };
+}
+
+/**
+ * Wrap a specific split node in a new split of a different direction,
+ * adding a new empty leaf sibling. Identifies the target by reference equality.
+ */
+export function wrapSplitInNewDirection(
+  root: WorkspaceLayoutNode,
+  targetSplit: WorkspaceSplitNode,
+  direction: "horizontal" | "vertical"
+): WorkspaceLayoutNode {
+  if (root === targetSplit) {
+    const newLeaf: WorkspaceLeafNode = { type: "leaf", tabs: [] };
+    return { type: "split", direction, children: [root, newLeaf] };
+  }
+
+  if (root.type === "leaf") return root;
+
+  return {
+    ...root,
+    children: root.children.map((child) => wrapSplitInNewDirection(child, targetSplit, direction)),
+  };
+}
+
 // --- Panel tree building/capture for workspace launch ---
 
 let panelIdCounter = 0;
