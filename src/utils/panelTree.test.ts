@@ -12,6 +12,7 @@ import {
   edgeToSplit,
   findAdjacentLeaf,
   markActiveLeaf,
+  normalizeSizes,
 } from "./panelTree";
 
 /** Create a minimal tab for testing. */
@@ -483,5 +484,91 @@ describe("markActiveLeaf", () => {
 
     const markedDeep = markedMid.children[1] as SplitContainer;
     expect(markedDeep.lastActiveLeafId).toBe("leaf-4");
+  });
+});
+
+describe("normalizeSizes", () => {
+  it("normalizes sizes to sum to 100", () => {
+    const result = normalizeSizes([30, 20, 50]);
+    expect(result.reduce((a, b) => a + b, 0)).toBeCloseTo(100);
+    expect(result[0]).toBeCloseTo(30);
+    expect(result[1]).toBeCloseTo(20);
+    expect(result[2]).toBeCloseTo(50);
+  });
+
+  it("scales up when sum is less than 100", () => {
+    const result = normalizeSizes([10, 10]);
+    expect(result[0]).toBeCloseTo(50);
+    expect(result[1]).toBeCloseTo(50);
+  });
+
+  it("scales down when sum exceeds 100", () => {
+    const result = normalizeSizes([100, 100]);
+    expect(result[0]).toBeCloseTo(50);
+    expect(result[1]).toBeCloseTo(50);
+  });
+
+  it("handles zero total by distributing equally", () => {
+    const result = normalizeSizes([0, 0, 0]);
+    expect(result).toEqual([100 / 3, 100 / 3, 100 / 3]);
+  });
+});
+
+describe("splitLeaf with sized parent", () => {
+  it("halves target size when splitting as sibling in sized split", () => {
+    const leaf1 = makeLeaf("leaf-1");
+    const leaf2 = makeLeaf("leaf-2");
+    const root: SplitContainer = {
+      ...makeSplit("split-1", "horizontal", [leaf1, leaf2]),
+      sizes: [60, 40],
+    };
+    const newLeaf = makeLeaf("new-leaf");
+    const result = splitLeaf(root, "leaf-1", newLeaf, "horizontal", "after");
+    const container = result as SplitContainer;
+    expect(container.children).toHaveLength(3);
+    expect(container.sizes).toBeDefined();
+    expect(container.sizes![0]).toBeCloseTo(30); // halved from 60
+    expect(container.sizes![1]).toBeCloseTo(30); // new leaf gets half of 60
+    expect(container.sizes![2]).toBeCloseTo(40); // unchanged
+  });
+
+  it("does not add sizes when parent has no sizes", () => {
+    const leaf1 = makeLeaf("leaf-1");
+    const leaf2 = makeLeaf("leaf-2");
+    const root = makeSplit("split-1", "horizontal", [leaf1, leaf2]);
+    const newLeaf = makeLeaf("new-leaf");
+    const result = splitLeaf(root, "leaf-1", newLeaf, "horizontal", "after");
+    const container = result as SplitContainer;
+    expect(container.sizes).toBeUndefined();
+  });
+});
+
+describe("removeLeaf with sized parent", () => {
+  it("redistributes sizes when removing from a sized split", () => {
+    const leaf1 = makeLeaf("leaf-1");
+    const leaf2 = makeLeaf("leaf-2");
+    const leaf3 = makeLeaf("leaf-3");
+    const root: SplitContainer = {
+      ...makeSplit("split-1", "horizontal", [leaf1, leaf2, leaf3]),
+      sizes: [50, 25, 25],
+    };
+    const result = removeLeaf(root, "leaf-1");
+    expect(result).not.toBeNull();
+    const container = result as SplitContainer;
+    expect(container.children).toHaveLength(2);
+    expect(container.sizes).toBeDefined();
+    const total = container.sizes!.reduce((a, b) => a + b, 0);
+    expect(total).toBeCloseTo(100);
+  });
+
+  it("collapses to single child when removing from sized 2-child split", () => {
+    const leaf1 = makeLeaf("leaf-1");
+    const leaf2 = makeLeaf("leaf-2");
+    const root: SplitContainer = {
+      ...makeSplit("split-1", "horizontal", [leaf1, leaf2]),
+      sizes: [70, 30],
+    };
+    const result = removeLeaf(root, "leaf-1");
+    expect(result).toBe(leaf2);
   });
 });
