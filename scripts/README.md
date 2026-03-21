@@ -5,7 +5,7 @@ Helper scripts for common development tasks. Each script has a `.sh` (Unix/macOS
 | Script                | What it does                                                                                                               |
 | --------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | `setup`               | Install all dependencies and do an initial build                                                                           |
-| `dev`                 | Start the app in development mode with hot-reload                                                                          |
+| `dev`                 | Start the app in dev mode with hot-reload; accepts an optional port argument (default 1420)                                |
 | `build`               | Build the app for production (creates platform installer); on macOS also cross-compiles agent for Linux x86_64 + aarch64   |
 | `test`                | Run all unit tests (frontend + backend + agent)                                                                            |
 | `check`               | Read-only quality checks mirroring CI (formatting, linting, clippy)                                                        |
@@ -29,6 +29,10 @@ Helper scripts for common development tasks. Each script has a `.sh` (Unix/macOS
 
 # Daily development
 ./scripts/dev.sh
+
+# Run a second instance in parallel (e.g. two checkouts side-by-side)
+./scripts/dev.sh 1422            # explicit port argument
+echo 1422 > dev.local            # or set a per-checkout default (gitignored)
 
 # Before pushing
 ./scripts/format.sh

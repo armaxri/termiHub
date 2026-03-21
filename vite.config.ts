@@ -4,6 +4,10 @@ import { fileURLToPath } from "url";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
+// Allow running multiple dev instances in parallel by setting TERMIHUB_DEV_PORT.
+// The HMR websocket uses devPort + 1. See scripts/dev.sh for how to configure this.
+// @ts-expect-error process is a nodejs global
+const devPort = parseInt(process.env.TERMIHUB_DEV_PORT ?? "1420", 10);
 
 // https://vitejs.dev/config/
 export default defineConfig(async () => ({
@@ -26,14 +30,14 @@ export default defineConfig(async () => ({
   clearScreen: false,
   // 2. tauri expects a fixed port, fail if that port is not available
   server: {
-    port: 1420,
+    port: devPort,
     strictPort: true,
     host: host || false,
     hmr: host
       ? {
           protocol: "ws",
           host,
-          port: 1421,
+          port: devPort + 1,
         }
       : undefined,
     watch: {
