@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- File browser: PowerShell connections now track the current working directory — the file browser follows `cd` changes in PowerShell and `pwsh` sessions via an injected `prompt` function that emits OSC 7 sequences
+- File browser: scrolling now works in large directories — the file list was using `overflow: hidden` preventing scroll in directories with many entries
+
 ### Added
 
 - Workspace editor: configurable panel sizes — click percentage badges on split children to set custom proportions, redistribute remaining space automatically, reset to equal with one click; sizes persist across save/load and apply as `defaultSize` at runtime (#544)

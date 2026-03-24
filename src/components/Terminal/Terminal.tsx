@@ -378,12 +378,18 @@ export function Terminal({
       return true;
     });
 
-    // Track CWD via OSC 7 escape sequences (sent by zsh/bash on macOS/Linux)
+    // Track CWD via OSC 7 escape sequences (sent by zsh/bash/PowerShell)
     const osc7Disposable = xterm.parser.registerOscHandler(7, (data: string) => {
       try {
         const url = new URL(data);
         if (url.protocol === "file:") {
-          useAppStore.getState().setTabCwd(tabId, decodeURIComponent(url.pathname));
+          let pathname = decodeURIComponent(url.pathname);
+          // On Windows, PowerShell emits paths like /C:/Users/foo — strip the
+          // leading slash so the file browser receives a valid Windows path.
+          if (/^\/[A-Za-z]:\//.test(pathname)) {
+            pathname = pathname.slice(1);
+          }
+          useAppStore.getState().setTabCwd(tabId, pathname);
         }
       } catch {
         // Ignore malformed OSC 7 data

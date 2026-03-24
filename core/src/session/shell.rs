@@ -177,13 +177,17 @@ pub fn build_shell_command(config: &ShellConfig) -> ShellCommand {
 /// - `"ssh"` — SSH variant: no `/mnt/` guard, includes screen-clear escape.
 /// - `"bash"` / `"gitbash"` — local bash sessions: same as SSH variant
 ///   (bash does not emit OSC 7 by default).
-/// - Anything else (`"zsh"`, `"powershell"`, `"cmd"`, etc.) — returns `None`
-///   (zsh emits OSC 7 natively; PowerShell/cmd don't support `PROMPT_COMMAND`).
+/// - `"powershell"` — PowerShell variant: overrides the `prompt` function to
+///   emit OSC 7 before each prompt, converting Windows paths to URI format.
+/// - Anything else (`"zsh"`, `"cmd"`, etc.) — returns `None`
+///   (zsh emits OSC 7 natively; cmd doesn't support prompt scripting).
 pub fn osc7_setup_command(shell_type: &str) -> Option<String> {
     if shell_type.starts_with("wsl:") {
         Some(wsl_osc7_command().to_string())
     } else if matches!(shell_type, "ssh" | "bash" | "gitbash") {
         Some(bash_osc7_command().to_string())
+    } else if shell_type == "powershell" {
+        Some(powershell_osc7_command().to_string())
     } else {
         None
     }
@@ -326,6 +330,21 @@ fn bash_osc7_command() -> &'static str {
         r#"[ "$ZSH_VERSION" ] && precmd_functions+=(__termihub_osc7) || "#,
         r#"PROMPT_COMMAND="__termihub_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}"; "#,
         r#"printf '\033[2J\033[H'"#,
+    )
+}
+
+/// OSC 7 setup command for PowerShell (both `powershell.exe` and `pwsh`).
+///
+/// Overrides the built-in `prompt` function to emit an OSC 7 CWD escape
+/// sequence before each prompt. Windows paths (`C:\foo`) are converted to
+/// URI form (`/C:/foo`) so the frontend URL parser can extract the path.
+/// Ends with `Clear-Host` to clear the screen, matching the bash variant.
+fn powershell_osc7_command() -> &'static str {
+    concat!(
+        r#"function prompt{"#,
+        r#"$p=($PWD.Path -replace '\\','/');if($p -notmatch '^/'){$p="/$p"};"#,
+        r#"[Console]::Write([char]27+']7;file://'+$p+[char]7);"#,
+        r#""PS $($PWD.Path)> "};Clear-Host"#,
     )
 }
 
@@ -778,9 +797,41 @@ mod tests {
     #[test]
     fn osc7_non_bash_returns_none() {
         assert!(osc7_setup_command("zsh").is_none());
-        assert!(osc7_setup_command("powershell").is_none());
         assert!(osc7_setup_command("cmd").is_none());
         assert!(osc7_setup_command("sh").is_none());
+    }
+
+    #[test]
+    fn osc7_powershell_contains_expected_parts() {
+        let setup = osc7_setup_command("powershell").expect("expected Some for powershell");
+        // Must redefine the prompt function
+        assert!(
+            setup.contains("function prompt"),
+            "expected prompt function override, got: {setup}"
+        );
+        // Must emit OSC 7 sequence (ESC + ]7;file:// + path + BEL via [char]7)
+        assert!(
+            setup.contains("]7;file://"),
+            "expected OSC 7 marker, got: {setup}"
+        );
+        assert!(
+            setup.contains("[char]27"),
+            "expected ESC via [char]27, got: {setup}"
+        );
+        assert!(
+            setup.contains("[char]7"),
+            "expected BEL via [char]7, got: {setup}"
+        );
+        // Must convert backslashes to forward slashes for the URI
+        assert!(
+            setup.contains(r#"-replace '\\','/'"#),
+            "expected backslash-to-slash replacement, got: {setup}"
+        );
+        // Must clear screen at end
+        assert!(
+            setup.contains("Clear-Host"),
+            "expected Clear-Host at end, got: {setup}"
+        );
     }
 
     // -----------------------------------------------------------------------
