@@ -21,6 +21,12 @@ pub struct Connection {
     /// Parent folder ID, or `None` for root-level connections.
     #[serde(default)]
     pub folder_id: Option<String>,
+    /// Terminal appearance/behaviour overrides (font, color, cursor, etc.).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_options: Option<serde_json::Value>,
+    /// Custom icon name (lucide-react PascalCase or "lab:camelCase").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
 }
 
 /// Read-only snapshot returned by list/create/update operations.
@@ -32,6 +38,10 @@ pub struct ConnectionSnapshot {
     pub config: serde_json::Value,
     pub persistent: bool,
     pub folder_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_options: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
 }
 
 impl Connection {
@@ -43,6 +53,8 @@ impl Connection {
             config: self.config.clone(),
             persistent: self.persistent,
             folder_id: self.folder_id.clone(),
+            terminal_options: self.terminal_options.clone(),
+            icon: self.icon.clone(),
         }
     }
 }
@@ -135,6 +147,7 @@ impl ConnectionStore {
     }
 
     /// Update an existing connection's fields. Returns `None` if not found.
+    #[allow(clippy::too_many_arguments)]
     pub async fn update(
         &self,
         id: &str,
@@ -143,6 +156,8 @@ impl ConnectionStore {
         config: Option<serde_json::Value>,
         persistent: Option<bool>,
         folder_id: Option<Option<String>>,
+        terminal_options: Option<Option<serde_json::Value>>,
+        icon: Option<Option<String>>,
     ) -> Option<ConnectionSnapshot> {
         let mut conns = self.connections.lock().await;
         let conn = conns.get_mut(id)?;
@@ -161,6 +176,12 @@ impl ConnectionStore {
         }
         if let Some(folder_id) = folder_id {
             conn.folder_id = folder_id;
+        }
+        if let Some(terminal_options) = terminal_options {
+            conn.terminal_options = terminal_options;
+        }
+        if let Some(icon) = icon {
+            conn.icon = icon;
         }
 
         let snapshot = conn.snapshot();
@@ -266,6 +287,8 @@ impl ConnectionStore {
             config: serde_json::json!({ "shell": shell }),
             persistent: false,
             folder_id: None,
+            terminal_options: None,
+            icon: None,
         };
 
         info!("Creating default shell connection (shell: {})", shell);
@@ -331,6 +354,8 @@ impl ConnectionStore {
                                 config: d.config,
                                 persistent: d.persistent,
                                 folder_id: None,
+                                terminal_options: None,
+                                icon: None,
                             };
                             (d.id, conn)
                         })
@@ -445,6 +470,8 @@ mod tests {
             config: json!({"shell": "/bin/bash"}),
             persistent,
             folder_id: None,
+            terminal_options: None,
+            icon: None,
         }
     }
 
@@ -511,6 +538,8 @@ mod tests {
                 None,
                 Some(true),
                 None,
+                None,
+                None,
             )
             .await;
         assert!(updated.is_some());
@@ -529,6 +558,8 @@ mod tests {
             .update(
                 "nonexistent",
                 Some("Name".to_string()),
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -560,6 +591,8 @@ mod tests {
                 None,
                 None,
                 Some(Some("folder-1".to_string())),
+                None,
+                None,
             )
             .await
             .unwrap();
@@ -567,7 +600,7 @@ mod tests {
 
         // Move back to root
         let snap = store
-            .update("conn-1", None, None, None, None, Some(None))
+            .update("conn-1", None, None, None, None, Some(None), None, None)
             .await
             .unwrap();
         assert_eq!(snap.folder_id, None);
@@ -827,6 +860,8 @@ mod tests {
             config: json!({"port": "/dev/ttyUSB0", "baud_rate": 115200}),
             persistent: true,
             folder_id: Some("folder-1".to_string()),
+            terminal_options: None,
+            icon: None,
         };
         let json = serde_json::to_string(&conn).unwrap();
         let parsed: Connection = serde_json::from_str(&json).unwrap();

@@ -54,6 +54,33 @@ describe("getDefaultIconInfo", () => {
     expect(info.component).toBe(BicepsFlexed);
   });
 
+  it("returns powershell icon for remote-session with full path /usr/local/bin/pwsh", () => {
+    const config: ConnectionConfig = {
+      type: "remote-session",
+      config: { agentId: "a1", sessionType: "shell", shell: "/usr/local/bin/pwsh" },
+    };
+    const info = getDefaultIconInfo(config);
+    expect(info.component).toBe(BicepsFlexed);
+  });
+
+  it("returns powershell icon for remote-session with full path /usr/bin/pwsh", () => {
+    const config: ConnectionConfig = {
+      type: "remote-session",
+      config: { agentId: "a1", sessionType: "shell", shell: "/usr/bin/pwsh" },
+    };
+    const info = getDefaultIconInfo(config);
+    expect(info.component).toBe(BicepsFlexed);
+  });
+
+  it("returns powershell icon for remote-session with sessionType=local and pwsh path", () => {
+    const config: ConnectionConfig = {
+      type: "remote-session",
+      config: { agentId: "a1", sessionType: "local", shell: "/snap/bin/pwsh" },
+    };
+    const info = getDefaultIconInfo(config);
+    expect(info.component).toBe(BicepsFlexed);
+  });
+
   it("returns gitbash icon for remote-session with shell=gitbash", () => {
     const config: ConnectionConfig = {
       type: "remote-session",
@@ -61,6 +88,15 @@ describe("getDefaultIconInfo", () => {
     };
     const info = getDefaultIconInfo(config);
     expect(info.component).toBe(GitBranch);
+  });
+
+  it("returns terminal icon for remote-session with shell=/bin/bash", () => {
+    const config: ConnectionConfig = {
+      type: "remote-session",
+      config: { agentId: "a1", sessionType: "shell", shell: "/bin/bash" },
+    };
+    const info = getDefaultIconInfo(config);
+    expect(info.component).toBe(Terminal);
   });
 
   it("returns terminal icon for remote-session with shell=bash", () => {

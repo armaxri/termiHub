@@ -9,7 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Remote agent shell sessions with PowerShell now show the PowerShell icon instead of the generic server icon (#549)
+- Remote agent shell sessions with PowerShell (and other special shells like GitBash, WSL) now show the correct shell icon instead of the generic server icon — handles both short names (`powershell`) and full paths (`/usr/local/bin/pwsh`) (#549)
+- Remote agent connection definitions now have Terminal and Appearance settings tabs for per-session font, color, cursor, and icon customisation (#549)
 
 ### Added
 

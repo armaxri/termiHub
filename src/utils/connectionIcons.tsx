@@ -26,15 +26,26 @@ const TYPE_ICONS: Record<string, LucideIcon> = {
   "remote-session": Server,
 };
 
-/** Shell-specific icon overrides for local connections */
-function getShellIconInfo(shellType: ShellType | undefined): {
+/** Shell-specific icon overrides for local and remote shell connections.
+ *
+ * Accepts both short names ("powershell") and full paths ("/usr/local/bin/pwsh")
+ * so it works for both local connections and remote-agent connections where the
+ * agent reports absolute shell paths. */
+function getShellIconInfo(shellType: ShellType | string | undefined): {
   component?: LucideIcon;
   iconNode?: IconNode;
 } {
   if (!shellType) return { component: Terminal };
-  if (shellType === "powershell") return { component: BicepsFlexed };
-  if (shellType === "gitbash") return { component: GitBranch };
+  // WSL must be checked first because it uses the "wsl:" prefix, not a path.
   if (shellType.startsWith("wsl:")) return { iconNode: labIcons.penguin as IconNode };
+  // For path-based values, compare against the basename.
+  const base =
+    shellType.includes("/") || shellType.includes("\\")
+      ? (shellType.split(/[/\\]/).pop() ?? shellType).toLowerCase()
+      : shellType.toLowerCase();
+  if (base === "powershell" || base === "powershell.exe" || base === "pwsh" || base === "pwsh.exe")
+    return { component: BicepsFlexed };
+  if (shellType === "gitbash" || base.includes("gitbash")) return { component: GitBranch };
   return { component: Terminal };
 }
 
@@ -50,12 +61,12 @@ export function getDefaultIconInfo(config: ConnectionConfig): {
   if (config.type === "wsl") {
     return { iconNode: labIcons.penguin as IconNode };
   }
-  if (
-    (config.type === "remote-session" || config.type === "remote") &&
-    config.config?.sessionType === "shell"
-  ) {
-    const shellValue = config.config?.shell as ShellType | undefined;
-    return getShellIconInfo(shellValue);
+  if (config.type === "remote-session" || config.type === "remote") {
+    const sessionType = config.config?.sessionType as string | undefined;
+    if (sessionType === "shell" || sessionType === "local") {
+      const shellValue = config.config?.shell as string | undefined;
+      return getShellIconInfo(shellValue);
+    }
   }
   return { component: TYPE_ICONS[config.type] };
 }
