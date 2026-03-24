@@ -4,6 +4,7 @@ import * as monaco from "monaco-editor";
 import { Save, Loader2, AlertCircle, Globe } from "lucide-react";
 import { EditorTabMeta, EditorStatus, LanguageInfo } from "@/types/terminal";
 import { useAppStore } from "@/store/appStore";
+import { resolveLanguage } from "@/utils/languageMapping";
 import {
   localReadFile,
   localWriteFile,
@@ -64,6 +65,7 @@ export function FileEditor({ tabId, meta, isVisible }: FileEditorProps) {
   const setEditorDirty = useAppStore((s) => s.setEditorDirty);
   const setEditorStatus = useAppStore((s) => s.setEditorStatus);
   const setEditorActions = useAppStore((s) => s.setEditorActions);
+  const fileLanguageMappings = useAppStore((s) => s.settings.fileLanguageMappings);
 
   const [content, setContent] = useState<string | null>(null);
   const [savedContent, setSavedContent] = useState<string | null>(null);
@@ -75,6 +77,7 @@ export function FileEditor({ tabId, meta, isVisible }: FileEditorProps) {
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
 
   const fileName = meta.filePath.split("/").pop() ?? meta.filePath;
+  const detectedLanguage = resolveLanguage(fileName, fileLanguageMappings);
 
   // Load file content on mount
   useEffect(() => {
@@ -283,6 +286,7 @@ export function FileEditor({ tabId, meta, isVisible }: FileEditorProps) {
         <Editor
           defaultValue={content ?? ""}
           path={fileName}
+          language={detectedLanguage}
           theme="vs-dark"
           onChange={(value) => setContent(value ?? "")}
           onMount={handleEditorMount}
