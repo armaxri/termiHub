@@ -264,12 +264,16 @@ function useFileBrowserSync() {
   const setFileBrowserMode = useAppStore((s) => s.setFileBrowserMode);
   const navigateLocal = useAppStore((s) => s.navigateLocal);
   const navigateSftp = useAppStore((s) => s.navigateSftp);
+  const navigateSession = useAppStore((s) => s.navigateSession);
+  const setSessionFileBrowserId = useAppStore((s) => s.setSessionFileBrowserId);
   const connectSftp = useAppStore((s) => s.connectSftp);
   const disconnectSftp = useAppStore((s) => s.disconnectSftp);
   const sftpSessionId = useAppStore((s) => s.sftpSessionId);
   const sftpConnectedHost = useAppStore((s) => s.sftpConnectedHost);
+  const sessionFileBrowserId = useAppStore((s) => s.sessionFileBrowserId);
   const requestPassword = useAppStore((s) => s.requestPassword);
   const connections = useAppStore((s) => s.connections);
+  const remoteAgents = useAppStore((s) => s.remoteAgents);
   const fileBrowserMode = useAppStore((s) => s.fileBrowserMode);
   const globalFileBrowserEnabled = useAppStore((s) => s.settings.fileBrowserEnabled);
 
@@ -324,6 +328,28 @@ function useFileBrowserSync() {
     }
     if (activeTabConnectionType === "local" || activeTabConnectionType === "wsl") {
       setFileBrowserMode("local");
+    } else if (activeTabConnectionType === "remote-session") {
+      // Remote agent sessions: check if the agent's connection type supports file browsing
+      const cfg = activeTab.config.config as { agentId?: string; sessionType?: string };
+      const agentId = cfg.agentId;
+      const sessionType = cfg.sessionType ?? "local";
+      if (agentId) {
+        const agent = remoteAgents.find((a) => a.id === agentId);
+        const agentConnectionTypes = agent?.capabilities?.connectionTypes ?? [];
+        const agentTypeInfo = agentConnectionTypes.find(
+          (ct: ConnectionTypeInfo) => ct.typeId === sessionType
+        );
+        const agentSupportsFileBrowser = agentTypeInfo?.capabilities?.fileBrowser ?? false;
+        if (agentSupportsFileBrowser && globalFileBrowserEnabled) {
+          setSessionFileBrowserId(activeTab.sessionId);
+          setFileBrowserMode("session");
+        } else {
+          setSessionFileBrowserId(null);
+          setFileBrowserMode("none");
+        }
+      } else {
+        setFileBrowserMode("none");
+      }
     } else if (
       activeTabConnectionType &&
       typeSupportsFileBrowser(activeTabConnectionType, connectionTypes)
@@ -340,7 +366,10 @@ function useFileBrowserSync() {
     activeTabContentType,
     activeTabEditorMeta,
     setFileBrowserMode,
+    setSessionFileBrowserId,
     connectionTypes,
+    remoteAgents,
+    globalFileBrowserEnabled,
   ]);
 
   // Auto-navigate on tab switch or CWD change
@@ -372,6 +401,8 @@ function useFileBrowserSync() {
       }
     } else if (currentMode === "sftp" && sftpSessionId && cwd) {
       navigateSftp(cwd);
+    } else if (currentMode === "session" && sessionFileBrowserId && cwd) {
+      navigateSession(sessionFileBrowserId, cwd);
     }
   }, [
     activeTabId,
@@ -382,7 +413,9 @@ function useFileBrowserSync() {
     activeTabEditorMeta,
     navigateLocal,
     navigateSftp,
+    navigateSession,
     sftpSessionId,
+    sessionFileBrowserId,
   ]);
 
   // Auto-navigate when entering local mode with no entries loaded yet.
@@ -403,6 +436,14 @@ function useFileBrowserSync() {
         .catch(() => navigateLocal("/"));
     }
   }, [fileBrowserMode, navigateLocal, cwd, wslDistro]);
+
+  // Auto-navigate when entering session mode with no entries loaded yet.
+  useEffect(() => {
+    if (fileBrowserMode !== "session" || !sessionFileBrowserId) return;
+    const { sessionFileEntries } = useAppStore.getState();
+    if (sessionFileEntries.length > 0) return; // Already loaded
+    navigateSession(sessionFileBrowserId, cwd ?? "/");
+  }, [fileBrowserMode, sessionFileBrowserId, navigateSession, cwd]);
 
   // Auto-connect SFTP for tabs with file browser capability
   useEffect(() => {
@@ -515,13 +556,16 @@ export function FileBrowser() {
     (entry: FileEntry, action: string) => {
       switch (action) {
         case "edit":
-          useAppStore
-            .getState()
-            .openEditorTab(
-              entry.path,
-              mode === "sftp",
-              mode === "sftp" ? (sftpSessionId ?? undefined) : undefined
-            );
+          if (mode === "local" || mode === "sftp") {
+            useAppStore
+              .getState()
+              .openEditorTab(
+                entry.path,
+                mode === "sftp",
+                mode === "sftp" ? (sftpSessionId ?? undefined) : undefined
+              );
+          }
+          // session mode: file editing via editor not yet supported for agent sessions
           break;
         case "download":
           downloadFile(entry.path, entry.name).catch((err: unknown) =>
@@ -604,6 +648,29 @@ export function FileBrowser() {
     );
   }
 
+  // Session mode — show loading/error state when not yet connected
+  if (mode === "session" && !isConnected) {
+    return (
+      <div className="file-browser">
+        <div className="file-browser__placeholder" data-testid="file-browser-session-connecting">
+          {isLoading ? (
+            <>
+              <Loader2 size={20} className="file-browser__spinner" />
+              <span>Loading files...</span>
+            </>
+          ) : error ? (
+            <>
+              <AlertCircle size={20} />
+              <span>{error}</span>
+            </>
+          ) : (
+            <span>Waiting for session...</span>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   // SFTP not yet connected — show loading/error state
   if (mode === "sftp" && !isConnected) {
     return (
@@ -660,7 +727,7 @@ export function FileBrowser() {
           >
             <RefreshCw size={14} className={isLoading ? "file-browser__spinner" : ""} />
           </button>
-          {mode === "sftp" && (
+          {(mode === "sftp" || mode === "session") && (
             <button
               className="file-browser__btn"
               onClick={uploadFile}
