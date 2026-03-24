@@ -249,6 +249,11 @@ impl FileBrowser for DockerFileBrowser {
         .await?;
         parse_stat_output(&output, path)
     }
+
+    async fn mkdir(&self, path: &str) -> Result<(), FileError> {
+        exec_command(&self.client, &self.container_id, vec!["mkdir", "-p", path]).await?;
+        Ok(())
+    }
 }
 
 // --- Parsing helpers (ported from agent/src/files/docker.rs) ---

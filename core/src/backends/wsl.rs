@@ -224,6 +224,16 @@ impl FileBrowser for WslFileBrowser {
         .await
         .map_err(|e| FileError::OperationFailed(e.to_string()))?
     }
+
+    async fn mkdir(&self, path: &str) -> Result<(), FileError> {
+        let unc_path = self.to_unc_path(path);
+        let linux_path = path.to_string();
+        tokio::task::spawn_blocking(move || {
+            std::fs::create_dir_all(&unc_path).map_err(|e| map_io_error(e, &linux_path))
+        })
+        .await
+        .map_err(|e| FileError::OperationFailed(e.to_string()))?
+    }
 }
 
 impl Wsl {

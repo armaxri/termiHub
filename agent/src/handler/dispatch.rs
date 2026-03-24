@@ -15,12 +15,12 @@ use crate::protocol::messages::{JsonRpcErrorResponse, JsonRpcRequest, JsonRpcRes
 use crate::protocol::methods::{
     AgentShutdownParams, AgentShutdownResult, Capabilities, ConnectionCreateParams,
     ConnectionDeleteParams, ConnectionTypesResult, ConnectionUpdateParams, FilesDeleteParams,
-    FilesListParams, FilesListResult, FilesReadParams, FilesReadResult, FilesRenameParams,
-    FilesStatParams, FilesWriteParams, FolderCreateParams, FolderDeleteParams, FolderUpdateParams,
-    HealthCheckResult, InitializeParams, InitializeResult, MonitoringSubscribeParams,
-    MonitoringUnsubscribeParams, SessionAttachParams, SessionCloseParams, SessionCreateParams,
-    SessionCreateResult, SessionDetachParams, SessionInputParams, SessionListEntry,
-    SessionListResult, SessionResizeParams,
+    FilesListParams, FilesListResult, FilesMkdirParams, FilesReadParams, FilesReadResult,
+    FilesRenameParams, FilesStatParams, FilesWriteParams, FolderCreateParams, FolderDeleteParams,
+    FolderUpdateParams, HealthCheckResult, InitializeParams, InitializeResult,
+    MonitoringSubscribeParams, MonitoringUnsubscribeParams, SessionAttachParams,
+    SessionCloseParams, SessionCreateParams, SessionCreateResult, SessionDetachParams,
+    SessionInputParams, SessionListEntry, SessionListResult, SessionResizeParams,
 };
 use crate::session::definitions::{Connection, ConnectionStore, Folder};
 use crate::session::manager::{SessionCreateError, SessionManager, MAX_SESSIONS};
@@ -129,6 +129,7 @@ impl Dispatcher {
             "connection.files.delete" => self.handle_files_delete(request).await,
             "connection.files.rename" => self.handle_files_rename(request).await,
             "connection.files.stat" => self.handle_files_stat(request).await,
+            "connection.files.mkdir" => self.handle_files_mkdir(request).await,
 
             // connection.monitoring.* — system monitoring
             "connection.monitoring.subscribe" => self.handle_monitoring_subscribe(request).await,
@@ -963,6 +964,36 @@ impl Dispatcher {
     /// For "local" connections, uses the local filesystem backend.
     /// Other connection types currently fall back to "not supported"
     /// until ConnectionType::file_browser() is wired up.
+    async fn handle_files_mkdir(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+
+        let params: FilesMkdirParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid files.mkdir params: {e}"),
+                ));
+            }
+        };
+
+        let backend = match self.resolve_file_backend(params.connection_id).await {
+            Ok(b) => b,
+            Err((code, msg)) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
+            }
+        };
+
+        match backend.mkdir(&params.path).await {
+            Ok(()) => DispatchResult::Success(JsonRpcResponse::new(id, json!({}))),
+            Err(e) => {
+                let (code, msg) = map_file_error(e);
+                DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
+            }
+        }
+    }
+
     async fn resolve_file_backend(
         &self,
         connection_id: Option<String>,

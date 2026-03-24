@@ -199,3 +199,14 @@ pub async fn session_rename_file(
     debug!(session_id, old_path, new_path, "Session file rename");
     manager.rename_file(&session_id, &old_path, &new_path).await
 }
+
+/// Create a directory via a session's file browser capability.
+#[tauri::command]
+pub async fn session_mkdir(
+    session_id: String,
+    path: String,
+    manager: State<'_, SessionManager>,
+) -> Result<(), TerminalError> {
+    debug!(session_id, path, "Session mkdir");
+    manager.mkdir_file(&session_id, &path).await
+}

@@ -365,6 +365,22 @@ impl SessionManager {
             .map_err(|e| TerminalError::RemoteError(e.to_string()))
     }
 
+    /// Create a directory via a session's file browser capability.
+    pub async fn mkdir_file(&self, session_id: &str, path: &str) -> Result<(), TerminalError> {
+        let sessions = self.sessions.lock().await;
+        let entry = sessions
+            .get(session_id)
+            .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
+        let browser = entry
+            .connection
+            .file_browser()
+            .ok_or_else(|| TerminalError::RemoteError("No file browser capability".to_string()))?;
+        browser
+            .mkdir(path)
+            .await
+            .map_err(|e| TerminalError::RemoteError(e.to_string()))
+    }
+
     /// Get the list of available connection types from the registry.
     pub fn available_types(&self) -> Vec<ConnectionTypeInfo> {
         self.registry.available_types()

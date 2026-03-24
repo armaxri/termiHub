@@ -272,6 +272,12 @@ pub struct FilesStatParams {
     pub path: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct FilesMkdirParams {
+    pub connection_id: Option<String>,
+    pub path: String,
+}
+
 /// Type alias for backward compatibility — stat results use the same shape
 /// as [`FileEntry`] from the core crate.
 pub type FilesStatResult = FileEntry;
