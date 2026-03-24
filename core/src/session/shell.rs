@@ -169,31 +169,33 @@ pub fn build_shell_command(config: &ShellConfig) -> ShellCommand {
     }
 }
 
-/// Return a shell command that configures `PROMPT_COMMAND` (bash) or
-/// `precmd_functions` (zsh) to emit OSC 7 CWD escape sequences.
+/// Return a shell command that enables CWD tracking for the given shell.
 ///
-/// - `"wsl:<distro>"` — WSL variant: includes `cd $HOME` guard for `/mnt/`
-///   paths and screen-clear escape.
-/// - `"ssh"` — SSH variant: no `/mnt/` guard, includes screen-clear escape.
-/// - `"bash"` / `"gitbash"` — local bash sessions: same as SSH variant
-///   (bash does not emit OSC 7 by default).
-/// - `"powershell"` — PowerShell variant: overrides the `prompt` function to
-///   emit OSC 7 before each prompt, converting Windows paths to URI format.
-///   Injected via `-NoExit -Command` startup args (not stdin) to avoid echo.
-/// - `"cmd"` — cmd.exe variant: sets the `PROMPT` variable to embed an OSC 7
-///   sequence using `$E` (ESC) and `$P` (current path) metacharacters.
-///   Injected via `/K` startup arg (not stdin) to avoid echo.
-/// - Anything else (`"zsh"`, etc.) — returns `None`
-///   (zsh emits OSC 7 natively).
+/// POSIX-compatible shells use **OSC 7** (`file://` URI), which is the
+/// cross-platform standard emitted natively by zsh and injected via
+/// `PROMPT_COMMAND` / `precmd_functions` for bash variants.
+///
+/// Native Windows shells use **OSC 9;9** (Windows Terminal standard), which
+/// carries the raw Windows path with no URL encoding or slash conversion.
+///
+/// - `"wsl:<distro>"` — OSC 7, WSL variant: `cd $HOME` guard for `/mnt/`
+///   paths and screen-clear escape; injected via stdin.
+/// - `"ssh"` — OSC 7, SSH variant: no `/mnt/` guard; injected via stdin.
+/// - `"bash"` / `"gitbash"` — OSC 7, local bash; injected via stdin.
+/// - `"powershell"` — OSC 9;9: overrides the `prompt` function; injected via
+///   `-NoExit -Command` startup args (not stdin) to avoid echo.
+/// - `"cmd"` — OSC 9;9: sets the `PROMPT` variable via `/K` startup arg
+///   (not stdin) to avoid echo.
+/// - Anything else (`"zsh"`, etc.) — `None` (zsh emits OSC 7 natively).
 pub fn osc7_setup_command(shell_type: &str) -> Option<String> {
     if shell_type.starts_with("wsl:") {
         Some(wsl_osc7_command().to_string())
     } else if matches!(shell_type, "ssh" | "bash" | "gitbash") {
         Some(bash_osc7_command().to_string())
     } else if shell_type == "powershell" {
-        Some(powershell_osc7_command().to_string())
+        Some(powershell_osc9_command().to_string())
     } else if shell_type == "cmd" {
-        Some(cmd_osc7_command().to_string())
+        Some(cmd_osc9_command().to_string())
     } else {
         None
     }
@@ -339,32 +341,31 @@ fn bash_osc7_command() -> &'static str {
     )
 }
 
-/// OSC 7 setup command for PowerShell (both `powershell.exe` and `pwsh`).
+/// OSC 9;9 setup command for PowerShell (both `powershell.exe` and `pwsh`).
 ///
-/// Overrides the built-in `prompt` function to emit an OSC 7 CWD escape
-/// sequence before each prompt. Windows paths (`C:\foo`) are converted to
-/// URI form (`/C:/foo`) so the frontend URL parser can extract the path.
-/// Ends with `Clear-Host` to clear the screen, matching the bash variant.
-fn powershell_osc7_command() -> &'static str {
+/// Overrides the built-in `prompt` function to emit an OSC 9;9 CWD sequence
+/// before each prompt. OSC 9;9 is the Windows Terminal native CWD sequence:
+/// it carries the raw Windows path (`C:\foo`) with no URL encoding or
+/// backslash conversion required. Ends with `Clear-Host` to clear the screen.
+/// Injected via `-NoExit -Command` startup args so the command never echoes.
+fn powershell_osc9_command() -> &'static str {
     concat!(
         r#"function prompt{"#,
-        r#"$p=($PWD.Path -replace '\\','/');if($p -notmatch '^/'){$p="/$p"};"#,
-        r#"[Console]::Write([char]27+']7;file://'+$p+[char]7);"#,
+        r#"[Console]::Write([char]27+']9;9;'+$PWD.Path+[char]7);"#,
         r#""PS $($PWD.Path)> "};Clear-Host"#,
     )
 }
 
-/// OSC 7 setup command for cmd.exe.
+/// OSC 9;9 setup command for cmd.exe.
 ///
-/// Sets the `PROMPT` variable to embed an OSC 7 CWD sequence before each
+/// Sets the `PROMPT` variable to embed an OSC 9;9 CWD sequence before each
 /// prompt. In cmd's PROMPT syntax: `$E` expands to ESC (0x1B), `$P` to the
-/// current drive and path (e.g. `C:\Users\foo`), `$G` to `>`, and a literal
-/// backslash after `$E` forms the OSC String Terminator (`ESC \`). The path
-/// is emitted as-is (Windows backslash format); the frontend normalises it.
-/// Ends with `cls` to clear the screen, matching the behaviour of other
-/// shell variants. Injected via `/K` startup arg so the command never echoes.
-fn cmd_osc7_command() -> &'static str {
-    r"PROMPT=$E]7;file:///$P$E\$P$G & cls"
+/// current drive and path (e.g. `C:\Users\foo`), `$G` to `>`, and `$E\`
+/// forms the OSC String Terminator (`ESC \`). OSC 9;9 carries the raw Windows
+/// path — no URL encoding or slash conversion needed. Ends with `cls` to clear
+/// the screen. Injected via `/K` startup arg so the command never echoes.
+fn cmd_osc9_command() -> &'static str {
+    r"PROMPT=$E]9;9;$P$E\$P$G & cls"
 }
 
 /// Resolve the path and arguments to launch a WSL distribution.
@@ -820,19 +821,19 @@ mod tests {
     }
 
     #[test]
-    fn osc7_cmd_contains_expected_parts() {
+    fn osc9_cmd_contains_expected_parts() {
         let setup = osc7_setup_command("cmd").expect("expected Some for cmd");
         // Must set the PROMPT variable
         assert!(
             setup.contains("PROMPT="),
             "expected PROMPT assignment, got: {setup}"
         );
-        // Must embed OSC 7 marker ($E = ESC in cmd PROMPT)
+        // Must embed OSC 9;9 marker ($E = ESC, no URL encoding needed)
         assert!(
-            setup.contains("$E]7;file:///"),
-            "expected OSC 7 marker via $E, got: {setup}"
+            setup.contains("$E]9;9;"),
+            "expected OSC 9;9 marker via $E, got: {setup}"
         );
-        // Must include current path via $P
+        // Must include current path via $P (raw Windows path, no conversion)
         assert!(
             setup.contains("$P"),
             "expected $P (current path) in PROMPT, got: {setup}"
@@ -845,17 +846,17 @@ mod tests {
     }
 
     #[test]
-    fn osc7_powershell_contains_expected_parts() {
+    fn osc9_powershell_contains_expected_parts() {
         let setup = osc7_setup_command("powershell").expect("expected Some for powershell");
         // Must redefine the prompt function
         assert!(
             setup.contains("function prompt"),
             "expected prompt function override, got: {setup}"
         );
-        // Must emit OSC 7 sequence (ESC + ]7;file:// + path + BEL via [char]7)
+        // Must emit OSC 9;9 sequence (raw Windows path, no URL conversion)
         assert!(
-            setup.contains("]7;file://"),
-            "expected OSC 7 marker, got: {setup}"
+            setup.contains("]9;9;"),
+            "expected OSC 9;9 marker, got: {setup}"
         );
         assert!(
             setup.contains("[char]27"),
@@ -865,10 +866,10 @@ mod tests {
             setup.contains("[char]7"),
             "expected BEL via [char]7, got: {setup}"
         );
-        // Must convert backslashes to forward slashes for the URI
+        // Must NOT do backslash conversion (OSC 9;9 carries raw Windows paths)
         assert!(
-            setup.contains(r#"-replace '\\','/'"#),
-            "expected backslash-to-slash replacement, got: {setup}"
+            !setup.contains(r#"-replace '\\','/'"#),
+            "OSC 9;9 should not convert backslashes, got: {setup}"
         );
         // Must clear screen at end
         assert!(
