@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- File browser: PowerShell connections now track the current working directory — the file browser follows `cd` changes in PowerShell and `pwsh` sessions via an injected `prompt` function that emits OSC 7 sequences
+- File browser: PowerShell and cmd.exe connections now track the current working directory — the file browser follows `cd`/`chdir` changes via injected prompt hooks that emit OSC 7 sequences (PowerShell overrides `prompt`; cmd.exe sets the `PROMPT` variable)
 - File browser: scrolling now works in large directories — the file list was using `overflow: hidden` preventing scroll in directories with many entries
 
 ### Added

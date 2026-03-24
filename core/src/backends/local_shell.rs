@@ -255,13 +255,24 @@ impl ConnectionType for LocalShell {
         for arg in &shell_cmd.args {
             command.arg(arg);
         }
-        // PowerShell: inject OSC 7 prompt hook via startup args to avoid echo.
-        if effective_shell == "powershell" {
-            if let Some(ref setup) = osc7_setup {
-                command.arg("-NoExit");
-                command.arg("-Command");
-                command.arg(setup.as_str());
+        // PowerShell / cmd: inject OSC 7 prompt hook via startup args to avoid
+        // the setup command being echoed visibly in the terminal.
+        // PowerShell uses -NoExit -Command; cmd uses /K.
+        match effective_shell.as_str() {
+            "powershell" => {
+                if let Some(ref setup) = osc7_setup {
+                    command.arg("-NoExit");
+                    command.arg("-Command");
+                    command.arg(setup.as_str());
+                }
             }
+            "cmd" => {
+                if let Some(ref setup) = osc7_setup {
+                    command.arg("/K");
+                    command.arg(setup.as_str());
+                }
+            }
+            _ => {}
         }
         for (key, value) in &shell_cmd.env {
             command.env(key, value);
@@ -346,11 +357,11 @@ impl ConnectionType for LocalShell {
 
         // Inject OSC 7 PROMPT_COMMAND hook for CWD tracking via stdin.
         // Bash (and Git Bash) don't emit OSC 7 by default, so we inject a
-        // PROMPT_COMMAND that emits it on each prompt. Zsh and cmd are skipped
-        // (zsh emits natively; cmd doesn't support it). PowerShell was already
-        // handled via -NoExit -Command startup args above to avoid echo.
+        // PROMPT_COMMAND that emits it on each prompt. PowerShell and cmd were
+        // already handled via startup args above to avoid visible echo.
         // Errors are non-fatal — the shell works without CWD tracking.
-        if effective_shell != "powershell" {
+        let uses_startup_args = matches!(effective_shell.as_str(), "powershell" | "cmd");
+        if !uses_startup_args {
             if let Some(setup) = osc7_setup {
                 let cmd = format!("{setup}\n");
                 if let Err(e) = self.write(cmd.as_bytes()) {

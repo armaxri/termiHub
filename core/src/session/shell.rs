@@ -179,8 +179,12 @@ pub fn build_shell_command(config: &ShellConfig) -> ShellCommand {
 ///   (bash does not emit OSC 7 by default).
 /// - `"powershell"` — PowerShell variant: overrides the `prompt` function to
 ///   emit OSC 7 before each prompt, converting Windows paths to URI format.
-/// - Anything else (`"zsh"`, `"cmd"`, etc.) — returns `None`
-///   (zsh emits OSC 7 natively; cmd doesn't support prompt scripting).
+///   Injected via `-NoExit -Command` startup args (not stdin) to avoid echo.
+/// - `"cmd"` — cmd.exe variant: sets the `PROMPT` variable to embed an OSC 7
+///   sequence using `$E` (ESC) and `$P` (current path) metacharacters.
+///   Injected via `/K` startup arg (not stdin) to avoid echo.
+/// - Anything else (`"zsh"`, etc.) — returns `None`
+///   (zsh emits OSC 7 natively).
 pub fn osc7_setup_command(shell_type: &str) -> Option<String> {
     if shell_type.starts_with("wsl:") {
         Some(wsl_osc7_command().to_string())
@@ -188,6 +192,8 @@ pub fn osc7_setup_command(shell_type: &str) -> Option<String> {
         Some(bash_osc7_command().to_string())
     } else if shell_type == "powershell" {
         Some(powershell_osc7_command().to_string())
+    } else if shell_type == "cmd" {
+        Some(cmd_osc7_command().to_string())
     } else {
         None
     }
@@ -346,6 +352,19 @@ fn powershell_osc7_command() -> &'static str {
         r#"[Console]::Write([char]27+']7;file://'+$p+[char]7);"#,
         r#""PS $($PWD.Path)> "};Clear-Host"#,
     )
+}
+
+/// OSC 7 setup command for cmd.exe.
+///
+/// Sets the `PROMPT` variable to embed an OSC 7 CWD sequence before each
+/// prompt. In cmd's PROMPT syntax: `$E` expands to ESC (0x1B), `$P` to the
+/// current drive and path (e.g. `C:\Users\foo`), `$G` to `>`, and a literal
+/// backslash after `$E` forms the OSC String Terminator (`ESC \`). The path
+/// is emitted as-is (Windows backslash format); the frontend normalises it.
+/// Ends with `cls` to clear the screen, matching the behaviour of other
+/// shell variants. Injected via `/K` startup arg so the command never echoes.
+fn cmd_osc7_command() -> &'static str {
+    r"PROMPT=$E]7;file:///$P$E\$P$G & cls"
 }
 
 /// Resolve the path and arguments to launch a WSL distribution.
@@ -797,8 +816,32 @@ mod tests {
     #[test]
     fn osc7_non_bash_returns_none() {
         assert!(osc7_setup_command("zsh").is_none());
-        assert!(osc7_setup_command("cmd").is_none());
         assert!(osc7_setup_command("sh").is_none());
+    }
+
+    #[test]
+    fn osc7_cmd_contains_expected_parts() {
+        let setup = osc7_setup_command("cmd").expect("expected Some for cmd");
+        // Must set the PROMPT variable
+        assert!(
+            setup.contains("PROMPT="),
+            "expected PROMPT assignment, got: {setup}"
+        );
+        // Must embed OSC 7 marker ($E = ESC in cmd PROMPT)
+        assert!(
+            setup.contains("$E]7;file:///"),
+            "expected OSC 7 marker via $E, got: {setup}"
+        );
+        // Must include current path via $P
+        assert!(
+            setup.contains("$P"),
+            "expected $P (current path) in PROMPT, got: {setup}"
+        );
+        // Must clear screen at end
+        assert!(
+            setup.contains("cls"),
+            "expected cls at end, got: {setup}"
+        );
     }
 
     #[test]

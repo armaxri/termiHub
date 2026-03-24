@@ -378,14 +378,17 @@ export function Terminal({
       return true;
     });
 
-    // Track CWD via OSC 7 escape sequences (sent by zsh/bash/PowerShell)
+    // Track CWD via OSC 7 escape sequences (sent by zsh/bash/PowerShell/cmd)
     const osc7Disposable = xterm.parser.registerOscHandler(7, (data: string) => {
       try {
-        const url = new URL(data);
+        // cmd.exe emits file:///C:\Users\foo (backslashes); normalise to
+        // forward slashes before parsing so the URL constructor handles it
+        // consistently across all URL parser implementations.
+        const url = new URL(data.replace(/\\/g, "/"));
         if (url.protocol === "file:") {
           let pathname = decodeURIComponent(url.pathname);
-          // On Windows, PowerShell emits paths like /C:/Users/foo — strip the
-          // leading slash so the file browser receives a valid Windows path.
+          // On Windows, paths arrive as /C:/Users/foo — strip the leading
+          // slash so the file browser receives a valid Windows path.
           if (/^\/[A-Za-z]:\//.test(pathname)) {
             pathname = pathname.slice(1);
           }
