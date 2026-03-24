@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Remote agent shell sessions with PowerShell now show the PowerShell icon instead of the generic server icon (#549)
+
 ### Added
 
 - Workspace editor: configurable panel sizes — click percentage badges on split children to set custom proportions, redistribute remaining space automatically, reset to equal with one click; sizes persist across save/load and apply as `defaultSize` at runtime (#544)

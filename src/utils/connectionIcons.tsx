@@ -50,6 +50,13 @@ export function getDefaultIconInfo(config: ConnectionConfig): {
   if (config.type === "wsl") {
     return { iconNode: labIcons.penguin as IconNode };
   }
+  if (
+    (config.type === "remote-session" || config.type === "remote") &&
+    config.config?.sessionType === "shell"
+  ) {
+    const shellValue = config.config?.shell as ShellType | undefined;
+    return getShellIconInfo(shellValue);
+  }
   return { component: TYPE_ICONS[config.type] };
 }
 
