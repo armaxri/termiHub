@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Terminal: OSC 7 CWD injection no longer clears the full screen — only the lines occupied by the echoed setup command are erased, using a computed `\r\033[2K` + N×`\033[A\033[2K` sequence sized to the terminal width
+- Terminal: WSL connections now pre-set `PROMPT_COMMAND` via environment variable before bash starts, so CWD tracking fires on the very first prompt without waiting for the stdin-injected hook to run
 - File browser: PowerShell and cmd.exe connections now track the current working directory — the file browser follows `cd`/`chdir` changes via injected prompt hooks that emit OSC 9;9 sequences (the Windows Terminal native CWD standard; no URL encoding or path conversion required)
 - File browser: scrolling now works in large directories — the file list was using `overflow: hidden` preventing scroll in directories with many entries
 

@@ -233,7 +233,7 @@ impl ConnectionType for LocalShell {
         // PowerShell: pass via -NoExit -Command so it runs silently before the
         // interactive session starts, avoiding any visible echo in the terminal.
         // All other shells (bash, WSL, git-bash): inject via stdin after spawn.
-        let osc7_setup = osc7_setup_command(&effective_shell);
+        let osc7_setup = osc7_setup_command(&effective_shell, config.cols);
 
         info!(
             program = %shell_cmd.program,
