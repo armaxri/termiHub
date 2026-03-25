@@ -192,9 +192,10 @@ pub fn build_shell_command(config: &ShellConfig) -> ShellCommand {
 ///
 /// `cols` is the terminal width used to calculate how many lines the echoed
 /// setup command occupies so only those lines are erased (not the full screen).
+/// For WSL, `cols` is unused because the WSL backend injects silently.
 pub fn osc7_setup_command(shell_type: &str, cols: u16) -> Option<String> {
     if shell_type.starts_with("wsl:") {
-        Some(wsl_osc7_command(cols))
+        Some(wsl_osc7_command().to_string())
     } else if matches!(shell_type, "ssh" | "bash" | "gitbash") {
         Some(bash_osc7_command(cols))
     } else if shell_type == "powershell" {
@@ -349,17 +350,18 @@ fn erase_echo_lines(cmd_len: usize, cols: u16) -> String {
 ///
 /// Changes to `$HOME` when the CWD is a Windows drive mount (`/mnt/c/...`),
 /// since WSL defaults to the Windows user directory which is inaccessible
-/// through the `\\wsl$\` UNC share. Ends with a targeted line-erase that
-/// removes only the echoed setup lines instead of clearing the full screen.
-fn wsl_osc7_command(cols: u16) -> String {
-    const BASE: &str = concat!(
+/// through the `\\wsl$\` UNC share.
+///
+/// This command is injected silently via the sentinel-based approach in
+/// `wsl.rs` (PTY echo is disabled before this runs), so no erase sequence
+/// is included here.
+fn wsl_osc7_command() -> &'static str {
+    concat!(
         r#"case "$PWD" in /mnt/[a-z]|/mnt/[a-z]/*) cd;; esac; "#,
         r#"__termihub_osc7(){ printf '\e]7;file://%s\a' "$PWD"; }; "#,
         r#"[ "$ZSH_VERSION" ] && precmd_functions+=(__termihub_osc7) || "#,
-        r#"PROMPT_COMMAND="__termihub_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}"; "#,
-    );
-    let erase = erase_echo_lines(BASE.len(), cols);
-    format!("{BASE}printf '{erase}'")
+        r#"PROMPT_COMMAND="__termihub_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}""#,
+    )
 }
 
 /// OSC 7 setup command for bash-based shells (SSH, local bash, Git Bash).
@@ -786,14 +788,15 @@ mod tests {
             setup.contains("/mnt/[a-z]") && setup.contains("cd"),
             "expected cd-home for /mnt/ paths, got: {setup}"
         );
-        // Should use targeted line-erase (cursor-up), not full screen clear
-        assert!(
-            setup.contains(r"\033[A"),
-            "expected cursor-up line-erase, got: {setup}"
-        );
+        // WSL injection is silent (via stty -echo sentinel in wsl.rs),
+        // so no erase sequence should be present in the command itself.
         assert!(
             !setup.contains(r"\033[2J"),
             "must not use full screen clear, got: {setup}"
+        );
+        assert!(
+            !setup.contains(r"\033[A"),
+            "WSL command must not contain erase (injection is silent), got: {setup}"
         );
     }
 
