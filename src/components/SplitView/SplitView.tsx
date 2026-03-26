@@ -49,6 +49,8 @@ import "./SplitView.css";
 
 export function SplitView() {
   const rootPanel = useAppStore((s) => s.rootPanel);
+  const tabGroups = useAppStore((s) => s.tabGroups);
+  const activeTabGroupId = useAppStore((s) => s.activeTabGroupId);
   const setActivePanel = useAppStore((s) => s.setActivePanel);
   const reorderTabs = useAppStore((s) => s.reorderTabs);
   const moveTab = useAppStore((s) => s.moveTab);
@@ -125,16 +127,41 @@ export function SplitView() {
   );
 
   return (
-    <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-      <PanelNodeRenderer
-        node={rootPanel}
-        setActivePanel={setActivePanel}
-        activeDragTab={activeDragTab}
-      />
-      <DragOverlay dropAnimation={null}>
-        {activeDragTab && <TabDragOverlay tab={activeDragTab} />}
-      </DragOverlay>
-    </DndContext>
+    <div className="split-view-groups">
+      {tabGroups.map((group) => {
+        const isActive = group.id === activeTabGroupId;
+        // Active group: use live rootPanel state (always up-to-date).
+        // Inactive groups: use saved rootPanel from tabGroups (preserved on switch).
+        const panelTree = isActive ? rootPanel : group.rootPanel;
+        return (
+          <div
+            key={group.id}
+            className={`split-view-group${isActive ? " split-view-group--active" : ""}`}
+          >
+            {/* Each group has its own DndContext.
+                Inactive groups' DndContexts are needed to satisfy @dnd-kit hooks
+                (SortableContext in TabBar, useDroppable in PanelDropZone) but
+                receive no events since their container is display:none. */}
+            <DndContext
+              sensors={sensors}
+              onDragStart={isActive ? handleDragStart : undefined}
+              onDragEnd={isActive ? handleDragEnd : undefined}
+            >
+              <PanelNodeRenderer
+                node={panelTree}
+                setActivePanel={isActive ? setActivePanel : () => {}}
+                activeDragTab={isActive ? activeDragTab : null}
+              />
+              {isActive && (
+                <DragOverlay dropAnimation={null}>
+                  {activeDragTab && <TabDragOverlay tab={activeDragTab} />}
+                </DragOverlay>
+              )}
+            </DndContext>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 

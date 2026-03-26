@@ -18,9 +18,16 @@ const CATEGORY_LABELS: Record<ShortcutCategory, string> = {
   clipboard: "Clipboard",
   terminal: "Terminal",
   navigation: "Navigation / Split",
+  "tab-groups": "Tab Groups",
 };
 
-const CATEGORY_ORDER: ShortcutCategory[] = ["general", "clipboard", "terminal", "navigation"];
+const CATEGORY_ORDER: ShortcutCategory[] = [
+  "general",
+  "clipboard",
+  "terminal",
+  "navigation",
+  "tab-groups",
+];
 
 interface KeyboardSettingsProps {
   visibleFields?: Set<string>;

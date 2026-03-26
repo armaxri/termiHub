@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from "react";
-import { Plus, Columns2, Rows2, X, PanelLeft } from "lucide-react";
+import { Plus, Columns2, Rows2, X, PanelLeft, Layers } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { useAppStore } from "@/store/appStore";
 import { TerminalTab } from "@/types/terminal";
@@ -7,6 +7,7 @@ import { getAllLeaves } from "@/utils/panelTree";
 import { TerminalPortalProvider } from "./TerminalRegistry";
 import { TerminalCommandBridge } from "./TerminalCommandBridge";
 import { Terminal } from "./Terminal";
+import { TabGroupChips } from "./TabGroupChips";
 import { SplitView } from "@/components/SplitView";
 import { terminalDispatcher } from "@/services/events";
 import "./TerminalView.css";
@@ -64,6 +65,8 @@ export function TerminalView() {
   const removePanel = useAppStore((s) => s.removePanel);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
+  const addTabGroup = useAppStore((s) => s.addTabGroup);
+  const tabGroups = useAppStore((s) => s.tabGroups);
 
   const isMac = navigator.platform.toUpperCase().includes("MAC");
   const sidebarToggleTitle = `Toggle Sidebar (${isMac ? "Cmd" : "Ctrl"}+B)`;
@@ -93,6 +96,7 @@ export function TerminalView() {
       <TerminalCommandBridge />
       <div className="terminal-view">
         <div className="terminal-view__toolbar">
+          <TabGroupChips />
           <div className="terminal-view__toolbar-actions">
             <button
               className="terminal-view__toolbar-btn"
@@ -128,6 +132,16 @@ export function TerminalView() {
                 <X size={16} />
               </button>
             )}
+            {tabGroups.length <= 1 && (
+              <button
+                className="terminal-view__toolbar-btn"
+                onClick={() => addTabGroup()}
+                title={`New Tab Group (${isMac ? "Cmd" : "Ctrl"}+Shift+T)`}
+                data-testid="terminal-view-new-tab-group"
+              >
+                <Layers size={16} />
+              </button>
+            )}
             <button
               className={`terminal-view__toolbar-btn${!sidebarCollapsed ? " terminal-view__toolbar-btn--active" : ""}`}
               onClick={toggleSidebar}
@@ -148,18 +162,31 @@ export function TerminalView() {
 }
 
 /**
- * Renders ALL terminal instances in a stable location in the React tree.
- * Terminal components create imperative DOM elements that are adopted by
- * TerminalSlot components in panels — this prevents unmount/remount when
- * tabs move between panels, preserving PTY sessions and terminal content.
+ * Renders ALL terminal instances across ALL tab groups in a stable location
+ * in the React tree. Terminal components create imperative DOM elements that
+ * are adopted by TerminalSlot components in panels — this prevents
+ * unmount/remount when tabs move between panels or groups, preserving PTY
+ * sessions and terminal content.
  */
 function TerminalHost() {
   const rootPanel = useAppStore((s) => s.rootPanel);
+  const tabGroups = useAppStore((s) => s.tabGroups);
+  const activeTabGroupId = useAppStore((s) => s.activeTabGroupId);
+
   const allTabs: TerminalTab[] = useMemo(() => {
-    return getAllLeaves(rootPanel)
+    // Active group: use live rootPanel (always up-to-date)
+    const activeTabs = getAllLeaves(rootPanel)
       .flatMap((leaf) => leaf.tabs)
       .filter((tab) => tab.contentType === "terminal");
-  }, [rootPanel]);
+
+    // Inactive groups: use saved rootPanel from tabGroups store
+    const inactiveTabs = tabGroups
+      .filter((g) => g.id !== activeTabGroupId)
+      .flatMap((g) => getAllLeaves(g.rootPanel).flatMap((leaf) => leaf.tabs))
+      .filter((tab) => tab.contentType === "terminal");
+
+    return [...activeTabs, ...inactiveTabs];
+  }, [rootPanel, tabGroups, activeTabGroupId]);
 
   return (
     <>

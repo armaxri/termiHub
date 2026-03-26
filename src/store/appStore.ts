@@ -14,6 +14,7 @@ import {
   WorkspaceEditorMeta,
   EditorStatus,
   EditorActions,
+  TabGroup,
 } from "@/types/terminal";
 import {
   SavedConnection,
@@ -168,6 +169,17 @@ interface AppState {
   requestPassword: (host: string, username: string) => Promise<string | null>;
   submitPassword: (password: string) => void;
   dismissPasswordPrompt: () => void;
+
+  // Tab Groups (workspace-level named panel trees)
+  tabGroups: TabGroup[];
+  activeTabGroupId: string;
+  /** Create a new tab group and switch to it. Returns the new group ID. */
+  addTabGroup: (name?: string) => string;
+  closeTabGroup: (groupId: string) => void;
+  renameTabGroup: (groupId: string, name: string) => void;
+  setTabGroupColor: (groupId: string, color: string | null) => void;
+  setActiveTabGroup: (groupId: string) => void;
+  reorderTabGroups: (fromIndex: number, toIndex: number) => void;
 
   // Panels & Tabs
   rootPanel: PanelNode;
@@ -466,8 +478,23 @@ function removeTabFromLeaf(leaf: LeafPanel, tabId: string): LeafPanel {
   return { ...leaf, tabs, activeTabId: null };
 }
 
+let groupCounter = 0;
+
+/** Generate a unique tab group ID. */
+function generateGroupId(): string {
+  groupCounter++;
+  return `group-${Date.now()}-${groupCounter}-${Math.random().toString(36).slice(2, 6)}`;
+}
+
 export const useAppStore = create<AppState>((set, get) => {
   const initialPanel = createLeafPanel();
+  const initialGroupId = generateGroupId();
+  const initialGroup: TabGroup = {
+    id: initialGroupId,
+    name: "Main",
+    rootPanel: initialPanel,
+    activePanelId: initialPanel.id,
+  };
 
   return {
     // Connection type registry — updated by loadFromBackend()
@@ -526,6 +553,99 @@ export const useAppStore = create<AppState>((set, get) => {
         passwordPromptResolve: null,
       });
     },
+
+    // Tab Groups
+    tabGroups: [initialGroup],
+    activeTabGroupId: initialGroupId,
+
+    addTabGroup: (name) => {
+      const newGroupId = generateGroupId();
+      const newPanel = createLeafPanel();
+      set((state) => {
+        const groupCount = state.tabGroups.length + 1;
+        const newGroup: TabGroup = {
+          id: newGroupId,
+          name: name ?? `Group ${groupCount}`,
+          rootPanel: newPanel,
+          activePanelId: newPanel.id,
+        };
+        // Save current live state into the active group before switching
+        const savedGroups = state.tabGroups.map((g) =>
+          g.id === state.activeTabGroupId
+            ? { ...g, rootPanel: state.rootPanel, activePanelId: state.activePanelId }
+            : g
+        );
+        return {
+          tabGroups: [...savedGroups, newGroup],
+          activeTabGroupId: newGroupId,
+          rootPanel: newPanel,
+          activePanelId: newPanel.id,
+        };
+      });
+      return newGroupId;
+    },
+
+    closeTabGroup: (groupId) =>
+      set((state) => {
+        if (state.tabGroups.length <= 1) return state;
+
+        const newGroups = state.tabGroups.filter((g) => g.id !== groupId);
+
+        if (groupId !== state.activeTabGroupId) {
+          // Closing an inactive group — straightforward removal
+          return { tabGroups: newGroups };
+        }
+
+        // Closing the active group — pick adjacent group
+        const currentIdx = state.tabGroups.findIndex((g) => g.id === groupId);
+        const newActiveIdx = Math.max(0, currentIdx - 1);
+        const newActiveGroup = newGroups[newActiveIdx];
+        return {
+          tabGroups: newGroups,
+          activeTabGroupId: newActiveGroup.id,
+          rootPanel: newActiveGroup.rootPanel,
+          activePanelId: newActiveGroup.activePanelId,
+        };
+      }),
+
+    renameTabGroup: (groupId, name) =>
+      set((state) => ({
+        tabGroups: state.tabGroups.map((g) => (g.id === groupId ? { ...g, name } : g)),
+      })),
+
+    setTabGroupColor: (groupId, color) =>
+      set((state) => ({
+        tabGroups: state.tabGroups.map((g) =>
+          g.id === groupId ? { ...g, color: color ?? undefined } : g
+        ),
+      })),
+
+    setActiveTabGroup: (groupId) =>
+      set((state) => {
+        if (groupId === state.activeTabGroupId) return state;
+        const targetGroup = state.tabGroups.find((g) => g.id === groupId);
+        if (!targetGroup) return state;
+        // Save current live state into the currently active group
+        const savedGroups = state.tabGroups.map((g) =>
+          g.id === state.activeTabGroupId
+            ? { ...g, rootPanel: state.rootPanel, activePanelId: state.activePanelId }
+            : g
+        );
+        return {
+          tabGroups: savedGroups,
+          activeTabGroupId: groupId,
+          rootPanel: targetGroup.rootPanel,
+          activePanelId: targetGroup.activePanelId,
+        };
+      }),
+
+    reorderTabGroups: (fromIndex, toIndex) =>
+      set((state) => {
+        const groups = [...state.tabGroups];
+        const [moved] = groups.splice(fromIndex, 1);
+        groups.splice(toIndex, 0, moved);
+        return { tabGroups: groups };
+      }),
 
     // Panels & Tabs
     rootPanel: initialPanel,
