@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { getDefaultIconInfo } from "./connectionIcons";
 import type { ConnectionConfig } from "@/types/terminal";
-import { BicepsFlexed, GitBranch, Terminal } from "lucide-react";
+import { BicepsFlexed, GitBranch, Terminal, Server } from "lucide-react";
 
 describe("getDefaultIconInfo", () => {
   it("resolves icon from 'shell' key", () => {
@@ -43,5 +43,86 @@ describe("getDefaultIconInfo", () => {
     const info = getDefaultIconInfo(config);
     expect(info.iconNode).toBeDefined();
     expect(info.component).toBeUndefined();
+  });
+
+  it("returns powershell icon for remote-session with shell=powershell", () => {
+    const config: ConnectionConfig = {
+      type: "remote-session",
+      config: { agentId: "a1", sessionType: "shell", shell: "powershell" },
+    };
+    const info = getDefaultIconInfo(config);
+    expect(info.component).toBe(BicepsFlexed);
+  });
+
+  it("returns powershell icon for remote-session with full path /usr/local/bin/pwsh", () => {
+    const config: ConnectionConfig = {
+      type: "remote-session",
+      config: { agentId: "a1", sessionType: "shell", shell: "/usr/local/bin/pwsh" },
+    };
+    const info = getDefaultIconInfo(config);
+    expect(info.component).toBe(BicepsFlexed);
+  });
+
+  it("returns powershell icon for remote-session with full path /usr/bin/pwsh", () => {
+    const config: ConnectionConfig = {
+      type: "remote-session",
+      config: { agentId: "a1", sessionType: "shell", shell: "/usr/bin/pwsh" },
+    };
+    const info = getDefaultIconInfo(config);
+    expect(info.component).toBe(BicepsFlexed);
+  });
+
+  it("returns powershell icon for remote-session with sessionType=local and pwsh path", () => {
+    const config: ConnectionConfig = {
+      type: "remote-session",
+      config: { agentId: "a1", sessionType: "local", shell: "/snap/bin/pwsh" },
+    };
+    const info = getDefaultIconInfo(config);
+    expect(info.component).toBe(BicepsFlexed);
+  });
+
+  it("returns gitbash icon for remote-session with shell=gitbash", () => {
+    const config: ConnectionConfig = {
+      type: "remote-session",
+      config: { agentId: "a1", sessionType: "shell", shell: "gitbash" },
+    };
+    const info = getDefaultIconInfo(config);
+    expect(info.component).toBe(GitBranch);
+  });
+
+  it("returns terminal icon for remote-session with shell=/bin/bash", () => {
+    const config: ConnectionConfig = {
+      type: "remote-session",
+      config: { agentId: "a1", sessionType: "shell", shell: "/bin/bash" },
+    };
+    const info = getDefaultIconInfo(config);
+    expect(info.component).toBe(Terminal);
+  });
+
+  it("returns terminal icon for remote-session with shell=bash", () => {
+    const config: ConnectionConfig = {
+      type: "remote-session",
+      config: { agentId: "a1", sessionType: "shell", shell: "bash" },
+    };
+    const info = getDefaultIconInfo(config);
+    expect(info.component).toBe(Terminal);
+  });
+
+  it("returns Server icon for remote-session with sessionType=serial", () => {
+    const config: ConnectionConfig = {
+      type: "remote-session",
+      config: { agentId: "a1", sessionType: "serial", serialPort: "/dev/ttyS0" },
+    };
+    const info = getDefaultIconInfo(config);
+    expect(info.component).toBe(Server);
+  });
+
+  it("returns Server icon for remote-session with no sessionType", () => {
+    const config: ConnectionConfig = {
+      type: "remote-session",
+      config: { agentId: "a1" },
+    };
+    const info = getDefaultIconInfo(config);
+    expect(info.component).toBe(Server);
   });
 });

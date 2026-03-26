@@ -33,7 +33,15 @@ const EDITOR_CATEGORIES = [
   { id: "appearance", label: "Appearance" },
 ];
 
-const AGENT_CATEGORIES = [{ id: "connection", label: "Connection" }];
+/** Agent transport mode: only the SSH connection parameters, no terminal settings. */
+const AGENT_TRANSPORT_CATEGORIES = [{ id: "connection", label: "Connection" }];
+
+/** Agent definition mode: connection settings + per-session terminal appearance. */
+const AGENT_DEF_CATEGORIES = [
+  { id: "connection", label: "Connection" },
+  { id: "terminal", label: "Terminal" },
+  { id: "appearance", label: "Appearance" },
+];
 
 const EDITOR_ICONS: Record<EditorCategory, LucideIcon> = {
   connection: PlugZap,
@@ -230,9 +238,11 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const isAnyAgentMode = isAgentTransportMode || isAgentDefinitionMode;
 
   const [terminalOptions, setTerminalOptions] = useState<TerminalOptions>(
-    existingConnection?.terminalOptions ?? {}
+    existingAgentDef?.terminalOptions ?? existingConnection?.terminalOptions ?? {}
   );
-  const [icon, setIcon] = useState<string | undefined>(existingConnection?.icon);
+  const [icon, setIcon] = useState<string | undefined>(
+    existingAgentDef?.icon ?? existingConnection?.icon
+  );
   const [sourceFile, setSourceFile] = useState<string | null>(
     existingConnection?.sourceFile ?? null
   );
@@ -289,12 +299,12 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     return () => observer.disconnect();
   }, []);
 
-  // In any agent mode, force category to "connection"
+  // In agent transport mode (not definition mode), force category to "connection"
   useEffect(() => {
-    if (isAnyAgentMode && activeCategory !== "connection") {
+    if (isAgentTransportMode && activeCategory !== "connection") {
       setActiveCategory("connection");
     }
-  }, [isAnyAgentMode, activeCategory]);
+  }, [isAgentTransportMode, activeCategory]);
 
   const handleCategoryChange = useCallback((category: EditorCategory) => {
     setActiveCategory(category);
@@ -326,6 +336,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const saveAgentDefinition = useCallback(async (): Promise<boolean> => {
     if (!name.trim() || !existingAgent) return false;
     try {
+      const opts = hasTerminalOptions(terminalOptions) ? terminalOptions : undefined;
       if (existingAgentDef) {
         await updateAgentDef(existingAgent.id, {
           id: existingAgentDef.id,
@@ -333,6 +344,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           session_type: selectedType,
           config: connSettings,
           persistent,
+          terminal_options: opts ?? null,
+          icon: icon ?? null,
         });
       } else {
         await saveAgentDef(existingAgent.id, {
@@ -341,6 +354,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           config: connSettings,
           persistent,
           folder_id: meta.agentFolderId ?? null,
+          terminal_options: opts,
+          icon,
         });
       }
       return true;
@@ -353,6 +368,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     selectedType,
     connSettings,
     persistent,
+    terminalOptions,
+    icon,
     existingAgent,
     existingAgentDef,
     meta.agentFolderId,
@@ -670,7 +687,11 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     }
   };
 
-  const categories = isAnyAgentMode ? AGENT_CATEGORIES : EDITOR_CATEGORIES;
+  const categories = isAgentTransportMode
+    ? AGENT_TRANSPORT_CATEGORIES
+    : isAgentDefinitionMode
+      ? AGENT_DEF_CATEGORIES
+      : EDITOR_CATEGORIES;
 
   return (
     <div
