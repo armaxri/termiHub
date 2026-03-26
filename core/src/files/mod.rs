@@ -3,7 +3,7 @@ pub mod local;
 pub mod utils;
 
 pub use browser::FileBrowser;
-pub use local::LocalFileBackend;
+pub use local::{LocalFileBackend, LocalFileBrowser};
 
 use crate::errors::FileError;
 use serde::{Deserialize, Serialize};

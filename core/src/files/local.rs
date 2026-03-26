@@ -204,6 +204,98 @@ impl FileBackend for LocalFileBackend {
     }
 }
 
+/// [`FileBrowser`] capability for the local filesystem.
+///
+/// A thin wrapper around the local filesystem operations that implements the
+/// `FileBrowser` capability interface (used by `ConnectionType::file_browser()`).
+/// Using a separate struct avoids method ambiguity with `LocalFileBackend`
+/// which implements the `FileBackend` trait.
+pub struct LocalFileBrowser;
+
+impl LocalFileBrowser {
+    /// Create a new `LocalFileBrowser`.
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for LocalFileBrowser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait::async_trait]
+impl super::browser::FileBrowser for LocalFileBrowser {
+    async fn list_dir(&self, path: &str) -> Result<Vec<FileEntry>, FileError> {
+        let path = path.to_string();
+        tokio::task::spawn_blocking(move || {
+            list_dir_sync(&path).map_err(|e| map_io_error(e, &path))
+        })
+        .await
+        .map_err(|e| FileError::OperationFailed(e.to_string()))?
+    }
+
+    async fn read_file(&self, path: &str) -> Result<Vec<u8>, FileError> {
+        let path = path.to_string();
+        tokio::task::spawn_blocking(move || {
+            std::fs::read(&path).map_err(|e| map_io_error(e, &path))
+        })
+        .await
+        .map_err(|e| FileError::OperationFailed(e.to_string()))?
+    }
+
+    async fn write_file(&self, path: &str, data: &[u8]) -> Result<(), FileError> {
+        let path = path.to_string();
+        let data = data.to_vec();
+        tokio::task::spawn_blocking(move || {
+            std::fs::write(&path, &data).map_err(|e| map_io_error(e, &path))
+        })
+        .await
+        .map_err(|e| FileError::OperationFailed(e.to_string()))?
+    }
+
+    async fn delete(&self, path: &str) -> Result<(), FileError> {
+        let entry = super::browser::FileBrowser::stat(self, path).await?;
+        let path = path.to_string();
+        tokio::task::spawn_blocking(move || {
+            if entry.is_directory {
+                std::fs::remove_dir_all(&path).map_err(|e| map_io_error(e, &path))
+            } else {
+                std::fs::remove_file(&path).map_err(|e| map_io_error(e, &path))
+            }
+        })
+        .await
+        .map_err(|e| FileError::OperationFailed(e.to_string()))?
+    }
+
+    async fn rename(&self, from: &str, to: &str) -> Result<(), FileError> {
+        let old = from.to_string();
+        let new = to.to_string();
+        tokio::task::spawn_blocking(move || {
+            std::fs::rename(&old, &new).map_err(|e| map_io_error(e, &old))
+        })
+        .await
+        .map_err(|e| FileError::OperationFailed(e.to_string()))?
+    }
+
+    async fn stat(&self, path: &str) -> Result<FileEntry, FileError> {
+        let path = path.to_string();
+        tokio::task::spawn_blocking(move || stat_sync(&path))
+            .await
+            .map_err(|e| FileError::OperationFailed(e.to_string()))?
+    }
+
+    async fn mkdir(&self, path: &str) -> Result<(), FileError> {
+        let path = path.to_string();
+        tokio::task::spawn_blocking(move || {
+            std::fs::create_dir_all(&path).map_err(|e| map_io_error(e, &path))
+        })
+        .await
+        .map_err(|e| FileError::OperationFailed(e.to_string()))?
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

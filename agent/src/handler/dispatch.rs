@@ -1003,6 +1003,22 @@ impl Dispatcher {
             Some(id) => id,
         };
 
+        // Check if this is an active session ID (sent by the desktop RemoteProxy).
+        if let Some(type_id) = self
+            .session_manager
+            .get_session_type_id(&connection_id)
+            .await
+        {
+            return match normalize_type_id(&type_id) {
+                "local" => Ok(Box::new(LocalFileBackend::new())),
+                other => Err((
+                    errors::FILE_BROWSING_NOT_SUPPORTED,
+                    format!("File browsing is not yet supported for '{other}' sessions"),
+                )),
+            };
+        }
+
+        // Fall back to connection preset lookup.
         let connection = self.connection_store.get(&connection_id).await.ok_or((
             errors::CONNECTION_NOT_FOUND,
             format!("Connection not found: {connection_id}"),
@@ -1977,6 +1993,38 @@ mod tests {
         let entries = result["result"]["entries"].as_array().unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0]["name"], "file.txt");
+    }
+
+    #[tokio::test]
+    async fn files_list_via_session_id_uses_local_backend() {
+        // Regression test: desktop RemoteProxy sends the session UUID as
+        // connection_id. resolve_file_backend must look it up in the session
+        // manager (not the connection preset store) and return LocalFileBackend
+        // for "local" sessions.
+        let (mut d, mgr) = make_dispatcher_with_manager();
+        init_dispatcher(&mut d).await;
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("from_session.txt"), "hi").unwrap();
+
+        // Create a stub local session (simulates what the agent does when the
+        // desktop calls connection.create with type="local").
+        let snapshot = mgr
+            .create_stub_session("local", "test shell".to_string(), json!({}))
+            .await
+            .unwrap();
+        let session_id = snapshot.id;
+
+        // List files using the session UUID as connection_id.
+        let req = make_request(
+            "connection.files.list",
+            json!({"connection_id": session_id, "path": dir.path().to_str().unwrap()}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        let entries = result["result"]["entries"].as_array().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["name"], "from_session.txt");
     }
 
     #[tokio::test]
