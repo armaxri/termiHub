@@ -139,6 +139,14 @@ fn run_setup_background(
     // Wait for the shell to initialize
     std::thread::sleep(std::time::Duration::from_millis(SHELL_INIT_DELAY_MS));
 
+    // Show immediate feedback so the terminal isn't blank while SFTP upload runs
+    inject_commands(
+        session_manager,
+        session_id,
+        "echo 'Preparing termiHub agent setup, please wait...'\n",
+        rt_handle,
+    );
+
     emit_progress(
         app_handle,
         agent_id,
@@ -422,6 +430,8 @@ fi
 echo ""
 echo "\360\237\216\211 === Setup Complete ==="
 echo ""
+echo "You can close this terminal tab now."
+echo ""
 "#;
 
 /// Inject commands into the visible terminal session via the SessionManager.
@@ -520,6 +530,7 @@ mod tests {
         assert!(script.contains("--version"));
         assert!(script.contains("=== termiHub Agent Setup ==="));
         assert!(script.contains("=== Setup Complete ==="));
+        assert!(script.contains("You can close this terminal tab now."));
         assert!(script.contains("=== Setup Failed ==="));
         assert!(script.contains("INSTALL_SERVICE=false"));
     }

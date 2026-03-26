@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Agent setup: terminal tab no longer appears blank for 5+ seconds on Windows — a "please wait" message is now injected immediately after the shell initialises, so users see feedback while the SFTP upload runs in the background (#560)
+- Agent setup: setup script now prints "You can close this terminal tab now." after the completion banner (#560)
+
 - File browser: pressing the Up button in a local PowerShell session on Windows no longer jumps to "/" and breaks Refresh — raw Windows backslash paths (reported by PowerShell via OSC 9;9) are now normalized to forward slashes, and navigating up correctly stops at the drive root (`C:/`) rather than falling back to "/" (#555)
 - File editor: syntax highlighting for CMake, TOML, Nginx, and Nix files now works correctly — `"vs-dark"` is not a valid Shiki v4 theme identifier, causing the grammar loader to silently fail; replaced with `"dark-plus"` / `"light-plus"` (VS Code Dark+ / Light+); the Monaco editor theme now also follows the termiHub app theme (dark / light / system) instead of being hardcoded to dark (#498)
 - File editor: built-in filename mappings now match case-insensitively, so e.g. `cmakelists.txt` is correctly highlighted as CMake (#498)
