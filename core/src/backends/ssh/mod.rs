@@ -431,7 +431,7 @@ impl ConnectionType for Ssh {
         // The remote shell (typically bash) doesn't emit OSC 7 by default,
         // so we inject a PROMPT_COMMAND that emits it on each prompt.
         // Errors are non-fatal — the shell works without CWD tracking.
-        if let Some(setup) = osc7_setup_command("ssh") {
+        if let Some(setup) = osc7_setup_command("ssh", config.cols) {
             let cmd = format!("{setup}\n");
             if let Err(e) = channel.write_all(cmd.as_bytes()) {
                 debug!("Failed to inject OSC 7 hook: {e}");

@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Remote agent shell sessions with PowerShell (and other special shells like GitBash, WSL) now show the correct shell icon instead of the generic server icon — handles both short names (`powershell`) and full paths (`/usr/local/bin/pwsh`) (#549)
 - Remote agent connection definitions now have Terminal and Appearance settings tabs for per-session font, color, cursor, and icon customisation (#549)
+- Terminal: WSL CWD hook injection is now completely silent — the setup task writes the hook to a temp script file via `wsl.exe -d <distro> -- sh -c 'cat > /tmp/.termihub_init'` and sources it; using a subprocess guarantees immediate filesystem visibility (Windows UNC path writes can return success without being synchronously propagated into WSL, causing `source: no such file` errors); the script self-erases the single visible `source ...` line before the next prompt appears
+- Terminal: WSL file browser now uses `\\wsl.localhost\<distro>` (the Windows 11 preferred UNC path) with automatic fallback to `\\wsl$\<distro>` for older Windows versions, fixing file browser failures on Windows 11
+- Terminal: OSC 7 CWD injection no longer clears the full screen — only the lines occupied by the echoed setup command are erased, using a computed `\r\033[2K` + N×`\033[A\033[2K` sequence sized to the terminal width
+- Terminal: WSL connections now pre-set `PROMPT_COMMAND` via environment variable before bash starts, so CWD tracking fires on the very first prompt without waiting for the stdin-injected hook to run
+- File browser: PowerShell and cmd.exe connections now track the current working directory — the file browser follows `cd`/`chdir` changes via injected prompt hooks that emit OSC 9;9 sequences (the Windows Terminal native CWD standard; no URL encoding or path conversion required)
+- File browser: scrolling now works in large directories — the file list was using `overflow: hidden` preventing scroll in directories with many entries
 
 ### Added
 
