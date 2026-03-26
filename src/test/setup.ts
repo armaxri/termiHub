@@ -16,6 +16,10 @@ vi.mock("monaco-editor", () => ({
       { id: "dockerfile", aliases: ["Dockerfile"] },
       { id: "makefile", aliases: ["Makefile"] },
       { id: "cmake", aliases: ["CMake"] },
+      { id: "toml", aliases: ["TOML"] },
+      { id: "nginx", aliases: ["Nginx"] },
+      { id: "nix", aliases: ["Nix"] },
+      { id: "properties", aliases: ["Properties"] },
       { id: "ruby", aliases: ["Ruby"] },
       { id: "java", aliases: ["Java"] },
       { id: "cpp", aliases: ["C++"] },
@@ -25,6 +29,9 @@ vi.mock("monaco-editor", () => ({
       { id: "css", aliases: ["CSS"] },
       { id: "hcl", aliases: ["HCL"] },
     ]),
+    register: vi.fn(),
+    setMonarchTokensProvider: vi.fn(),
+    setLanguageConfiguration: vi.fn(),
   },
 }));
 

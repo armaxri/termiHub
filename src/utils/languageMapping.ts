@@ -19,6 +19,9 @@ export const BUILT_IN_FILENAME_MAPPINGS: Record<string, string> = {
   Kbuild: "makefile",
   "CMakeLists.txt": "cmake",
 
+  // Web server config
+  "nginx.conf": "nginx",
+
   // CI / deployment
   Jenkinsfile: "java", // Groovy DSL — Groovy not available in Monaco; java is closest
   Vagrantfile: "ruby",
@@ -118,10 +121,14 @@ export const BUILT_IN_EXTENSION_MAPPINGS: Record<string, string> = {
   ".vert": "cpp",
   ".frag": "cpp",
 
+  // Data / config
+  ".toml": "toml",
+  ".properties": "properties",
+
   // Data / misc
   ".lock": "yaml",
   ".ipynb": "json",
-  ".nix": "plaintext",
+  ".nix": "nix",
   ".http": "plaintext",
   ".rest": "plaintext",
 };

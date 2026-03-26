@@ -97,8 +97,28 @@ describe("resolveLanguage — built-in filename mappings", () => {
 });
 
 describe("resolveLanguage — built-in extension mappings", () => {
-  it("maps .conf to ini", () => {
-    expect(resolveLanguage("nginx.conf")).toBe("ini");
+  it("maps nginx.conf filename to nginx", () => {
+    expect(resolveLanguage("nginx.conf")).toBe("nginx");
+  });
+
+  it("maps .conf to ini (generic conf files)", () => {
+    expect(resolveLanguage("app.conf")).toBe("ini");
+  });
+
+  it("maps .toml to toml", () => {
+    expect(resolveLanguage("Cargo.toml")).toBe("toml");
+  });
+
+  it("maps .properties to properties", () => {
+    expect(resolveLanguage("application.properties")).toBe("properties");
+  });
+
+  it("maps .nix to nix", () => {
+    expect(resolveLanguage("default.nix")).toBe("nix");
+  });
+
+  it("maps .cmake to cmake", () => {
+    expect(resolveLanguage("FindBoost.cmake")).toBe("cmake");
   });
 
   it("maps .cfg to ini", () => {
