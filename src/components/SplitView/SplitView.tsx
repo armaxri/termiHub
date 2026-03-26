@@ -26,6 +26,7 @@ import {
   ArrowRightLeft,
   Check,
   Palette,
+  Stethoscope,
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { PanelNode, LeafPanel, TerminalTab, DropEdge } from "@/types/terminal";
@@ -43,6 +44,7 @@ import { ConnectionEditor } from "@/components/ConnectionEditor/ConnectionEditor
 import { LogViewer } from "@/components/LogViewer";
 import { TunnelEditor } from "@/components/TunnelEditor";
 import { WorkspaceEditor } from "@/components/WorkspaceEditor";
+import { NetworkDiagnosticPanel } from "@/components/NetworkTools/NetworkDiagnosticPanel";
 import { TerminalSearchBar } from "@/components/Terminal/TerminalSearchBar";
 import { PanelDropZone } from "./PanelDropZone";
 import "./SplitView.css";
@@ -294,6 +296,12 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
               meta={tab.workspaceEditorMeta}
               isVisible={tab.id === panel.activeTabId}
             />
+          ) : tab.contentType === "network-diagnostic" && tab.networkDiagnosticMeta ? (
+            <NetworkDiagnosticPanel
+              key={tab.id}
+              meta={tab.networkDiagnosticMeta}
+              isVisible={tab.id === panel.activeTabId}
+            />
           ) : useQuickAction ? (
             <div
               key={tab.id}
@@ -497,7 +505,9 @@ function TabDragOverlay({ tab }: { tab: TerminalTab }) {
               ? ArrowLeftRight
               : tab.contentType === "workspace-editor"
                 ? LayoutGrid
-                : null;
+                : tab.contentType === "network-diagnostic"
+                  ? Stethoscope
+                  : null;
   return (
     <div className="tab tab--drag-overlay">
       {NonTerminalIcon ? (

@@ -28,7 +28,8 @@ export type TabContentType =
   | "connection-editor"
   | "log-viewer"
   | "tunnel-editor"
-  | "workspace-editor";
+  | "workspace-editor"
+  | "network-diagnostic";
 
 export interface EditorTabMeta {
   filePath: string;
@@ -51,6 +52,24 @@ export interface TunnelEditorMeta {
 
 export interface WorkspaceEditorMeta {
   workspaceId: string | null;
+}
+
+/** Which network diagnostic tool to show in a network-diagnostic tab. */
+export type NetworkTool =
+  | "port-scanner"
+  | "ping"
+  | "dns-lookup"
+  | "http-monitor"
+  | "traceroute"
+  | "wol"
+  | "open-ports";
+
+export interface NetworkDiagnosticMeta {
+  tool: NetworkTool;
+  /** Pre-fill the host/hostname field with this value. */
+  prefillHost?: string;
+  /** Connection ID that triggered this diagnostic (for context). */
+  connectionId?: string;
 }
 
 export interface TerminalOptions {
@@ -112,6 +131,7 @@ export interface TerminalTab {
   connectionEditorMeta?: ConnectionEditorMeta;
   tunnelEditorMeta?: TunnelEditorMeta;
   workspaceEditorMeta?: WorkspaceEditorMeta;
+  networkDiagnosticMeta?: NetworkDiagnosticMeta;
   /** Optional command to send after the terminal session connects. */
   initialCommand?: string;
 }

@@ -9,7 +9,12 @@ async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { version = "1", features = ["rt", "sync"] }
+tokio = { version = "1", features = ["rt", "sync", "net", "time", "macros"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+surge-ping = "0.8"
+hickory-resolver = { version = "0.24", features = ["tokio-runtime"] }
+socket2 = { version = "0.5", features = ["all"] }
+rand = "0.8"
 serialport = { workspace = true, optional = true }
 portable-pty = { version = "0.8", optional = true }
 tracing = { version = "0.1", optional = true }
@@ -21,8 +26,7 @@ futures-util = { version = "0.3", optional = true }
 
 [dev-dependencies]
 tempfile = "3"
-tokio = { version = "1", features = ["rt", "macros", "time", "sync"] }
-rand = "0.8"
+tokio = { version = "1", features = ["rt", "macros", "time", "sync", "net"] }
 serde_json = { workspace = true }
 ssh2 = { workspace = true }
 

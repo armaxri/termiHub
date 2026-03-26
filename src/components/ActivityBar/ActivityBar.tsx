@@ -9,6 +9,7 @@ import {
   Upload,
   ScrollText,
   LayoutDashboard,
+  Stethoscope,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -22,6 +23,7 @@ const TOP_ITEMS: { view: SidebarView; icon: typeof Network; label: string }[] = 
   { view: "files", icon: FolderOpen, label: "File Browser" },
   { view: "tunnels", icon: ArrowLeftRight, label: "SSH Tunnels" },
   { view: "workspaces", icon: LayoutGrid, label: "Workspaces" },
+  { view: "network-tools", icon: Stethoscope, label: "Network Tools" },
 ];
 
 interface ActivityBarProps {

@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Network Tools: built-in network diagnostic utilities accessible from a new "Network Tools" activity bar entry (#525):
+  - **Port Scanner** — TCP connect scan with port-spec syntax (`22`, `80,443`, `8080-8090`), streaming results, large-range warning
+  - **Ping** — ICMP ping with TCP fallback when raw sockets require elevated privileges; live latency chart (up to 2 min history); configurable interval and count
+  - **DNS Lookup** — A/AAAA/MX/CNAME/NS/TXT/SRV/SOA/PTR/ANY record types with optional custom nameserver
+  - **Traceroute** — TTL-limited hop-by-hop trace with three RTT columns per hop
+  - **Open Ports** — lists TCP/UDP listening ports on the local machine with process name and PID
+  - **Wake-on-LAN** — sends magic packets; save/delete named device presets; per-send history
+  - **HTTP Monitor** — periodic HTTP/HTTPS checks with response-time chart, status history, configurable method, interval, expected status code
+  - All diagnostic logic lives in `termihub-core` so the remote agent can use it; HTTP monitoring is desktop-only
+  - Agent now supports `network.port_scan`, `network.ping`, `network.dns_lookup`, `network.open_ports`, `network.traceroute`, `network.wol` JSON-RPC methods
+
 - File browser: toolbar now has a "Go to Terminal CWD" button (folder-sync icon) that jumps back to the terminal's current working directory after manually browsing elsewhere; the button is disabled when no CWD has been reported yet
 
 ### Fixed
