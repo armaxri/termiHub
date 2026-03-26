@@ -15,12 +15,12 @@ use crate::protocol::messages::{JsonRpcErrorResponse, JsonRpcRequest, JsonRpcRes
 use crate::protocol::methods::{
     AgentShutdownParams, AgentShutdownResult, Capabilities, ConnectionCreateParams,
     ConnectionDeleteParams, ConnectionTypesResult, ConnectionUpdateParams, FilesDeleteParams,
-    FilesListParams, FilesListResult, FilesReadParams, FilesReadResult, FilesRenameParams,
-    FilesStatParams, FilesWriteParams, FolderCreateParams, FolderDeleteParams, FolderUpdateParams,
-    HealthCheckResult, InitializeParams, InitializeResult, MonitoringSubscribeParams,
-    MonitoringUnsubscribeParams, SessionAttachParams, SessionCloseParams, SessionCreateParams,
-    SessionCreateResult, SessionDetachParams, SessionInputParams, SessionListEntry,
-    SessionListResult, SessionResizeParams,
+    FilesListParams, FilesListResult, FilesMkdirParams, FilesReadParams, FilesReadResult,
+    FilesRenameParams, FilesStatParams, FilesWriteParams, FolderCreateParams, FolderDeleteParams,
+    FolderUpdateParams, HealthCheckResult, InitializeParams, InitializeResult,
+    MonitoringSubscribeParams, MonitoringUnsubscribeParams, SessionAttachParams,
+    SessionCloseParams, SessionCreateParams, SessionCreateResult, SessionDetachParams,
+    SessionInputParams, SessionListEntry, SessionListResult, SessionResizeParams,
 };
 use crate::session::definitions::{Connection, ConnectionStore, Folder};
 use crate::session::manager::{SessionCreateError, SessionManager, MAX_SESSIONS};
@@ -129,6 +129,7 @@ impl Dispatcher {
             "connection.files.delete" => self.handle_files_delete(request).await,
             "connection.files.rename" => self.handle_files_rename(request).await,
             "connection.files.stat" => self.handle_files_stat(request).await,
+            "connection.files.mkdir" => self.handle_files_mkdir(request).await,
 
             // connection.monitoring.* — system monitoring
             "connection.monitoring.subscribe" => self.handle_monitoring_subscribe(request).await,
@@ -980,6 +981,36 @@ impl Dispatcher {
     /// For "local" connections, uses the local filesystem backend.
     /// Other connection types currently fall back to "not supported"
     /// until ConnectionType::file_browser() is wired up.
+    async fn handle_files_mkdir(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+
+        let params: FilesMkdirParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid files.mkdir params: {e}"),
+                ));
+            }
+        };
+
+        let backend = match self.resolve_file_backend(params.connection_id).await {
+            Ok(b) => b,
+            Err((code, msg)) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
+            }
+        };
+
+        match backend.mkdir(&params.path).await {
+            Ok(()) => DispatchResult::Success(JsonRpcResponse::new(id, json!({}))),
+            Err(e) => {
+                let (code, msg) = map_file_error(e);
+                DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
+            }
+        }
+    }
+
     async fn resolve_file_backend(
         &self,
         connection_id: Option<String>,
@@ -989,6 +1020,22 @@ impl Dispatcher {
             Some(id) => id,
         };
 
+        // Check if this is an active session ID (sent by the desktop RemoteProxy).
+        if let Some(type_id) = self
+            .session_manager
+            .get_session_type_id(&connection_id)
+            .await
+        {
+            return match normalize_type_id(&type_id) {
+                "local" => Ok(Box::new(LocalFileBackend::new())),
+                other => Err((
+                    errors::FILE_BROWSING_NOT_SUPPORTED,
+                    format!("File browsing is not yet supported for '{other}' sessions"),
+                )),
+            };
+        }
+
+        // Fall back to connection preset lookup.
         let connection = self.connection_store.get(&connection_id).await.ok_or((
             errors::CONNECTION_NOT_FOUND,
             format!("Connection not found: {connection_id}"),
@@ -1963,6 +2010,38 @@ mod tests {
         let entries = result["result"]["entries"].as_array().unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0]["name"], "file.txt");
+    }
+
+    #[tokio::test]
+    async fn files_list_via_session_id_uses_local_backend() {
+        // Regression test: desktop RemoteProxy sends the session UUID as
+        // connection_id. resolve_file_backend must look it up in the session
+        // manager (not the connection preset store) and return LocalFileBackend
+        // for "local" sessions.
+        let (mut d, mgr) = make_dispatcher_with_manager();
+        init_dispatcher(&mut d).await;
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("from_session.txt"), "hi").unwrap();
+
+        // Create a stub local session (simulates what the agent does when the
+        // desktop calls connection.create with type="local").
+        let snapshot = mgr
+            .create_stub_session("local", "test shell".to_string(), json!({}))
+            .await
+            .unwrap();
+        let session_id = snapshot.id;
+
+        // List files using the session UUID as connection_id.
+        let req = make_request(
+            "connection.files.list",
+            json!({"connection_id": session_id, "path": dir.path().to_str().unwrap()}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        let entries = result["result"]["entries"].as_array().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["name"], "from_session.txt");
     }
 
     #[tokio::test]

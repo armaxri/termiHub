@@ -397,6 +397,48 @@ export async function sftpWriteFileContent(
   await invoke("sftp_write_file_content", { sessionId, remotePath, content });
 }
 
+// --- Session-based file browsing commands ---
+// These work with any connection type that has file browser capability
+// (including remote agent sessions) by using the terminal session ID directly.
+
+/** List directory contents via a session's file browser capability. */
+export async function sessionListFiles(sessionId: string, path: string): Promise<FileEntry[]> {
+  return await invoke<FileEntry[]>("session_list_files", { sessionId, path });
+}
+
+/** Read a file via a session's file browser capability. Returns raw bytes. */
+export async function sessionReadFile(sessionId: string, path: string): Promise<number[]> {
+  return await invoke<number[]>("session_read_file", { sessionId, path });
+}
+
+/** Write raw bytes to a file via a session's file browser capability. */
+export async function sessionWriteFile(
+  sessionId: string,
+  path: string,
+  data: number[]
+): Promise<void> {
+  await invoke("session_write_file", { sessionId, path, data });
+}
+
+/** Delete a file or directory via a session's file browser capability. */
+export async function sessionDeleteFile(sessionId: string, path: string): Promise<void> {
+  await invoke("session_delete_file", { sessionId, path });
+}
+
+/** Rename a file or directory via a session's file browser capability. */
+export async function sessionRenameFile(
+  sessionId: string,
+  oldPath: string,
+  newPath: string
+): Promise<void> {
+  await invoke("session_rename_file", { sessionId, oldPath, newPath });
+}
+
+/** Create a directory via a session's file browser capability. */
+export async function sessionMkdir(sessionId: string, path: string): Promise<void> {
+  await invoke("session_mkdir", { sessionId, path });
+}
+
 // --- VS Code integration ---
 
 /** Check if VS Code CLI (`code`) is available on PATH. */

@@ -47,6 +47,7 @@ import {
   sftpOpen,
   sftpClose,
   sftpListDir,
+  sessionListFiles,
   localListDir,
   vscodeAvailable as checkVscode,
   monitoringOpen,
@@ -112,9 +113,11 @@ export type SidebarView = "connections" | "files" | "tunnels" | "workspaces";
 export interface FileClipboard {
   entries: FileEntry[];
   operation: "copy" | "cut";
-  sourceMode: "local" | "sftp";
+  sourceMode: "local" | "sftp" | "session";
   sourcePath: string;
   sftpSessionId: string | null;
+  /** Terminal session ID for session-mode clipboard entries. */
+  terminalSessionId?: string | null;
 }
 
 /**
@@ -203,6 +206,8 @@ interface AppState {
     edge: DropEdge
   ) => void;
   getAllPanels: () => LeafPanel[];
+  /** Update the backend session ID on a tab (called after the terminal session is created). */
+  setTabSessionId: (tabId: string, sessionId: string | null) => void;
 
   // Connections
   folders: ConnectionFolder[];
@@ -335,9 +340,20 @@ interface AppState {
   navigateLocal: (path: string) => Promise<void>;
   refreshLocal: () => Promise<void>;
 
+  // Session-based file browser state (for remote-session tabs)
+  sessionFileEntries: FileEntry[];
+  sessionCurrentPath: string;
+  sessionFileLoading: boolean;
+  sessionFileError: string | null;
+  /** Terminal session ID used for session-based file browsing. */
+  sessionFileBrowserId: string | null;
+  navigateSession: (sessionId: string, path: string) => Promise<void>;
+  refreshSession: () => Promise<void>;
+  setSessionFileBrowserId: (sessionId: string | null) => void;
+
   // File browser mode
-  fileBrowserMode: "local" | "sftp" | "none";
-  setFileBrowserMode: (mode: "local" | "sftp" | "none") => void;
+  fileBrowserMode: "local" | "sftp" | "session" | "none";
+  setFileBrowserMode: (mode: "local" | "sftp" | "session" | "none") => void;
 
   // File clipboard (copy/cut)
   fileClipboard: FileClipboard | null;
@@ -516,6 +532,18 @@ export const useAppStore = create<AppState>((set, get) => {
     activePanelId: initialPanel.id,
 
     getAllPanels: () => getAllLeaves(get().rootPanel),
+
+    setTabSessionId: (tabId, sessionId) =>
+      set((state) => {
+        const leaf = findLeafByTab(state.rootPanel, tabId);
+        if (!leaf) return state;
+        return {
+          rootPanel: updateLeaf(state.rootPanel, leaf.id, (l) => ({
+            ...l,
+            tabs: l.tabs.map((t) => (t.id === tabId ? { ...t, sessionId } : t)),
+          })),
+        };
+      }),
 
     addTab: (title, connectionType, config, panelId, contentType, terminalOptions, sessionId) =>
       set((state) => {
@@ -1735,6 +1763,46 @@ export const useAppStore = create<AppState>((set, get) => {
         set({
           localFileLoading: false,
           localFileError: err instanceof Error ? err.message : String(err),
+        });
+      }
+    },
+
+    // Session-based file browser state
+    sessionFileEntries: [],
+    sessionCurrentPath: "/",
+    sessionFileLoading: false,
+    sessionFileError: null,
+    sessionFileBrowserId: null,
+    setSessionFileBrowserId: (sessionId) => set({ sessionFileBrowserId: sessionId }),
+
+    navigateSession: async (sessionId: string, path: string) => {
+      set({ sessionFileLoading: true, sessionFileError: null });
+      try {
+        const entries = await sessionListFiles(sessionId, path);
+        set({
+          sessionFileEntries: entries,
+          sessionCurrentPath: path,
+          sessionFileLoading: false,
+        });
+      } catch (err) {
+        set({
+          sessionFileLoading: false,
+          sessionFileError: err instanceof Error ? err.message : String(err),
+        });
+      }
+    },
+
+    refreshSession: async () => {
+      const { sessionFileBrowserId, sessionCurrentPath } = useAppStore.getState();
+      if (!sessionFileBrowserId) return;
+      set({ sessionFileLoading: true, sessionFileError: null });
+      try {
+        const entries = await sessionListFiles(sessionFileBrowserId, sessionCurrentPath);
+        set({ sessionFileEntries: entries, sessionFileLoading: false });
+      } catch (err) {
+        set({
+          sessionFileLoading: false,
+          sessionFileError: err instanceof Error ? err.message : String(err),
         });
       }
     },

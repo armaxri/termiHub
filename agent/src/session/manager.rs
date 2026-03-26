@@ -243,6 +243,12 @@ impl SessionManager {
         sessions.values().map(|s| s.snapshot()).collect()
     }
 
+    /// Return the `type_id` for an active session, or `None` if not found.
+    pub async fn get_session_type_id(&self, session_id: &str) -> Option<String> {
+        let sessions = self.sessions.lock().await;
+        sessions.get(session_id).map(|s| s.type_id.clone())
+    }
+
     /// Close (remove) a session by ID.
     ///
     /// Disconnects the backend before removing the session.

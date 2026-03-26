@@ -77,6 +77,15 @@ impl FileBackend for LocalFileBackend {
             .await
             .map_err(|e| FileError::OperationFailed(e.to_string()))?
     }
+
+    async fn mkdir(&self, path: &str) -> Result<(), FileError> {
+        let path = path.to_string();
+        tokio::task::spawn_blocking(move || {
+            std::fs::create_dir_all(&path).map_err(|e| map_io_error(e, &path))
+        })
+        .await
+        .map_err(|e| FileError::OperationFailed(e.to_string()))?
+    }
 }
 
 /// Map `std::io::Error` to `FileError` based on error kind.

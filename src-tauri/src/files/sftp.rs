@@ -383,6 +383,19 @@ impl FileBackend for SftpFileBackend {
         .await
         .map_err(|e| FileError::OperationFailed(format!("Task join failed: {e}")))?
     }
+
+    async fn mkdir(&self, path: &str) -> Result<(), FileError> {
+        let session = self.session.clone();
+        let path = path.to_string();
+        tauri::async_runtime::spawn_blocking(move || {
+            let sftp = session.lock().map_err(|e| {
+                FileError::OperationFailed(format!("Failed to lock SFTP session: {e}"))
+            })?;
+            sftp.mkdir(&path).map_err(terminal_error_to_file_error)
+        })
+        .await
+        .map_err(|e| FileError::OperationFailed(format!("Task join failed: {e}")))?
+    }
 }
 
 /// Manages multiple SFTP sessions keyed by UUID.

@@ -418,6 +418,20 @@ impl FileBrowser for RemoteFileBrowserProxy {
 
         serde_json::from_value(result).map_err(|e| FileError::OperationFailed(e.to_string()))
     }
+
+    async fn mkdir(&self, path: &str) -> Result<(), FileError> {
+        self.agent_manager
+            .send_request(
+                &self.agent_id,
+                "connection.files.mkdir",
+                serde_json::json!({
+                    "connection_id": self.remote_session_id,
+                    "path": path,
+                }),
+            )
+            .map_err(|e| FileError::OperationFailed(e.to_string()))?;
+        Ok(())
+    }
 }
 
 /// Monitoring proxy that forwards operations to a remote agent.

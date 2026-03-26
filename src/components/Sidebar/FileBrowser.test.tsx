@@ -72,9 +72,10 @@ describe("FileBrowser – useFileBrowserSync", () => {
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
 
-    // Mock local_list_dir to return empty entries so navigateLocal doesn't throw.
+    // Mock file listing commands to return empty entries so navigation doesn't throw.
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === "local_list_dir") return Promise.resolve([]);
+      if (cmd === "session_list_files") return Promise.resolve([]);
       return Promise.resolve(undefined);
     });
   });
@@ -181,6 +182,126 @@ describe("FileBrowser – useFileBrowserSync", () => {
       config: { type: "telnet", config: { host: "example.com" } },
     });
     setActiveTab(telnetTab);
+
+    act(() => {
+      root.render(<FileBrowser />);
+    });
+
+    expect(useAppStore.getState().fileBrowserMode).toBe("none");
+  });
+
+  it("sets fileBrowserMode to 'session' for remote-session tab when agent supports file browser", () => {
+    const remoteTab = makeTab({
+      connectionType: "remote-session",
+      sessionId: "terminal-sess-1",
+      config: {
+        type: "remote-session",
+        config: { agentId: "agent-1", sessionType: "local" },
+      },
+    });
+    setActiveTab(remoteTab);
+    useAppStore.setState({
+      remoteAgents: [
+        {
+          id: "agent-1",
+          name: "Test Agent",
+          config: { host: "example.com", port: 22, username: "user", authMethod: "key" },
+          connectionState: "connected",
+          isExpanded: false,
+          capabilities: {
+            connectionTypes: [
+              {
+                typeId: "local",
+                displayName: "Local Shell",
+                icon: "terminal",
+                schema: { groups: [] },
+                capabilities: {
+                  monitoring: false,
+                  fileBrowser: true,
+                  resize: true,
+                  persistent: false,
+                },
+              },
+            ],
+            maxSessions: 10,
+            availableShells: ["/bin/bash"],
+            availableSerialPorts: [],
+            dockerAvailable: false,
+            availableDockerImages: [],
+          },
+        },
+      ],
+    });
+
+    act(() => {
+      root.render(<FileBrowser />);
+    });
+
+    expect(useAppStore.getState().fileBrowserMode).toBe("session");
+    expect(useAppStore.getState().sessionFileBrowserId).toBe("terminal-sess-1");
+  });
+
+  it("sets fileBrowserMode to 'none' for remote-session tab when agent does not support file browser", () => {
+    const remoteTab = makeTab({
+      connectionType: "remote-session",
+      sessionId: "terminal-sess-2",
+      config: {
+        type: "remote-session",
+        config: { agentId: "agent-2", sessionType: "serial" },
+      },
+    });
+    setActiveTab(remoteTab);
+    useAppStore.setState({
+      remoteAgents: [
+        {
+          id: "agent-2",
+          name: "Test Agent 2",
+          config: { host: "example.com", port: 22, username: "user", authMethod: "key" },
+          connectionState: "connected",
+          isExpanded: false,
+          capabilities: {
+            connectionTypes: [
+              {
+                typeId: "serial",
+                displayName: "Serial",
+                icon: "serial",
+                schema: { groups: [] },
+                capabilities: {
+                  monitoring: false,
+                  fileBrowser: false,
+                  resize: false,
+                  persistent: false,
+                },
+              },
+            ],
+            maxSessions: 10,
+            availableShells: [],
+            availableSerialPorts: ["/dev/ttyUSB0"],
+            dockerAvailable: false,
+            availableDockerImages: [],
+          },
+        },
+      ],
+    });
+
+    act(() => {
+      root.render(<FileBrowser />);
+    });
+
+    expect(useAppStore.getState().fileBrowserMode).toBe("none");
+  });
+
+  it("sets fileBrowserMode to 'none' for remote-session tab when no agent found", () => {
+    const remoteTab = makeTab({
+      connectionType: "remote-session",
+      sessionId: "terminal-sess-3",
+      config: {
+        type: "remote-session",
+        config: { agentId: "nonexistent-agent", sessionType: "local" },
+      },
+    });
+    setActiveTab(remoteTab);
+    useAppStore.setState({ remoteAgents: [] });
 
     act(() => {
       root.render(<FileBrowser />);

@@ -237,6 +237,30 @@ impl FileBrowser for SftpFileBrowser {
         .map_err(|e| FileError::OperationFailed(format!("Task join failed: {e}")))?
     }
 
+    async fn mkdir(&self, path: &str) -> Result<(), FileError> {
+        let state = self.state.clone();
+        let config = self.config.clone();
+        let path = path.to_string();
+        tokio::task::spawn_blocking(move || {
+            Self::ensure_connected(&state, &config)?;
+            let guard = state
+                .lock()
+                .map_err(|e| FileError::OperationFailed(format!("Lock failed: {e}")))?;
+            let sftp_state = guard
+                .as_ref()
+                .ok_or(FileError::OperationFailed("SFTP not connected".to_string()))?;
+
+            let p = std::path::Path::new(&path);
+            sftp_state
+                .sftp
+                .mkdir(p, 0o755)
+                .map_err(|e| FileError::OperationFailed(format!("mkdir failed: {e}")))?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| FileError::OperationFailed(format!("Task join failed: {e}")))?
+    }
+
     async fn stat(&self, path: &str) -> Result<FileEntry, FileError> {
         let state = self.state.clone();
         let config = self.config.clone();

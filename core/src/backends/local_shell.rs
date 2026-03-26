@@ -18,7 +18,7 @@ use crate::connection::{
     SelectOption, SettingsField, SettingsGroup, SettingsSchema,
 };
 use crate::errors::SessionError;
-use crate::files::FileBrowser;
+use crate::files::{FileBrowser, LocalFileBrowser};
 use crate::monitoring::MonitoringProvider;
 use crate::session::shell::{
     build_shell_command, detect_available_shells, detect_default_shell, osc7_setup_command,
@@ -44,6 +44,8 @@ pub struct LocalShell {
     /// the channel. The reader thread also holds a reference and picks up
     /// the replacement on its next iteration.
     output_tx: Arc<Mutex<Option<OutputSender>>>,
+    /// Local file browser capability.
+    file_backend: LocalFileBrowser,
 }
 
 /// Internal state of an active shell connection.
@@ -60,6 +62,7 @@ impl LocalShell {
         Self {
             state: None,
             output_tx: Arc::new(Mutex::new(None)),
+            file_backend: LocalFileBrowser::new(),
         }
     }
 }
@@ -174,7 +177,7 @@ impl ConnectionType for LocalShell {
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             monitoring: false,
-            file_browser: false,
+            file_browser: true,
             resize: true,
             persistent: false,
         }
@@ -439,7 +442,7 @@ impl ConnectionType for LocalShell {
     }
 
     fn file_browser(&self) -> Option<&dyn FileBrowser> {
-        None
+        Some(&self.file_backend)
     }
 }
 
@@ -466,8 +469,14 @@ mod tests {
         let caps = shell.capabilities();
         assert!(caps.resize);
         assert!(!caps.monitoring);
-        assert!(!caps.file_browser);
+        assert!(caps.file_browser);
         assert!(!caps.persistent);
+    }
+
+    #[test]
+    fn file_browser_returns_some() {
+        let shell = LocalShell::new();
+        assert!(shell.file_browser().is_some());
     }
 
     #[test]
