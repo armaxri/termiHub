@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- File browser: toolbar now has a "Go to Terminal CWD" button (folder-sync icon) that jumps back to the terminal's current working directory after manually browsing elsewhere; the button is disabled when no CWD has been reported yet
+
 ### Fixed
 
 - File browser: pressing the Up button in a local PowerShell session on Windows no longer jumps to "/" and breaks Refresh — raw Windows backslash paths (reported by PowerShell via OSC 9;9) are now normalized to forward slashes, and navigating up correctly stops at the drive root (`C:/`) rather than falling back to "/" (#555)

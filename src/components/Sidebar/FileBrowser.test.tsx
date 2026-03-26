@@ -1030,3 +1030,102 @@ describe("FileBrowser – Windows navigate-up (#555)", () => {
     expect(useAppStore.getState().localCurrentPath).toBe("C:/");
   });
 });
+
+describe("FileBrowser – Go to Terminal CWD button", () => {
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState(useAppStore.getInitialState());
+
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "local_list_dir") return Promise.resolve([]);
+      return Promise.resolve(undefined);
+    });
+  });
+
+  afterEach(() => {
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+    vi.clearAllMocks();
+  });
+
+  it("button is disabled when no CWD is available", async () => {
+    const localTab = makeTab({
+      connectionType: "local",
+      config: { type: "local", config: {} },
+    });
+    setActiveTab(localTab);
+    useAppStore.setState({ sidebarView: "files" });
+
+    await act(async () => {
+      root.render(<FileBrowser />);
+    });
+    await flushAsync();
+
+    const btn = container.querySelector(
+      '[data-testid="file-browser-go-to-cwd"]'
+    ) as HTMLButtonElement;
+    expect(btn).toBeTruthy();
+    expect(btn.disabled).toBe(true);
+  });
+
+  it("button is enabled when a CWD is available", async () => {
+    const localTab = makeTab({
+      connectionType: "local",
+      config: { type: "local", config: {} },
+    });
+    setActiveTab(localTab);
+    useAppStore.setState({
+      sidebarView: "files",
+      tabCwds: { "tab-1": "/home/user/projects" },
+    });
+
+    await act(async () => {
+      root.render(<FileBrowser />);
+    });
+    await flushAsync();
+
+    const btn = container.querySelector(
+      '[data-testid="file-browser-go-to-cwd"]'
+    ) as HTMLButtonElement;
+    expect(btn.disabled).toBe(false);
+  });
+
+  it("clicking the button navigates to the terminal CWD", async () => {
+    const localTab = makeTab({
+      connectionType: "local",
+      config: { type: "local", config: {} },
+    });
+    setActiveTab(localTab);
+    useAppStore.setState({
+      sidebarView: "files",
+      tabCwds: { "tab-1": "/home/user/projects" },
+    });
+
+    await act(async () => {
+      root.render(<FileBrowser />);
+    });
+    await flushAsync();
+
+    // Manually navigate away
+    await act(async () => {
+      useAppStore.getState().navigateLocal("/home/user");
+    });
+    await flushAsync();
+    expect(useAppStore.getState().localCurrentPath).toBe("/home/user");
+
+    // Click the Go to CWD button
+    const btn = container.querySelector(
+      '[data-testid="file-browser-go-to-cwd"]'
+    ) as HTMLButtonElement;
+    await act(async () => {
+      btn.click();
+    });
+    await flushAsync();
+
+    expect(useAppStore.getState().localCurrentPath).toBe("/home/user/projects");
+  });
+});
