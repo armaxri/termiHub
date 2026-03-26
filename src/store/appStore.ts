@@ -94,7 +94,10 @@ import { buildPanelTreeFromWorkspace, captureCurrentLayout } from "@/utils/works
 import { SystemStats } from "@/types/monitoring";
 import { applyTheme, onThemeChange } from "@/themes";
 import { setOverrides as setKeybindingOverrides } from "@/services/keybindings";
-import { registerAdditionalLanguagePackages } from "@/utils/monacoCustomLanguages";
+import {
+  registerAdditionalLanguagePackages,
+  registerCustomGrammars,
+} from "@/utils/monacoCustomLanguages";
 import {
   createLeafPanel,
   findLeaf,
@@ -1115,6 +1118,9 @@ export const useAppStore = create<AppState>((set, get) => {
         }
         if (settings.installedLanguagePackages?.length) {
           void registerAdditionalLanguagePackages(settings.installedLanguagePackages);
+        }
+        if (settings.customLanguageGrammars?.length) {
+          void registerCustomGrammars(settings.customLanguageGrammars);
         }
         // Re-render terminals when OS theme changes in system mode
         onThemeChange(() => {

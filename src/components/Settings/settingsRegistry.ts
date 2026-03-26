@@ -158,6 +158,22 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
       "elixir",
     ],
   },
+  {
+    id: "customLanguageGrammars",
+    label: "Custom Language Grammars",
+    description: "Import custom TextMate grammar files (.tmLanguage.json) for your own languages",
+    category: "editor",
+    keywords: [
+      "custom",
+      "language",
+      "grammar",
+      "textmate",
+      "tmLanguage",
+      "import",
+      "syntax",
+      "highlight",
+    ],
+  },
 ];
 
 /**

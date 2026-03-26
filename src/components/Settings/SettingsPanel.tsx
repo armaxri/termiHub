@@ -25,6 +25,7 @@ import { KeyboardSettings } from "./KeyboardSettings";
 import { SecuritySettings } from "./SecuritySettings";
 import { FileTypeSettings } from "./FileTypeSettings";
 import { LanguagePackagesSettings } from "./LanguagePackagesSettings";
+import { CustomGrammarsSettings } from "./CustomGrammarsSettings";
 import "./SettingsPanel.css";
 
 const SETTINGS_ICONS: Record<SettingsCategory, LucideIcon> = {
@@ -208,6 +209,9 @@ export function SettingsPanel({ isVisible }: SettingsPanelProps) {
         sections.push(
           <LanguagePackagesSettings key="lang-packages" visibleFields={visibleFields} />
         );
+        sections.push(
+          <CustomGrammarsSettings key="custom-grammars" visibleFields={visibleFields} />
+        );
       }
       if (sections.length === 0) {
         return <div className="settings-panel__no-results">No settings match your search.</div>;
@@ -233,6 +237,7 @@ export function SettingsPanel({ isVisible }: SettingsPanelProps) {
           <>
             <FileTypeSettings />
             <LanguagePackagesSettings />
+            <CustomGrammarsSettings />
           </>
         );
     }

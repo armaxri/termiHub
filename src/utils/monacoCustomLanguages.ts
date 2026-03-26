@@ -15,6 +15,9 @@
  * Additional language packages can be installed by the user via Settings → Editor →
  * Language Packages. Call `registerAdditionalLanguagePackages(ids)` after settings load.
  *
+ * Custom TextMate grammars (user's own `.tmLanguage.json` files) can be registered via
+ * `registerCustomGrammars(grammars)`.
+ *
  * Call `registerCustomMonacoLanguages()` once at application startup. It returns a
  * Promise that resolves once Shiki has loaded all grammars and registered the token
  * providers with Monaco. Editors created before the Promise resolves will briefly
@@ -23,8 +26,14 @@
 
 import * as monaco from "monaco-editor";
 import { createHighlighter, bundledLanguages, bundledLanguagesInfo } from "shiki";
-import type { HighlighterGeneric, BundledLanguage, BundledTheme } from "shiki";
+import type {
+  HighlighterGeneric,
+  BundledLanguage,
+  BundledTheme,
+  LanguageRegistration,
+} from "shiki";
 import { shikiToMonaco } from "@shikijs/monaco";
+import type { CustomLanguageGrammar } from "@/types/connection";
 import { getCurrentTheme } from "@/themes";
 import { resetLanguageCache } from "./monacoLanguages";
 import { BUILTIN_PACKAGE_IDS } from "./monacoLanguagePackages";
@@ -126,6 +135,43 @@ export async function registerAdditionalLanguagePackages(langIds: string[]): Pro
 /** IDs of all language packages currently loaded (built-ins + user-installed). */
 export function getLoadedLanguagePackageIds(): ReadonlySet<string> {
   return loadedLanguageIds;
+}
+
+/**
+ * Register user-imported custom TextMate grammar definitions with Monaco and Shiki.
+ *
+ * Each `CustomLanguageGrammar` stores the full `.tmLanguage.json` content so no
+ * file path is needed at runtime. Safe to call multiple times — only grammars whose
+ * `id` is not already loaded will be processed.
+ *
+ * Waits for the initial `registerCustomMonacoLanguages()` call to complete first.
+ */
+export async function registerCustomGrammars(grammars: CustomLanguageGrammar[]): Promise<void> {
+  await registerCustomMonacoLanguages();
+
+  if (!shikiHighlighter) return;
+
+  const toLoad = grammars.filter((g) => !loadedLanguageIds.has(g.id));
+  if (toLoad.length === 0) return;
+
+  for (const { id, name, grammar } of toLoad) {
+    if (!monaco.languages.getLanguages().some((l) => l.id === id)) {
+      monaco.languages.register({ id, aliases: [name, id] });
+    }
+
+    // Build a LanguageRegistration from the stored grammar JSON.
+    // The grammar must have at least a `scopeName` field to be valid.
+    const registration: LanguageRegistration = {
+      ...(grammar as Omit<LanguageRegistration, "id" | "name">),
+      id,
+      name,
+    };
+    await shikiHighlighter.loadLanguage(registration);
+    loadedLanguageIds.add(id);
+  }
+
+  shikiToMonaco(shikiHighlighter, monaco);
+  resetLanguageCache();
 }
 
 function registerBuiltinLanguageDefinitions(): void {

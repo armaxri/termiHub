@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Settings: new **Language Packages** section under Editor settings — browse and install any of the ~235 Shiki/TextMate grammar packages (the same set VS Code uses) for additional syntax highlighting in the file editor; packages install immediately without a restart; the built-in packages (CMake, TOML, Nginx, Nix) are always active and listed for reference (#556)
+- Settings: new **Custom Language Grammars** section under Editor settings — import your own `.tmLanguage.json` (JSON-format TextMate grammar) files to add syntax highlighting for custom or proprietary languages; grammar content is stored in settings so the original file is not needed after import; the language ID can be used in File Type Mappings to associate extensions with the grammar (#556)
 - File browser: toolbar now has a "Go to Terminal CWD" button (folder-sync icon) that jumps back to the terminal's current working directory after manually browsing elsewhere; the button is disabled when no CWD has been reported yet
 
 ### Fixed
