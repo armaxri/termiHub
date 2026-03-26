@@ -33,7 +33,17 @@ export function useLocalFileSystem() {
 
   const navigateUp = useCallback(() => {
     if (currentPath === "/") return;
-    const parentPath = currentPath.split("/").slice(0, -1).join("/") || "/";
+    // Windows drive root (e.g. "C:/" or "C:"): nothing above this
+    if (/^[A-Za-z]:\/?$/.test(currentPath)) return;
+    // Remove any trailing slash, then strip the last path segment
+    const noTrailing = currentPath.endsWith("/") ? currentPath.slice(0, -1) : currentPath;
+    const parts = noTrailing.split("/");
+    parts.pop();
+    let parentPath = parts.join("/") || "/";
+    // A bare drive letter like "C:" becomes the drive root "C:/"
+    if (/^[A-Za-z]:$/.test(parentPath)) {
+      parentPath = parentPath + "/";
+    }
     navigateTo(parentPath);
   }, [currentPath, navigateTo]);
 
@@ -43,7 +53,8 @@ export function useLocalFileSystem() {
 
   const createDirectory = useCallback(
     async (name: string) => {
-      const dirPath = currentPath === "/" ? `/${name}` : `${currentPath}/${name}`;
+      const base = currentPath.endsWith("/") ? currentPath.slice(0, -1) : currentPath;
+      const dirPath = base ? `${base}/${name}` : `/${name}`;
       await localMkdir(dirPath);
       refreshLocal();
     },
@@ -52,7 +63,8 @@ export function useLocalFileSystem() {
 
   const createFile = useCallback(
     async (name: string) => {
-      const filePath = currentPath === "/" ? `/${name}` : `${currentPath}/${name}`;
+      const base = currentPath.endsWith("/") ? currentPath.slice(0, -1) : currentPath;
+      const filePath = base ? `${base}/${name}` : `/${name}`;
       await localWriteFile(filePath, "");
       refreshLocal();
     },
