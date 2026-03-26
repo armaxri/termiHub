@@ -24,6 +24,7 @@ import { ExternalFilesSettings } from "./ExternalFilesSettings";
 import { KeyboardSettings } from "./KeyboardSettings";
 import { SecuritySettings } from "./SecuritySettings";
 import { FileTypeSettings } from "./FileTypeSettings";
+import { LanguagePackagesSettings } from "./LanguagePackagesSettings";
 import "./SettingsPanel.css";
 
 const SETTINGS_ICONS: Record<SettingsCategory, LucideIcon> = {
@@ -204,6 +205,9 @@ export function SettingsPanel({ isVisible }: SettingsPanelProps) {
       }
       if (highlightedCategories?.has("editor")) {
         sections.push(<FileTypeSettings key="editor" visibleFields={visibleFields} />);
+        sections.push(
+          <LanguagePackagesSettings key="lang-packages" visibleFields={visibleFields} />
+        );
       }
       if (sections.length === 0) {
         return <div className="settings-panel__no-results">No settings match your search.</div>;
@@ -225,7 +229,12 @@ export function SettingsPanel({ isVisible }: SettingsPanelProps) {
       case "external-files":
         return <ExternalFilesSettings />;
       case "editor":
-        return <FileTypeSettings />;
+        return (
+          <>
+            <FileTypeSettings />
+            <LanguagePackagesSettings />
+          </>
+        );
     }
   };
 

@@ -6,11 +6,14 @@
  * via `@shikijs/monaco`, which implements Monaco's `ITokensProvider` interface on
  * top of the vscode-textmate engine.
  *
- * Languages added here:
+ * Built-in languages (always loaded):
  *  - cmake  (.cmake, CMakeLists.txt)
  *  - toml   (.toml)
  *  - nginx  (nginx.conf)
  *  - nix    (.nix)
+ *
+ * Additional language packages can be installed by the user via Settings → Editor →
+ * Language Packages. Call `registerAdditionalLanguagePackages(ids)` after settings load.
  *
  * Call `registerCustomMonacoLanguages()` once at application startup. It returns a
  * Promise that resolves once Shiki has loaded all grammars and registered the token
@@ -19,10 +22,12 @@
  */
 
 import * as monaco from "monaco-editor";
-import { createHighlighter } from "shiki";
+import { createHighlighter, bundledLanguages, bundledLanguagesInfo } from "shiki";
+import type { HighlighterGeneric, BundledLanguage, BundledTheme } from "shiki";
 import { shikiToMonaco } from "@shikijs/monaco";
 import { getCurrentTheme } from "@/themes";
 import { resetLanguageCache } from "./monacoLanguages";
+import { BUILTIN_PACKAGE_IDS } from "./monacoLanguagePackages";
 
 /** Shiki theme used for Monaco's dark mode (matches Monaco's built-in vs-dark palette). */
 export const MONACO_DARK_THEME = "dark-plus";
@@ -39,6 +44,9 @@ export function getMonacoTheme(appThemeId: string): string {
 }
 
 let initPromise: Promise<void> | null = null;
+let shikiHighlighter: HighlighterGeneric<BundledLanguage, BundledTheme> | null = null;
+/** IDs that have been registered with the Shiki highlighter. */
+const loadedLanguageIds = new Set<string>();
 
 /** Register custom Monaco languages backed by TextMate grammars via Shiki. Idempotent. */
 export function registerCustomMonacoLanguages(): Promise<void> {
@@ -50,18 +58,21 @@ export function registerCustomMonacoLanguages(): Promise<void> {
 async function doRegister(): Promise<void> {
   // Register language IDs and editor configurations synchronously so Monaco
   // knows about bracket matching, comment toggling, etc. before the tokeniser loads.
-  registerLanguageDefinitions();
+  registerBuiltinLanguageDefinitions();
 
   // Load TextMate grammars via Shiki.
   // Both dark-plus and light-plus are loaded so the editor can switch themes.
   // nginx depends on lua for embedded Lua blocks (ngx_lua) — include it explicitly.
-  const highlighter = await createHighlighter({
+  const langs: BundledLanguage[] = ["cmake", "toml", "nginx", "nix", "lua"];
+  shikiHighlighter = await createHighlighter({
     themes: [MONACO_DARK_THEME, MONACO_LIGHT_THEME],
-    langs: ["cmake", "toml", "nginx", "nix", "lua"],
+    langs,
   });
 
+  for (const id of langs) loadedLanguageIds.add(id);
+
   // Wire Shiki's TextMate tokenisers into Monaco.
-  shikiToMonaco(highlighter, monaco);
+  shikiToMonaco(shikiHighlighter, monaco);
 
   // Set the initial Monaco theme to match the current app theme so Shiki's
   // colour map is initialised correctly before any editor is created.
@@ -71,7 +82,53 @@ async function doRegister(): Promise<void> {
   resetLanguageCache();
 }
 
-function registerLanguageDefinitions(): void {
+/**
+ * Load additional language packages (user-installed) into the Shiki highlighter
+ * and register their token providers with Monaco.
+ *
+ * Safe to call multiple times — only loads IDs not already present.
+ * Waits for the initial `registerCustomMonacoLanguages()` call to complete first.
+ */
+export async function registerAdditionalLanguagePackages(langIds: string[]): Promise<void> {
+  // Wait for the initial registration to finish.
+  await registerCustomMonacoLanguages();
+
+  if (!shikiHighlighter) return;
+
+  const toLoad = langIds.filter((id) => !loadedLanguageIds.has(id) && id in bundledLanguages);
+  if (toLoad.length === 0) return;
+
+  // Ensure each language is registered with Monaco before loading its grammar.
+  const infoByid = new Map(bundledLanguagesInfo.map((l) => [l.id, l]));
+  for (const id of toLoad) {
+    if (!monaco.languages.getLanguages().some((l) => l.id === id)) {
+      const info = infoByid.get(id);
+      monaco.languages.register({
+        id,
+        aliases: info ? [info.name, ...(info.aliases ?? [])] : [id],
+      });
+    }
+  }
+
+  // Load grammars into the existing highlighter.
+  await shikiHighlighter.loadLanguage(
+    ...toLoad.map((id) => bundledLanguages[id as BundledLanguage])
+  );
+
+  for (const id of toLoad) loadedLanguageIds.add(id);
+
+  // Re-wire all token providers (including newly added languages).
+  shikiToMonaco(shikiHighlighter, monaco);
+
+  resetLanguageCache();
+}
+
+/** IDs of all language packages currently loaded (built-ins + user-installed). */
+export function getLoadedLanguagePackageIds(): ReadonlySet<string> {
+  return loadedLanguageIds;
+}
+
+function registerBuiltinLanguageDefinitions(): void {
   monaco.languages.register({
     id: "cmake",
     aliases: ["CMake", "cmake"],
@@ -148,4 +205,9 @@ function registerLanguageDefinitions(): void {
       { open: '"', close: '"', notIn: ["string"] },
     ],
   });
+
+  // Exclude built-ins from the BUILTIN_PACKAGE_IDS check used elsewhere.
+  for (const id of BUILTIN_PACKAGE_IDS) {
+    loadedLanguageIds.add(id);
+  }
 }

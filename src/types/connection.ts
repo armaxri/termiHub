@@ -136,6 +136,12 @@ export interface AppSettings {
    * These take precedence over the built-in defaults.
    */
   fileLanguageMappings?: Record<string, string>;
+  /**
+   * Additional Shiki language package IDs to load for syntax highlighting.
+   * Values are Shiki bundled language IDs (e.g. `"astro"`, `"svelte"`, `"zig"`).
+   * The built-in packages (cmake, toml, nginx, nix) are always loaded regardless.
+   */
+  installedLanguagePackages?: string[];
 }
 
 export interface FileEntry {
