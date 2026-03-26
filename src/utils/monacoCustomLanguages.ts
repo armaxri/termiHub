@@ -37,6 +37,7 @@ import type { CustomLanguageGrammar } from "@/types/connection";
 import { getCurrentTheme } from "@/themes";
 import { resetLanguageCache } from "./monacoLanguages";
 import { BUILTIN_PACKAGE_IDS } from "./monacoLanguagePackages";
+import { frontendLog } from "./frontendLog";
 
 /** Shiki theme used for Monaco's dark mode (matches Monaco's built-in vs-dark palette). */
 export const MONACO_DARK_THEME = "dark-plus";
@@ -166,11 +167,24 @@ export async function registerCustomGrammars(grammars: CustomLanguageGrammar[]):
       id,
       name,
     };
-    await shikiHighlighter.loadLanguage(registration);
-    loadedLanguageIds.add(id);
+    try {
+      frontendLog("custom_grammars", `Loading grammar for language "${id}" (${name})`);
+      await shikiHighlighter.loadLanguage(registration);
+      loadedLanguageIds.add(id);
+      frontendLog("custom_grammars", `Grammar loaded successfully for "${id}"`);
+    } catch (err) {
+      frontendLog(
+        "custom_grammars",
+        `Failed to load grammar for "${id}": ${err instanceof Error ? err.message : String(err)}`
+      );
+      throw new Error(
+        `Failed to load grammar for "${name}" (${id}): ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
   }
 
   shikiToMonaco(shikiHighlighter, monaco);
+  frontendLog("custom_grammars", `Token providers registered for ${toLoad.length} grammar(s)`);
   resetLanguageCache();
 }
 

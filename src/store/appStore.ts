@@ -98,6 +98,7 @@ import {
   registerAdditionalLanguagePackages,
   registerCustomGrammars,
 } from "@/utils/monacoCustomLanguages";
+import { frontendLog } from "@/utils/frontendLog";
 import {
   createLeafPanel,
   findLeaf,
@@ -1120,7 +1121,12 @@ export const useAppStore = create<AppState>((set, get) => {
           void registerAdditionalLanguagePackages(settings.installedLanguagePackages);
         }
         if (settings.customLanguageGrammars?.length) {
-          void registerCustomGrammars(settings.customLanguageGrammars);
+          registerCustomGrammars(settings.customLanguageGrammars).catch((err: unknown) => {
+            frontendLog(
+              "app_store",
+              `Failed to register custom grammars on startup: ${err instanceof Error ? err.message : String(err)}`
+            );
+          });
         }
         // Re-render terminals when OS theme changes in system mode
         onThemeChange(() => {

@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Settings: custom grammar import now shows an error message when the grammar fails to load in Shiki (e.g. malformed grammar, unsupported embedded scope), and the grammar is only saved to settings if loading actually succeeds; failures are also logged to the LogViewer via `frontend::custom_grammars` for diagnosis (#556)
 - Terminal: all connections no longer show a blank terminal on open — `registerSession` writing the session ID back to the Zustand store caused `existingSessionId` to change as a prop, which invalidated `setupTerminal`'s callback and triggered a full xterm teardown/recreate cycle; the session ID is now captured in a mount-time ref so later store updates do not re-run the terminal setup
 - File browser: copy/cut in session-based connections (remote agent) now correctly supports multi-file selection — `useSessionFileSystem` was still using the old singular `entry` field instead of `entries: FileEntry[]`
 - Agent setup: terminal tab no longer appears blank for 5+ seconds on Windows — a "please wait" message is now injected immediately after the shell initialises, so users see feedback while the SFTP upload runs in the background (#560)

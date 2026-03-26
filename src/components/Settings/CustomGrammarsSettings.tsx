@@ -46,6 +46,7 @@ export function CustomGrammarsSettings({ visibleFields }: CustomGrammarsSettings
 
   const [draft, setDraft] = useState<ImportDraft | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
+  const [registerError, setRegisterError] = useState<string | null>(null);
 
   const show = (field: string) => !visibleFields || visibleFields.has(field);
 
@@ -101,10 +102,11 @@ export function CustomGrammarsSettings({ visibleFields }: CustomGrammarsSettings
       id = `${suggestedId}-${i}`;
     }
 
+    setRegisterError(null);
     setDraft({ grammar: parsed, name, id, error: null });
   }, [existingIds]);
 
-  const handleDraftConfirm = useCallback(() => {
+  const handleDraftConfirm = useCallback(async () => {
     if (!draft) return;
 
     const { id, name, grammar } = draft;
@@ -129,13 +131,22 @@ export function CustomGrammarsSettings({ visibleFields }: CustomGrammarsSettings
     }
 
     const entry: CustomLanguageGrammar = { id: id.trim(), name: name.trim() || id.trim(), grammar };
+    setRegisterError(null);
+    try {
+      await registerCustomGrammars([entry]);
+    } catch (err) {
+      setRegisterError(err instanceof Error ? err.message : String(err));
+      return;
+    }
     const updated = [...existing, entry];
     updateSettings({ ...settings, customLanguageGrammars: updated });
-    void registerCustomGrammars([entry]);
     setDraft(null);
   }, [draft, existing, existingIds, settings, updateSettings]);
 
-  const handleDraftCancel = useCallback(() => setDraft(null), []);
+  const handleDraftCancel = useCallback(() => {
+    setDraft(null);
+    setRegisterError(null);
+  }, []);
 
   const handleRemove = useCallback(
     (id: string) => {
@@ -183,6 +194,12 @@ export function CustomGrammarsSettings({ visibleFields }: CustomGrammarsSettings
               </p>
             )}
 
+            {registerError && (
+              <p className="settings-panel__file-error" data-testid="custom-grammar-register-error">
+                {registerError}
+              </p>
+            )}
+
             {/* Draft confirmation form */}
             {draft && (
               <div className="settings-panel__section" data-testid="custom-grammar-draft">
@@ -212,7 +229,7 @@ export function CustomGrammarsSettings({ visibleFields }: CustomGrammarsSettings
                   />
                   <button
                     className="settings-panel__btn settings-panel__btn--primary"
-                    onClick={handleDraftConfirm}
+                    onClick={() => void handleDraftConfirm()}
                     disabled={!draft.id.trim()}
                     data-testid="custom-grammar-confirm-btn"
                   >
