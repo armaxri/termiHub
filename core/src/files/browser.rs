@@ -35,6 +35,9 @@ pub trait FileBrowser: Send {
 
     /// Get metadata for a single file or directory.
     async fn stat(&self, path: &str) -> Result<FileEntry, FileError>;
+
+    /// Create a directory (and any missing parent directories) at the given path.
+    async fn mkdir(&self, path: &str) -> Result<(), FileError>;
 }
 
 #[cfg(test)]

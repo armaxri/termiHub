@@ -3,7 +3,7 @@ pub mod local;
 pub mod utils;
 
 pub use browser::FileBrowser;
-pub use local::LocalFileBackend;
+pub use local::{LocalFileBackend, LocalFileBrowser};
 
 use crate::errors::FileError;
 use serde::{Deserialize, Serialize};
@@ -49,4 +49,7 @@ pub trait FileBackend: Send + Sync {
 
     /// Get metadata for a single file or directory.
     async fn stat(&self, path: &str) -> Result<FileEntry, FileError>;
+
+    /// Create a directory (and any missing parent directories) at the given path.
+    async fn mkdir(&self, path: &str) -> Result<(), FileError>;
 }

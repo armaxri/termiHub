@@ -167,10 +167,12 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
 
   const registerSession = useCallback((tabId: string, sessionId: SessionId) => {
     sessionRegistryRef.current.set(tabId, sessionId);
+    useAppStore.getState().setTabSessionId(tabId, sessionId);
   }, []);
 
   const unregisterSession = useCallback((tabId: string) => {
     sessionRegistryRef.current.delete(tabId);
+    useAppStore.getState().setTabSessionId(tabId, null);
   }, []);
 
   const pasteToTerminal = useCallback(async (tabId: string) => {

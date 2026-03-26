@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Terminal: WSL connections now pre-set `PROMPT_COMMAND` via environment variable before bash starts, so CWD tracking fires on the very first prompt without waiting for the stdin-injected hook to run
 - File browser: PowerShell and cmd.exe connections now track the current working directory — the file browser follows `cd`/`chdir` changes via injected prompt hooks that emit OSC 9;9 sequences (the Windows Terminal native CWD standard; no URL encoding or path conversion required)
 - File browser: scrolling now works in large directories — the file list was using `overflow: hidden` preventing scroll in directories with many entries
+- File browser: "Waiting for session..." no longer persists indefinitely for new remote-agent connections — the terminal registry now updates the tab's session ID in the store when the session is created, allowing the file browser to transition to the connected state
 
 ### Added
 
@@ -61,6 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- File browser not working on remote agent connections — the file browser now activates in "session" mode for `remote-session` tabs when the agent's connection type reports file browser capability (`fileBrowser: true`), wiring the existing session-based file commands (`session_list_files` etc.) to the file browser UI; also adds `mkdir` support throughout the file browser capability stack (FileBrowser/FileBackend traits, all backends, agent protocol, Tauri commands) so directory creation works in session mode (#548)
 - Terminal auto-scroll overriding user scroll position — scrolling up during active output (e.g., Claude Code thinking phase) no longer snaps the viewport back to the bottom; auto-scroll resumes when the user scrolls back to the bottom (#504)
 - Remote monitoring data never reaching the frontend — the `RemoteMonitoringProxy` created a tokio channel but immediately dropped the sender, and `handle_notification()` in `agent_manager` silently ignored `connection.monitoring.data` notifications; now monitoring notifications are routed through the agent I/O thread to registered monitoring channels (#483)
 - Paste (Cmd+V) inserting text twice on macOS — the native browser paste event was reaching xterm.js in addition to the custom paste handler, causing doubled input (#444)

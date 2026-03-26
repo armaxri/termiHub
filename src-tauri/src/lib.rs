@@ -280,6 +280,7 @@ pub fn run() {
             commands::session::session_write_file,
             commands::session::session_delete_file,
             commands::session::session_rename_file,
+            commands::session::session_mkdir,
             // Connection management
             commands::connection::load_connections_and_folders,
             commands::connection::save_connection,
