@@ -91,9 +91,9 @@ export function useLocalFileSystem() {
   }, []);
 
   const copyEntry = useCallback(
-    (entry: FileEntry) => {
+    (entries: FileEntry[]) => {
       useAppStore.getState().setFileClipboard({
-        entry,
+        entries,
         operation: "copy",
         sourceMode: "local",
         sourcePath: currentPath,
@@ -104,9 +104,9 @@ export function useLocalFileSystem() {
   );
 
   const cutEntry = useCallback(
-    (entry: FileEntry) => {
+    (entries: FileEntry[]) => {
       useAppStore.getState().setFileClipboard({
-        entry,
+        entries,
         operation: "cut",
         sourceMode: "local",
         sourcePath: currentPath,
@@ -121,25 +121,27 @@ export function useLocalFileSystem() {
     if (!clipboard) return;
 
     const destDir = currentPath;
-    const destPath =
-      destDir === "/" ? `/${clipboard.entry.name}` : `${destDir}/${clipboard.entry.name}`;
 
-    if (clipboard.sourceMode === "local") {
-      // local→local
-      if (clipboard.operation === "cut") {
-        await localRename(clipboard.entry.path, destPath);
-        useAppStore.getState().setFileClipboard(null);
-      } else {
-        await localCopyFile(clipboard.entry.path, destPath, clipboard.entry.isDirectory);
-      }
-    } else {
-      // sftp→local: download remote file to local destination
-      if (clipboard.sftpSessionId) {
-        await sftpDownload(clipboard.sftpSessionId, clipboard.entry.path, destPath);
+    for (const clipEntry of clipboard.entries) {
+      const destPath = destDir === "/" ? `/${clipEntry.name}` : `${destDir}/${clipEntry.name}`;
+
+      if (clipboard.sourceMode === "local") {
+        // local→local
         if (clipboard.operation === "cut") {
-          useAppStore.getState().setFileClipboard(null);
+          await localRename(clipEntry.path, destPath);
+        } else {
+          await localCopyFile(clipEntry.path, destPath, clipEntry.isDirectory);
+        }
+      } else {
+        // sftp→local: download remote file to local destination
+        if (clipboard.sftpSessionId) {
+          await sftpDownload(clipboard.sftpSessionId, clipEntry.path, destPath);
         }
       }
+    }
+
+    if (clipboard.operation === "cut") {
+      useAppStore.getState().setFileClipboard(null);
     }
 
     refreshLocal();

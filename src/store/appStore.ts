@@ -110,7 +110,7 @@ export type SidebarView = "connections" | "files" | "tunnels" | "workspaces";
 
 /** Clipboard state for file browser copy/cut operations. */
 export interface FileClipboard {
-  entry: FileEntry;
+  entries: FileEntry[];
   operation: "copy" | "cut";
   sourceMode: "local" | "sftp";
   sourcePath: string;

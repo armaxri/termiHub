@@ -49,6 +49,10 @@ interface FileRowProps {
   onContextAction: (entry: FileEntry, action: string) => void;
   onPaste: () => void;
   hasClipboard: boolean;
+  isSelected: boolean;
+  onRowClick: (entry: FileEntry, e: React.MouseEvent) => void;
+  selectedCount: number;
+  onMultiContextAction: (action: string) => void;
 }
 
 /**
@@ -171,6 +175,60 @@ export function FileMenuItems({
   );
 }
 
+/**
+ * Context menu items shown when multiple files are selected.
+ */
+export function MultiSelectMenuItems({
+  count,
+  onAction,
+  onPaste,
+  hasClipboard,
+  Item,
+  Separator,
+}: {
+  count: number;
+  onAction: (action: string) => void;
+  onPaste: () => void;
+  hasClipboard: boolean;
+  Item: React.ElementType;
+  Separator: React.ElementType;
+}) {
+  return (
+    <>
+      <Item
+        className="context-menu__item"
+        onSelect={() => onAction("copy")}
+        data-testid="multi-select-copy"
+      >
+        <Copy size={14} /> Copy ({count} items)
+      </Item>
+      <Item
+        className="context-menu__item"
+        onSelect={() => onAction("cut")}
+        data-testid="multi-select-cut"
+      >
+        <Scissors size={14} /> Cut ({count} items)
+      </Item>
+      <Item
+        className="context-menu__item"
+        disabled={!hasClipboard}
+        onSelect={onPaste}
+        data-testid="multi-select-paste"
+      >
+        <ClipboardPaste size={14} /> Paste
+      </Item>
+      <Separator className="context-menu__separator" />
+      <Item
+        className="context-menu__item context-menu__item--danger"
+        onSelect={() => onAction("delete")}
+        data-testid="multi-select-delete"
+      >
+        <Trash2 size={14} /> Delete ({count} items)
+      </Item>
+    </>
+  );
+}
+
 function FileRow({
   entry,
   vscodeAvailable,
@@ -178,6 +236,10 @@ function FileRow({
   onContextAction,
   onPaste,
   hasClipboard,
+  isSelected,
+  onRowClick,
+  selectedCount,
+  onMultiContextAction,
 }: FileRowProps) {
   const menuItemProps = {
     entry,
@@ -188,13 +250,18 @@ function FileRow({
     hasClipboard,
   };
 
+  const showMultiSelect = isSelected && selectedCount > 1;
+
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger asChild>
-        <div className="file-browser__row-wrapper">
+        <div
+          className={`file-browser__row-wrapper${isSelected ? " file-browser__row-wrapper--selected" : ""}`}
+        >
           <button
             className="file-browser__row"
             data-testid={`file-row-${entry.name}`}
+            onClick={(e) => onRowClick(entry, e)}
             onDoubleClick={() => {
               if (entry.isDirectory) {
                 onNavigate(entry);
@@ -243,12 +310,23 @@ function FileRow({
       </ContextMenu.Trigger>
       <ContextMenu.Portal>
         <ContextMenu.Content className="context-menu__content">
-          <FileMenuItems
-            {...menuItemProps}
-            Item={ContextMenu.Item}
-            Separator={ContextMenu.Separator}
-            testIdPrefix="context-file"
-          />
+          {showMultiSelect ? (
+            <MultiSelectMenuItems
+              count={selectedCount}
+              onAction={onMultiContextAction}
+              onPaste={onPaste}
+              hasClipboard={hasClipboard}
+              Item={ContextMenu.Item}
+              Separator={ContextMenu.Separator}
+            />
+          ) : (
+            <FileMenuItems
+              {...menuItemProps}
+              Item={ContextMenu.Item}
+              Separator={ContextMenu.Separator}
+              testIdPrefix="context-file"
+            />
+          )}
         </ContextMenu.Content>
       </ContextMenu.Portal>
     </ContextMenu.Root>
@@ -485,6 +563,8 @@ export function FileBrowser() {
   const fileClipboard = useAppStore((s) => s.fileClipboard);
   const [newDirName, setNewDirName] = useState<string | null>(null);
   const [newFileName, setNewFileName] = useState<string | null>(null);
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
+  const [lastClickedPath, setLastClickedPath] = useState<string | null>(null);
 
   // Listen for VS Code edit-complete events (remote file re-upload)
   useEffect(() => {
@@ -503,6 +583,8 @@ export function FileBrowser() {
   const handleNavigate = useCallback(
     (entry: FileEntry) => {
       if (entry.isDirectory) {
+        setSelectedPaths(new Set());
+        setLastClickedPath(null);
         navigateTo(entry.path);
       }
     },
@@ -534,10 +616,10 @@ export function FileBrowser() {
           );
           break;
         case "copy":
-          copyEntry(entry);
+          copyEntry([entry]);
           break;
         case "cut":
-          cutEntry(entry);
+          cutEntry([entry]);
           break;
         case "copyName":
           writeClipboard(entry.name);
@@ -573,6 +655,69 @@ export function FileBrowser() {
   const handlePaste = useCallback(() => {
     pasteEntry().catch((err: unknown) => console.error("Paste failed:", err));
   }, [pasteEntry]);
+
+  const handleRowClick = useCallback(
+    (entry: FileEntry, e: React.MouseEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        // Toggle this entry's selection
+        setSelectedPaths((prev) => {
+          const next = new Set(prev);
+          if (next.has(entry.path)) {
+            next.delete(entry.path);
+          } else {
+            next.add(entry.path);
+          }
+          return next;
+        });
+        setLastClickedPath(entry.path);
+      } else if (e.shiftKey && lastClickedPath) {
+        // Range-select from lastClickedPath to this entry using the current sorted list
+        const sortedPaths = [...fileEntries]
+          .sort((a, b) => {
+            if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
+            return a.name.localeCompare(b.name);
+          })
+          .map((fe) => fe.path);
+        const anchorIdx = sortedPaths.indexOf(lastClickedPath);
+        const targetIdx = sortedPaths.indexOf(entry.path);
+        if (anchorIdx >= 0 && targetIdx >= 0) {
+          const [start, end] =
+            anchorIdx < targetIdx ? [anchorIdx, targetIdx] : [targetIdx, anchorIdx];
+          setSelectedPaths(new Set(sortedPaths.slice(start, end + 1)));
+        }
+      } else {
+        // Plain click: select only this entry
+        setSelectedPaths(new Set([entry.path]));
+        setLastClickedPath(entry.path);
+      }
+    },
+    [fileEntries, lastClickedPath]
+  );
+
+  const handleMultiAction = useCallback(
+    (entries: FileEntry[], action: string) => {
+      switch (action) {
+        case "copy":
+          copyEntry(entries);
+          break;
+        case "cut":
+          cutEntry(entries);
+          break;
+        case "delete": {
+          const ok = window.confirm(`Delete ${entries.length} items?`);
+          if (ok) {
+            Promise.all(entries.map((e) => deleteEntry(e.path, e.isDirectory))).catch(
+              (err: unknown) => console.error("Delete failed:", err)
+            );
+            setSelectedPaths(new Set());
+            setLastClickedPath(null);
+          }
+          break;
+        }
+      }
+    },
+    [copyEntry, cutEntry, deleteEntry]
+  );
 
   const handleCreateDir = useCallback(() => {
     if (newDirName && newDirName.trim()) {
@@ -632,6 +777,8 @@ export function FileBrowser() {
     return a.name.localeCompare(b.name);
   });
 
+  const selectedEntries = sortedEntries.filter((e) => selectedPaths.has(e.path));
+
   return (
     <div className="file-browser">
       <div className="file-browser__toolbar">
@@ -676,7 +823,9 @@ export function FileBrowser() {
             disabled={!fileClipboard}
             title={
               fileClipboard
-                ? `Paste "${fileClipboard.entry.name}" (${fileClipboard.operation})`
+                ? fileClipboard.entries.length === 1
+                  ? `Paste "${fileClipboard.entries[0].name}" (${fileClipboard.operation})`
+                  : `Paste ${fileClipboard.entries.length} items (${fileClipboard.operation})`
                 : "Paste"
             }
             data-testid="file-browser-paste"
@@ -787,6 +936,10 @@ export function FileBrowser() {
                   onContextAction={handleContextAction}
                   onPaste={handlePaste}
                   hasClipboard={fileClipboard !== null}
+                  isSelected={selectedPaths.has(entry.path)}
+                  onRowClick={handleRowClick}
+                  selectedCount={selectedPaths.size}
+                  onMultiContextAction={(action) => handleMultiAction(selectedEntries, action)}
                 />
               ))}
             </div>

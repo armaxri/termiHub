@@ -110,9 +110,9 @@ export function useFileSystem() {
   );
 
   const copyEntry = useCallback(
-    (entry: FileEntry) => {
+    (entries: FileEntry[]) => {
       useAppStore.getState().setFileClipboard({
-        entry,
+        entries,
         operation: "copy",
         sourceMode: "sftp",
         sourcePath: currentPath,
@@ -123,9 +123,9 @@ export function useFileSystem() {
   );
 
   const cutEntry = useCallback(
-    (entry: FileEntry) => {
+    (entries: FileEntry[]) => {
       useAppStore.getState().setFileClipboard({
-        entry,
+        entries,
         operation: "cut",
         sourceMode: "sftp",
         sourcePath: currentPath,
@@ -140,35 +140,37 @@ export function useFileSystem() {
     if (!clipboard || !sftpSessionId) return;
 
     const destDir = currentPath;
-    const destPath =
-      destDir === "/" ? `/${clipboard.entry.name}` : `${destDir}/${clipboard.entry.name}`;
 
-    if (clipboard.sourceMode === "sftp") {
-      // sftp→sftp
-      if (clipboard.operation === "cut") {
-        if (clipboard.sftpSessionId === sftpSessionId) {
-          await sftpRename(sftpSessionId, clipboard.entry.path, destPath);
+    for (const clipEntry of clipboard.entries) {
+      const destPath = destDir === "/" ? `/${clipEntry.name}` : `${destDir}/${clipEntry.name}`;
+
+      if (clipboard.sourceMode === "sftp") {
+        // sftp→sftp
+        if (clipboard.operation === "cut") {
+          if (clipboard.sftpSessionId === sftpSessionId) {
+            await sftpRename(sftpSessionId, clipEntry.path, destPath);
+          } else {
+            // Different SFTP session — download to temp then upload
+            const tempPath = `/tmp/termihub-paste-${Date.now()}-${clipEntry.name}`;
+            await sftpDownload(clipboard.sftpSessionId!, clipEntry.path, tempPath);
+            await sftpUpload(sftpSessionId, tempPath, destPath);
+          }
         } else {
-          // Different SFTP session — download to temp then upload
-          const tempPath = `/tmp/termihub-paste-${Date.now()}-${clipboard.entry.name}`;
-          await sftpDownload(clipboard.sftpSessionId!, clipboard.entry.path, tempPath);
-          await sftpUpload(sftpSessionId, tempPath, destPath);
+          // Copy within SFTP: download to temp, re-upload
+          const tempPath = `/tmp/termihub-paste-${Date.now()}-${clipEntry.name}`;
+          if (clipboard.sftpSessionId) {
+            await sftpDownload(clipboard.sftpSessionId, clipEntry.path, tempPath);
+            await sftpUpload(sftpSessionId, tempPath, destPath);
+          }
         }
-        useAppStore.getState().setFileClipboard(null);
       } else {
-        // Copy within SFTP: download to temp, re-upload
-        const tempPath = `/tmp/termihub-paste-${Date.now()}-${clipboard.entry.name}`;
-        if (clipboard.sftpSessionId) {
-          await sftpDownload(clipboard.sftpSessionId, clipboard.entry.path, tempPath);
-          await sftpUpload(sftpSessionId, tempPath, destPath);
-        }
+        // local→sftp: upload local file to remote destination
+        await sftpUpload(sftpSessionId, clipEntry.path, destPath);
       }
-    } else {
-      // local→sftp: upload local file to remote destination
-      await sftpUpload(sftpSessionId, clipboard.entry.path, destPath);
-      if (clipboard.operation === "cut") {
-        useAppStore.getState().setFileClipboard(null);
-      }
+    }
+
+    if (clipboard.operation === "cut") {
+      useAppStore.getState().setFileClipboard(null);
     }
 
     refreshSftp();
