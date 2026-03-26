@@ -793,7 +793,7 @@ export function FileBrowser() {
           <button
             className="file-browser__btn"
             onClick={navigateUp}
-            disabled={currentPath === "/"}
+            disabled={currentPath === "/" || /^[A-Za-z]:\/?$/.test(currentPath)}
             title="Go Up"
             data-testid="file-browser-up"
           >
