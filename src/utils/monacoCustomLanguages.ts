@@ -157,15 +157,35 @@ export async function registerCustomGrammars(grammars: CustomLanguageGrammar[]):
 
   for (const { id, name, grammar } of toLoad) {
     if (!monaco.languages.getLanguages().some((l) => l.id === id)) {
-      monaco.languages.register({ id, aliases: [name, id] });
+      // Extract file extensions from the TextMate grammar's `fileTypes` field so
+      // Monaco can auto-detect the language from file names on open.
+      const rawFileTypes = Array.isArray(grammar.fileTypes) ? (grammar.fileTypes as string[]) : [];
+      const extensions = rawFileTypes.map((t) => (t.startsWith(".") ? t : `.${t}`));
+      monaco.languages.register({
+        id,
+        aliases: [name, id],
+        extensions: extensions.length > 0 ? extensions : undefined,
+      });
+      if (extensions.length > 0) {
+        frontendLog(
+          "custom_grammars",
+          `Registered Monaco language "${id}" with extensions: ${extensions.join(", ")}`
+        );
+      }
     }
 
     // Build a LanguageRegistration from the stored grammar JSON.
     // The grammar must have at least a `scopeName` field to be valid.
+    // Ensure `id` is included in `aliases` so that shikiToMonaco's
+    // getLoadedLanguages() returns the Monaco language ID (Shiki stores
+    // grammars by `name`, not `id`, so without this alias the token provider
+    // would never be wired).
+    const grammarAliases = Array.isArray(grammar.aliases) ? (grammar.aliases as string[]) : [];
     const registration: LanguageRegistration = {
       ...(grammar as Omit<LanguageRegistration, "id" | "name">),
       id,
       name,
+      aliases: [...new Set([id, ...grammarAliases])],
     };
     try {
       frontendLog("custom_grammars", `Loading grammar for language "${id}" (${name})`);
