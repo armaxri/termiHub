@@ -85,7 +85,7 @@ pub(crate) struct WslFileBrowser {
 }
 
 impl WslFileBrowser {
-    #[cfg(windows)]
+    #[cfg(all(windows, test))]
     pub(crate) fn new(distribution: String) -> Self {
         let unc_prefix = wsl_unc_prefix(&distribution);
         Self { unc_prefix }
@@ -749,7 +749,9 @@ impl ConnectionType for Wsl {
         // Detect the UNC prefix once; share it between the file browser and
         // the silent setup task so we don't do the filesystem probe twice.
         let unc_prefix = wsl_unc_prefix(&distribution);
-        self.file_browser_provider = Some(WslFileBrowser { unc_prefix: unc_prefix.clone() });
+        self.file_browser_provider = Some(WslFileBrowser {
+            unc_prefix: unc_prefix.clone(),
+        });
 
         // Spawn the silent setup task.  It watches the tap channel for the first
         // OSC 7 emission from the PROMPT_COMMAND env var (= shell ready, .bashrc
@@ -993,8 +995,7 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(8);
         tx.send(b"foo__TERMI".to_vec()).await.unwrap();
         tx.send(b"HUB__bar".to_vec()).await.unwrap();
-        let found =
-            wait_for_bytes(&mut rx, b"__TERMIHUB__", Duration::from_millis(500)).await;
+        let found = wait_for_bytes(&mut rx, b"__TERMIHUB__", Duration::from_millis(500)).await;
         assert!(found);
     }
 
