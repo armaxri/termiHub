@@ -203,3 +203,61 @@ describe("appStore — layout state", () => {
     expect(useAppStore.getState().layoutConfig).toEqual(DEFAULT_LAYOUT);
   });
 });
+
+describe("appStore — setTabSessionId", () => {
+  beforeEach(() => {
+    useAppStore.setState(useAppStore.getInitialState());
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("updates sessionId on a tab created with null sessionId", () => {
+    // Regression: remote-session tabs are added with sessionId=null because the
+    // terminal session is created asynchronously. setTabSessionId must update
+    // the tab in the store so that the file browser's reactive effect can
+    // observe the change and transition out of "Waiting for session...".
+    const store = useAppStore.getState();
+    store.addTab("My Session", "remote-session", {
+      type: "remote-session",
+      config: { agentId: "agent-1", sessionType: "local" },
+    });
+
+    const leaf = store.getAllPanels()[0];
+    const tab = leaf.tabs[0];
+    expect(tab.sessionId).toBeNull();
+
+    useAppStore.getState().setTabSessionId(tab.id, "session-abc");
+
+    const updatedLeaf = useAppStore.getState().getAllPanels()[0];
+    const updatedTab = updatedLeaf.tabs.find((t) => t.id === tab.id);
+    expect(updatedTab?.sessionId).toBe("session-abc");
+  });
+
+  it("clears sessionId when called with null", () => {
+    const store = useAppStore.getState();
+    store.addTab("My Session", "remote-session", {
+      type: "remote-session",
+      config: { agentId: "agent-1", sessionType: "local" },
+    });
+
+    const leaf = store.getAllPanels()[0];
+    const tab = leaf.tabs[0];
+
+    useAppStore.getState().setTabSessionId(tab.id, "session-xyz");
+    useAppStore.getState().setTabSessionId(tab.id, null);
+
+    const updatedLeaf = useAppStore.getState().getAllPanels()[0];
+    const updatedTab = updatedLeaf.tabs.find((t) => t.id === tab.id);
+    expect(updatedTab?.sessionId).toBeNull();
+  });
+
+  it("is a no-op for an unknown tabId", () => {
+    const before = useAppStore.getState().rootPanel;
+    useAppStore.getState().setTabSessionId("nonexistent-tab", "session-xyz");
+    expect(useAppStore.getState().rootPanel).toBe(before);
+  });
+});

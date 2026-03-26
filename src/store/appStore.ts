@@ -206,6 +206,8 @@ interface AppState {
     edge: DropEdge
   ) => void;
   getAllPanels: () => LeafPanel[];
+  /** Update the backend session ID on a tab (called after the terminal session is created). */
+  setTabSessionId: (tabId: string, sessionId: string | null) => void;
 
   // Connections
   folders: ConnectionFolder[];
@@ -530,6 +532,18 @@ export const useAppStore = create<AppState>((set, get) => {
     activePanelId: initialPanel.id,
 
     getAllPanels: () => getAllLeaves(get().rootPanel),
+
+    setTabSessionId: (tabId, sessionId) =>
+      set((state) => {
+        const leaf = findLeafByTab(state.rootPanel, tabId);
+        if (!leaf) return state;
+        return {
+          rootPanel: updateLeaf(state.rootPanel, leaf.id, (l) => ({
+            ...l,
+            tabs: l.tabs.map((t) => (t.id === tabId ? { ...t, sessionId } : t)),
+          })),
+        };
+      }),
 
     addTab: (title, connectionType, config, panelId, contentType, terminalOptions, sessionId) =>
       set((state) => {

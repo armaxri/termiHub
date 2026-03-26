@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Terminal: WSL connections now pre-set `PROMPT_COMMAND` via environment variable before bash starts, so CWD tracking fires on the very first prompt without waiting for the stdin-injected hook to run
 - File browser: PowerShell and cmd.exe connections now track the current working directory — the file browser follows `cd`/`chdir` changes via injected prompt hooks that emit OSC 9;9 sequences (the Windows Terminal native CWD standard; no URL encoding or path conversion required)
 - File browser: scrolling now works in large directories — the file list was using `overflow: hidden` preventing scroll in directories with many entries
+- File browser: "Waiting for session..." no longer persists indefinitely for new remote-agent connections — the terminal registry now updates the tab's session ID in the store when the session is created, allowing the file browser to transition to the connected state
 
 ### Added
 
