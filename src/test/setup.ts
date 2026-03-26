@@ -1,5 +1,33 @@
 import { vi } from "vitest";
 
+// Mock monaco-editor so tests don't need a browser environment.
+vi.mock("monaco-editor", () => ({
+  languages: {
+    getLanguages: vi.fn(() => [
+      { id: "plaintext", aliases: ["Plain Text"] },
+      { id: "javascript", aliases: ["JavaScript"] },
+      { id: "typescript", aliases: ["TypeScript"] },
+      { id: "json", aliases: ["JSON"] },
+      { id: "python", aliases: ["Python"] },
+      { id: "shell", aliases: ["Shell Script"] },
+      { id: "ini", aliases: ["Ini"] },
+      { id: "yaml", aliases: ["YAML"] },
+      { id: "xml", aliases: ["XML"] },
+      { id: "dockerfile", aliases: ["Dockerfile"] },
+      { id: "makefile", aliases: ["Makefile"] },
+      { id: "cmake", aliases: ["CMake"] },
+      { id: "ruby", aliases: ["Ruby"] },
+      { id: "java", aliases: ["Java"] },
+      { id: "cpp", aliases: ["C++"] },
+      { id: "rust", aliases: ["Rust"] },
+      { id: "go", aliases: ["Go"] },
+      { id: "html", aliases: ["HTML"] },
+      { id: "css", aliases: ["CSS"] },
+      { id: "hcl", aliases: ["HCL"] },
+    ]),
+  },
+}));
+
 // Mock Tauri core API to prevent import errors when modules load
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
