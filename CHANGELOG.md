@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Terminal: all connections no longer show a blank terminal on open — `registerSession` writing the session ID back to the Zustand store caused `existingSessionId` to change as a prop, which invalidated `setupTerminal`'s callback and triggered a full xterm teardown/recreate cycle; the session ID is now captured in a mount-time ref so later store updates do not re-run the terminal setup
+- File browser: copy/cut in session-based connections (remote agent) now correctly supports multi-file selection — `useSessionFileSystem` was still using the old singular `entry` field instead of `entries: FileEntry[]`
 - Agent setup: terminal tab no longer appears blank for 5+ seconds on Windows — a "please wait" message is now injected immediately after the shell initialises, so users see feedback while the SFTP upload runs in the background (#560)
 - Agent setup: setup script now prints "You can close this terminal tab now." after the completion banner (#560)
 
