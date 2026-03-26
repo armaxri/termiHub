@@ -24,6 +24,7 @@ import {
   Copy,
   Scissors,
   ClipboardPaste,
+  FolderSync,
 } from "lucide-react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
@@ -572,10 +573,23 @@ function useFileBrowserSync() {
     disconnectSftp,
     requestPassword,
   ]);
+
+  // Callback to jump the file browser back to the terminal's current CWD.
+  const navigateToCwd = useCallback(() => {
+    if (!cwd) return;
+    const currentMode = useAppStore.getState().fileBrowserMode;
+    if (currentMode === "local") {
+      navigateLocal(wslDistro ? wslToWindowsPath(cwd, wslDistro) : cwd);
+    } else if (currentMode === "sftp" && sftpSessionId) {
+      navigateSftp(cwd);
+    }
+  }, [cwd, wslDistro, navigateLocal, navigateSftp, sftpSessionId]);
+
+  return { navigateToCwd, hasCwd: !!cwd };
 }
 
 export function FileBrowser() {
-  useFileBrowserSync();
+  const { navigateToCwd, hasCwd } = useFileBrowserSync();
 
   const {
     fileEntries,
@@ -860,11 +874,20 @@ export function FileBrowser() {
           <button
             className="file-browser__btn"
             onClick={navigateUp}
-            disabled={currentPath === "/"}
+            disabled={currentPath === "/" || /^[A-Za-z]:\/?$/.test(currentPath)}
             title="Go Up"
             data-testid="file-browser-up"
           >
             <ArrowUp size={14} />
+          </button>
+          <button
+            className="file-browser__btn"
+            onClick={navigateToCwd}
+            disabled={!hasCwd}
+            title="Go to Terminal CWD"
+            data-testid="file-browser-go-to-cwd"
+          >
+            <FolderSync size={14} />
           </button>
           <button
             className="file-browser__btn"

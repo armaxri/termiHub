@@ -1741,10 +1741,22 @@ export const useAppStore = create<AppState>((set, get) => {
     localFileError: null,
 
     navigateLocal: async (path: string) => {
+      // Normalize Windows backslashes to forward slashes so path manipulation
+      // in the frontend (navigateUp, path join) works uniformly on all platforms.
+      // Also expand bare drive letters (e.g. "C:") to their root form ("C:/")
+      // so the Up button can reliably detect the drive root boundary.
+      let normalizedPath = path.replace(/\\/g, "/");
+      if (/^[A-Za-z]:$/.test(normalizedPath)) {
+        normalizedPath = normalizedPath + "/";
+      }
       set({ localFileLoading: true, localFileError: null });
       try {
-        const entries = await localListDir(path);
-        set({ localFileEntries: entries, localCurrentPath: path, localFileLoading: false });
+        const entries = await localListDir(normalizedPath);
+        set({
+          localFileEntries: entries,
+          localCurrentPath: normalizedPath,
+          localFileLoading: false,
+        });
       } catch (err) {
         set({
           localFileLoading: false,

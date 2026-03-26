@@ -403,6 +403,27 @@ describe("FileBrowser – useFileBrowserSync", () => {
 
     expect(useAppStore.getState().localCurrentPath).toBe("C:/Users/richtera");
   });
+
+  // Regression test for #555: PowerShell reports CWD via OSC 9;9 with backslashes.
+  // navigateLocal must normalize them so navigateUp and path display work correctly.
+  it("normalizes Windows backslash CWD to forward slashes for local tab (#555)", async () => {
+    const localTab = makeTab({
+      connectionType: "local",
+      config: { type: "local", config: { shell: "powershell" } },
+    });
+    setActiveTab(localTab);
+    useAppStore.setState({
+      sidebarView: "files",
+      tabCwds: { "tab-1": "C:\\Users\\testuser" },
+    });
+
+    await act(async () => {
+      root.render(<FileBrowser />);
+    });
+    await flushAsync();
+
+    expect(useAppStore.getState().localCurrentPath).toBe("C:/Users/testuser");
+  });
 });
 
 /** Simple wrapper that renders items as plain divs (bypassing Radix portal issues in JSDOM). */
@@ -1024,5 +1045,208 @@ describe("FileBrowser – MultiSelectMenuItems", () => {
     });
 
     expect(onAction).toHaveBeenCalledWith("copy");
+  });
+});
+
+// Regression tests for #555: Windows navigate-up and Up button disable state.
+describe("FileBrowser – Windows navigate-up (#555)", () => {
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState(useAppStore.getInitialState());
+
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "local_list_dir") return Promise.resolve([]);
+      return Promise.resolve(undefined);
+    });
+  });
+
+  afterEach(() => {
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+    vi.clearAllMocks();
+  });
+
+  it("navigateLocal normalizes backslash path and Up button navigates to parent", async () => {
+    const localTab = makeTab({
+      connectionType: "local",
+      config: { type: "local", config: { shell: "powershell" } },
+    });
+    setActiveTab(localTab);
+    useAppStore.setState({
+      sidebarView: "files",
+      tabCwds: { "tab-1": "C:\\Users\\testuser" },
+    });
+
+    await act(async () => {
+      root.render(<FileBrowser />);
+    });
+    await flushAsync();
+
+    // Path should be normalized
+    expect(useAppStore.getState().localCurrentPath).toBe("C:/Users/testuser");
+
+    // Click the Up button — should navigate to "C:/Users"
+    const upBtn = container.querySelector('[data-testid="file-browser-up"]') as HTMLButtonElement;
+    expect(upBtn.disabled).toBe(false);
+
+    await act(async () => {
+      upBtn.click();
+    });
+    await flushAsync();
+
+    expect(useAppStore.getState().localCurrentPath).toBe("C:/Users");
+  });
+
+  it("Up button is disabled at Windows drive root (C:/)", async () => {
+    const localTab = makeTab({
+      connectionType: "local",
+      config: { type: "local", config: { shell: "powershell" } },
+    });
+    setActiveTab(localTab);
+    // Drive CWD through tabCwds so the sync hook navigates there (not to getHomeDir)
+    useAppStore.setState({
+      sidebarView: "files",
+      tabCwds: { "tab-1": "C:/" },
+    });
+
+    await act(async () => {
+      root.render(<FileBrowser />);
+    });
+    await flushAsync();
+
+    expect(useAppStore.getState().localCurrentPath).toBe("C:/");
+    const upBtn = container.querySelector('[data-testid="file-browser-up"]') as HTMLButtonElement;
+    expect(upBtn.disabled).toBe(true);
+  });
+
+  it("navigating up from C:/Users stops at drive root C:/", async () => {
+    const localTab = makeTab({
+      connectionType: "local",
+      config: { type: "local", config: { shell: "powershell" } },
+    });
+    setActiveTab(localTab);
+    // Drive CWD through tabCwds so the sync hook navigates there (not to getHomeDir)
+    useAppStore.setState({
+      sidebarView: "files",
+      tabCwds: { "tab-1": "C:/Users" },
+    });
+
+    await act(async () => {
+      root.render(<FileBrowser />);
+    });
+    await flushAsync();
+
+    const upBtn = container.querySelector('[data-testid="file-browser-up"]') as HTMLButtonElement;
+    expect(upBtn.disabled).toBe(false);
+
+    await act(async () => {
+      upBtn.click();
+    });
+    await flushAsync();
+
+    expect(useAppStore.getState().localCurrentPath).toBe("C:/");
+  });
+});
+
+describe("FileBrowser – Go to Terminal CWD button", () => {
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState(useAppStore.getInitialState());
+
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "local_list_dir") return Promise.resolve([]);
+      return Promise.resolve(undefined);
+    });
+  });
+
+  afterEach(() => {
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+    vi.clearAllMocks();
+  });
+
+  it("button is disabled when no CWD is available", async () => {
+    const localTab = makeTab({
+      connectionType: "local",
+      config: { type: "local", config: {} },
+    });
+    setActiveTab(localTab);
+    useAppStore.setState({ sidebarView: "files" });
+
+    await act(async () => {
+      root.render(<FileBrowser />);
+    });
+    await flushAsync();
+
+    const btn = container.querySelector(
+      '[data-testid="file-browser-go-to-cwd"]'
+    ) as HTMLButtonElement;
+    expect(btn).toBeTruthy();
+    expect(btn.disabled).toBe(true);
+  });
+
+  it("button is enabled when a CWD is available", async () => {
+    const localTab = makeTab({
+      connectionType: "local",
+      config: { type: "local", config: {} },
+    });
+    setActiveTab(localTab);
+    useAppStore.setState({
+      sidebarView: "files",
+      tabCwds: { "tab-1": "/home/user/projects" },
+    });
+
+    await act(async () => {
+      root.render(<FileBrowser />);
+    });
+    await flushAsync();
+
+    const btn = container.querySelector(
+      '[data-testid="file-browser-go-to-cwd"]'
+    ) as HTMLButtonElement;
+    expect(btn.disabled).toBe(false);
+  });
+
+  it("clicking the button navigates to the terminal CWD", async () => {
+    const localTab = makeTab({
+      connectionType: "local",
+      config: { type: "local", config: {} },
+    });
+    setActiveTab(localTab);
+    useAppStore.setState({
+      sidebarView: "files",
+      tabCwds: { "tab-1": "/home/user/projects" },
+    });
+
+    await act(async () => {
+      root.render(<FileBrowser />);
+    });
+    await flushAsync();
+
+    // Manually navigate away
+    await act(async () => {
+      useAppStore.getState().navigateLocal("/home/user");
+    });
+    await flushAsync();
+    expect(useAppStore.getState().localCurrentPath).toBe("/home/user");
+
+    // Click the Go to CWD button
+    const btn = container.querySelector(
+      '[data-testid="file-browser-go-to-cwd"]'
+    ) as HTMLButtonElement;
+    await act(async () => {
+      btn.click();
+    });
+    await flushAsync();
+
+    expect(useAppStore.getState().localCurrentPath).toBe("/home/user/projects");
   });
 });
