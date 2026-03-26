@@ -378,15 +378,35 @@ export function Terminal({
       return true;
     });
 
-    // Track CWD via OSC 7 escape sequences (sent by zsh/bash on macOS/Linux)
+    // Track CWD via OSC 7 (POSIX shells: zsh, bash, WSL, SSH).
+    // Data is a file:// URI, e.g. "file:///home/user/foo" or "file:///C:/foo".
     const osc7Disposable = xterm.parser.registerOscHandler(7, (data: string) => {
       try {
         const url = new URL(data);
         if (url.protocol === "file:") {
-          useAppStore.getState().setTabCwd(tabId, decodeURIComponent(url.pathname));
+          let pathname = decodeURIComponent(url.pathname);
+          // On Windows (e.g. WSL forwarding), paths arrive as /C:/foo —
+          // strip the leading slash to get a valid Windows path.
+          if (/^\/[A-Za-z]:\//.test(pathname)) {
+            pathname = pathname.slice(1);
+          }
+          useAppStore.getState().setTabCwd(tabId, pathname);
         }
       } catch {
         // Ignore malformed OSC 7 data
+      }
+      return true;
+    });
+
+    // Track CWD via OSC 9;9 (Windows Terminal native: PowerShell, cmd.exe).
+    // Data format after ident strip: "9;<raw-windows-path>", e.g. "9;C:\Users\foo".
+    // No URL encoding or slash conversion — the path is used directly.
+    const osc9Disposable = xterm.parser.registerOscHandler(9, (data: string) => {
+      if (data.startsWith("9;")) {
+        const path = data.slice(2);
+        if (path) {
+          useAppStore.getState().setTabCwd(tabId, path);
+        }
       }
       return true;
     });
@@ -471,6 +491,7 @@ export function Terminal({
       el.removeEventListener("wheel", handleGapWheel);
       onScrollDisposable.dispose();
       osc7Disposable.dispose();
+      osc9Disposable.dispose();
       unregister(tabId);
       if (cleanupRef.current) {
         cleanupRef.current();

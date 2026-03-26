@@ -169,21 +169,39 @@ pub fn build_shell_command(config: &ShellConfig) -> ShellCommand {
     }
 }
 
-/// Return a shell command that configures `PROMPT_COMMAND` (bash) or
-/// `precmd_functions` (zsh) to emit OSC 7 CWD escape sequences.
+/// Return a shell command that enables CWD tracking for the given shell.
 ///
-/// - `"wsl:<distro>"` — WSL variant: includes `cd $HOME` guard for `/mnt/`
-///   paths and screen-clear escape.
-/// - `"ssh"` — SSH variant: no `/mnt/` guard, includes screen-clear escape.
-/// - `"bash"` / `"gitbash"` — local bash sessions: same as SSH variant
-///   (bash does not emit OSC 7 by default).
-/// - Anything else (`"zsh"`, `"powershell"`, `"cmd"`, etc.) — returns `None`
-///   (zsh emits OSC 7 natively; PowerShell/cmd don't support `PROMPT_COMMAND`).
-pub fn osc7_setup_command(shell_type: &str) -> Option<String> {
+/// POSIX-compatible shells use **OSC 7** (`file://` URI), which is the
+/// cross-platform standard emitted natively by zsh and injected via
+/// `PROMPT_COMMAND` / `precmd_functions` for bash variants.
+///
+/// Native Windows shells use **OSC 9;9** (Windows Terminal standard), which
+/// carries the raw Windows path with no URL encoding or slash conversion.
+///
+/// - `"wsl:<distro>"` — OSC 7, WSL variant: `cd $HOME` guard for `/mnt/`
+///   paths; injected via stdin with a targeted line-erase sequence.
+/// - `"ssh"` — OSC 7, SSH variant: no `/mnt/` guard; injected via stdin
+///   with a targeted line-erase sequence.
+/// - `"bash"` / `"gitbash"` — OSC 7, local bash; injected via stdin with
+///   a targeted line-erase sequence.
+/// - `"powershell"` — OSC 9;9: overrides the `prompt` function; injected via
+///   `-NoExit -Command` startup args (not stdin) to avoid echo.
+/// - `"cmd"` — OSC 9;9: sets the `PROMPT` variable via `/K` startup arg
+///   (not stdin) to avoid echo.
+/// - Anything else (`"zsh"`, etc.) — `None` (zsh emits OSC 7 natively).
+///
+/// `cols` is the terminal width used to calculate how many lines the echoed
+/// setup command occupies so only those lines are erased (not the full screen).
+/// For WSL, `cols` is unused because the WSL backend injects silently.
+pub fn osc7_setup_command(shell_type: &str, cols: u16) -> Option<String> {
     if shell_type.starts_with("wsl:") {
         Some(wsl_osc7_command().to_string())
     } else if matches!(shell_type, "ssh" | "bash" | "gitbash") {
-        Some(bash_osc7_command().to_string())
+        Some(bash_osc7_command(cols))
+    } else if shell_type == "powershell" {
+        Some(powershell_osc9_command().to_string())
+    } else if shell_type == "cmd" {
+        Some(cmd_osc9_command().to_string())
     } else {
         None
     }
@@ -300,18 +318,49 @@ pub fn initial_command_strategy(
 // Private helpers
 // ---------------------------------------------------------------------------
 
+/// Build an ANSI sequence (in bash `printf` escape format) that erases only
+/// the terminal lines occupied by the injection echo.
+///
+/// When we write a setup command to PTY stdin, the terminal line discipline
+/// echoes every character back, wrapping at `cols` columns. This function
+/// computes exactly how many lines that echo occupies — factoring in a
+/// generous allowance for the shell prompt already on screen — and returns
+/// a sequence of cursor-up + erase-line pairs that removes only those lines.
+///
+/// The returned string is suitable for embedding in `printf '...'` inside
+/// a shell command (uses `\r`, `\033` octal escapes).
+fn erase_echo_lines(cmd_len: usize, cols: u16) -> String {
+    // Allow up to 80 chars for the shell prompt visible before the echo,
+    // plus a small budget for the printf command appended after the base.
+    const OVERHEAD: usize = 80;
+    let cols = (cols as usize).max(20);
+    let lines = (cmd_len + OVERHEAD).div_ceil(cols);
+    let lines = lines.clamp(1, 10);
+
+    // Erase current line (the blank line the trailing \n moved us to),
+    // then step up and erase each echoed line.
+    let mut s = String::from(r"\r\033[2K");
+    for _ in 0..lines {
+        s.push_str(r"\033[A\033[2K");
+    }
+    s
+}
+
 /// OSC 7 setup command for WSL shells.
 ///
 /// Changes to `$HOME` when the CWD is a Windows drive mount (`/mnt/c/...`),
 /// since WSL defaults to the Windows user directory which is inaccessible
-/// through the `\\wsl$\` UNC share. Ends with ANSI screen-clear escape.
+/// through the `\\wsl$\` UNC share.
+///
+/// This command is injected silently via the sentinel-based approach in
+/// `wsl.rs` (PTY echo is disabled before this runs), so no erase sequence
+/// is included here.
 fn wsl_osc7_command() -> &'static str {
     concat!(
         r#"case "$PWD" in /mnt/[a-z]|/mnt/[a-z]/*) cd;; esac; "#,
         r#"__termihub_osc7(){ printf '\e]7;file://%s\a' "$PWD"; }; "#,
         r#"[ "$ZSH_VERSION" ] && precmd_functions+=(__termihub_osc7) || "#,
-        r#"PROMPT_COMMAND="__termihub_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}"; "#,
-        r#"printf '\033[2J\033[H'"#,
+        r#"PROMPT_COMMAND="__termihub_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}""#,
     )
 }
 
@@ -319,14 +368,43 @@ fn wsl_osc7_command() -> &'static str {
 ///
 /// Unlike [`wsl_osc7_command()`], this does not include a `cd $HOME` guard
 /// for `/mnt/` paths. Supports both bash (`PROMPT_COMMAND`) and zsh
-/// (`precmd_functions`). Ends with ANSI screen-clear escape.
-fn bash_osc7_command() -> &'static str {
-    concat!(
+/// (`precmd_functions`). Ends with a targeted line-erase that removes only
+/// the echoed setup lines instead of clearing the full screen.
+fn bash_osc7_command(cols: u16) -> String {
+    const BASE: &str = concat!(
         r#"__termihub_osc7(){ printf '\e]7;file://%s\a' "$PWD"; }; "#,
         r#"[ "$ZSH_VERSION" ] && precmd_functions+=(__termihub_osc7) || "#,
         r#"PROMPT_COMMAND="__termihub_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}"; "#,
-        r#"printf '\033[2J\033[H'"#,
+    );
+    let erase = erase_echo_lines(BASE.len(), cols);
+    format!("{BASE}printf '{erase}'")
+}
+
+/// OSC 9;9 setup command for PowerShell (both `powershell.exe` and `pwsh`).
+///
+/// Overrides the built-in `prompt` function to emit an OSC 9;9 CWD sequence
+/// before each prompt. OSC 9;9 is the Windows Terminal native CWD sequence:
+/// it carries the raw Windows path (`C:\foo`) with no URL encoding or
+/// backslash conversion required. Ends with `Clear-Host` to clear the screen.
+/// Injected via `-NoExit -Command` startup args so the command never echoes.
+fn powershell_osc9_command() -> &'static str {
+    concat!(
+        r#"function prompt{"#,
+        r#"[Console]::Write([char]27+']9;9;'+$PWD.Path+[char]7);"#,
+        r#""PS $($PWD.Path)> "};Clear-Host"#,
     )
+}
+
+/// OSC 9;9 setup command for cmd.exe.
+///
+/// Sets the `PROMPT` variable to embed an OSC 9;9 CWD sequence before each
+/// prompt. In cmd's PROMPT syntax: `$E` expands to ESC (0x1B), `$P` to the
+/// current drive and path (e.g. `C:\Users\foo`), `$G` to `>`, and `$E\`
+/// forms the OSC String Terminator (`ESC \`). OSC 9;9 carries the raw Windows
+/// path — no URL encoding or slash conversion needed. Ends with `cls` to clear
+/// the screen. Injected via `/K` startup arg so the command never echoes.
+fn cmd_osc9_command() -> &'static str {
+    r"PROMPT=$E]9;9;$P$E\$P$G & cls"
 }
 
 /// Resolve the path and arguments to launch a WSL distribution.
@@ -692,7 +770,7 @@ mod tests {
 
     #[test]
     fn osc7_wsl_contains_expected_parts() {
-        let setup = osc7_setup_command("wsl:Ubuntu").expect("expected Some for WSL");
+        let setup = osc7_setup_command("wsl:Ubuntu", 80).expect("expected Some for WSL");
         assert!(
             setup.contains(r"\e]7;"),
             "expected OSC 7 escape marker, got: {setup}"
@@ -710,16 +788,21 @@ mod tests {
             setup.contains("/mnt/[a-z]") && setup.contains("cd"),
             "expected cd-home for /mnt/ paths, got: {setup}"
         );
-        // Should use printf for screen clear (not `clear` which needs ncurses)
+        // WSL injection is silent (via stty -echo sentinel in wsl.rs),
+        // so no erase sequence should be present in the command itself.
         assert!(
-            setup.contains(r"\033[2J"),
-            "expected ANSI clear-screen escape, got: {setup}"
+            !setup.contains(r"\033[2J"),
+            "must not use full screen clear, got: {setup}"
+        );
+        assert!(
+            !setup.contains(r"\033[A"),
+            "WSL command must not contain erase (injection is silent), got: {setup}"
         );
     }
 
     #[test]
     fn osc7_ssh_contains_expected_parts() {
-        let setup = osc7_setup_command("ssh").expect("expected Some for SSH");
+        let setup = osc7_setup_command("ssh", 80).expect("expected Some for SSH");
         assert!(
             setup.contains(r"\e]7;"),
             "expected OSC 7 escape marker, got: {setup}"
@@ -737,16 +820,20 @@ mod tests {
             !setup.contains("/mnt/"),
             "SSH setup should not contain /mnt/ path handling, got: {setup}"
         );
-        // Should use printf for screen clear
+        // Should use targeted line-erase, not full screen clear
         assert!(
-            setup.contains(r"\033[2J"),
-            "expected ANSI clear-screen escape, got: {setup}"
+            setup.contains(r"\033[A"),
+            "expected cursor-up line-erase, got: {setup}"
+        );
+        assert!(
+            !setup.contains(r"\033[2J"),
+            "must not use full screen clear, got: {setup}"
         );
     }
 
     #[test]
     fn osc7_bash_contains_expected_parts() {
-        let setup = osc7_setup_command("bash").expect("expected Some for bash");
+        let setup = osc7_setup_command("bash", 80).expect("expected Some for bash");
         assert!(
             setup.contains(r"\e]7;"),
             "expected OSC 7 escape marker, got: {setup}"
@@ -764,7 +851,7 @@ mod tests {
 
     #[test]
     fn osc7_gitbash_contains_expected_parts() {
-        let setup = osc7_setup_command("gitbash").expect("expected Some for gitbash");
+        let setup = osc7_setup_command("gitbash", 80).expect("expected Some for gitbash");
         assert!(
             setup.contains(r"\e]7;"),
             "expected OSC 7 escape marker, got: {setup}"
@@ -777,10 +864,104 @@ mod tests {
 
     #[test]
     fn osc7_non_bash_returns_none() {
-        assert!(osc7_setup_command("zsh").is_none());
-        assert!(osc7_setup_command("powershell").is_none());
-        assert!(osc7_setup_command("cmd").is_none());
-        assert!(osc7_setup_command("sh").is_none());
+        assert!(osc7_setup_command("zsh", 80).is_none());
+        assert!(osc7_setup_command("sh", 80).is_none());
+    }
+
+    #[test]
+    fn erase_echo_lines_erases_correct_line_count() {
+        // At 80 cols with a 168-char bash base command + 80 overhead = 248 chars
+        // ceil(248 / 80) = 4 lines → sequence contains 4 cursor-up pairs
+        let seq = erase_echo_lines(168, 80);
+        let up_count = seq.matches(r"\033[A").count();
+        assert!(
+            up_count >= 3,
+            "expected at least 3 cursor-up sequences at 80 cols, got {up_count}: {seq}"
+        );
+        // Must start with \r\033[2K
+        assert!(
+            seq.starts_with(r"\r\033[2K"),
+            "expected leading line erase: {seq}"
+        );
+    }
+
+    #[test]
+    fn erase_echo_lines_wider_terminal_fewer_lines() {
+        // At 200 cols, 168 chars fits in 2 lines (with 80-char overhead = 248 → ceil(248/200) = 2)
+        let seq_80 = erase_echo_lines(168, 80);
+        let seq_200 = erase_echo_lines(168, 200);
+        let up_80 = seq_80.matches(r"\033[A").count();
+        let up_200 = seq_200.matches(r"\033[A").count();
+        assert!(
+            up_200 <= up_80,
+            "wider terminal should need fewer or equal erase lines: {up_200} vs {up_80}"
+        );
+    }
+
+    #[test]
+    fn erase_echo_lines_clamps_to_max() {
+        // Tiny cols forces many lines, but clamp at 10
+        let seq = erase_echo_lines(1000, 20);
+        let up_count = seq.matches(r"\033[A").count();
+        assert!(
+            up_count <= 10,
+            "line count should be clamped at 10, got {up_count}"
+        );
+    }
+
+    #[test]
+    fn osc9_cmd_contains_expected_parts() {
+        let setup = osc7_setup_command("cmd", 80).expect("expected Some for cmd");
+        // Must set the PROMPT variable
+        assert!(
+            setup.contains("PROMPT="),
+            "expected PROMPT assignment, got: {setup}"
+        );
+        // Must embed OSC 9;9 marker ($E = ESC, no URL encoding needed)
+        assert!(
+            setup.contains("$E]9;9;"),
+            "expected OSC 9;9 marker via $E, got: {setup}"
+        );
+        // Must include current path via $P (raw Windows path, no conversion)
+        assert!(
+            setup.contains("$P"),
+            "expected $P (current path) in PROMPT, got: {setup}"
+        );
+        // Must clear screen at end
+        assert!(setup.contains("cls"), "expected cls at end, got: {setup}");
+    }
+
+    #[test]
+    fn osc9_powershell_contains_expected_parts() {
+        let setup = osc7_setup_command("powershell", 80).expect("expected Some for powershell");
+        // Must redefine the prompt function
+        assert!(
+            setup.contains("function prompt"),
+            "expected prompt function override, got: {setup}"
+        );
+        // Must emit OSC 9;9 sequence (raw Windows path, no URL conversion)
+        assert!(
+            setup.contains("]9;9;"),
+            "expected OSC 9;9 marker, got: {setup}"
+        );
+        assert!(
+            setup.contains("[char]27"),
+            "expected ESC via [char]27, got: {setup}"
+        );
+        assert!(
+            setup.contains("[char]7"),
+            "expected BEL via [char]7, got: {setup}"
+        );
+        // Must NOT do backslash conversion (OSC 9;9 carries raw Windows paths)
+        assert!(
+            !setup.contains(r#"-replace '\\','/'"#),
+            "OSC 9;9 should not convert backslashes, got: {setup}"
+        );
+        // Must clear screen at end
+        assert!(
+            setup.contains("Clear-Host"),
+            "expected Clear-Host at end, got: {setup}"
+        );
     }
 
     // -----------------------------------------------------------------------
