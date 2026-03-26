@@ -3,7 +3,7 @@ import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
-import { FileBrowser, FileMenuItems } from "./FileBrowser";
+import { FileBrowser, FileMenuItems, MultiSelectMenuItems } from "./FileBrowser";
 import type { TerminalTab, LeafPanel } from "@/types/terminal";
 import type { FileEntry } from "@/types/connection";
 
@@ -356,14 +356,16 @@ describe("FileBrowser – Copy/Cut/Paste UI", () => {
     useAppStore.setState({
       sidebarView: "files",
       fileClipboard: {
-        entry: {
-          name: "copied.txt",
-          path: "/home/copied.txt",
-          isDirectory: false,
-          size: 5,
-          modified: "",
-          permissions: null,
-        },
+        entries: [
+          {
+            name: "copied.txt",
+            path: "/home/copied.txt",
+            isDirectory: false,
+            size: 5,
+            modified: "",
+            permissions: null,
+          },
+        ],
         operation: "copy",
         sourceMode: "local",
         sourcePath: "/home",
@@ -391,7 +393,7 @@ describe("FileBrowser – Copy/Cut/Paste UI", () => {
       permissions: null,
     };
     useAppStore.getState().setFileClipboard({
-      entry,
+      entries: [entry],
       operation: "copy",
       sourceMode: "local",
       sourcePath: "/home",
@@ -400,7 +402,7 @@ describe("FileBrowser – Copy/Cut/Paste UI", () => {
 
     const clipboard = useAppStore.getState().fileClipboard;
     expect(clipboard).not.toBeNull();
-    expect(clipboard?.entry.name).toBe("test.txt");
+    expect(clipboard?.entries[0].name).toBe("test.txt");
     expect(clipboard?.operation).toBe("copy");
     expect(clipboard?.sourceMode).toBe("local");
   });
@@ -415,7 +417,7 @@ describe("FileBrowser – Copy/Cut/Paste UI", () => {
       permissions: null,
     };
     useAppStore.getState().setFileClipboard({
-      entry,
+      entries: [entry],
       operation: "cut",
       sourceMode: "local",
       sourcePath: "/home",
@@ -424,7 +426,7 @@ describe("FileBrowser – Copy/Cut/Paste UI", () => {
 
     const clipboard = useAppStore.getState().fileClipboard;
     expect(clipboard).not.toBeNull();
-    expect(clipboard?.entry.name).toBe("mydir");
+    expect(clipboard?.entries[0].name).toBe("mydir");
     expect(clipboard?.operation).toBe("cut");
     expect(clipboard?.sourceMode).toBe("local");
   });
@@ -439,7 +441,7 @@ describe("FileBrowser – Copy/Cut/Paste UI", () => {
       permissions: null,
     };
     useAppStore.getState().setFileClipboard({
-      entry,
+      entries: [entry],
       operation: "copy",
       sourceMode: "local",
       sourcePath: "/home",
@@ -630,5 +632,276 @@ describe("FileBrowser – Copy Name / Copy Path", () => {
     });
 
     expect(onAction).toHaveBeenCalledWith(dirEntry, "copyPath");
+  });
+});
+
+describe("FileBrowser – Multi-file selection", () => {
+  const entries: FileEntry[] = [
+    {
+      name: "alpha.txt",
+      path: "/home/alpha.txt",
+      isDirectory: false,
+      size: 10,
+      modified: "",
+      permissions: null,
+    },
+    {
+      name: "beta.txt",
+      path: "/home/beta.txt",
+      isDirectory: false,
+      size: 20,
+      modified: "",
+      permissions: null,
+    },
+    {
+      name: "gamma.txt",
+      path: "/home/gamma.txt",
+      isDirectory: false,
+      size: 30,
+      modified: "",
+      permissions: null,
+    },
+  ];
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState(useAppStore.getInitialState());
+
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "local_list_dir") return Promise.resolve(entries);
+      return Promise.resolve(undefined);
+    });
+  });
+
+  afterEach(() => {
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+    vi.clearAllMocks();
+  });
+
+  it("selects a single file on plain click", async () => {
+    const localTab = makeTab({
+      connectionType: "local",
+      config: { type: "local", config: {} },
+    });
+    setActiveTab(localTab);
+    useAppStore.setState({ sidebarView: "files" });
+
+    await act(async () => {
+      root.render(<FileBrowser />);
+    });
+    await flushAsync();
+
+    const row = container.querySelector('[data-testid="file-row-alpha.txt"]') as HTMLElement;
+    act(() => {
+      row.click();
+    });
+
+    expect(container.querySelectorAll(".file-browser__row-wrapper--selected").length).toBe(1);
+  });
+
+  it("adds to selection on Ctrl+click", async () => {
+    const localTab = makeTab({
+      connectionType: "local",
+      config: { type: "local", config: {} },
+    });
+    setActiveTab(localTab);
+    useAppStore.setState({ sidebarView: "files" });
+
+    await act(async () => {
+      root.render(<FileBrowser />);
+    });
+    await flushAsync();
+
+    const alpha = container.querySelector('[data-testid="file-row-alpha.txt"]') as HTMLElement;
+    const beta = container.querySelector('[data-testid="file-row-beta.txt"]') as HTMLElement;
+
+    act(() => {
+      alpha.click();
+    });
+    act(() => {
+      beta.dispatchEvent(new MouseEvent("click", { ctrlKey: true, bubbles: true }));
+    });
+
+    expect(container.querySelectorAll(".file-browser__row-wrapper--selected").length).toBe(2);
+  });
+
+  it("deselects an already-selected file on Ctrl+click", async () => {
+    const localTab = makeTab({
+      connectionType: "local",
+      config: { type: "local", config: {} },
+    });
+    setActiveTab(localTab);
+    useAppStore.setState({ sidebarView: "files" });
+
+    await act(async () => {
+      root.render(<FileBrowser />);
+    });
+    await flushAsync();
+
+    const alpha = container.querySelector('[data-testid="file-row-alpha.txt"]') as HTMLElement;
+
+    act(() => {
+      alpha.click();
+    });
+    expect(container.querySelectorAll(".file-browser__row-wrapper--selected").length).toBe(1);
+
+    act(() => {
+      alpha.dispatchEvent(new MouseEvent("click", { ctrlKey: true, bubbles: true }));
+    });
+    expect(container.querySelectorAll(".file-browser__row-wrapper--selected").length).toBe(0);
+  });
+
+  it("selects a range on Shift+click", async () => {
+    const localTab = makeTab({
+      connectionType: "local",
+      config: { type: "local", config: {} },
+    });
+    setActiveTab(localTab);
+    useAppStore.setState({ sidebarView: "files" });
+
+    await act(async () => {
+      root.render(<FileBrowser />);
+    });
+    await flushAsync();
+
+    const alpha = container.querySelector('[data-testid="file-row-alpha.txt"]') as HTMLElement;
+    const gamma = container.querySelector('[data-testid="file-row-gamma.txt"]') as HTMLElement;
+
+    act(() => {
+      alpha.click();
+    });
+    act(() => {
+      gamma.dispatchEvent(new MouseEvent("click", { shiftKey: true, bubbles: true }));
+    });
+
+    expect(container.querySelectorAll(".file-browser__row-wrapper--selected").length).toBe(3);
+  });
+
+  it("replaces selection on plain click after multi-select", async () => {
+    const localTab = makeTab({
+      connectionType: "local",
+      config: { type: "local", config: {} },
+    });
+    setActiveTab(localTab);
+    useAppStore.setState({ sidebarView: "files" });
+
+    await act(async () => {
+      root.render(<FileBrowser />);
+    });
+    await flushAsync();
+
+    const alpha = container.querySelector('[data-testid="file-row-alpha.txt"]') as HTMLElement;
+    const beta = container.querySelector('[data-testid="file-row-beta.txt"]') as HTMLElement;
+    const gamma = container.querySelector('[data-testid="file-row-gamma.txt"]') as HTMLElement;
+
+    // Select alpha and beta
+    act(() => {
+      alpha.click();
+    });
+    act(() => {
+      beta.dispatchEvent(new MouseEvent("click", { ctrlKey: true, bubbles: true }));
+    });
+    expect(container.querySelectorAll(".file-browser__row-wrapper--selected").length).toBe(2);
+
+    // Plain click on gamma — should replace selection
+    act(() => {
+      gamma.click();
+    });
+    expect(container.querySelectorAll(".file-browser__row-wrapper--selected").length).toBe(1);
+    expect(
+      container
+        .querySelector('[data-testid="file-row-gamma.txt"]')
+        ?.closest(".file-browser__row-wrapper")
+        ?.classList.contains("file-browser__row-wrapper--selected")
+    ).toBe(true);
+  });
+});
+
+describe("FileBrowser – MultiSelectMenuItems", () => {
+  let localContainer: HTMLDivElement;
+  let localRoot: Root;
+
+  beforeEach(() => {
+    localContainer = document.createElement("div");
+    document.body.appendChild(localContainer);
+    localRoot = createRoot(localContainer);
+  });
+
+  afterEach(() => {
+    act(() => {
+      localRoot.unmount();
+    });
+    localContainer.remove();
+  });
+
+  it("shows correct item count label", () => {
+    act(() => {
+      localRoot.render(
+        <MultiSelectMenuItems
+          count={3}
+          onAction={vi.fn()}
+          onPaste={vi.fn()}
+          hasClipboard={false}
+          Item={SimpleItem}
+          Separator={SimpleSeparator}
+        />
+      );
+    });
+
+    expect(
+      localContainer.querySelector('[data-testid="multi-select-copy"]')?.textContent
+    ).toContain("3");
+    expect(
+      localContainer.querySelector('[data-testid="multi-select-delete"]')?.textContent
+    ).toContain("3");
+  });
+
+  it("calls onAction with 'delete' when Delete is clicked", () => {
+    const onAction = vi.fn();
+    act(() => {
+      localRoot.render(
+        <MultiSelectMenuItems
+          count={2}
+          onAction={onAction}
+          onPaste={vi.fn()}
+          hasClipboard={false}
+          Item={SimpleItem}
+          Separator={SimpleSeparator}
+        />
+      );
+    });
+
+    act(() => {
+      (localContainer.querySelector('[data-testid="multi-select-delete"]') as HTMLElement).click();
+    });
+
+    expect(onAction).toHaveBeenCalledWith("delete");
+  });
+
+  it("calls onAction with 'copy' when Copy is clicked", () => {
+    const onAction = vi.fn();
+    act(() => {
+      localRoot.render(
+        <MultiSelectMenuItems
+          count={2}
+          onAction={onAction}
+          onPaste={vi.fn()}
+          hasClipboard={false}
+          Item={SimpleItem}
+          Separator={SimpleSeparator}
+        />
+      );
+    });
+
+    act(() => {
+      (localContainer.querySelector('[data-testid="multi-select-copy"]') as HTMLElement).click();
+    });
+
+    expect(onAction).toHaveBeenCalledWith("copy");
   });
 });

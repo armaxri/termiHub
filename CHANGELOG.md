@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- File browser: multi-file selection — Ctrl/Cmd+click to toggle individual files, Shift+click for range selection, plain click to select one; right-clicking a multi-selection shows bulk Copy, Cut, and Delete actions; copy/cut clipboard now supports multiple entries and paste applies each in turn (#554)
 - Settings: file-type mappings editor now shows a copy button (⎘) on each built-in row to pre-fill the override form, and an "overridden" badge on rows that already have a custom mapping covering them (#498)
 - Settings: language ID input in the file-type mappings editor now has autocomplete — suggestions are drawn from the full Monaco language registry (#498)
 - File editor: automatic syntax highlighting for special filenames (e.g. `Dockerfile`, `Jenkinsfile`, `Makefile`) and dotfiles (e.g. `.gitignore`, `.env`, `.bashrc`) that Monaco does not detect from extensions alone; user-configurable overrides available under Settings → Editor (#498)

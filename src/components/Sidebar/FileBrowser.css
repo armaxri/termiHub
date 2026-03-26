@@ -75,6 +75,14 @@
   background-color: var(--bg-hover);
 }
 
+.file-browser__row-wrapper--selected {
+  background-color: var(--bg-active);
+}
+
+.file-browser__row-wrapper--selected:hover {
+  background-color: var(--bg-active);
+}
+
 .file-browser__row {
   display: flex;
   align-items: center;
