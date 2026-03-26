@@ -1,7 +1,8 @@
-import { useState, useCallback } from "react";
-import { Plus, Trash2, RotateCcw } from "lucide-react";
+import { useState, useCallback, useRef, useMemo } from "react";
+import { Plus, Trash2, RotateCcw, Copy } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { BUILT_IN_FILENAME_MAPPINGS, BUILT_IN_EXTENSION_MAPPINGS } from "@/utils/languageMapping";
+import { getAvailableLanguages } from "@/utils/monacoLanguages";
 
 /** Combined view of a built-in mapping row (shown in the reference table). */
 interface BuiltInRow {
@@ -21,7 +22,12 @@ const ALL_BUILT_IN_ROWS: BuiltInRow[] = [
     language,
     kind: "extension" as const,
   })),
-];
+].sort((a, b) => {
+  // Strip leading dot so ".gitignore" sorts near "g", ".zshrc" near "z", etc.
+  const keyA = a.pattern.replace(/^\./, "").toLowerCase();
+  const keyB = b.pattern.replace(/^\./, "").toLowerCase();
+  return keyA.localeCompare(keyB);
+});
 
 interface FileTypeSettingsProps {
   visibleFields?: Set<string>;
@@ -40,6 +46,7 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
   const [newPattern, setNewPattern] = useState("");
   const [newLanguage, setNewLanguage] = useState("");
   const [addError, setAddError] = useState<string | null>(null);
+  const languageInputRef = useRef<HTMLInputElement>(null);
 
   const show = (field: string) => !visibleFields || visibleFields.has(field);
 
@@ -83,6 +90,15 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
     updateSettings({ ...settings, fileLanguageMappings: undefined });
   }, [settings, updateSettings]);
 
+  /** Pre-fill the add form with a built-in row so the user can override it. */
+  const handlePrefillOverride = useCallback((pattern: string, language: string) => {
+    setNewPattern(pattern);
+    setNewLanguage(language);
+    setAddError(null);
+    languageInputRef.current?.focus();
+  }, []);
+
+  const availableLanguages = useMemo(() => getAvailableLanguages(), []);
   const userEntries = Object.entries(userMappings);
 
   return (
@@ -115,6 +131,15 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
               <code>shell</code>).
             </p>
 
+            {/* Language ID datalist for autocomplete */}
+            <datalist id="file-type-language-list">
+              {availableLanguages.map(({ id, name }) => (
+                <option key={id} value={id}>
+                  {name}
+                </option>
+              ))}
+            </datalist>
+
             {/* Add new mapping */}
             <div className="settings-panel__create-prompt">
               <input
@@ -132,6 +157,7 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
                 data-testid="file-type-pattern-input"
               />
               <input
+                ref={languageInputRef}
                 className="settings-panel__create-input"
                 type="text"
                 value={newLanguage}
@@ -143,6 +169,7 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
                   if (e.key === "Enter") handleAdd();
                 }}
                 placeholder="Language ID (e.g. groovy)"
+                list="file-type-language-list"
                 data-testid="file-type-language-input"
               />
               <button
@@ -197,23 +224,46 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
               <h3 className="settings-panel__section-title">Built-in Defaults</h3>
             </div>
             <p className="settings-panel__description">
-              These mappings are applied automatically. Add a custom mapping above to override any
-              of them.
+              These mappings are applied automatically. Click{" "}
+              <Copy size={11} style={{ display: "inline", verticalAlign: "middle" }} /> to copy a
+              row into the add form and override it.
             </p>
             <ul className="settings-panel__file-list">
-              {ALL_BUILT_IN_ROWS.map(({ pattern, language }) => (
-                <li key={pattern} className="settings-panel__file-item">
-                  <span className="settings-panel__file-path" style={{ fontFamily: "monospace" }}>
-                    {pattern}
-                  </span>
-                  <span
-                    className="settings-panel__file-path settings-panel__file-path--disabled"
-                    style={{ fontFamily: "monospace" }}
+              {ALL_BUILT_IN_ROWS.map(({ pattern, language }) => {
+                const isOverridden = pattern in userMappings;
+                return (
+                  <li
+                    key={pattern}
+                    className={`settings-panel__file-item${isOverridden ? " settings-panel__file-item--overridden" : ""}`}
                   >
-                    → {language}
-                  </span>
-                </li>
-              ))}
+                    <span className="settings-panel__file-path" style={{ fontFamily: "monospace" }}>
+                      {pattern}
+                    </span>
+                    <span
+                      className="settings-panel__file-path settings-panel__file-path--disabled"
+                      style={{ fontFamily: "monospace" }}
+                    >
+                      → {language}
+                    </span>
+                    {isOverridden && (
+                      <span
+                        className="settings-panel__badge"
+                        data-testid={`file-type-overridden-badge-${pattern}`}
+                      >
+                        overridden
+                      </span>
+                    )}
+                    <button
+                      className="settings-panel__file-remove"
+                      onClick={() => handlePrefillOverride(pattern, language)}
+                      title={`Copy "${pattern}" into the add form`}
+                      data-testid={`file-type-copy-${pattern}`}
+                    >
+                      <Copy size={14} />
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           </div>
         </>
