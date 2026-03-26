@@ -123,7 +123,7 @@ export const BUILT_IN_EXTENSION_MAPPINGS: Record<string, string> = {
 
   // Data / config
   ".toml": "toml",
-  ".properties": "properties",
+  ".properties": "ini",
 
   // Data / misc
   ".lock": "yaml",

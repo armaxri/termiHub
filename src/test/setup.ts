@@ -19,7 +19,6 @@ vi.mock("monaco-editor", () => ({
       { id: "toml", aliases: ["TOML"] },
       { id: "nginx", aliases: ["Nginx"] },
       { id: "nix", aliases: ["Nix"] },
-      { id: "properties", aliases: ["Properties"] },
       { id: "ruby", aliases: ["Ruby"] },
       { id: "java", aliases: ["Java"] },
       { id: "cpp", aliases: ["C++"] },
@@ -33,6 +32,15 @@ vi.mock("monaco-editor", () => ({
     setMonarchTokensProvider: vi.fn(),
     setLanguageConfiguration: vi.fn(),
   },
+}));
+
+// Mock shiki and @shikijs/monaco to avoid WASM loading in tests.
+vi.mock("shiki", () => ({
+  createHighlighter: vi.fn().mockResolvedValue({}),
+}));
+
+vi.mock("@shikijs/monaco", () => ({
+  shikiToMonaco: vi.fn(),
 }));
 
 // Mock Tauri core API to prevent import errors when modules load

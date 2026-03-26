@@ -109,8 +109,8 @@ describe("resolveLanguage — built-in extension mappings", () => {
     expect(resolveLanguage("Cargo.toml")).toBe("toml");
   });
 
-  it("maps .properties to properties", () => {
-    expect(resolveLanguage("application.properties")).toBe("properties");
+  it("maps .properties to ini", () => {
+    expect(resolveLanguage("application.properties")).toBe("ini");
   });
 
   it("maps .nix to nix", () => {
