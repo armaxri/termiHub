@@ -14,7 +14,10 @@ import {
   WorkspaceEditorMeta,
   EditorStatus,
   EditorActions,
+  NetworkDiagnosticMeta,
+  NetworkTool,
 } from "@/types/terminal";
+import type { HttpMonitorState } from "@/types/network";
 import {
   SavedConnection,
   ConnectionFolder,
@@ -107,7 +110,7 @@ import {
   markActiveLeaf,
 } from "@/utils/panelTree";
 
-export type SidebarView = "connections" | "files" | "tunnels" | "workspaces";
+export type SidebarView = "connections" | "files" | "tunnels" | "workspaces" | "network-tools";
 
 /** Clipboard state for file browser copy/cut operations. */
 export interface FileClipboard {
@@ -183,6 +186,13 @@ interface AppState {
   ) => void;
   openSettingsTab: () => void;
   openLogViewerTab: () => void;
+  openNetworkDiagnosticTab: (
+    tool: NetworkTool,
+    prefillHost?: string,
+    connectionId?: string
+  ) => void;
+  httpMonitors: HttpMonitorState[];
+  setHttpMonitors: (monitors: HttpMonitorState[]) => void;
   openEditorTab: (filePath: string, isRemote: boolean, sftpSessionId?: string) => void;
   openConnectionEditorTab: (connectionId: string, folderId?: string | null) => void;
   openAgentDefinitionEditorTab: (
@@ -476,6 +486,10 @@ export const useAppStore = create<AppState>((set, get) => {
     // Platform default shell — updated by loadFromBackend()
     defaultShell: "bash",
 
+    // Network monitors (populated by NetworkToolsSidebar on open)
+    httpMonitors: [],
+    setHttpMonitors: (monitors) => set({ httpMonitors: monitors }),
+
     // Sidebar
     sidebarView: "connections",
     sidebarCollapsed: false,
@@ -648,6 +662,36 @@ export const useAppStore = create<AppState>((set, get) => {
 
         const dummyConfig: ConnectionConfig = { type: "local", config: { shell: "zsh" } };
         const newTab = createTab("Logs", "local", dummyConfig, targetPanelId, "log-viewer");
+        const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
+          const tabs = leaf.tabs.map((t) => ({ ...t, isActive: false }));
+          tabs.push(newTab);
+          return { ...leaf, tabs, activeTabId: newTab.id };
+        });
+        return { rootPanel, activePanelId: targetPanelId };
+      }),
+
+    openNetworkDiagnosticTab: (tool, prefillHost, connectionId) =>
+      set((state) => {
+        const allLeaves = getAllLeaves(state.rootPanel);
+        const targetPanelId = state.activePanelId ?? allLeaves[0]?.id;
+        if (!targetPanelId) return state;
+
+        const meta: NetworkDiagnosticMeta = { tool, prefillHost, connectionId };
+        const dummyConfig: ConnectionConfig = { type: "local", config: {} };
+        const toolLabel: Record<NetworkTool, string> = {
+          "port-scanner": "Port Scanner",
+          ping: "Ping",
+          "dns-lookup": "DNS Lookup",
+          "http-monitor": "HTTP Monitor",
+          traceroute: "Traceroute",
+          wol: "Wake-on-LAN",
+          "open-ports": "Open Ports",
+        };
+        const title = prefillHost ? `${toolLabel[tool]}: ${prefillHost}` : toolLabel[tool];
+        const newTab = createTab(title, "local", dummyConfig, targetPanelId, "network-diagnostic");
+        (
+          newTab as TerminalTab & { networkDiagnosticMeta: NetworkDiagnosticMeta }
+        ).networkDiagnosticMeta = meta;
         const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
           const tabs = leaf.tabs.map((t) => ({ ...t, isActive: false }));
           tabs.push(newTab);
