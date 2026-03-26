@@ -52,6 +52,15 @@ pub enum TerminalError {
     #[error("Workspace error: {0}")]
     WorkspaceError(String),
 
+    #[error("Network error: {0}")]
+    NetworkError(String),
+
+    #[error("Not found: {0}")]
+    NotFound(String),
+
+    #[error("Internal error: {0}")]
+    InternalError(String),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }
