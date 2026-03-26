@@ -14,8 +14,6 @@ export function useKeyboardShortcuts() {
   const closeTab = useAppStore((s) => s.closeTab);
   const setActiveTab = useAppStore((s) => s.setActiveTab);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
-  const tabGroups = useAppStore((s) => s.tabGroups);
-  const activeTabGroupId = useAppStore((s) => s.activeTabGroupId);
 
   useEffect(() => {
     // Wire chord state changes to the store for StatusBar display
@@ -151,34 +149,6 @@ export function useKeyboardShortcuts() {
           }
           break;
         }
-
-        case "new-tab-group":
-          e.preventDefault();
-          useAppStore.getState().addTabGroup();
-          break;
-
-        case "close-tab-group":
-          e.preventDefault();
-          useAppStore.getState().closeTabGroup(activeTabGroupId);
-          break;
-
-        case "prev-tab-group": {
-          e.preventDefault();
-          const currentIdx = tabGroups.findIndex((g) => g.id === activeTabGroupId);
-          if (currentIdx > 0) {
-            useAppStore.getState().setActiveTabGroup(tabGroups[currentIdx - 1].id);
-          }
-          break;
-        }
-
-        case "next-tab-group": {
-          e.preventDefault();
-          const currentIdx = tabGroups.findIndex((g) => g.id === activeTabGroupId);
-          if (currentIdx < tabGroups.length - 1) {
-            useAppStore.getState().setActiveTabGroup(tabGroups[currentIdx + 1].id);
-          }
-          break;
-        }
       }
     };
 
@@ -187,14 +157,5 @@ export function useKeyboardShortcuts() {
       window.removeEventListener("keydown", handleKeyDown);
       cancelChord();
     };
-  }, [
-    addTab,
-    rootPanel,
-    activePanelId,
-    closeTab,
-    setActiveTab,
-    toggleSidebar,
-    tabGroups,
-    activeTabGroupId,
-  ]);
+  }, [addTab, rootPanel, activePanelId, closeTab, setActiveTab, toggleSidebar]);
 }
