@@ -43,6 +43,18 @@ describe("resolveLanguage — built-in filename mappings", () => {
     expect(resolveLanguage("Jenkinsfile")).toBe("java");
   });
 
+  it("maps CMakeLists.txt to cmake", () => {
+    expect(resolveLanguage("CMakeLists.txt")).toBe("cmake");
+  });
+
+  it("maps cmakelists.txt (lowercase) to cmake — case-insensitive", () => {
+    expect(resolveLanguage("cmakelists.txt")).toBe("cmake");
+  });
+
+  it("maps dockerfile (lowercase) to dockerfile — case-insensitive", () => {
+    expect(resolveLanguage("dockerfile")).toBe("dockerfile");
+  });
+
   it("maps Vagrantfile to ruby", () => {
     expect(resolveLanguage("Vagrantfile")).toBe("ruby");
   });

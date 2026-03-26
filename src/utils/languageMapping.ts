@@ -127,6 +127,14 @@ export const BUILT_IN_EXTENSION_MAPPINGS: Record<string, string> = {
 };
 
 /**
+ * Case-insensitive lookup map derived from BUILT_IN_FILENAME_MAPPINGS.
+ * Allows matching e.g. "cmakelists.txt" → "cmake" regardless of case.
+ */
+const BUILT_IN_FILENAME_MAPPINGS_LOWER: Record<string, string> = Object.fromEntries(
+  Object.entries(BUILT_IN_FILENAME_MAPPINGS).map(([k, v]) => [k.toLowerCase(), v])
+);
+
+/**
  * Extract the file extension from a filename (including the leading dot).
  * Returns `undefined` for files with no extension or dotfiles with no further extension.
  *
@@ -167,8 +175,10 @@ export function resolveLanguage(
   const ext = fileExtension(fileName);
   if (ext && userOverrides[ext]) return userOverrides[ext];
 
-  // 3. Built-in filename match
-  if (BUILT_IN_FILENAME_MAPPINGS[fileName]) return BUILT_IN_FILENAME_MAPPINGS[fileName];
+  // 3. Built-in filename match (case-insensitive)
+  const fileNameLower = fileName.toLowerCase();
+  if (BUILT_IN_FILENAME_MAPPINGS_LOWER[fileNameLower])
+    return BUILT_IN_FILENAME_MAPPINGS_LOWER[fileNameLower];
 
   // 4. Built-in extension match
   if (ext && BUILT_IN_EXTENSION_MAPPINGS[ext]) return BUILT_IN_EXTENSION_MAPPINGS[ext];
