@@ -35,7 +35,7 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
         .then((ws) => {
           setName(ws.name);
           setDescription(ws.description ?? "");
-          setLayout(ws.layout);
+          setLayout(ws.layout ?? DEFAULT_LAYOUT);
         })
         .catch((err) => console.error("Failed to load workspace:", err))
         .finally(() => setLoading(false));
@@ -51,7 +51,7 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
     };
 
     try {
-      await saveWorkspace(definition);
+      await saveWorkspace(definition as Parameters<typeof saveWorkspace>[0]);
       const { findLeafByTab } = await import("@/utils/panelTree");
       const leaf = findLeafByTab(rootPanel, tabId);
       if (leaf) {

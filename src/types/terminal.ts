@@ -137,6 +137,17 @@ export interface SplitContainer {
 export type PanelNode = LeafPanel | SplitContainer;
 export type DropEdge = "left" | "right" | "top" | "bottom" | "center";
 
+/** A named workspace tab containing an independent split-panel layout. */
+export interface TabGroup {
+  id: string;
+  name: string;
+  /** Optional accent color for the tab group chip. */
+  color?: string;
+  rootPanel: PanelNode;
+  /** The currently active panel ID within this group. */
+  activePanelId: string | null;
+}
+
 export interface LanguageInfo {
   id: string;
   name: string;

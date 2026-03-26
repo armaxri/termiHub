@@ -1,27 +1,44 @@
-import { useEffect, useMemo } from "react";
-import { Plus, Columns2, Rows2, X, PanelLeft } from "lucide-react";
+import { useState, useCallback, useEffect, useMemo } from "react";
+import {
+  Plus,
+  Columns2,
+  Rows2,
+  X,
+  PanelLeft,
+  Settings as SettingsIcon,
+  FileEdit,
+  SquarePen,
+  ScrollText,
+  ArrowLeftRight,
+  LayoutGrid,
+} from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
+import {
+  DndContext,
+  DragEndEvent,
+  DragStartEvent,
+  DragOverlay,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
 import { useAppStore } from "@/store/appStore";
 import { TerminalTab } from "@/types/terminal";
-import { getAllLeaves } from "@/utils/panelTree";
+import { getAllLeaves, findLeafByTab } from "@/utils/panelTree";
+import { ConnectionIcon } from "@/utils/connectionIcons";
 import { TerminalPortalProvider } from "./TerminalRegistry";
 import { TerminalCommandBridge } from "./TerminalCommandBridge";
 import { Terminal } from "./Terminal";
 import { SplitView } from "@/components/SplitView";
+import { TabGroupStrip } from "@/components/TabGroupStrip/TabGroupStrip";
 import { terminalDispatcher } from "@/services/events";
 import "./TerminalView.css";
 
 export function TerminalView() {
-  // Initialize the singleton event dispatcher once.
-  // No cleanup — the dispatcher is a module-level singleton that persists for
-  // the app's lifetime. Per-session subscriptions handle individual terminal
-  // lifecycle. Avoiding destroy() here prevents an async race condition under
-  // React StrictMode where duplicate Tauri listeners cause doubled output.
   useEffect(() => {
     terminalDispatcher.init();
   }, []);
 
-  // Update global remote-connection state in the store (drives tab state dots).
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     listen<{ session_id: string; state: string }>("remote-state-change", (event) => {
@@ -35,7 +52,6 @@ export function TerminalView() {
     };
   }, []);
 
-  // Update agent connection state in the store (drives sidebar state dots).
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     listen<{ session_id: string; state: string }>("agent-state-change", (event) => {
@@ -45,7 +61,6 @@ export function TerminalView() {
         session_id,
         state as "disconnected" | "connecting" | "connected" | "reconnecting"
       );
-      // Auto-refresh sessions when agent reconnects
       if (state === "connected") {
         store.refreshAgentSessions(session_id);
       }
@@ -64,102 +79,176 @@ export function TerminalView() {
   const removePanel = useAppStore((s) => s.removePanel);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
+  const reorderTabs = useAppStore((s) => s.reorderTabs);
+  const moveTab = useAppStore((s) => s.moveTab);
+  const splitPanelWithTab = useAppStore((s) => s.splitPanelWithTab);
+  const moveTabToGroup = useAppStore((s) => s.moveTabToGroup);
+
+  const [activeDragTab, setActiveDragTab] = useState<TerminalTab | null>(null);
+
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
+  const handleDragStart = useCallback(
+    (event: DragStartEvent) => {
+      const tabId = event.active.id as string;
+      const leaf = findLeafByTab(rootPanel, tabId);
+      if (!leaf) return;
+      const tab = leaf.tabs.find((t) => t.id === tabId);
+      if (tab) setActiveDragTab(tab);
+    },
+    [rootPanel]
+  );
+
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      setActiveDragTab(null);
+      const { active, over } = event;
+      if (!over) return;
+
+      const tabId = active.id as string;
+      const overId = over.id as string;
+      const fromPanelId = (active.data.current as { panelId?: string })?.panelId;
+      if (!fromPanelId) return;
+
+      // Cross-group drop: tab dropped onto a tab group chip
+      if (overId.startsWith("tgchip-")) {
+        const toGroupId = overId.slice("tgchip-".length);
+        moveTabToGroup(tabId, fromPanelId, toGroupId);
+        return;
+      }
+
+      // Edge drop: split panel with tab
+      if (overId.startsWith("edge-")) {
+        const parts = overId.split("-");
+        const edge = parts[parts.length - 1] as import("@/types/terminal").DropEdge;
+        const targetPanelId = parts.slice(1, -1).join("-");
+        splitPanelWithTab(tabId, fromPanelId, targetPanelId, edge);
+        return;
+      }
+
+      // Center drop: move tab to that panel
+      if (overId.startsWith("center-")) {
+        const targetPanelId = overId.slice("center-".length);
+        if (targetPanelId === fromPanelId) return;
+        splitPanelWithTab(tabId, fromPanelId, targetPanelId, "center");
+        return;
+      }
+
+      // Sortable tab drop — find which panel the over tab belongs to
+      const overData = over.data.current as { panelId?: string; type?: string } | undefined;
+      const overPanelId = overData?.panelId;
+
+      if (overPanelId && overPanelId !== fromPanelId) {
+        const destLeaf = getAllLeaves(rootPanel).find((l) => l.id === overPanelId);
+        if (!destLeaf) return;
+        const overIndex = destLeaf.tabs.findIndex((t) => t.id === overId);
+        moveTab(tabId, fromPanelId, overPanelId, overIndex >= 0 ? overIndex : -1);
+        return;
+      }
+
+      // Same-panel reorder
+      if (tabId === overId) return;
+      const sourceLeaf = getAllLeaves(rootPanel).find((l) => l.id === fromPanelId);
+      if (!sourceLeaf) return;
+      const oldIndex = sourceLeaf.tabs.findIndex((t) => t.id === tabId);
+      const newIndex = sourceLeaf.tabs.findIndex((t) => t.id === overId);
+      if (oldIndex !== -1 && newIndex !== -1) {
+        reorderTabs(fromPanelId, oldIndex, newIndex);
+      }
+    },
+    [rootPanel, reorderTabs, moveTab, splitPanelWithTab, moveTabToGroup]
+  );
 
   const isMac = navigator.platform.toUpperCase().includes("MAC");
   const sidebarToggleTitle = `Toggle Sidebar (${isMac ? "Cmd" : "Ctrl"}+B)`;
 
   const allLeaves = getAllLeaves(rootPanel);
 
-  const handleNewTerminal = () => {
-    addTab("Terminal", "local");
-  };
-
-  const handleSplitHorizontal = () => {
-    splitPanel("horizontal");
-  };
-
-  const handleSplitVertical = () => {
-    splitPanel("vertical");
-  };
-
-  const handleClosePanel = () => {
-    if (activePanelId && allLeaves.length > 1) {
-      removePanel(activePanelId);
-    }
-  };
-
   return (
     <TerminalPortalProvider>
       <TerminalCommandBridge />
-      <div className="terminal-view">
-        <div className="terminal-view__toolbar">
-          <div className="terminal-view__toolbar-actions">
-            <button
-              className="terminal-view__toolbar-btn"
-              onClick={handleNewTerminal}
-              title="New Terminal"
-              data-testid="terminal-view-new-terminal"
-            >
-              <Plus size={16} />
-            </button>
-            <button
-              className="terminal-view__toolbar-btn"
-              onClick={handleSplitHorizontal}
-              title="Split Terminal Right"
-              data-testid="terminal-view-split-horizontal"
-            >
-              <Columns2 size={16} />
-            </button>
-            <button
-              className="terminal-view__toolbar-btn"
-              onClick={handleSplitVertical}
-              title="Split Terminal Down"
-              data-testid="terminal-view-split-vertical"
-            >
-              <Rows2 size={16} />
-            </button>
-            {allLeaves.length > 1 && (
+      <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+        <div className="terminal-view">
+          <div className="terminal-view__toolbar">
+            <div className="terminal-view__toolbar-actions">
               <button
                 className="terminal-view__toolbar-btn"
-                onClick={handleClosePanel}
-                title="Close Panel"
-                data-testid="terminal-view-close-panel"
+                onClick={() => addTab("Terminal", "local")}
+                title="New Terminal"
+                data-testid="terminal-view-new-terminal"
               >
-                <X size={16} />
+                <Plus size={16} />
               </button>
-            )}
-            <button
-              className={`terminal-view__toolbar-btn${!sidebarCollapsed ? " terminal-view__toolbar-btn--active" : ""}`}
-              onClick={toggleSidebar}
-              title={sidebarToggleTitle}
-              data-testid="terminal-view-toggle-sidebar"
-            >
-              <PanelLeft size={16} />
-            </button>
+              <button
+                className="terminal-view__toolbar-btn"
+                onClick={() => splitPanel("horizontal")}
+                title="Split Terminal Right"
+                data-testid="terminal-view-split-horizontal"
+              >
+                <Columns2 size={16} />
+              </button>
+              <button
+                className="terminal-view__toolbar-btn"
+                onClick={() => splitPanel("vertical")}
+                title="Split Terminal Down"
+                data-testid="terminal-view-split-vertical"
+              >
+                <Rows2 size={16} />
+              </button>
+              {allLeaves.length > 1 && (
+                <button
+                  className="terminal-view__toolbar-btn"
+                  onClick={() => {
+                    if (activePanelId && allLeaves.length > 1) removePanel(activePanelId);
+                  }}
+                  title="Close Panel"
+                  data-testid="terminal-view-close-panel"
+                >
+                  <X size={16} />
+                </button>
+              )}
+              <button
+                className={`terminal-view__toolbar-btn${!sidebarCollapsed ? " terminal-view__toolbar-btn--active" : ""}`}
+                onClick={toggleSidebar}
+                title={sidebarToggleTitle}
+                data-testid="terminal-view-toggle-sidebar"
+              >
+                <PanelLeft size={16} />
+              </button>
+            </div>
+          </div>
+          <div className="terminal-view__workspace">
+            <TabGroupStrip activeDragTabId={activeDragTab?.id ?? null} />
+            <div className="terminal-view__content">
+              <TerminalHost />
+              <SplitView activeDragTab={activeDragTab} />
+            </div>
           </div>
         </div>
-        <div className="terminal-view__content">
-          <TerminalHost />
-          <SplitView />
-        </div>
-      </div>
+        <DragOverlay dropAnimation={null}>
+          {activeDragTab && <TabDragOverlay tab={activeDragTab} />}
+        </DragOverlay>
+      </DndContext>
     </TerminalPortalProvider>
   );
 }
 
 /**
- * Renders ALL terminal instances in a stable location in the React tree.
- * Terminal components create imperative DOM elements that are adopted by
- * TerminalSlot components in panels — this prevents unmount/remount when
- * tabs move between panels, preserving PTY sessions and terminal content.
+ * Renders ALL terminal instances across ALL tab groups in a stable location in
+ * the React tree. Terminal components create imperative DOM elements that are
+ * adopted by TerminalSlot components in panels — this prevents unmount/remount
+ * when tabs move between panels or when switching tab groups, preserving PTY
+ * sessions and terminal content.
  */
 function TerminalHost() {
-  const rootPanel = useAppStore((s) => s.rootPanel);
+  const tabGroups = useAppStore((s) => s.tabGroups);
+
   const allTabs: TerminalTab[] = useMemo(() => {
-    return getAllLeaves(rootPanel)
+    return tabGroups
+      .flatMap((g) => getAllLeaves(g.rootPanel))
       .flatMap((leaf) => leaf.tabs)
       .filter((tab) => tab.contentType === "terminal");
-  }, [rootPanel]);
+  }, [tabGroups]);
 
   return (
     <>
@@ -174,5 +263,32 @@ function TerminalHost() {
         />
       ))}
     </>
+  );
+}
+
+function TabDragOverlay({ tab }: { tab: TerminalTab }) {
+  const NonTerminalIcon =
+    tab.contentType === "settings"
+      ? SettingsIcon
+      : tab.contentType === "log-viewer"
+        ? ScrollText
+        : tab.contentType === "editor"
+          ? FileEdit
+          : tab.contentType === "connection-editor"
+            ? SquarePen
+            : tab.contentType === "tunnel-editor"
+              ? ArrowLeftRight
+              : tab.contentType === "workspace-editor"
+                ? LayoutGrid
+                : null;
+  return (
+    <div className="tab tab--drag-overlay">
+      {NonTerminalIcon ? (
+        <NonTerminalIcon size={14} className="tab__icon" />
+      ) : (
+        <ConnectionIcon config={tab.config} size={14} className="tab__icon" />
+      )}
+      <span className="tab__title">{tab.title}</span>
+    </div>
   );
 }

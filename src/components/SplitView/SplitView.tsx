@@ -1,22 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { Group, Panel, Separator } from "react-resizable-panels";
-import {
-  DndContext,
-  DragEndEvent,
-  DragStartEvent,
-  DragOverlay,
-  PointerSensor,
-  useSensor,
-  useSensors,
-} from "@dnd-kit/core";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import {
-  Settings as SettingsIcon,
-  FileEdit,
-  SquarePen,
-  ScrollText,
-  ArrowLeftRight,
-  LayoutGrid,
   Pencil,
   FileDown,
   ClipboardCopy,
@@ -28,11 +13,9 @@ import {
   Palette,
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { PanelNode, LeafPanel, TerminalTab, DropEdge } from "@/types/terminal";
-import { getAllLeaves, findLeafByTab } from "@/utils/panelTree";
+import { PanelNode, LeafPanel, TerminalTab } from "@/types/terminal";
 import { isWindows } from "@/utils/platform";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
-import { ConnectionIcon } from "@/utils/connectionIcons";
 import { useTerminalRegistry } from "@/components/Terminal/TerminalRegistry";
 import { TabBar } from "@/components/Terminal/TabBar";
 import { ColorPickerDialog } from "@/components/Terminal/ColorPickerDialog";
@@ -47,94 +30,38 @@ import { TerminalSearchBar } from "@/components/Terminal/TerminalSearchBar";
 import { PanelDropZone } from "./PanelDropZone";
 import "./SplitView.css";
 
-export function SplitView() {
-  const rootPanel = useAppStore((s) => s.rootPanel);
+/** Props for SplitView — the DndContext now lives in TerminalView. */
+export interface SplitViewProps {
+  activeDragTab: TerminalTab | null;
+}
+
+/**
+ * Renders all tab groups' panel trees.
+ * Only the active group is visible; inactive groups are hidden via CSS so that
+ * all terminal sessions stay mounted and alive (session preservation).
+ * The DndContext lives in TerminalView and is passed as `activeDragTab`.
+ */
+export function SplitView({ activeDragTab }: SplitViewProps) {
+  const tabGroups = useAppStore((s) => s.tabGroups);
+  const activeTabGroupId = useAppStore((s) => s.activeTabGroupId);
   const setActivePanel = useAppStore((s) => s.setActivePanel);
-  const reorderTabs = useAppStore((s) => s.reorderTabs);
-  const moveTab = useAppStore((s) => s.moveTab);
-  const splitPanelWithTab = useAppStore((s) => s.splitPanelWithTab);
-
-  const [activeDragTab, setActiveDragTab] = useState<TerminalTab | null>(null);
-
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
-
-  const handleDragStart = useCallback(
-    (event: DragStartEvent) => {
-      const tabId = event.active.id as string;
-      const leaf = findLeafByTab(rootPanel, tabId);
-      if (!leaf) return;
-      const tab = leaf.tabs.find((t) => t.id === tabId);
-      if (tab) setActiveDragTab(tab);
-    },
-    [rootPanel]
-  );
-
-  const handleDragEnd = useCallback(
-    (event: DragEndEvent) => {
-      setActiveDragTab(null);
-      const { active, over } = event;
-      if (!over) return;
-
-      const tabId = active.id as string;
-      const overId = over.id as string;
-      const fromPanelId = (active.data.current as { panelId?: string })?.panelId;
-      if (!fromPanelId) return;
-
-      // Edge drop: split panel with tab
-      if (overId.startsWith("edge-")) {
-        const parts = overId.split("-");
-        // edge-{panelId}-{edge} — panelId may contain dashes so parse carefully
-        const edge = parts[parts.length - 1] as DropEdge;
-        const targetPanelId = parts.slice(1, -1).join("-");
-        splitPanelWithTab(tabId, fromPanelId, targetPanelId, edge);
-        return;
-      }
-
-      // Center drop: move tab to that panel
-      if (overId.startsWith("center-")) {
-        const targetPanelId = overId.slice("center-".length);
-        if (targetPanelId === fromPanelId) return;
-        splitPanelWithTab(tabId, fromPanelId, targetPanelId, "center");
-        return;
-      }
-
-      // Sortable tab drop — find which panel the over tab belongs to
-      const overData = over.data.current as { panelId?: string; type?: string } | undefined;
-      const overPanelId = overData?.panelId;
-
-      if (overPanelId && overPanelId !== fromPanelId) {
-        // Cross-panel tab drop: find index of the over tab in destination
-        const destLeaf = getAllLeaves(rootPanel).find((l) => l.id === overPanelId);
-        if (!destLeaf) return;
-        const overIndex = destLeaf.tabs.findIndex((t) => t.id === overId);
-        moveTab(tabId, fromPanelId, overPanelId, overIndex >= 0 ? overIndex : -1);
-        return;
-      }
-
-      // Same-panel reorder
-      if (tabId === overId) return;
-      const sourceLeaf = getAllLeaves(rootPanel).find((l) => l.id === fromPanelId);
-      if (!sourceLeaf) return;
-      const oldIndex = sourceLeaf.tabs.findIndex((t) => t.id === tabId);
-      const newIndex = sourceLeaf.tabs.findIndex((t) => t.id === overId);
-      if (oldIndex !== -1 && newIndex !== -1) {
-        reorderTabs(fromPanelId, oldIndex, newIndex);
-      }
-    },
-    [rootPanel, reorderTabs, moveTab, splitPanelWithTab]
-  );
 
   return (
-    <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-      <PanelNodeRenderer
-        node={rootPanel}
-        setActivePanel={setActivePanel}
-        activeDragTab={activeDragTab}
-      />
-      <DragOverlay dropAnimation={null}>
-        {activeDragTab && <TabDragOverlay tab={activeDragTab} />}
-      </DragOverlay>
-    </DndContext>
+    <div className="split-view-container">
+      {tabGroups.map((group) => (
+        <div
+          key={group.id}
+          className="split-view-group"
+          style={{ display: group.id === activeTabGroupId ? "flex" : "none" }}
+        >
+          <PanelNodeRenderer
+            node={group.rootPanel}
+            setActivePanel={setActivePanel}
+            activeDragTab={activeDragTab}
+          />
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -480,32 +407,5 @@ function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: boolean 
       className={`terminal-container ${isVisible ? "" : "terminal-container--hidden"}`}
       style={tabColor ? { border: `2px solid ${tabColor}` } : undefined}
     />
-  );
-}
-
-function TabDragOverlay({ tab }: { tab: TerminalTab }) {
-  const NonTerminalIcon =
-    tab.contentType === "settings"
-      ? SettingsIcon
-      : tab.contentType === "log-viewer"
-        ? ScrollText
-        : tab.contentType === "editor"
-          ? FileEdit
-          : tab.contentType === "connection-editor"
-            ? SquarePen
-            : tab.contentType === "tunnel-editor"
-              ? ArrowLeftRight
-              : tab.contentType === "workspace-editor"
-                ? LayoutGrid
-                : null;
-  return (
-    <div className="tab tab--drag-overlay">
-      {NonTerminalIcon ? (
-        <NonTerminalIcon size={14} className="tab__icon" />
-      ) : (
-        <ConnectionIcon config={tab.config} size={14} className="tab__icon" />
-      )}
-      <span className="tab__title">{tab.title}</span>
-    </div>
   );
 }

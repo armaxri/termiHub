@@ -46,7 +46,15 @@
   color: var(--text-primary);
 }
 
+.terminal-view__workspace {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .terminal-view__content {
   flex: 1;
+  display: flex;
   overflow: hidden;
 }

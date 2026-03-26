@@ -1,0 +1,126 @@
+.tab-group-strip {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 8px 0;
+  background-color: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-secondary);
+  overflow-x: auto;
+  scrollbar-width: none;
+  flex-shrink: 0;
+}
+
+.tab-group-strip::-webkit-scrollbar {
+  display: none;
+}
+
+/* ---- Chip ---- */
+
+.tab-group-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px 3px 10px;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--text-secondary);
+  background-color: transparent;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  border: 1px solid transparent;
+  border-bottom: none;
+  transition:
+    color var(--transition-fast),
+    background-color var(--transition-fast);
+  position: relative;
+}
+
+.tab-group-chip:hover {
+  color: var(--text-primary);
+  background-color: var(--bg-hover);
+}
+
+.tab-group-chip--active {
+  color: var(--text-primary);
+  background-color: var(--bg-primary);
+  border-color: var(--border-secondary);
+  border-bottom-color: var(--bg-primary);
+}
+
+.tab-group-chip--drop-over {
+  background-color: var(--accent-hover, var(--bg-hover));
+  outline: 2px solid var(--accent-color);
+  outline-offset: -2px;
+}
+
+/* Optional colored dot when group has an accent color */
+.tab-group-chip--colored::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--chip-accent, transparent);
+  flex-shrink: 0;
+}
+
+.tab-group-chip__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--chip-accent, var(--accent-color));
+  flex-shrink: 0;
+}
+
+.tab-group-chip__name {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tab-group-chip__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  opacity: 0;
+  transition:
+    opacity var(--transition-fast),
+    background-color var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.tab-group-chip:hover .tab-group-chip__close,
+.tab-group-chip--active .tab-group-chip__close {
+  opacity: 1;
+}
+
+.tab-group-chip__close:hover {
+  color: var(--text-primary);
+  background-color: var(--bg-hover);
+}
+
+/* ---- Add button ---- */
+
+.tab-group-strip__add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  transition:
+    color var(--transition-fast),
+    background-color var(--transition-fast);
+}
+
+.tab-group-strip__add:hover {
+  color: var(--text-primary);
+  background-color: var(--bg-hover);
+}

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Tab Groups: the split-view area now supports multiple named tab groups (workspaces) via a tab strip above the panels. Each tab group is an independent split-panel layout. Terminal sessions are preserved when switching between groups (all groups stay mounted). Groups can be created (`Ctrl+Shift+T` / `Cmd+Shift+T`), renamed (double-click or right-click), closed (`Ctrl+Shift+W` / `Cmd+Shift+W`), reordered by drag-and-drop, and navigated with `Ctrl+Shift+[`/`]`. Dragging a tab onto another group's chip moves the tab there. The strip hides automatically when only one group exists. Workspaces now support multi-group layouts (`tabGroups` field). (#546)
 - File browser: toolbar now has a "Go to Terminal CWD" button (folder-sync icon) that jumps back to the terminal's current working directory after manually browsing elsewhere; the button is disabled when no CWD has been reported yet
 
 ### Fixed

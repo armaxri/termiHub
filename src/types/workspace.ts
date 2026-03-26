@@ -28,12 +28,22 @@ export interface WorkspaceSplitNode {
 /** Recursive layout tree for a workspace. */
 export type WorkspaceLayoutNode = WorkspaceLeafNode | WorkspaceSplitNode;
 
+/** A tab group entry within a multi-group workspace. */
+export interface WorkspaceTabGroupDef {
+  name: string;
+  color?: string;
+  layout: WorkspaceLayoutNode;
+}
+
 /** A complete workspace definition. */
 export interface WorkspaceDefinition {
   id: string;
   name: string;
   description?: string;
-  layout: WorkspaceLayoutNode;
+  /** Single-layout field, kept for backward compatibility. */
+  layout?: WorkspaceLayoutNode;
+  /** Multi-group layout (overrides `layout` when present). */
+  tabGroups?: WorkspaceTabGroupDef[];
 }
 
 /** Summary of a workspace for list display. */
