@@ -50,9 +50,6 @@ export function TabGroupChips() {
 
   const renameGroup = tabGroups.find((g) => g.id === renameGroupId);
 
-  // Only show chips when there are multiple groups
-  if (tabGroups.length <= 1) return null;
-
   return (
     <div className="tab-group-chips">
       <DndContext sensors={sensors} onDragEnd={handleDragEnd}>

@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from "react";
-import { Plus, Columns2, Rows2, X, PanelLeft, Layers } from "lucide-react";
+import { Plus, Columns2, Rows2, X, PanelLeft } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { useAppStore } from "@/store/appStore";
 import { TerminalTab } from "@/types/terminal";
@@ -65,9 +65,6 @@ export function TerminalView() {
   const removePanel = useAppStore((s) => s.removePanel);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
-  const addTabGroup = useAppStore((s) => s.addTabGroup);
-  const tabGroups = useAppStore((s) => s.tabGroups);
-
   const isMac = navigator.platform.toUpperCase().includes("MAC");
   const sidebarToggleTitle = `Toggle Sidebar (${isMac ? "Cmd" : "Ctrl"}+B)`;
 
@@ -130,16 +127,6 @@ export function TerminalView() {
                 data-testid="terminal-view-close-panel"
               >
                 <X size={16} />
-              </button>
-            )}
-            {tabGroups.length <= 1 && (
-              <button
-                className="terminal-view__toolbar-btn"
-                onClick={() => addTabGroup()}
-                title={`New Tab Group (${isMac ? "Cmd" : "Ctrl"}+Shift+T)`}
-                data-testid="terminal-view-new-tab-group"
-              >
-                <Layers size={16} />
               </button>
             )}
             <button
