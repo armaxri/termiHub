@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Agent setup: terminal tab no longer appears blank for 5+ seconds on Windows — a "please wait" message is now injected immediately after the shell initialises, so users see feedback while the SFTP upload runs in the background (#560)
+- Agent setup: setup script now prints "You can close this terminal tab now." after the completion banner (#560)
+
 - File editor: syntax highlighting for CMake, TOML, Nginx, and Nix files now works correctly — `"vs-dark"` is not a valid Shiki v4 theme identifier, causing the grammar loader to silently fail; replaced with `"dark-plus"` / `"light-plus"` (VS Code Dark+ / Light+); the Monaco editor theme now also follows the termiHub app theme (dark / light / system) instead of being hardcoded to dark (#498)
 - File editor: built-in filename mappings now match case-insensitively, so e.g. `cmakelists.txt` is correctly highlighted as CMake (#498)
 - File editor: added syntax highlighting for CMake, TOML, Nginx, and Nix files using TextMate grammars sourced from shiki's `tm-grammars` package (the same grammars VS Code uses); `.nix` and `.toml` files now highlight instead of showing as plain text; `.properties` files are mapped to the built-in `ini` highlighter (#498)
