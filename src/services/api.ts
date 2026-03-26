@@ -3,7 +3,13 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import { SessionId, ConnectionConfig, RemoteAgentConfig, LogEntry } from "@/types/terminal";
+import {
+  SessionId,
+  ConnectionConfig,
+  RemoteAgentConfig,
+  LogEntry,
+  TerminalOptions,
+} from "@/types/terminal";
 import { SystemStats } from "@/types/monitoring";
 import { CredentialStoreStatusInfo, SwitchCredentialStoreResult } from "@/types/credential";
 import {
@@ -427,6 +433,8 @@ export interface AgentDefinitionInfo {
   config: Record<string, unknown>;
   persistent: boolean;
   folderId: string | null;
+  terminalOptions?: TerminalOptions;
+  icon?: string;
 }
 
 /** Info about a folder on an agent. */

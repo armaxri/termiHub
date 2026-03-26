@@ -32,6 +32,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
+import { ConnectionIcon } from "@/utils/connectionIcons";
 import { useAppStore } from "@/store/appStore";
 import { RemoteAgentDefinition } from "@/types/connection";
 import {
@@ -161,7 +162,17 @@ function AgentConnectionItem({
           onDoubleClick={() => onOpen(definition)}
           title={`${definition.name} (${definition.sessionType}${definition.persistent ? ", persistent" : ""})`}
         >
-          <SessionTypeIcon type={definition.sessionType} />
+          <ConnectionIcon
+            config={{
+              type: "remote-session",
+              config: {
+                sessionType: definition.sessionType,
+                shell: (definition.config as Record<string, unknown>).shell as string | undefined,
+              },
+            }}
+            customIcon={definition.icon}
+            size={14}
+          />
           <span className="connection-tree__label">{definition.name}</span>
           <span className="connection-tree__type">{definition.sessionType}</span>
         </button>
@@ -479,17 +490,24 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
 
   const handleOpenDefinition = useCallback(
     (def: AgentDefinitionInfo) => {
-      addTab(def.name, "remote-session", {
-        type: "remote-session",
-        config: {
-          agentId: agent.id,
-          sessionType: def.sessionType as "shell" | "serial",
-          shell: (def.config as Record<string, unknown>).shell as string | undefined,
-          serialPort: (def.config as Record<string, unknown>).port as string | undefined,
-          persistent: def.persistent,
-          title: def.name,
+      addTab(
+        def.name,
+        "remote-session",
+        {
+          type: "remote-session",
+          config: {
+            agentId: agent.id,
+            sessionType: def.sessionType as "shell" | "serial",
+            shell: (def.config as Record<string, unknown>).shell as string | undefined,
+            serialPort: (def.config as Record<string, unknown>).port as string | undefined,
+            persistent: def.persistent,
+            title: def.name,
+          },
         },
-      });
+        undefined,
+        undefined,
+        def.terminalOptions
+      );
     },
     [agent.id, addTab]
   );
