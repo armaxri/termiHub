@@ -305,6 +305,90 @@ pub struct AgentShutdownResult {
     pub detached_sessions: u32,
 }
 
+// ── network.port_scan ───────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct NetworkPortScanParams {
+    pub host: String,
+    /// Port specification: "22", "80,443", "1-1024"
+    pub ports: String,
+    pub timeout_ms: Option<u64>,
+    pub concurrency: Option<usize>,
+}
+
+pub use termihub_core::network::types::{
+    OpenPort, PingResult, PingStats, PortScanResult, PortScanSummary, TracerouteHop,
+};
+
+#[derive(Debug, Clone, Serialize)]
+pub struct NetworkPortScanResponse {
+    pub results: Vec<PortScanResult>,
+    pub summary: PortScanSummary,
+}
+
+// ── network.ping ────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct NetworkPingParams {
+    pub host: String,
+    pub count: Option<u32>,
+    pub interval_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct NetworkPingResponse {
+    pub results: Vec<PingResult>,
+    pub stats: PingStats,
+}
+
+// ── network.dns_lookup ──────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct NetworkDnsLookupParams {
+    pub hostname: String,
+    pub record_type: String,
+    pub server: Option<String>,
+}
+
+// ── network.open_ports ──────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+pub struct NetworkOpenPortsResponse {
+    pub ports: Vec<OpenPort>,
+}
+
+// ── network.traceroute ──────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct NetworkTracerouteParams {
+    pub host: String,
+    pub max_hops: Option<u8>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct NetworkTracerouteResponse {
+    pub hops: Vec<TracerouteHop>,
+}
+
+// ── network.wol ─────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct NetworkWolParams {
+    pub mac: String,
+    #[serde(default = "default_broadcast")]
+    pub broadcast: String,
+    #[serde(default = "default_wol_port")]
+    pub port: u16,
+}
+
+fn default_broadcast() -> String {
+    "255.255.255.255".to_string()
+}
+
+fn default_wol_port() -> u16 {
+    9
+}
+
 // ── monitoring.subscribe ────────────────────────────────────────────
 
 #[derive(Debug, Clone, Deserialize)]

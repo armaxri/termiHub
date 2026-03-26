@@ -4,6 +4,7 @@ mod files;
 mod handler;
 mod io;
 mod monitoring;
+mod network;
 mod protocol;
 mod registry;
 mod session;
