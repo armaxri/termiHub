@@ -116,9 +116,9 @@ export function useSessionFileSystem() {
   }, []);
 
   const copyEntry = useCallback(
-    (entry: FileEntry) => {
+    (entries: FileEntry[]) => {
       useAppStore.getState().setFileClipboard({
-        entry,
+        entries,
         operation: "copy",
         sourceMode: "session",
         sourcePath: sessionCurrentPath,
@@ -130,9 +130,9 @@ export function useSessionFileSystem() {
   );
 
   const cutEntry = useCallback(
-    (entry: FileEntry) => {
+    (entries: FileEntry[]) => {
       useAppStore.getState().setFileClipboard({
-        entry,
+        entries,
         operation: "cut",
         sourceMode: "session",
         sourcePath: sessionCurrentPath,
@@ -148,34 +148,35 @@ export function useSessionFileSystem() {
     if (!clipboard || !sessionFileBrowserId) return;
 
     const destDir = sessionCurrentPath;
-    const destPath =
-      destDir === "/" ? `/${clipboard.entry.name}` : `${destDir}/${clipboard.entry.name}`;
 
-    if (clipboard.sourceMode === "session") {
-      const srcId = clipboard.terminalSessionId;
-      if (clipboard.operation === "cut" && srcId === sessionFileBrowserId) {
-        await sessionRenameFile(sessionFileBrowserId, clipboard.entry.path, destPath);
-        useAppStore.getState().setFileClipboard(null);
-      } else {
-        // Cross-session or copy: read source, write to dest
-        const srcSession = srcId ?? sessionFileBrowserId;
-        const data = await sessionReadFile(srcSession, clipboard.entry.path);
-        await sessionWriteFile(sessionFileBrowserId, destPath, data);
-        if (clipboard.operation === "cut") {
-          await sessionDeleteFile(srcSession, clipboard.entry.path);
-          useAppStore.getState().setFileClipboard(null);
+    for (const clipEntry of clipboard.entries) {
+      const destPath = destDir === "/" ? `/${clipEntry.name}` : `${destDir}/${clipEntry.name}`;
+
+      if (clipboard.sourceMode === "session") {
+        const srcId = clipboard.terminalSessionId;
+        if (clipboard.operation === "cut" && srcId === sessionFileBrowserId) {
+          await sessionRenameFile(sessionFileBrowserId, clipEntry.path, destPath);
+        } else {
+          // Cross-session or copy: read source, write to dest
+          const srcSession = srcId ?? sessionFileBrowserId;
+          const data = await sessionReadFile(srcSession, clipEntry.path);
+          await sessionWriteFile(sessionFileBrowserId, destPath, data);
+          if (clipboard.operation === "cut") {
+            await sessionDeleteFile(srcSession, clipEntry.path);
+          }
         }
+      } else if (clipboard.sourceMode === "local") {
+        // local→session: read local file and write to session
+        const { readFile } = await import("@tauri-apps/plugin-fs");
+        const data = await readFile(clipEntry.path);
+        await sessionWriteFile(sessionFileBrowserId, destPath, Array.from(data));
       }
-    } else if (clipboard.sourceMode === "local") {
-      // local→session: read local file and write to session
-      const { readFile } = await import("@tauri-apps/plugin-fs");
-      const data = await readFile(clipboard.entry.path);
-      await sessionWriteFile(sessionFileBrowserId, destPath, Array.from(data));
-      if (clipboard.operation === "cut") {
-        useAppStore.getState().setFileClipboard(null);
-      }
+      // sftp→session: not yet supported
     }
-    // sftp→session: not yet supported
+
+    if (clipboard.operation === "cut") {
+      useAppStore.getState().setFileClipboard(null);
+    }
 
     refreshSession();
   }, [sessionFileBrowserId, sessionCurrentPath, refreshSession]);
