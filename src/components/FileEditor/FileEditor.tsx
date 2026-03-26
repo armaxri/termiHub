@@ -6,6 +6,8 @@ import { EditorTabMeta, EditorStatus } from "@/types/terminal";
 import { useAppStore } from "@/store/appStore";
 import { resolveLanguage } from "@/utils/languageMapping";
 import { getAvailableLanguages } from "@/utils/monacoLanguages";
+import { getMonacoTheme } from "@/utils/monacoCustomLanguages";
+import { getCurrentTheme, onThemeChange } from "@/themes";
 import {
   localReadFile,
   localWriteFile,
@@ -51,18 +53,37 @@ export function FileEditor({ tabId, meta, isVisible }: FileEditorProps) {
   const setEditorStatus = useAppStore((s) => s.setEditorStatus);
   const setEditorActions = useAppStore((s) => s.setEditorActions);
   const fileLanguageMappings = useAppStore((s) => s.settings.fileLanguageMappings);
+  // Subscribe to the theme setting so we re-derive the Monaco theme when the
+  // user explicitly switches between dark / light / system in the settings.
+  const themeSetting = useAppStore((s) => s.settings.theme);
 
   const [content, setContent] = useState<string | null>(null);
   const [savedContent, setSavedContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // Monaco theme derived from the active termiHub theme.  getCurrentTheme()
+  // always returns the resolved theme (dark or light), even when the setting
+  // is "system", so this handles all three settings modes correctly.
+  const [monacoTheme, setMonacoTheme] = useState(() => getMonacoTheme(getCurrentTheme().id));
 
   const saveRef = useRef<() => void>(() => {});
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
 
   const fileName = meta.filePath.split("/").pop() ?? meta.filePath;
   const detectedLanguage = resolveLanguage(fileName, fileLanguageMappings);
+
+  // Re-derive Monaco theme when the settings theme changes (dark / light / system).
+  useEffect(() => {
+    setMonacoTheme(getMonacoTheme(getCurrentTheme().id));
+  }, [themeSetting]);
+
+  // Also update when the OS theme changes while in "system" mode.
+  useEffect(() => {
+    return onThemeChange(() => {
+      setMonacoTheme(getMonacoTheme(getCurrentTheme().id));
+    });
+  }, []);
 
   // Load file content on mount
   useEffect(() => {
@@ -272,7 +293,7 @@ export function FileEditor({ tabId, meta, isVisible }: FileEditorProps) {
           defaultValue={content ?? ""}
           path={fileName}
           language={detectedLanguage}
-          theme="vs-dark"
+          theme={monacoTheme}
           onChange={(value) => setContent(value ?? "")}
           onMount={handleEditorMount}
           options={{

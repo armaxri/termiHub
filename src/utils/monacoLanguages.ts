@@ -12,6 +12,14 @@ import { LanguageInfo } from "@/types/terminal";
 let cached: LanguageInfo[] | null = null;
 
 /**
+ * Invalidate the language cache so the next call to `getAvailableLanguages()`
+ * re-queries Monaco. Call this after registering custom languages.
+ */
+export function resetLanguageCache(): void {
+  cached = null;
+}
+
+/**
  * Return all language IDs registered with Monaco, sorted by display name.
  * Results are memoised — safe to call on every render.
  */

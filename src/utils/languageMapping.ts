@@ -19,6 +19,9 @@ export const BUILT_IN_FILENAME_MAPPINGS: Record<string, string> = {
   Kbuild: "makefile",
   "CMakeLists.txt": "cmake",
 
+  // Web server config
+  "nginx.conf": "nginx",
+
   // CI / deployment
   Jenkinsfile: "java", // Groovy DSL — Groovy not available in Monaco; java is closest
   Vagrantfile: "ruby",
@@ -118,13 +121,25 @@ export const BUILT_IN_EXTENSION_MAPPINGS: Record<string, string> = {
   ".vert": "cpp",
   ".frag": "cpp",
 
+  // Data / config
+  ".toml": "toml",
+  ".properties": "ini",
+
   // Data / misc
   ".lock": "yaml",
   ".ipynb": "json",
-  ".nix": "plaintext",
+  ".nix": "nix",
   ".http": "plaintext",
   ".rest": "plaintext",
 };
+
+/**
+ * Case-insensitive lookup map derived from BUILT_IN_FILENAME_MAPPINGS.
+ * Allows matching e.g. "cmakelists.txt" → "cmake" regardless of case.
+ */
+const BUILT_IN_FILENAME_MAPPINGS_LOWER: Record<string, string> = Object.fromEntries(
+  Object.entries(BUILT_IN_FILENAME_MAPPINGS).map(([k, v]) => [k.toLowerCase(), v])
+);
 
 /**
  * Extract the file extension from a filename (including the leading dot).
@@ -167,8 +182,10 @@ export function resolveLanguage(
   const ext = fileExtension(fileName);
   if (ext && userOverrides[ext]) return userOverrides[ext];
 
-  // 3. Built-in filename match
-  if (BUILT_IN_FILENAME_MAPPINGS[fileName]) return BUILT_IN_FILENAME_MAPPINGS[fileName];
+  // 3. Built-in filename match (case-insensitive)
+  const fileNameLower = fileName.toLowerCase();
+  if (BUILT_IN_FILENAME_MAPPINGS_LOWER[fileNameLower])
+    return BUILT_IN_FILENAME_MAPPINGS_LOWER[fileNameLower];
 
   // 4. Built-in extension match
   if (ext && BUILT_IN_EXTENSION_MAPPINGS[ext]) return BUILT_IN_EXTENSION_MAPPINGS[ext];

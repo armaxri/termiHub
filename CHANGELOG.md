@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- File editor: syntax highlighting for CMake, TOML, Nginx, and Nix files now works correctly — `"vs-dark"` is not a valid Shiki v4 theme identifier, causing the grammar loader to silently fail; replaced with `"dark-plus"` / `"light-plus"` (VS Code Dark+ / Light+); the Monaco editor theme now also follows the termiHub app theme (dark / light / system) instead of being hardcoded to dark (#498)
+- File editor: built-in filename mappings now match case-insensitively, so e.g. `cmakelists.txt` is correctly highlighted as CMake (#498)
+- File editor: added syntax highlighting for CMake, TOML, Nginx, and Nix files using TextMate grammars sourced from shiki's `tm-grammars` package (the same grammars VS Code uses); `.nix` and `.toml` files now highlight instead of showing as plain text; `.properties` files are mapped to the built-in `ini` highlighter (#498)
 - Settings: file-type mappings built-in table no longer renders dotfile names backwards (`.gitignore` was displayed as `erongi tig.`) — caused by `direction: rtl` CSS on the shared file-path class; RTL truncation is now a separate opt-in modifier used only where long real paths need left-truncation (#498)
 - Settings: built-in file-type mappings are now sorted alphabetically (leading dot ignored), replacing the unpredictable insertion order (#498)
 - Remote agent shell sessions with PowerShell (and other special shells like GitBash, WSL) now show the correct shell icon instead of the generic server icon — handles both short names (`powershell`) and full paths (`/usr/local/bin/pwsh`) (#549)

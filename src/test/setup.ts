@@ -2,6 +2,9 @@ import { vi } from "vitest";
 
 // Mock monaco-editor so tests don't need a browser environment.
 vi.mock("monaco-editor", () => ({
+  editor: {
+    setTheme: vi.fn(),
+  },
   languages: {
     getLanguages: vi.fn(() => [
       { id: "plaintext", aliases: ["Plain Text"] },
@@ -16,6 +19,9 @@ vi.mock("monaco-editor", () => ({
       { id: "dockerfile", aliases: ["Dockerfile"] },
       { id: "makefile", aliases: ["Makefile"] },
       { id: "cmake", aliases: ["CMake"] },
+      { id: "toml", aliases: ["TOML"] },
+      { id: "nginx", aliases: ["Nginx"] },
+      { id: "nix", aliases: ["Nix"] },
       { id: "ruby", aliases: ["Ruby"] },
       { id: "java", aliases: ["Java"] },
       { id: "cpp", aliases: ["C++"] },
@@ -25,7 +31,19 @@ vi.mock("monaco-editor", () => ({
       { id: "css", aliases: ["CSS"] },
       { id: "hcl", aliases: ["HCL"] },
     ]),
+    register: vi.fn(),
+    setMonarchTokensProvider: vi.fn(),
+    setLanguageConfiguration: vi.fn(),
   },
+}));
+
+// Mock shiki and @shikijs/monaco to avoid WASM loading in tests.
+vi.mock("shiki", () => ({
+  createHighlighter: vi.fn().mockResolvedValue({}),
+}));
+
+vi.mock("@shikijs/monaco", () => ({
+  shikiToMonaco: vi.fn(),
 }));
 
 // Mock Tauri core API to prevent import errors when modules load
