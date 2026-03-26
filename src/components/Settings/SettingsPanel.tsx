@@ -1,6 +1,14 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { getVersion } from "@tauri-apps/api/app";
-import { Settings2, Palette, TerminalSquare, Keyboard, Shield, FileJson } from "lucide-react";
+import {
+  Settings2,
+  Palette,
+  TerminalSquare,
+  Keyboard,
+  Shield,
+  FileJson,
+  FileCode2,
+} from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { applyTheme } from "@/themes/engine";
@@ -15,6 +23,7 @@ import { TerminalSettings } from "./TerminalSettings";
 import { ExternalFilesSettings } from "./ExternalFilesSettings";
 import { KeyboardSettings } from "./KeyboardSettings";
 import { SecuritySettings } from "./SecuritySettings";
+import { FileTypeSettings } from "./FileTypeSettings";
 import "./SettingsPanel.css";
 
 const SETTINGS_ICONS: Record<SettingsCategory, LucideIcon> = {
@@ -24,6 +33,7 @@ const SETTINGS_ICONS: Record<SettingsCategory, LucideIcon> = {
   keyboard: Keyboard,
   security: Shield,
   "external-files": FileJson,
+  editor: FileCode2,
 };
 
 const STORAGE_KEY = "termihub-settings-category";
@@ -38,7 +48,8 @@ function loadSavedCategory(): SettingsCategory {
       saved === "terminal" ||
       saved === "keyboard" ||
       saved === "security" ||
-      saved === "external-files"
+      saved === "external-files" ||
+      saved === "editor"
     ) {
       return saved;
     }
@@ -191,6 +202,9 @@ export function SettingsPanel({ isVisible }: SettingsPanelProps) {
       if (highlightedCategories?.has("security")) {
         sections.push(<SecuritySettings key="security" visibleFields={visibleFields} />);
       }
+      if (highlightedCategories?.has("editor")) {
+        sections.push(<FileTypeSettings key="editor" visibleFields={visibleFields} />);
+      }
       if (sections.length === 0) {
         return <div className="settings-panel__no-results">No settings match your search.</div>;
       }
@@ -210,6 +224,8 @@ export function SettingsPanel({ isVisible }: SettingsPanelProps) {
         return <SecuritySettings />;
       case "external-files":
         return <ExternalFilesSettings />;
+      case "editor":
+        return <FileTypeSettings />;
     }
   };
 

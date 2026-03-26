@@ -267,12 +267,32 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Left-truncate long paths (shows the end of the path instead of the beginning). */
+.settings-panel__file-path--rtl {
   direction: rtl;
   text-align: left;
 }
 
 .settings-panel__file-path--disabled {
   color: var(--text-disabled);
+}
+
+.settings-panel__file-item--overridden {
+  opacity: 0.55;
+}
+
+.settings-panel__badge {
+  flex-shrink: 0;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background-color: var(--color-warning, #e8a317);
+  color: var(--bg-primary);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
 .settings-panel__file-error {

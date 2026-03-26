@@ -174,7 +174,7 @@ export function ExternalFilesSettings() {
                   <span className="settings-panel__toggle-slider" />
                 </label>
                 <span
-                  className={`settings-panel__file-path${!file.enabled ? " settings-panel__file-path--disabled" : ""}`}
+                  className={`settings-panel__file-path settings-panel__file-path--rtl${!file.enabled ? " settings-panel__file-path--disabled" : ""}`}
                   title={file.path}
                 >
                   {file.path}

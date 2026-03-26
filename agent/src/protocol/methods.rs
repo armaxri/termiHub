@@ -153,6 +153,8 @@ pub struct ConnectionCreateParams {
     #[serde(default)]
     pub persistent: bool,
     pub folder_id: Option<String>,
+    pub terminal_options: Option<serde_json::Value>,
+    pub icon: Option<String>,
 }
 
 // ── connections.update ─────────────────────────────────────────────
@@ -168,6 +170,12 @@ pub struct ConnectionUpdateParams {
     /// Use JSON `null` to move to root, omit to leave unchanged.
     #[serde(default, deserialize_with = "deserialize_optional_nullable")]
     pub folder_id: Option<serde_json::Value>,
+    /// Use JSON `null` to clear, omit to leave unchanged.
+    #[serde(default, deserialize_with = "deserialize_optional_nullable")]
+    pub terminal_options: Option<serde_json::Value>,
+    /// Use JSON `null` to clear, omit to leave unchanged.
+    #[serde(default, deserialize_with = "deserialize_optional_nullable")]
+    pub icon: Option<serde_json::Value>,
 }
 
 // ── connections.delete ─────────────────────────────────────────────

@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Settings: file-type mappings built-in table no longer renders dotfile names backwards (`.gitignore` was displayed as `erongi tig.`) — caused by `direction: rtl` CSS on the shared file-path class; RTL truncation is now a separate opt-in modifier used only where long real paths need left-truncation (#498)
+- Settings: built-in file-type mappings are now sorted alphabetically (leading dot ignored), replacing the unpredictable insertion order (#498)
+- Remote agent shell sessions with PowerShell (and other special shells like GitBash, WSL) now show the correct shell icon instead of the generic server icon — handles both short names (`powershell`) and full paths (`/usr/local/bin/pwsh`) (#549)
+- Remote agent connection definitions now have Terminal and Appearance settings tabs for per-session font, color, cursor, and icon customisation (#549)
 - Terminal: WSL CWD hook injection is now completely silent — the setup task writes the hook to a temp script file via `wsl.exe -d <distro> -- sh -c 'cat > /tmp/.termihub_init'` and sources it; using a subprocess guarantees immediate filesystem visibility (Windows UNC path writes can return success without being synchronously propagated into WSL, causing `source: no such file` errors); the script self-erases the single visible `source ...` line before the next prompt appears
 - Terminal: WSL file browser now uses `\\wsl.localhost\<distro>` (the Windows 11 preferred UNC path) with automatic fallback to `\\wsl$\<distro>` for older Windows versions, fixing file browser failures on Windows 11
 - Terminal: OSC 7 CWD injection no longer clears the full screen — only the lines occupied by the echoed setup command are erased, using a computed `\r\033[2K` + N×`\033[A\033[2K` sequence sized to the terminal width
@@ -18,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Settings: file-type mappings editor now shows a copy button (⎘) on each built-in row to pre-fill the override form, and an "overridden" badge on rows that already have a custom mapping covering them (#498)
+- Settings: language ID input in the file-type mappings editor now has autocomplete — suggestions are drawn from the full Monaco language registry (#498)
+- File editor: automatic syntax highlighting for special filenames (e.g. `Dockerfile`, `Jenkinsfile`, `Makefile`) and dotfiles (e.g. `.gitignore`, `.env`, `.bashrc`) that Monaco does not detect from extensions alone; user-configurable overrides available under Settings → Editor (#498)
 - Workspace editor: configurable panel sizes — click percentage badges on split children to set custom proportions, redistribute remaining space automatically, reset to equal with one click; sizes persist across save/load and apply as `defaultSize` at runtime (#544)
 - Concept: Package manager for extensions and tools — design document covering repository browsing, dependency resolution, automatic updates, tool packages, and size management (#521)
 - Workspaces — reusable terminal layouts with pre-configured connections that open automatically; create, edit, duplicate, delete, launch, and save the current layout as a workspace (#503)

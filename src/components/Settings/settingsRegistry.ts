@@ -4,7 +4,8 @@ export type SettingsCategory =
   | "terminal"
   | "keyboard"
   | "security"
-  | "external-files";
+  | "external-files"
+  | "editor";
 
 export interface CategoryDefinition {
   id: SettingsCategory;
@@ -26,6 +27,7 @@ export const CATEGORIES: CategoryDefinition[] = [
   { id: "keyboard", label: "Keyboard" },
   { id: "security", label: "Security" },
   { id: "external-files", label: "External Files" },
+  { id: "editor", label: "Editor" },
 ];
 
 export const SETTINGS_REGISTRY: SettingDefinition[] = [
@@ -126,6 +128,13 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     description: "Lock the master password credential store after inactivity",
     category: "security",
     keywords: ["auto-lock", "timeout", "lock", "inactivity", "minutes"],
+  },
+  {
+    id: "fileLanguageMappings",
+    label: "File Type Mappings",
+    description: "Map filenames and extensions to syntax highlighting languages",
+    category: "editor",
+    keywords: ["syntax", "highlight", "language", "filetype", "extension", "mapping", "monaco"],
   },
 ];
 

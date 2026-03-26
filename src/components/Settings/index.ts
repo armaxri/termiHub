@@ -6,5 +6,6 @@ export { AppearanceSettings } from "./AppearanceSettings";
 export { TerminalSettings } from "./TerminalSettings";
 export { ExternalFilesSettings } from "./ExternalFilesSettings";
 export { SecuritySettings } from "./SecuritySettings";
+export { FileTypeSettings } from "./FileTypeSettings";
 export { CustomizeLayoutDialog } from "./CustomizeLayoutDialog";
 export { LayoutPreview } from "./LayoutPreview";

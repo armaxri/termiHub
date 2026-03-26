@@ -524,6 +524,8 @@ impl Dispatcher {
             config: params.config,
             persistent: params.persistent,
             folder_id: params.folder_id,
+            terminal_options: params.terminal_options,
+            icon: params.icon,
         };
 
         let snapshot = self.connection_store.create(conn).await;
@@ -556,6 +558,19 @@ impl Dispatcher {
             }
         });
 
+        // Convert optional nullable JSON values to Option<Option<T>>
+        let terminal_options =
+            params
+                .terminal_options
+                .map(|v| if v.is_null() { None } else { Some(v) });
+        let icon = params.icon.map(|v| {
+            if v.is_null() {
+                None
+            } else {
+                v.as_str().map(|s| s.to_string())
+            }
+        });
+
         match self
             .connection_store
             .update(
@@ -565,6 +580,8 @@ impl Dispatcher {
                 params.config,
                 params.persistent,
                 folder_id,
+                terminal_options,
+                icon,
             )
             .await
         {

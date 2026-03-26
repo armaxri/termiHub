@@ -76,6 +76,10 @@ pub struct AgentDefinitionInfo {
     pub config: Value,
     pub persistent: bool,
     pub folder_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_options: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
 }
 
 /// Info about a folder on the agent.
@@ -104,6 +108,14 @@ fn parse_agent_definition(v: &Value) -> Option<AgentDefinitionInfo> {
         config: v.get("config").cloned().unwrap_or(Value::Null),
         persistent: v["persistent"].as_bool().unwrap_or(false),
         folder_id: v["folder_id"].as_str().map(|s| s.to_string()),
+        terminal_options: v.get("terminal_options").and_then(|t| {
+            if t.is_null() {
+                None
+            } else {
+                Some(t.clone())
+            }
+        }),
+        icon: v["icon"].as_str().map(|s| s.to_string()),
     })
 }
 
@@ -1280,6 +1292,8 @@ mod tests {
             config: json!({}),
             persistent: true,
             folder_id: Some("folder-1".to_string()),
+            terminal_options: None,
+            icon: None,
         };
         let v = serde_json::to_value(&def).unwrap();
         assert_eq!(v["sessionType"], "shell");
@@ -1317,6 +1331,8 @@ mod tests {
                 config: json!({}),
                 persistent: false,
                 folder_id: None,
+                terminal_options: None,
+                icon: None,
             }],
             folders: vec![AgentFolderInfo {
                 id: "folder-1".to_string(),
