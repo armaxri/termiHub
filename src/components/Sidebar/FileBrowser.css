@@ -63,7 +63,7 @@
 
 .file-browser__list {
   flex: 1;
-  overflow: hidden;
+  overflow-y: auto;
 }
 
 .file-browser__row-wrapper {

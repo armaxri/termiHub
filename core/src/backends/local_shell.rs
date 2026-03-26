@@ -229,6 +229,12 @@ impl ConnectionType for LocalShell {
 
         let shell_cmd = build_shell_command(&config);
 
+        // Determine OSC 7 CWD tracking injection strategy.
+        // PowerShell: pass via -NoExit -Command so it runs silently before the
+        // interactive session starts, avoiding any visible echo in the terminal.
+        // All other shells (bash, WSL, git-bash): inject via stdin after spawn.
+        let osc7_setup = osc7_setup_command(&effective_shell, config.cols);
+
         info!(
             program = %shell_cmd.program,
             "Spawning local shell"
@@ -248,6 +254,25 @@ impl ConnectionType for LocalShell {
         let mut command = CommandBuilder::new(&shell_cmd.program);
         for arg in &shell_cmd.args {
             command.arg(arg);
+        }
+        // PowerShell / cmd: inject OSC 7 prompt hook via startup args to avoid
+        // the setup command being echoed visibly in the terminal.
+        // PowerShell uses -NoExit -Command; cmd uses /K.
+        match effective_shell.as_str() {
+            "powershell" => {
+                if let Some(ref setup) = osc7_setup {
+                    command.arg("-NoExit");
+                    command.arg("-Command");
+                    command.arg(setup.as_str());
+                }
+            }
+            "cmd" => {
+                if let Some(ref setup) = osc7_setup {
+                    command.arg("/K");
+                    command.arg(setup.as_str());
+                }
+            }
+            _ => {}
         }
         for (key, value) in &shell_cmd.env {
             command.env(key, value);
@@ -330,15 +355,18 @@ impl ConnectionType for LocalShell {
             child: Arc::new(Mutex::new(child)),
         });
 
-        // Inject OSC 7 PROMPT_COMMAND hook for CWD tracking.
+        // Inject OSC 7 PROMPT_COMMAND hook for CWD tracking via stdin.
         // Bash (and Git Bash) don't emit OSC 7 by default, so we inject a
-        // PROMPT_COMMAND that emits it on each prompt. Zsh, PowerShell, and cmd
-        // are skipped (zsh has native OSC 7; PowerShell/cmd don't support it).
+        // PROMPT_COMMAND that emits it on each prompt. PowerShell and cmd were
+        // already handled via startup args above to avoid visible echo.
         // Errors are non-fatal — the shell works without CWD tracking.
-        if let Some(setup) = osc7_setup_command(&effective_shell) {
-            let cmd = format!("{setup}\n");
-            if let Err(e) = self.write(cmd.as_bytes()) {
-                debug!("Failed to inject OSC 7 hook: {e}");
+        let uses_startup_args = matches!(effective_shell.as_str(), "powershell" | "cmd");
+        if !uses_startup_args {
+            if let Some(setup) = osc7_setup {
+                let cmd = format!("{setup}\n");
+                if let Err(e) = self.write(cmd.as_bytes()) {
+                    debug!("Failed to inject OSC 7 hook: {e}");
+                }
             }
         }
 
