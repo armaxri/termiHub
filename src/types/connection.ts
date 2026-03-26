@@ -129,6 +129,13 @@ export interface AppSettings {
   credentialAutoLockMinutes?: number;
   rightClickBehavior?: "contextMenu" | "quickAction";
   keybindingOverrides?: KeybindingOverrideEntry[];
+  /**
+   * User-defined file-type overrides for the built-in language mapping.
+   * Keys are exact filenames (e.g. `"Jenkinsfile"`) or extensions (e.g. `".conf"`).
+   * Values are Monaco language IDs (e.g. `"groovy"`, `"ini"`).
+   * These take precedence over the built-in defaults.
+   */
+  fileLanguageMappings?: Record<string, string>;
 }
 
 export interface FileEntry {

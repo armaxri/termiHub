@@ -2,8 +2,10 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import Editor, { loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
 import { Save, Loader2, AlertCircle, Globe } from "lucide-react";
-import { EditorTabMeta, EditorStatus, LanguageInfo } from "@/types/terminal";
+import { EditorTabMeta, EditorStatus } from "@/types/terminal";
 import { useAppStore } from "@/store/appStore";
+import { resolveLanguage } from "@/utils/languageMapping";
+import { getAvailableLanguages } from "@/utils/monacoLanguages";
 import {
   localReadFile,
   localWriteFile,
@@ -14,22 +16,6 @@ import "./FileEditor.css";
 
 // Use local monaco-editor package instead of CDN (important for Tauri/offline)
 loader.config({ monaco });
-
-/** Cached list of Monaco languages (populated on first call). */
-let cachedLanguages: LanguageInfo[] | null = null;
-
-function getAvailableLanguages(): LanguageInfo[] {
-  if (!cachedLanguages) {
-    cachedLanguages = monaco.languages
-      .getLanguages()
-      .map((lang) => ({
-        id: lang.id,
-        name: lang.aliases?.[0] ?? lang.id,
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }
-  return cachedLanguages;
-}
 
 /**
  * Read current editor status from a Monaco editor instance.
@@ -64,6 +50,7 @@ export function FileEditor({ tabId, meta, isVisible }: FileEditorProps) {
   const setEditorDirty = useAppStore((s) => s.setEditorDirty);
   const setEditorStatus = useAppStore((s) => s.setEditorStatus);
   const setEditorActions = useAppStore((s) => s.setEditorActions);
+  const fileLanguageMappings = useAppStore((s) => s.settings.fileLanguageMappings);
 
   const [content, setContent] = useState<string | null>(null);
   const [savedContent, setSavedContent] = useState<string | null>(null);
@@ -75,6 +62,7 @@ export function FileEditor({ tabId, meta, isVisible }: FileEditorProps) {
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
 
   const fileName = meta.filePath.split("/").pop() ?? meta.filePath;
+  const detectedLanguage = resolveLanguage(fileName, fileLanguageMappings);
 
   // Load file content on mount
   useEffect(() => {
@@ -283,6 +271,7 @@ export function FileEditor({ tabId, meta, isVisible }: FileEditorProps) {
         <Editor
           defaultValue={content ?? ""}
           path={fileName}
+          language={detectedLanguage}
           theme="vs-dark"
           onChange={(value) => setContent(value ?? "")}
           onMount={handleEditorMount}
