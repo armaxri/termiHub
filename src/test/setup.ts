@@ -2,6 +2,9 @@ import { vi } from "vitest";
 
 // Mock monaco-editor so tests don't need a browser environment.
 vi.mock("monaco-editor", () => ({
+  editor: {
+    setTheme: vi.fn(),
+  },
   languages: {
     getLanguages: vi.fn(() => [
       { id: "plaintext", aliases: ["Plain Text"] },

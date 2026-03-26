@@ -21,7 +21,22 @@
 import * as monaco from "monaco-editor";
 import { createHighlighter } from "shiki";
 import { shikiToMonaco } from "@shikijs/monaco";
+import { getCurrentTheme } from "@/themes";
 import { resetLanguageCache } from "./monacoLanguages";
+
+/** Shiki theme used for Monaco's dark mode (matches Monaco's built-in vs-dark palette). */
+export const MONACO_DARK_THEME = "dark-plus";
+/** Shiki theme used for Monaco's light mode (matches Monaco's built-in vs palette). */
+export const MONACO_LIGHT_THEME = "light-plus";
+
+/**
+ * Return the Monaco/Shiki theme name that corresponds to the given termiHub
+ * theme ID (`"dark"` or `"light"`). Falls back to the dark theme for any
+ * unknown value.
+ */
+export function getMonacoTheme(appThemeId: string): string {
+  return appThemeId === "light" ? MONACO_LIGHT_THEME : MONACO_DARK_THEME;
+}
 
 let initPromise: Promise<void> | null = null;
 
@@ -38,14 +53,19 @@ async function doRegister(): Promise<void> {
   registerLanguageDefinitions();
 
   // Load TextMate grammars via Shiki.
+  // Both dark-plus and light-plus are loaded so the editor can switch themes.
   // nginx depends on lua for embedded Lua blocks (ngx_lua) — include it explicitly.
   const highlighter = await createHighlighter({
-    themes: ["vs-dark"],
+    themes: [MONACO_DARK_THEME, MONACO_LIGHT_THEME],
     langs: ["cmake", "toml", "nginx", "nix", "lua"],
   });
 
   // Wire Shiki's TextMate tokenisers into Monaco.
   shikiToMonaco(highlighter, monaco);
+
+  // Set the initial Monaco theme to match the current app theme so Shiki's
+  // colour map is initialised correctly before any editor is created.
+  monaco.editor.setTheme(getMonacoTheme(getCurrentTheme().id));
 
   // Invalidate the language list cache so the new IDs appear in the picker.
   resetLanguageCache();
