@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { Activity, RefreshCw, Unplug, Loader2 } from "lucide-react";
+import { Activity, RefreshCw, Unplug, Loader2, Server } from "lucide-react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import { ConnectionConfig } from "@/types/terminal";
 import { SavedConnection } from "@/types/connection";
@@ -69,6 +69,7 @@ export function StatusBar() {
     <div className="status-bar">
       <div className="status-bar__section status-bar__section--left">
         <MonitoringStatus />
+        <ServicesIndicator />
         <CredentialStoreIndicator />
       </div>
       <div className="status-bar__section status-bar__section--center">
@@ -149,6 +150,33 @@ export function StatusBar() {
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * Shows running embedded servers count in the status bar.
+ * Clicking opens the Services sidebar panel.
+ */
+function ServicesIndicator() {
+  const embeddedServerStates = useAppStore((s) => s.embeddedServerStates);
+  const setSidebarView = useAppStore((s) => s.setSidebarView);
+
+  const runningCount = Object.values(embeddedServerStates).filter(
+    (s) => s.status === "running"
+  ).length;
+
+  if (runningCount === 0) return null;
+
+  return (
+    <button
+      className="status-bar__item status-bar__item--interactive"
+      title={`${runningCount} service${runningCount !== 1 ? "s" : ""} running — click to open Services`}
+      data-testid="services-indicator"
+      onClick={() => setSidebarView("services")}
+    >
+      <Server size={12} />
+      {runningCount}
+    </button>
   );
 }
 
