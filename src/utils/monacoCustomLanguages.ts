@@ -129,6 +129,9 @@ export async function registerAdditionalLanguagePackages(langIds: string[]): Pro
 
   // Re-wire all token providers (including newly added languages).
   shikiToMonaco(shikiHighlighter, monaco);
+  // shikiToMonaco internally resets the Monaco theme to themeIds[0]. Re-apply the
+  // user's actual theme so the colorMap is correct and open models re-tokenize.
+  monaco.editor.setTheme(getMonacoTheme(getCurrentTheme().id));
 
   resetLanguageCache();
 }
@@ -204,7 +207,21 @@ export async function registerCustomGrammars(grammars: CustomLanguageGrammar[]):
     }
   }
 
+  // Verify all custom language IDs appear in getLoadedLanguages() so shikiToMonaco
+  // can match them to Monaco language IDs (Shiki indexes by name, the id alias bridges this).
+  const loadedLangs = shikiHighlighter.getLoadedLanguages();
+  for (const { id } of toLoad) {
+    const inLoaded = loadedLangs.includes(id);
+    frontendLog(
+      "custom_grammars",
+      `"${id}" in getLoadedLanguages(): ${inLoaded} — provider will${inLoaded ? "" : " NOT"} be registered`
+    );
+  }
+
   shikiToMonaco(shikiHighlighter, monaco);
+  // shikiToMonaco internally resets the Monaco theme to themeIds[0]. Re-apply the
+  // user's actual theme so the colorMap is correct and open models re-tokenize.
+  monaco.editor.setTheme(getMonacoTheme(getCurrentTheme().id));
   frontendLog("custom_grammars", `Token providers registered for ${toLoad.length} grammar(s)`);
   resetLanguageCache();
 }
