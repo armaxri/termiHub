@@ -103,6 +103,11 @@ export function useKeyboardShortcuts() {
           useAppStore.getState().splitPanel("vertical");
           break;
 
+        case "zoom-panel":
+          e.preventDefault();
+          useAppStore.getState().toggleZoomActiveTab();
+          break;
+
         case "zoom-in":
           e.preventDefault();
           useAppStore.getState().zoomIn();

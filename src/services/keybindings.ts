@@ -166,6 +166,14 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     configurable: true,
   },
   {
+    action: "zoom-panel",
+    label: "Toggle Panel Zoom",
+    category: "navigation",
+    macDefault: { key: "Enter", meta: true, shift: true },
+    winLinuxDefault: { key: "Enter", ctrl: true, shift: true },
+    configurable: true,
+  },
+  {
     action: "zoom-in",
     label: "Zoom In",
     category: "navigation",
