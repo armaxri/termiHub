@@ -185,12 +185,16 @@ export async function registerCustomGrammars(grammars: CustomLanguageGrammar[]):
     // grammars by `name`, not `id`, so without this alias the token provider
     // would never be wired).
     const grammarAliases = Array.isArray(grammar.aliases) ? (grammar.aliases as string[]) : [];
+    // Only add `id` to aliases when it differs from `name`. If id === name,
+    // adding it causes Shiki to report a circular alias and throw on every
+    // tokenize() call, silently breaking syntax highlighting.
+    // The alias bridge is still needed when id !== name so shikiToMonaco's
+    // getLoadedLanguages() can match the Monaco language ID.
+    const extraAlias = id !== name ? [id] : [];
     const registration: LanguageRegistration = {
       ...(grammar as Omit<LanguageRegistration, "name" | "aliases">),
       name,
-      // Include `id` in aliases so shikiToMonaco's getLoadedLanguages() check
-      // can match the Monaco language ID (Shiki indexes by name, not id).
-      aliases: [...new Set([id, ...grammarAliases])],
+      aliases: [...new Set([...extraAlias, ...grammarAliases])],
     };
     try {
       frontendLog("custom_grammars", `Loading grammar for language "${id}" (${name})`);
