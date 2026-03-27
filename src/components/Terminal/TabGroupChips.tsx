@@ -22,6 +22,7 @@ export function TabGroupChips() {
   const closeTabGroup = useAppStore((s) => s.closeTabGroup);
   const renameTabGroup = useAppStore((s) => s.renameTabGroup);
   const reorderTabGroups = useAppStore((s) => s.reorderTabGroups);
+  const draggingTabId = useAppStore((s) => s.draggingTabId);
 
   const [renameGroupId, setRenameGroupId] = useState<string | null>(null);
 
@@ -63,6 +64,7 @@ export function TabGroupChips() {
               group={group}
               isActive={group.id === activeTabGroupId}
               canClose={tabGroups.length > 1}
+              isDropTarget={!!draggingTabId && group.id !== activeTabGroupId}
               onClick={() => setActiveTabGroup(group.id)}
               onClose={(e) => handleClose(group.id, e)}
               onRename={() => setRenameGroupId(group.id)}
@@ -97,6 +99,7 @@ interface TabGroupChipProps {
   group: TabGroup;
   isActive: boolean;
   canClose: boolean;
+  isDropTarget: boolean;
   onClick: () => void;
   onClose: (e: React.MouseEvent) => void;
   onRename: () => void;
@@ -106,6 +109,7 @@ function TabGroupChip({
   group,
   isActive,
   canClose,
+  isDropTarget,
   onClick,
   onClose,
   onRename,
@@ -128,11 +132,12 @@ function TabGroupChip({
           style={style}
           {...attributes}
           {...listeners}
-          className={`tab-group-chip${isActive ? " tab-group-chip--active" : ""}`}
+          className={`tab-group-chip${isActive ? " tab-group-chip--active" : ""}${isDropTarget ? " tab-group-chip--drop-target" : ""}`}
           onClick={onClick}
           onDoubleClick={onRename}
           title={group.name}
           data-testid={`tab-group-chip-${group.id}`}
+          data-tab-group-id={group.id}
         >
           {group.color && (
             <span className="tab-group-chip__dot" style={{ backgroundColor: group.color }} />

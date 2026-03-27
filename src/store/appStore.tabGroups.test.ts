@@ -238,6 +238,78 @@ describe("appStore — tab groups", () => {
     });
   });
 
+  describe("moveTabToGroup", () => {
+    it("moves a tab from the active group to a target group", () => {
+      // Set up: add a tab to the initial group
+      useAppStore.getState().addTab("bash", "local");
+      const group1Id = useAppStore.getState().tabGroups[0].id;
+      const group1Leaf = getAllLeaves(useAppStore.getState().rootPanel)[0];
+      const tabId = group1Leaf.tabs[0].id;
+      const panelId = group1Leaf.id;
+
+      // Create a second group
+      const group2Id = useAppStore.getState().addTabGroup("Group 2");
+      // Switch back to group 1 so it's active
+      useAppStore.getState().setActiveTabGroup(group1Id);
+
+      // Move the tab to group 2
+      useAppStore.getState().moveTabToGroup(tabId, panelId, group2Id);
+
+      // Tab should be gone from active group
+      const activeTabs = getAllLeaves(useAppStore.getState().rootPanel).flatMap((l) => l.tabs);
+      expect(activeTabs).toHaveLength(0);
+
+      // Tab should be in group 2's saved rootPanel
+      const { tabGroups } = useAppStore.getState();
+      const group2 = tabGroups.find((g) => g.id === group2Id)!;
+      const group2Tabs = getAllLeaves(group2.rootPanel).flatMap((l) => l.tabs);
+      expect(group2Tabs).toHaveLength(1);
+      expect(group2Tabs[0].id).toBe(tabId);
+    });
+
+    it("is a no-op when target group is the active group", () => {
+      useAppStore.getState().addTab("bash", "local");
+      const { activeTabGroupId, rootPanel } = useAppStore.getState();
+      const leaf = getAllLeaves(rootPanel)[0];
+      const tabId = leaf.tabs[0].id;
+      const before = useAppStore.getState().rootPanel;
+
+      useAppStore.getState().moveTabToGroup(tabId, leaf.id, activeTabGroupId);
+
+      expect(useAppStore.getState().rootPanel).toBe(before);
+    });
+
+    it("does not switch the active group", () => {
+      useAppStore.getState().addTab("bash", "local");
+      const group1Id = useAppStore.getState().tabGroups[0].id;
+      const leaf = getAllLeaves(useAppStore.getState().rootPanel)[0];
+      const tabId = leaf.tabs[0].id;
+      const group2Id = useAppStore.getState().addTabGroup("Group 2");
+      useAppStore.getState().setActiveTabGroup(group1Id);
+
+      useAppStore.getState().moveTabToGroup(tabId, leaf.id, group2Id);
+
+      expect(useAppStore.getState().activeTabGroupId).toBe(group1Id);
+    });
+
+    it("updates panelId of the moved tab to the target group's first leaf", () => {
+      useAppStore.getState().addTab("bash", "local");
+      const group1Id = useAppStore.getState().tabGroups[0].id;
+      const leaf = getAllLeaves(useAppStore.getState().rootPanel)[0];
+      const tabId = leaf.tabs[0].id;
+      const group2Id = useAppStore.getState().addTabGroup("Group 2");
+      const group2Leaf = getAllLeaves(useAppStore.getState().rootPanel)[0];
+      useAppStore.getState().setActiveTabGroup(group1Id);
+
+      useAppStore.getState().moveTabToGroup(tabId, leaf.id, group2Id);
+
+      const { tabGroups } = useAppStore.getState();
+      const group2 = tabGroups.find((g) => g.id === group2Id)!;
+      const movedTab = getAllLeaves(group2.rootPanel).flatMap((l) => l.tabs)[0];
+      expect(movedTab.panelId).toBe(group2Leaf.id);
+    });
+  });
+
   describe("session preservation across group switches", () => {
     it("tabs added to one group are not visible when switching to another", () => {
       // Add tabs to group 1

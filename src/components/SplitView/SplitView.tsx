@@ -55,6 +55,8 @@ export function SplitView() {
   const reorderTabs = useAppStore((s) => s.reorderTabs);
   const moveTab = useAppStore((s) => s.moveTab);
   const splitPanelWithTab = useAppStore((s) => s.splitPanelWithTab);
+  const moveTabToGroup = useAppStore((s) => s.moveTabToGroup);
+  const setDraggingTabId = useAppStore((s) => s.setDraggingTabId);
 
   const [activeDragTab, setActiveDragTab] = useState<TerminalTab | null>(null);
 
@@ -66,21 +68,46 @@ export function SplitView() {
       const leaf = findLeafByTab(rootPanel, tabId);
       if (!leaf) return;
       const tab = leaf.tabs.find((t) => t.id === tabId);
-      if (tab) setActiveDragTab(tab);
+      if (tab) {
+        setActiveDragTab(tab);
+        setDraggingTabId(tabId);
+      }
     },
-    [rootPanel]
+    [rootPanel, setDraggingTabId]
   );
 
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
       setActiveDragTab(null);
+      setDraggingTabId(null);
       const { active, over } = event;
-      if (!over) return;
 
       const tabId = active.id as string;
-      const overId = over.id as string;
       const fromPanelId = (active.data.current as { panelId?: string })?.panelId;
       if (!fromPanelId) return;
+
+      // If not dropped on any registered droppable, check for cross-group chip drop.
+      // Use elementsFromPoint (plural) to look through the DragOverlay which may be
+      // rendered at the same coordinates and would block elementFromPoint.
+      if (!over) {
+        const ae = event.activatorEvent as PointerEvent;
+        if (ae.clientX !== undefined) {
+          const finalX = ae.clientX + event.delta.x;
+          const finalY = ae.clientY + event.delta.y;
+          const elements = document.elementsFromPoint(finalX, finalY);
+          for (const el of elements) {
+            const chipEl = el.closest("[data-tab-group-id]");
+            if (chipEl) {
+              const targetGroupId = chipEl.getAttribute("data-tab-group-id");
+              if (targetGroupId) moveTabToGroup(tabId, fromPanelId, targetGroupId);
+              break;
+            }
+          }
+        }
+        return;
+      }
+
+      const overId = over.id as string;
 
       // Edge drop: split panel with tab
       if (overId.startsWith("edge-")) {
@@ -123,7 +150,7 @@ export function SplitView() {
         reorderTabs(fromPanelId, oldIndex, newIndex);
       }
     },
-    [rootPanel, reorderTabs, moveTab, splitPanelWithTab]
+    [rootPanel, reorderTabs, moveTab, splitPanelWithTab, moveTabToGroup, setDraggingTabId]
   );
 
   return (

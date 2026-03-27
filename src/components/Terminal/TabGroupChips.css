@@ -44,6 +44,14 @@
   border-color: var(--border-primary);
 }
 
+/* Highlighted when a tab is being dragged and can be dropped here */
+.tab-group-chip--drop-target {
+  color: var(--text-primary);
+  border-color: var(--border-primary);
+  border-style: dashed;
+  background-color: var(--bg-hover);
+}
+
 /* Accent dot for color-coded groups */
 .tab-group-chip__dot {
   width: 7px;
