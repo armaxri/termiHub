@@ -157,21 +157,22 @@ export async function registerCustomGrammars(grammars: CustomLanguageGrammar[]):
 
   for (const { id, name, grammar } of toLoad) {
     if (!monaco.languages.getLanguages().some((l) => l.id === id)) {
-      // Extract file extensions from the TextMate grammar's `fileTypes` field so
-      // Monaco can auto-detect the language from file names on open.
+      // Build the Monaco extension list from the grammar's `fileTypes` field, and
+      // always include the language ID itself as a default extension (e.g. id "s16"
+      // → ".s16") so that files are auto-detected even when fileTypes is absent or
+      // contains different extensions.
       const rawFileTypes = Array.isArray(grammar.fileTypes) ? (grammar.fileTypes as string[]) : [];
-      const extensions = rawFileTypes.map((t) => (t.startsWith(".") ? t : `.${t}`));
+      const fileTypeExtensions = rawFileTypes.map((t) => (t.startsWith(".") ? t : `.${t}`));
+      const extensions = [...new Set([`.${id}`, ...fileTypeExtensions])];
       monaco.languages.register({
         id,
         aliases: [name, id],
-        extensions: extensions.length > 0 ? extensions : undefined,
+        extensions,
       });
-      if (extensions.length > 0) {
-        frontendLog(
-          "custom_grammars",
-          `Registered Monaco language "${id}" with extensions: ${extensions.join(", ")}`
-        );
-      }
+      frontendLog(
+        "custom_grammars",
+        `Registered Monaco language "${id}" with extensions: ${extensions.join(", ")}`
+      );
     }
 
     // Build a LanguageRegistration from the stored grammar JSON.
