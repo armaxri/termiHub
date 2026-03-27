@@ -245,6 +245,12 @@ interface AppState {
   shortcutsOverlayOpen: boolean;
   setShortcutsOverlayOpen: (open: boolean) => void;
 
+  // Panel zoom overlay (runtime-only) — temporarily expand the active terminal tab to full view
+  zoomedTabId: string | null;
+  setZoomedTabId: (tabId: string | null) => void;
+  /** Toggle zoom for the active terminal tab. Zooms in if nothing is zoomed; dismisses otherwise. */
+  toggleZoomActiveTab: () => void;
+
   // Chord pending indicator
   chordPending: string | null;
   setChordPending: (pending: string | null) => void;
@@ -1060,6 +1066,9 @@ export const useAppStore = create<AppState>((set, get) => {
           removeTabFromLeaf(leaf, tabId)
         );
 
+        // Dismiss zoom overlay if the zoomed tab is being closed
+        const zoomedTabId = state.zoomedTabId === tabId ? null : state.zoomedTabId;
+
         // If leaf is now empty and not the sole leaf, remove it
         const allLeaves = getAllLeaves(rootPanel);
         const updatedLeaf = findLeaf(rootPanel, panelId);
@@ -1072,6 +1081,7 @@ export const useAppStore = create<AppState>((set, get) => {
           return {
             rootPanel,
             activePanelId,
+            zoomedTabId,
             tabCwds: remainingCwds,
             tabHorizontalScrolling: remainingHs,
             editorDirtyTabs: remainingDirty,
@@ -1083,6 +1093,7 @@ export const useAppStore = create<AppState>((set, get) => {
 
         return {
           rootPanel,
+          zoomedTabId,
           tabCwds: remainingCwds,
           tabHorizontalScrolling: remainingHs,
           editorDirtyTabs: remainingDirty,
@@ -1267,6 +1278,25 @@ export const useAppStore = create<AppState>((set, get) => {
     // Shortcuts overlay
     shortcutsOverlayOpen: false,
     setShortcutsOverlayOpen: (open) => set({ shortcutsOverlayOpen: open }),
+
+    // Panel zoom overlay
+    zoomedTabId: null,
+    setZoomedTabId: (tabId) => set({ zoomedTabId: tabId }),
+    toggleZoomActiveTab: () => {
+      const { activePanelId, rootPanel, zoomedTabId } = get();
+      if (zoomedTabId !== null) {
+        set({ zoomedTabId: null });
+        return;
+      }
+      const leaves = getAllLeaves(rootPanel);
+      const panel = leaves.find((p) => p.id === activePanelId) ?? leaves[0];
+      if (panel?.activeTabId) {
+        const tab = panel.tabs.find((t) => t.id === panel.activeTabId);
+        if (tab?.contentType === "terminal") {
+          set({ zoomedTabId: panel.activeTabId });
+        }
+      }
+    },
 
     // Chord pending indicator
     chordPending: null,

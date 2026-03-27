@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import {
   DndContext,
@@ -26,6 +26,7 @@ import {
   ArrowRightLeft,
   Check,
   Palette,
+  X,
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { PanelNode, LeafPanel, TerminalTab, DropEdge } from "@/types/terminal";
@@ -58,6 +59,33 @@ export function SplitView() {
   const splitPanelWithTab = useAppStore((s) => s.splitPanelWithTab);
   const moveTabToGroup = useAppStore((s) => s.moveTabToGroup);
   const setDraggingTabId = useAppStore((s) => s.setDraggingTabId);
+  const zoomedTabId = useAppStore((s) => s.zoomedTabId);
+  const setZoomedTabId = useAppStore((s) => s.setZoomedTabId);
+
+  // Find the zoomed tab's metadata for the overlay header
+  const zoomedTab = useMemo(() => {
+    if (!zoomedTabId) return null;
+    for (const leaf of getAllLeaves(rootPanel)) {
+      const tab = leaf.tabs.find((t) => t.id === zoomedTabId);
+      if (tab) return tab;
+    }
+    return null;
+  }, [zoomedTabId, rootPanel]);
+
+  const dismissZoom = useCallback(() => setZoomedTabId(null), [setZoomedTabId]);
+
+  // Close the zoom overlay on Escape (capture phase to intercept before xterm)
+  useEffect(() => {
+    if (!zoomedTabId) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setZoomedTabId(null);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown, { capture: true });
+    return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
+  }, [zoomedTabId, setZoomedTabId]);
 
   const [activeDragTab, setActiveDragTab] = useState<TerminalTab | null>(null);
 
@@ -204,6 +232,30 @@ export function SplitView() {
           </div>
         );
       })}
+      {zoomedTabId && zoomedTab && (
+        <div className="zoom-overlay" onClick={dismissZoom}>
+          <div className="zoom-overlay__panel" onClick={(e) => e.stopPropagation()}>
+            <div className="zoom-overlay__header">
+              <ConnectionIcon config={zoomedTab.config} size={14} className="zoom-overlay__icon" />
+              <span className="zoom-overlay__title">{zoomedTab.title}</span>
+              <span className="zoom-overlay__hint">
+                {isMac() ? "⌘⇧↵" : "Ctrl+Shift+Enter"} · Esc to close
+              </span>
+              <button
+                className="zoom-overlay__close"
+                onClick={dismissZoom}
+                aria-label="Close zoom overlay"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="zoom-overlay__content">
+              <TerminalSearchBar tabId={zoomedTabId} />
+              <TerminalSlot tabId={zoomedTabId} isVisible={true} />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -269,6 +321,7 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
   const hideEdges =
     activeDragTab !== null && activeDragTab.panelId === panel.id && panel.tabs.length <= 1;
 
+  const zoomedTabId = useAppStore((s) => s.zoomedTabId);
   const renameTab = useAppStore((s) => s.renameTab);
   const tabHorizontalScrolling = useAppStore((s) => s.tabHorizontalScrolling);
   const setTabHorizontalScrolling = useAppStore((s) => s.setTabHorizontalScrolling);
@@ -376,7 +429,11 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
               onContextMenu={(e) => handleQuickAction(e, tab.id)}
             >
               <TerminalSearchBar tabId={tab.id} />
-              <TerminalSlot tabId={tab.id} isVisible={tab.id === panel.activeTabId} />
+              <TerminalSlot
+                key={`ts-${tab.id}-${zoomedTabId === tab.id ? "z" : "n"}`}
+                tabId={tab.id}
+                isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
+              />
             </div>
           ) : (
             <ContextMenu.Root
@@ -396,7 +453,11 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
                   }
                 >
                   <TerminalSearchBar tabId={tab.id} />
-                  <TerminalSlot tabId={tab.id} isVisible={tab.id === panel.activeTabId} />
+                  <TerminalSlot
+                    key={`ts-${tab.id}-${zoomedTabId === tab.id ? "z" : "n"}`}
+                    tabId={tab.id}
+                    isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
+                  />
                 </div>
               </ContextMenu.Trigger>
               <ContextMenu.Portal>
