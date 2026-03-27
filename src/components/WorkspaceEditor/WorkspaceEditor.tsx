@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback } from "react";
 import { Plus, X } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { WorkspaceEditorMeta } from "@/types/terminal";
@@ -34,7 +34,7 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
   const [activeGroupIndex, setActiveGroupIndex] = useState(0);
   const [loading, setLoading] = useState(!!meta.workspaceId);
   const [renamingGroupIndex, setRenamingGroupIndex] = useState<number | null>(null);
-  const renameInputRef = useRef<HTMLInputElement>(null);
+  const [renameValue, setRenameValue] = useState("");
 
   useEffect(() => {
     if (meta.workspaceId) {
@@ -57,14 +57,6 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
         .finally(() => setLoading(false));
     }
   }, [meta.workspaceId]);
-
-  // Focus rename input when it appears
-  useEffect(() => {
-    if (renamingGroupIndex !== null) {
-      renameInputRef.current?.focus();
-      renameInputRef.current?.select();
-    }
-  }, [renamingGroupIndex]);
 
   const updateActiveGroupLayout = useCallback(
     (layout: WorkspaceLayoutNode) => {
@@ -98,13 +90,21 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
     [tabGroupDefs]
   );
 
-  const commitRename = useCallback((index: number, newName: string) => {
-    const trimmed = newName.trim();
-    if (trimmed) {
-      setTabGroupDefs((prev) => prev.map((g, i) => (i === index ? { ...g, name: trimmed } : g)));
-    }
-    setRenamingGroupIndex(null);
+  const startRename = useCallback((index: number, currentName: string) => {
+    setRenamingGroupIndex(index);
+    setRenameValue(currentName);
   }, []);
+
+  const commitRename = useCallback(
+    (index: number) => {
+      const trimmed = renameValue.trim();
+      if (trimmed) {
+        setTabGroupDefs((prev) => prev.map((g, i) => (i === index ? { ...g, name: trimmed } : g)));
+      }
+      setRenamingGroupIndex(null);
+    },
+    [renameValue]
+  );
 
   const handleSave = useCallback(async () => {
     const definition: WorkspaceDefinition = {
@@ -219,12 +219,13 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
                 >
                   {renamingGroupIndex === index ? (
                     <input
-                      ref={renameInputRef}
+                      autoFocus
                       className="workspace-group-chip__rename-input"
-                      defaultValue={group.name}
-                      onBlur={(e) => commitRename(index, e.target.value)}
+                      value={renameValue}
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      onBlur={() => commitRename(index)}
                       onKeyDown={(e) => {
-                        if (e.key === "Enter") commitRename(index, e.currentTarget.value);
+                        if (e.key === "Enter") commitRename(index);
                         if (e.key === "Escape") setRenamingGroupIndex(null);
                         e.stopPropagation();
                       }}
@@ -237,7 +238,7 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
                       onDoubleClick={(e) => {
                         e.stopPropagation();
                         setActiveGroupIndex(index);
-                        setRenamingGroupIndex(index);
+                        startRename(index, group.name);
                       }}
                     >
                       {group.name}
