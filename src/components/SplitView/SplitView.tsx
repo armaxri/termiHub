@@ -52,6 +52,7 @@ export function SplitView() {
   const tabGroups = useAppStore((s) => s.tabGroups);
   const activeTabGroupId = useAppStore((s) => s.activeTabGroupId);
   const setActivePanel = useAppStore((s) => s.setActivePanel);
+  const addTab = useAppStore((s) => s.addTab);
   const reorderTabs = useAppStore((s) => s.reorderTabs);
   const moveTab = useAppStore((s) => s.moveTab);
   const splitPanelWithTab = useAppStore((s) => s.splitPanelWithTab);
@@ -104,11 +105,20 @@ export function SplitView() {
               if (targetGroupId) moveTabToGroup(tabId, fromPanelId, targetGroupId);
               break;
             }
-            // New-tab button drop: move tab to the active panel (append to end)
+            // New-tab button drop: open a new tab with the same connection in the active panel
             if (el.closest("[data-new-tab-btn]")) {
-              const activePanelId = useAppStore.getState().activePanelId;
-              if (activePanelId && activePanelId !== fromPanelId) {
-                moveTab(tabId, fromPanelId, activePanelId, -1);
+              const storeState = useAppStore.getState();
+              const activePanelId = storeState.activePanelId;
+              const sourceLeaf = getAllLeaves(rootPanel).find((l) => l.id === fromPanelId);
+              const draggedTab = sourceLeaf?.tabs.find((t) => t.id === tabId);
+              if (draggedTab && activePanelId) {
+                addTab(
+                  draggedTab.title,
+                  draggedTab.connectionType,
+                  draggedTab.config,
+                  activePanelId,
+                  draggedTab.contentType
+                );
               }
               break;
             }
@@ -160,7 +170,7 @@ export function SplitView() {
         reorderTabs(fromPanelId, oldIndex, newIndex);
       }
     },
-    [rootPanel, reorderTabs, moveTab, splitPanelWithTab, moveTabToGroup, setDraggingTabId]
+    [rootPanel, addTab, reorderTabs, moveTab, splitPanelWithTab, moveTabToGroup, setDraggingTabId]
   );
 
   return (
