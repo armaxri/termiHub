@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Settings: imported grammars, installed language packages, and file type mappings now survive app restarts — the Rust `AppSettings` struct was missing these three fields so serde silently dropped them on every save/load cycle (#556)
 - Settings: custom grammar import now shows an error message when the grammar fails to load in Shiki (e.g. malformed grammar, unsupported embedded scope), and the grammar is only saved to settings if loading actually succeeds; failures are also logged to the LogViewer via `frontend::custom_grammars` for diagnosis (#556)
 - Settings: custom grammar syntax highlighting now actually works when the language is selected — Shiki indexes grammars by their `name` field, not `id`, so `shikiToMonaco` could not match the Shiki language to the Monaco language ID; the `id` is now explicitly added to the Shiki registration's `aliases` so the token provider is correctly wired (#556)
 - Settings: files with extensions listed in the grammar's `fileTypes` field are now auto-detected as the custom language when opened in the file editor; the language ID is also always registered as a file extension (e.g. grammar with id `s16` matches `*.s16` files), so auto-detection works even when `fileTypes` is absent or lists different extensions (#556)
