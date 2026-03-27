@@ -125,6 +125,14 @@ export function Terminal({
   const lastInputTimeRef = useRef(0);
   const contentDirtyRef = useRef(false);
   const pendingCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Capture existingSessionId at mount time only. After the Terminal creates a
+  // session, TerminalRegistry.registerSession writes the session ID back to the
+  // Zustand store (via setTabSessionId) so the file browser can observe it.
+  // That store update propagates the session ID back as the existingSessionId
+  // prop, which would change setupTerminal's closure and trigger a re-setup —
+  // destroying the live xterm and leaving a blank terminal. Using a mount-time
+  // ref keeps setupTerminal stable after the initial connect.
+  const initialSessionIdRef = useRef(existingSessionId);
   const {
     register,
     unregister,
@@ -151,13 +159,13 @@ export function Terminal({
         await terminalDispatcher.init();
         if (isCanceled()) return;
 
-        const sessionId = existingSessionId ?? (await createTerminal(config));
+        const sessionId = initialSessionIdRef.current ?? (await createTerminal(config));
 
         // Guard against StrictMode race: if this setup was canceled while
         // the async createTerminal was in-flight, close the orphaned session
         // and bail out — the remounted effect will create its own session.
         if (isCanceled()) {
-          if (!existingSessionId) {
+          if (!initialSessionIdRef.current) {
             closeTerminal(sessionId);
           }
           return;
@@ -248,7 +256,7 @@ export function Terminal({
         resizeTerminal(sessionId, xterm.cols, xterm.rows);
 
         // Send initial command after session connects (used by workspace launch)
-        if (initialCommand && !existingSessionId) {
+        if (initialCommand && !initialSessionIdRef.current) {
           setTimeout(() => {
             sendInput(sessionId, initialCommand + "\n");
           }, 200);
@@ -292,7 +300,11 @@ export function Terminal({
         }
       }
     },
-    [config, existingSessionId, tabId, registerSession, unregisterSession, initialCommand]
+    // initialSessionIdRef and initialCommand are intentionally excluded: they are
+    // captured at mount time and must not trigger re-setup when the store writes
+    // the session ID back after creation (which would blank the terminal).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [config, tabId, registerSession, unregisterSession]
   );
 
   // Create the terminal element, xterm instance, and register
