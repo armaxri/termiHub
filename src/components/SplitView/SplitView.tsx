@@ -86,7 +86,8 @@ export function SplitView() {
       const fromPanelId = (active.data.current as { panelId?: string })?.panelId;
       if (!fromPanelId) return;
 
-      // If not dropped on any registered droppable, check for cross-group chip drop.
+      // If not dropped on any registered droppable, check for special drop targets
+      // outside the DndContext (group chips, new-tab button) using elementsFromPoint.
       // Use elementsFromPoint (plural) to look through the DragOverlay which may be
       // rendered at the same coordinates and would block elementFromPoint.
       if (!over) {
@@ -96,10 +97,19 @@ export function SplitView() {
           const finalY = ae.clientY + event.delta.y;
           const elements = document.elementsFromPoint(finalX, finalY);
           for (const el of elements) {
+            // Cross-group chip drop
             const chipEl = el.closest("[data-tab-group-id]");
             if (chipEl) {
               const targetGroupId = chipEl.getAttribute("data-tab-group-id");
               if (targetGroupId) moveTabToGroup(tabId, fromPanelId, targetGroupId);
+              break;
+            }
+            // New-tab button drop: move tab to the active panel (append to end)
+            if (el.closest("[data-new-tab-btn]")) {
+              const activePanelId = useAppStore.getState().activePanelId;
+              if (activePanelId && activePanelId !== fromPanelId) {
+                moveTab(tabId, fromPanelId, activePanelId, -1);
+              }
               break;
             }
           }

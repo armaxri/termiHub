@@ -59,6 +59,7 @@ export function TerminalView() {
   }, []);
 
   const addTab = useAppStore((s) => s.addTab);
+  const draggingTabId = useAppStore((s) => s.draggingTabId);
   const splitPanel = useAppStore((s) => s.splitPanel);
   const rootPanel = useAppStore((s) => s.rootPanel);
   const activePanelId = useAppStore((s) => s.activePanelId);
@@ -96,10 +97,11 @@ export function TerminalView() {
           <TabGroupChips />
           <div className="terminal-view__toolbar-actions">
             <button
-              className="terminal-view__toolbar-btn"
+              className={`terminal-view__toolbar-btn${draggingTabId ? " terminal-view__toolbar-btn--drop-target" : ""}`}
               onClick={handleNewTerminal}
               title="New Terminal"
               data-testid="terminal-view-new-terminal"
+              data-new-tab-btn="true"
             >
               <Plus size={16} />
             </button>
