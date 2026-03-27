@@ -4,6 +4,7 @@ pub mod credential;
 pub mod files;
 pub mod logs;
 pub mod monitoring;
+pub mod portable;
 pub mod session;
 pub mod tunnel;
 pub mod workspace;

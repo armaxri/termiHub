@@ -103,6 +103,10 @@ pub struct AppSettings {
     /// User-imported custom TextMate grammars (stored inline).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_language_grammars: Option<Vec<CustomLanguageGrammar>>,
+    /// Whether the user has acknowledged the keychain-in-portable-mode warning.
+    /// Only relevant when portable mode is active and the credential mode is "keychain".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub portable_keychain_warning_acknowledged: Option<bool>,
 }
 
 impl Default for AppSettings {
@@ -130,6 +134,7 @@ impl Default for AppSettings {
             file_language_mappings: None,
             installed_language_packages: None,
             custom_language_grammars: None,
+            portable_keychain_warning_acknowledged: None,
         }
     }
 }

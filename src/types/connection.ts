@@ -148,6 +148,8 @@ export interface AppSettings {
    * original file being present.
    */
   customLanguageGrammars?: CustomLanguageGrammar[];
+  /** Whether the user has acknowledged the keychain-in-portable-mode warning. */
+  portableKeychainWarningAcknowledged?: boolean;
 }
 
 /**
@@ -161,6 +163,25 @@ export interface CustomLanguageGrammar {
   name: string;
   /** The raw TextMate grammar object (contents of the `.tmLanguage.json` file). */
   grammar: Record<string, unknown>;
+}
+
+/** Current app mode returned by the backend. */
+export interface AppModeInfo {
+  isPortable: boolean;
+  /** Absolute path to the portable data directory, or null in installed mode. */
+  dataDir: string | null;
+}
+
+/** Status of a single config file in a directory. */
+export interface ConfigFileStatus {
+  name: string;
+  present: boolean;
+}
+
+/** Result of a config export or import operation. */
+export interface ConfigMigrationResult {
+  filesCopied: string[];
+  warnings: string[];
 }
 
 export interface FileEntry {
