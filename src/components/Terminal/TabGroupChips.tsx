@@ -73,10 +73,11 @@ export function TabGroupChips() {
         </SortableContext>
       </DndContext>
       <button
-        className="tab-group-chips__add"
+        className={`tab-group-chips__add${draggingTabId ? " tab-group-chips__add--drop-target" : ""}`}
         onClick={() => addTabGroup()}
         title="New Tab Group (Ctrl+Shift+T)"
         data-testid="tab-group-add"
+        data-new-group-btn="true"
       >
         <Plus size={14} />
       </button>

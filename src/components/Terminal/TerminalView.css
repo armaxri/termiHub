@@ -47,12 +47,6 @@
   color: var(--text-primary);
 }
 
-.terminal-view__toolbar-btn--drop-target {
-  color: var(--text-primary);
-  background-color: var(--bg-hover);
-  border: 1px dashed var(--border-primary);
-}
-
 .terminal-view__content {
   flex: 1;
   overflow: hidden;

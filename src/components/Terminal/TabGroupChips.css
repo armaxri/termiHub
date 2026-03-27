@@ -109,3 +109,9 @@
   color: var(--text-primary);
   background-color: var(--bg-hover);
 }
+
+.tab-group-chips__add--drop-target {
+  color: var(--text-primary);
+  background-color: var(--bg-hover);
+  border: 1px dashed var(--border-primary);
+}
