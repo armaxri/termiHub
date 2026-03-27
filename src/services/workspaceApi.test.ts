@@ -32,7 +32,11 @@ describe("workspaceApi", () => {
   });
 
   it("loadWorkspace invokes correct command with id", async () => {
-    const ws = { id: "ws-1", name: "Test", layout: { type: "leaf", tabs: [] } };
+    const ws = {
+      id: "ws-1",
+      name: "Test",
+      tabGroups: [{ name: "Main", layout: { type: "leaf", tabs: [] } }],
+    };
     mockedInvoke.mockResolvedValue(ws);
     const result = await loadWorkspace("ws-1");
     expect(mockedInvoke).toHaveBeenCalledWith("load_workspace", { workspaceId: "ws-1" });
@@ -40,7 +44,11 @@ describe("workspaceApi", () => {
   });
 
   it("saveWorkspace invokes correct command", async () => {
-    const definition = { id: "ws-1", name: "Test", layout: { type: "leaf" as const, tabs: [] } };
+    const definition = {
+      id: "ws-1",
+      name: "Test",
+      tabGroups: [{ name: "Main", layout: { type: "leaf" as const, tabs: [] } }],
+    };
     mockedInvoke.mockResolvedValue(undefined);
     await saveWorkspace(definition);
     expect(mockedInvoke).toHaveBeenCalledWith("save_workspace", { definition });

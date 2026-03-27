@@ -149,6 +149,40 @@ export function useKeyboardShortcuts() {
           }
           break;
         }
+
+        case "new-tab-group":
+          e.preventDefault();
+          useAppStore.getState().addTabGroup();
+          break;
+
+        case "close-tab-group": {
+          e.preventDefault();
+          const { tabGroups, activeTabGroupId } = useAppStore.getState();
+          if (tabGroups.length > 1) {
+            useAppStore.getState().closeTabGroup(activeTabGroupId);
+          }
+          break;
+        }
+
+        case "next-tab-group": {
+          e.preventDefault();
+          const { tabGroups: groups, activeTabGroupId: activeId } = useAppStore.getState();
+          if (groups.length <= 1) break;
+          const idx = groups.findIndex((g) => g.id === activeId);
+          const nextIdx = (idx + 1) % groups.length;
+          useAppStore.getState().setActiveTabGroup(groups[nextIdx].id);
+          break;
+        }
+
+        case "prev-tab-group": {
+          e.preventDefault();
+          const { tabGroups: groups, activeTabGroupId: activeId } = useAppStore.getState();
+          if (groups.length <= 1) break;
+          const idx = groups.findIndex((g) => g.id === activeId);
+          const prevIdx = (idx - 1 + groups.length) % groups.length;
+          useAppStore.getState().setActiveTabGroup(groups[prevIdx].id);
+          break;
+        }
       }
     };
 

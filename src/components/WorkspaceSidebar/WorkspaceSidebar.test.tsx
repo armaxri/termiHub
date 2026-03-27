@@ -79,7 +79,7 @@ describe("WorkspaceSidebar", () => {
     expect(query("workspace-name-ws-2")?.textContent).toBe("Production");
   });
 
-  it("shows connection count badges", () => {
+  it("shows connection count badges for single-group workspaces", () => {
     useAppStore.setState({ workspaces: sampleWorkspaces });
 
     act(() => {
@@ -88,6 +88,19 @@ describe("WorkspaceSidebar", () => {
 
     expect(query("workspace-count-ws-1")?.textContent).toBe("3 tabs");
     expect(query("workspace-count-ws-2")?.textContent).toBe("1 tab");
+  });
+
+  it("shows group count in badge for multi-group workspaces", () => {
+    const multiGroupWorkspaces: WorkspaceSummary[] = [
+      { id: "ws-3", name: "Full Stack", connectionCount: 8, groupCount: 3 },
+    ];
+    useAppStore.setState({ workspaces: multiGroupWorkspaces });
+
+    act(() => {
+      root.render(<WorkspaceSidebar />);
+    });
+
+    expect(query("workspace-count-ws-3")?.textContent).toBe("3 groups · 8 tabs");
   });
 
   it("has a New Workspace button", () => {

@@ -189,6 +189,40 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     winLinuxDefault: { key: "0", ctrl: true },
     configurable: true,
   },
+
+  // Tab Groups
+  {
+    action: "new-tab-group",
+    label: "New Tab Group",
+    category: "tab-groups",
+    macDefault: { key: "t", meta: true, shift: true },
+    winLinuxDefault: { key: "t", ctrl: true, shift: true },
+    configurable: true,
+  },
+  {
+    action: "close-tab-group",
+    label: "Close Tab Group",
+    category: "tab-groups",
+    macDefault: { key: "w", meta: true, shift: true },
+    winLinuxDefault: { key: "w", ctrl: true, shift: true },
+    configurable: true,
+  },
+  {
+    action: "next-tab-group",
+    label: "Next Tab Group",
+    category: "tab-groups",
+    macDefault: { key: "]", meta: true, shift: true },
+    winLinuxDefault: { key: "]", ctrl: true, shift: true },
+    configurable: true,
+  },
+  {
+    action: "prev-tab-group",
+    label: "Previous Tab Group",
+    category: "tab-groups",
+    macDefault: { key: "[", meta: true, shift: true },
+    winLinuxDefault: { key: "[", ctrl: true, shift: true },
+    configurable: true,
+  },
 ];
 
 /** Active user overrides. */

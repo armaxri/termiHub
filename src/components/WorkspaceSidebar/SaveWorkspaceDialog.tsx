@@ -1,19 +1,33 @@
 import { useState, useCallback } from "react";
 import { X } from "lucide-react";
 
+export type SaveWorkspaceScope = "all" | "active";
+
 interface SaveWorkspaceDialogProps {
-  onSave: (name: string, description?: string) => void;
+  /** Number of live tab groups — shows scope selector when > 1. */
+  tabGroupCount: number;
+  /** Name of the currently active tab group (shown in "active only" label). */
+  activeGroupName: string;
+  onSave: (name: string, scope: SaveWorkspaceScope, description?: string) => void;
   onCancel: () => void;
 }
 
-export function SaveWorkspaceDialog({ onSave, onCancel }: SaveWorkspaceDialogProps) {
+export function SaveWorkspaceDialog({
+  tabGroupCount,
+  activeGroupName,
+  onSave,
+  onCancel,
+}: SaveWorkspaceDialogProps) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [scope, setScope] = useState<SaveWorkspaceScope>("all");
+
+  const showScopeSelector = tabGroupCount > 1;
 
   const handleSave = useCallback(() => {
     if (!name.trim()) return;
-    onSave(name.trim(), description.trim() || undefined);
-  }, [name, description, onSave]);
+    onSave(name.trim(), showScopeSelector ? scope : "all", description.trim() || undefined);
+  }, [name, description, scope, showScopeSelector, onSave]);
 
   return (
     <div className="save-workspace-dialog__overlay" data-testid="save-workspace-dialog">
@@ -54,6 +68,34 @@ export function SaveWorkspaceDialog({ onSave, onCancel }: SaveWorkspaceDialogPro
               data-testid="save-workspace-description"
             />
           </div>
+
+          {showScopeSelector && (
+            <div className="save-workspace-dialog__field" data-testid="save-workspace-scope">
+              <label>Capture</label>
+              <div className="save-workspace-dialog__radio-group">
+                <label className="save-workspace-dialog__radio-label">
+                  <input
+                    type="radio"
+                    value="all"
+                    checked={scope === "all"}
+                    onChange={() => setScope("all")}
+                    data-testid="save-workspace-scope-all"
+                  />
+                  All tab groups ({tabGroupCount})
+                </label>
+                <label className="save-workspace-dialog__radio-label">
+                  <input
+                    type="radio"
+                    value="active"
+                    checked={scope === "active"}
+                    onChange={() => setScope("active")}
+                    data-testid="save-workspace-scope-active"
+                  />
+                  Active group only ({activeGroupName})
+                </label>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="save-workspace-dialog__actions">

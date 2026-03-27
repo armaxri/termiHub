@@ -49,10 +49,15 @@ import "./SplitView.css";
 
 export function SplitView() {
   const rootPanel = useAppStore((s) => s.rootPanel);
+  const tabGroups = useAppStore((s) => s.tabGroups);
+  const activeTabGroupId = useAppStore((s) => s.activeTabGroupId);
   const setActivePanel = useAppStore((s) => s.setActivePanel);
+  const addTabGroupWithTab = useAppStore((s) => s.addTabGroupWithTab);
   const reorderTabs = useAppStore((s) => s.reorderTabs);
   const moveTab = useAppStore((s) => s.moveTab);
   const splitPanelWithTab = useAppStore((s) => s.splitPanelWithTab);
+  const moveTabToGroup = useAppStore((s) => s.moveTabToGroup);
+  const setDraggingTabId = useAppStore((s) => s.setDraggingTabId);
 
   const [activeDragTab, setActiveDragTab] = useState<TerminalTab | null>(null);
 
@@ -64,21 +69,53 @@ export function SplitView() {
       const leaf = findLeafByTab(rootPanel, tabId);
       if (!leaf) return;
       const tab = leaf.tabs.find((t) => t.id === tabId);
-      if (tab) setActiveDragTab(tab);
+      if (tab) {
+        setActiveDragTab(tab);
+        setDraggingTabId(tabId);
+      }
     },
-    [rootPanel]
+    [rootPanel, setDraggingTabId]
   );
 
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
       setActiveDragTab(null);
+      setDraggingTabId(null);
       const { active, over } = event;
-      if (!over) return;
 
       const tabId = active.id as string;
-      const overId = over.id as string;
       const fromPanelId = (active.data.current as { panelId?: string })?.panelId;
       if (!fromPanelId) return;
+
+      // If not dropped on any registered droppable, check for special drop targets
+      // outside the DndContext (group chips, new-tab button) using elementsFromPoint.
+      // Use elementsFromPoint (plural) to look through the DragOverlay which may be
+      // rendered at the same coordinates and would block elementFromPoint.
+      if (!over) {
+        const ae = event.activatorEvent as PointerEvent;
+        if (ae.clientX !== undefined) {
+          const finalX = ae.clientX + event.delta.x;
+          const finalY = ae.clientY + event.delta.y;
+          const elements = document.elementsFromPoint(finalX, finalY);
+          for (const el of elements) {
+            // Cross-group chip drop
+            const chipEl = el.closest("[data-tab-group-id]");
+            if (chipEl) {
+              const targetGroupId = chipEl.getAttribute("data-tab-group-id");
+              if (targetGroupId) moveTabToGroup(tabId, fromPanelId, targetGroupId);
+              break;
+            }
+            // New-group button drop: create a new tab group and move the tab into it
+            if (el.closest("[data-new-group-btn]")) {
+              addTabGroupWithTab(tabId, fromPanelId);
+              break;
+            }
+          }
+        }
+        return;
+      }
+
+      const overId = over.id as string;
 
       // Edge drop: split panel with tab
       if (overId.startsWith("edge-")) {
@@ -121,20 +158,53 @@ export function SplitView() {
         reorderTabs(fromPanelId, oldIndex, newIndex);
       }
     },
-    [rootPanel, reorderTabs, moveTab, splitPanelWithTab]
+    [
+      rootPanel,
+      addTabGroupWithTab,
+      reorderTabs,
+      moveTab,
+      splitPanelWithTab,
+      moveTabToGroup,
+      setDraggingTabId,
+    ]
   );
 
   return (
-    <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-      <PanelNodeRenderer
-        node={rootPanel}
-        setActivePanel={setActivePanel}
-        activeDragTab={activeDragTab}
-      />
-      <DragOverlay dropAnimation={null}>
-        {activeDragTab && <TabDragOverlay tab={activeDragTab} />}
-      </DragOverlay>
-    </DndContext>
+    <div className="split-view-groups">
+      {tabGroups.map((group) => {
+        const isActive = group.id === activeTabGroupId;
+        // Active group: use live rootPanel state (always up-to-date).
+        // Inactive groups: use saved rootPanel from tabGroups (preserved on switch).
+        const panelTree = isActive ? rootPanel : group.rootPanel;
+        return (
+          <div
+            key={group.id}
+            className={`split-view-group${isActive ? " split-view-group--active" : ""}`}
+          >
+            {/* Each group has its own DndContext.
+                Inactive groups' DndContexts are needed to satisfy @dnd-kit hooks
+                (SortableContext in TabBar, useDroppable in PanelDropZone) but
+                receive no events since their container is display:none. */}
+            <DndContext
+              sensors={sensors}
+              onDragStart={isActive ? handleDragStart : undefined}
+              onDragEnd={isActive ? handleDragEnd : undefined}
+            >
+              <PanelNodeRenderer
+                node={panelTree}
+                setActivePanel={isActive ? setActivePanel : () => {}}
+                activeDragTab={isActive ? activeDragTab : null}
+              />
+              {isActive && (
+                <DragOverlay dropAnimation={null}>
+                  {activeDragTab && <TabDragOverlay tab={activeDragTab} />}
+                </DragOverlay>
+              )}
+            </DndContext>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 

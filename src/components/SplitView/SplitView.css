@@ -1,3 +1,21 @@
+/* Tab group containers — all mounted, only active is visible */
+.split-view-groups {
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+}
+
+.split-view-group {
+  display: none;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.split-view-group--active {
+  display: block;
+}
+
 .split-view {
   width: 100%;
   height: 100%;

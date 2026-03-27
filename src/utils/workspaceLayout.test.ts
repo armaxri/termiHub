@@ -4,9 +4,10 @@ import {
   WorkspaceLeafNode,
   WorkspaceSplitNode,
   WorkspaceTabDef,
+  WorkspaceTabGroupDef,
 } from "@/types/workspace";
 import { SavedConnection } from "@/types/connection";
-import { PanelNode } from "@/types/terminal";
+import { PanelNode, TabGroup, LeafPanel } from "@/types/terminal";
 import {
   getWorkspaceLeaves,
   countWorkspaceTabs,
@@ -18,6 +19,8 @@ import {
   addLeafToSplit,
   wrapSplitInNewDirection,
   buildPanelTreeFromWorkspace,
+  buildTabGroupsFromWorkspace,
+  captureAllTabGroups,
   captureCurrentLayout,
   moveTabBetweenLeaves,
   updateSplitSizes,
@@ -800,5 +803,149 @@ describe("splitWorkspaceLeaf with sized parent", () => {
       // Sizes should still be valid (same length as children)
       expect(result.sizes).toHaveLength(2);
     }
+  });
+});
+
+describe("buildTabGroupsFromWorkspace", () => {
+  const savedConnections: SavedConnection[] = [
+    {
+      id: "conn-1",
+      name: "Dev Server",
+      config: { type: "local", config: { shell: "bash" } },
+    },
+    {
+      id: "conn-2",
+      name: "Prod",
+      config: { type: "local", config: { shell: "zsh" } },
+    },
+  ];
+
+  it("builds one TabGroup per definition", () => {
+    const defs: WorkspaceTabGroupDef[] = [
+      { name: "Dev", layout: leaf(tab("conn-1")) },
+      { name: "Deploy", layout: leaf(tab("conn-2")) },
+    ];
+    const groups = buildTabGroupsFromWorkspace(defs, savedConnections, "bash");
+    expect(groups).toHaveLength(2);
+    expect(groups[0].name).toBe("Dev");
+    expect(groups[1].name).toBe("Deploy");
+  });
+
+  it("each group has a unique id", () => {
+    const defs: WorkspaceTabGroupDef[] = [
+      { name: "A", layout: leaf() },
+      { name: "B", layout: leaf() },
+    ];
+    const groups = buildTabGroupsFromWorkspace(defs, savedConnections, "bash");
+    expect(groups[0].id).not.toBe(groups[1].id);
+  });
+
+  it("propagates color from definition", () => {
+    const defs: WorkspaceTabGroupDef[] = [{ name: "Dev", color: "#ff6b6b", layout: leaf() }];
+    const groups = buildTabGroupsFromWorkspace(defs, savedConnections, "bash");
+    expect(groups[0].color).toBe("#ff6b6b");
+  });
+
+  it("sets activePanelId to first leaf panel id", () => {
+    const defs: WorkspaceTabGroupDef[] = [{ name: "Main", layout: leaf(tab("conn-1")) }];
+    const groups = buildTabGroupsFromWorkspace(defs, savedConnections, "bash");
+    const panel = groups[0].rootPanel;
+    expect(groups[0].activePanelId).toBe(panel.id);
+  });
+
+  it("builds correct panel tree (split layout)", () => {
+    const defs: WorkspaceTabGroupDef[] = [
+      { name: "Main", layout: hsplit(leaf(tab("conn-1")), leaf(tab("conn-2"))) },
+    ];
+    const groups = buildTabGroupsFromWorkspace(defs, savedConnections, "bash");
+    expect(groups[0].rootPanel.type).toBe("split");
+    if (groups[0].rootPanel.type === "split") {
+      expect(groups[0].rootPanel.children).toHaveLength(2);
+    }
+  });
+
+  it("returns empty array for empty defs", () => {
+    const groups = buildTabGroupsFromWorkspace([], savedConnections, "bash");
+    expect(groups).toHaveLength(0);
+  });
+});
+
+describe("captureAllTabGroups", () => {
+  function makeLeafPanel(tabTitle: string): LeafPanel {
+    return {
+      type: "leaf",
+      id: `panel-${tabTitle}`,
+      tabs: [
+        {
+          id: `tab-${tabTitle}`,
+          sessionId: null,
+          title: tabTitle,
+          connectionType: "local",
+          contentType: "terminal",
+          config: { type: "local", config: { shell: "bash" } },
+          panelId: `panel-${tabTitle}`,
+          isActive: true,
+        },
+      ],
+      activeTabId: `tab-${tabTitle}`,
+    };
+  }
+
+  const savedConnections: SavedConnection[] = [];
+
+  it("captures one def per group", () => {
+    const panel1 = makeLeafPanel("alpha");
+    const panel2 = makeLeafPanel("beta");
+
+    const groups: TabGroup[] = [
+      { id: "g1", name: "Dev", rootPanel: panel1, activePanelId: panel1.id },
+      { id: "g2", name: "Deploy", rootPanel: panel2, activePanelId: panel2.id },
+    ];
+
+    const defs = captureAllTabGroups(groups, "g1", panel1, savedConnections);
+    expect(defs).toHaveLength(2);
+    expect(defs[0].name).toBe("Dev");
+    expect(defs[1].name).toBe("Deploy");
+  });
+
+  it("uses liveRootPanel for active group", () => {
+    const savedPanel = makeLeafPanel("old");
+    const livePanel = makeLeafPanel("live");
+
+    const groups: TabGroup[] = [
+      { id: "g1", name: "Main", rootPanel: savedPanel, activePanelId: savedPanel.id },
+    ];
+
+    const defs = captureAllTabGroups(groups, "g1", livePanel, savedConnections);
+    expect(defs[0].layout.type).toBe("leaf");
+    if (defs[0].layout.type === "leaf") {
+      // livePanel has tab titled "live"
+      expect(defs[0].layout.tabs[0].title).toBe("live");
+    }
+  });
+
+  it("uses saved rootPanel for inactive groups", () => {
+    const activePanel = makeLeafPanel("active");
+    const inactivePanel = makeLeafPanel("inactive");
+
+    const groups: TabGroup[] = [
+      { id: "g1", name: "Active", rootPanel: activePanel, activePanelId: activePanel.id },
+      { id: "g2", name: "Inactive", rootPanel: inactivePanel, activePanelId: inactivePanel.id },
+    ];
+
+    const defs = captureAllTabGroups(groups, "g1", activePanel, savedConnections);
+    expect(defs[1].name).toBe("Inactive");
+    if (defs[1].layout.type === "leaf") {
+      expect(defs[1].layout.tabs[0].title).toBe("inactive");
+    }
+  });
+
+  it("propagates group color", () => {
+    const panel = makeLeafPanel("x");
+    const groups: TabGroup[] = [
+      { id: "g1", name: "Dev", color: "#abc", rootPanel: panel, activePanelId: panel.id },
+    ];
+    const defs = captureAllTabGroups(groups, "g1", panel, savedConnections);
+    expect(defs[0].color).toBe("#abc");
   });
 });
