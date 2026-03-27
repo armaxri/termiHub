@@ -8,6 +8,7 @@ import type { ConnectionTypeInfo } from "@/services/api";
 import { SystemStats } from "@/types/monitoring";
 import { resolveFeatureEnabled } from "@/utils/featureFlags";
 import { CredentialStoreIndicator } from "@/components/CredentialStoreIndicator";
+import { PortableBadge } from "./PortableBadge";
 import "./StatusBar.css";
 
 const INDENT_SIZES = [1, 2, 4, 8] as const;
@@ -68,6 +69,7 @@ export function StatusBar() {
   return (
     <div className="status-bar">
       <div className="status-bar__section status-bar__section--left">
+        <PortableBadge />
         <MonitoringStatus />
         <CredentialStoreIndicator />
       </div>

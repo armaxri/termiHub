@@ -5,7 +5,8 @@ export type SettingsCategory =
   | "keyboard"
   | "security"
   | "external-files"
-  | "editor";
+  | "editor"
+  | "portable";
 
 export interface CategoryDefinition {
   id: SettingsCategory;
@@ -28,6 +29,7 @@ export const CATEGORIES: CategoryDefinition[] = [
   { id: "security", label: "Security" },
   { id: "external-files", label: "External Files" },
   { id: "editor", label: "Editor" },
+  { id: "portable", label: "Portable Mode" },
 ];
 
 export const SETTINGS_REGISTRY: SettingDefinition[] = [
@@ -135,6 +137,28 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     description: "Map filenames and extensions to syntax highlighting languages",
     category: "editor",
     keywords: ["syntax", "highlight", "language", "filetype", "extension", "mapping", "monaco"],
+  },
+  {
+    id: "portableMode",
+    label: "Portable Mode",
+    description: "Run termiHub from a USB drive or any directory without system installation",
+    category: "portable",
+    keywords: [
+      "portable",
+      "usb",
+      "travel",
+      "self-contained",
+      "data directory",
+      "marker",
+      "no install",
+    ],
+  },
+  {
+    id: "portableMigration",
+    label: "Config Migration",
+    description: "Export or import configuration between installed and portable mode",
+    category: "portable",
+    keywords: ["export", "import", "migrate", "copy", "transfer", "backup", "portable"],
   },
 ];
 

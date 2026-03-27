@@ -71,6 +71,7 @@ import {
   AgentFolderInfo,
   getCredentialStoreStatus as apiGetCredentialStoreStatus,
   getConnectionTypes,
+  getAppMode as apiGetAppMode,
 } from "@/services/api";
 import type { ConnectionTypeInfo } from "@/services/api";
 import { RemoteAgentConfig } from "@/types/terminal";
@@ -442,6 +443,11 @@ interface AppState {
   masterPasswordSetupMode: "setup" | "change";
   openMasterPasswordSetup: (mode: "setup" | "change") => void;
   closeMasterPasswordSetup: () => void;
+
+  // Portable mode
+  isPortableMode: boolean;
+  portableDataDir: string | null;
+  loadAppMode: () => Promise<void>;
 }
 
 let tabCounter = 0;
@@ -1417,6 +1423,8 @@ export const useAppStore = create<AppState>((set, get) => {
       get().loadTunnels();
       // Load workspaces
       get().loadWorkspaces();
+      // Load app mode (portable vs. installed) for status bar and settings display
+      await get().loadAppMode();
       // Load credential store status and auto-open unlock dialog if locked
       await get().loadCredentialStoreStatus();
       const credStatus = get().credentialStoreStatus;
@@ -2449,6 +2457,18 @@ export const useAppStore = create<AppState>((set, get) => {
     openMasterPasswordSetup: (mode) =>
       set({ masterPasswordSetupOpen: true, masterPasswordSetupMode: mode }),
     closeMasterPasswordSetup: () => set({ masterPasswordSetupOpen: false }),
+
+    // Portable mode
+    isPortableMode: false,
+    portableDataDir: null,
+    loadAppMode: async () => {
+      try {
+        const info = await apiGetAppMode();
+        set({ isPortableMode: info.isPortable, portableDataDir: info.dataDir });
+      } catch (err) {
+        console.error("Failed to load app mode:", err);
+      }
+    },
   };
 });
 

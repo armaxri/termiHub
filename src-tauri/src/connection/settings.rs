@@ -82,6 +82,10 @@ pub struct AppSettings {
     /// User-customized keybinding overrides.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub keybinding_overrides: Option<Vec<KeybindingOverrideEntry>>,
+    /// Whether the user has acknowledged the keychain-in-portable-mode warning.
+    /// Only relevant when portable mode is active and the credential mode is "keychain".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub portable_keychain_warning_acknowledged: Option<bool>,
 }
 
 impl Default for AppSettings {
@@ -106,6 +110,7 @@ impl Default for AppSettings {
             credential_auto_lock_minutes: None,
             right_click_behavior: None,
             keybinding_overrides: None,
+            portable_keychain_warning_acknowledged: None,
         }
     }
 }

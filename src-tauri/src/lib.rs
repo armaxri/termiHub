@@ -62,6 +62,35 @@ pub fn run() {
 
             let mut recovery_warnings: Vec<RecoveryWarning> = Vec::new();
 
+            // Detect portable mode before any storage initialization.
+            // Priority: TERMIHUB_CONFIG_DIR env var > portable mode detection > OS default.
+            let app_mode = match utils::portable::detect_app_mode() {
+                Ok(mode) => {
+                    info!(is_portable = mode.is_portable(), "App mode detected");
+                    mode
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to detect app mode, defaulting to installed: {e}");
+                    utils::portable::AppMode::Installed
+                }
+            };
+
+            // If portable mode is active and no explicit override is set, redirect config dir
+            // so all storage modules (which check TERMIHUB_CONFIG_DIR) use the portable path.
+            if app_mode.is_portable() && std::env::var("TERMIHUB_CONFIG_DIR").is_err() {
+                if let Some(data_dir) = app_mode.data_dir() {
+                    std::fs::create_dir_all(data_dir).expect("Failed to create portable data directory");
+                    // Safety: called before any threads that read env vars are spawned.
+                    #[allow(unused_unsafe)]
+                    unsafe {
+                        std::env::set_var("TERMIHUB_CONFIG_DIR", data_dir);
+                    }
+                }
+            }
+
+            // Store the detected app mode so commands and the frontend can query it.
+            app.manage(app_mode);
+
             // Load settings to determine the credential storage mode.
             // On failure, fall back to defaults so the app can still start.
             let config_dir = match std::env::var("TERMIHUB_CONFIG_DIR") {
@@ -376,6 +405,12 @@ pub fn run() {
             commands::credential::resolve_credential,
             commands::credential::remove_credential,
             commands::credential::set_auto_lock_timeout,
+            // Portable mode
+            commands::portable::get_app_mode,
+            commands::portable::list_config_files,
+            commands::portable::resolve_portable_path_cmd,
+            commands::portable::export_config_to_portable,
+            commands::portable::import_config_from_portable,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
