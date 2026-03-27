@@ -811,11 +811,13 @@ describe("buildTabGroupsFromWorkspace", () => {
     {
       id: "conn-1",
       name: "Dev Server",
+      folderId: null,
       config: { type: "local", config: { shell: "bash" } },
     },
     {
       id: "conn-2",
       name: "Prod",
+      folderId: null,
       config: { type: "local", config: { shell: "zsh" } },
     },
   ];
