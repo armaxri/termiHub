@@ -103,6 +103,11 @@ export function useKeyboardShortcuts() {
           useAppStore.getState().splitPanel("vertical");
           break;
 
+        case "zoom-panel":
+          e.preventDefault();
+          useAppStore.getState().toggleZoomActiveTab();
+          break;
+
         case "zoom-in":
           e.preventDefault();
           useAppStore.getState().zoomIn();
@@ -147,6 +152,40 @@ export function useKeyboardShortcuts() {
           if (activeTab?.contentType === "terminal") {
             useAppStore.getState().toggleTerminalSearch(activeTab.id);
           }
+          break;
+        }
+
+        case "new-tab-group":
+          e.preventDefault();
+          useAppStore.getState().addTabGroup();
+          break;
+
+        case "close-tab-group": {
+          e.preventDefault();
+          const { tabGroups, activeTabGroupId } = useAppStore.getState();
+          if (tabGroups.length > 1) {
+            useAppStore.getState().closeTabGroup(activeTabGroupId);
+          }
+          break;
+        }
+
+        case "next-tab-group": {
+          e.preventDefault();
+          const { tabGroups: groups, activeTabGroupId: activeId } = useAppStore.getState();
+          if (groups.length <= 1) break;
+          const idx = groups.findIndex((g) => g.id === activeId);
+          const nextIdx = (idx + 1) % groups.length;
+          useAppStore.getState().setActiveTabGroup(groups[nextIdx].id);
+          break;
+        }
+
+        case "prev-tab-group": {
+          e.preventDefault();
+          const { tabGroups: groups, activeTabGroupId: activeId } = useAppStore.getState();
+          if (groups.length <= 1) break;
+          const idx = groups.findIndex((g) => g.id === activeId);
+          const prevIdx = (idx - 1 + groups.length) % groups.length;
+          useAppStore.getState().setActiveTabGroup(groups[prevIdx].id);
           break;
         }
       }

@@ -14,6 +14,7 @@ import {
   WorkspaceEditorMeta,
   EditorStatus,
   EditorActions,
+  TabGroup,
 } from "@/types/terminal";
 import {
   SavedConnection,
@@ -82,7 +83,7 @@ import {
   stopTunnel as apiStopTunnel,
   getTunnelStatuses,
 } from "@/services/tunnelApi";
-import { WorkspaceSummary } from "@/types/workspace";
+import { WorkspaceSummary, WorkspaceDefinition } from "@/types/workspace";
 import {
   getWorkspaces as apiGetWorkspaces,
   loadWorkspace as apiLoadWorkspace,
@@ -90,7 +91,7 @@ import {
   deleteWorkspace as apiDeleteWorkspace,
   duplicateWorkspace as apiDuplicateWorkspace,
 } from "@/services/workspaceApi";
-import { buildPanelTreeFromWorkspace, captureCurrentLayout } from "@/utils/workspaceLayout";
+import { buildTabGroupsFromWorkspace, captureAllTabGroups } from "@/utils/workspaceLayout";
 import { SystemStats } from "@/types/monitoring";
 import { applyTheme, onThemeChange } from "@/themes";
 import { setOverrides as setKeybindingOverrides } from "@/services/keybindings";
@@ -174,6 +175,25 @@ interface AppState {
   submitPassword: (password: string) => void;
   dismissPasswordPrompt: () => void;
 
+  // Tab Groups (workspace-level named panel trees)
+  tabGroups: TabGroup[];
+  activeTabGroupId: string;
+  /** Create a new tab group and switch to it. Returns the new group ID. */
+  addTabGroup: (name?: string) => string;
+  closeTabGroup: (groupId: string) => void;
+  renameTabGroup: (groupId: string, name: string) => void;
+  setTabGroupColor: (groupId: string, color: string | null) => void;
+  setActiveTabGroup: (groupId: string) => void;
+  reorderTabGroups: (fromIndex: number, toIndex: number) => void;
+  /** Move a tab from the active group into a different tab group. */
+  moveTabToGroup: (tabId: string, fromPanelId: string, targetGroupId: string) => void;
+  /** Create a new tab group and move a tab from the active group into it atomically. */
+  addTabGroupWithTab: (tabId: string, fromPanelId: string) => void;
+
+  // Tab drag state (shared across components for cross-group DnD)
+  draggingTabId: string | null;
+  setDraggingTabId: (id: string | null) => void;
+
   // Panels & Tabs
   rootPanel: PanelNode;
   activePanelId: string | null;
@@ -229,6 +249,12 @@ interface AppState {
   // Shortcuts overlay
   shortcutsOverlayOpen: boolean;
   setShortcutsOverlayOpen: (open: boolean) => void;
+
+  // Panel zoom overlay (runtime-only) — temporarily expand the active terminal tab to full view
+  zoomedTabId: string | null;
+  setZoomedTabId: (tabId: string | null) => void;
+  /** Toggle zoom for the active terminal tab. Zooms in if nothing is zoomed; dismisses otherwise. */
+  toggleZoomActiveTab: () => void;
 
   // Chord pending indicator
   chordPending: string | null;
@@ -399,17 +425,17 @@ interface AppState {
   workspaces: WorkspaceSummary[];
   activeWorkspaceName: string | null;
   loadWorkspaces: () => Promise<void>;
-  saveWorkspaceToBackend: (definition: {
-    id: string;
-    name: string;
-    description?: string;
-    layout: unknown;
-  }) => Promise<void>;
+  saveWorkspaceToBackend: (definition: WorkspaceDefinition) => Promise<void>;
   deleteWorkspaceFromBackend: (workspaceId: string) => Promise<void>;
   duplicateWorkspaceInBackend: (workspaceId: string) => Promise<void>;
   openWorkspaceEditorTab: (workspaceId: string | null) => void;
   launchWorkspace: (workspaceId: string) => Promise<void>;
-  saveCurrentAsWorkspace: (name: string, description?: string) => Promise<void>;
+  /** scope "all" captures all tab groups; "active" captures only the active group. */
+  saveCurrentAsWorkspace: (
+    name: string,
+    scope: "all" | "active",
+    description?: string
+  ) => Promise<void>;
 
   // Credential store
   credentialStoreStatus: CredentialStoreStatusInfo | null;
@@ -471,8 +497,23 @@ function removeTabFromLeaf(leaf: LeafPanel, tabId: string): LeafPanel {
   return { ...leaf, tabs, activeTabId: null };
 }
 
+let groupCounter = 0;
+
+/** Generate a unique tab group ID. */
+function generateGroupId(): string {
+  groupCounter++;
+  return `group-${Date.now()}-${groupCounter}-${Math.random().toString(36).slice(2, 6)}`;
+}
+
 export const useAppStore = create<AppState>((set, get) => {
   const initialPanel = createLeafPanel();
+  const initialGroupId = generateGroupId();
+  const initialGroup: TabGroup = {
+    id: initialGroupId,
+    name: "Main",
+    rootPanel: initialPanel,
+    activePanelId: initialPanel.id,
+  };
 
   return {
     // Connection type registry — updated by loadFromBackend()
@@ -531,6 +572,216 @@ export const useAppStore = create<AppState>((set, get) => {
         passwordPromptResolve: null,
       });
     },
+
+    // Tab Groups
+    tabGroups: [initialGroup],
+    activeTabGroupId: initialGroupId,
+
+    addTabGroup: (name) => {
+      const newGroupId = generateGroupId();
+      const newPanel = createLeafPanel();
+      set((state) => {
+        const groupCount = state.tabGroups.length + 1;
+        const newGroup: TabGroup = {
+          id: newGroupId,
+          name: name ?? `Group ${groupCount}`,
+          rootPanel: newPanel,
+          activePanelId: newPanel.id,
+        };
+        // Save current live state into the active group before switching
+        const savedGroups = state.tabGroups.map((g) =>
+          g.id === state.activeTabGroupId
+            ? { ...g, rootPanel: state.rootPanel, activePanelId: state.activePanelId }
+            : g
+        );
+        return {
+          tabGroups: [...savedGroups, newGroup],
+          activeTabGroupId: newGroupId,
+          rootPanel: newPanel,
+          activePanelId: newPanel.id,
+        };
+      });
+      return newGroupId;
+    },
+
+    closeTabGroup: (groupId) =>
+      set((state) => {
+        if (state.tabGroups.length <= 1) return state;
+
+        const newGroups = state.tabGroups.filter((g) => g.id !== groupId);
+
+        if (groupId !== state.activeTabGroupId) {
+          // Closing an inactive group — straightforward removal
+          return { tabGroups: newGroups };
+        }
+
+        // Closing the active group — pick adjacent group
+        const currentIdx = state.tabGroups.findIndex((g) => g.id === groupId);
+        const newActiveIdx = Math.max(0, currentIdx - 1);
+        const newActiveGroup = newGroups[newActiveIdx];
+        return {
+          tabGroups: newGroups,
+          activeTabGroupId: newActiveGroup.id,
+          rootPanel: newActiveGroup.rootPanel,
+          activePanelId: newActiveGroup.activePanelId,
+        };
+      }),
+
+    renameTabGroup: (groupId, name) =>
+      set((state) => ({
+        tabGroups: state.tabGroups.map((g) => (g.id === groupId ? { ...g, name } : g)),
+      })),
+
+    setTabGroupColor: (groupId, color) =>
+      set((state) => ({
+        tabGroups: state.tabGroups.map((g) =>
+          g.id === groupId ? { ...g, color: color ?? undefined } : g
+        ),
+      })),
+
+    setActiveTabGroup: (groupId) =>
+      set((state) => {
+        if (groupId === state.activeTabGroupId) return state;
+        const targetGroup = state.tabGroups.find((g) => g.id === groupId);
+        if (!targetGroup) return state;
+        // Save current live state into the currently active group
+        const savedGroups = state.tabGroups.map((g) =>
+          g.id === state.activeTabGroupId
+            ? { ...g, rootPanel: state.rootPanel, activePanelId: state.activePanelId }
+            : g
+        );
+        return {
+          tabGroups: savedGroups,
+          activeTabGroupId: groupId,
+          rootPanel: targetGroup.rootPanel,
+          activePanelId: targetGroup.activePanelId,
+        };
+      }),
+
+    reorderTabGroups: (fromIndex, toIndex) =>
+      set((state) => {
+        const groups = [...state.tabGroups];
+        const [moved] = groups.splice(fromIndex, 1);
+        groups.splice(toIndex, 0, moved);
+        return { tabGroups: groups };
+      }),
+
+    moveTabToGroup: (tabId, fromPanelId, targetGroupId) =>
+      set((state) => {
+        if (targetGroupId === state.activeTabGroupId) return state;
+
+        // Find the tab in the active group's live rootPanel
+        const sourceLeaf = getAllLeaves(state.rootPanel).find((l) => l.id === fromPanelId);
+        if (!sourceLeaf) return state;
+        const tab = sourceLeaf.tabs.find((t) => t.id === tabId);
+        if (!tab) return state;
+
+        // Remove tab from active group's live rootPanel
+        let newRootPanel = updateLeaf(state.rootPanel, fromPanelId, (leaf) =>
+          removeTabFromLeaf(leaf, tabId)
+        );
+
+        // Clean up empty source panel (if not the sole leaf)
+        const updatedSource = findLeaf(newRootPanel, fromPanelId);
+        const allLeaves = getAllLeaves(newRootPanel);
+        if (updatedSource && updatedSource.tabs.length === 0 && allLeaves.length > 1) {
+          const removed = removeLeaf(newRootPanel, fromPanelId);
+          newRootPanel = removed ? simplifyTree(removed) : newRootPanel;
+        }
+
+        // Find target group and add tab to its first leaf
+        const targetGroupIndex = state.tabGroups.findIndex((g) => g.id === targetGroupId);
+        if (targetGroupIndex === -1) return state;
+        const targetGroup = state.tabGroups[targetGroupIndex];
+        const targetLeaves = getAllLeaves(targetGroup.rootPanel);
+        const targetLeaf = targetLeaves[0];
+        if (!targetLeaf) return state;
+
+        const movedTab: TerminalTab = { ...tab, panelId: targetLeaf.id, isActive: true };
+        const newTargetRootPanel = updateLeaf(targetGroup.rootPanel, targetLeaf.id, (leaf) => ({
+          ...leaf,
+          tabs: [...leaf.tabs.map((t) => ({ ...t, isActive: false })), movedTab],
+          activeTabId: movedTab.id,
+        }));
+
+        const newTabGroups = state.tabGroups.map((g, i) =>
+          i === targetGroupIndex ? { ...g, rootPanel: newTargetRootPanel } : g
+        );
+
+        // Update active panel if the source panel was removed
+        const newActivePanelId =
+          state.activePanelId === fromPanelId
+            ? (getAllLeaves(newRootPanel)[0]?.id ?? null)
+            : state.activePanelId;
+
+        return {
+          rootPanel: newRootPanel,
+          tabGroups: newTabGroups,
+          activePanelId: newActivePanelId,
+        };
+      }),
+
+    addTabGroupWithTab: (tabId, fromPanelId) =>
+      set((state) => {
+        // Find the tab in the active group's live rootPanel
+        const sourceLeaf = getAllLeaves(state.rootPanel).find((l) => l.id === fromPanelId);
+        if (!sourceLeaf) return state;
+        const tab = sourceLeaf.tabs.find((t) => t.id === tabId);
+        if (!tab) return state;
+
+        // Remove tab from active group's live rootPanel
+        let newSourceRootPanel = updateLeaf(state.rootPanel, fromPanelId, (leaf) =>
+          removeTabFromLeaf(leaf, tabId)
+        );
+
+        // Clean up empty source panel (if not the sole leaf)
+        const updatedSource = findLeaf(newSourceRootPanel, fromPanelId);
+        const allSourceLeaves = getAllLeaves(newSourceRootPanel);
+        if (updatedSource && updatedSource.tabs.length === 0 && allSourceLeaves.length > 1) {
+          const removed = removeLeaf(newSourceRootPanel, fromPanelId);
+          newSourceRootPanel = removed ? simplifyTree(removed) : newSourceRootPanel;
+        }
+
+        // Update active panel if the source panel was removed
+        const newActivePanelId =
+          state.activePanelId === fromPanelId
+            ? (getAllLeaves(newSourceRootPanel)[0]?.id ?? null)
+            : state.activePanelId;
+
+        // Save the updated source group state
+        const savedGroups = state.tabGroups.map((g) =>
+          g.id === state.activeTabGroupId
+            ? { ...g, rootPanel: newSourceRootPanel, activePanelId: newActivePanelId }
+            : g
+        );
+
+        // Create the new group with the moved tab
+        const newGroupId = generateGroupId();
+        const newPanel = createLeafPanel();
+        const movedTab: TerminalTab = { ...tab, panelId: newPanel.id, isActive: true };
+        const newGroupRootPanel = updateLeaf(newPanel, newPanel.id, (leaf) => ({
+          ...leaf,
+          tabs: [movedTab],
+          activeTabId: movedTab.id,
+        }));
+        const groupCount = state.tabGroups.length + 1;
+        const newGroup: TabGroup = {
+          id: newGroupId,
+          name: `Group ${groupCount}`,
+          rootPanel: newGroupRootPanel,
+          activePanelId: newPanel.id,
+        };
+
+        return {
+          tabGroups: [...savedGroups, newGroup],
+          activeTabGroupId: newGroupId,
+          rootPanel: newGroupRootPanel,
+          activePanelId: newPanel.id,
+        };
+      }),
+
+    draggingTabId: null,
+    setDraggingTabId: (id) => set({ draggingTabId: id }),
 
     // Panels & Tabs
     rootPanel: initialPanel,
@@ -820,6 +1071,9 @@ export const useAppStore = create<AppState>((set, get) => {
           removeTabFromLeaf(leaf, tabId)
         );
 
+        // Dismiss zoom overlay if the zoomed tab is being closed
+        const zoomedTabId = state.zoomedTabId === tabId ? null : state.zoomedTabId;
+
         // If leaf is now empty and not the sole leaf, remove it
         const allLeaves = getAllLeaves(rootPanel);
         const updatedLeaf = findLeaf(rootPanel, panelId);
@@ -832,6 +1086,7 @@ export const useAppStore = create<AppState>((set, get) => {
           return {
             rootPanel,
             activePanelId,
+            zoomedTabId,
             tabCwds: remainingCwds,
             tabHorizontalScrolling: remainingHs,
             editorDirtyTabs: remainingDirty,
@@ -843,6 +1098,7 @@ export const useAppStore = create<AppState>((set, get) => {
 
         return {
           rootPanel,
+          zoomedTabId,
           tabCwds: remainingCwds,
           tabHorizontalScrolling: remainingHs,
           editorDirtyTabs: remainingDirty,
@@ -1027,6 +1283,25 @@ export const useAppStore = create<AppState>((set, get) => {
     // Shortcuts overlay
     shortcutsOverlayOpen: false,
     setShortcutsOverlayOpen: (open) => set({ shortcutsOverlayOpen: open }),
+
+    // Panel zoom overlay
+    zoomedTabId: null,
+    setZoomedTabId: (tabId) => set({ zoomedTabId: tabId }),
+    toggleZoomActiveTab: () => {
+      const { activePanelId, rootPanel, zoomedTabId } = get();
+      if (zoomedTabId !== null) {
+        set({ zoomedTabId: null });
+        return;
+      }
+      const leaves = getAllLeaves(rootPanel);
+      const panel = leaves.find((p) => p.id === activePanelId) ?? leaves[0];
+      if (panel?.activeTabId) {
+        const tab = panel.tabs.find((t) => t.id === panel.activeTabId);
+        if (tab?.contentType === "terminal") {
+          set({ zoomedTabId: panel.activeTabId });
+        }
+      }
+    },
 
     // Chord pending indicator
     chordPending: null,
@@ -2047,7 +2322,7 @@ export const useAppStore = create<AppState>((set, get) => {
 
     saveWorkspaceToBackend: async (definition) => {
       try {
-        await apiSaveWorkspace(definition as Parameters<typeof apiSaveWorkspace>[0]);
+        await apiSaveWorkspace(definition);
         await get().loadWorkspaces();
       } catch (err) {
         console.error("Failed to save workspace:", err);
@@ -2125,16 +2400,18 @@ export const useAppStore = create<AppState>((set, get) => {
       try {
         const definition = await apiLoadWorkspace(workspaceId);
         const state = get();
-        const rootPanel = buildPanelTreeFromWorkspace(
-          definition.layout,
+        const builtGroups = buildTabGroupsFromWorkspace(
+          definition.tabGroups,
           state.connections,
           state.defaultShell
         );
-        const firstLeaf =
-          rootPanel.type === "leaf" ? rootPanel : (getAllLeaves(rootPanel)[0] ?? null);
+        if (builtGroups.length === 0) return;
+        const firstGroup = builtGroups[0];
         set({
-          rootPanel,
-          activePanelId: firstLeaf?.id ?? null,
+          tabGroups: builtGroups,
+          activeTabGroupId: firstGroup.id,
+          rootPanel: firstGroup.rootPanel,
+          activePanelId: firstGroup.activePanelId,
           activeWorkspaceName: definition.name,
         });
       } catch (err) {
@@ -2142,17 +2419,26 @@ export const useAppStore = create<AppState>((set, get) => {
       }
     },
 
-    saveCurrentAsWorkspace: async (name, description) => {
+    saveCurrentAsWorkspace: async (name, scope, description) => {
       try {
         const state = get();
-        const layout = captureCurrentLayout(state.rootPanel, state.connections);
+        const activeGroup = state.tabGroups.find((g) => g.id === state.activeTabGroupId);
+        const tabGroups =
+          scope === "active" && activeGroup
+            ? captureAllTabGroups(
+                [activeGroup],
+                state.activeTabGroupId,
+                state.rootPanel,
+                state.connections
+              )
+            : captureAllTabGroups(
+                state.tabGroups,
+                state.activeTabGroupId,
+                state.rootPanel,
+                state.connections
+              );
         const id = `ws-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-        await apiSaveWorkspace({
-          id,
-          name,
-          description,
-          layout,
-        });
+        await apiSaveWorkspace({ id, name, description, tabGroups });
         await get().loadWorkspaces();
         set({ activeWorkspaceName: name });
       } catch (err) {

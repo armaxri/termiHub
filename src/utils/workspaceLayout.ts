@@ -7,8 +7,9 @@ import {
   WorkspaceLeafNode,
   WorkspaceSplitNode,
   WorkspaceTabDef,
+  WorkspaceTabGroupDef,
 } from "@/types/workspace";
-import { PanelNode, ConnectionConfig, TerminalTab } from "@/types/terminal";
+import { PanelNode, ConnectionConfig, TerminalTab, TabGroup } from "@/types/terminal";
 import { SavedConnection } from "@/types/connection";
 
 /** Get all leaf nodes from a workspace layout tree. */
@@ -522,4 +523,61 @@ function captureTab(tab: TerminalTab, savedConnections: SavedConnection[]): Work
     title: tab.title,
     initialCommand: tab.initialCommand,
   };
+}
+
+let groupIdCounter = 0;
+
+function generateWorkspaceGroupId(): string {
+  groupIdCounter++;
+  return `ws-group-${groupIdCounter}-${Math.random().toString(36).slice(2, 6)}`;
+}
+
+/**
+ * Build an array of TabGroup objects from workspace tab group definitions.
+ * Each group gets a fresh ID and a newly-built PanelNode tree.
+ */
+export function buildTabGroupsFromWorkspace(
+  tabGroupDefs: WorkspaceTabGroupDef[],
+  savedConnections: SavedConnection[],
+  defaultShell: string
+): TabGroup[] {
+  return tabGroupDefs.map((def) => {
+    const rootPanel = buildPanelTreeFromWorkspace(def.layout, savedConnections, defaultShell);
+    const firstLeaf =
+      rootPanel.type === "leaf" ? rootPanel : getAllWorkspaceLeafPanels(rootPanel)[0];
+    return {
+      id: generateWorkspaceGroupId(),
+      name: def.name,
+      color: def.color,
+      rootPanel,
+      activePanelId: firstLeaf?.id ?? null,
+    };
+  });
+}
+
+/** Collect all leaf panels from a PanelNode tree (used internally). */
+function getAllWorkspaceLeafPanels(node: PanelNode): Extract<PanelNode, { type: "leaf" }>[] {
+  if (node.type === "leaf") return [node];
+  return node.children.flatMap(getAllWorkspaceLeafPanels);
+}
+
+/**
+ * Capture all live tab groups as WorkspaceTabGroupDef[].
+ * The active group uses the provided live rootPanel; inactive groups use their
+ * saved rootPanel from the tabGroups array.
+ */
+export function captureAllTabGroups(
+  tabGroups: TabGroup[],
+  activeTabGroupId: string,
+  liveRootPanel: PanelNode,
+  savedConnections: SavedConnection[]
+): WorkspaceTabGroupDef[] {
+  return tabGroups.map((group) => {
+    const panelTree = group.id === activeTabGroupId ? liveRootPanel : group.rootPanel;
+    return {
+      name: group.name,
+      color: group.color,
+      layout: captureCurrentLayout(panelTree, savedConnections),
+    };
+  });
 }
