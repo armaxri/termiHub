@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- File browser: new "cd here" toolbar button (terminal icon) sends `cd <current-browser-path>` to the active terminal session, making it easy to navigate the terminal to the directory you are browsing; supports local shells, remote agent sessions, and SFTP-backed SSH terminals, with automatic WSL path conversion
 - File browser: toolbar now has a "Go to Terminal CWD" button (folder-sync icon) that jumps back to the terminal's current working directory after manually browsing elsewhere; the button is disabled when no CWD has been reported yet
 
 ### Fixed

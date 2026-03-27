@@ -53,3 +53,30 @@ export function wslToWindowsPath(linuxPath: string, distro: string): string {
   }
   return `//wsl$/${distro}${linuxPath}`;
 }
+
+/**
+ * Convert a Windows-style path back to the Linux path used inside WSL.
+ * Reverses the wslToWindowsPath conversion.
+ *
+ * Examples:
+ *   "//wsl$/Ubuntu/home/user" → "/home/user"
+ *   "C:/Users/arne"           → "/mnt/c/Users/arne"
+ *   "/already/unix"           → "/already/unix"
+ */
+export function windowsToWslPath(windowsPath: string): string {
+  // Handle UNC WSL paths: //wsl$/distro/... or \\wsl$\distro\...
+  const wslMatch = windowsPath.match(/^[/\\]{2}wsl\$[/\\][^/\\]+([/\\].*)?$/i);
+  if (wslMatch) {
+    const rest = wslMatch[1] ?? "/";
+    return rest.replace(/\\/g, "/");
+  }
+  // Handle Windows drive paths: C:/... or C:\...
+  const driveMatch = windowsPath.match(/^([A-Za-z]):[/\\](.*)$/);
+  if (driveMatch) {
+    const driveLetter = driveMatch[1].toLowerCase();
+    const rest = driveMatch[2].replace(/\\/g, "/");
+    return `/mnt/${driveLetter}${rest ? `/${rest}` : ""}`;
+  }
+  // Already a Unix path or unrecognized format — return as-is
+  return windowsPath;
+}
