@@ -31,7 +31,7 @@ import {
 import { useAppStore } from "@/store/appStore";
 import { PanelNode, LeafPanel, TerminalTab, DropEdge } from "@/types/terminal";
 import { getAllLeaves, findLeafByTab } from "@/utils/panelTree";
-import { isWindows } from "@/utils/platform";
+import { isWindows, isMac } from "@/utils/platform";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import { ConnectionIcon } from "@/utils/connectionIcons";
 import { useTerminalRegistry } from "@/components/Terminal/TerminalRegistry";
