@@ -52,6 +52,9 @@ pub enum TerminalError {
     #[error("Workspace error: {0}")]
     WorkspaceError(String),
 
+    #[error("Embedded server error: {0}")]
+    EmbeddedServerError(String),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }
