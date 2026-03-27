@@ -59,7 +59,8 @@
     "overrides": {
       "dompurify": "^3.3.3",
       "serialize-javascript": "^7.0.4"
-    }
+    },
+    "onlyBuiltDependencies": ["esbuild", "edgedriver", "geckodriver"]
   },
   "devDependencies": {
     "@commitlint/cli": "^20.4.4",
