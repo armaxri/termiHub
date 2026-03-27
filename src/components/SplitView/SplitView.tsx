@@ -52,7 +52,7 @@ export function SplitView() {
   const tabGroups = useAppStore((s) => s.tabGroups);
   const activeTabGroupId = useAppStore((s) => s.activeTabGroupId);
   const setActivePanel = useAppStore((s) => s.setActivePanel);
-  const addTabGroup = useAppStore((s) => s.addTabGroup);
+  const addTabGroupWithTab = useAppStore((s) => s.addTabGroupWithTab);
   const reorderTabs = useAppStore((s) => s.reorderTabs);
   const moveTab = useAppStore((s) => s.moveTab);
   const splitPanelWithTab = useAppStore((s) => s.splitPanelWithTab);
@@ -107,8 +107,7 @@ export function SplitView() {
             }
             // New-group button drop: create a new tab group and move the tab into it
             if (el.closest("[data-new-group-btn]")) {
-              const newGroupId = addTabGroup();
-              moveTabToGroup(tabId, fromPanelId, newGroupId);
+              addTabGroupWithTab(tabId, fromPanelId);
               break;
             }
           }
@@ -161,7 +160,7 @@ export function SplitView() {
     },
     [
       rootPanel,
-      addTabGroup,
+      addTabGroupWithTab,
       reorderTabs,
       moveTab,
       splitPanelWithTab,

@@ -310,6 +310,45 @@ describe("appStore — tab groups", () => {
     });
   });
 
+  describe("addTabGroupWithTab", () => {
+    it("creates a new group and moves the tab into it atomically", () => {
+      useAppStore.getState().addTab("bash", "local");
+      const leaf = getAllLeaves(useAppStore.getState().rootPanel)[0];
+      const tabId = leaf.tabs[0].id;
+
+      useAppStore.getState().addTabGroupWithTab(tabId, leaf.id);
+
+      const state = useAppStore.getState();
+      // New group should be active
+      expect(state.tabGroups).toHaveLength(2);
+      const newGroup = state.tabGroups.find((g) => g.id === state.activeTabGroupId)!;
+      const newGroupTabs = getAllLeaves(newGroup.rootPanel).flatMap((l) => l.tabs);
+      expect(newGroupTabs).toHaveLength(1);
+      expect(newGroupTabs[0].id).toBe(tabId);
+    });
+
+    it("removes the tab from the source group", () => {
+      useAppStore.getState().addTab("bash", "local");
+      useAppStore.getState().addTab("zsh", "local");
+      const leaf = getAllLeaves(useAppStore.getState().rootPanel)[0];
+      const tabId = leaf.tabs[0].id;
+      const group1Id = useAppStore.getState().tabGroups[0].id;
+
+      useAppStore.getState().addTabGroupWithTab(tabId, leaf.id);
+
+      const state = useAppStore.getState();
+      const group1 = state.tabGroups.find((g) => g.id === group1Id)!;
+      const group1Tabs = getAllLeaves(group1.rootPanel).flatMap((l) => l.tabs);
+      expect(group1Tabs.every((t) => t.id !== tabId)).toBe(true);
+    });
+
+    it("is a no-op when the tab does not exist", () => {
+      const before = useAppStore.getState().tabGroups;
+      useAppStore.getState().addTabGroupWithTab("nonexistent", "nonexistent");
+      expect(useAppStore.getState().tabGroups).toBe(before);
+    });
+  });
+
   describe("session preservation across group switches", () => {
     it("tabs added to one group are not visible when switching to another", () => {
       // Add tabs to group 1

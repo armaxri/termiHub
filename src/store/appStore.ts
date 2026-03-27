@@ -182,6 +182,8 @@ interface AppState {
   reorderTabGroups: (fromIndex: number, toIndex: number) => void;
   /** Move a tab from the active group into a different tab group. */
   moveTabToGroup: (tabId: string, fromPanelId: string, targetGroupId: string) => void;
+  /** Create a new tab group and move a tab from the active group into it atomically. */
+  addTabGroupWithTab: (tabId: string, fromPanelId: string) => void;
 
   // Tab drag state (shared across components for cross-group DnD)
   draggingTabId: string | null;
@@ -705,6 +707,65 @@ export const useAppStore = create<AppState>((set, get) => {
           rootPanel: newRootPanel,
           tabGroups: newTabGroups,
           activePanelId: newActivePanelId,
+        };
+      }),
+
+    addTabGroupWithTab: (tabId, fromPanelId) =>
+      set((state) => {
+        // Find the tab in the active group's live rootPanel
+        const sourceLeaf = getAllLeaves(state.rootPanel).find((l) => l.id === fromPanelId);
+        if (!sourceLeaf) return state;
+        const tab = sourceLeaf.tabs.find((t) => t.id === tabId);
+        if (!tab) return state;
+
+        // Remove tab from active group's live rootPanel
+        let newSourceRootPanel = updateLeaf(state.rootPanel, fromPanelId, (leaf) =>
+          removeTabFromLeaf(leaf, tabId)
+        );
+
+        // Clean up empty source panel (if not the sole leaf)
+        const updatedSource = findLeaf(newSourceRootPanel, fromPanelId);
+        const allSourceLeaves = getAllLeaves(newSourceRootPanel);
+        if (updatedSource && updatedSource.tabs.length === 0 && allSourceLeaves.length > 1) {
+          const removed = removeLeaf(newSourceRootPanel, fromPanelId);
+          newSourceRootPanel = removed ? simplifyTree(removed) : newSourceRootPanel;
+        }
+
+        // Update active panel if the source panel was removed
+        const newActivePanelId =
+          state.activePanelId === fromPanelId
+            ? (getAllLeaves(newSourceRootPanel)[0]?.id ?? null)
+            : state.activePanelId;
+
+        // Save the updated source group state
+        const savedGroups = state.tabGroups.map((g) =>
+          g.id === state.activeTabGroupId
+            ? { ...g, rootPanel: newSourceRootPanel, activePanelId: newActivePanelId }
+            : g
+        );
+
+        // Create the new group with the moved tab
+        const newGroupId = generateGroupId();
+        const newPanel = createLeafPanel();
+        const movedTab: TerminalTab = { ...tab, panelId: newPanel.id, isActive: true };
+        const newGroupRootPanel = updateLeaf(newPanel, newPanel.id, (leaf) => ({
+          ...leaf,
+          tabs: [movedTab],
+          activeTabId: movedTab.id,
+        }));
+        const groupCount = state.tabGroups.length + 1;
+        const newGroup: TabGroup = {
+          id: newGroupId,
+          name: `Group ${groupCount}`,
+          rootPanel: newGroupRootPanel,
+          activePanelId: newPanel.id,
+        };
+
+        return {
+          tabGroups: [...savedGroups, newGroup],
+          activeTabGroupId: newGroupId,
+          rootPanel: newGroupRootPanel,
+          activePanelId: newPanel.id,
         };
       }),
 
