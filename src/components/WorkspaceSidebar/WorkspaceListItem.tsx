@@ -30,6 +30,7 @@ export function WorkspaceListItem({
           className="workspace-item__count-badge"
           data-testid={`workspace-count-${workspace.id}`}
         >
+          {workspace.groupCount != null && `${workspace.groupCount} groups · `}
           {workspace.connectionCount} {workspace.connectionCount === 1 ? "tab" : "tabs"}
         </span>
         <div className="workspace-item__actions">

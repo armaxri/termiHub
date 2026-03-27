@@ -28,12 +28,23 @@ export interface WorkspaceSplitNode {
 /** Recursive layout tree for a workspace. */
 export type WorkspaceLayoutNode = WorkspaceLeafNode | WorkspaceSplitNode;
 
+/** Definition of a single tab group within a workspace. */
+export interface WorkspaceTabGroupDef {
+  /** Display name for this tab group. */
+  name: string;
+  /** Optional accent dot color. */
+  color?: string;
+  /** The panel layout tree for this group. */
+  layout: WorkspaceLayoutNode;
+}
+
 /** A complete workspace definition. */
 export interface WorkspaceDefinition {
   id: string;
   name: string;
   description?: string;
-  layout: WorkspaceLayoutNode;
+  /** The tab groups in this workspace (always at least one). */
+  tabGroups: WorkspaceTabGroupDef[];
 }
 
 /** Summary of a workspace for list display. */
@@ -42,6 +53,8 @@ export interface WorkspaceSummary {
   name: string;
   description?: string;
   connectionCount: number;
+  /** Number of tab groups; omitted when workspace has only one group. */
+  groupCount?: number;
 }
 
 /** Preview of a workspace import file. */

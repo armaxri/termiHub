@@ -83,7 +83,7 @@ import {
   stopTunnel as apiStopTunnel,
   getTunnelStatuses,
 } from "@/services/tunnelApi";
-import { WorkspaceSummary } from "@/types/workspace";
+import { WorkspaceSummary, WorkspaceDefinition } from "@/types/workspace";
 import {
   getWorkspaces as apiGetWorkspaces,
   loadWorkspace as apiLoadWorkspace,
@@ -91,7 +91,7 @@ import {
   deleteWorkspace as apiDeleteWorkspace,
   duplicateWorkspace as apiDuplicateWorkspace,
 } from "@/services/workspaceApi";
-import { buildPanelTreeFromWorkspace, captureCurrentLayout } from "@/utils/workspaceLayout";
+import { buildTabGroupsFromWorkspace, captureAllTabGroups } from "@/utils/workspaceLayout";
 import { SystemStats } from "@/types/monitoring";
 import { applyTheme, onThemeChange } from "@/themes";
 import { setOverrides as setKeybindingOverrides } from "@/services/keybindings";
@@ -414,17 +414,17 @@ interface AppState {
   workspaces: WorkspaceSummary[];
   activeWorkspaceName: string | null;
   loadWorkspaces: () => Promise<void>;
-  saveWorkspaceToBackend: (definition: {
-    id: string;
-    name: string;
-    description?: string;
-    layout: unknown;
-  }) => Promise<void>;
+  saveWorkspaceToBackend: (definition: WorkspaceDefinition) => Promise<void>;
   deleteWorkspaceFromBackend: (workspaceId: string) => Promise<void>;
   duplicateWorkspaceInBackend: (workspaceId: string) => Promise<void>;
   openWorkspaceEditorTab: (workspaceId: string | null) => void;
   launchWorkspace: (workspaceId: string) => Promise<void>;
-  saveCurrentAsWorkspace: (name: string, description?: string) => Promise<void>;
+  /** scope "all" captures all tab groups; "active" captures only the active group. */
+  saveCurrentAsWorkspace: (
+    name: string,
+    scope: "all" | "active",
+    description?: string
+  ) => Promise<void>;
 
   // Credential store
   credentialStoreStatus: CredentialStoreStatusInfo | null;
@@ -2276,7 +2276,7 @@ export const useAppStore = create<AppState>((set, get) => {
 
     saveWorkspaceToBackend: async (definition) => {
       try {
-        await apiSaveWorkspace(definition as Parameters<typeof apiSaveWorkspace>[0]);
+        await apiSaveWorkspace(definition);
         await get().loadWorkspaces();
       } catch (err) {
         console.error("Failed to save workspace:", err);
@@ -2354,16 +2354,18 @@ export const useAppStore = create<AppState>((set, get) => {
       try {
         const definition = await apiLoadWorkspace(workspaceId);
         const state = get();
-        const rootPanel = buildPanelTreeFromWorkspace(
-          definition.layout,
+        const builtGroups = buildTabGroupsFromWorkspace(
+          definition.tabGroups,
           state.connections,
           state.defaultShell
         );
-        const firstLeaf =
-          rootPanel.type === "leaf" ? rootPanel : (getAllLeaves(rootPanel)[0] ?? null);
+        if (builtGroups.length === 0) return;
+        const firstGroup = builtGroups[0];
         set({
-          rootPanel,
-          activePanelId: firstLeaf?.id ?? null,
+          tabGroups: builtGroups,
+          activeTabGroupId: firstGroup.id,
+          rootPanel: firstGroup.rootPanel,
+          activePanelId: firstGroup.activePanelId,
           activeWorkspaceName: definition.name,
         });
       } catch (err) {
@@ -2371,17 +2373,26 @@ export const useAppStore = create<AppState>((set, get) => {
       }
     },
 
-    saveCurrentAsWorkspace: async (name, description) => {
+    saveCurrentAsWorkspace: async (name, scope, description) => {
       try {
         const state = get();
-        const layout = captureCurrentLayout(state.rootPanel, state.connections);
+        const activeGroup = state.tabGroups.find((g) => g.id === state.activeTabGroupId);
+        const tabGroups =
+          scope === "active" && activeGroup
+            ? captureAllTabGroups(
+                [activeGroup],
+                state.activeTabGroupId,
+                state.rootPanel,
+                state.connections
+              )
+            : captureAllTabGroups(
+                state.tabGroups,
+                state.activeTabGroupId,
+                state.rootPanel,
+                state.connections
+              );
         const id = `ws-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-        await apiSaveWorkspace({
-          id,
-          name,
-          description,
-          layout,
-        });
+        await apiSaveWorkspace({ id, name, description, tabGroups });
         await get().loadWorkspaces();
         set({ activeWorkspaceName: name });
       } catch (err) {
