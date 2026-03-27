@@ -39,7 +39,24 @@ vi.mock("monaco-editor", () => ({
 
 // Mock shiki and @shikijs/monaco to avoid WASM loading in tests.
 vi.mock("shiki", () => ({
-  createHighlighter: vi.fn().mockResolvedValue({}),
+  createHighlighter: vi.fn().mockResolvedValue({
+    loadLanguage: vi.fn().mockResolvedValue(undefined),
+  }),
+  bundledLanguages: {
+    astro: vi.fn(),
+    svelte: vi.fn(),
+    zig: vi.fn(),
+  },
+  bundledLanguagesInfo: [
+    { id: "astro", name: "Astro" },
+    { id: "svelte", name: "Svelte" },
+    { id: "zig", name: "Zig" },
+    { id: "cmake", name: "CMake" },
+    { id: "toml", name: "TOML" },
+    { id: "nginx", name: "Nginx" },
+    { id: "nix", name: "Nix" },
+    { id: "lua", name: "Lua" },
+  ],
 }));
 
 vi.mock("@shikijs/monaco", () => ({

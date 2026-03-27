@@ -97,6 +97,11 @@ import { SystemStats } from "@/types/monitoring";
 import { applyTheme, onThemeChange } from "@/themes";
 import { setOverrides as setKeybindingOverrides } from "@/services/keybindings";
 import {
+  registerAdditionalLanguagePackages,
+  registerCustomGrammars,
+} from "@/utils/monacoCustomLanguages";
+import { frontendLog } from "@/utils/frontendLog";
+import {
   createLeafPanel,
   findLeaf,
   findLeafByTab,
@@ -1392,6 +1397,17 @@ export const useAppStore = create<AppState>((set, get) => {
         applyTheme(settings.theme);
         if (settings.keybindingOverrides) {
           setKeybindingOverrides(settings.keybindingOverrides);
+        }
+        if (settings.installedLanguagePackages?.length) {
+          void registerAdditionalLanguagePackages(settings.installedLanguagePackages);
+        }
+        if (settings.customLanguageGrammars?.length) {
+          registerCustomGrammars(settings.customLanguageGrammars).catch((err: unknown) => {
+            frontendLog(
+              "app_store",
+              `Failed to register custom grammars on startup: ${err instanceof Error ? err.message : String(err)}`
+            );
+          });
         }
         // Re-render terminals when OS theme changes in system mode
         onThemeChange(() => {

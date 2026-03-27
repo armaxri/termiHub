@@ -25,6 +25,8 @@ import { ExternalFilesSettings } from "./ExternalFilesSettings";
 import { KeyboardSettings } from "./KeyboardSettings";
 import { SecuritySettings } from "./SecuritySettings";
 import { FileTypeSettings } from "./FileTypeSettings";
+import { LanguagePackagesSettings } from "./LanguagePackagesSettings";
+import { CustomGrammarsSettings } from "./CustomGrammarsSettings";
 import { PortableModeSettings } from "./PortableModeSettings";
 import "./SettingsPanel.css";
 
@@ -208,6 +210,12 @@ export function SettingsPanel({ isVisible }: SettingsPanelProps) {
       }
       if (highlightedCategories?.has("editor")) {
         sections.push(<FileTypeSettings key="editor" visibleFields={visibleFields} />);
+        sections.push(
+          <LanguagePackagesSettings key="lang-packages" visibleFields={visibleFields} />
+        );
+        sections.push(
+          <CustomGrammarsSettings key="custom-grammars" visibleFields={visibleFields} />
+        );
       }
       if (highlightedCategories?.has("portable")) {
         sections.push(<PortableModeSettings key="portable" />);
@@ -232,7 +240,13 @@ export function SettingsPanel({ isVisible }: SettingsPanelProps) {
       case "external-files":
         return <ExternalFilesSettings />;
       case "editor":
-        return <FileTypeSettings />;
+        return (
+          <>
+            <FileTypeSettings />
+            <LanguagePackagesSettings />
+            <CustomGrammarsSettings />
+          </>
+        );
       case "portable":
         return <PortableModeSettings />;
     }

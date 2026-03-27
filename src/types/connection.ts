@@ -136,8 +136,33 @@ export interface AppSettings {
    * These take precedence over the built-in defaults.
    */
   fileLanguageMappings?: Record<string, string>;
+  /**
+   * Additional Shiki language package IDs to load for syntax highlighting.
+   * Values are Shiki bundled language IDs (e.g. `"astro"`, `"svelte"`, `"zig"`).
+   * The built-in packages (cmake, toml, nginx, nix) are always loaded regardless.
+   */
+  installedLanguagePackages?: string[];
+  /**
+   * User-imported custom TextMate grammar definitions for languages not in Shiki's
+   * bundled set. Each entry stores the full grammar JSON so it works without the
+   * original file being present.
+   */
+  customLanguageGrammars?: CustomLanguageGrammar[];
   /** Whether the user has acknowledged the keychain-in-portable-mode warning. */
   portableKeychainWarningAcknowledged?: boolean;
+}
+
+/**
+ * A user-imported TextMate grammar definition.
+ * The `grammar` field is the parsed `.tmLanguage.json` content stored verbatim.
+ */
+export interface CustomLanguageGrammar {
+  /** Monaco / Shiki language ID used in file-type mappings (e.g. `"my-lang"`). */
+  id: string;
+  /** Human-readable display name shown in the language picker. */
+  name: string;
+  /** The raw TextMate grammar object (contents of the `.tmLanguage.json` file). */
+  grammar: Record<string, unknown>;
 }
 
 /** Current app mode returned by the backend. */
