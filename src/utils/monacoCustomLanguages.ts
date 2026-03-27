@@ -186,9 +186,10 @@ export async function registerCustomGrammars(grammars: CustomLanguageGrammar[]):
     // would never be wired).
     const grammarAliases = Array.isArray(grammar.aliases) ? (grammar.aliases as string[]) : [];
     const registration: LanguageRegistration = {
-      ...(grammar as Omit<LanguageRegistration, "id" | "name">),
-      id,
+      ...(grammar as Omit<LanguageRegistration, "name" | "aliases">),
       name,
+      // Include `id` in aliases so shikiToMonaco's getLoadedLanguages() check
+      // can match the Monaco language ID (Shiki indexes by name, not id).
       aliases: [...new Set([id, ...grammarAliases])],
     };
     try {
@@ -196,6 +197,28 @@ export async function registerCustomGrammars(grammars: CustomLanguageGrammar[]):
       await shikiHighlighter.loadLanguage(registration);
       loadedLanguageIds.add(id);
       frontendLog("custom_grammars", `Grammar loaded successfully for "${id}"`);
+
+      // Diagnostic: tokenize a trivial test line to confirm Shiki can tokenize this language.
+      try {
+        // Cast lang: custom IDs are not BundledLanguage but work at runtime.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const diag = (await (shikiHighlighter as any).codeToTokens("test", {
+          lang: id,
+          theme: MONACO_DARK_THEME,
+        })) as Awaited<ReturnType<typeof shikiHighlighter.codeToTokens>>;
+        const firstLine = diag.tokens[0] ?? [];
+        frontendLog(
+          "custom_grammars",
+          `Tokenization test for "${id}": ${firstLine.length} token(s) — ${
+            firstLine.map((t) => `"${t.content}"(${t.color ?? "no-color"})`).join(", ") || "(none)"
+          }`
+        );
+      } catch (diagErr) {
+        frontendLog(
+          "custom_grammars",
+          `Tokenization test failed for "${id}": ${diagErr instanceof Error ? diagErr.message : String(diagErr)}`
+        );
+      }
     } catch (err) {
       frontendLog(
         "custom_grammars",
