@@ -6,6 +6,7 @@ import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { LogEntry } from "@/types/terminal";
 import { TunnelState, TunnelStats } from "@/types/tunnel";
 import { CredentialStoreStatusInfo } from "@/types/credential";
+import { ServerState } from "@/types/embeddedServer";
 
 interface TerminalOutputPayload {
   session_id: string;
@@ -343,6 +344,15 @@ export async function onCredentialStoreStatusChanged(
   callback: (status: CredentialStoreStatusInfo) => void
 ): Promise<UnlistenFn> {
   return await listen<CredentialStoreStatusInfo>("credential-store-status-changed", (event) => {
+    callback(event.payload);
+  });
+}
+
+/** Subscribe to embedded server status change events. */
+export async function onEmbeddedServerStatusChanged(
+  callback: (state: ServerState) => void
+): Promise<UnlistenFn> {
+  return await listen<ServerState>("embedded-server-status-changed", (event) => {
     callback(event.payload);
   });
 }
