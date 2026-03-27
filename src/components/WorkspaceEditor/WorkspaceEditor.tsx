@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Plus, X } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { WorkspaceEditorMeta } from "@/types/terminal";
