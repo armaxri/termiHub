@@ -22,6 +22,7 @@ describe("getActivePreset", () => {
       sidebarPosition: "right",
       sidebarVisible: true,
       statusBarVisible: false,
+      hiddenActivityBarViews: [],
     };
     expect(getActivePreset(custom)).toBeNull();
   });
