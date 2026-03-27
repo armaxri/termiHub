@@ -136,6 +136,44 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     category: "editor",
     keywords: ["syntax", "highlight", "language", "filetype", "extension", "mapping", "monaco"],
   },
+  {
+    id: "installedLanguagePackages",
+    label: "Language Packages",
+    description:
+      "Install additional syntax highlighting packages from Shiki's TextMate grammar library",
+    category: "editor",
+    keywords: [
+      "language",
+      "package",
+      "syntax",
+      "highlight",
+      "grammar",
+      "textmate",
+      "shiki",
+      "install",
+      "astro",
+      "svelte",
+      "zig",
+      "dart",
+      "elixir",
+    ],
+  },
+  {
+    id: "customLanguageGrammars",
+    label: "Custom Language Grammars",
+    description: "Import custom TextMate grammar files (.tmLanguage.json) for your own languages",
+    category: "editor",
+    keywords: [
+      "custom",
+      "language",
+      "grammar",
+      "textmate",
+      "tmLanguage",
+      "import",
+      "syntax",
+      "highlight",
+    ],
+  },
 ];
 
 /**
