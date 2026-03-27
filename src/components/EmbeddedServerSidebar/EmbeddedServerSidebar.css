@@ -1,0 +1,251 @@
+.server-sidebar {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.server-sidebar__actions {
+  display: flex;
+  padding: 4px 8px;
+  gap: 4px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.server-sidebar__add-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  border-radius: 4px;
+}
+
+.server-sidebar__add-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.server-sidebar__list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.server-sidebar__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 24px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-align: center;
+  gap: 8px;
+}
+
+/* ─── Server item ─────────────────────────────────────────────────────────── */
+
+.server-item {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.server-item:hover {
+  background: var(--bg-hover);
+}
+
+.server-item__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.server-item__status {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.server-item__status--stopped {
+  background-color: var(--text-secondary);
+}
+
+.server-item__status--pending {
+  background-color: var(--color-warning);
+}
+
+.server-item__status--running {
+  background-color: var(--color-success);
+}
+
+.server-item__status--error {
+  background-color: var(--color-error);
+}
+
+.server-item__badge {
+  font-size: 10px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.server-item__name {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.server-item__actions {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+}
+
+.server-item:hover .server-item__actions {
+  opacity: 1;
+}
+
+.server-item__action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 0;
+}
+
+.server-item__action:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.server-item__action--danger:hover {
+  color: var(--color-error);
+}
+
+.server-item__details {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 0 0 14px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.server-item__error {
+  color: var(--color-error);
+}
+
+/* ─── Dialog form ─────────────────────────────────────────────────────────── */
+
+.server-dialog__form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px 0 16px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.server-dialog__label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.server-dialog__label--inline {
+  flex: 1;
+}
+
+.server-dialog__input {
+  padding: 5px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.server-dialog__input--port {
+  width: 80px;
+}
+
+.server-dialog__input:focus {
+  outline: none;
+  border-color: var(--accent-color);
+}
+
+.server-dialog__radio-group {
+  display: flex;
+  gap: 16px;
+  padding: 4px 0;
+}
+
+.server-dialog__radio {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.server-dialog__fieldset {
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.server-dialog__legend {
+  font-size: 11px;
+  color: var(--text-secondary);
+  padding: 0 4px;
+}
+
+.server-dialog__row {
+  display: flex;
+  gap: 12px;
+}
+
+.server-dialog__check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.server-dialog__creds {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-left: 20px;
+}

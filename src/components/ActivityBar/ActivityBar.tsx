@@ -4,6 +4,7 @@ import {
   FolderOpen,
   ArrowLeftRight,
   LayoutGrid,
+  Server,
   Settings,
   Download,
   Upload,
@@ -21,6 +22,7 @@ const TOP_ITEMS: { view: SidebarView; icon: typeof Network; label: string }[] = 
   { view: "connections", icon: Network, label: "Connections" },
   { view: "files", icon: FolderOpen, label: "File Browser" },
   { view: "tunnels", icon: ArrowLeftRight, label: "SSH Tunnels" },
+  { view: "services", icon: Server, label: "Services" },
   { view: "workspaces", icon: LayoutGrid, label: "Workspaces" },
 ];
 

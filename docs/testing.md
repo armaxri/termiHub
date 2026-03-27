@@ -688,20 +688,21 @@ Manual test procedures for verifying user-facing features before releases and af
 
 Manual tests that can be automated have been moved to WebdriverIO E2E tests. The YAML files now contain only items that truly require manual verification. See the [E2E Coverage Map](#e2e-coverage-map) below for the mapping from manual test IDs to E2E test files.
 
-**75 manual test items remain** across 11 YAML files. These cannot be automated due to:
+**81 manual test items remain** across 12 YAML files. These cannot be automated due to:
 
-| Reason                                | Items | Examples                                                         |
-| ------------------------------------- | ----- | ---------------------------------------------------------------- |
-| Visual rendering verification         | ~16   | Powerline glyphs, white flash, 1px borders, cursor blink         |
-| Keyboard shortcuts                    | ~8    | Chord bindings, rebinding, shortcut conflicts                    |
-| OS-level behavior                     | ~10   | macOS key repeat, accent picker, custom app icon, app updater    |
-| Native OS dialogs (file picker, save) | ~6    | Import/export connections, SSH key browse, save terminal to file |
-| Drag-and-drop                         | ~8    | Tab reorder, split view drag, connection folder drag             |
-| External app integration              | ~7    | Open in VS Code (local + SFTP), VS Code not installed            |
-| Right-click behavior                  | ~5    | Quick copy/paste, context menu, setting persistence              |
-| OS credential store                   | ~3    | Windows Credential Manager, macOS Keychain, Linux Secret Service |
-| Platform-specific SSH/agent           | ~5    | SSH agent setup, X11 forwarding, Windows WSL file browser paths  |
-| Cross-platform (external window)      | ~1    | X11 forwarding displays remote window                            |
+| Reason                                | Items | Examples                                                          |
+| ------------------------------------- | ----- | ----------------------------------------------------------------- |
+| Visual rendering verification         | ~16   | Powerline glyphs, white flash, 1px borders, cursor blink          |
+| Keyboard shortcuts                    | ~8    | Chord bindings, rebinding, shortcut conflicts                     |
+| OS-level behavior                     | ~10   | macOS key repeat, accent picker, custom app icon, app updater     |
+| Native OS dialogs (file picker, save) | ~6    | Import/export connections, SSH key browse, save terminal to file  |
+| Drag-and-drop                         | ~8    | Tab reorder, split view drag, connection folder drag              |
+| External app integration              | ~7    | Open in VS Code (local + SFTP), VS Code not installed             |
+| Right-click behavior                  | ~5    | Quick copy/paste, context menu, setting persistence               |
+| OS credential store                   | ~3    | Windows Credential Manager, macOS Keychain, Linux Secret Service  |
+| Platform-specific SSH/agent           | ~5    | SSH agent setup, X11 forwarding, Windows WSL file browser paths   |
+| Cross-platform (external window)      | ~1    | X11 forwarding displays remote window                             |
+| Embedded network services             | ~6    | HTTP/FTP/TFTP server start/stop, file transfer, auto-start (#526) |
 
 E2E test coverage: **45 test files** (28 UI suite + 17 infrastructure suite)
 

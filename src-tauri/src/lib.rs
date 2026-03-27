@@ -1,6 +1,7 @@
 mod commands;
 mod connection;
 mod credential;
+mod embedded_servers;
 mod files;
 mod monitoring;
 mod session;
@@ -213,6 +214,35 @@ pub fn run() {
                 }
             }
 
+            // Initialize embedded server manager with recovery loading.
+            // On failure, the app still starts but embedded servers are unavailable.
+            match embedded_servers::server_manager::EmbeddedServerManager::new(app.handle()) {
+                Ok(manager) => {
+                    recovery_warnings.extend(manager.take_recovery_warnings());
+
+                    // Auto-start servers in a background thread.
+                    let handle = app.handle().clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                        if let Some(mgr) = handle
+                            .try_state::<embedded_servers::server_manager::EmbeddedServerManager>()
+                        {
+                            mgr.start_auto_servers();
+                        }
+                    });
+
+                    app.manage(manager);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to initialize embedded server manager: {e}");
+                    recovery_warnings.push(RecoveryWarning {
+                        file_name: "embedded_servers.json".to_string(),
+                        message: "Could not initialize embedded server storage. Services are unavailable until the app is restarted.".to_string(),
+                        details: Some(e.to_string()),
+                    });
+                }
+            }
+
             // Handle --list-workspaces CLI flag: print workspace list and exit
             {
                 use tauri_plugin_cli::CliExt;
@@ -365,6 +395,14 @@ pub fn run() {
             commands::workspace::export_workspaces,
             commands::workspace::import_workspaces,
             commands::workspace::preview_import_workspaces,
+            // Embedded servers
+            commands::embedded_servers::list_embedded_servers,
+            commands::embedded_servers::save_embedded_server,
+            commands::embedded_servers::delete_embedded_server,
+            commands::embedded_servers::get_embedded_server_states,
+            commands::embedded_servers::start_embedded_server,
+            commands::embedded_servers::stop_embedded_server,
+            commands::embedded_servers::create_and_start_server,
             // Credentials
             commands::credential::get_credential_store_status,
             commands::credential::unlock_credential_store,
@@ -387,6 +425,12 @@ pub fn run() {
             {
                 // Gracefully stop all active tunnels on window close
                 if let Some(mgr) = app_handle.try_state::<tunnel::tunnel_manager::TunnelManager>() {
+                    mgr.stop_all();
+                }
+                // Gracefully stop all running embedded servers on window close
+                if let Some(mgr) = app_handle
+                    .try_state::<embedded_servers::server_manager::EmbeddedServerManager>()
+                {
                     mgr.stop_all();
                 }
             }

@@ -74,6 +74,17 @@ import {
 import type { ConnectionTypeInfo } from "@/services/api";
 import { RemoteAgentConfig } from "@/types/terminal";
 import { TunnelConfig, TunnelState } from "@/types/tunnel";
+import { EmbeddedServerConfig, ServerState as EmbeddedServerState } from "@/types/embeddedServer";
+import {
+  listEmbeddedServers,
+  saveEmbeddedServer as apiSaveEmbeddedServer,
+  deleteEmbeddedServer as apiDeleteEmbeddedServer,
+  startEmbeddedServer as apiStartEmbeddedServer,
+  stopEmbeddedServer as apiStopEmbeddedServer,
+  getEmbeddedServerStates,
+  createAndStartServer as apiCreateAndStartServer,
+} from "@/services/embeddedServerApi";
+import { DEFAULT_PORTS, ServerType } from "@/types/embeddedServer";
 import {
   getTunnels,
   saveTunnel as apiSaveTunnel,
@@ -107,7 +118,7 @@ import {
   markActiveLeaf,
 } from "@/utils/panelTree";
 
-export type SidebarView = "connections" | "files" | "tunnels" | "workspaces";
+export type SidebarView = "connections" | "files" | "tunnels" | "services" | "workspaces";
 
 /** Clipboard state for file browser copy/cut operations. */
 export interface FileClipboard {
@@ -389,6 +400,17 @@ interface AppState {
   stopTunnel: (tunnelId: string) => Promise<void>;
   updateTunnelState: (state: TunnelState) => void;
   openTunnelEditorTab: (tunnelId: string | null) => void;
+
+  // Embedded Servers
+  embeddedServers: EmbeddedServerConfig[];
+  embeddedServerStates: Record<string, EmbeddedServerState>;
+  loadEmbeddedServers: () => Promise<void>;
+  saveEmbeddedServer: (config: EmbeddedServerConfig) => Promise<void>;
+  deleteEmbeddedServer: (serverId: string) => Promise<void>;
+  startEmbeddedServer: (serverId: string) => Promise<void>;
+  stopEmbeddedServer: (serverId: string) => Promise<void>;
+  updateEmbeddedServerState: (state: EmbeddedServerState) => void;
+  quickShareServer: (path: string, protocol: ServerType) => Promise<string>;
 
   // Workspaces
   workspaces: WorkspaceSummary[];
@@ -1140,6 +1162,8 @@ export const useAppStore = create<AppState>((set, get) => {
       }
       // Load SSH tunnels
       get().loadTunnels();
+      // Load embedded servers
+      get().loadEmbeddedServers();
       // Load workspaces
       get().loadWorkspaces();
       // Load credential store status and auto-open unlock dialog if locked
@@ -2015,6 +2039,96 @@ export const useAppStore = create<AppState>((set, get) => {
         });
         return { rootPanel, activePanelId: targetPanelId };
       }),
+
+    // Embedded Servers
+    embeddedServers: [],
+    embeddedServerStates: {},
+
+    loadEmbeddedServers: async () => {
+      try {
+        const servers = await listEmbeddedServers();
+        const stateList = await getEmbeddedServerStates();
+        const embeddedServerStates: Record<string, EmbeddedServerState> = {};
+        for (const s of stateList) {
+          embeddedServerStates[s.serverId] = s;
+        }
+        set({ embeddedServers: servers, embeddedServerStates });
+      } catch (err) {
+        console.error("Failed to load embedded servers:", err);
+      }
+    },
+
+    saveEmbeddedServer: async (config) => {
+      try {
+        await apiSaveEmbeddedServer(config);
+        set((state) => {
+          const exists = state.embeddedServers.some((s) => s.id === config.id);
+          const embeddedServers = exists
+            ? state.embeddedServers.map((s) => (s.id === config.id ? config : s))
+            : [...state.embeddedServers, config];
+          return { embeddedServers };
+        });
+      } catch (err) {
+        console.error("Failed to save embedded server:", err);
+        throw err;
+      }
+    },
+
+    deleteEmbeddedServer: async (serverId) => {
+      try {
+        await apiDeleteEmbeddedServer(serverId);
+        set((state) => ({
+          embeddedServers: state.embeddedServers.filter((s) => s.id !== serverId),
+          embeddedServerStates: Object.fromEntries(
+            Object.entries(state.embeddedServerStates).filter(([k]) => k !== serverId)
+          ),
+        }));
+      } catch (err) {
+        console.error("Failed to delete embedded server:", err);
+      }
+    },
+
+    startEmbeddedServer: async (serverId) => {
+      try {
+        await apiStartEmbeddedServer(serverId);
+      } catch (err) {
+        console.error("Failed to start embedded server:", err);
+        throw err;
+      }
+    },
+
+    stopEmbeddedServer: async (serverId) => {
+      try {
+        await apiStopEmbeddedServer(serverId);
+      } catch (err) {
+        console.error("Failed to stop embedded server:", err);
+        throw err;
+      }
+    },
+
+    updateEmbeddedServerState: (state) => {
+      set((s) => ({
+        embeddedServerStates: { ...s.embeddedServerStates, [state.serverId]: state },
+      }));
+    },
+
+    quickShareServer: async (path, protocol) => {
+      const config: EmbeddedServerConfig = {
+        id: "",
+        name: `Quick Share (${protocol.toUpperCase()})`,
+        serverType: protocol,
+        rootDirectory: path,
+        bindHost: "127.0.0.1",
+        port: DEFAULT_PORTS[protocol],
+        autoStart: false,
+        readOnly: false,
+        directoryListing: protocol === "http" ? true : undefined,
+      };
+      const serverId = await apiCreateAndStartServer(config);
+      // Refresh server list so the new entry shows up in the sidebar.
+      await get().loadEmbeddedServers();
+      return serverId;
+    },
 
     // Workspaces
     workspaces: [],
