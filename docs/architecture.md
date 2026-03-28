@@ -990,6 +990,57 @@ termiHub provides optional credential encryption with three storage modes:
 
 All modes support auto-lock after a configurable timeout. Credential storage is managed through the Security section in Settings.
 
+### Experimental Features
+
+termiHub provides an opt-in mechanism for features that are under active development and not yet ready for general availability.
+
+#### Purpose
+
+Experimental features allow work-in-progress functionality to ship in releases without stability guarantees. They may be:
+
+- Completely redesigned before reaching stable status
+- Removed without replacement if the direction is abandoned
+- Broken across releases without migration paths
+
+Users opt in explicitly and accept these trade-offs.
+
+#### How It Works
+
+A single boolean setting, **Allow Experimental Features** (`experimentalFeaturesEnabled` in `AppSettings`), gates all experimental UI. It is `false` by default and surfaced in **Settings → General**.
+
+The `useExperimentalFeatures()` hook (`src/hooks/useExperimentalFeatures.ts`) is the single read point for this flag across the frontend:
+
+```typescript
+const experimental = useExperimentalFeatures();
+if (!experimental) return null;
+```
+
+#### Marking a Feature as Experimental
+
+**Activity Bar items** — set `experimental: true` on the item definition in `ActivityBar.tsx`. The item is automatically hidden when the flag is off and shown with a " — Experimental" suffix in the right-click context menu when enabled.
+
+**Connection type options** — gate inclusion via the `includeRemoteAgent` parameter of `buildTypeOptions()` in `ConnectionEditor.tsx`.
+
+**Sidebar sections** — guard the render block with `experimental &&` in `ConnectionList.tsx`.
+
+**Other UI** — guard rendering with `useExperimentalFeatures()`.
+
+#### Currently Experimental Features
+
+| Feature      | Entry points gated                                               |
+| ------------ | ---------------------------------------------------------------- |
+| Remote Agent | Connection type dropdown, agent nodes in the Connections sidebar |
+| SSH Tunnels  | Activity Bar item (SSH Tunnels sidebar view)                     |
+
+#### Stability Contract
+
+| Status       | Guarantee                                                   |
+| ------------ | ----------------------------------------------------------- |
+| Stable       | Backward-compatible; breaking changes require deprecation   |
+| Experimental | No guarantees; may change, break, or be removed at any time |
+
+Experimental features may ship in public releases. The flag is not a hidden developer tool — it is a user-visible opt-in that makes the lack of guarantees explicit.
+
 ---
 
 ## 9. Architecture Decisions
