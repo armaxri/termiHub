@@ -298,13 +298,11 @@ pub fn write_cheatsheet(html: String, app: tauri::AppHandle) -> Result<String, S
         .app_cache_dir()
         .map_err(|e| format!("could not resolve app cache dir: {e}"))?;
 
-    std::fs::create_dir_all(&cache_dir)
-        .map_err(|e| format!("could not create cache dir: {e}"))?;
+    std::fs::create_dir_all(&cache_dir).map_err(|e| format!("could not create cache dir: {e}"))?;
 
     let file_path = cache_dir.join("termihub-shortcuts.html");
 
-    std::fs::write(&file_path, html)
-        .map_err(|e| format!("could not write cheatsheet: {e}"))?;
+    std::fs::write(&file_path, html).map_err(|e| format!("could not write cheatsheet: {e}"))?;
 
     file_path
         .to_str()
