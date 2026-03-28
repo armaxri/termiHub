@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { RotateCcw } from "lucide-react";
+import { RotateCcw, Download } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { KeyCombo, KeyBinding, ShortcutCategory } from "@/types/keybindings";
 import {
@@ -11,6 +11,7 @@ import {
   checkConflict,
   getOverrides,
 } from "@/services/keybindings";
+import { exportCheatSheet } from "@/utils/cheatSheetPdf";
 import "./KeyboardSettings.css";
 
 const CATEGORY_LABELS: Record<ShortcutCategory, string> = {
@@ -173,14 +174,25 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
         </div>
       ))}
 
-      <button
-        className="keyboard-settings__reset-all"
-        onClick={handleResetAll}
-        data-testid="keyboard-settings-reset-all"
-      >
-        <RotateCcw size={14} />
-        Reset All to Defaults
-      </button>
+      <div className="keyboard-settings__actions">
+        <button
+          className="keyboard-settings__reset-all"
+          onClick={handleResetAll}
+          data-testid="keyboard-settings-reset-all"
+        >
+          <RotateCcw size={14} />
+          Reset All to Defaults
+        </button>
+        <button
+          className="keyboard-settings__export-pdf"
+          onClick={() => void exportCheatSheet()}
+          data-testid="keyboard-settings-export-pdf"
+          title="Save a one-page HTML cheat sheet of all shortcuts"
+        >
+          <Download size={14} />
+          Save HTML Cheat Sheet
+        </button>
+      </div>
     </div>
   );
 }

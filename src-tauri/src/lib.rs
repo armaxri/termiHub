@@ -352,6 +352,7 @@ pub fn run() {
             commands::files::vscode_available,
             commands::files::vscode_open_local,
             commands::files::vscode_open_remote,
+            commands::files::write_cheatsheet,
             // Monitoring (kept temporarily — will migrate to session-based monitoring)
             commands::monitoring::monitoring_open,
             commands::monitoring::monitoring_close,

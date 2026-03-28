@@ -115,7 +115,15 @@
   color: var(--text-primary);
 }
 
-.keyboard-settings__reset-all {
+.keyboard-settings__actions {
+  display: flex;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+  margin-top: var(--spacing-md);
+}
+
+.keyboard-settings__reset-all,
+.keyboard-settings__export-pdf {
   display: inline-flex;
   align-items: center;
   gap: var(--spacing-xs);
@@ -126,10 +134,10 @@
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
   cursor: pointer;
-  margin-top: var(--spacing-md);
 }
 
-.keyboard-settings__reset-all:hover {
+.keyboard-settings__reset-all:hover,
+.keyboard-settings__export-pdf:hover {
   background-color: var(--bg-hover);
   color: var(--text-primary);
 }

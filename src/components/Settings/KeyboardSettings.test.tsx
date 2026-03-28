@@ -4,6 +4,10 @@ import { createRoot, Root } from "react-dom/client";
 import { KeyboardSettings } from "./KeyboardSettings";
 import { clearOverrides } from "@/services/keybindings";
 
+vi.mock("@/utils/cheatSheetPdf", () => ({
+  exportCheatSheet: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock("@/themes", () => ({
   applyTheme: vi.fn(),
   onThemeChange: vi.fn(() => vi.fn()),
@@ -56,6 +60,27 @@ describe("KeyboardSettings", () => {
     renderComponent();
     const resetBtn = container.querySelector('[data-testid="keyboard-settings-reset-all"]');
     expect(resetBtn).not.toBeNull();
+  });
+
+  it("renders export HTML button", () => {
+    renderComponent();
+    const exportBtn = container.querySelector('[data-testid="keyboard-settings-export-pdf"]');
+    expect(exportBtn).not.toBeNull();
+    expect(exportBtn?.textContent).toContain("Save HTML Cheat Sheet");
+  });
+
+  it("calls exportCheatSheet when export PDF button is clicked", async () => {
+    const { exportCheatSheet } = await import("@/utils/cheatSheetPdf");
+    renderComponent();
+    const exportBtn = container.querySelector(
+      '[data-testid="keyboard-settings-export-pdf"]'
+    ) as HTMLElement;
+
+    act(() => {
+      exportBtn.click();
+    });
+
+    expect(exportCheatSheet).toHaveBeenCalledOnce();
   });
 
   it("filters bindings by search query", () => {
