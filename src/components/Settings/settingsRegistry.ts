@@ -177,6 +177,14 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     ],
   },
   {
+    id: "experimentalFeaturesEnabled",
+    label: "Allow Experimental Features",
+    description:
+      "Show experimental features that are not guaranteed to be released or long-term supported",
+    category: "general",
+    keywords: ["experimental", "beta", "preview", "unstable", "hidden", "features", "labs"],
+  },
+  {
     id: "portableMode",
     label: "Portable Mode",
     description: "Run termiHub from a USB drive or any directory without system installation",

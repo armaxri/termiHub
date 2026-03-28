@@ -79,6 +79,7 @@ export interface LayoutConfig {
   sidebarPosition: SidebarPosition;
   sidebarVisible: boolean;
   statusBarVisible: boolean;
+  hiddenActivityBarViews: string[];
 }
 
 export const DEFAULT_LAYOUT: LayoutConfig = {
@@ -86,6 +87,7 @@ export const DEFAULT_LAYOUT: LayoutConfig = {
   sidebarPosition: "left",
   sidebarVisible: true,
   statusBarVisible: true,
+  hiddenActivityBarViews: [],
 };
 
 export const LAYOUT_PRESETS: Record<string, LayoutConfig> = {
@@ -94,18 +96,21 @@ export const LAYOUT_PRESETS: Record<string, LayoutConfig> = {
     sidebarPosition: "left",
     sidebarVisible: true,
     statusBarVisible: true,
+    hiddenActivityBarViews: [],
   },
   focus: {
     activityBarPosition: "left",
     sidebarPosition: "left",
     sidebarVisible: false,
     statusBarVisible: true,
+    hiddenActivityBarViews: [],
   },
   zen: {
     activityBarPosition: "hidden",
     sidebarPosition: "left",
     sidebarVisible: false,
     statusBarVisible: false,
+    hiddenActivityBarViews: [],
   },
 };
 
@@ -150,6 +155,7 @@ export interface AppSettings {
   customLanguageGrammars?: CustomLanguageGrammar[];
   /** Whether the user has acknowledged the keychain-in-portable-mode warning. */
   portableKeychainWarningAcknowledged?: boolean;
+  experimentalFeaturesEnabled?: boolean;
 }
 
 /**

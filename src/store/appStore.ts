@@ -246,6 +246,7 @@ interface AppState {
   setLayoutDialogOpen: (open: boolean) => void;
   updateLayoutConfig: (partial: Partial<LayoutConfig>) => void;
   applyLayoutPreset: (preset: "default" | "focus" | "zen") => void;
+  toggleActivityBarView: (view: SidebarView) => void;
 
   // Shortcuts overlay
   shortcutsOverlayOpen: boolean;
@@ -1373,6 +1374,28 @@ export const useAppStore = create<AppState>((set, get) => {
         const current = get();
         persistSettings({ ...current.settings, layout: config }).catch((err) =>
           console.error("Failed to persist layout preset:", err)
+        );
+      }, 300);
+    },
+
+    toggleActivityBarView: (view) => {
+      const REQUIRED_VIEWS: SidebarView[] = ["connections"];
+      if (REQUIRED_VIEWS.includes(view)) return;
+      const { layoutConfig, sidebarView, sidebarCollapsed } = get();
+      const hidden = layoutConfig.hiddenActivityBarViews ?? [];
+      const isCurrentlyHidden = hidden.includes(view);
+      const updatedHidden = isCurrentlyHidden
+        ? hidden.filter((v) => v !== view)
+        : [...hidden, view];
+      const updated = { ...layoutConfig, hiddenActivityBarViews: updatedHidden };
+      // If hiding the currently active view, collapse the sidebar
+      const shouldCollapse = !isCurrentlyHidden && sidebarView === view && !sidebarCollapsed;
+      set({ layoutConfig: updated, ...(shouldCollapse ? { sidebarCollapsed: true } : {}) });
+      if (layoutPersistTimer) clearTimeout(layoutPersistTimer);
+      layoutPersistTimer = setTimeout(() => {
+        const current = get();
+        persistSettings({ ...current.settings, layout: updated }).catch((err) =>
+          console.error("Failed to persist layout config:", err)
         );
       }, 300);
     },
