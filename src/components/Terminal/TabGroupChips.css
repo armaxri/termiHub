@@ -1,0 +1,117 @@
+/* Tab group chip area — lives in the toolbar left side */
+.tab-group-chips {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  flex: 1;
+  min-width: 0;
+  padding-right: var(--spacing-sm);
+}
+
+.tab-group-chips::-webkit-scrollbar {
+  display: none;
+}
+
+/* Pill-shaped chip — intentionally distinct from file-tab terminal tabs */
+.tab-group-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  border-radius: 100px;
+  border: 1px solid transparent;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color var(--transition-fast),
+    background-color var(--transition-fast),
+    border-color var(--transition-fast);
+  user-select: none;
+}
+
+.tab-group-chip:hover {
+  color: var(--text-primary);
+  background-color: var(--bg-hover);
+}
+
+.tab-group-chip--active {
+  color: var(--text-primary);
+  background-color: var(--bg-active);
+  border-color: var(--border-primary);
+}
+
+/* Highlighted when a tab is being dragged and can be dropped here */
+.tab-group-chip--drop-target {
+  color: var(--text-primary);
+  border-color: var(--border-primary);
+  border-style: dashed;
+  background-color: var(--bg-hover);
+}
+
+/* Accent dot for color-coded groups */
+.tab-group-chip__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.tab-group-chip__name {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Close button — hidden by default, visible on hover or when chip is active */
+.tab-group-chip__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-sm);
+  opacity: 0;
+  transition:
+    opacity var(--transition-fast),
+    background-color var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.tab-group-chip:hover .tab-group-chip__close,
+.tab-group-chip--active .tab-group-chip__close {
+  opacity: 1;
+}
+
+.tab-group-chip__close:hover {
+  background-color: var(--bg-hover);
+}
+
+/* "+" button after chips */
+.tab-group-chips__add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  transition:
+    color var(--transition-fast),
+    background-color var(--transition-fast);
+}
+
+.tab-group-chips__add:hover {
+  color: var(--text-primary);
+  background-color: var(--bg-hover);
+}
+
+.tab-group-chips__add--drop-target {
+  color: var(--text-primary);
+  background-color: var(--bg-hover);
+  border: 1px dashed var(--border-primary);
+}

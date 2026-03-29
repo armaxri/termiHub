@@ -101,6 +101,24 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
           </span>
         </label>
       )}
+      {show("experimentalFeaturesEnabled") && (
+        <label className="settings-form__field settings-form__field--checkbox">
+          <input
+            type="checkbox"
+            checked={settings.experimentalFeaturesEnabled ?? false}
+            onChange={(e) =>
+              onChange({ ...settings, experimentalFeaturesEnabled: e.target.checked })
+            }
+            data-testid="settings-experimental-features"
+          />
+          <span className="settings-form__label">Allow Experimental Features</span>
+          <span className="settings-form__hint settings-form__hint--warning">
+            Enables hidden features that are under active development. Experimental features may
+            change, break, or be removed at any time without notice and are not guaranteed to be
+            released or long-term supported.
+          </span>
+        </label>
+      )}
     </div>
   );
 }

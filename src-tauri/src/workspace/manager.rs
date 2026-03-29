@@ -5,8 +5,9 @@ use anyhow::{Context, Result};
 use tauri::AppHandle;
 
 use super::config::{
-    WorkspaceDefinition, WorkspaceExportData, WorkspaceExportEntry, WorkspaceImportPreview,
-    WorkspaceLayoutNode, WorkspaceStore, WorkspaceSummary, WorkspaceTabDef,
+    count_tabs, WorkspaceDefinition, WorkspaceExportData, WorkspaceExportEntry,
+    WorkspaceImportPreview, WorkspaceLayoutNode, WorkspaceStore, WorkspaceSummary, WorkspaceTabDef,
+    WorkspaceTabGroupDef,
 };
 use super::storage::WorkspaceStorage;
 use crate::connection::recovery::RecoveryWarning;
@@ -133,7 +134,7 @@ impl WorkspaceManager {
             id: new_id.clone(),
             name: format!("Copy of {}", original.name),
             description: original.description,
-            layout: original.layout,
+            tab_groups: original.tab_groups,
         };
 
         store.workspaces.push(duplicate);
@@ -162,7 +163,15 @@ impl WorkspaceManager {
             .map(|ws| WorkspaceExportEntry {
                 name: ws.name.clone(),
                 description: ws.description.clone(),
-                layout: replace_connection_ids_with_names(&ws.layout, id_to_name),
+                tab_groups: ws
+                    .tab_groups
+                    .iter()
+                    .map(|g| WorkspaceTabGroupDef {
+                        name: g.name.clone(),
+                        color: g.color.clone(),
+                        layout: replace_connection_ids_with_names(&g.layout, id_to_name),
+                    })
+                    .collect(),
             })
             .collect();
 
@@ -208,7 +217,15 @@ impl WorkspaceManager {
                 id: new_id,
                 name: entry.name,
                 description: entry.description,
-                layout: resolve_connection_names_to_ids(&entry.layout, name_to_id),
+                tab_groups: entry
+                    .tab_groups
+                    .into_iter()
+                    .map(|g| WorkspaceTabGroupDef {
+                        name: g.name,
+                        color: g.color,
+                        layout: resolve_connection_names_to_ids(&g.layout, name_to_id),
+                    })
+                    .collect(),
             };
 
             store.workspaces.push(definition);
@@ -230,7 +247,8 @@ impl WorkspaceManager {
         let total_tab_count = data
             .workspaces
             .iter()
-            .map(|ws| count_layout_tabs(&ws.layout))
+            .flat_map(|ws| ws.tab_groups.iter())
+            .map(|g| count_tabs(&g.layout))
             .sum();
 
         Ok(WorkspaceImportPreview {
@@ -308,18 +326,11 @@ fn resolve_connection_names_to_ids(
     }
 }
 
-/// Count tabs in a layout tree (used by preview).
-fn count_layout_tabs(node: &WorkspaceLayoutNode) -> usize {
-    match node {
-        WorkspaceLayoutNode::Leaf { tabs } => tabs.len(),
-        WorkspaceLayoutNode::Split { children, .. } => children.iter().map(count_layout_tabs).sum(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::workspace::config::{SplitDirection, WorkspaceLayoutNode, WorkspaceTabDef};
+    use crate::workspace::storage::WorkspaceStorage;
     use tempfile::TempDir;
 
     fn create_test_manager(dir: &TempDir) -> WorkspaceManager {
@@ -337,14 +348,52 @@ mod tests {
             id: id.to_string(),
             name: name.to_string(),
             description: None,
-            layout: WorkspaceLayoutNode::Leaf {
-                tabs: vec![WorkspaceTabDef {
-                    connection_ref: Some("conn-1".to_string()),
-                    inline_config: None,
-                    title: None,
-                    initial_command: None,
-                }],
-            },
+            tab_groups: vec![WorkspaceTabGroupDef {
+                name: "Main".to_string(),
+                color: None,
+                layout: WorkspaceLayoutNode::Leaf {
+                    tabs: vec![WorkspaceTabDef {
+                        connection_ref: Some("conn-1".to_string()),
+                        inline_config: None,
+                        title: None,
+                        initial_command: None,
+                    }],
+                },
+            }],
+        }
+    }
+
+    fn multi_group_definition(id: &str, name: &str) -> WorkspaceDefinition {
+        WorkspaceDefinition {
+            id: id.to_string(),
+            name: name.to_string(),
+            description: None,
+            tab_groups: vec![
+                WorkspaceTabGroupDef {
+                    name: "Dev".to_string(),
+                    color: None,
+                    layout: WorkspaceLayoutNode::Leaf {
+                        tabs: vec![WorkspaceTabDef {
+                            connection_ref: Some("conn-1".to_string()),
+                            inline_config: None,
+                            title: None,
+                            initial_command: None,
+                        }],
+                    },
+                },
+                WorkspaceTabGroupDef {
+                    name: "Deploy".to_string(),
+                    color: Some("#ff6b6b".to_string()),
+                    layout: WorkspaceLayoutNode::Leaf {
+                        tabs: vec![WorkspaceTabDef {
+                            connection_ref: Some("conn-2".to_string()),
+                            inline_config: None,
+                            title: None,
+                            initial_command: None,
+                        }],
+                    },
+                },
+            ],
         }
     }
 
@@ -396,34 +445,40 @@ mod tests {
             id: "ws-1".to_string(),
             name: "Test".to_string(),
             description: Some("desc".to_string()),
-            layout: WorkspaceLayoutNode::Split {
-                direction: SplitDirection::Horizontal,
-                children: vec![
-                    WorkspaceLayoutNode::Leaf {
-                        tabs: vec![WorkspaceTabDef {
-                            connection_ref: Some("conn-1".to_string()),
-                            inline_config: None,
-                            title: None,
-                            initial_command: None,
-                        }],
-                    },
-                    WorkspaceLayoutNode::Leaf {
-                        tabs: vec![WorkspaceTabDef {
-                            connection_ref: Some("conn-2".to_string()),
-                            inline_config: None,
-                            title: None,
-                            initial_command: None,
-                        }],
-                    },
-                ],
-                sizes: None,
-            },
+            tab_groups: vec![WorkspaceTabGroupDef {
+                name: "Main".to_string(),
+                color: None,
+                layout: WorkspaceLayoutNode::Split {
+                    direction: SplitDirection::Horizontal,
+                    children: vec![
+                        WorkspaceLayoutNode::Leaf {
+                            tabs: vec![WorkspaceTabDef {
+                                connection_ref: Some("conn-1".to_string()),
+                                inline_config: None,
+                                title: None,
+                                initial_command: None,
+                            }],
+                        },
+                        WorkspaceLayoutNode::Leaf {
+                            tabs: vec![WorkspaceTabDef {
+                                connection_ref: Some("conn-2".to_string()),
+                                inline_config: None,
+                                title: None,
+                                initial_command: None,
+                            }],
+                        },
+                    ],
+                    sizes: None,
+                },
+            }],
         };
         mgr.save_workspace(ws).unwrap();
 
         let loaded = mgr.load_workspace("ws-1").unwrap();
         assert_eq!(loaded.name, "Test");
         assert_eq!(loaded.description.as_deref(), Some("desc"));
+        assert_eq!(loaded.tab_groups.len(), 1);
+        assert_eq!(loaded.tab_groups[0].name, "Main");
     }
 
     #[test]
@@ -460,7 +515,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let mgr = create_test_manager(&dir);
 
-        mgr.save_workspace(sample_definition("ws-1", "Original"))
+        mgr.save_workspace(multi_group_definition("ws-1", "Original"))
             .unwrap();
         let new_id = mgr.duplicate_workspace("ws-1").unwrap();
 
@@ -469,6 +524,10 @@ mod tests {
 
         let dup = mgr.load_workspace(&new_id).unwrap();
         assert_eq!(dup.name, "Copy of Original");
+        assert_eq!(dup.tab_groups.len(), 2);
+        assert_eq!(dup.tab_groups[0].name, "Dev");
+        assert_eq!(dup.tab_groups[1].name, "Deploy");
+        assert_eq!(dup.tab_groups[1].color.as_deref(), Some("#ff6b6b"));
     }
 
     #[test]
@@ -506,10 +565,33 @@ mod tests {
         mgr.save_workspace(sample_definition("ws-1", "Test"))
             .unwrap();
 
-        // Empty mapping — IDs should pass through
         let id_to_name: HashMap<String, String> = HashMap::new();
         let json = mgr.export_json(&id_to_name).unwrap();
         assert!(json.contains("conn-1"));
+    }
+
+    #[test]
+    fn export_multi_group_workspace() {
+        let dir = TempDir::new().unwrap();
+        let mgr = create_test_manager(&dir);
+
+        mgr.save_workspace(multi_group_definition("ws-1", "Full Stack"))
+            .unwrap();
+
+        let id_to_name: HashMap<String, String> = [
+            ("conn-1".to_string(), "Dev Server".to_string()),
+            ("conn-2".to_string(), "Deploy Server".to_string()),
+        ]
+        .into_iter()
+        .collect();
+
+        let json = mgr.export_json(&id_to_name).unwrap();
+        assert!(json.contains("Dev"));
+        assert!(json.contains("Deploy"));
+        assert!(json.contains("Dev Server"));
+        assert!(json.contains("Deploy Server"));
+        assert!(!json.contains("conn-1"));
+        assert!(!json.contains("conn-2"));
     }
 
     #[test]
@@ -521,10 +603,13 @@ mod tests {
             "version": "1",
             "workspaces": [{
                 "name": "Imported",
-                "layout": {
-                    "type": "leaf",
-                    "tabs": [{ "connectionRef": "Dev Server" }]
-                }
+                "tabGroups": [{
+                    "name": "Main",
+                    "layout": {
+                        "type": "leaf",
+                        "tabs": [{ "connectionRef": "Dev Server" }]
+                    }
+                }]
             }]
         }"#;
 
@@ -541,7 +626,8 @@ mod tests {
         assert_eq!(workspaces[0].name, "Imported");
 
         let ws = mgr.load_workspace(&workspaces[0].id).unwrap();
-        if let WorkspaceLayoutNode::Leaf { tabs } = &ws.layout {
+        assert_eq!(ws.tab_groups.len(), 1);
+        if let WorkspaceLayoutNode::Leaf { tabs } = &ws.tab_groups[0].layout {
             assert_eq!(tabs[0].connection_ref.as_deref(), Some("conn-1"));
         } else {
             panic!("Expected leaf layout");
@@ -559,8 +645,8 @@ mod tests {
         let json = r#"{
             "version": "1",
             "workspaces": [
-                { "name": "Existing", "layout": { "type": "leaf", "tabs": [] } },
-                { "name": "New One", "layout": { "type": "leaf", "tabs": [] } }
+                { "name": "Existing", "tabGroups": [{ "name": "Main", "layout": { "type": "leaf", "tabs": [] } }] },
+                { "name": "New One", "tabGroups": [{ "name": "Main", "layout": { "type": "leaf", "tabs": [] } }] }
             ]
         }"#;
 
@@ -576,19 +662,22 @@ mod tests {
         let json = r#"{
             "version": "1",
             "workspaces": [
-                { "name": "WS1", "layout": { "type": "leaf", "tabs": [
+                { "name": "WS1", "tabGroups": [{ "name": "Main", "layout": { "type": "leaf", "tabs": [
                     { "connectionRef": "a" }, { "connectionRef": "b" }
-                ] } },
-                { "name": "WS2", "layout": { "type": "split", "direction": "horizontal", "children": [
-                    { "type": "leaf", "tabs": [{ "connectionRef": "c" }] },
-                    { "type": "leaf", "tabs": [{ "connectionRef": "d" }] }
-                ] } }
+                ] } }] },
+                { "name": "WS2", "tabGroups": [
+                    { "name": "Dev", "layout": { "type": "split", "direction": "horizontal", "children": [
+                        { "type": "leaf", "tabs": [{ "connectionRef": "c" }] },
+                        { "type": "leaf", "tabs": [{ "connectionRef": "d" }] }
+                    ] } },
+                    { "name": "Deploy", "layout": { "type": "leaf", "tabs": [{ "connectionRef": "e" }] } }
+                ] }
             ]
         }"#;
 
         let preview = WorkspaceManager::preview_import_json(json).unwrap();
         assert_eq!(preview.workspace_count, 2);
-        assert_eq!(preview.total_tab_count, 4);
+        assert_eq!(preview.total_tab_count, 5); // 2 + 2 + 1
     }
 
     #[test]
@@ -598,17 +687,21 @@ mod tests {
 
         mgr.save_workspace(sample_definition("ws-1", "Setup A"))
             .unwrap();
-        mgr.save_workspace(sample_definition("ws-2", "Setup B"))
+        mgr.save_workspace(multi_group_definition("ws-2", "Setup B"))
             .unwrap();
 
-        let id_to_name: HashMap<String, String> =
-            [("conn-1".to_string(), "Dev Server".to_string())]
-                .into_iter()
-                .collect();
-        let name_to_id: HashMap<String, String> =
-            [("Dev Server".to_string(), "conn-1".to_string())]
-                .into_iter()
-                .collect();
+        let id_to_name: HashMap<String, String> = [
+            ("conn-1".to_string(), "Dev Server".to_string()),
+            ("conn-2".to_string(), "Deploy Server".to_string()),
+        ]
+        .into_iter()
+        .collect();
+        let name_to_id: HashMap<String, String> = [
+            ("Dev Server".to_string(), "conn-1".to_string()),
+            ("Deploy Server".to_string(), "conn-2".to_string()),
+        ]
+        .into_iter()
+        .collect();
 
         let exported = mgr.export_json(&id_to_name).unwrap();
 
@@ -622,5 +715,16 @@ mod tests {
         assert_eq!(workspaces.len(), 2);
         assert!(workspaces.iter().any(|ws| ws.name == "Setup A"));
         assert!(workspaces.iter().any(|ws| ws.name == "Setup B"));
+
+        // Verify multi-group workspace round-tripped correctly
+        let setup_b_id = workspaces
+            .iter()
+            .find(|ws| ws.name == "Setup B")
+            .unwrap()
+            .id
+            .clone();
+        let setup_b = mgr2.load_workspace(&setup_b_id).unwrap();
+        assert_eq!(setup_b.tab_groups.len(), 2);
+        assert_eq!(setup_b.tab_groups[1].name, "Deploy");
     }
 }

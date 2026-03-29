@@ -8,6 +8,7 @@ import {
   Shield,
   FileJson,
   FileCode2,
+  HardDrive,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
@@ -24,6 +25,9 @@ import { ExternalFilesSettings } from "./ExternalFilesSettings";
 import { KeyboardSettings } from "./KeyboardSettings";
 import { SecuritySettings } from "./SecuritySettings";
 import { FileTypeSettings } from "./FileTypeSettings";
+import { LanguagePackagesSettings } from "./LanguagePackagesSettings";
+import { CustomGrammarsSettings } from "./CustomGrammarsSettings";
+import { PortableModeSettings } from "./PortableModeSettings";
 import "./SettingsPanel.css";
 
 const SETTINGS_ICONS: Record<SettingsCategory, LucideIcon> = {
@@ -34,6 +38,7 @@ const SETTINGS_ICONS: Record<SettingsCategory, LucideIcon> = {
   security: Shield,
   "external-files": FileJson,
   editor: FileCode2,
+  portable: HardDrive,
 };
 
 const STORAGE_KEY = "termihub-settings-category";
@@ -49,7 +54,8 @@ function loadSavedCategory(): SettingsCategory {
       saved === "keyboard" ||
       saved === "security" ||
       saved === "external-files" ||
-      saved === "editor"
+      saved === "editor" ||
+      saved === "portable"
     ) {
       return saved;
     }
@@ -204,6 +210,15 @@ export function SettingsPanel({ isVisible }: SettingsPanelProps) {
       }
       if (highlightedCategories?.has("editor")) {
         sections.push(<FileTypeSettings key="editor" visibleFields={visibleFields} />);
+        sections.push(
+          <LanguagePackagesSettings key="lang-packages" visibleFields={visibleFields} />
+        );
+        sections.push(
+          <CustomGrammarsSettings key="custom-grammars" visibleFields={visibleFields} />
+        );
+      }
+      if (highlightedCategories?.has("portable")) {
+        sections.push(<PortableModeSettings key="portable" />);
       }
       if (sections.length === 0) {
         return <div className="settings-panel__no-results">No settings match your search.</div>;
@@ -225,7 +240,15 @@ export function SettingsPanel({ isVisible }: SettingsPanelProps) {
       case "external-files":
         return <ExternalFilesSettings />;
       case "editor":
-        return <FileTypeSettings />;
+        return (
+          <>
+            <FileTypeSettings />
+            <LanguagePackagesSettings />
+            <CustomGrammarsSettings />
+          </>
+        );
+      case "portable":
+        return <PortableModeSettings />;
     }
   };
 

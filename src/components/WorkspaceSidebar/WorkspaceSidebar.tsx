@@ -5,7 +5,7 @@ import { writeTextFile, readTextFile } from "@tauri-apps/plugin-fs";
 import { useAppStore } from "@/store/appStore";
 import { exportWorkspaces, importWorkspaces } from "@/services/workspaceApi";
 import { WorkspaceListItem } from "./WorkspaceListItem";
-import { SaveWorkspaceDialog } from "./SaveWorkspaceDialog";
+import { SaveWorkspaceDialog, SaveWorkspaceScope } from "./SaveWorkspaceDialog";
 import "./WorkspaceSidebar.css";
 
 export function WorkspaceSidebar() {
@@ -15,6 +15,8 @@ export function WorkspaceSidebar() {
   const openWorkspaceEditorTab = useAppStore((s) => s.openWorkspaceEditorTab);
   const launchWorkspace = useAppStore((s) => s.launchWorkspace);
   const saveCurrentAsWorkspace = useAppStore((s) => s.saveCurrentAsWorkspace);
+  const tabGroups = useAppStore((s) => s.tabGroups);
+  const activeTabGroupId = useAppStore((s) => s.activeTabGroupId);
 
   const [showSaveDialog, setShowSaveDialog] = useState(false);
 
@@ -51,8 +53,8 @@ export function WorkspaceSidebar() {
   );
 
   const handleSaveCurrent = useCallback(
-    (name: string, description?: string) => {
-      saveCurrentAsWorkspace(name, description);
+    (name: string, scope: SaveWorkspaceScope, description?: string) => {
+      saveCurrentAsWorkspace(name, scope, description);
       setShowSaveDialog(false);
     },
     [saveCurrentAsWorkspace]
@@ -88,6 +90,9 @@ export function WorkspaceSidebar() {
       // Import cancelled or failed
     }
   }, [loadWorkspaces]);
+
+  const activeGroup = tabGroups.find((g) => g.id === activeTabGroupId);
+  const activeGroupName = activeGroup?.name ?? "Main";
 
   return (
     <div className="workspace-sidebar" data-testid="workspace-sidebar">
@@ -147,7 +152,12 @@ export function WorkspaceSidebar() {
         </div>
       )}
       {showSaveDialog && (
-        <SaveWorkspaceDialog onSave={handleSaveCurrent} onCancel={() => setShowSaveDialog(false)} />
+        <SaveWorkspaceDialog
+          tabGroupCount={tabGroups.length}
+          activeGroupName={activeGroupName}
+          onSave={handleSaveCurrent}
+          onCancel={() => setShowSaveDialog(false)}
+        />
       )}
     </div>
   );

@@ -175,6 +175,7 @@ describe("appStore — layout state", () => {
       sidebarPosition: "right" as const,
       sidebarVisible: false,
       statusBarVisible: false,
+      hiddenActivityBarViews: [],
     };
     vi.mocked(getSettings).mockResolvedValueOnce({
       version: "1",
@@ -259,5 +260,45 @@ describe("appStore — setTabSessionId", () => {
     const before = useAppStore.getState().rootPanel;
     useAppStore.getState().setTabSessionId("nonexistent-tab", "session-xyz");
     expect(useAppStore.getState().rootPanel).toBe(before);
+  });
+});
+
+describe("toggleActivityBarView", () => {
+  beforeEach(() => {
+    useAppStore.setState({
+      layoutConfig: { ...DEFAULT_LAYOUT, hiddenActivityBarViews: [] },
+      sidebarView: "connections",
+      sidebarCollapsed: false,
+    });
+  });
+
+  it("hides a visible view", () => {
+    useAppStore.getState().toggleActivityBarView("tunnels");
+    expect(useAppStore.getState().layoutConfig.hiddenActivityBarViews).toContain("tunnels");
+  });
+
+  it("shows a hidden view", () => {
+    useAppStore.setState({
+      layoutConfig: { ...DEFAULT_LAYOUT, hiddenActivityBarViews: ["tunnels"] },
+    });
+    useAppStore.getState().toggleActivityBarView("tunnels");
+    expect(useAppStore.getState().layoutConfig.hiddenActivityBarViews).not.toContain("tunnels");
+  });
+
+  it("collapses the sidebar when hiding the active view", () => {
+    useAppStore.setState({ sidebarView: "tunnels", sidebarCollapsed: false });
+    useAppStore.getState().toggleActivityBarView("tunnels");
+    expect(useAppStore.getState().sidebarCollapsed).toBe(true);
+  });
+
+  it("is a no-op for required views (connections)", () => {
+    useAppStore.getState().toggleActivityBarView("connections");
+    expect(useAppStore.getState().layoutConfig.hiddenActivityBarViews).not.toContain("connections");
+  });
+
+  it("does not collapse the sidebar when hiding an inactive view", () => {
+    useAppStore.setState({ sidebarView: "connections", sidebarCollapsed: false });
+    useAppStore.getState().toggleActivityBarView("tunnels");
+    expect(useAppStore.getState().sidebarCollapsed).toBe(false);
   });
 });

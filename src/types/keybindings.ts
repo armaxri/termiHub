@@ -8,7 +8,7 @@ export interface KeyCombo {
 }
 
 /** Categories for grouping shortcuts in the overlay and settings. */
-export type ShortcutCategory = "general" | "clipboard" | "terminal" | "navigation";
+export type ShortcutCategory = "general" | "clipboard" | "terminal" | "navigation" | "tab-groups";
 
 /** A default keybinding definition with platform-specific defaults. */
 export interface KeyBinding {

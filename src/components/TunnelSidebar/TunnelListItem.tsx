@@ -1,7 +1,7 @@
 import { Play, Square, Pencil, Copy, Trash2 } from "lucide-react";
 import { TunnelConfig, TunnelState } from "@/types/tunnel";
 import { SavedConnection } from "@/types/connection";
-import { formatBytes } from "./formatBytes";
+import { formatBytes } from "@/utils/formatters";
 
 interface TunnelListItemProps {
   tunnel: TunnelConfig;

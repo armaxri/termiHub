@@ -34,7 +34,16 @@ export function LogViewer({ isVisible }: LogViewerProps) {
 
     getLogs(MAX_ENTRIES)
       .then((buffered) => {
-        if (!cancelled) setEntries(buffered);
+        if (!cancelled) {
+          // Prepend backend-buffered entries to any frontend log entries that
+          // may have already been added by the startup buffer flush.
+          setEntries((prev) => {
+            const combined = [...buffered, ...prev];
+            return combined.length > MAX_ENTRIES
+              ? combined.slice(combined.length - MAX_ENTRIES)
+              : combined;
+          });
+        }
       })
       .catch(() => {});
 

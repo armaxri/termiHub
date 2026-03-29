@@ -166,6 +166,14 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     configurable: true,
   },
   {
+    action: "zoom-panel",
+    label: "Toggle Panel Zoom",
+    category: "navigation",
+    macDefault: { key: "Enter", meta: true, shift: true },
+    winLinuxDefault: { key: "Enter", ctrl: true, shift: true },
+    configurable: true,
+  },
+  {
     action: "zoom-in",
     label: "Zoom In",
     category: "navigation",
@@ -187,6 +195,40 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     category: "navigation",
     macDefault: { key: "0", meta: true },
     winLinuxDefault: { key: "0", ctrl: true },
+    configurable: true,
+  },
+
+  // Tab Groups
+  {
+    action: "new-tab-group",
+    label: "New Tab Group",
+    category: "tab-groups",
+    macDefault: { key: "t", meta: true, shift: true },
+    winLinuxDefault: { key: "t", ctrl: true, shift: true },
+    configurable: true,
+  },
+  {
+    action: "close-tab-group",
+    label: "Close Tab Group",
+    category: "tab-groups",
+    macDefault: { key: "w", meta: true, shift: true },
+    winLinuxDefault: { key: "w", ctrl: true, shift: true },
+    configurable: true,
+  },
+  {
+    action: "next-tab-group",
+    label: "Next Tab Group",
+    category: "tab-groups",
+    macDefault: { key: "]", meta: true, shift: true },
+    winLinuxDefault: { key: "]", ctrl: true, shift: true },
+    configurable: true,
+  },
+  {
+    action: "prev-tab-group",
+    label: "Previous Tab Group",
+    category: "tab-groups",
+    macDefault: { key: "[", meta: true, shift: true },
+    winLinuxDefault: { key: "[", ctrl: true, shift: true },
     configurable: true,
   },
 ];

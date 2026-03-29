@@ -79,6 +79,7 @@ export interface LayoutConfig {
   sidebarPosition: SidebarPosition;
   sidebarVisible: boolean;
   statusBarVisible: boolean;
+  hiddenActivityBarViews: string[];
 }
 
 export const DEFAULT_LAYOUT: LayoutConfig = {
@@ -86,6 +87,7 @@ export const DEFAULT_LAYOUT: LayoutConfig = {
   sidebarPosition: "left",
   sidebarVisible: true,
   statusBarVisible: true,
+  hiddenActivityBarViews: [],
 };
 
 export const LAYOUT_PRESETS: Record<string, LayoutConfig> = {
@@ -94,18 +96,21 @@ export const LAYOUT_PRESETS: Record<string, LayoutConfig> = {
     sidebarPosition: "left",
     sidebarVisible: true,
     statusBarVisible: true,
+    hiddenActivityBarViews: [],
   },
   focus: {
     activityBarPosition: "left",
     sidebarPosition: "left",
     sidebarVisible: false,
     statusBarVisible: true,
+    hiddenActivityBarViews: [],
   },
   zen: {
     activityBarPosition: "hidden",
     sidebarPosition: "left",
     sidebarVisible: false,
     statusBarVisible: false,
+    hiddenActivityBarViews: [],
   },
 };
 
@@ -136,6 +141,53 @@ export interface AppSettings {
    * These take precedence over the built-in defaults.
    */
   fileLanguageMappings?: Record<string, string>;
+  /**
+   * Additional Shiki language package IDs to load for syntax highlighting.
+   * Values are Shiki bundled language IDs (e.g. `"astro"`, `"svelte"`, `"zig"`).
+   * The built-in packages (cmake, toml, nginx, nix) are always loaded regardless.
+   */
+  installedLanguagePackages?: string[];
+  /**
+   * User-imported custom TextMate grammar definitions for languages not in Shiki's
+   * bundled set. Each entry stores the full grammar JSON so it works without the
+   * original file being present.
+   */
+  customLanguageGrammars?: CustomLanguageGrammar[];
+  /** Whether the user has acknowledged the keychain-in-portable-mode warning. */
+  portableKeychainWarningAcknowledged?: boolean;
+  experimentalFeaturesEnabled?: boolean;
+}
+
+/**
+ * A user-imported TextMate grammar definition.
+ * The `grammar` field is the parsed `.tmLanguage.json` content stored verbatim.
+ */
+export interface CustomLanguageGrammar {
+  /** Monaco / Shiki language ID used in file-type mappings (e.g. `"my-lang"`). */
+  id: string;
+  /** Human-readable display name shown in the language picker. */
+  name: string;
+  /** The raw TextMate grammar object (contents of the `.tmLanguage.json` file). */
+  grammar: Record<string, unknown>;
+}
+
+/** Current app mode returned by the backend. */
+export interface AppModeInfo {
+  isPortable: boolean;
+  /** Absolute path to the portable data directory, or null in installed mode. */
+  dataDir: string | null;
+}
+
+/** Status of a single config file in a directory. */
+export interface ConfigFileStatus {
+  name: string;
+  present: boolean;
+}
+
+/** Result of a config export or import operation. */
+export interface ConfigMigrationResult {
+  filesCopied: string[];
+  warnings: string[];
 }
 
 export interface FileEntry {

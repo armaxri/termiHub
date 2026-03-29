@@ -5,6 +5,7 @@ import {
   isWslShell,
   getWslDistroName,
   wslToWindowsPath,
+  windowsToWslPath,
 } from "./shell-detection";
 import { listAvailableShells } from "@/services/api";
 
@@ -149,6 +150,46 @@ describe("shell-detection", () => {
 
     it("does not convert /mnt/wsl or other non-drive /mnt paths", () => {
       expect(wslToWindowsPath("/mnt/wsl/docker", "Ubuntu")).toBe("//wsl$/Ubuntu/mnt/wsl/docker");
+    });
+  });
+
+  describe("windowsToWslPath", () => {
+    it("converts a UNC WSL path (forward slashes) back to a Linux path", () => {
+      expect(windowsToWslPath("//wsl$/Ubuntu/home/user")).toBe("/home/user");
+    });
+
+    it("converts a UNC WSL root path back to /", () => {
+      expect(windowsToWslPath("//wsl$/Debian/")).toBe("/");
+    });
+
+    it("converts a UNC WSL path with a named distro", () => {
+      expect(windowsToWslPath("//wsl$/Ubuntu-22.04/home/user/docs")).toBe("/home/user/docs");
+    });
+
+    it("converts a Windows drive path to /mnt/<drive>", () => {
+      expect(windowsToWslPath("C:/Users/richtera")).toBe("/mnt/c/Users/richtera");
+    });
+
+    it("converts a Windows drive root to /mnt/<drive>", () => {
+      expect(windowsToWslPath("C:/")).toBe("/mnt/c");
+    });
+
+    it("converts a Windows drive path with backslashes", () => {
+      expect(windowsToWslPath("D:\\projects\\app")).toBe("/mnt/d/projects/app");
+    });
+
+    it("returns an already-Unix path unchanged", () => {
+      expect(windowsToWslPath("/home/user/docs")).toBe("/home/user/docs");
+    });
+
+    it("is the inverse of wslToWindowsPath for WSL filesystem paths", () => {
+      const linux = "/home/user/project";
+      expect(windowsToWslPath(wslToWindowsPath(linux, "Ubuntu"))).toBe(linux);
+    });
+
+    it("is the inverse of wslToWindowsPath for Windows drive paths", () => {
+      const linux = "/mnt/c/Users/arne";
+      expect(windowsToWslPath(wslToWindowsPath(linux, "Ubuntu"))).toBe(linux);
     });
   });
 });

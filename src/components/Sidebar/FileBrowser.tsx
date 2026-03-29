@@ -26,23 +26,19 @@ import {
   ClipboardPaste,
   FolderSync,
   Globe,
+  Terminal,
 } from "lucide-react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { onVscodeEditComplete } from "@/services/events";
-import { getHomeDir } from "@/services/api";
+import { getHomeDir, sendInput } from "@/services/api";
 import { FileEntry } from "@/types/connection";
 import type { ShellType } from "@/types/terminal";
 import type { ConnectionTypeInfo } from "@/services/api";
-import { getWslDistroName, wslToWindowsPath } from "@/utils/shell-detection";
+import { getWslDistroName, wslToWindowsPath, windowsToWslPath } from "@/utils/shell-detection";
+import { formatBytes } from "@/utils/formatters";
 import { resolveFeatureEnabled } from "@/utils/featureFlags";
 import "./FileBrowser.css";
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 interface FileRowProps {
   entry: FileEntry;
@@ -312,7 +308,7 @@ function FileRow({
             )}
             <span className="file-browser__name">{entry.name}</span>
             {!entry.isDirectory && (
-              <span className="file-browser__size">{formatFileSize(entry.size)}</span>
+              <span className="file-browser__size">{formatBytes(entry.size)}</span>
             )}
             {entry.permissions && (
               <span className="file-browser__permissions">{entry.permissions}</span>
@@ -385,6 +381,9 @@ function useFileBrowserSync() {
   const sftpConnectedHost = useAppStore((s) => s.sftpConnectedHost);
   const sessionFileBrowserId = useAppStore((s) => s.sessionFileBrowserId);
   const requestPassword = useAppStore((s) => s.requestPassword);
+  const localCurrentPath = useAppStore((s) => s.localCurrentPath);
+  const sftpCurrentPath = useAppStore((s) => s.currentPath);
+  const sessionCurrentPath = useAppStore((s) => s.sessionCurrentPath);
   const connections = useAppStore((s) => s.connections);
   const remoteAgents = useAppStore((s) => s.remoteAgents);
   const fileBrowserMode = useAppStore((s) => s.fileBrowserMode);
@@ -619,11 +618,39 @@ function useFileBrowserSync() {
     }
   }, [cwd, wslDistro, navigateLocal, navigateSftp, sftpSessionId]);
 
-  return { navigateToCwd, hasCwd: !!cwd };
+  // Callback to send "cd <current-file-browser-path>" to the active terminal.
+  const cdToCurrentPath = useCallback(async () => {
+    const sessionId = activeTab?.sessionId ?? null;
+    if (!sessionId) return;
+    const { fileBrowserMode } = useAppStore.getState();
+
+    let path: string;
+    if (fileBrowserMode === "local") {
+      // Convert Windows-style WSL paths back to Linux paths for the WSL terminal
+      path = wslDistro ? windowsToWslPath(localCurrentPath) : localCurrentPath;
+    } else if (fileBrowserMode === "sftp") {
+      path = sftpCurrentPath;
+    } else if (fileBrowserMode === "session") {
+      path = sessionCurrentPath;
+    } else {
+      return;
+    }
+
+    // Build the cd command with appropriate quoting
+    const cdCmd = /^[A-Za-z]:/.test(path)
+      ? `cd "${path.replace(/"/g, '\\"')}"` // Windows path: double quotes
+      : `cd -- '${path.replace(/'/g, "'\\''")}'`; // Unix path: single quotes
+    await sendInput(sessionId, cdCmd + "\n");
+  }, [activeTab?.sessionId, localCurrentPath, sftpCurrentPath, sessionCurrentPath, wslDistro]);
+
+  const canCd =
+    !!activeTab?.sessionId && fileBrowserMode !== "none" && activeTab?.contentType !== "editor";
+
+  return { navigateToCwd, hasCwd: !!cwd, cdToCurrentPath, canCd };
 }
 
 export function FileBrowser() {
-  const { navigateToCwd, hasCwd } = useFileBrowserSync();
+  const { navigateToCwd, hasCwd, cdToCurrentPath, canCd } = useFileBrowserSync();
 
   const {
     fileEntries,
@@ -659,15 +686,18 @@ export function FileBrowser() {
 
   // Listen for VS Code edit-complete events (remote file re-upload)
   useEffect(() => {
-    const unlisten = onVscodeEditComplete((remotePath, success, err) => {
+    let cleanup: (() => void) | null = null;
+    onVscodeEditComplete((remotePath, success, err) => {
       if (success) {
         refresh();
       } else {
         console.error(`VS Code edit failed for ${remotePath}:`, err);
       }
+    }).then((fn) => {
+      cleanup = fn;
     });
     return () => {
-      unlisten.then((fn) => fn());
+      if (cleanup) cleanup();
     };
   }, [refresh]);
 
@@ -932,6 +962,15 @@ export function FileBrowser() {
             data-testid="file-browser-go-to-cwd"
           >
             <FolderSync size={14} />
+          </button>
+          <button
+            className="file-browser__btn"
+            onClick={cdToCurrentPath}
+            disabled={!canCd}
+            title={canCd ? `cd to ${currentPath}` : "cd here (no active terminal)"}
+            data-testid="file-browser-cd-here"
+          >
+            <Terminal size={14} />
           </button>
           <button
             className="file-browser__btn"
