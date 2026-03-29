@@ -2,52 +2,7 @@ category: embedded-services
 display_name: "Embedded Network Services"
 
 tests:
-  - id: MT-SVC-01
-    name: "Create and start an HTTP server"
-    platforms: [linux, macos, windows]
-    prerequisites:
-      - app: true
-    verification: manual
-    steps:
-      - Click the Services icon (server icon) in the activity bar
-      - Click "+ New Service"
-      - Set Name="Test HTTP", Protocol=HTTP, Root Directory to any local directory, Port=8080
-      - Click Save
-      - Click the play button on the new server item
-      - Verify the status dot turns green and "running" state is shown
-      - Open a browser and navigate to http://127.0.0.1:8080 — directory listing should appear
-      - Click the stop button and verify the dot returns to grey
-    added_by: "#526"
-
-  - id: MT-SVC-02
-    name: "Share via HTTP from File Browser right-click"
-    platforms: [linux, macos, windows]
-    prerequisites:
-      - app: true
-      - local shell tab open: true
-    verification: manual
-    steps:
-      - Switch to the File Browser sidebar
-      - Right-click any local directory
-      - Select "Share via HTTP Server" from the context menu
-      - Verify the sidebar switches to Services automatically
-      - Verify a new server entry appears with status "running"
-      - Open a browser to the shown port and confirm the directory is served
-    added_by: "#526"
-
-  - id: MT-SVC-03
-    name: "Status bar running services indicator"
-    platforms: [linux, macos, windows]
-    prerequisites:
-      - app: true
-      - at least one embedded server running: true
-    verification: manual
-    steps:
-      - Start an embedded server (any protocol) from the Services panel
-      - Verify a server icon with a count badge appears in the status bar left section
-      - Click the indicator and verify the Services sidebar panel opens
-      - Stop all servers and verify the indicator disappears
-    added_by: "#526"
+  # MT-SVC-01, MT-SVC-02, MT-SVC-03 are covered by tests/e2e/embedded-services.test.js (PR #567)
 
   - id: MT-SVC-04
     name: "FTP server basic transfer"

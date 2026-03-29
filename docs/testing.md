@@ -751,7 +751,8 @@ See [scripts/README.md](../scripts/README.md) for all options. Reports are saved
 | Keyboard Shortcuts    | [`keyboard.yaml`](../tests/manual/keyboard.yaml)                           | `MT-KB`    | 8      |
 | Cross-Platform        | [`cross-platform.yaml`](../tests/manual/cross-platform.yaml)               | `MT-XPLAT` | 1      |
 | Portable Mode         | [`portable-mode.yaml`](../tests/manual/portable-mode.yaml)                 | `MT-PORT`  | 4      |
-| **Total**             |                                                                            |            | **79** |
+| Embedded Services     | [`embedded-services.yaml`](../tests/manual/embedded-services.yaml)         | `MT-SVC`   | 3      |
+| **Total**             |                                                                            |            | **82** |
 
 When adding new manual tests, add the YAML definition to the appropriate file in `tests/manual/` — the YAML files are the **source of truth** for guided testing.
 
@@ -781,3 +782,4 @@ Mapping of manual test IDs that have been automated to their E2E test files:
 | MT-CRED-04–08                  | `credential-store.test.js`, `credential-store-infra.test.js` |
 | MT-RECOVERY-01–12              | `infrastructure/config-recovery.test.js`                     |
 | MT-XPLAT-01, 02                | `cross-platform.test.js`                                     |
+| MT-SVC-01, 02, 03              | `embedded-services.test.js`                                  |
