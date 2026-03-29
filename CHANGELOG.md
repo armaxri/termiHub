@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Services: "Bind Address" in the New/Edit Service dialog is now a dropdown listing all local network interfaces (loopback, real interface IPs, all-interfaces) instead of a fixed read-only field with a checkbox — makes it easy to expose a service on a specific secondary network adapter (e.g. a test bench connected to a different NIC)
 - Services: new embedded network daemon panel accessible from the activity bar — spin up lightweight HTTP, FTP, or TFTP servers that serve a local directory with a single click; servers auto-start on launch, persist across restarts, and can be toggled, edited, duplicated, or deleted from the sidebar (#526)
 - File browser: right-click a local directory → "Share via HTTP/FTP/TFTP Server" to instantly create and start an embedded server for that path and switch to the Services panel (#526)
 - Status bar: running embedded services count indicator in the left section; clicking it opens the Services sidebar panel (#526)

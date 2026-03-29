@@ -433,6 +433,7 @@ pub fn run() {
             commands::embedded_servers::start_embedded_server,
             commands::embedded_servers::stop_embedded_server,
             commands::embedded_servers::create_and_start_server,
+            commands::embedded_servers::list_network_interfaces,
             // Credentials
             commands::credential::get_credential_store_status,
             commands::credential::unlock_credential_store,

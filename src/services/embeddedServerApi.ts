@@ -3,7 +3,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import { EmbeddedServerConfig, ServerState } from "@/types/embeddedServer";
+import { EmbeddedServerConfig, NetworkInterface, ServerState } from "@/types/embeddedServer";
 
 /** Return all saved embedded server configurations. */
 export async function listEmbeddedServers(): Promise<EmbeddedServerConfig[]> {
@@ -42,4 +42,12 @@ export async function stopEmbeddedServer(serverId: string): Promise<void> {
  */
 export async function createAndStartServer(config: EmbeddedServerConfig): Promise<string> {
   return await invoke<string>("create_and_start_server", { config });
+}
+
+/**
+ * Return all local IPv4 interfaces available as bind addresses.
+ * Always includes loopback (127.0.0.1) first and all-interfaces (0.0.0.0) last.
+ */
+export async function listNetworkInterfaces(): Promise<NetworkInterface[]> {
+  return await invoke<NetworkInterface[]>("list_network_interfaces");
 }

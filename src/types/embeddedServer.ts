@@ -53,3 +53,11 @@ export const PROTOCOL_LABELS: Record<ServerType, string> = {
   ftp: "FTP",
   tftp: "TFTP",
 };
+
+/** A local network interface returned by the backend for the bind-address dropdown. */
+export interface NetworkInterface {
+  /** Human-readable name, e.g. "en0", "eth0", "Loopback", "All Interfaces". */
+  name: string;
+  /** IPv4 address string, e.g. "127.0.0.1", "192.168.1.5", "0.0.0.0". */
+  addr: string;
+}

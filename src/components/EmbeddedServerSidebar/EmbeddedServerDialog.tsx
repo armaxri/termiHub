@@ -2,7 +2,13 @@ import { useState, useEffect } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import "./EmbeddedServerSidebar.css";
 import { AlertTriangle } from "lucide-react";
-import { EmbeddedServerConfig, ServerType, DEFAULT_PORTS } from "@/types/embeddedServer";
+import {
+  EmbeddedServerConfig,
+  NetworkInterface,
+  ServerType,
+  DEFAULT_PORTS,
+} from "@/types/embeddedServer";
+import { listNetworkInterfaces } from "@/services/embeddedServerApi";
 
 interface Props {
   open: boolean;
@@ -34,11 +40,20 @@ function defaultConfig(): EmbeddedServerConfig {
 export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Props) {
   const [form, setForm] = useState<EmbeddedServerConfig>(defaultConfig());
   const [lanWarning, setLanWarning] = useState(false);
+  const [interfaces, setInterfaces] = useState<NetworkInterface[]>([
+    { name: "Loopback", addr: "127.0.0.1" },
+    { name: "All Interfaces", addr: "0.0.0.0" },
+  ]);
 
   useEffect(() => {
     if (open) {
       setForm(config ? { ...config } : defaultConfig());
       setLanWarning(false);
+      listNetworkInterfaces()
+        .then(setInterfaces)
+        .catch(() => {
+          /* keep defaults on error */
+        });
     }
   }, [open, config]);
 
@@ -55,16 +70,20 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
     }));
   };
 
-  const handleLanToggle = (checked: boolean) => {
-    if (checked) {
+  const handleBindHostChange = (addr: string) => {
+    if (addr === "0.0.0.0") {
       setLanWarning(true);
     } else {
-      set("bindHost", "127.0.0.1");
+      set("bindHost", addr);
     }
   };
 
   const handleLanConfirm = () => {
     setForm((f) => ({ ...f, bindHost: "0.0.0.0" }));
+    setLanWarning(false);
+  };
+
+  const handleLanCancel = () => {
     setLanWarning(false);
   };
 
@@ -98,7 +117,7 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
             <div className="dialog__actions">
               <button
                 className="btn btn--secondary"
-                onClick={() => setLanWarning(false)}
+                onClick={handleLanCancel}
                 data-testid="lan-warning-cancel"
               >
                 Cancel
@@ -176,13 +195,20 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
                 <div className="server-dialog__row">
                   <label className="server-dialog__label server-dialog__label--inline">
                     Bind Address
-                    <input
+                    <select
                       className="server-dialog__input"
-                      value={form.bindHost === "0.0.0.0" ? "0.0.0.0" : "127.0.0.1"}
-                      readOnly
-                      tabIndex={-1}
+                      value={form.bindHost}
+                      onChange={(e) => handleBindHostChange(e.target.value)}
                       data-testid="server-dialog-bind-host"
-                    />
+                    >
+                      {interfaces.map((iface) => (
+                        <option key={`${iface.name}-${iface.addr}`} value={iface.addr}>
+                          {iface.addr === "0.0.0.0" || iface.addr === "127.0.0.1"
+                            ? `${iface.addr} — ${iface.name}`
+                            : `${iface.addr} (${iface.name})`}
+                        </option>
+                      ))}
+                    </select>
                   </label>
                   <label className="server-dialog__label server-dialog__label--inline">
                     Port
@@ -197,15 +223,6 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
                     />
                   </label>
                 </div>
-                <label className="server-dialog__check">
-                  <input
-                    type="checkbox"
-                    checked={form.bindHost === "0.0.0.0"}
-                    onChange={(e) => handleLanToggle(e.target.checked)}
-                    data-testid="server-dialog-lan"
-                  />
-                  Expose to LAN (bind 0.0.0.0)
-                </label>
               </fieldset>
 
               {/* Options */}
