@@ -1,5 +1,5 @@
 use serde::Serialize;
-use tauri::{Emitter, State};
+use tauri::{Emitter, Manager, State};
 use termihub_core::backends::ssh::parse_ssh_settings;
 use tracing::{debug, info};
 
@@ -285,4 +285,27 @@ pub fn vscode_open_remote(
     });
 
     Ok(())
+}
+
+/// Write the keyboard shortcut cheat sheet HTML to the app cache directory
+/// and return the absolute path so the frontend can open it in the system browser.
+///
+/// Uses native Rust file I/O so no `plugin-fs` permission scope is required.
+#[tauri::command]
+pub fn write_cheatsheet(html: String, app: tauri::AppHandle) -> Result<String, String> {
+    let cache_dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| format!("could not resolve app cache dir: {e}"))?;
+
+    std::fs::create_dir_all(&cache_dir).map_err(|e| format!("could not create cache dir: {e}"))?;
+
+    let file_path = cache_dir.join("termihub-shortcuts.html");
+
+    std::fs::write(&file_path, html).map_err(|e| format!("could not write cheatsheet: {e}"))?;
+
+    file_path
+        .to_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| "file path contains non-UTF-8 characters".to_string())
 }
