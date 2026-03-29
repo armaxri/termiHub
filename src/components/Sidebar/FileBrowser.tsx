@@ -25,6 +25,7 @@ import {
   Scissors,
   ClipboardPaste,
   FolderSync,
+  Globe,
   Terminal,
 } from "lucide-react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
@@ -50,6 +51,7 @@ interface FileRowProps {
   onRowClick: (entry: FileEntry, e: React.MouseEvent) => void;
   selectedCount: number;
   onMultiContextAction: (action: string) => void;
+  onShareVia?: (path: string, protocol: "http" | "ftp" | "tftp") => void;
 }
 
 /**
@@ -64,6 +66,7 @@ export function FileMenuItems({
   onContextAction,
   onPaste,
   hasClipboard,
+  onShareVia,
   Item,
   Separator,
   testIdPrefix,
@@ -74,6 +77,8 @@ export function FileMenuItems({
   onContextAction: (entry: FileEntry, action: string) => void;
   onPaste: () => void;
   hasClipboard: boolean;
+  /** Only provided in local mode for directory entries. */
+  onShareVia?: (path: string, protocol: "http" | "ftp" | "tftp") => void;
   Item: React.ElementType;
   Separator: React.ElementType;
   testIdPrefix: string;
@@ -88,6 +93,33 @@ export function FileMenuItems({
         >
           <FolderOpen size={14} /> Open
         </Item>
+      )}
+      {entry.isDirectory && onShareVia && (
+        <>
+          <Separator className="context-menu__separator" />
+          <Item
+            className="context-menu__item"
+            onSelect={() => onShareVia(entry.path, "http")}
+            data-testid={`${testIdPrefix}-share-http`}
+          >
+            <Globe size={14} /> Share via HTTP Server
+          </Item>
+          <Item
+            className="context-menu__item"
+            onSelect={() => onShareVia(entry.path, "ftp")}
+            data-testid={`${testIdPrefix}-share-ftp`}
+          >
+            <Globe size={14} /> Share via FTP Server
+          </Item>
+          <Item
+            className="context-menu__item"
+            onSelect={() => onShareVia(entry.path, "tftp")}
+            data-testid={`${testIdPrefix}-share-tftp`}
+          >
+            <Globe size={14} /> Share via TFTP Server
+          </Item>
+          <Separator className="context-menu__separator" />
+        </>
       )}
       {!entry.isDirectory && (
         <Item
@@ -237,6 +269,7 @@ function FileRow({
   onRowClick,
   selectedCount,
   onMultiContextAction,
+  onShareVia,
 }: FileRowProps) {
   const menuItemProps = {
     entry,
@@ -245,6 +278,7 @@ function FileRow({
     onContextAction,
     onPaste,
     hasClipboard,
+    onShareVia,
   };
 
   const showMultiSelect = isSelected && selectedCount > 1;
@@ -643,6 +677,8 @@ export function FileBrowser() {
   const disconnectSftp = useAppStore((s) => s.disconnectSftp);
   const vscodeAvailable = useAppStore((s) => s.vscodeAvailable);
   const fileClipboard = useAppStore((s) => s.fileClipboard);
+  const quickShareServer = useAppStore((s) => s.quickShareServer);
+  const setSidebarView = useAppStore((s) => s.setSidebarView);
   const [newDirName, setNewDirName] = useState<string | null>(null);
   const [newFileName, setNewFileName] = useState<string | null>(null);
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
@@ -738,6 +774,14 @@ export function FileBrowser() {
       }
     },
     [mode, sftpSessionId, downloadFile, openInVscode, copyEntry, cutEntry, renameEntry, deleteEntry]
+  );
+
+  const handleShareVia = useCallback(
+    (path: string, protocol: "http" | "ftp" | "tftp") => {
+      quickShareServer(path, protocol);
+      setSidebarView("services");
+    },
+    [quickShareServer, setSidebarView]
   );
 
   const handlePaste = useCallback(() => {
@@ -1069,6 +1113,7 @@ export function FileBrowser() {
                   onRowClick={handleRowClick}
                   selectedCount={selectedPaths.size}
                   onMultiContextAction={(action) => handleMultiAction(selectedEntries, action)}
+                  onShareVia={mode === "local" ? handleShareVia : undefined}
                 />
               ))}
             </div>

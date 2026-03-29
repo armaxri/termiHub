@@ -48,6 +48,15 @@ pub struct LayoutConfig {
     pub sidebar_position: String,
     pub sidebar_visible: bool,
     pub status_bar_visible: bool,
+    /// Activity bar views hidden by the user via context menu.
+    #[serde(default)]
+    pub hidden_activity_bar_views: Vec<String>,
+    /// The currently active sidebar panel (e.g. "connections", "files").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sidebar_view: Option<String>,
+    /// Whether the sidebar is currently collapsed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sidebar_collapsed: Option<bool>,
 }
 
 /// Application-wide settings persisted to disk.
@@ -107,6 +116,9 @@ pub struct AppSettings {
     /// Only relevant when portable mode is active and the credential mode is "keychain".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub portable_keychain_warning_acknowledged: Option<bool>,
+    /// Whether experimental features are enabled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub experimental_features_enabled: Option<bool>,
 }
 
 impl Default for AppSettings {
@@ -135,6 +147,7 @@ impl Default for AppSettings {
             installed_language_packages: None,
             custom_language_grammars: None,
             portable_keychain_warning_acknowledged: None,
+            experimental_features_enabled: None,
         }
     }
 }
@@ -374,6 +387,48 @@ mod tests {
         let layout = settings.layout.unwrap();
         assert_eq!(layout.activity_bar_position, "right");
         assert!(!layout.status_bar_visible);
+        // New optional fields default to empty/None when absent
+        assert!(layout.hidden_activity_bar_views.is_empty());
+        assert!(layout.sidebar_view.is_none());
+        assert!(layout.sidebar_collapsed.is_none());
+    }
+
+    #[test]
+    fn layout_config_persists_sidebar_state() {
+        let json = r#"{
+            "version": "1",
+            "externalConnectionFiles": [],
+            "layout": {
+                "activityBarPosition": "left",
+                "sidebarPosition": "left",
+                "sidebarVisible": true,
+                "statusBarVisible": true,
+                "hiddenActivityBarViews": ["tunnels", "services"],
+                "sidebarView": "files",
+                "sidebarCollapsed": true
+            }
+        }"#;
+        let settings: AppSettings = serde_json::from_str(json).unwrap();
+        {
+            let layout = settings.layout.as_ref().unwrap();
+            assert_eq!(
+                layout.hidden_activity_bar_views,
+                vec!["tunnels", "services"]
+            );
+            assert_eq!(layout.sidebar_view.as_deref(), Some("files"));
+            assert_eq!(layout.sidebar_collapsed, Some(true));
+        }
+
+        // Round-trip
+        let serialized = serde_json::to_string(&settings).unwrap();
+        let deserialized: AppSettings = serde_json::from_str(&serialized).unwrap();
+        let layout2 = deserialized.layout.unwrap();
+        assert_eq!(
+            layout2.hidden_activity_bar_views,
+            vec!["tunnels", "services"]
+        );
+        assert_eq!(layout2.sidebar_view.as_deref(), Some("files"));
+        assert_eq!(layout2.sidebar_collapsed, Some(true));
     }
 
     #[test]
@@ -576,6 +631,25 @@ mod tests {
         assert!(!json.contains("fileLanguageMappings"));
         assert!(!json.contains("installedLanguagePackages"));
         assert!(!json.contains("customLanguageGrammars"));
+    }
+
+    #[test]
+    fn experimental_features_enabled_round_trip() {
+        let settings = AppSettings {
+            experimental_features_enabled: Some(true),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(json.contains("experimentalFeaturesEnabled"));
+        let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.experimental_features_enabled, Some(true));
+    }
+
+    #[test]
+    fn experimental_features_enabled_none_omitted_from_json() {
+        let settings = AppSettings::default();
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(!json.contains("experimentalFeaturesEnabled"));
     }
 
     #[test]

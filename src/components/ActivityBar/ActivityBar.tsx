@@ -4,6 +4,7 @@ import {
   FolderOpen,
   ArrowLeftRight,
   LayoutGrid,
+  Server,
   Settings,
   Download,
   Upload,
@@ -34,6 +35,7 @@ const OPTIONAL_ITEMS: ActivityBarItemDef[] = [
   { view: "files", icon: FolderOpen, label: "File Browser" },
   { view: "workspaces", icon: LayoutGrid, label: "Workspaces" },
   { view: "tunnels", icon: ArrowLeftRight, label: "SSH Tunnels", experimental: true },
+  { view: "services", icon: Server, label: "Services", experimental: true },
 ];
 
 const EMPTY_HIDDEN_VIEWS: string[] = [];
@@ -195,9 +197,7 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
                 onCheckedChange={() => toggleActivityBarView(item.view)}
                 data-testid={`activity-bar-context-toggle-${item.view}`}
               >
-                <ContextMenu.ItemIndicator className="settings-menu__item-indicator">
-                  ✓
-                </ContextMenu.ItemIndicator>
+                <span className="settings-menu__item-indicator">{isVisible ? "✓" : ""}</span>
                 {item.label}
                 {item.experimental && (
                   <span className="settings-menu__item-experimental"> — Experimental</span>

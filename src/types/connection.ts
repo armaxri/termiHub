@@ -80,6 +80,10 @@ export interface LayoutConfig {
   sidebarVisible: boolean;
   statusBarVisible: boolean;
   hiddenActivityBarViews: string[];
+  /** The currently active sidebar panel. Persisted across restarts. */
+  sidebarView?: string;
+  /** Whether the sidebar is currently collapsed. Persisted across restarts. */
+  sidebarCollapsed?: boolean;
 }
 
 export const DEFAULT_LAYOUT: LayoutConfig = {
