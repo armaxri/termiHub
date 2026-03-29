@@ -555,12 +555,19 @@ export const useAppStore = create<AppState>((set, get) => {
     sidebarView: "connections",
     sidebarCollapsed: false,
     sidebarWidth: 260,
-    setSidebarView: (view) =>
+    setSidebarView: (view) => {
       set((state) => ({
         sidebarView: view,
         sidebarCollapsed: state.sidebarView === view && !state.sidebarCollapsed ? true : false,
-      })),
-    toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
+      }));
+      const { sidebarCollapsed, updateLayoutConfig } = get();
+      updateLayoutConfig({ sidebarView: view, sidebarCollapsed });
+    },
+    toggleSidebar: () => {
+      set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed }));
+      const { sidebarView, sidebarCollapsed, updateLayoutConfig } = get();
+      updateLayoutConfig({ sidebarView, sidebarCollapsed });
+    },
     setSidebarWidth: (width) => set({ sidebarWidth: width }),
 
     // Password prompt
@@ -1438,7 +1445,17 @@ export const useAppStore = create<AppState>((set, get) => {
           }
         }
         const layoutConfig = settings.layout ?? DEFAULT_LAYOUT;
-        set({ connections, folders, settings, remoteAgents, layoutConfig });
+        const sidebarView = (layoutConfig.sidebarView as SidebarView | undefined) ?? "connections";
+        const sidebarCollapsed = layoutConfig.sidebarCollapsed ?? false;
+        set({
+          connections,
+          folders,
+          settings,
+          remoteAgents,
+          layoutConfig,
+          sidebarView,
+          sidebarCollapsed,
+        });
         applyTheme(settings.theme);
         if (settings.keybindingOverrides) {
           setKeybindingOverrides(settings.keybindingOverrides);

@@ -203,6 +203,76 @@ describe("appStore — layout state", () => {
 
     expect(useAppStore.getState().layoutConfig).toEqual(DEFAULT_LAYOUT);
   });
+
+  it("loadFromBackend restores sidebarView and sidebarCollapsed from saved layout", async () => {
+    const { getSettings } = await import("@/services/storage");
+    vi.mocked(getSettings).mockResolvedValueOnce({
+      version: "1",
+      externalConnectionFiles: [],
+      powerMonitoringEnabled: true,
+      fileBrowserEnabled: true,
+      layout: {
+        activityBarPosition: "left",
+        sidebarPosition: "left",
+        sidebarVisible: true,
+        statusBarVisible: true,
+        hiddenActivityBarViews: [],
+        sidebarView: "files",
+        sidebarCollapsed: true,
+      },
+    });
+
+    await useAppStore.getState().loadFromBackend();
+
+    expect(useAppStore.getState().sidebarView).toBe("files");
+    expect(useAppStore.getState().sidebarCollapsed).toBe(true);
+  });
+
+  it("loadFromBackend defaults sidebarView to connections when not in saved layout", async () => {
+    const { getSettings } = await import("@/services/storage");
+    vi.mocked(getSettings).mockResolvedValueOnce({
+      version: "1",
+      externalConnectionFiles: [],
+      powerMonitoringEnabled: true,
+      fileBrowserEnabled: true,
+      layout: {
+        activityBarPosition: "left",
+        sidebarPosition: "left",
+        sidebarVisible: true,
+        statusBarVisible: true,
+        hiddenActivityBarViews: [],
+      },
+    });
+
+    await useAppStore.getState().loadFromBackend();
+
+    expect(useAppStore.getState().sidebarView).toBe("connections");
+    expect(useAppStore.getState().sidebarCollapsed).toBe(false);
+  });
+
+  it("setSidebarView persists the new view and collapsed state to layoutConfig", () => {
+    useAppStore.getState().setSidebarView("files");
+    vi.runAllTimers();
+
+    expect(mockSaveSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        layout: expect.objectContaining({ sidebarView: "files", sidebarCollapsed: false }),
+      })
+    );
+  });
+
+  it("toggleSidebar persists the collapsed state to layoutConfig", () => {
+    useAppStore.getState().setSidebarView("files");
+    vi.clearAllMocks();
+    useAppStore.getState().toggleSidebar();
+    vi.runAllTimers();
+
+    expect(mockSaveSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        layout: expect.objectContaining({ sidebarView: "files", sidebarCollapsed: true }),
+      })
+    );
+  });
 });
 
 describe("appStore — setTabSessionId", () => {
