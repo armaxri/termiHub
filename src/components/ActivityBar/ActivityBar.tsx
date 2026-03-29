@@ -197,9 +197,7 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
                 onCheckedChange={() => toggleActivityBarView(item.view)}
                 data-testid={`activity-bar-context-toggle-${item.view}`}
               >
-                <ContextMenu.ItemIndicator className="settings-menu__item-indicator">
-                  ✓
-                </ContextMenu.ItemIndicator>
+                <span className="settings-menu__item-indicator">{isVisible ? "✓" : ""}</span>
                 {item.label}
                 {item.experimental && (
                   <span className="settings-menu__item-experimental"> — Experimental</span>
