@@ -35,14 +35,9 @@ import { FileEntry } from "@/types/connection";
 import type { ShellType } from "@/types/terminal";
 import type { ConnectionTypeInfo } from "@/services/api";
 import { getWslDistroName, wslToWindowsPath, windowsToWslPath } from "@/utils/shell-detection";
+import { formatBytes } from "@/utils/formatters";
 import { resolveFeatureEnabled } from "@/utils/featureFlags";
 import "./FileBrowser.css";
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 interface FileRowProps {
   entry: FileEntry;
@@ -279,7 +274,7 @@ function FileRow({
             )}
             <span className="file-browser__name">{entry.name}</span>
             {!entry.isDirectory && (
-              <span className="file-browser__size">{formatFileSize(entry.size)}</span>
+              <span className="file-browser__size">{formatBytes(entry.size)}</span>
             )}
             {entry.permissions && (
               <span className="file-browser__permissions">{entry.permissions}</span>
@@ -655,15 +650,18 @@ export function FileBrowser() {
 
   // Listen for VS Code edit-complete events (remote file re-upload)
   useEffect(() => {
-    const unlisten = onVscodeEditComplete((remotePath, success, err) => {
+    let cleanup: (() => void) | null = null;
+    onVscodeEditComplete((remotePath, success, err) => {
       if (success) {
         refresh();
       } else {
         console.error(`VS Code edit failed for ${remotePath}:`, err);
       }
+    }).then((fn) => {
+      cleanup = fn;
     });
     return () => {
-      unlisten.then((fn) => fn());
+      if (cleanup) cleanup();
     };
   }, [refresh]);
 
