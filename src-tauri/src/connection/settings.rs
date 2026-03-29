@@ -107,6 +107,9 @@ pub struct AppSettings {
     /// Only relevant when portable mode is active and the credential mode is "keychain".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub portable_keychain_warning_acknowledged: Option<bool>,
+    /// Whether experimental features are enabled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub experimental_features_enabled: Option<bool>,
 }
 
 impl Default for AppSettings {
@@ -135,6 +138,7 @@ impl Default for AppSettings {
             installed_language_packages: None,
             custom_language_grammars: None,
             portable_keychain_warning_acknowledged: None,
+            experimental_features_enabled: None,
         }
     }
 }
@@ -576,6 +580,25 @@ mod tests {
         assert!(!json.contains("fileLanguageMappings"));
         assert!(!json.contains("installedLanguagePackages"));
         assert!(!json.contains("customLanguageGrammars"));
+    }
+
+    #[test]
+    fn experimental_features_enabled_round_trip() {
+        let settings = AppSettings {
+            experimental_features_enabled: Some(true),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(json.contains("experimentalFeaturesEnabled"));
+        let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.experimental_features_enabled, Some(true));
+    }
+
+    #[test]
+    fn experimental_features_enabled_none_omitted_from_json() {
+        let settings = AppSettings::default();
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(!json.contains("experimentalFeaturesEnabled"));
     }
 
     #[test]
