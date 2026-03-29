@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Services: "New Service" dialog now opens as a centred modal overlay instead of rendering inline and covering the lower half of the app — the dialog CSS classes (`dialog__overlay`, `dialog__content`, `btn`, etc.) were never defined or imported, so the Radix portal content had no `position: fixed` and appeared in the normal document flow
 - Settings: custom grammar syntax highlighting now correctly applies — `shikiToMonaco` internally resets Monaco's theme to `themeIds[0]` (always dark-plus), which corrupted the colorMap used by the token provider and prevented open models from re-tokenizing with the correct colors; the user's actual theme is now re-applied after every `shikiToMonaco` call (#556)
 - Settings: imported grammars, installed language packages, and file type mappings now survive app restarts — the Rust `AppSettings` struct was missing these three fields so serde silently dropped them on every save/load cycle (#556)
 - Settings: custom grammar import now shows an error message when the grammar fails to load in Shiki (e.g. malformed grammar, unsupported embedded scope), and the grammar is only saved to settings if loading actually succeeds; failures are also logged to the LogViewer via `frontend::custom_grammars` for diagnosis (#556)

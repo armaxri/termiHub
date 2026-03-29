@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
+import "./EmbeddedServerSidebar.css";
 import { AlertTriangle } from "lucide-react";
 import { EmbeddedServerConfig, ServerType, DEFAULT_PORTS } from "@/types/embeddedServer";
 
