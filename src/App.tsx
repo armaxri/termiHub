@@ -14,6 +14,7 @@ import { ShortcutsOverlay } from "@/components/KeyboardShortcuts/ShortcutsOverla
 import { LargePasteDialog } from "@/components/Terminal/LargePasteDialog";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useTunnelEvents } from "@/hooks/useTunnelEvents";
+import { useEmbeddedServerEvents } from "@/hooks/useEmbeddedServerEvents";
 import { useCredentialStoreEvents } from "@/hooks/useCredentialStoreEvents";
 import { useWebviewZoom } from "@/hooks/useWebviewZoom";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
@@ -89,6 +90,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
 function App() {
   useKeyboardShortcuts();
   useTunnelEvents();
+  useEmbeddedServerEvents();
   useCredentialStoreEvents();
   useWebviewZoom();
   const loadFromBackend = useAppStore((s) => s.loadFromBackend);

@@ -61,6 +61,7 @@ export const config = {
       "./tests/e2e/encrypted-export-import.test.js",
       "./tests/e2e/external-files.test.js",
       "./tests/e2e/cross-platform.test.js",
+      "./tests/e2e/embedded-services.test.js",
     ],
     local: [
       "./tests/e2e/local-shell.test.js",
@@ -119,9 +120,7 @@ export const config = {
       xvfb = spawn("Xvfb", [DISPLAY_NUM, "-screen", "0", "1280x800x24"], {
         stdio: "ignore",
       });
-      xvfb.on("error", (err) =>
-        console.error("[xvfb]", err.message),
-      );
+      xvfb.on("error", (err) => console.error("[xvfb]", err.message));
       // Give Xvfb time to initialise before anything tries to connect
       await sleep(1000);
     }
@@ -149,9 +148,7 @@ export const config = {
       console.error("[tauri-driver]", data.toString().trim());
     });
 
-    tauriDriver.on("error", (err) =>
-      console.error("[tauri-driver] failed to start:", err.message),
-    );
+    tauriDriver.on("error", (err) => console.error("[tauri-driver] failed to start:", err.message));
 
     tauriDriver.on("exit", (code) => {
       if (code !== null && code !== 0) {

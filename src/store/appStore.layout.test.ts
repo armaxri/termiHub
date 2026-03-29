@@ -175,6 +175,7 @@ describe("appStore — layout state", () => {
       sidebarPosition: "right" as const,
       sidebarVisible: false,
       statusBarVisible: false,
+      hiddenActivityBarViews: [],
     };
     vi.mocked(getSettings).mockResolvedValueOnce({
       version: "1",
@@ -201,6 +202,76 @@ describe("appStore — layout state", () => {
     await useAppStore.getState().loadFromBackend();
 
     expect(useAppStore.getState().layoutConfig).toEqual(DEFAULT_LAYOUT);
+  });
+
+  it("loadFromBackend restores sidebarView and sidebarCollapsed from saved layout", async () => {
+    const { getSettings } = await import("@/services/storage");
+    vi.mocked(getSettings).mockResolvedValueOnce({
+      version: "1",
+      externalConnectionFiles: [],
+      powerMonitoringEnabled: true,
+      fileBrowserEnabled: true,
+      layout: {
+        activityBarPosition: "left",
+        sidebarPosition: "left",
+        sidebarVisible: true,
+        statusBarVisible: true,
+        hiddenActivityBarViews: [],
+        sidebarView: "files",
+        sidebarCollapsed: true,
+      },
+    });
+
+    await useAppStore.getState().loadFromBackend();
+
+    expect(useAppStore.getState().sidebarView).toBe("files");
+    expect(useAppStore.getState().sidebarCollapsed).toBe(true);
+  });
+
+  it("loadFromBackend defaults sidebarView to connections when not in saved layout", async () => {
+    const { getSettings } = await import("@/services/storage");
+    vi.mocked(getSettings).mockResolvedValueOnce({
+      version: "1",
+      externalConnectionFiles: [],
+      powerMonitoringEnabled: true,
+      fileBrowserEnabled: true,
+      layout: {
+        activityBarPosition: "left",
+        sidebarPosition: "left",
+        sidebarVisible: true,
+        statusBarVisible: true,
+        hiddenActivityBarViews: [],
+      },
+    });
+
+    await useAppStore.getState().loadFromBackend();
+
+    expect(useAppStore.getState().sidebarView).toBe("connections");
+    expect(useAppStore.getState().sidebarCollapsed).toBe(false);
+  });
+
+  it("setSidebarView persists the new view and collapsed state to layoutConfig", () => {
+    useAppStore.getState().setSidebarView("files");
+    vi.runAllTimers();
+
+    expect(mockSaveSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        layout: expect.objectContaining({ sidebarView: "files", sidebarCollapsed: false }),
+      })
+    );
+  });
+
+  it("toggleSidebar persists the collapsed state to layoutConfig", () => {
+    useAppStore.getState().setSidebarView("files");
+    vi.clearAllMocks();
+    useAppStore.getState().toggleSidebar();
+    vi.runAllTimers();
+
+    expect(mockSaveSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        layout: expect.objectContaining({ sidebarView: "files", sidebarCollapsed: true }),
+      })
+    );
   });
 });
 
@@ -259,5 +330,45 @@ describe("appStore — setTabSessionId", () => {
     const before = useAppStore.getState().rootPanel;
     useAppStore.getState().setTabSessionId("nonexistent-tab", "session-xyz");
     expect(useAppStore.getState().rootPanel).toBe(before);
+  });
+});
+
+describe("toggleActivityBarView", () => {
+  beforeEach(() => {
+    useAppStore.setState({
+      layoutConfig: { ...DEFAULT_LAYOUT, hiddenActivityBarViews: [] },
+      sidebarView: "connections",
+      sidebarCollapsed: false,
+    });
+  });
+
+  it("hides a visible view", () => {
+    useAppStore.getState().toggleActivityBarView("tunnels");
+    expect(useAppStore.getState().layoutConfig.hiddenActivityBarViews).toContain("tunnels");
+  });
+
+  it("shows a hidden view", () => {
+    useAppStore.setState({
+      layoutConfig: { ...DEFAULT_LAYOUT, hiddenActivityBarViews: ["tunnels"] },
+    });
+    useAppStore.getState().toggleActivityBarView("tunnels");
+    expect(useAppStore.getState().layoutConfig.hiddenActivityBarViews).not.toContain("tunnels");
+  });
+
+  it("collapses the sidebar when hiding the active view", () => {
+    useAppStore.setState({ sidebarView: "tunnels", sidebarCollapsed: false });
+    useAppStore.getState().toggleActivityBarView("tunnels");
+    expect(useAppStore.getState().sidebarCollapsed).toBe(true);
+  });
+
+  it("is a no-op for required views (connections)", () => {
+    useAppStore.getState().toggleActivityBarView("connections");
+    expect(useAppStore.getState().layoutConfig.hiddenActivityBarViews).not.toContain("connections");
+  });
+
+  it("does not collapse the sidebar when hiding an inactive view", () => {
+    useAppStore.setState({ sidebarView: "connections", sidebarCollapsed: false });
+    useAppStore.getState().toggleActivityBarView("tunnels");
+    expect(useAppStore.getState().sidebarCollapsed).toBe(false);
   });
 });

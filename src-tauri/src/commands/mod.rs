@@ -1,10 +1,12 @@
 pub mod agent;
 pub mod connection;
 pub mod credential;
+pub mod embedded_servers;
 pub mod files;
 pub mod logs;
 pub mod monitoring;
 pub mod network;
+pub mod portable;
 pub mod session;
 pub mod tunnel;
 pub mod workspace;

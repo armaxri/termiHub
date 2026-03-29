@@ -1,6 +1,7 @@
 mod commands;
 mod connection;
 mod credential;
+mod embedded_servers;
 mod files;
 mod monitoring;
 mod network;
@@ -64,6 +65,35 @@ pub fn run() {
             }
 
             let mut recovery_warnings: Vec<RecoveryWarning> = Vec::new();
+
+            // Detect portable mode before any storage initialization.
+            // Priority: TERMIHUB_CONFIG_DIR env var > portable mode detection > OS default.
+            let app_mode = match utils::portable::detect_app_mode() {
+                Ok(mode) => {
+                    info!(is_portable = mode.is_portable(), "App mode detected");
+                    mode
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to detect app mode, defaulting to installed: {e}");
+                    utils::portable::AppMode::Installed
+                }
+            };
+
+            // If portable mode is active and no explicit override is set, redirect config dir
+            // so all storage modules (which check TERMIHUB_CONFIG_DIR) use the portable path.
+            if app_mode.is_portable() && std::env::var("TERMIHUB_CONFIG_DIR").is_err() {
+                if let Some(data_dir) = app_mode.data_dir() {
+                    std::fs::create_dir_all(data_dir).expect("Failed to create portable data directory");
+                    // Safety: called before any threads that read env vars are spawned.
+                    #[allow(unused_unsafe)]
+                    unsafe {
+                        std::env::set_var("TERMIHUB_CONFIG_DIR", data_dir);
+                    }
+                }
+            }
+
+            // Store the detected app mode so commands and the frontend can query it.
+            app.manage(app_mode);
 
             // Load settings to determine the credential storage mode.
             // On failure, fall back to defaults so the app can still start.
@@ -223,6 +253,35 @@ pub fn run() {
                 }
             }
 
+            // Initialize embedded server manager with recovery loading.
+            // On failure, the app still starts but embedded servers are unavailable.
+            match embedded_servers::server_manager::EmbeddedServerManager::new(app.handle()) {
+                Ok(manager) => {
+                    recovery_warnings.extend(manager.take_recovery_warnings());
+
+                    // Auto-start servers in a background thread.
+                    let handle = app.handle().clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                        if let Some(mgr) = handle
+                            .try_state::<embedded_servers::server_manager::EmbeddedServerManager>()
+                        {
+                            mgr.start_auto_servers();
+                        }
+                    });
+
+                    app.manage(manager);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to initialize embedded server manager: {e}");
+                    recovery_warnings.push(RecoveryWarning {
+                        file_name: "embedded_servers.json".to_string(),
+                        message: "Could not initialize embedded server storage. Services are unavailable until the app is restarted.".to_string(),
+                        details: Some(e.to_string()),
+                    });
+                }
+            }
+
             // Handle --list-workspaces CLI flag: print workspace list and exit
             {
                 use tauri_plugin_cli::CliExt;
@@ -333,6 +392,7 @@ pub fn run() {
             commands::files::vscode_available,
             commands::files::vscode_open_local,
             commands::files::vscode_open_remote,
+            commands::files::write_cheatsheet,
             // Monitoring (kept temporarily — will migrate to session-based monitoring)
             commands::monitoring::monitoring_open,
             commands::monitoring::monitoring_close,
@@ -391,6 +451,15 @@ pub fn run() {
             commands::network::network_http_monitor_start,
             commands::network::network_http_monitor_stop,
             commands::network::network_http_monitor_list,
+            // Embedded servers
+            commands::embedded_servers::list_embedded_servers,
+            commands::embedded_servers::save_embedded_server,
+            commands::embedded_servers::delete_embedded_server,
+            commands::embedded_servers::get_embedded_server_states,
+            commands::embedded_servers::start_embedded_server,
+            commands::embedded_servers::stop_embedded_server,
+            commands::embedded_servers::create_and_start_server,
+            commands::embedded_servers::list_network_interfaces,
             // Credentials
             commands::credential::get_credential_store_status,
             commands::credential::unlock_credential_store,
@@ -402,6 +471,12 @@ pub fn run() {
             commands::credential::resolve_credential,
             commands::credential::remove_credential,
             commands::credential::set_auto_lock_timeout,
+            // Portable mode
+            commands::portable::get_app_mode,
+            commands::portable::list_config_files,
+            commands::portable::resolve_portable_path_cmd,
+            commands::portable::export_config_to_portable,
+            commands::portable::import_config_from_portable,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -413,6 +488,12 @@ pub fn run() {
             {
                 // Gracefully stop all active tunnels on window close
                 if let Some(mgr) = app_handle.try_state::<tunnel::tunnel_manager::TunnelManager>() {
+                    mgr.stop_all();
+                }
+                // Gracefully stop all running embedded servers on window close
+                if let Some(mgr) = app_handle
+                    .try_state::<embedded_servers::server_manager::EmbeddedServerManager>()
+                {
                     mgr.stop_all();
                 }
             }

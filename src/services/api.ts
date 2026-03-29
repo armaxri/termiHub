@@ -21,6 +21,9 @@ import {
   AppSettings,
   AgentCapabilities,
   RecoveryWarning,
+  AppModeInfo,
+  ConfigFileStatus,
+  ConfigMigrationResult,
 } from "@/types/connection";
 
 export type { ConnectionTypeInfo };
@@ -774,4 +777,47 @@ export async function removeCredential(
   credentialType: "password" | "key_passphrase"
 ): Promise<void> {
   await invoke("remove_credential", { connectionId, credentialType });
+}
+
+// --- Portable mode commands ---
+
+/** Return the current app mode (portable vs. installed) and the data directory path. */
+export async function getAppMode(): Promise<AppModeInfo> {
+  return await invoke<AppModeInfo>("get_app_mode");
+}
+
+/** List config files present in a given directory. */
+export async function listConfigFiles(dir: string): Promise<ConfigFileStatus[]> {
+  return await invoke<ConfigFileStatus[]>("list_config_files", { dir });
+}
+
+/** Resolve a `{PORTABLE_DIR}` placeholder in a path string. */
+export async function resolvePortablePath(path: string): Promise<string> {
+  return await invoke<string>("resolve_portable_path_cmd", { path });
+}
+
+/**
+ * Export the currently active config files to a portable data directory.
+ *
+ * @param destDir - Destination directory (the portable `data/` folder).
+ * @param files - List of file names to copy (e.g. `["connections.json", "settings.json"]`).
+ */
+export async function exportConfigToPortable(
+  destDir: string,
+  files: string[]
+): Promise<ConfigMigrationResult> {
+  return await invoke<ConfigMigrationResult>("export_config_to_portable", { destDir, files });
+}
+
+/**
+ * Import config files from a portable data directory into the current config directory.
+ *
+ * @param srcDir - Source directory (the portable `data/` folder).
+ * @param files - List of file names to copy (e.g. `["connections.json", "settings.json"]`).
+ */
+export async function importConfigFromPortable(
+  srcDir: string,
+  files: string[]
+): Promise<ConfigMigrationResult> {
+  return await invoke<ConfigMigrationResult>("import_config_from_portable", { srcDir, files });
 }

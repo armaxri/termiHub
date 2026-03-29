@@ -39,8 +39,10 @@ base64 = "0.22"
 anyhow = "1"
 thiserror = { workspace = true }
 termihub-core = { path = "../core", features = ["serial", "local-shell", "telnet", "ssh", "docker", "wsl"] }
-tokio = { version = "1", features = ["rt", "sync", "macros"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "macros", "net", "time", "io-util"] }
 tokio-util = { version = "0.7", features = ["rt"] }
+axum = "0.7"
+tower-http = { version = "0.5", features = ["fs"] }
 async-trait = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking"] }
 dirs = "6"
@@ -54,6 +56,7 @@ zeroize = { version = "1", features = ["derive"] }
 rand = "0.8"
 tauri-plugin-clipboard-manager = "2.3.2"
 tauri-plugin-cli = "2"
+if-addrs = "0.6"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-foundation = { version = "0.3", features = ["NSUserDefaults", "NSString"] }

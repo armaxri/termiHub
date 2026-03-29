@@ -20,6 +20,7 @@ import {
   filterRuntimeOptions,
 } from "@/utils/schemaDefaults";
 import { useAvailableRuntimes } from "@/hooks/useAvailableRuntimes";
+import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import { ConnectionTerminalSettings } from "./ConnectionTerminalSettings";
 import { ConnectionAppearanceSettings } from "./ConnectionAppearanceSettings";
 import { findLeafByTab } from "@/utils/panelTree";
@@ -68,15 +69,18 @@ function hasTerminalOptions(opts: TerminalOptions): boolean {
   return Object.values(opts).some((v) => v !== undefined);
 }
 
-/** Build type options from the registry, plus a "Remote Agent" entry. */
+/** Build type options from the registry, optionally including the experimental "Remote Agent" entry. */
 function buildTypeOptions(
-  connectionTypes: ConnectionTypeInfo[]
+  connectionTypes: ConnectionTypeInfo[],
+  includeRemoteAgent: boolean
 ): { value: string; label: string }[] {
   const options = connectionTypes.map((ct) => ({
     value: ct.typeId,
     label: ct.displayName,
   }));
-  options.push({ value: "remote", label: "Remote Agent" });
+  if (includeRemoteAgent) {
+    options.push({ value: "remote", label: "Remote Agent (Experimental)" });
+  }
   return options;
 }
 
@@ -124,6 +128,7 @@ interface ConnectionEditorProps {
 }
 
 export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorProps) {
+  const experimental = useExperimentalFeatures();
   const connections = useAppStore((s) => s.connections);
   const connectionTypes = useAppStore((s) => s.connectionTypes);
   const addConnection = useAppStore((s) => s.addConnection);
@@ -276,8 +281,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       // Definition mode: show only agent-reported types (no "Remote Agent" entry)
       return agentConnectionTypes.map((ct) => ({ value: ct.typeId, label: ct.displayName }));
     }
-    return buildTypeOptions(connectionTypes);
-  }, [isAgentDefinitionMode, agentConnectionTypes, connectionTypes]);
+    return buildTypeOptions(connectionTypes, experimental);
+  }, [isAgentDefinitionMode, agentConnectionTypes, connectionTypes, experimental]);
 
   // Get the current schema from the effective registry
   const currentTypeInfo = useMemo(

@@ -23,6 +23,18 @@ pub struct KeybindingOverrideEntry {
     pub key: String,
 }
 
+/// A user-imported custom TextMate grammar for Monaco syntax highlighting.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomLanguageGrammar {
+    /// Monaco language ID (e.g. "my-lang").
+    pub id: String,
+    /// Display name shown in the language picker.
+    pub name: String,
+    /// Full TextMate grammar JSON (stored inline so the original file is not needed).
+    pub grammar: serde_json::Value,
+}
+
 /// Helper for serde default that returns `true`.
 fn default_true() -> bool {
     true
@@ -36,6 +48,15 @@ pub struct LayoutConfig {
     pub sidebar_position: String,
     pub sidebar_visible: bool,
     pub status_bar_visible: bool,
+    /// Activity bar views hidden by the user via context menu.
+    #[serde(default)]
+    pub hidden_activity_bar_views: Vec<String>,
+    /// The currently active sidebar panel (e.g. "connections", "files").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sidebar_view: Option<String>,
+    /// Whether the sidebar is currently collapsed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sidebar_collapsed: Option<bool>,
 }
 
 /// Application-wide settings persisted to disk.
@@ -82,6 +103,22 @@ pub struct AppSettings {
     /// User-customized keybinding overrides.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub keybinding_overrides: Option<Vec<KeybindingOverrideEntry>>,
+    /// User-defined file extension / filename → language ID mappings.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_language_mappings: Option<std::collections::HashMap<String, String>>,
+    /// IDs of user-installed Shiki language packages.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub installed_language_packages: Option<Vec<String>>,
+    /// User-imported custom TextMate grammars (stored inline).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_language_grammars: Option<Vec<CustomLanguageGrammar>>,
+    /// Whether the user has acknowledged the keychain-in-portable-mode warning.
+    /// Only relevant when portable mode is active and the credential mode is "keychain".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub portable_keychain_warning_acknowledged: Option<bool>,
+    /// Whether experimental features are enabled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub experimental_features_enabled: Option<bool>,
 }
 
 impl Default for AppSettings {
@@ -106,6 +143,11 @@ impl Default for AppSettings {
             credential_auto_lock_minutes: None,
             right_click_behavior: None,
             keybinding_overrides: None,
+            file_language_mappings: None,
+            installed_language_packages: None,
+            custom_language_grammars: None,
+            portable_keychain_warning_acknowledged: None,
+            experimental_features_enabled: None,
         }
     }
 }
@@ -345,6 +387,48 @@ mod tests {
         let layout = settings.layout.unwrap();
         assert_eq!(layout.activity_bar_position, "right");
         assert!(!layout.status_bar_visible);
+        // New optional fields default to empty/None when absent
+        assert!(layout.hidden_activity_bar_views.is_empty());
+        assert!(layout.sidebar_view.is_none());
+        assert!(layout.sidebar_collapsed.is_none());
+    }
+
+    #[test]
+    fn layout_config_persists_sidebar_state() {
+        let json = r#"{
+            "version": "1",
+            "externalConnectionFiles": [],
+            "layout": {
+                "activityBarPosition": "left",
+                "sidebarPosition": "left",
+                "sidebarVisible": true,
+                "statusBarVisible": true,
+                "hiddenActivityBarViews": ["tunnels", "services"],
+                "sidebarView": "files",
+                "sidebarCollapsed": true
+            }
+        }"#;
+        let settings: AppSettings = serde_json::from_str(json).unwrap();
+        {
+            let layout = settings.layout.as_ref().unwrap();
+            assert_eq!(
+                layout.hidden_activity_bar_views,
+                vec!["tunnels", "services"]
+            );
+            assert_eq!(layout.sidebar_view.as_deref(), Some("files"));
+            assert_eq!(layout.sidebar_collapsed, Some(true));
+        }
+
+        // Round-trip
+        let serialized = serde_json::to_string(&settings).unwrap();
+        let deserialized: AppSettings = serde_json::from_str(&serialized).unwrap();
+        let layout2 = deserialized.layout.unwrap();
+        assert_eq!(
+            layout2.hidden_activity_bar_views,
+            vec!["tunnels", "services"]
+        );
+        assert_eq!(layout2.sidebar_view.as_deref(), Some("files"));
+        assert_eq!(layout2.sidebar_collapsed, Some(true));
     }
 
     #[test]
@@ -486,6 +570,86 @@ mod tests {
         let settings = AppSettings::default();
         let json = serde_json::to_string(&settings).unwrap();
         assert!(!json.contains("keybindingOverrides"));
+    }
+
+    #[test]
+    fn deserialize_without_editor_language_fields() {
+        let json = r#"{"version":"1","externalConnectionFiles":[]}"#;
+        let settings: AppSettings = serde_json::from_str(json).unwrap();
+        assert!(settings.file_language_mappings.is_none());
+        assert!(settings.installed_language_packages.is_none());
+        assert!(settings.custom_language_grammars.is_none());
+    }
+
+    #[test]
+    fn editor_language_fields_round_trip() {
+        use std::collections::HashMap;
+
+        let mut mappings = HashMap::new();
+        mappings.insert(".s16".to_string(), "s16".to_string());
+
+        let grammar_json = serde_json::json!({
+            "name": "S16 Assembly",
+            "scopeName": "source.s16",
+            "patterns": []
+        });
+
+        let settings = AppSettings {
+            file_language_mappings: Some(mappings),
+            installed_language_packages: Some(vec!["lua".to_string(), "rust".to_string()]),
+            custom_language_grammars: Some(vec![CustomLanguageGrammar {
+                id: "s16".to_string(),
+                name: "S16 Assembly".to_string(),
+                grammar: grammar_json,
+            }]),
+            ..Default::default()
+        };
+
+        let json = serde_json::to_string(&settings).unwrap();
+        let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
+
+        let mappings = deserialized.file_language_mappings.unwrap();
+        assert_eq!(mappings.get(".s16").map(String::as_str), Some("s16"));
+
+        let packages = deserialized.installed_language_packages.unwrap();
+        assert_eq!(packages, vec!["lua", "rust"]);
+
+        let grammars = deserialized.custom_language_grammars.unwrap();
+        assert_eq!(grammars.len(), 1);
+        assert_eq!(grammars[0].id, "s16");
+        assert_eq!(grammars[0].name, "S16 Assembly");
+        assert_eq!(
+            grammars[0].grammar["scopeName"].as_str(),
+            Some("source.s16")
+        );
+    }
+
+    #[test]
+    fn editor_language_fields_none_omitted_from_json() {
+        let settings = AppSettings::default();
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(!json.contains("fileLanguageMappings"));
+        assert!(!json.contains("installedLanguagePackages"));
+        assert!(!json.contains("customLanguageGrammars"));
+    }
+
+    #[test]
+    fn experimental_features_enabled_round_trip() {
+        let settings = AppSettings {
+            experimental_features_enabled: Some(true),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(json.contains("experimentalFeaturesEnabled"));
+        let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.experimental_features_enabled, Some(true));
+    }
+
+    #[test]
+    fn experimental_features_enabled_none_omitted_from_json() {
+        let settings = AppSettings::default();
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(!json.contains("experimentalFeaturesEnabled"));
     }
 
     #[test]

@@ -185,3 +185,13 @@ export interface LogEntry {
   target: string;
   message: string;
 }
+
+/** A named workspace-level tab group with its own independent panel tree. */
+export interface TabGroup {
+  id: string;
+  name: string;
+  /** Optional accent color shown as a dot on the chip. */
+  color?: string;
+  rootPanel: PanelNode;
+  activePanelId: string | null;
+}

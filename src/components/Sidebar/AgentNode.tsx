@@ -28,8 +28,6 @@ import {
   Upload,
   Folder,
   FolderPlus,
-  Check,
-  X,
   Zap,
 } from "lucide-react";
 import { ConnectionIcon } from "@/utils/connectionIcons";
@@ -45,6 +43,7 @@ import { classifyAgentError, ClassifiedAgentError } from "@/utils/classifyAgentE
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { AgentSetupDialog } from "./AgentSetupDialog";
 import { ConnectionErrorDialog } from "./ConnectionErrorDialog";
+import { InlineFolderInput } from "./InlineFolderInput";
 
 const EMPTY_SESSIONS: AgentSessionInfo[] = [];
 const EMPTY_DEFINITIONS: AgentDefinitionInfo[] = [];
@@ -72,66 +71,6 @@ function SessionTypeIcon({ type, size = 14 }: { type: string; size?: number }) {
     default:
       return <Terminal size={size} />;
   }
-}
-
-// ── Inline folder name input ─────────────────────────────────────────
-
-interface InlineFolderInputProps {
-  depth: number;
-  onConfirm: (name: string) => void;
-  onCancel: () => void;
-}
-
-function InlineFolderInput({ depth, onConfirm, onCancel }: InlineFolderInputProps) {
-  const [name, setName] = useState("");
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && name.trim()) {
-      onConfirm(name.trim());
-    } else if (e.key === "Escape") {
-      onCancel();
-    }
-  };
-
-  return (
-    <div
-      className="connection-tree__folder connection-tree__folder--editing"
-      style={{ paddingLeft: `${depth * 16 + 8}px` }}
-    >
-      <Folder size={16} />
-      <input
-        className="connection-tree__inline-input"
-        type="text"
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        onKeyDown={handleKeyDown}
-        onBlur={onCancel}
-        placeholder="Folder name"
-        autoFocus
-        data-testid="agent-inline-folder-input"
-      />
-      <button
-        className="connection-tree__inline-btn"
-        onMouseDown={(e) => {
-          e.preventDefault();
-          if (name.trim()) onConfirm(name.trim());
-        }}
-        title="Confirm"
-      >
-        <Check size={14} />
-      </button>
-      <button
-        className="connection-tree__inline-btn"
-        onMouseDown={(e) => {
-          e.preventDefault();
-          onCancel();
-        }}
-        title="Cancel"
-      >
-        <X size={14} />
-      </button>
-    </div>
-  );
 }
 
 // ── Agent connection item ────────────────────────────────────────────

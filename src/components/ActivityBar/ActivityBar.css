@@ -122,3 +122,34 @@
   background-color: var(--border-primary);
   margin: var(--spacing-xs) 0;
 }
+
+.settings-menu__label {
+  padding: var(--spacing-xs) var(--spacing-md);
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.settings-menu__item-indicator {
+  width: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+.settings-menu__item--required {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.settings-menu__item-experimental {
+  margin-left: auto;
+  padding-left: var(--spacing-sm);
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+}

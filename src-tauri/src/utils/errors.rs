@@ -61,6 +61,9 @@ pub enum TerminalError {
     #[error("Internal error: {0}")]
     InternalError(String),
 
+    #[error("Embedded server error: {0}")]
+    EmbeddedServerError(String),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }

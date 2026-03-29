@@ -2,14 +2,14 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { LayoutPreview } from "./LayoutPreview";
-import { LayoutConfig } from "@/types/connection";
+import { LayoutConfig, DEFAULT_LAYOUT } from "@/types/connection";
 
 let container: HTMLDivElement;
 let root: Root;
 
-function render(layout: LayoutConfig) {
+function render(layout: Omit<LayoutConfig, "hiddenActivityBarViews"> & Partial<LayoutConfig>) {
   act(() => {
-    root.render(<LayoutPreview layout={layout} />);
+    root.render(<LayoutPreview layout={{ ...DEFAULT_LAYOUT, ...layout }} />);
   });
 }
 

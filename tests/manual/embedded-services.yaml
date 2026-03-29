@@ -1,0 +1,47 @@
+category: embedded-services
+display_name: "Embedded Network Services"
+
+tests:
+  # MT-SVC-01, MT-SVC-02, MT-SVC-03 are covered by tests/e2e/embedded-services.test.js (PR #567)
+
+  - id: MT-SVC-04
+    name: "FTP server basic transfer"
+    platforms: [linux, macos, windows]
+    prerequisites:
+      - app: true
+      - ftp client available (e.g. lftp, curl, or FileZilla): true
+    verification: manual
+    steps:
+      - Create an FTP server on port 2121 pointing to a directory with test files
+      - Start the server
+      - Connect with an FTP client: ftp://127.0.0.1:2121
+      - Verify directory listing returns file names
+      - Download a file and verify contents match the original
+    added_by: "#526"
+
+  - id: MT-SVC-05
+    name: "TFTP server read request"
+    platforms: [linux, macos, windows]
+    prerequisites:
+      - app: true
+      - tftp client available (e.g. tftp or tftp-hpa): true
+    verification: manual
+    steps:
+      - Create a TFTP server on port 6969 pointing to a directory with a small text file
+      - Start the server
+      - Run: tftp 127.0.0.1 6969 -c get <filename>
+      - Verify the file is downloaded and contents match
+    added_by: "#526"
+
+  - id: MT-SVC-06
+    name: "Auto-start on application launch"
+    platforms: [linux, macos, windows]
+    prerequisites:
+      - app: true
+    verification: manual
+    steps:
+      - Create an HTTP server and enable "Auto-start" in its settings
+      - Quit and relaunch the application
+      - Open the Services panel
+      - Verify the server starts automatically within a few seconds of app launch
+    added_by: "#526"

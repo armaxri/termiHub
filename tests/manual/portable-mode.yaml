@@ -1,0 +1,80 @@
+category: portable-mode
+display_name: "Portable Mode"
+
+tests:
+  - id: MT-PORT-01
+    name: "Portable mode activates via portable.marker"
+    platforms: [windows, macos, linux]
+    prerequisites:
+      - "A built termiHub binary (not the installer)"
+      - "A directory to act as the portable root"
+    instructions:
+      - "Copy the termiHub binary to an empty directory (e.g. /tmp/th-portable/)"
+      - "Create an empty file named 'portable.marker' in the same directory"
+      - "Launch the binary"
+      - "Check the status bar at the bottom of the window"
+      - "Open Settings > Portable Mode"
+    expected:
+      - "A 'Portable' badge appears in the status bar (left side)"
+      - "Hovering the badge shows the data directory path"
+      - "Settings > Portable Mode shows Status: Active"
+      - "Data path points to <binary-dir>/data/"
+      - "Config files are listed (all 'not created yet' on first run)"
+      - "Connections, settings, and tunnels are stored in <binary-dir>/data/ after use"
+    verification: manual
+    pr: 524
+
+  - id: MT-PORT-02
+    name: "Portable mode activates via data/ directory"
+    platforms: [windows, macos, linux]
+    prerequisites:
+      - "A built termiHub binary (not the installer)"
+    instructions:
+      - "Copy the termiHub binary to an empty directory"
+      - "Create a subdirectory named 'data/' in the same directory (no marker file)"
+      - "Launch the binary"
+    expected:
+      - "A 'Portable' badge appears in the status bar"
+      - "Settings > Portable Mode shows Status: Active"
+      - "Data path points to <binary-dir>/data/"
+    verification: manual
+    pr: 524
+
+  - id: MT-PORT-03
+    name: "Installed mode shows no badge"
+    platforms: [windows, macos, linux]
+    prerequisites:
+      - "A normally installed termiHub (no portable.marker, no data/ next to binary)"
+    instructions:
+      - "Launch the installed app"
+      - "Check the status bar"
+      - "Open Settings > Portable Mode"
+    expected:
+      - "No 'Portable' badge in the status bar"
+      - "Settings > Portable Mode shows Status: Inactive (installed mode)"
+      - "Info box explains how to enable portable mode"
+    verification: manual
+    pr: 524
+
+  - id: MT-PORT-04
+    name: "Config export and import via Settings"
+    platforms: [windows, macos, linux]
+    prerequisites:
+      - "termiHub installed with at least one saved connection"
+    instructions:
+      - "Open Settings > Portable Mode"
+      - "Click 'Export Config to Directory'"
+      - "Select or create an empty destination directory"
+      - "Select all files in the migration dialog and click 'Copy'"
+      - "Verify success message appears"
+      - "Click 'Import Config from Directory'"
+      - "Select a different portable data directory with valid config files"
+      - "Select all files and click 'Copy'"
+      - "Restart the app and verify the imported config is active"
+    expected:
+      - "Export copies connections.json and other selected files to the destination"
+      - "Success message shows the number of files copied"
+      - "Import copies files from the source into the current config directory"
+      - "After restart, the imported connections appear in the sidebar"
+    verification: manual
+    pr: 524
