@@ -12,6 +12,7 @@ pub mod connection;
 pub mod errors;
 pub mod files;
 pub mod monitoring;
+pub mod network;
 pub mod output;
 pub mod protocol;
 pub mod session;

@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Network Tools: built-in network diagnostic utilities accessible from the "Network Tools" activity bar entry (experimental, #525):
+  - **Port Scanner** — TCP connect scan with port-spec syntax (`22`, `80,443`, `8080-8090`), streaming results, large-range warning
+  - **Ping** — ICMP ping with TCP fallback when raw sockets require elevated privileges; live latency chart (up to 2 min history); configurable interval and count
+  - **DNS Lookup** — A/AAAA/MX/CNAME/NS/TXT/SRV/SOA/PTR/ANY record types with optional custom nameserver
+  - **Traceroute** — TTL-limited hop-by-hop trace with three RTT columns per hop
+  - **Open Ports** — lists TCP/UDP listening ports on the local machine with process name and PID
+  - **Wake-on-LAN** — sends magic packets; save/delete named device presets; per-send history
+  - **HTTP Monitor** — periodic HTTP/HTTPS checks with response-time chart, status history, configurable method, interval, expected status code
+  - All diagnostic logic lives in `termihub-core` so the remote agent can use it; HTTP monitoring is desktop-only
+  - Agent now supports `network.port_scan`, `network.ping`, `network.dns_lookup`, `network.open_ports`, `network.traceroute`, `network.wol` JSON-RPC methods
 - Services: "Bind Address" in the New/Edit Service dialog is now a dropdown listing all local network interfaces (loopback, real interface IPs, all-interfaces) instead of a fixed read-only field with a checkbox — makes it easy to expose a service on a specific secondary network adapter (e.g. a test bench connected to a different NIC)
 - Services: new embedded network daemon panel accessible from the activity bar — spin up lightweight HTTP, FTP, or TFTP servers that serve a local directory with a single click; servers auto-start on launch, persist across restarts, and can be toggled, edited, duplicated, or deleted from the sidebar (#526)
 - File browser: right-click a local directory → "Share via HTTP/FTP/TFTP Server" to instantly create and start an embedded server for that path and switch to the Services panel (#526)

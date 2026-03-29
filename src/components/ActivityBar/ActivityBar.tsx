@@ -10,6 +10,7 @@ import {
   Upload,
   ScrollText,
   LayoutDashboard,
+  Stethoscope,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as ContextMenu from "@radix-ui/react-context-menu";
@@ -36,6 +37,7 @@ const OPTIONAL_ITEMS: ActivityBarItemDef[] = [
   { view: "workspaces", icon: LayoutGrid, label: "Workspaces" },
   { view: "tunnels", icon: ArrowLeftRight, label: "SSH Tunnels", experimental: true },
   { view: "services", icon: Server, label: "Services", experimental: true },
+  { view: "network-tools", icon: Stethoscope, label: "Network Tools", experimental: true },
 ];
 
 const EMPTY_HIDDEN_VIEWS: string[] = [];

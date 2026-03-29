@@ -40,6 +40,7 @@ anyhow = "1"
 thiserror = { workspace = true }
 termihub-core = { path = "../core", features = ["serial", "local-shell", "telnet", "ssh", "docker", "wsl"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "macros", "net", "time", "io-util"] }
+tokio-util = { version = "0.7", features = ["rt"] }
 axum = "0.7"
 tower-http = { version = "0.5", features = ["fs"] }
 async-trait = { workspace = true }

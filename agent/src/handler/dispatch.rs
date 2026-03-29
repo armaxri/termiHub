@@ -10,6 +10,7 @@ use base64::Engine;
 use crate::files::local::LocalFileBackend;
 use crate::files::{FileBackend, FileError};
 use crate::monitoring::MonitoringManager;
+use crate::network;
 use crate::protocol::errors;
 use crate::protocol::messages::{JsonRpcErrorResponse, JsonRpcRequest, JsonRpcResponse};
 use crate::protocol::methods::{
@@ -18,9 +19,11 @@ use crate::protocol::methods::{
     FilesListParams, FilesListResult, FilesMkdirParams, FilesReadParams, FilesReadResult,
     FilesRenameParams, FilesStatParams, FilesWriteParams, FolderCreateParams, FolderDeleteParams,
     FolderUpdateParams, HealthCheckResult, InitializeParams, InitializeResult,
-    MonitoringSubscribeParams, MonitoringUnsubscribeParams, SessionAttachParams,
-    SessionCloseParams, SessionCreateParams, SessionCreateResult, SessionDetachParams,
-    SessionInputParams, SessionListEntry, SessionListResult, SessionResizeParams,
+    MonitoringSubscribeParams, MonitoringUnsubscribeParams, NetworkDnsLookupParams,
+    NetworkPingParams, NetworkPortScanParams, NetworkTracerouteParams, NetworkWolParams,
+    SessionAttachParams, SessionCloseParams, SessionCreateParams, SessionCreateResult,
+    SessionDetachParams, SessionInputParams, SessionListEntry, SessionListResult,
+    SessionResizeParams,
 };
 use crate::session::definitions::{Connection, ConnectionStore, Folder};
 use crate::session::manager::{SessionCreateError, SessionManager, MAX_SESSIONS};
@@ -136,6 +139,14 @@ impl Dispatcher {
             "connection.monitoring.unsubscribe" => {
                 self.handle_monitoring_unsubscribe(request).await
             }
+
+            // network.* — diagnostic tools
+            "network.port_scan" => self.handle_network_port_scan(request).await,
+            "network.ping" => self.handle_network_ping(request).await,
+            "network.dns_lookup" => self.handle_network_dns_lookup(request).await,
+            "network.open_ports" => self.handle_network_open_ports(request).await,
+            "network.traceroute" => self.handle_network_traceroute(request).await,
+            "network.wol" => self.handle_network_wol(request).await,
 
             // Utility
             "health.check" => self.handle_health_check(request).await,
@@ -1049,6 +1060,145 @@ impl Dispatcher {
             other => Err((
                 errors::FILE_BROWSING_NOT_SUPPORTED,
                 format!("File browsing is not yet supported for '{other}' connections"),
+            )),
+        }
+    }
+
+    // ── network.* handlers ─────────────────────────────────────────
+
+    async fn handle_network_port_scan(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+        let params: NetworkPortScanParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid network.port_scan params: {e}"),
+                ));
+            }
+        };
+        match network::handle_port_scan(params).await {
+            Ok(result) => DispatchResult::Success(JsonRpcResponse::new(
+                id,
+                serde_json::to_value(result).unwrap(),
+            )),
+            Err(e) => DispatchResult::Error(JsonRpcErrorResponse::new(
+                id,
+                errors::INTERNAL_ERROR,
+                e.to_string(),
+            )),
+        }
+    }
+
+    async fn handle_network_ping(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+        let params: NetworkPingParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid network.ping params: {e}"),
+                ));
+            }
+        };
+        match network::handle_ping(params).await {
+            Ok(result) => DispatchResult::Success(JsonRpcResponse::new(
+                id,
+                serde_json::to_value(result).unwrap(),
+            )),
+            Err(e) => DispatchResult::Error(JsonRpcErrorResponse::new(
+                id,
+                errors::INTERNAL_ERROR,
+                e.to_string(),
+            )),
+        }
+    }
+
+    async fn handle_network_dns_lookup(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+        let params: NetworkDnsLookupParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid network.dns_lookup params: {e}"),
+                ));
+            }
+        };
+        match network::handle_dns_lookup(params).await {
+            Ok(result) => DispatchResult::Success(JsonRpcResponse::new(
+                id,
+                serde_json::to_value(result).unwrap(),
+            )),
+            Err(e) => DispatchResult::Error(JsonRpcErrorResponse::new(
+                id,
+                errors::INTERNAL_ERROR,
+                e.to_string(),
+            )),
+        }
+    }
+
+    async fn handle_network_open_ports(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+        match network::handle_open_ports() {
+            Ok(result) => DispatchResult::Success(JsonRpcResponse::new(
+                id,
+                serde_json::to_value(result).unwrap(),
+            )),
+            Err(e) => DispatchResult::Error(JsonRpcErrorResponse::new(
+                id,
+                errors::INTERNAL_ERROR,
+                e.to_string(),
+            )),
+        }
+    }
+
+    async fn handle_network_traceroute(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+        let params: NetworkTracerouteParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid network.traceroute params: {e}"),
+                ));
+            }
+        };
+        match network::handle_traceroute(params).await {
+            Ok(result) => DispatchResult::Success(JsonRpcResponse::new(
+                id,
+                serde_json::to_value(result).unwrap(),
+            )),
+            Err(e) => DispatchResult::Error(JsonRpcErrorResponse::new(
+                id,
+                errors::INTERNAL_ERROR,
+                e.to_string(),
+            )),
+        }
+    }
+
+    async fn handle_network_wol(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+        let params: NetworkWolParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid network.wol params: {e}"),
+                ));
+            }
+        };
+        match network::handle_wol(params) {
+            Ok(()) => DispatchResult::Success(JsonRpcResponse::new(id, json!({}))),
+            Err(e) => DispatchResult::Error(JsonRpcErrorResponse::new(
+                id,
+                errors::INTERNAL_ERROR,
+                e.to_string(),
             )),
         }
     }
@@ -2231,5 +2381,79 @@ mod tests {
             candidates.contains(&"/snap/bin/nu"),
             "expected /snap/bin/nu in SHELL_CANDIDATES"
         );
+    }
+
+    // ── network.* tests ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn network_dns_lookup_invalid_type_returns_error() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request(
+            "network.dns_lookup",
+            json!({"hostname": "example.com", "record_type": "BOGUS"}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        // Should fail due to unknown record type
+        assert!(
+            result.get("error").is_some(),
+            "expected error for unknown record type"
+        );
+    }
+
+    #[tokio::test]
+    async fn network_port_scan_invalid_port_spec_returns_error() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request(
+            "network.port_scan",
+            json!({"host": "localhost", "ports": "not-a-port"}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert!(
+            result.get("error").is_some(),
+            "expected error for invalid port spec"
+        );
+    }
+
+    #[tokio::test]
+    async fn network_wol_invalid_mac_returns_error() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request("network.wol", json!({"mac": "not-a-mac"}), 2);
+        let result = d.dispatch(req).await.to_json();
+        assert!(
+            result.get("error").is_some(),
+            "expected error for invalid MAC"
+        );
+    }
+
+    #[tokio::test]
+    async fn network_open_ports_returns_result() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request("network.open_ports", json!({}), 2);
+        let result = d.dispatch(req).await.to_json();
+        // Should succeed and return a ports array
+        assert!(
+            result.get("result").is_some(),
+            "expected result for open_ports"
+        );
+        assert!(result["result"]["ports"].is_array());
+    }
+
+    #[tokio::test]
+    async fn network_methods_require_initialization() {
+        let mut d = make_dispatcher();
+
+        let req = make_request("network.open_ports", json!({}), 1);
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["error"]["code"], errors::NOT_INITIALIZED);
     }
 }

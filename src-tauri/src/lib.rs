@@ -4,6 +4,7 @@ mod credential;
 mod embedded_servers;
 mod files;
 mod monitoring;
+mod network;
 mod session;
 mod terminal;
 mod tunnel;
@@ -23,6 +24,7 @@ use connection::settings::{AppSettings, SettingsStorage};
 use credential::{AutoLockTimer, CredentialManager, StorageMode};
 use files::sftp::SftpManager;
 use monitoring::MonitoringManager;
+use network::NetworkManager;
 use session::manager::SessionManager;
 use session::registry::build_desktop_registry;
 use terminal::agent_manager::AgentConnectionManager;
@@ -47,6 +49,7 @@ pub fn run() {
         .plugin(tauri_plugin_cli::init())
         .manage(SftpManager::new())
         .manage(MonitoringManager::new())
+        .manage(NetworkManager::new())
         .manage(log_buffer)
         .setup(move |app| {
             #[cfg(target_os = "macos")]
@@ -103,6 +106,13 @@ pub fn run() {
                     .expect("Failed to resolve app config directory"),
             };
             std::fs::create_dir_all(&config_dir).expect("Failed to create config directory");
+
+            // Initialise the network manager with the config dir and app handle.
+            if let Some(net_mgr) = app.try_state::<NetworkManager>() {
+                // SAFETY: NetworkManager is only initialised once at startup.
+                let mgr_ptr = net_mgr.inner() as *const NetworkManager as *mut NetworkManager;
+                unsafe { (*mgr_ptr).init(config_dir.clone(), app.handle().clone()) };
+            }
 
             let settings = match SettingsStorage::new(app.handle()) {
                 Ok(storage) => match storage.load_with_recovery() {
@@ -425,6 +435,22 @@ pub fn run() {
             commands::workspace::export_workspaces,
             commands::workspace::import_workspaces,
             commands::workspace::preview_import_workspaces,
+            // Network diagnostics
+            commands::network::network_port_scan,
+            commands::network::network_port_scan_cancel,
+            commands::network::network_ping_start,
+            commands::network::network_ping_stop,
+            commands::network::network_dns_lookup,
+            commands::network::network_open_ports,
+            commands::network::network_traceroute,
+            commands::network::network_traceroute_cancel,
+            commands::network::network_wol_send,
+            commands::network::network_wol_devices_list,
+            commands::network::network_wol_device_save,
+            commands::network::network_wol_device_delete,
+            commands::network::network_http_monitor_start,
+            commands::network::network_http_monitor_stop,
+            commands::network::network_http_monitor_list,
             // Embedded servers
             commands::embedded_servers::list_embedded_servers,
             commands::embedded_servers::save_embedded_server,
