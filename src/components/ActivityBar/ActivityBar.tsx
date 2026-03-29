@@ -35,7 +35,7 @@ const OPTIONAL_ITEMS: ActivityBarItemDef[] = [
   { view: "files", icon: FolderOpen, label: "File Browser" },
   { view: "workspaces", icon: LayoutGrid, label: "Workspaces" },
   { view: "tunnels", icon: ArrowLeftRight, label: "SSH Tunnels", experimental: true },
-  { view: "services", icon: Server, label: "Services" },
+  { view: "services", icon: Server, label: "Services", experimental: true },
 ];
 
 const EMPTY_HIDDEN_VIEWS: string[] = [];
