@@ -1,0 +1,121 @@
+# Network Tools Manual Tests
+# These tests require real network connectivity and cannot be automated in CI.
+# UI-only tests (sidebar structure, panel rendering, button states) are covered
+# by tests/e2e/network-tools.test.js (NT-01 through NT-09).
+
+prefix: MT-NET
+feature: Network Tools
+
+tests:
+  - id: MT-NET-10
+    title: Ping — live latency chart and stats
+    automated_by: null
+    steps:
+      - Open the Network Tools sidebar (stethoscope icon in activity bar; requires experimental features enabled)
+      - Click "Ping Host…" to open the Ping panel
+      - Enter `8.8.8.8` in the Host field
+      - Click Start
+    expected:
+      - Ping begins; replies stream in
+      - A latency graph appears below the form and updates with each reply
+      - The stats row (Sent / Received / Loss / RTT) updates after each reply
+      - After several replies, click Stop — status changes to "canceled" and final stats are shown
+
+  - id: MT-NET-11
+    title: Ping — TCP fallback notice
+    automated_by: null
+    steps:
+      - Open the Ping panel
+      - Enter `8.8.8.8` in the Host field and click Start on a machine without raw socket privileges (non-root Linux / restricted environment)
+    expected:
+      - An info banner "Using TCP ping — ICMP requires elevated privileges" appears
+      - Ping still produces results via TCP connect
+
+  - id: MT-NET-12
+    title: Port Scanner — results stream in
+    automated_by: null
+    steps:
+      - Click "Scan Ports…" to open the Port Scanner panel
+      - Enter `scanme.nmap.org` in Host and `22,80,443` in Ports
+      - Click Run
+    expected:
+      - Results begin streaming; each port row shows port number, state (open/closed/filtered), and latency
+      - Run button changes to Cancel while scanning
+      - Scan completes with a footer showing total count and elapsed time
+
+  - id: MT-NET-13
+    title: Port Scanner — large-range warning
+    automated_by: null
+    steps:
+      - Open the Port Scanner panel
+      - Enter any host and `1-10000` in Ports
+      - Click Run
+    expected:
+      - A large-range warning banner is shown before or during the scan
+      - Scan proceeds and results stream in
+
+  - id: MT-NET-14
+    title: DNS Lookup — A record resolution
+    automated_by: null
+    steps:
+      - Click "DNS Lookup…" to open the DNS Lookup panel
+      - Enter `example.com` in Hostname, select record type `A`
+      - Click Run
+    expected:
+      - One or more A records appear in the results table with IP address and TTL
+
+  - id: MT-NET-15
+    title: DNS Lookup — multiple record types
+    automated_by: null
+    steps:
+      - Open the DNS Lookup panel
+      - Test each record type (MX, CNAME, NS, TXT) for a domain that has them (e.g. `google.com`)
+    expected:
+      - Results match the expected records for each type (verify against `dig` or similar)
+
+  - id: MT-NET-16
+    title: Traceroute — hops stream in
+    automated_by: null
+    steps:
+      - Click "Traceroute…" to open the Traceroute panel
+      - Enter `8.8.8.8` in Host
+      - Click Run
+    expected:
+      - Hop rows stream in as TTL probes return
+      - Each row shows hop number, address, and three RTT columns
+      - Trace completes (or times out with `* * *` rows for unresponsive hops)
+
+  - id: MT-NET-17
+    title: HTTP Monitor — periodic checks and chart
+    automated_by: null
+    steps:
+      - Click "New Monitor" in the sidebar to open the HTTP Monitor panel
+      - Enter `https://example.com` as URL, set interval to 10 seconds
+      - Click Start
+    expected:
+      - First check appears in the history list within ~10 seconds with status code and latency
+      - The response-time chart updates with each check
+      - After several checks, click Stop — monitoring halts
+
+  - id: MT-NET-18
+    title: HTTP Monitor — sidebar monitor row
+    automated_by: null
+    steps:
+      - Start an HTTP Monitor for `https://example.com` (see MT-NET-17)
+      - Switch to another sidebar view and back to Network Tools
+    expected:
+      - The running monitor appears in the Monitors section of the sidebar with URL and last status
+      - Clicking the row re-opens the HTTP Monitor panel
+      - The stop button in the sidebar row stops the monitor when clicked
+
+  - id: MT-NET-19
+    title: Remote agent — network.open_ports via JSON-RPC
+    automated_by: null
+    steps:
+      - Configure an SSH connection with a remote agent
+      - Connect and ensure the agent is deployed
+      - Open the Network Tools sidebar while the remote agent connection is active
+      - Open the Open Ports panel and click Refresh
+    expected:
+      - Results return showing the listening ports on the remote machine
+      - Port list differs from the local machine's ports
