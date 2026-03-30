@@ -148,15 +148,15 @@ describe("embeddedServerApi", () => {
 
     it("always returns at least loopback and all-interfaces", async () => {
       const ifaces = [
-        { name: "Loopback", address: "127.0.0.1" },
-        { name: "All interfaces", address: "0.0.0.0" },
+        { name: "Loopback", addr: "127.0.0.1" },
+        { name: "All interfaces", addr: "0.0.0.0" },
       ];
       mockedInvoke.mockResolvedValue(ifaces);
 
       const result = await listNetworkInterfaces();
 
-      expect(result.some((i) => i.address === "127.0.0.1")).toBe(true);
-      expect(result.some((i) => i.address === "0.0.0.0")).toBe(true);
+      expect(result.some((i) => i.addr === "127.0.0.1")).toBe(true);
+      expect(result.some((i) => i.addr === "0.0.0.0")).toBe(true);
     });
   });
 });

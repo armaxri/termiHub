@@ -46,6 +46,10 @@ fn list_via_lsof() -> Result<Vec<OpenPort>, NetworkError> {
     parse_lsof_output(&text)
 }
 
+#[cfg(any(
+    target_os = "macos",
+    not(any(target_os = "macos", target_os = "linux"))
+))]
 fn parse_lsof_output(text: &str) -> Result<Vec<OpenPort>, NetworkError> {
     let mut ports = Vec::new();
 
@@ -132,10 +136,8 @@ fn parse_proc_net_line(
 
     let state_hex = cols[3];
     // For TCP: only LISTEN (0x0A). For UDP: state is always 07 (close); include all.
-    if protocol == Protocol::Tcp {
-        if state_hex != "0A" {
-            return None;
-        }
+    if protocol == Protocol::Tcp && state_hex != "0A" {
+        return None;
     }
 
     let local_hex = cols[1]; // "0100007F:0035" (little-endian hex IP:port)
