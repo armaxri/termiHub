@@ -13,6 +13,7 @@
 #   agent      - Remote agent test container
 #   fault      - Network fault injection proxy
 #   stress     - SFTP stress test container
+#   network    - Network tools live test target (HTTP server on :8080)
 #   all        - Everything
 #
 # Networks:
@@ -217,6 +218,28 @@ services:
       - serial-ports:/tmp
     networks:
       - test-net
+
+  # ============================================================
+  # Network Tools Live Test Target (profile: network)
+  # ============================================================
+
+  # Simple HTTP server for testing: ping, port scan, DNS, HTTP monitor.
+  # Exposed on 127.0.0.1:8080 (HTTP) and known SSH port for port scanning.
+  network-target:
+    image: nginx:alpine
+    container_name: termihub-network-target
+    ports:
+      - "127.0.0.1:8080:80"
+    networks:
+      - test-net
+    profiles:
+      - network
+      - all
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
   # ============================================================
   # Network Fault Injection (profile: fault)

@@ -1,9 +1,17 @@
 // Embedded Services panel E2E tests.
-// Covers: SVC-01 through SVC-11 (PR #526, MT-SVC-01 through MT-SVC-05).
+// Covers: SVC-01 through SVC-11 (PR #526, MT-SVC-01 through MT-SVC-05),
+//         SVC-12 (FTP file transfer, MT-SVC-04), SVC-13 (TFTP file transfer, MT-SVC-05).
 //
 // NOTE: The Services sidebar requires experimental features to be enabled.
 // The `before` hook enables them via Settings before the suite runs.
+//
+// SVC-12 and SVC-13 (actual transfer tests) require `curl` to be available on the
+// test host. curl is pre-installed on Ubuntu/Debian CI environments.
 
+import { execSync } from "node:child_process";
+import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { waitForAppReady, ensureConnectionsSidebar, closeAllTabs } from "./helpers/app.js";
 import { uniqueName, createLocalConnection, connectByName } from "./helpers/connections.js";
 import { openSettingsTab, switchToFilesSidebar } from "./helpers/sidebar.js";
@@ -713,7 +721,7 @@ describe("Embedded Services Panel (PR #526)", () => {
       await browser.pause(300);
     });
 
-    it("should bind to 0.0.0.0 and show it in the server details after confirming the warning", async () => {
+    it("should bind to 0.0.0.0 and show details after confirming the LAN warning", async () => {
       const name = uniqueName("svc-lan-bind");
       const port = nextPort();
 
@@ -760,6 +768,150 @@ describe("Embedded Services Panel (PR #526)", () => {
       expect(server).not.toBeNull();
       const text = await server.element.getText();
       expect(text).toContain("0.0.0.0");
+    });
+  });
+
+  // ─── SVC-12: FTP server actual file transfer (MT-SVC-04) ─────────────────
+
+  describe("SVC-12: FTP server actual file transfer (MT-SVC-04)", () => {
+    let tmpDir;
+    let port;
+    let serverName;
+
+    before(async () => {
+      // Create a temp directory with a known test file
+      tmpDir = mkdtempSync(join(tmpdir(), "termihub-ftp-test-"));
+      writeFileSync(join(tmpDir, "hello.txt"), "termihub-ftp-transfer-ok\n");
+    });
+
+    after(async () => {
+      await ensureServicesSidebar();
+      await cleanupAllServers();
+      if (tmpDir) {
+        try {
+          rmSync(tmpDir, { recursive: true });
+        } catch {
+          // ignore cleanup errors
+        }
+      }
+    });
+
+    it("should serve files via FTP protocol (curl download)", async () => {
+      port = nextPort();
+      serverName = uniqueName("svc-ftp-transfer");
+
+      await ensureServicesSidebar();
+      const newBtn = await browser.$(SERVER_NEW_BTN);
+      await newBtn.click();
+      await browser.pause(400);
+      await fillServerDialog({ name: serverName, proto: "ftp", root: tmpDir, port });
+
+      const server = await findServerByName(serverName);
+      expect(server).not.toBeNull();
+
+      const startBtn = await browser.$(serverStart(server.id));
+      await browser.execute((el) => el.click(), startBtn);
+      await browser.pause(2000);
+
+      // Verify server is running in UI
+      const dot = await browser.$(serverStatus(server.id));
+      expect(await dot.getAttribute("class")).toContain("server-item__status--running");
+
+      // Use curl to download the test file via FTP
+      let curlOutput;
+      try {
+        curlOutput = execSync(
+          `curl --silent --connect-timeout 5 --max-time 10 ftp://127.0.0.1:${port}/hello.txt`,
+          { encoding: "utf8", timeout: 15000 }
+        );
+      } catch (err) {
+        throw new Error(
+          `curl FTP download failed on port ${port}: ${err.message}. ` +
+            "Ensure the FTP server is accessible on 127.0.0.1."
+        );
+      }
+
+      expect(curlOutput.trim()).toBe("termihub-ftp-transfer-ok");
+    });
+
+    it("should list directory contents via FTP", async () => {
+      // Re-use the server started in the previous test (same describe block)
+      if (!port) this.skip();
+
+      let listing;
+      try {
+        listing = execSync(
+          `curl --silent --connect-timeout 5 --max-time 10 ftp://127.0.0.1:${port}/`,
+          { encoding: "utf8", timeout: 15000 }
+        );
+      } catch (err) {
+        throw new Error(`curl FTP listing failed on port ${port}: ${err.message}`);
+      }
+
+      expect(listing).toContain("hello.txt");
+    });
+  });
+
+  // ─── SVC-13: TFTP server actual file transfer (MT-SVC-05) ────────────────
+
+  describe("SVC-13: TFTP server actual file transfer (MT-SVC-05)", () => {
+    let tmpDir;
+    let port;
+    let serverName;
+
+    before(async () => {
+      tmpDir = mkdtempSync(join(tmpdir(), "termihub-tftp-test-"));
+      writeFileSync(join(tmpDir, "boot.txt"), "termihub-tftp-transfer-ok\n");
+    });
+
+    after(async () => {
+      await ensureServicesSidebar();
+      await cleanupAllServers();
+      if (tmpDir) {
+        try {
+          rmSync(tmpDir, { recursive: true });
+        } catch {
+          // ignore cleanup errors
+        }
+      }
+    });
+
+    it("should serve files via TFTP protocol (curl download)", async () => {
+      port = nextPort();
+      serverName = uniqueName("svc-tftp-transfer");
+
+      await ensureServicesSidebar();
+      const newBtn = await browser.$(SERVER_NEW_BTN);
+      await newBtn.click();
+      await browser.pause(400);
+      await fillServerDialog({ name: serverName, proto: "tftp", root: tmpDir, port });
+
+      const server = await findServerByName(serverName);
+      expect(server).not.toBeNull();
+
+      const startBtn = await browser.$(serverStart(server.id));
+      await browser.execute((el) => el.click(), startBtn);
+      await browser.pause(2000);
+
+      // Verify server is running in UI
+      const dot = await browser.$(serverStatus(server.id));
+      expect(await dot.getAttribute("class")).toContain("server-item__status--running");
+
+      // Use curl to download via TFTP (curl supports tftp:// scheme)
+      let curlOutput;
+      try {
+        curlOutput = execSync(
+          `curl --silent --connect-timeout 5 --max-time 10 tftp://127.0.0.1:${port}/boot.txt`,
+          { encoding: "utf8", timeout: 15000 }
+        );
+      } catch (err) {
+        throw new Error(
+          `curl TFTP download failed on port ${port}: ${err.message}. ` +
+            "Ensure the TFTP server is accessible on 127.0.0.1 and curl supports TFTP."
+        );
+      }
+
+      expect(curlOutput.trim()).toBe("termihub-tftp-transfer-ok");
     });
   });
 });

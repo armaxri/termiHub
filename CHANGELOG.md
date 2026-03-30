@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Test coverage: added 16 new test files covering previously untested services (`networkApi`, `tunnelApi`, `embeddedServerApi`, `storage`), hooks (`useConnections`, `useTerminal`, `useCredentialStoreEvents`, `useEmbeddedServerEvents`, `useTunnelEvents`, `useFileBrowser`, `useLocalFileSystem`, `useSectionResize`, `useKeyboardShortcuts`), utilities (`frontendLog`), and components (`PortableBadge`, `PortableModeSettings`) — bringing frontend unit test coverage from ~52% to ~75%
+- E2E test coverage: added live network tools tests (`MT-NET-10, 12–14, 17–18`) against a controlled nginx target, FTP/TFTP actual transfer tests (`MT-SVC-04, 05`) using curl, and a `network-target` Docker/Podman container for deterministic live tests
+
 ### Added
 
 - Network Tools: built-in network diagnostic utilities accessible from the "Network Tools" activity bar entry (experimental, #525):
