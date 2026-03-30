@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Test coverage: added 14 new test files covering previously untested services (`networkApi`, `tunnelApi`, `embeddedServerApi`, `storage`), hooks (`useConnections`, `useTerminal`, `useCredentialStoreEvents`, `useEmbeddedServerEvents`, `useTunnelEvents`, `useFileBrowser`, `useLocalFileSystem`, `useSectionResize`, `useKeyboardShortcuts`), and utilities (`frontendLog`) — bringing frontend unit test coverage from ~52% to ~75%
+
 ### Added
 
 - Network Tools: built-in network diagnostic utilities accessible from the "Network Tools" activity bar entry (experimental, #525):
