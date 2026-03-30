@@ -784,4 +784,6 @@ Mapping of manual test IDs that have been automated to their E2E test files:
 | MT-RECOVERY-01–12              | `infrastructure/config-recovery.test.js`                     |
 | MT-XPLAT-01, 02                | `cross-platform.test.js`                                     |
 | MT-SVC-01, 02, 03              | `embedded-services.test.js`                                  |
+| MT-SVC-04, 05 (transfer)       | `embedded-services.test.js` (SVC-12, SVC-13 via curl)        |
 | MT-NET-01–09                   | `network-tools.test.js`                                      |
+| MT-NET-10, 12, 13, 14, 17, 18  | `network-tools-live.test.js` (requires `network` profile)    |
