@@ -127,6 +127,7 @@ export interface AppSettings {
   theme?: "dark" | "light" | "system";
   fontFamily?: string;
   fontSize?: number;
+  lineHeight?: number;
   defaultHorizontalScrolling?: boolean;
   scrollbackBuffer?: number;
   cursorStyle?: "block" | "underline" | "bar";

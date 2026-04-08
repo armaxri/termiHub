@@ -77,6 +77,7 @@ export interface TerminalOptions {
   color?: string;
   fontFamily?: string;
   fontSize?: number;
+  lineHeight?: number;
   scrollbackBuffer?: number;
   cursorStyle?: "block" | "underline" | "bar";
   cursorBlink?: boolean;
