@@ -288,3 +288,20 @@ tests:
       - "The full context menu appears again"
     verification: manual
     tags: [terminal, settings]
+
+  - id: MT-UI-31
+    name: "Box-drawing characters render without gaps"
+    pr: 579
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - "Open a local terminal session"
+    instructions:
+      - "Run: printf '┌──────┐\\n│ test │\\n└──────┘\\n'"
+      - "Also run a table-rendering CLI tool, e.g.: column -t /etc/passwd | head -5"
+    expected:
+      - "All horizontal (─) and vertical (│) lines are solid and unbroken"
+      - "Corner characters (┌ ┐ └ ┘) connect seamlessly to adjacent lines"
+      - "No pixel gaps visible between rows of a box"
+    verification: manual
+    tags: [terminal, visual]

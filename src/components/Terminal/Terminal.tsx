@@ -18,6 +18,8 @@ const HORIZONTAL_SCROLL_COLS = 500;
 const DEFAULT_FONT_FAMILY =
   "'MesloLGS Nerd Font Mono', 'MesloLGS NF', 'CaskaydiaCove Nerd Font', 'FiraCode Nerd Font', 'Hack Nerd Font', 'Cascadia Code', 'Fira Code', Menlo, Monaco, 'Courier New', monospace";
 const DEFAULT_FONT_SIZE = 14;
+/** Line height of 1.0 ensures box-drawing characters connect without gaps. */
+export const DEFAULT_LINE_HEIGHT = 1.0;
 const DEFAULT_SCROLLBACK = 5000;
 const DEFAULT_CURSOR_STYLE = "block" as const;
 const DEFAULT_CURSOR_BLINK = true;
@@ -331,7 +333,7 @@ export function Terminal({
       theme: getXtermTheme(),
       fontFamily: tabOpts?.fontFamily || appSettings.fontFamily || DEFAULT_FONT_FAMILY,
       fontSize: baseFontSize,
-      lineHeight: 1.2,
+      lineHeight: tabOpts?.lineHeight ?? appSettings.lineHeight ?? DEFAULT_LINE_HEIGHT,
       scrollback: tabOpts?.scrollbackBuffer ?? appSettings.scrollbackBuffer ?? DEFAULT_SCROLLBACK,
       cursorBlink: tabOpts?.cursorBlink ?? appSettings.cursorBlink ?? DEFAULT_CURSOR_BLINK,
       cursorStyle: tabOpts?.cursorStyle ?? appSettings.cursorStyle ?? DEFAULT_CURSOR_STYLE,

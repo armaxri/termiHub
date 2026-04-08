@@ -64,6 +64,25 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
           <span className="settings-form__hint">Terminal font size in pixels (8–32).</span>
         </label>
       )}
+      {show("lineHeight") && (
+        <label className="settings-form__field">
+          <span className="settings-form__label">Line Height</span>
+          <input
+            type="number"
+            min={0.8}
+            max={2.0}
+            step={0.1}
+            value={settings.lineHeight ?? 1.0}
+            onChange={(e) => {
+              const val = parseFloat(e.target.value);
+              onChange({ ...settings, lineHeight: isNaN(val) ? undefined : val });
+            }}
+          />
+          <span className="settings-form__hint">
+            Terminal line height (0.8–2.0). Use 1.0 for seamless box-drawing characters.
+          </span>
+        </label>
+      )}
     </div>
   );
 }
