@@ -735,7 +735,7 @@ For inline jump hosts:
 }
 ```
 
-Inline jump host passwords follow the same credential store flow as regular SSH passwords — stored in the system keychain when `savePassword` is true.
+Inline jump host passwords follow the same credential store flow as regular SSH passwords — stored via the active credential store when `savePassword` is true.
 
 ### Implementation Phases
 

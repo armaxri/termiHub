@@ -115,6 +115,32 @@ function findFieldKey(schema: SettingsSchema, key: string): string | null {
 }
 
 /**
+ * Filter out credential-related fields (`password`, `savePassword`) from a
+ * schema when no credential store is configured.
+ *
+ * When the credential store mode is `"none"`, passwords are always prompted
+ * at connect time — pre-filling or saving them in the editor is meaningless.
+ * Those fields are therefore removed from the rendered schema so they don't
+ * appear in the connection editor.
+ *
+ * Returns a shallow-cloned schema with those fields removed when mode is
+ * `"none"`. The original schema is never mutated. All other modes are
+ * returned unchanged.
+ */
+export function filterCredentialFields(
+  schema: SettingsSchema,
+  credentialMode: string | undefined
+): SettingsSchema {
+  if (credentialMode !== "none") return schema;
+  return {
+    groups: schema.groups.map((group) => ({
+      ...group,
+      fields: group.fields.filter((f) => f.key !== "password" && f.key !== "savePassword"),
+    })),
+  };
+}
+
+/**
  * Filter the `runtime` select options in a Docker connection schema based on
  * which container runtimes are actually available on the system.
  *

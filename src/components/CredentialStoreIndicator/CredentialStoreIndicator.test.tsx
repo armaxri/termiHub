@@ -56,26 +56,10 @@ describe("CredentialStoreIndicator", () => {
     expect(query("credential-store-indicator")).toBeNull();
   });
 
-  it("returns null for keychain mode", () => {
-    const status: CredentialStoreStatusInfo = {
-      mode: "keychain",
-      status: "unlocked",
-      keychainAvailable: true,
-    };
-    useAppStore.setState({ credentialStoreStatus: status });
-
-    act(() => {
-      root.render(<CredentialStoreIndicator />);
-    });
-
-    expect(query("credential-store-indicator")).toBeNull();
-  });
-
   it("returns null for none mode", () => {
     const status: CredentialStoreStatusInfo = {
       mode: "none",
       status: "unavailable",
-      keychainAvailable: false,
     };
     useAppStore.setState({ credentialStoreStatus: status });
 
@@ -90,7 +74,6 @@ describe("CredentialStoreIndicator", () => {
     const status: CredentialStoreStatusInfo = {
       mode: "master_password",
       status: "locked",
-      keychainAvailable: false,
     };
     useAppStore.setState({ credentialStoreStatus: status });
 
@@ -107,7 +90,6 @@ describe("CredentialStoreIndicator", () => {
     const status: CredentialStoreStatusInfo = {
       mode: "master_password",
       status: "unlocked",
-      keychainAvailable: false,
     };
     useAppStore.setState({ credentialStoreStatus: status });
 
@@ -124,7 +106,6 @@ describe("CredentialStoreIndicator", () => {
     const status: CredentialStoreStatusInfo = {
       mode: "master_password",
       status: "locked",
-      keychainAvailable: false,
     };
     useAppStore.setState({ credentialStoreStatus: status, unlockDialogOpen: false });
 
@@ -145,7 +126,6 @@ describe("CredentialStoreIndicator", () => {
     const status: CredentialStoreStatusInfo = {
       mode: "master_password",
       status: "unlocked",
-      keychainAvailable: false,
     };
     useAppStore.setState({ credentialStoreStatus: status });
 

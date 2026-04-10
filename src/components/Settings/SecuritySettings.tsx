@@ -1,14 +1,8 @@
-import { useState, useEffect, useCallback } from "react";
-import { CheckCircle2, AlertTriangle, Shield } from "lucide-react";
+import { useState, useCallback } from "react";
+import { Shield } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { CredentialStorageMode } from "@/types/credential";
-import {
-  switchCredentialStore,
-  setupMasterPassword,
-  changeMasterPassword,
-  checkKeychainAvailable,
-  setAutoLockTimeout,
-} from "@/services/api";
+import { switchCredentialStore, changeMasterPassword, setAutoLockTimeout } from "@/services/api";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 
 interface SecuritySettingsProps {
@@ -24,14 +18,6 @@ interface StorageModeOption {
 }
 
 const STORAGE_MODE_OPTIONS: StorageModeOption[] = [
-  {
-    value: "keychain",
-    label: "OS Keychain",
-    badge: "Recommended",
-    description:
-      "Store credentials in the operating system's native keychain (macOS Keychain, Windows Credential Manager, or Linux Secret Service).",
-    testId: "storage-mode-keychain",
-  },
   {
     value: "master_password",
     label: "Master Password",
@@ -69,7 +55,6 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
   const settings = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
 
-  const [keychainAvailable, setKeychainAvailable] = useState<boolean | null>(null);
   const [switching, setSwitching] = useState(false);
   const [confirmSwitch, setConfirmSwitch] = useState<CredentialStorageMode | null>(null);
   const [masterPasswordSetup, setMasterPasswordSetup] = useState(false);
@@ -88,12 +73,6 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
   const [changePasswordError, setChangePasswordError] = useState("");
 
   const currentMode = credentialStoreStatus?.mode ?? "none";
-
-  useEffect(() => {
-    checkKeychainAvailable()
-      .then(setKeychainAvailable)
-      .catch(() => setKeychainAvailable(false));
-  }, []);
 
   const show = (field: string): boolean => !visibleFields || visibleFields.has(field);
 
@@ -149,9 +128,6 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
     setSwitching(true);
     setPasswordError("");
     try {
-      if (confirmSwitch === "master_password") {
-        await setupMasterPassword(newPassword);
-      }
       const result = await switchCredentialStore(
         confirmSwitch,
         confirmSwitch === "master_password" ? newPassword : undefined
@@ -211,28 +187,6 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
           <p className="settings-panel__description">
             Choose how connection passwords, SSH key passphrases, and other secrets are stored.
           </p>
-
-          <div className="settings-panel__status-indicator" data-testid="keychain-status">
-            {keychainAvailable === null ? (
-              <span className="settings-panel__status-indicator--checking">
-                Checking keychain availability…
-              </span>
-            ) : keychainAvailable ? (
-              <>
-                <CheckCircle2 size={14} />
-                <span className="settings-panel__status-indicator--ok">
-                  OS Keychain is available
-                </span>
-              </>
-            ) : (
-              <>
-                <AlertTriangle size={14} />
-                <span className="settings-panel__status-indicator--warning">
-                  OS Keychain is not available on this system
-                </span>
-              </>
-            )}
-          </div>
 
           <div className="settings-panel__radio-group" role="radiogroup" aria-label="Storage mode">
             {STORAGE_MODE_OPTIONS.map((option) => (
@@ -298,9 +252,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
 
           {confirmSwitch && confirmSwitch !== "master_password" && (
             <div className="settings-panel__inline-dialog" data-testid="confirm-switch-dialog">
-              <h4 className="settings-panel__inline-dialog-title">
-                Switch to {confirmSwitch === "keychain" ? "OS Keychain" : "No Storage"}?
-              </h4>
+              <h4 className="settings-panel__inline-dialog-title">Switch to No Storage?</h4>
               <p className="settings-panel__inline-dialog-text">
                 Existing credentials will be migrated to the new storage backend.
               </p>

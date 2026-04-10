@@ -181,7 +181,7 @@ When connecting via plain FTP (no TLS), a modal warning is shown:
 
 ### Credential Handling
 
-- Passwords are stored in the credential store (keychain, master password, or prompt-only — matching the user's credential storage mode setting)
+- Passwords are stored in the credential store (master password or prompt-only — matching the user's credential storage mode setting)
 - Anonymous login uses username `anonymous` with an email-style password (configurable, defaults to empty)
 - Passwords are never written to `connections.json` or logs
 

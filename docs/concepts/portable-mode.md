@@ -11,7 +11,7 @@ Key goals:
 - **Zero-install operation**: Run termiHub directly from a self-contained directory without requiring admin privileges or system installation
 - **Self-contained data**: All settings, connections, credentials, and tunnels stored in a `data/` subfolder next to the executable
 - **Auto-detection**: Portable mode activates automatically when a `portable.marker` file or `data/` directory exists next to the binary
-- **Credential safety**: Master password mode works portably; keychain mode warns and offers fallback
+- **Credential safety**: Master password mode works portably; the encrypted `credentials.enc` file is stored in `data/` alongside everything else
 - **Coexistence**: Portable and installed versions do not conflict on the same machine
 
 ### Existing Infrastructure
@@ -46,9 +46,6 @@ When termiHub starts and detects portable mode (via marker file or `data/` direc
 │  │                                           │      │
 │  │ ○ None                                    │      │
 │  │   Prompt for credentials each time        │      │
-│  │                                           │      │
-│  │ ○ System Keychain (⚠ Not Portable)        │      │
-│  │   Credentials stay on this machine        │      │
 │  └───────────────────────────────────────────┘      │
 │                                                     │
 │                    [Get Started]                     │
@@ -56,7 +53,7 @@ When termiHub starts and detects portable mode (via marker file or `data/` direc
 └─────────────────────────────────────────────────────┘
 ```
 
-In portable mode, the credential storage selector defaults to **Master Password** instead of **None**, and the **System Keychain** option shows a warning that credentials will not be portable.
+In portable mode, the credential storage selector defaults to **Master Password** instead of **None**.
 
 ### Status Bar Indicator
 
@@ -113,9 +110,6 @@ When a user wants to switch between installed and portable mode, a migration dia
 │ ☑ Tunnels (tunnels.json)                             │
 │ ☑ Credentials (credentials.enc)                      │
 │ ☐ SSH Keys (copy referenced key files)               │
-│                                                      │
-│ ⚠ Credentials stored in System Keychain cannot be    │
-│   exported. Switch to Master Password mode first.    │
 │                                                      │
 │ Destination: D:\termiHub\data\                       │
 │                                                      │
@@ -200,20 +194,7 @@ flowchart TD
     A[Portable Mode Active] --> B{Credential mode<br>in settings?}
     B -->|Master Password| C[Use credentials.enc<br>in data/ directory]
     B -->|None| D[Prompt for credentials<br>on each connection]
-    B -->|Keychain| E{First launch with<br>keychain in portable?}
-    E -->|Yes| F[Show warning dialog]
-    F --> G{User choice}
-    G -->|Switch to Master Password| H[Migrate to master password mode]
-    G -->|Keep Keychain| I[Use OS keychain<br>credentials not portable]
-    G -->|Use None| D
-    E -->|No, user acknowledged| I
 ```
-
-When portable mode is active and the credential storage mode is set to **Keychain**:
-
-- On first detection, show a one-time warning: "System Keychain credentials are stored on this machine and will not be available on other computers. Switch to Master Password mode for portable credentials."
-- The user can choose to switch, keep keychain (accepting non-portability), or use no storage.
-- The warning is recorded in `settings.json` (`portableKeychainWarningAcknowledged: true`) so it only appears once.
 
 ### Path Handling for Portability
 
@@ -321,10 +302,7 @@ stateDiagram-v2
     state PortableMode {
         [*] --> SetConfigDir
         SetConfigDir --> EnsureDataDir: config_dir = exe_dir/data/
-        EnsureDataDir --> CheckCredentialMode
-        CheckCredentialMode --> ShowKeychainWarning: mode == Keychain
-        CheckCredentialMode --> LoadConfig: mode != Keychain
-        ShowKeychainWarning --> LoadConfig: User acknowledged
+        EnsureDataDir --> LoadConfig
         LoadConfig --> Ready
     }
 
@@ -353,10 +331,8 @@ sequenceDiagram
     B->>FS: Read settings.json from installed dir
     B->>FS: Read tunnels.json from installed dir
 
-    alt Credential mode is Master Password
+    opt Credential mode is Master Password
         B->>FS: Copy credentials.enc
-    else Credential mode is Keychain
-        B-->>S: Warning: keychain credentials<br>cannot be exported
     end
 
     alt User selected "Copy SSH Keys"
@@ -618,4 +594,4 @@ No changes to `tauri.conf.json` are needed. The portable mode detection is purel
 | `src/components/Settings/PortableModeSettings.tsx` | **New** — settings section for portable mode                            |
 | `src/types/terminal.ts` (or new `portable.ts`)     | Add `AppMode` TypeScript type                                           |
 | `scripts/build-portable.sh` / `.cmd`               | **New** — portable archive build script                                 |
-| `src-tauri/src/connection/settings.rs`             | Add `portableKeychainWarningAcknowledged` to `AppSettings`              |
+| `src-tauri/src/connection/settings.rs`             | No changes required for credential handling                             |

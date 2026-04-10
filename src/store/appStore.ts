@@ -157,10 +157,12 @@ export interface FileClipboard {
  */
 function stripPassword(connection: SavedConnection): SavedConnection {
   const cfg = connection.config.config as unknown as Record<string, unknown>;
-  if (cfg.savePassword) {
-    return connection; // Keep password for backend credential store routing
+  const hasNonEmptyPassword =
+    typeof cfg.password === "string" && (cfg.password as string).length > 0;
+  if (hasNonEmptyPassword && cfg.savePassword) {
+    return connection; // Let backend route non-empty password to credential store
   }
-  if (cfg.password) {
+  if (cfg.password !== undefined) {
     return {
       ...connection,
       config: {
@@ -192,8 +194,10 @@ interface AppState {
   passwordPromptHost: string;
   passwordPromptUsername: string;
   passwordPromptResolve: ((password: string | null) => void) | null;
+  /** Whether the user checked "Save password" in the last password prompt. */
+  passwordPromptShouldSave: boolean;
   requestPassword: (host: string, username: string) => Promise<string | null>;
-  submitPassword: (password: string) => void;
+  submitPassword: (password: string, shouldSave?: boolean) => void;
   dismissPasswordPrompt: () => void;
 
   // Tab Groups (workspace-level named panel trees)
@@ -595,6 +599,7 @@ export const useAppStore = create<AppState>((set, get) => {
     passwordPromptHost: "",
     passwordPromptUsername: "",
     passwordPromptResolve: null,
+    passwordPromptShouldSave: false,
 
     requestPassword: (host, username) => {
       return new Promise<string | null>((resolve) => {
@@ -603,11 +608,12 @@ export const useAppStore = create<AppState>((set, get) => {
           passwordPromptHost: host,
           passwordPromptUsername: username,
           passwordPromptResolve: resolve,
+          passwordPromptShouldSave: false,
         });
       });
     },
 
-    submitPassword: (password) => {
+    submitPassword: (password, shouldSave = false) => {
       const { passwordPromptResolve } = get();
       if (passwordPromptResolve) passwordPromptResolve(password);
       set({
@@ -615,6 +621,7 @@ export const useAppStore = create<AppState>((set, get) => {
         passwordPromptHost: "",
         passwordPromptUsername: "",
         passwordPromptResolve: null,
+        passwordPromptShouldSave: shouldSave,
       });
     },
 
@@ -626,6 +633,7 @@ export const useAppStore = create<AppState>((set, get) => {
         passwordPromptHost: "",
         passwordPromptUsername: "",
         passwordPromptResolve: null,
+        passwordPromptShouldSave: false,
       });
     },
 
@@ -1013,7 +1021,15 @@ export const useAppStore = create<AppState>((set, get) => {
           if (existing) {
             const rootPanel = updateLeaf(state.rootPanel, leaf.id, (l) => ({
               ...l,
-              tabs: l.tabs.map((t) => ({ ...t, isActive: t.id === existing.id })),
+              tabs: l.tabs.map((t) => {
+                if (t.id !== existing.id) return { ...t, isActive: false };
+                // Refresh the SFTP session ID so a reconnected session works.
+                const updatedMeta =
+                  isRemote && sftpSessionId && t.editorMeta
+                    ? { ...t.editorMeta, sftpSessionId }
+                    : t.editorMeta;
+                return { ...t, isActive: true, editorMeta: updatedMeta };
+              }),
               activeTabId: existing.id,
             }));
             return { rootPanel, activePanelId: leaf.id };

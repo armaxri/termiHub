@@ -30,7 +30,13 @@ import {
 import { useAppStore } from "@/store/appStore";
 import { ShellType } from "@/types/terminal";
 import { SavedConnection, ConnectionFolder } from "@/types/connection";
-import { listAvailableShells, createTerminal, removeCredential } from "@/services/api";
+import {
+  listAvailableShells,
+  createTerminal,
+  removeCredential,
+  storeCredential,
+} from "@/services/api";
+import { frontendLog } from "@/utils/frontendLog";
 import { ConnectionIcon } from "@/utils/connectionIcons";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { useSectionResize } from "@/hooks/useSectionResize";
@@ -361,6 +367,12 @@ export function ConnectionList() {
           const password = await requestPassword(host, username);
           if (password === null) return;
           config = { ...config, config: { ...cfg, password } } as typeof config;
+          // Persist the entered password if the user opted in via the prompt checkbox
+          if (useAppStore.getState().passwordPromptShouldSave) {
+            await storeCredential(connection.id, "password", password).catch((err) => {
+              frontendLog("connection_list", `Failed to store credential: ${err}`);
+            });
+          }
         }
       }
 

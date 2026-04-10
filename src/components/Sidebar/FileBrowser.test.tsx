@@ -1249,4 +1249,31 @@ describe("FileBrowser – Go to Terminal CWD button", () => {
 
     expect(useAppStore.getState().localCurrentPath).toBe("/home/user/projects");
   });
+
+  it("does not disconnect the existing SFTP session when an editor tab with isRemote is activated", async () => {
+    // Simulate: user had an SSH terminal → SFTP auto-connected → user opened a
+    // remote file → editor tab is now active.  The auto-connect effect must NOT
+    // call disconnectSftp() because the editor tab carries a dummy local config.
+    const editorTab = makeTab({
+      contentType: "editor",
+      connectionType: "local",
+      config: { type: "local", config: { shell: "zsh" } },
+      editorMeta: { filePath: "/remote/file.txt", isRemote: true, sftpSessionId: "session-xyz" },
+    });
+    setActiveTab(editorTab);
+
+    // Pre-seed the store as if an SFTP session was already established.
+    useAppStore.setState({
+      sftpSessionId: "session-xyz",
+      sftpConnectedHost: "user@host:22",
+    });
+
+    await act(async () => {
+      root.render(<FileBrowser />);
+    });
+    await flushAsync();
+
+    // The SFTP session must still be alive — not disconnected by the auto-connect effect.
+    expect(useAppStore.getState().sftpSessionId).toBe("session-xyz");
+  });
 });

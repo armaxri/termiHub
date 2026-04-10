@@ -650,9 +650,8 @@ describe("events service", () => {
       await onCredentialStoreStatusChanged(callback);
 
       const statusInfo = {
-        mode: "keychain",
+        mode: "master_password",
         status: "unlocked",
-        keychainAvailable: true,
       };
       capturedHandler!({ payload: statusInfo });
 

@@ -559,7 +559,9 @@ function useFileBrowserSync() {
 
   // Auto-connect SFTP for tabs with file browser capability
   useEffect(() => {
-    if (fileBrowserMode !== "sftp" || !activeTab) return;
+    // Editor tabs use a dummy local config — skip SFTP auto-connect for them.
+    // The session they need is already stored in editorMeta.sftpSessionId.
+    if (fileBrowserMode !== "sftp" || !activeTab || activeTabContentType === "editor") return;
 
     const cfg = activeTab.config.config;
     const host = (cfg.host as string) ?? "";
@@ -599,6 +601,7 @@ function useFileBrowserSync() {
     fileBrowserMode,
     activeTabId,
     activeTab,
+    activeTabContentType,
     sftpSessionId,
     sftpConnectedHost,
     connections,

@@ -9,7 +9,7 @@ import {
   TerminalOptions,
   ConnectionEditorMeta,
 } from "@/types/terminal";
-import { listAvailableShells } from "@/services/api";
+import { listAvailableShells, resolveCredential } from "@/services/api";
 import type { ConnectionTypeInfo } from "@/services/api";
 import { SavedConnection, RemoteAgentDefinition } from "@/types/connection";
 import { SettingsNav } from "@/components/Settings";
@@ -18,6 +18,7 @@ import {
   buildDefaults,
   findPasswordPromptInfo,
   filterRuntimeOptions,
+  filterCredentialFields,
 } from "@/utils/schemaDefaults";
 import { useAvailableRuntimes } from "@/hooks/useAvailableRuntimes";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
@@ -145,6 +146,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const saveAgentDef = useAppStore((s) => s.saveAgentDef);
   const updateAgentDef = useAppStore((s) => s.updateAgentDef);
   const settings = useAppStore((s) => s.settings);
+  const credentialStoreStatus = useAppStore((s) => s.credentialStoreStatus);
 
   const editingConnectionId = meta.connectionId;
   const editingConnectionFolderId = meta.folderId;
@@ -289,6 +291,42 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     () => findSchema(effectiveRegistry, selectedType),
     [effectiveRegistry, selectedType]
   );
+
+  // Track whether a credential is actually stored for this connection.
+  // Prevents the hint from showing when savePassword=true but no credential was ever saved.
+  const [credentialExistsInStore, setCredentialExistsInStore] = useState(false);
+  const credentialId = existingConnection?.id ?? existingAgentDef?.id ?? existingAgent?.id;
+  useEffect(() => {
+    if (
+      !credentialId ||
+      credentialStoreStatus?.mode === "none" ||
+      connSettings.savePassword !== true
+    ) {
+      setCredentialExistsInStore(false);
+      return;
+    }
+    let cancelled = false;
+    resolveCredential(credentialId, "password")
+      .then((val) => {
+        if (!cancelled) setCredentialExistsInStore(val !== null);
+      })
+      .catch(() => {
+        if (!cancelled) setCredentialExistsInStore(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [credentialId, credentialStoreStatus?.mode, connSettings.savePassword]);
+
+  // Show a "Password saved in credential store" hint on empty password fields when editing
+  // an existing connection that has savePassword=true, an active credential store, and a
+  // credential actually present in the store.
+  const credentialSavedHint =
+    !!(existingConnection || existingAgent) &&
+    credentialStoreStatus?.mode !== "none" &&
+    connSettings.savePassword === true &&
+    !connSettings.password &&
+    credentialExistsInStore;
 
   // ResizeObserver for compact mode
   useEffect(() => {
@@ -556,8 +594,12 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
 
   const currentSchema = useMemo(() => {
     const base = isAgentTransportMode ? AGENT_SCHEMA : currentTypeInfo?.schema;
-    if (!base || selectedType !== "docker" || runtimesLoading) return base;
-    return filterRuntimeOptions(base, dockerAvailable, podmanAvailable);
+    if (!base) return base;
+    let schema = base;
+    if (selectedType === "docker" && !runtimesLoading) {
+      schema = filterRuntimeOptions(schema, dockerAvailable, podmanAvailable);
+    }
+    return filterCredentialFields(schema, credentialStoreStatus?.mode);
   }, [
     isAgentTransportMode,
     currentTypeInfo?.schema,
@@ -565,6 +607,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     runtimesLoading,
     dockerAvailable,
     podmanAvailable,
+    credentialStoreStatus?.mode,
   ]);
 
   // Auto-set the runtime value when only one option remains
@@ -631,6 +674,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           schema={currentSchema}
           settings={connSettings}
           onChange={setConnSettings}
+          credentialSavedHint={credentialSavedHint}
         />
       )}
 

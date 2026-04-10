@@ -34,7 +34,9 @@ export async function resolveConnectionCredential(
 ): Promise<CredentialResolution> {
   if (authMethod === "password") {
     try {
-      const password = await resolveCredential(connectionId, "password");
+      const raw = await resolveCredential(connectionId, "password");
+      // Treat empty string the same as null — an empty credential is not usable.
+      const password = raw === "" ? null : raw;
       return {
         password,
         usedStoredCredential: password !== null,
@@ -47,7 +49,9 @@ export async function resolveConnectionCredential(
 
   if (authMethod === "key" && savePassword) {
     try {
-      const password = await resolveCredential(connectionId, "key_passphrase");
+      const raw = await resolveCredential(connectionId, "key_passphrase");
+      // Treat empty string the same as null — an empty credential is not usable.
+      const password = raw === "" ? null : raw;
       return {
         password,
         usedStoredCredential: password !== null,

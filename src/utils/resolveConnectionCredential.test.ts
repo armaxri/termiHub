@@ -75,6 +75,30 @@ describe("resolveConnectionCredential", () => {
     });
   });
 
+  it("treats empty string password as not found", async () => {
+    mockedResolveCredential.mockResolvedValue("");
+
+    const result = await resolveConnectionCredential("conn-1", "password");
+
+    expect(result).toEqual({
+      password: null,
+      usedStoredCredential: false,
+      credentialType: "password",
+    });
+  });
+
+  it("treats empty string key passphrase as not found", async () => {
+    mockedResolveCredential.mockResolvedValue("");
+
+    const result = await resolveConnectionCredential("conn-2", "key", true);
+
+    expect(result).toEqual({
+      password: null,
+      usedStoredCredential: false,
+      credentialType: "key_passphrase",
+    });
+  });
+
   it("falls through on store error for password auth", async () => {
     mockedResolveCredential.mockRejectedValue(new Error("Store locked"));
 

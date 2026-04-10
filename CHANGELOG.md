@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- OS Keychain credential backend removed — the `keyring` crate dependency and `KeychainStore` backend have been dropped. Credential storage now offers **Master Password** (Argon2id + AES-256-GCM encrypted file) and **None** (prompt-only). Users with `"keychain"` saved in `settings.json` will be migrated to `"none"` on next launch.
+
 ### Fixed
 
 - Agent build: `build-agents.sh` now builds multiple targets in parallel (each in its own `CARGO_TARGET_DIR` to avoid cargo build lock contention); add `--sequential` flag to opt out

@@ -12,7 +12,7 @@ Add built-in RDP session support to termiHub, allowing users to connect to Windo
 
 - **Inline graphical sessions**: RDP renders inside a termiHub tab via `<canvas>`, not an external window
 - **Full tab integration**: RDP tabs participate in drag-and-drop, split views, and the tab bar like any other connection type
-- **Credential store integration**: RDP passwords stored via the existing credential store (master password or keychain)
+- **Credential store integration**: RDP passwords stored via the existing credential store (master password or prompt-only)
 - **Connection editor support**: Schema-driven form for host, port, username, domain, resolution, color depth, etc.
 - **Cross-platform**: Works on Windows, macOS, and Linux using IronRDP (pure Rust)
 

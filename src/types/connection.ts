@@ -135,7 +135,7 @@ export interface AppSettings {
   powerMonitoringEnabled: boolean;
   fileBrowserEnabled: boolean;
   layout?: LayoutConfig;
-  credentialStorageMode?: "keychain" | "master_password" | "none";
+  credentialStorageMode?: "master_password" | "none";
   credentialAutoLockMinutes?: number;
   rightClickBehavior?: "contextMenu" | "quickAction";
   keybindingOverrides?: KeybindingOverrideEntry[];
@@ -158,8 +158,6 @@ export interface AppSettings {
    * original file being present.
    */
   customLanguageGrammars?: CustomLanguageGrammar[];
-  /** Whether the user has acknowledged the keychain-in-portable-mode warning. */
-  portableKeychainWarningAcknowledged?: boolean;
   experimentalFeaturesEnabled?: boolean;
 }
 

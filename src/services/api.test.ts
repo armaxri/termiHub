@@ -64,7 +64,6 @@ import {
   setupMasterPassword,
   changeMasterPassword,
   switchCredentialStore,
-  checkKeychainAvailable,
   resolveCredential,
   removeCredential,
 } from "./api";
@@ -791,9 +790,8 @@ describe("api service", () => {
   describe("credential store commands", () => {
     it("getCredentialStoreStatus returns status info", async () => {
       const status = {
-        mode: "keychain",
+        mode: "master_password",
         status: "unlocked",
-        keychainAvailable: true,
       };
       mockedInvoke.mockResolvedValue(status);
 
@@ -858,21 +856,12 @@ describe("api service", () => {
     it("switchCredentialStore sends null when no master password", async () => {
       mockedInvoke.mockResolvedValue({ migratedCount: 0, warnings: [] });
 
-      await switchCredentialStore("keychain");
+      await switchCredentialStore("none");
 
       expect(mockedInvoke).toHaveBeenCalledWith("switch_credential_store", {
-        newMode: "keychain",
+        newMode: "none",
         masterPassword: null,
       });
-    });
-
-    it("checkKeychainAvailable returns boolean", async () => {
-      mockedInvoke.mockResolvedValue(true);
-
-      const result = await checkKeychainAvailable();
-
-      expect(mockedInvoke).toHaveBeenCalledWith("check_keychain_available");
-      expect(result).toBe(true);
     });
 
     it("resolveCredential returns stored password", async () => {

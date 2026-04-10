@@ -257,6 +257,46 @@ describe("appStore", () => {
     });
   });
 
+  describe("openEditorTab", () => {
+    it("creates a new editor tab with the given session ID", () => {
+      useAppStore.getState().openEditorTab("/remote/file.txt", true, "session-abc");
+
+      const state = useAppStore.getState();
+      const leaves = getAllLeaves(state.rootPanel);
+      const tab = leaves.flatMap((l) => l.tabs).find((t) => t.contentType === "editor");
+      expect(tab).toBeDefined();
+      expect(tab!.editorMeta?.filePath).toBe("/remote/file.txt");
+      expect(tab!.editorMeta?.isRemote).toBe(true);
+      expect(tab!.editorMeta?.sftpSessionId).toBe("session-abc");
+    });
+
+    it("refreshes sftpSessionId on existing remote editor tab when reopened with a new session", () => {
+      // Open the file for the first time with session "old-session"
+      useAppStore.getState().openEditorTab("/remote/file.txt", true, "old-session");
+
+      // Simulate reconnect: open the same file again with "new-session"
+      useAppStore.getState().openEditorTab("/remote/file.txt", true, "new-session");
+
+      const state = useAppStore.getState();
+      const leaves = getAllLeaves(state.rootPanel);
+      const tabs = leaves.flatMap((l) => l.tabs).filter((t) => t.contentType === "editor");
+      // Still only one tab
+      expect(tabs).toHaveLength(1);
+      // Session ID must be updated to the new one
+      expect(tabs[0].editorMeta?.sftpSessionId).toBe("new-session");
+    });
+
+    it("does not create duplicate tabs for the same remote file", () => {
+      useAppStore.getState().openEditorTab("/remote/file.txt", true, "session-1");
+      useAppStore.getState().openEditorTab("/remote/file.txt", true, "session-2");
+
+      const state = useAppStore.getState();
+      const leaves = getAllLeaves(state.rootPanel);
+      const tabs = leaves.flatMap((l) => l.tabs).filter((t) => t.contentType === "editor");
+      expect(tabs).toHaveLength(1);
+    });
+  });
+
   describe("openLogViewerTab", () => {
     it("creates a log-viewer tab", () => {
       useAppStore.getState().openLogViewerTab();

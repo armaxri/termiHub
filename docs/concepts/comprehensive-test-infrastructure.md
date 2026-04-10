@@ -682,7 +682,6 @@ The following scenarios **cannot be covered by this test infrastructure** and mu
 | Scenario                                          | Reason                                    |
 | ------------------------------------------------- | ----------------------------------------- |
 | macOS visual rendering (fonts, DPI, Retina)       | No tauri-driver on macOS (ADR-5)          |
-| macOS native Keychain prompts                     | Requires interactive user consent         |
 | macOS key repeat rate fix verification            | Requires sustained physical key press     |
 | Windows visual rendering (DPI scaling, ClearType) | No tauri-driver in current CI for Windows |
 | System tray icon rendering and behavior           | Platform-native, not WebView-accessible   |
