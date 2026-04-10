@@ -9,7 +9,7 @@ import {
   TerminalOptions,
   ConnectionEditorMeta,
 } from "@/types/terminal";
-import { listAvailableShells } from "@/services/api";
+import { listAvailableShells, resolveCredential } from "@/services/api";
 import type { ConnectionTypeInfo } from "@/services/api";
 import { SavedConnection, RemoteAgentDefinition } from "@/types/connection";
 import { SettingsNav } from "@/components/Settings";
@@ -292,13 +292,41 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     [effectiveRegistry, selectedType]
   );
 
+  // Track whether a credential is actually stored for this connection.
+  // Prevents the hint from showing when savePassword=true but no credential was ever saved.
+  const [credentialExistsInStore, setCredentialExistsInStore] = useState(false);
+  const credentialId = existingConnection?.id ?? existingAgentDef?.id ?? existingAgent?.id;
+  useEffect(() => {
+    if (
+      !credentialId ||
+      credentialStoreStatus?.mode === "none" ||
+      connSettings.savePassword !== true
+    ) {
+      setCredentialExistsInStore(false);
+      return;
+    }
+    let cancelled = false;
+    resolveCredential(credentialId, "password")
+      .then((val) => {
+        if (!cancelled) setCredentialExistsInStore(val !== null);
+      })
+      .catch(() => {
+        if (!cancelled) setCredentialExistsInStore(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [credentialId, credentialStoreStatus?.mode, connSettings.savePassword]);
+
   // Show a "Password saved in credential store" hint on empty password fields when editing
-  // an existing connection that has savePassword=true and an active credential store.
+  // an existing connection that has savePassword=true, an active credential store, and a
+  // credential actually present in the store.
   const credentialSavedHint =
     !!(existingConnection || existingAgent) &&
     credentialStoreStatus?.mode !== "none" &&
     connSettings.savePassword === true &&
-    !connSettings.password;
+    !connSettings.password &&
+    credentialExistsInStore;
 
   // ResizeObserver for compact mode
   useEffect(() => {
