@@ -2,12 +2,7 @@ import { useState, useCallback } from "react";
 import { Shield } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { CredentialStorageMode } from "@/types/credential";
-import {
-  switchCredentialStore,
-  setupMasterPassword,
-  changeMasterPassword,
-  setAutoLockTimeout,
-} from "@/services/api";
+import { switchCredentialStore, changeMasterPassword, setAutoLockTimeout } from "@/services/api";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 
 interface SecuritySettingsProps {
@@ -133,9 +128,6 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
     setSwitching(true);
     setPasswordError("");
     try {
-      if (confirmSwitch === "master_password") {
-        await setupMasterPassword(newPassword);
-      }
       const result = await switchCredentialStore(
         confirmSwitch,
         confirmSwitch === "master_password" ? newPassword : undefined
