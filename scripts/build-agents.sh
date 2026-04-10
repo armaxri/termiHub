@@ -157,7 +157,7 @@ if [ "$SEQUENTIAL" = true ] || [ "${#SELECTED_TARGETS[@]}" -le 1 ]; then
 
         build_exit=0
         CROSS_CONFIG=agent/Cross.toml cross build --release --target "$target" -p termihub-agent 2>&1 \
-            | { grep -v "^<jemalloc>" || true; } \
+            | { grep -v "<jemalloc>:" || true; } \
             || build_exit=$?
 
         if [ "$build_exit" -eq 0 ]; then
@@ -215,7 +215,7 @@ else
             CARGO_TARGET_DIR="$cross_dir" CROSS_CONFIG=agent/Cross.toml \
                 cross build --release --target "$target" -p termihub-agent 2>&1 \
                 | awk -v prefix="[$target] " \
-                      '!/^<jemalloc>/ { print prefix $0; fflush() }'
+                      '/<jemalloc>:/ { next } { print prefix $0; fflush() }'
         } &
 
         _pids[$i]=$!
