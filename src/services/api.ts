@@ -763,6 +763,15 @@ export async function setAutoLockTimeout(minutes: number | null): Promise<void> 
   await invoke("set_auto_lock_timeout", { minutes });
 }
 
+/** Store a credential for a connection (e.g., after entering it via the password prompt). */
+export async function storeCredential(
+  connectionId: string,
+  credentialType: "password" | "key_passphrase",
+  value: string
+): Promise<void> {
+  await invoke("store_credential", { connectionId, credentialType, value });
+}
+
 /** Resolve a stored credential for a connection. Returns the value or null if not found. */
 export async function resolveCredential(
   connectionId: string,

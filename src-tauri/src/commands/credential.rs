@@ -4,6 +4,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 use tracing::{debug, info, warn};
 
+use crate::connection::manager::ConnectionManager;
 use crate::credential::types::{build_status_info, CredentialStoreStatusInfo};
 use crate::credential::{
     CredentialKey, CredentialManager, CredentialStore, CredentialType, KeychainStore, StorageMode,
@@ -158,13 +159,15 @@ pub async fn change_master_password(
 ///
 /// Optionally migrates existing credentials to the new store.
 /// When switching to master password mode, a `master_password` must be provided
-/// to set up the new encrypted store.
+/// to set up the new encrypted store. The new mode is persisted to app settings
+/// so it survives app restarts.
 #[tauri::command]
 pub async fn switch_credential_store(
     new_mode: String,
     master_password: Option<String>,
     app_handle: AppHandle,
     manager: State<'_, Arc<CredentialManager>>,
+    connection_manager: State<'_, ConnectionManager>,
 ) -> Result<SwitchResult, String> {
     let target_mode = StorageMode::from_settings_str(Some(&new_mode));
     let current_mode = manager.get_mode();
@@ -246,6 +249,13 @@ pub async fn switch_credential_store(
         );
     }
 
+    // Persist the new mode to settings so it survives app restarts.
+    let mut settings = connection_manager.get_settings();
+    settings.credential_storage_mode = Some(target_mode.to_settings_str().to_string());
+    if let Err(e) = connection_manager.save_settings(settings) {
+        warn!("Failed to persist credential storage mode to settings: {}", e);
+    }
+
     emit_status_changed(&app_handle, &manager);
     Ok(SwitchResult {
         migrated_count,
@@ -279,6 +289,28 @@ fn parse_credential_type(s: &str) -> Result<CredentialType, String> {
         "key_passphrase" => Ok(CredentialType::KeyPassphrase),
         _ => Err(format!("Unknown credential type: {s}")),
     }
+}
+
+/// Store a credential for a connection.
+///
+/// Used to persist a password or passphrase that was entered via the
+/// password prompt, so it can be retrieved automatically on the next
+/// connection attempt (when `savePassword` is enabled on the connection).
+#[tauri::command]
+pub fn store_credential(
+    connection_id: String,
+    credential_type: String,
+    value: String,
+    manager: State<'_, Arc<CredentialManager>>,
+) -> Result<(), String> {
+    let cred_type = parse_credential_type(&credential_type)?;
+    let key = CredentialKey::new(&connection_id, cred_type);
+    debug!(
+        connection_id = %connection_id,
+        credential_type = %credential_type,
+        "Storing credential"
+    );
+    manager.set(&key, &value).map_err(|e| e.to_string())
 }
 
 /// Resolve a stored credential for a connection.

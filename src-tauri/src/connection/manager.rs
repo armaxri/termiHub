@@ -30,7 +30,9 @@ pub(crate) fn prepare_for_storage(
         .and_then(|v| v.as_str())
         .map(String::from)
     {
-        if settings.get("savePassword").and_then(|v| v.as_bool()) == Some(true) {
+        if !password.is_empty()
+            && settings.get("savePassword").and_then(|v| v.as_bool()) == Some(true)
+        {
             let auth_method = settings
                 .get("authMethod")
                 .and_then(|v| v.as_str())
@@ -1143,6 +1145,24 @@ mod tests {
         assert_eq!(result.config.type_id, "local");
         assert_eq!(result.config.settings["shell"], "bash");
         assert!(store.stored.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn prepare_for_storage_does_not_overwrite_credential_with_empty_password() {
+        // Regression: editing a connection (e.g. changing the IP) without re-entering
+        // the password sends password="" to the backend. This must not overwrite the
+        // previously stored credential in the credential store.
+        let store = MockStore::new();
+        let conn = make_ssh_conn("c4", "password", Some(""), Some(true));
+        let result = prepare_for_storage(conn, &store).unwrap();
+        assert!(
+            result.config.settings.get("password").is_none(),
+            "Empty password should still be stripped from disk"
+        );
+        assert!(
+            store.stored.lock().unwrap().is_empty(),
+            "Empty password must not overwrite the stored credential"
+        );
     }
 
     #[test]
