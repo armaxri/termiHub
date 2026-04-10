@@ -1021,7 +1021,15 @@ export const useAppStore = create<AppState>((set, get) => {
           if (existing) {
             const rootPanel = updateLeaf(state.rootPanel, leaf.id, (l) => ({
               ...l,
-              tabs: l.tabs.map((t) => ({ ...t, isActive: t.id === existing.id })),
+              tabs: l.tabs.map((t) => {
+                if (t.id !== existing.id) return { ...t, isActive: false };
+                // Refresh the SFTP session ID so a reconnected session works.
+                const updatedMeta =
+                  isRemote && sftpSessionId && t.editorMeta
+                    ? { ...t.editorMeta, sftpSessionId }
+                    : t.editorMeta;
+                return { ...t, isActive: true, editorMeta: updatedMeta };
+              }),
               activeTabId: existing.id,
             }));
             return { rootPanel, activePanelId: leaf.id };
