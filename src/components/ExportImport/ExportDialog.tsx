@@ -4,6 +4,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { exportConnectionsEncrypted } from "@/services/api";
 import { useAppStore } from "@/store/appStore";
+import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import "./ExportDialog.css";
 
 type ExportMode = "plain" | "encrypted";
@@ -98,18 +99,16 @@ export function ExportDialog() {
                 Credentials will be encrypted with AES-256-GCM. You will need this password to
                 import them on another machine.
               </p>
-              <input
+              <PasswordInput
                 className="export-dialog__input"
-                type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Encryption password (min 8 characters)"
                 autoFocus
                 data-testid="export-password"
               />
-              <input
+              <PasswordInput
                 className="export-dialog__input"
-                type="password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 placeholder="Confirm password"

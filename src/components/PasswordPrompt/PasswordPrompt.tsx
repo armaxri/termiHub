@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useAppStore } from "@/store/appStore";
+import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import "./PasswordPrompt.css";
 
 /**
@@ -56,9 +57,8 @@ export function PasswordPrompt() {
           <Dialog.Description className="password-prompt__description">
             Enter password for {username}@{host}
           </Dialog.Description>
-          <input
+          <PasswordInput
             className="password-prompt__input"
-            type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             onKeyDown={handleKeyDown}

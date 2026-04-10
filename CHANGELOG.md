@@ -13,11 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Agent build: `build-agents.sh` and `setup-agent-cross.sh` now work correctly on ARM hosts (Apple Silicon, Raspberry Pi) — cross-rs Docker base images are pinned to `linux/amd64`, the container engine is auto-selected based on which engine already has the required images, missing images are caught early with a clear error, and jemalloc/QEMU noise is filtered from build output
 - Terminal: box-drawing characters (table borders, tree views) no longer render with pixel gaps between rows — the default `lineHeight` has been corrected from 1.2 to 1.0 (#579)
 
 ### Added
 
 - Terminal: `lineHeight` is now a user-configurable setting (0.8–2.0) in Appearance Settings, also available per-tab via `TerminalOptions` (#579)
+- UI: all password input fields now have a show/hide toggle (eye icon) on the right side, allowing users to verify what they typed before submitting
 
 ### Changed
 

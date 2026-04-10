@@ -3,6 +3,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { previewImport, importConnectionsWithCredentials } from "@/services/api";
 import type { ImportPreview } from "@/services/api";
 import { useAppStore } from "@/store/appStore";
+import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import "./ImportDialog.css";
 
 export function ImportDialog() {
@@ -117,9 +118,8 @@ export function ImportDialog() {
                     This file contains encrypted credentials. Enter the export password to import
                     them.
                   </p>
-                  <input
+                  <PasswordInput
                     className="import-dialog__input"
-                    type="password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     onKeyDown={handleKeyDown}

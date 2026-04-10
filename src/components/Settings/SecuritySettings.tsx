@@ -8,6 +8,7 @@ import {
   changeMasterPassword,
   setAutoLockTimeout,
 } from "@/services/api";
+import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 
 interface SecuritySettingsProps {
   visibleFields?: Set<string>;
@@ -223,17 +224,15 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
               <p className="settings-panel__inline-dialog-text">
                 Choose a strong password to encrypt your credentials.
               </p>
-              <input
+              <PasswordInput
                 className="settings-panel__inline-dialog-input"
-                type="password"
                 placeholder="Master password"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
                 autoFocus
               />
-              <input
+              <PasswordInput
                 className="settings-panel__inline-dialog-input"
-                type="password"
                 placeholder="Confirm password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
@@ -339,24 +338,21 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
               {changingPassword && (
                 <div className="settings-panel__inline-dialog" data-testid="change-password-dialog">
                   <h4 className="settings-panel__inline-dialog-title">Change Master Password</h4>
-                  <input
+                  <PasswordInput
                     className="settings-panel__inline-dialog-input"
-                    type="password"
                     placeholder="Current password"
                     value={currentPasswordInput}
                     onChange={(e) => setCurrentPasswordInput(e.target.value)}
                     autoFocus
                   />
-                  <input
+                  <PasswordInput
                     className="settings-panel__inline-dialog-input"
-                    type="password"
                     placeholder="New password"
                     value={changeNewPassword}
                     onChange={(e) => setChangeNewPassword(e.target.value)}
                   />
-                  <input
+                  <PasswordInput
                     className="settings-panel__inline-dialog-input"
-                    type="password"
                     placeholder="Confirm new password"
                     value={changeConfirmPassword}
                     onChange={(e) => setChangeConfirmPassword(e.target.value)}
