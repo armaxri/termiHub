@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { SettingsField, FieldType } from "@/types/schema";
 import { KeyPathInput } from "@/components/Settings/KeyPathInput";
+import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 
 interface DynamicFieldProps {
   field: SettingsField;
@@ -85,8 +86,7 @@ function PasswordField({ field, value, onChange }: FieldProps) {
   return (
     <>
       <span className="settings-form__label">{field.label}</span>
-      <input
-        type="password"
+      <PasswordInput
         value={(value as string) ?? ""}
         onChange={(e) => onChange(e.target.value || undefined)}
         placeholder={field.placeholder}

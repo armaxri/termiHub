@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { unlockCredentialStore } from "@/services/api";
+import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import "./UnlockDialog.css";
 
 interface UnlockDialogProps {
@@ -61,9 +62,8 @@ export function UnlockDialog({ open, onOpenChange }: UnlockDialogProps) {
           <Dialog.Description className="unlock-dialog__description">
             termiHub has saved credentials that are encrypted with your master password.
           </Dialog.Description>
-          <input
+          <PasswordInput
             className="unlock-dialog__input"
-            type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             onKeyDown={handleKeyDown}
