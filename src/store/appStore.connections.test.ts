@@ -32,6 +32,7 @@ vi.mock("@/services/api", () => ({
 }));
 
 import { useAppStore } from "./appStore";
+import { persistConnection } from "@/services/storage";
 import type { LeafPanel } from "@/types/terminal";
 import { findLeaf, getAllLeaves } from "@/utils/panelTree";
 import type { SavedConnection, ConnectionFolder } from "@/types/connection";
@@ -446,6 +447,68 @@ describe("appStore — connections, folders, and special tabs", () => {
       const state = useAppStore.getState();
       const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
       expect(leaf.tabs).toHaveLength(2);
+    });
+  });
+
+  describe("stripPassword — credential store interaction", () => {
+    const mockPersist = vi.mocked(persistConnection);
+
+    beforeEach(() => {
+      mockPersist.mockClear();
+    });
+
+    function makeSshConn(
+      passwordValue: string | undefined,
+      savePassword: boolean
+    ): SavedConnection {
+      return makeConnection({
+        id: "c-ssh",
+        config: {
+          type: "ssh",
+          config: {
+            host: "host.example.com",
+            username: "alice",
+            authMethod: "password",
+            password: passwordValue,
+            savePassword,
+          } as unknown as Record<string, unknown>,
+        },
+      });
+    }
+
+    it("strips password from disk when savePassword is false", () => {
+      const conn = makeSshConn("secret", false);
+      useAppStore.getState().addConnection(conn);
+
+      const persisted = mockPersist.mock.calls[0][0] as SavedConnection;
+      expect((persisted.config.config as Record<string, unknown>).password).toBeUndefined();
+    });
+
+    it("keeps non-empty password when savePassword is true (for backend routing)", () => {
+      const conn = makeSshConn("secret", true);
+      useAppStore.getState().addConnection(conn);
+
+      const persisted = mockPersist.mock.calls[0][0] as SavedConnection;
+      expect((persisted.config.config as Record<string, unknown>).password).toBe("secret");
+    });
+
+    it("strips empty-string password even when savePassword is true (regression: must not overwrite stored credential)", () => {
+      // When a user edits an existing connection (e.g. changes the IP) without
+      // re-entering the password, the form sends password="". This must NOT be
+      // forwarded to the backend as it would overwrite the previously stored credential.
+      const conn = makeSshConn("", true);
+      useAppStore.getState().updateConnection(conn);
+
+      const persisted = mockPersist.mock.calls[0][0] as SavedConnection;
+      expect((persisted.config.config as Record<string, unknown>).password).toBeUndefined();
+    });
+
+    it("strips undefined password regardless of savePassword", () => {
+      const conn = makeSshConn(undefined, true);
+      useAppStore.getState().addConnection(conn);
+
+      const persisted = mockPersist.mock.calls[0][0] as SavedConnection;
+      expect((persisted.config.config as Record<string, unknown>).password).toBeUndefined();
     });
   });
 });
