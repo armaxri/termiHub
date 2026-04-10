@@ -192,20 +192,23 @@ else
     echo "=== Building agent for ${#SELECTED_TARGETS[@]} target(s) in parallel ==="
     echo ""
 
-    declare -A _pids=()
-    declare -A _tmpfiles=()
-    declare -A _cross_dirs=()
+    # Parallel indexed arrays (bash 3.2 compatible — no declare -A needed).
+    # Index i matches SELECTED_TARGETS[i] throughout.
+    _pids=()
+    _tmpfiles=()
+    _cross_dirs=()
     _tmpfile_list=()
 
     # Clean up temp files on exit (normal or interrupted)
     trap 'rm -f "${_tmpfile_list[@]:-}"' EXIT
 
-    for target in "${SELECTED_TARGETS[@]}"; do
+    for i in "${!SELECTED_TARGETS[@]}"; do
+        target="${SELECTED_TARGETS[$i]}"
         cross_dir="target/cross/$target"
-        _cross_dirs[$target]=$cross_dir
+        _cross_dirs[$i]=$cross_dir
 
         tmpfile=$(mktemp)
-        _tmpfiles[$target]=$tmpfile
+        _tmpfiles[$i]=$tmpfile
         _tmpfile_list+=("$tmpfile")
 
         {
@@ -214,21 +217,22 @@ else
                 | { grep -v "^<jemalloc>" || true; }
         } > "$tmpfile" &
 
-        _pids[$target]=$!
-        echo "  $target: building... (PID ${_pids[$target]})"
+        _pids[$i]=$!
+        echo "  $target: building... (PID ${_pids[$i]})"
     done
     echo ""
 
-    for target in "${SELECTED_TARGETS[@]}"; do
+    for i in "${!SELECTED_TARGETS[@]}"; do
+        target="${SELECTED_TARGETS[$i]}"
         echo "--- $target ---"
 
         build_exit=0
-        wait "${_pids[$target]}" || build_exit=$?
+        wait "${_pids[$i]}" || build_exit=$?
 
-        cat "${_tmpfiles[$target]}"
+        cat "${_tmpfiles[$i]}"
 
         if [ "$build_exit" -eq 0 ]; then
-            cross_dir="${_cross_dirs[$target]}"
+            cross_dir="${_cross_dirs[$i]}"
             src_binary="$cross_dir/$target/release/termihub-agent"
             dst_dir="target/$target/release"
             dst_binary="$dst_dir/termihub-agent"
