@@ -7,6 +7,8 @@ interface DynamicFieldProps {
   field: SettingsField;
   value: unknown;
   onChange: (key: string, value: unknown) => void;
+  /** When true, shows a "Password saved in credential store" hint below password fields. */
+  credentialSaved?: boolean;
 }
 
 /**
@@ -15,13 +17,21 @@ interface DynamicFieldProps {
  * Dispatches to the appropriate input widget (text, password, number,
  * boolean toggle, select, port, file path, key-value list, object list).
  */
-export function DynamicField({ field, value, onChange }: DynamicFieldProps) {
+export function DynamicField({ field, value, onChange, credentialSaved }: DynamicFieldProps) {
   const handleChange = useCallback((v: unknown) => onChange(field.key, v), [field.key, onChange]);
 
   return (
     <div className="settings-form__field" data-testid={`dynamic-field-${field.key}`}>
       {renderFieldInput(field, field.fieldType, value, handleChange)}
       {field.description && <p className="settings-form__hint">{field.description}</p>}
+      {credentialSaved && (
+        <p
+          className="settings-form__hint settings-form__hint--success"
+          data-testid={`field-${field.key}-credential-saved`}
+        >
+          Password saved in credential store
+        </p>
+      )}
     </div>
   );
 }

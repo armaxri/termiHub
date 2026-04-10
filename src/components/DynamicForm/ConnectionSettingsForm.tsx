@@ -7,6 +7,12 @@ interface ConnectionSettingsFormProps {
   schema: SettingsSchema;
   settings: Record<string, unknown>;
   onChange: (settings: Record<string, unknown>) => void;
+  /**
+   * When true, a "Password saved in credential store" hint is shown below
+   * password fields that are currently empty (i.e. the credential is stored
+   * and will not be overwritten unless the user types a new value).
+   */
+  credentialSavedHint?: boolean;
 }
 
 /**
@@ -19,6 +25,7 @@ export function ConnectionSettingsForm({
   schema,
   settings,
   onChange,
+  credentialSavedHint,
 }: ConnectionSettingsFormProps) {
   const handleFieldChange = useCallback(
     (key: string, value: unknown) => {
@@ -40,6 +47,9 @@ export function ConnectionSettingsForm({
                 field={field}
                 value={settings[field.key]}
                 onChange={handleFieldChange}
+                credentialSaved={
+                  credentialSavedHint && field.fieldType.type === "password" && !settings[field.key]
+                }
               />
             ))}
           </div>

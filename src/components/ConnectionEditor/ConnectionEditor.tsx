@@ -145,6 +145,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const saveAgentDef = useAppStore((s) => s.saveAgentDef);
   const updateAgentDef = useAppStore((s) => s.updateAgentDef);
   const settings = useAppStore((s) => s.settings);
+  const credentialStoreStatus = useAppStore((s) => s.credentialStoreStatus);
 
   const editingConnectionId = meta.connectionId;
   const editingConnectionFolderId = meta.folderId;
@@ -289,6 +290,14 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     () => findSchema(effectiveRegistry, selectedType),
     [effectiveRegistry, selectedType]
   );
+
+  // Show a "Password saved in credential store" hint on empty password fields when editing
+  // an existing connection that has savePassword=true and an active credential store.
+  const credentialSavedHint =
+    !!(existingConnection || existingAgent) &&
+    credentialStoreStatus?.mode !== "none" &&
+    connSettings.savePassword === true &&
+    !connSettings.password;
 
   // ResizeObserver for compact mode
   useEffect(() => {
@@ -631,6 +640,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           schema={currentSchema}
           settings={connSettings}
           onChange={setConnSettings}
+          credentialSavedHint={credentialSavedHint}
         />
       )}
 

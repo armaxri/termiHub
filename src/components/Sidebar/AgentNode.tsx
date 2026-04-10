@@ -32,12 +32,14 @@ import {
 } from "lucide-react";
 import { ConnectionIcon } from "@/utils/connectionIcons";
 import { useAppStore } from "@/store/appStore";
+import { frontendLog } from "@/utils/frontendLog";
 import { RemoteAgentDefinition } from "@/types/connection";
 import {
   AgentSessionInfo,
   AgentDefinitionInfo,
   AgentFolderInfo,
   removeCredential,
+  storeCredential,
 } from "@/services/api";
 import { classifyAgentError, ClassifiedAgentError } from "@/utils/classifyAgentError";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
@@ -340,6 +342,8 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
         agent.config.savePassword
       );
 
+      let promptedPassword: string | undefined;
+
       if (resolution.usedStoredCredential && resolution.password) {
         password = resolution.password;
       } else if (agent.config.authMethod === "password" && !agent.config.password) {
@@ -349,10 +353,17 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
           return;
         }
         password = result;
+        promptedPassword = result;
       }
 
       try {
         await connectRemoteAgent(agent.id, password);
+        // Persist the entered password if the user opted in via the prompt checkbox
+        if (promptedPassword && useAppStore.getState().passwordPromptShouldSave) {
+          await storeCredential(agent.id, "password", promptedPassword).catch((err) => {
+            frontendLog("agent_node", `Failed to store credential: ${err}`);
+          });
+        }
       } catch (err) {
         const classified = classifyAgentError(err);
         if (resolution.usedStoredCredential && classified.category === "auth-failure") {
@@ -363,6 +374,12 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
             return;
           }
           await connectRemoteAgent(agent.id, retryPassword);
+          // Persist the retry password if the user opted in
+          if (useAppStore.getState().passwordPromptShouldSave) {
+            await storeCredential(agent.id, "password", retryPassword).catch((err) => {
+              frontendLog("agent_node", `Failed to store credential: ${err}`);
+            });
+          }
           return;
         }
         throw err;
