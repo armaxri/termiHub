@@ -699,7 +699,7 @@ Manual tests that can be automated have been moved to WebdriverIO E2E tests. The
 | Drag-and-drop                         | ~8    | Tab reorder, split view drag, connection folder drag              |
 | External app integration              | ~7    | Open in VS Code (local + SFTP), VS Code not installed             |
 | Right-click behavior                  | ~5    | Quick copy/paste, context menu, setting persistence               |
-| OS credential store                   | ~3    | Windows Credential Manager, macOS Keychain, Linux Secret Service  |
+| Credential store (master password)    | ~3    | Setup, unlock, auto-lock, wrong password, change password         |
 | Platform-specific SSH/agent           | ~5    | SSH agent setup, X11 forwarding, Windows WSL file browser paths   |
 | Cross-platform (external window)      | ~1    | X11 forwarding displays remote window                             |
 | Embedded network services             | ~6    | HTTP/FTP/TFTP server start/stop, file transfer, auto-start (#526) |

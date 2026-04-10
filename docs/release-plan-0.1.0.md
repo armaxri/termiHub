@@ -727,7 +727,7 @@ events that tauri-driver may not reliably simulate (especially chords,
 modifier keys, and platform-specific mappings).
 
 **Reason: Native dialogs / OS integration (3 tests)**:
-MT-CRED-01 through MT-CRED-03 — credential store uses OS keychain.
+MT-CRED-01 through MT-CRED-03 — credential store (master password setup, auto-lock, change password).
 
 **Reason: Hardware interaction (2 tests)**:
 MT-SER-01, MT-SER-02 — serial ports require physical or virtual hardware.

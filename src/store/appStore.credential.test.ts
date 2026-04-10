@@ -38,9 +38,8 @@ describe("appStore credential store state", () => {
 
   it("setCredentialStoreStatus updates the state", () => {
     const status: CredentialStoreStatusInfo = {
-      mode: "keychain",
+      mode: "master_password",
       status: "unlocked",
-      keychainAvailable: true,
     };
 
     useAppStore.getState().setCredentialStoreStatus(status);
@@ -49,18 +48,16 @@ describe("appStore credential store state", () => {
   });
 
   it("setCredentialStoreStatus can update to different modes", () => {
-    const keychainStatus: CredentialStoreStatusInfo = {
-      mode: "keychain",
-      status: "unlocked",
-      keychainAvailable: true,
+    const noneStatus: CredentialStoreStatusInfo = {
+      mode: "none",
+      status: "unavailable",
     };
-    useAppStore.getState().setCredentialStoreStatus(keychainStatus);
-    expect(useAppStore.getState().credentialStoreStatus?.mode).toBe("keychain");
+    useAppStore.getState().setCredentialStoreStatus(noneStatus);
+    expect(useAppStore.getState().credentialStoreStatus?.mode).toBe("none");
 
     const masterStatus: CredentialStoreStatusInfo = {
       mode: "master_password",
       status: "locked",
-      keychainAvailable: true,
     };
     useAppStore.getState().setCredentialStoreStatus(masterStatus);
     expect(useAppStore.getState().credentialStoreStatus?.mode).toBe("master_password");
@@ -71,7 +68,6 @@ describe("appStore credential store state", () => {
     const status: CredentialStoreStatusInfo = {
       mode: "master_password",
       status: "unlocked",
-      keychainAvailable: false,
     };
     mockedInvoke.mockResolvedValueOnce(status);
 

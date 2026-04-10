@@ -68,13 +68,13 @@
 
 ### Technical Constraints
 
-| Constraint                             | Rationale                                                                                                                 |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| **Tauri 2.x** as application framework | Small binary (~5 MB vs Electron's ~100 MB), lower memory footprint, Rust backend for performance and safety               |
-| **React 18 + TypeScript** for frontend | Mature ecosystem, best-in-class drag-and-drop (dnd-kit) and split view (react-resizable-panels) libraries                 |
-| **Rust** for backend                   | Memory safety, cross-platform PTY/serial/SSH support, async I/O via tokio                                                 |
-| **Windows 10 1809+** minimum           | Required for ConPTY (Windows pseudo-terminal) support                                                                     |
-| **Credential storage optional**        | Platform keychain and master-password encryption available but optional; SSH passwords can be prompted at connection time |
+| Constraint                             | Rationale                                                                                                   |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| **Tauri 2.x** as application framework | Small binary (~5 MB vs Electron's ~100 MB), lower memory footprint, Rust backend for performance and safety |
+| **React 18 + TypeScript** for frontend | Mature ecosystem, best-in-class drag-and-drop (dnd-kit) and split view (react-resizable-panels) libraries   |
+| **Rust** for backend                   | Memory safety, cross-platform PTY/serial/SSH support, async I/O via tokio                                   |
+| **Windows 10 1809+** minimum           | Required for ConPTY (Windows pseudo-terminal) support                                                       |
+| **Credential storage optional**        | Master-password encryption available but optional; SSH passwords can be prompted at connection time         |
 
 ### Organizational Constraints
 
@@ -197,7 +197,7 @@ graph LR
 | Backend extensibility | **`ConnectionType` trait + registry** | Schema-driven connection types in `termihub-core` — each backend declares its settings schema, capabilities, and lifecycle; the UI renders forms dynamically (see [ADR-7](#adr-7-connectiontype-trait-and-registry)) |
 | IPC pattern           | **Commands + Events**                 | Commands for request-response (create terminal, send input), events for streaming (terminal output)                                                                                                                  |
 | Connection storage    | **JSON files with generic config**    | Connections stored as `{type, config}` pairs where config is a type-specific JSON object; schemas define validation                                                                                                  |
-| Credential handling   | **Optional credential store**         | Platform keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service) or master password encryption; prompt-at-connection fallback                                                                    |
+| Credential handling   | **Optional credential store**         | Master password encryption or no-storage (prompt-only); Argon2id key derivation + AES-256-GCM                                                                                                                        |
 
 ---
 
@@ -253,7 +253,7 @@ graph TB
 | **Session Manager**             | Orchestrates terminal session lifecycle using the `ConnectionType` registry — creates, routes I/O, and cleans up sessions for all connection types                                                                                                                                                                                                                       |
 | **ConnectionType Registry**     | Runtime registry of available connection types. Each type is a `ConnectionType` trait implementation registered at startup with its settings schema, capabilities, and factory function. Both desktop and agent maintain their own registries populated from `termihub-core` backends.                                                                                   |
 | **Tunnel Manager**              | Manages SSH port forwarding tunnels (local, remote, dynamic SOCKS5) with auto-start, status tracking, and persistence                                                                                                                                                                                                                                                    |
-| **Credential Store**            | Optional encrypted credential storage via platform keychain or master password, with auto-lock timeout                                                                                                                                                                                                                                                                   |
+| **Credential Store**            | Optional encrypted credential storage via master password (Argon2id + AES-256-GCM), with auto-lock timeout                                                                                                                                                                                                                                                               |
 | **RemoteBackend**               | Proxy to remote agent instances — forwards I/O as JSON-RPC over SSH                                                                                                                                                                                                                                                                                                      |
 | **Shared Core (termihub-core)** | Shared Rust library containing the `ConnectionType` trait, `ConnectionTypeRegistry`, settings schema system, concrete backend implementations (local shell, SSH, serial, telnet, Docker, WSL), config types, error types, protocol types, session helpers, file operations, monitoring parsers, transport traits, and output processing — used by both desktop and agent |
 | **Remote Agent**                | Standalone binary (`termihub-agent`) for persistent remote sessions, file browsing, and system monitoring. Uses a thin JSON-RPC dispatcher that delegates to the core `ConnectionType` registry. See [Remote Protocol](remote-protocol.md) for the protocol specification.                                                                                               |
@@ -335,7 +335,7 @@ graph LR
 | **Session**    | `src-tauri/src/session/`    | Desktop `SessionManager` — wraps core `ConnectionType` instances, manages lifecycle via the registry                                 |
 | **Connection** | `src-tauri/src/connection/` | Config persistence, CRUD operations, connection file I/O                                                                             |
 | **Tunnel**     | `src-tauri/src/tunnel/`     | SSH tunnel manager — local, remote, and dynamic (SOCKS5) forwarding with session pooling, auto-start, and `tunnels.json` persistence |
-| **Credential** | `src-tauri/src/credential/` | Credential store abstraction — platform keychain backend, master password backend, encryption, auto-lock                             |
+| **Credential** | `src-tauri/src/credential/` | Credential store abstraction — master password backend, Argon2id + AES-256-GCM encryption, auto-lock                                 |
 | **Files**      | `src-tauri/src/files/`      | Local and SFTP file browsing, upload/download                                                                                        |
 | **Monitoring** | `src-tauri/src/monitoring/` | SSH remote system monitoring (CPU, memory, disk, uptime)                                                                             |
 | **Commands**   | `src-tauri/src/commands/`   | Tauri IPC command handlers (session, connection, agent, files, monitoring, credentials, tunnels, logs)                               |
@@ -937,7 +937,7 @@ The frontend uses a single **Zustand** store (`src/store/appStore.ts`) managing:
 - **SSH tunnels** — Tunnel definitions, status, and statistics
 - **Connection types** — Registry of available `ConnectionTypeInfo` from the backend (schemas, capabilities)
 - **Theme** — Active theme (dark/light/system), resolved theme for OS auto-detection
-- **Credential store** — Storage mode (keychain/master password/none), lock state
+- **Credential store** — Storage mode (master password/none), lock state
 
 ### Terminal Rendering
 
@@ -982,13 +982,12 @@ Supported field types: `text`, `password`, `number`, `boolean`, `select` (dropdo
 
 ### Credential Storage
 
-termiHub provides optional credential encryption with three storage modes:
+termiHub provides optional credential encryption with two storage modes:
 
-- **Platform Keychain** — Uses the OS credential store (macOS Keychain, Windows Credential Manager, Linux Secret Service via `keyring` crate)
-- **Master Password** — Encrypts credentials with a user-chosen master password, stored in a portable encrypted file
-- **None** — Passwords are prompted at connection time and never persisted (the default for new installations)
+- **Master Password** — Encrypts all credentials into a single `credentials.enc` file using Argon2id key derivation and AES-256-GCM authenticated encryption. Supports auto-lock after a configurable inactivity timeout.
+- **None** — Passwords are prompted at connection time and never persisted (the default for new installations).
 
-All modes support auto-lock after a configurable timeout. Credential storage is managed through the Security section in Settings.
+Credential storage is managed through the Security section in Settings.
 
 ### Experimental Features
 
@@ -1124,15 +1123,15 @@ Experimental features may ship in public releases. The flag is not a hidden deve
 
 **Context:** SSH connections require authentication credentials. The original decision (Phase 1) was to prompt for passwords at connection time and never persist them. As the project matured, a credential storage system was implemented.
 
-**Decision:** Provide three credential storage modes — platform keychain, master password encryption, and no storage (prompt-only). The user chooses their mode in Security settings.
+**Decision:** Provide two credential storage modes — master password encryption and no storage (prompt-only). The user chooses their mode in Security settings.
 
 **Rationale:**
 
-- Platform keychains (macOS Keychain, Windows Credential Manager, Linux Secret Service) are the most secure option for single-machine use
-- Master password mode provides portability for users who sync settings across machines
+- Master password mode provides strong, portable encryption (Argon2id + AES-256-GCM) that works identically on all platforms
 - No-storage mode preserves the original Phase 1 behavior for users who prefer it
 - Key-based authentication (recommended) doesn't require password storage regardless of mode
 - Auto-lock timeout adds an additional security layer
+- An OS keychain backend was implemented and later removed: it offered no additional security over master password on macOS (login.keychain is silently unlocked during the session) while adding platform-specific complexity and inconsistent behaviour across OSes
 
 **Trade-off:** Master password mode requires the user to remember a master password. If lost, stored credentials are unrecoverable.
 
@@ -1304,7 +1303,7 @@ graph TD
 | **Docker**                 | Container runtime; termiHub can connect to running Docker containers or start new ones as a connection type, executing shells inside the container environment                                   |
 | **Theme Engine**           | Frontend subsystem that resolves the active theme (dark/light/system), applies CSS custom properties to `:root`, and live-updates xterm.js terminal colors                                       |
 | **Monaco Editor**          | VS Code's code editor component, embedded in termiHub for editing local and remote files with syntax highlighting                                                                                |
-| **Credential Store**       | Optional subsystem for persisting connection passwords — supports platform keychain, master password encryption, or no-storage (prompt-only) modes                                               |
+| **Credential Store**       | Optional subsystem for persisting connection passwords — master password encryption (Argon2id + AES-256-GCM) or no-storage (prompt-only)                                                         |
 | **Layout Presets**         | Pre-defined UI configurations (default, focus, zen) that control activity bar position, sidebar visibility, and status bar visibility                                                            |
 
 ---

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- OS Keychain credential backend removed — the `keyring` crate dependency and `KeychainStore` backend have been dropped. Credential storage now offers **Master Password** (Argon2id + AES-256-GCM encrypted file) and **None** (prompt-only). Users with `"keychain"` saved in `settings.json` will be migrated to `"none"` on next launch.
+
 ### Fixed
 
 - Terminal: box-drawing characters (table borders, tree views) no longer render with pixel gaps between rows — the default `lineHeight` has been corrected from 1.2 to 1.0 (#579)

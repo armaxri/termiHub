@@ -91,7 +91,7 @@ pub struct AppSettings {
     pub file_browser_enabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub layout: Option<LayoutConfig>,
-    /// Credential storage mode: "keychain", "master_password", or "none".
+    /// Credential storage mode: "master_password" or "none".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub credential_storage_mode: Option<String>,
     /// Auto-lock timeout in minutes for master password mode. None = never.
@@ -112,10 +112,6 @@ pub struct AppSettings {
     /// User-imported custom TextMate grammars (stored inline).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_language_grammars: Option<Vec<CustomLanguageGrammar>>,
-    /// Whether the user has acknowledged the keychain-in-portable-mode warning.
-    /// Only relevant when portable mode is active and the credential mode is "keychain".
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub portable_keychain_warning_acknowledged: Option<bool>,
     /// Whether experimental features are enabled.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub experimental_features_enabled: Option<bool>,
@@ -146,7 +142,6 @@ impl Default for AppSettings {
             file_language_mappings: None,
             installed_language_packages: None,
             custom_language_grammars: None,
-            portable_keychain_warning_acknowledged: None,
             experimental_features_enabled: None,
         }
     }
@@ -444,20 +439,20 @@ mod tests {
         let json = r#"{
             "version": "1",
             "externalConnectionFiles": [],
-            "credentialStorageMode": "keychain",
+            "credentialStorageMode": "master_password",
             "credentialAutoLockMinutes": 15
         }"#;
         let settings: AppSettings = serde_json::from_str(json).unwrap();
         assert_eq!(
             settings.credential_storage_mode.as_deref(),
-            Some("keychain")
+            Some("master_password")
         );
         assert_eq!(settings.credential_auto_lock_minutes, Some(15));
     }
 
     #[test]
     fn credential_fields_round_trip_all_modes() {
-        for mode in &["keychain", "master_password", "none"] {
+        for mode in &["master_password", "none"] {
             let settings = AppSettings {
                 credential_storage_mode: Some(mode.to_string()),
                 credential_auto_lock_minutes: Some(30),

@@ -49,9 +49,7 @@ vi.mock("@/services/api", () => ({
   listAgentDefinitions: vi.fn(() => Promise.resolve([])),
   saveAgentDefinition: vi.fn(),
   deleteAgentDefinition: vi.fn(),
-  getCredentialStoreStatus: vi.fn(() =>
-    Promise.resolve({ mode: "none", status: "unavailable", keychainAvailable: false })
-  ),
+  getCredentialStoreStatus: vi.fn(() => Promise.resolve({ mode: "none", status: "unavailable" })),
 }));
 
 vi.mock("@/services/tunnelApi", () => ({

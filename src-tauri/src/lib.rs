@@ -467,7 +467,6 @@ pub fn run() {
             commands::credential::setup_master_password,
             commands::credential::change_master_password,
             commands::credential::switch_credential_store,
-            commands::credential::check_keychain_available,
             commands::credential::store_credential,
             commands::credential::resolve_credential,
             commands::credential::remove_credential,

@@ -36,9 +36,7 @@ vi.mock("@/services/api", () => ({
   sftpListDir: vi.fn(),
   localListDir: vi.fn(),
   vscodeAvailable: vi.fn(() => Promise.resolve(false)),
-  getCredentialStoreStatus: vi.fn(() =>
-    Promise.resolve({ mode: "none", status: "unlocked", keychainAvailable: false })
-  ),
+  getCredentialStoreStatus: vi.fn(() => Promise.resolve({ mode: "none", status: "unlocked" })),
 }));
 
 import {
@@ -143,7 +141,7 @@ describe("useCredentialStoreEvents", () => {
       root.render(createElement(HookConsumer));
     });
 
-    const newStatus = { mode: "master_password", status: "locked", keychainAvailable: false };
+    const newStatus = { mode: "master_password", status: "locked" };
     await act(async () => {
       statusChangedHandler?.(newStatus);
     });

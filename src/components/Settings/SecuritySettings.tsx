@@ -1,16 +1,13 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { CheckCircle2, AlertTriangle, Shield } from "lucide-react";
+import { useState, useCallback } from "react";
+import { Shield } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { CredentialStorageMode } from "@/types/credential";
 import {
   switchCredentialStore,
   setupMasterPassword,
   changeMasterPassword,
-  checkKeychainAvailable,
   setAutoLockTimeout,
 } from "@/services/api";
-import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
-import { getPlatform } from "@/utils/platform";
 
 interface SecuritySettingsProps {
   visibleFields?: Set<string>;
@@ -24,7 +21,7 @@ interface StorageModeOption {
   testId: string;
 }
 
-const STORAGE_MODE_OPTIONS_BASE: StorageModeOption[] = [
+const STORAGE_MODE_OPTIONS: StorageModeOption[] = [
   {
     value: "master_password",
     label: "Master Password",
@@ -39,40 +36,6 @@ const STORAGE_MODE_OPTIONS_BASE: StorageModeOption[] = [
     testId: "storage-mode-none",
   },
 ];
-
-/** Build the full list of storage mode options for the current platform.
- *
- * The OS Keychain option is only shown on macOS (where it is fully supported)
- * or on other platforms when experimental features are enabled. */
-function buildStorageModeOptions(
-  platform: string,
-  experimental: boolean,
-  currentMode: CredentialStorageMode
-): StorageModeOption[] {
-  const keychainOption: StorageModeOption =
-    platform === "macos"
-      ? {
-          value: "keychain",
-          label: "OS Keychain",
-          badge: "Recommended",
-          description: "Store credentials in the macOS Keychain.",
-          testId: "storage-mode-keychain",
-        }
-      : {
-          value: "keychain",
-          label: "OS Keychain",
-          badge: "Experimental",
-          description:
-            "Store credentials in the OS native credential store. Support on this platform is experimental and may not work correctly.",
-          testId: "storage-mode-keychain",
-        };
-
-  // Show the keychain option when: macOS, OR experimental enabled, OR already selected
-  // (always show current mode so the user can see their state and switch away)
-  const showKeychain = platform === "macos" || experimental || currentMode === "keychain";
-
-  return showKeychain ? [keychainOption, ...STORAGE_MODE_OPTIONS_BASE] : STORAGE_MODE_OPTIONS_BASE;
-}
 
 interface AutoLockOption {
   value: number;
@@ -96,7 +59,6 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
   const settings = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
 
-  const [keychainAvailable, setKeychainAvailable] = useState<boolean | null>(null);
   const [switching, setSwitching] = useState(false);
   const [confirmSwitch, setConfirmSwitch] = useState<CredentialStorageMode | null>(null);
   const [masterPasswordSetup, setMasterPasswordSetup] = useState(false);
@@ -114,21 +76,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
   const [changeConfirmPassword, setChangeConfirmPassword] = useState("");
   const [changePasswordError, setChangePasswordError] = useState("");
 
-  const experimental = useExperimentalFeatures();
-  const platform = useMemo(() => getPlatform(), []);
-
   const currentMode = credentialStoreStatus?.mode ?? "none";
-
-  const storageOptions = useMemo(
-    () => buildStorageModeOptions(platform, experimental, currentMode),
-    [platform, experimental, currentMode]
-  );
-
-  useEffect(() => {
-    checkKeychainAvailable()
-      .then(setKeychainAvailable)
-      .catch(() => setKeychainAvailable(false));
-  }, []);
 
   const show = (field: string): boolean => !visibleFields || visibleFields.has(field);
 
@@ -247,30 +195,8 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
             Choose how connection passwords, SSH key passphrases, and other secrets are stored.
           </p>
 
-          <div className="settings-panel__status-indicator" data-testid="keychain-status">
-            {keychainAvailable === null ? (
-              <span className="settings-panel__status-indicator--checking">
-                Checking keychain availability…
-              </span>
-            ) : keychainAvailable ? (
-              <>
-                <CheckCircle2 size={14} />
-                <span className="settings-panel__status-indicator--ok">
-                  OS Keychain is available
-                </span>
-              </>
-            ) : (
-              <>
-                <AlertTriangle size={14} />
-                <span className="settings-panel__status-indicator--warning">
-                  OS Keychain is not available on this system
-                </span>
-              </>
-            )}
-          </div>
-
           <div className="settings-panel__radio-group" role="radiogroup" aria-label="Storage mode">
-            {storageOptions.map((option) => (
+            {STORAGE_MODE_OPTIONS.map((option) => (
               <button
                 key={option.value}
                 className={`settings-panel__radio-option${currentMode === option.value ? " settings-panel__radio-option--active" : ""}`}
@@ -335,9 +261,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
 
           {confirmSwitch && confirmSwitch !== "master_password" && (
             <div className="settings-panel__inline-dialog" data-testid="confirm-switch-dialog">
-              <h4 className="settings-panel__inline-dialog-title">
-                Switch to {confirmSwitch === "keychain" ? "OS Keychain" : "No Storage"}?
-              </h4>
+              <h4 className="settings-panel__inline-dialog-title">Switch to No Storage?</h4>
               <p className="settings-panel__inline-dialog-text">
                 Existing credentials will be migrated to the new storage backend.
               </p>

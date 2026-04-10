@@ -50,7 +50,7 @@ describe("PasswordPrompt", () => {
 
   it("hides save checkbox when no credential store is configured", async () => {
     useAppStore.setState({
-      credentialStoreStatus: { mode: "none", status: "unlocked", keychainAvailable: false },
+      credentialStoreStatus: { mode: "none", status: "unlocked" },
     });
     await act(async () => {
       useAppStore.getState().requestPassword("example.com", "alice");
@@ -62,7 +62,7 @@ describe("PasswordPrompt", () => {
 
   it("shows save checkbox pre-checked when credential store is active", async () => {
     useAppStore.setState({
-      credentialStoreStatus: { mode: "keychain", status: "unlocked", keychainAvailable: true },
+      credentialStoreStatus: { mode: "master_password", status: "unlocked" },
     });
     await act(async () => {
       useAppStore.getState().requestPassword("example.com", "alice");
@@ -76,11 +76,7 @@ describe("PasswordPrompt", () => {
 
   it("shows save checkbox pre-checked for master_password mode", async () => {
     useAppStore.setState({
-      credentialStoreStatus: {
-        mode: "master_password",
-        status: "unlocked",
-        keychainAvailable: false,
-      },
+      credentialStoreStatus: { mode: "master_password", status: "unlocked" },
     });
     await act(async () => {
       useAppStore.getState().requestPassword("example.com", "alice");
@@ -94,7 +90,7 @@ describe("PasswordPrompt", () => {
 
   it("sets passwordPromptShouldSave=true when submitting with checkbox checked", async () => {
     useAppStore.setState({
-      credentialStoreStatus: { mode: "keychain", status: "unlocked", keychainAvailable: true },
+      credentialStoreStatus: { mode: "master_password", status: "unlocked" },
     });
     useAppStore.getState().requestPassword("example.com", "alice");
     // Simulate submit with shouldSave=true (checkbox is checked by default when store is active)
@@ -107,7 +103,7 @@ describe("PasswordPrompt", () => {
 
   it("sets passwordPromptShouldSave=false when submitting with checkbox unchecked", async () => {
     useAppStore.setState({
-      credentialStoreStatus: { mode: "keychain", status: "unlocked", keychainAvailable: true },
+      credentialStoreStatus: { mode: "master_password", status: "unlocked" },
     });
     useAppStore.getState().requestPassword("example.com", "alice");
     act(() => {

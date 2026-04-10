@@ -753,11 +753,6 @@ export async function switchCredentialStore(
   });
 }
 
-/** Check whether the OS keychain is accessible. */
-export async function checkKeychainAvailable(): Promise<boolean> {
-  return await invoke<boolean>("check_keychain_available");
-}
-
 /** Update the auto-lock timeout for the master password credential store. */
 export async function setAutoLockTimeout(minutes: number | null): Promise<void> {
   await invoke("set_auto_lock_timeout", { minutes });

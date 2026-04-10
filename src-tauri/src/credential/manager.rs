@@ -5,13 +5,12 @@ use anyhow::Result;
 
 use super::auto_lock::AutoLockTimer;
 use super::types::{CredentialKey, CredentialStoreStatus, StorageMode};
-use super::{CredentialStore, KeychainStore, MasterPasswordStore, NullStore};
+use super::{CredentialStore, MasterPasswordStore, NullStore};
 
 /// Internal storage backend enum, allowing direct access to
 /// backend-specific methods without trait-object downcasting.
 enum StoreBackend {
     Null(NullStore),
-    Keychain(KeychainStore),
     MasterPassword(MasterPasswordStore),
 }
 
@@ -46,7 +45,6 @@ impl CredentialManager {
         let inner = self.inner.read().expect("credential manager lock poisoned");
         match *inner {
             StoreBackend::Null(_) => StorageMode::None,
-            StoreBackend::Keychain(_) => StorageMode::Keychain,
             StoreBackend::MasterPassword(_) => StorageMode::MasterPassword,
         }
     }
@@ -134,7 +132,6 @@ impl CredentialManager {
     /// Create the appropriate backend for the given mode.
     fn create_backend(mode: &StorageMode, config_dir: &Path) -> StoreBackend {
         match mode {
-            StorageMode::Keychain => StoreBackend::Keychain(KeychainStore),
             StorageMode::MasterPassword => {
                 let file_path = config_dir.join("credentials.enc");
                 StoreBackend::MasterPassword(MasterPasswordStore::new(file_path))
@@ -149,7 +146,6 @@ impl CredentialStore for CredentialManager {
         let inner = self.inner.read().expect("credential manager lock poisoned");
         let result = match *inner {
             StoreBackend::Null(ref s) => s.get(key),
-            StoreBackend::Keychain(ref s) => s.get(key),
             StoreBackend::MasterPassword(ref s) => s.get(key),
         };
         drop(inner);
@@ -161,7 +157,6 @@ impl CredentialStore for CredentialManager {
         let inner = self.inner.read().expect("credential manager lock poisoned");
         let result = match *inner {
             StoreBackend::Null(ref s) => s.set(key, value),
-            StoreBackend::Keychain(ref s) => s.set(key, value),
             StoreBackend::MasterPassword(ref s) => s.set(key, value),
         };
         drop(inner);
@@ -173,7 +168,6 @@ impl CredentialStore for CredentialManager {
         let inner = self.inner.read().expect("credential manager lock poisoned");
         let result = match *inner {
             StoreBackend::Null(ref s) => s.remove(key),
-            StoreBackend::Keychain(ref s) => s.remove(key),
             StoreBackend::MasterPassword(ref s) => s.remove(key),
         };
         drop(inner);
@@ -185,7 +179,6 @@ impl CredentialStore for CredentialManager {
         let inner = self.inner.read().expect("credential manager lock poisoned");
         let result = match *inner {
             StoreBackend::Null(ref s) => s.remove_all_for_connection(connection_id),
-            StoreBackend::Keychain(ref s) => s.remove_all_for_connection(connection_id),
             StoreBackend::MasterPassword(ref s) => s.remove_all_for_connection(connection_id),
         };
         drop(inner);
@@ -197,7 +190,6 @@ impl CredentialStore for CredentialManager {
         let inner = self.inner.read().expect("credential manager lock poisoned");
         let result = match *inner {
             StoreBackend::Null(ref s) => s.list_keys(),
-            StoreBackend::Keychain(ref s) => s.list_keys(),
             StoreBackend::MasterPassword(ref s) => s.list_keys(),
         };
         drop(inner);
@@ -209,7 +201,6 @@ impl CredentialStore for CredentialManager {
         let inner = self.inner.read().expect("credential manager lock poisoned");
         match *inner {
             StoreBackend::Null(ref s) => s.status(),
-            StoreBackend::Keychain(ref s) => s.status(),
             StoreBackend::MasterPassword(ref s) => s.status(),
         }
     }

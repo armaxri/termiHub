@@ -6,7 +6,7 @@
 
 ## Overview
 
-termiHub has 97 manual test items in `docs/testing.md` that cannot be fully automated. These tests verify platform-specific behavior (macOS key repeat, WSL shell detection, Windows shells), native OS dialogs (file picker, save, import/export), visual rendering (Powerline glyphs, white flash timing, 1px panel borders), external application integration (VS Code), and OS-level features (Keychain, app icon). Currently, a developer must read the testing document, mentally filter for their platform, manually set up infrastructure, perform each test, and track results in their head — a tedious, error-prone process.
+termiHub has 97 manual test items in `docs/testing.md` that cannot be fully automated. These tests verify platform-specific behavior (macOS key repeat, WSL shell detection, Windows shells), native OS dialogs (file picker, save, import/export), visual rendering (Powerline glyphs, white flash timing, 1px panel borders), external application integration (VS Code), and OS-level features (app icon). Currently, a developer must read the testing document, mentally filter for their platform, manually set up infrastructure, perform each test, and track results in their head — a tedious, error-prone process.
 
 ### Motivation
 
@@ -161,8 +161,8 @@ At the end, the runner prints a summary and writes the report:
 │      Note: "Brief 50ms white flash visible on cold start"       │
 │    MT-SSH-07  Powerline glyph rendering                         │
 │      Note: "Black rectangle behind user@host segment"           │
-│    MT-CRED-02  Keychain integration                             │
-│      Note: "No entry found in Keychain Access"                  │
+│    MT-CRED-02  Master password auto-lock                        │
+│      Note: "Store did not lock after timeout elapsed"           │
 │                                                                  │
 │  Report saved to:                                                │
 │    tests/reports/manual-2026-02-25T143000-macos-arm64.json      │
@@ -810,7 +810,7 @@ tests/
     file-browser.yaml                 # ~20 tests (SFTP, VS Code, WSL paths, editor)
     ui-layout.yaml                    # ~20 tests (white flash, theme, borders, app icon)
     remote-agent.yaml                 #  ~8 tests (cleanup, setup wizard, error dialog)
-    credential-store.yaml             #  ~8 tests (keychain, master password, auto-lock)
+    credential-store.yaml             #  ~8 tests (master password, auto-lock)
     cross-platform.yaml               #  ~3 tests (shell list, serial ports, X11)
     config-recovery.yaml              # ~12 tests (corrupt settings, nested tree data model)
   reports/                            # Generated JSON reports (gitignored)

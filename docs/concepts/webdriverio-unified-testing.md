@@ -965,7 +965,7 @@ The entire guided testing approach is built on top of WebdriverIO, which connect
 **The macOS problem is the most significant consequence.** tauri-driver does not work on macOS because Apple provides no WKWebView WebDriver — `safaridriver` only controls Safari the browser, not WKWebView instances embedded in Tauri apps (see [tauri-apps/tauri#7068](https://github.com/tauri-apps/tauri/issues/7068)). This means:
 
 - On macOS, guided tests would run inside a **Docker container with a Linux build** (Xvfb + WebKitGTK + tauri-driver). This tests the Linux UI, not the macOS UI — fine for functional behavior, but useless for macOS-specific tests.
-- Tests that specifically verify macOS behavior (**~50 items**: accent picker, Keychain integration, macOS key repeat, WKWebView rendering quirks, native file dialogs with macOS styling) **cannot run through this system at all**. They would need a separate checklist or a different mechanism.
+- Tests that specifically verify macOS behavior (**~50 items**: accent picker, macOS key repeat, WKWebView rendering quirks, native file dialogs with macOS styling) **cannot run through this system at all**. They would need a separate checklist or a different mechanism.
 - The Python/YAML runner has no such limitation: it presents instructions and collects pass/fail without automating the app. It works on any platform with a terminal.
 
 **The "app must be built" problem is secondary but real.** Even on Linux/Windows, running guided tests requires a release build of the app (`pnpm tauri build`, which takes several minutes). The Python runner can present pure-checklist tests (e.g., "verify the app icon in your OS dock") without building anything. Under the WebdriverIO approach, these ~5 items would need to live outside the framework entirely.
@@ -975,7 +975,6 @@ The entire guided testing approach is built on top of WebdriverIO, which connect
 | Category                            | Manual test items | Can run via Docker (Linux)?                         | Needs native macOS? |
 | ----------------------------------- | ----------------- | --------------------------------------------------- | ------------------- |
 | macOS key repeat, accent picker     | 3                 | No — tests macOS-specific OS behavior               | Yes                 |
-| Keychain integration                | 3                 | No — macOS Keychain API                             | Yes                 |
 | Native file dialogs (macOS styling) | ~8                | No — dialog appearance is OS-specific               | Yes                 |
 | WKWebView rendering quirks          | ~5                | No — WebKitGTK differs from WKWebView               | Yes                 |
 | WSL shell detection                 | ~6                | No — WSL is Windows-only                            | N/A (Windows)       |
@@ -1054,7 +1053,6 @@ The Python/YAML guided runner can present **any test** — even those that don't
 **Testing OS-level features outside the app.** Some manual tests verify things that exist outside the app window entirely:
 
 - "Does the app icon render correctly in the macOS Dock?" — requires looking at the Dock, not the app UI
-- "Does the Keychain entry appear in Keychain Access.app?" — requires opening a separate macOS app
 - "Does the custom app icon persist after restart?" — requires quitting and relaunching
 - "Does the installer create the correct Start Menu entry?" — Windows-only, outside the app
 
@@ -1062,12 +1060,12 @@ These tests have no WebDriver interaction at all. Under the Python runner, they'
 
 **Impact quantification:**
 
-| Workflow                                     | Python/YAML                                                          | WebdriverIO Unified                                  |
-| -------------------------------------------- | -------------------------------------------------------------------- | ---------------------------------------------------- |
-| Walk through 10 visual checks during dev     | `python scripts/test-manual.py --category ui-layout` (instant start) | Must build release binary first (~5-10 min)          |
-| QA runs checklist on installed app           | Works (Python + YAML only)                                           | Cannot run (needs full dev environment)              |
-| Check 5 OS-level items (Dock icon, Keychain) | Works (pure checklist)                                               | Cannot run (no browser session)                      |
-| Run subset of SSH tests against Docker       | Works (starts Docker, presents prompts)                              | Works (starts Docker, launches app via tauri-driver) |
+| Workflow                                   | Python/YAML                                                          | WebdriverIO Unified                                  |
+| ------------------------------------------ | -------------------------------------------------------------------- | ---------------------------------------------------- |
+| Walk through 10 visual checks during dev   | `python scripts/test-manual.py --category ui-layout` (instant start) | Must build release binary first (~5-10 min)          |
+| QA runs checklist on installed app         | Works (Python + YAML only)                                           | Cannot run (needs full dev environment)              |
+| Check OS-level items (Dock icon, app icon) | Works (pure checklist)                                               | Cannot run (no browser session)                      |
+| Run subset of SSH tests against Docker     | Works (starts Docker, presents prompts)                              | Works (starts Docker, launches app via tauri-driver) |
 
 **Mitigation:** For the ~5 OS-level items, maintain a short markdown checklist. For the "quick check without building" workflow, accept that guided tests require a build — this is the same requirement as automated E2E tests, so developers are already accustomed to it. If the QA-without-dev-environment workflow is important, this is a strong argument for keeping the Python runner or the hybrid approach instead.
 

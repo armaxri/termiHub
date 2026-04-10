@@ -7,7 +7,7 @@ use tracing::{debug, info, warn};
 use crate::connection::manager::ConnectionManager;
 use crate::credential::types::{build_status_info, CredentialStoreStatusInfo};
 use crate::credential::{
-    CredentialKey, CredentialManager, CredentialStore, CredentialType, KeychainStore, StorageMode,
+    CredentialKey, CredentialManager, CredentialStore, CredentialType, StorageMode,
 };
 
 /// Event emitted when the credential store is locked.
@@ -253,7 +253,10 @@ pub async fn switch_credential_store(
     let mut settings = connection_manager.get_settings();
     settings.credential_storage_mode = Some(target_mode.to_settings_str().to_string());
     if let Err(e) = connection_manager.save_settings(settings) {
-        warn!("Failed to persist credential storage mode to settings: {}", e);
+        warn!(
+            "Failed to persist credential storage mode to settings: {}",
+            e
+        );
     }
 
     emit_status_changed(&app_handle, &manager);
@@ -261,12 +264,6 @@ pub async fn switch_credential_store(
         migrated_count,
         warnings,
     })
-}
-
-/// Check whether the OS keychain is accessible.
-#[tauri::command]
-pub fn check_keychain_available() -> bool {
-    KeychainStore::is_available()
 }
 
 /// Update the auto-lock timeout for the master password credential store.

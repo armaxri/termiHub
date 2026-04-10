@@ -70,8 +70,6 @@ pub enum CredentialStoreStatus {
 /// How credentials are persisted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StorageMode {
-    /// Use the OS keychain (e.g., macOS Keychain, Windows Credential Manager).
-    Keychain,
     /// Encrypt credentials with a user-provided master password.
     MasterPassword,
     /// Do not persist credentials (current default behavior).
@@ -81,11 +79,10 @@ pub enum StorageMode {
 impl StorageMode {
     /// Parse the `credential_storage_mode` setting string into a [`StorageMode`].
     ///
-    /// Accepts `"keychain"`, `"master_password"`, `"none"`, or `None` (which
-    /// maps to [`StorageMode::None`]).
+    /// Accepts `"master_password"`, `"none"`, or `None` (which maps to
+    /// [`StorageMode::None`]).
     pub fn from_settings_str(s: Option<&str>) -> Self {
         match s {
-            Some("keychain") => StorageMode::Keychain,
             Some("master_password") => StorageMode::MasterPassword,
             _ => StorageMode::None,
         }
@@ -94,7 +91,6 @@ impl StorageMode {
     /// Return the settings string representation of this storage mode.
     pub fn to_settings_str(&self) -> &str {
         match self {
-            StorageMode::Keychain => "keychain",
             StorageMode::MasterPassword => "master_password",
             StorageMode::None => "none",
         }
@@ -105,12 +101,10 @@ impl StorageMode {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CredentialStoreStatusInfo {
-    /// Current storage mode: `"keychain"`, `"master_password"`, or `"none"`.
+    /// Current storage mode: `"master_password"` or `"none"`.
     pub mode: String,
     /// Current status: `"unlocked"`, `"locked"`, or `"unavailable"`.
     pub status: String,
-    /// Whether the OS keychain is accessible on this system.
-    pub keychain_available: bool,
 }
 
 /// Convert a [`CredentialStoreStatus`] to its string representation.
@@ -128,7 +122,6 @@ pub fn build_status_info(manager: &super::CredentialManager) -> CredentialStoreS
     CredentialStoreStatusInfo {
         mode: manager.get_mode().to_settings_str().to_string(),
         status: status_to_string(&manager.status()).to_string(),
-        keychain_available: super::KeychainStore::is_available(),
     }
 }
 
@@ -198,14 +191,6 @@ mod tests {
     }
 
     #[test]
-    fn storage_mode_from_settings_str_keychain() {
-        assert_eq!(
-            StorageMode::from_settings_str(Some("keychain")),
-            StorageMode::Keychain
-        );
-    }
-
-    #[test]
     fn storage_mode_from_settings_str_master_password() {
         assert_eq!(
             StorageMode::from_settings_str(Some("master_password")),
@@ -236,11 +221,7 @@ mod tests {
 
     #[test]
     fn storage_mode_to_settings_str_round_trip() {
-        for mode in &[
-            StorageMode::Keychain,
-            StorageMode::MasterPassword,
-            StorageMode::None,
-        ] {
+        for mode in &[StorageMode::MasterPassword, StorageMode::None] {
             let s = mode.to_settings_str();
             let parsed = StorageMode::from_settings_str(Some(s));
             assert_eq!(&parsed, mode);

@@ -272,9 +272,7 @@ impl ConnectionType for Ssh {
                         SettingsField {
                             key: "savePassword".to_string(),
                             label: "Save credentials".to_string(),
-                            description: Some(
-                                "Store credentials in the system keychain".to_string(),
-                            ),
+                            description: Some("Store credentials for automatic login".to_string()),
                             field_type: FieldType::Boolean,
                             required: false,
                             default: Some(serde_json::json!(false)),

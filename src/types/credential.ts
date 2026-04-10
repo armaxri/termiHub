@@ -1,5 +1,5 @@
 /** Credential storage backend mode. */
-export type CredentialStorageMode = "keychain" | "master_password" | "none";
+export type CredentialStorageMode = "master_password" | "none";
 
 /** Runtime status of the credential store. */
 export type CredentialStoreStatus = "unlocked" | "locked" | "unavailable";
@@ -8,7 +8,6 @@ export type CredentialStoreStatus = "unlocked" | "locked" | "unavailable";
 export interface CredentialStoreStatusInfo {
   mode: CredentialStorageMode;
   status: CredentialStoreStatus;
-  keychainAvailable: boolean;
 }
 
 /** Result of switching to a different credential store backend. */
