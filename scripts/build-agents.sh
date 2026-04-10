@@ -214,8 +214,26 @@ else
         {
             CARGO_TARGET_DIR="$cross_dir" CROSS_CONFIG=agent/Cross.toml \
                 cross build --release --target "$target" -p termihub-agent 2>&1 \
-                | awk -v prefix="[$target] " \
-                      '/<jemalloc>:/ { next } { print prefix $0; fflush() }'
+                | awk -v prefix="[$target] " '
+                    {
+                        # Cargo uses \r (no \n) for in-place progress updates.
+                        # jemalloc output (which does have \n) therefore lands on
+                        # the same awk record as the preceding cargo progress text.
+                        # Replace \r with \n first so we can process each visual
+                        # line independently, then strip only the jemalloc portion.
+                        gsub(/\r/, "\n")
+                        n = split($0, segs, "\n")
+                        for (i = 1; i <= n; i++) {
+                            seg = segs[i]
+                            if (seg == "") continue
+                            p = index(seg, "<jemalloc>:")
+                            if (p > 0) seg = substr(seg, 1, p - 1)
+                            if (seg ~ /^[[:space:]]*$/) continue
+                            print prefix seg
+                            fflush()
+                        }
+                    }
+                '
         } &
 
         _pids[$i]=$!
