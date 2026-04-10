@@ -18,6 +18,7 @@ import {
   buildDefaults,
   findPasswordPromptInfo,
   filterRuntimeOptions,
+  filterCredentialFields,
 } from "@/utils/schemaDefaults";
 import { useAvailableRuntimes } from "@/hooks/useAvailableRuntimes";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
@@ -565,8 +566,12 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
 
   const currentSchema = useMemo(() => {
     const base = isAgentTransportMode ? AGENT_SCHEMA : currentTypeInfo?.schema;
-    if (!base || selectedType !== "docker" || runtimesLoading) return base;
-    return filterRuntimeOptions(base, dockerAvailable, podmanAvailable);
+    if (!base) return base;
+    let schema = base;
+    if (selectedType === "docker" && !runtimesLoading) {
+      schema = filterRuntimeOptions(schema, dockerAvailable, podmanAvailable);
+    }
+    return filterCredentialFields(schema, credentialStoreStatus?.mode);
   }, [
     isAgentTransportMode,
     currentTypeInfo?.schema,
@@ -574,6 +579,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     runtimesLoading,
     dockerAvailable,
     podmanAvailable,
+    credentialStoreStatus?.mode,
   ]);
 
   // Auto-set the runtime value when only one option remains

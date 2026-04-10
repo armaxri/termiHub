@@ -5,6 +5,7 @@ import {
   isFieldVisible,
   findPasswordPromptInfo,
   filterRuntimeOptions,
+  filterCredentialFields,
 } from "./schemaDefaults";
 
 function textField(key: string, opts: Partial<SettingsField> = {}): SettingsField {
@@ -254,6 +255,74 @@ describe("findPasswordPromptInfo", () => {
       usernameKey: "username",
       passwordKey: "password",
     });
+  });
+});
+
+const CREDENTIAL_SCHEMA: SettingsSchema = {
+  groups: [
+    {
+      key: "auth",
+      label: "Authentication",
+      fields: [
+        {
+          key: "authMethod",
+          label: "Auth Method",
+          fieldType: {
+            type: "select",
+            options: [{ value: "password", label: "Password" }],
+          },
+          required: true,
+        },
+        passwordField("password", { visibleWhen: { field: "authMethod", equals: "password" } }),
+        {
+          key: "savePassword",
+          label: "Save password",
+          fieldType: { type: "boolean" },
+          required: false,
+          default: false,
+        },
+        textField("keyPath"),
+      ],
+    },
+  ],
+};
+
+describe("filterCredentialFields", () => {
+  it("removes password and savePassword fields when mode is 'none'", () => {
+    const result = filterCredentialFields(CREDENTIAL_SCHEMA, "none");
+    const keys = result.groups[0].fields.map((f) => f.key);
+    expect(keys).not.toContain("password");
+    expect(keys).not.toContain("savePassword");
+    expect(keys).toContain("authMethod");
+    expect(keys).toContain("keyPath");
+  });
+
+  it("keeps all fields when mode is 'master_password'", () => {
+    const result = filterCredentialFields(CREDENTIAL_SCHEMA, "master_password");
+    const keys = result.groups[0].fields.map((f) => f.key);
+    expect(keys).toContain("password");
+    expect(keys).toContain("savePassword");
+  });
+
+  it("keeps all fields when mode is undefined", () => {
+    const result = filterCredentialFields(CREDENTIAL_SCHEMA, undefined);
+    const keys = result.groups[0].fields.map((f) => f.key);
+    expect(keys).toContain("password");
+    expect(keys).toContain("savePassword");
+  });
+
+  it("does not mutate the original schema", () => {
+    const original = JSON.parse(JSON.stringify(CREDENTIAL_SCHEMA));
+    filterCredentialFields(CREDENTIAL_SCHEMA, "none");
+    expect(CREDENTIAL_SCHEMA).toEqual(original);
+  });
+
+  it("handles schema with no credential fields gracefully", () => {
+    const schema: SettingsSchema = {
+      groups: [{ key: "conn", label: "Connection", fields: [textField("host")] }],
+    };
+    const result = filterCredentialFields(schema, "none");
+    expect(result.groups[0].fields.map((f) => f.key)).toEqual(["host"]);
   });
 });
 
