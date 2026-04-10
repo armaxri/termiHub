@@ -216,20 +216,26 @@ else
                 cross build --release --target "$target" -p termihub-agent 2>&1 \
                 | awk -v prefix="[$target] " '
                     {
-                        # Cargo uses \r (no \n) for in-place progress updates.
-                        # jemalloc output (which does have \n) therefore lands on
-                        # the same awk record as the preceding cargo progress text.
-                        # Replace \r with \n first so we can process each visual
-                        # line independently, then strip only the jemalloc portion.
+                        # \r in the stream is cargo'\''s in-place progress marker.
+                        # Replace with \n to split the record into visual segments,
+                        # then restore the in-place behaviour per segment type.
                         gsub(/\r/, "\n")
                         n = split($0, segs, "\n")
                         for (i = 1; i <= n; i++) {
                             seg = segs[i]
                             if (seg == "") continue
+                            # Strip jemalloc text fused with cargo progress
                             p = index(seg, "<jemalloc>:")
                             if (p > 0) seg = substr(seg, 1, p - 1)
-                            if (seg ~ /^[[:space:]]*$/) continue
-                            print prefix seg
+                            sub(/[[:space:]]+$/, "", seg)
+                            if (seg == "") continue
+                            # Progress lines (NNN: or NNN/NNN: crates…) overwrite
+                            # in place; everything else is a permanent new line.
+                            if (seg ~ /^[[:space:]]*[0-9]+(\/[0-9]+)?: /) {
+                                printf "\r%s%s", prefix, seg
+                            } else {
+                                printf "\r%s%s\n", prefix, seg
+                            }
                             fflush()
                         }
                     }
