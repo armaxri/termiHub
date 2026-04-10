@@ -9,6 +9,7 @@ import {
   DEFAULT_PORTS,
 } from "@/types/embeddedServer";
 import { listNetworkInterfaces } from "@/services/embeddedServerApi";
+import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 
 interface Props {
   open: boolean;
@@ -309,9 +310,8 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
                       </label>
                       <label className="server-dialog__label">
                         Password
-                        <input
+                        <PasswordInput
                           className="server-dialog__input"
-                          type="password"
                           value={ftpCreds.password}
                           onChange={(e) => {
                             const p = e.target.value;

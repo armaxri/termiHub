@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { setupMasterPassword, changeMasterPassword } from "@/services/api";
+import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import "./MasterPasswordSetup.css";
 
 type PasswordStrength = "weak" | "medium" | "strong";
@@ -107,10 +108,9 @@ export function MasterPasswordSetup({ open, onOpenChange, mode }: MasterPassword
               <label className="master-pw__label" htmlFor="master-pw-current">
                 Current Password
               </label>
-              <input
+              <PasswordInput
                 id="master-pw-current"
                 className="master-pw__input"
-                type="password"
                 value={currentPassword}
                 onChange={(e) => setCurrentPassword(e.target.value)}
                 placeholder="Current password"
@@ -124,10 +124,9 @@ export function MasterPasswordSetup({ open, onOpenChange, mode }: MasterPassword
             <label className="master-pw__label" htmlFor="master-pw-new">
               {mode === "setup" ? "Password" : "New Password"}
             </label>
-            <input
+            <PasswordInput
               id="master-pw-new"
               className="master-pw__input"
-              type="password"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
               placeholder={mode === "setup" ? "Password (min 8 characters)" : "New password"}
@@ -160,10 +159,9 @@ export function MasterPasswordSetup({ open, onOpenChange, mode }: MasterPassword
             <label className="master-pw__label" htmlFor="master-pw-confirm">
               Confirm Password
             </label>
-            <input
+            <PasswordInput
               id="master-pw-confirm"
               className="master-pw__input"
-              type="password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               placeholder="Confirm password"
