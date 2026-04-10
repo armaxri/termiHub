@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Cross-compile the remote agent (termihub-agent) for Linux targets (musl, static).
-# Uses cross-rs for all targets.
+# Uses cross-rs for all targets. Multiple targets are built in parallel by default,
+# each in its own CARGO_TARGET_DIR to avoid cargo's workspace build lock.
 #
-# Usage: ./scripts/build-agents.sh [--targets <list>] [--help]
+# Usage: ./scripts/build-agents.sh [--targets <list>] [--sequential] [--help]
 #
 # Run ./scripts/setup-agent-cross.sh first to install required toolchains.
 set -euo pipefail
@@ -15,6 +16,7 @@ ALL_TARGETS=(
     aarch64-unknown-linux-musl
 )
 SELECTED_TARGETS=()
+SEQUENTIAL=false
 
 # --- Argument parsing ---
 while [[ $# -gt 0 ]]; do
@@ -24,14 +26,20 @@ while [[ $# -gt 0 ]]; do
             IFS=',' read -ra SELECTED_TARGETS <<< "$1"
             shift
             ;;
+        --sequential)
+            SEQUENTIAL=true
+            shift
+            ;;
         --help|-h)
             cat <<'USAGE'
 Usage: build-agents.sh [OPTIONS]
 
 Cross-compile the remote agent for Linux targets (static musl binaries).
+Multiple targets are built in parallel by default.
 
 Options:
   --targets <list>   Comma-separated list of targets to build (default: all)
+  --sequential       Build targets one at a time (useful for debugging)
   --help, -h         Show this help message
 
 Targets:
@@ -41,6 +49,7 @@ Targets:
 Examples:
   ./scripts/build-agents.sh
   ./scripts/build-agents.sh --targets aarch64-unknown-linux-musl
+  ./scripts/build-agents.sh --sequential
 USAGE
             exit 0
             ;;
@@ -122,48 +131,162 @@ if [ "${#_missing_images[@]}" -gt 0 ]; then
 fi
 unset _container_cmd _missing_images _t _img
 
-# --- Build ---
-echo "=== Building agent for ${#SELECTED_TARGETS[@]} target(s) ==="
-echo ""
-
-built=0
-failed=0
-results=()
-
+# --- Ensure Rust targets are installed (before any parallel work starts) ---
 for target in "${SELECTED_TARGETS[@]}"; do
-    echo "--- $target ---"
-
-    # Ensure Rust target is installed
     if ! rustup target list --installed | grep -q "^${target}$"; then
         echo "  Adding Rust target $target..."
         rustup target add "$target"
     fi
+done
 
-    echo "  Building with cross-rs..."
-    # Pipe through grep to suppress the jemalloc/QEMU noise printed when running
-    # amd64 containers under emulation (Apple Silicon, Raspberry Pi, etc.).
-    # The { ... || true; } group always exits 0 so that pipefail only triggers
-    # on a non-zero exit from cross itself, not from grep filtering all lines.
-    if CROSS_CONFIG=agent/Cross.toml cross build --release --target "$target" -p termihub-agent 2>&1 \
-        | { grep -v "^<jemalloc>" || true; }; then
-        binary="target/$target/release/termihub-agent"
-        if [ -f "$binary" ]; then
-            size=$(du -h "$binary" | cut -f1)
-            results+=("  OK    $target  ($size)")
-            echo "  -> $binary ($size)"
-            built=$((built + 1))
+# --- Build ---
+built=0
+failed=0
+results=()
+
+if [ "$SEQUENTIAL" = true ] || [ "${#SELECTED_TARGETS[@]}" -le 1 ]; then
+    # ------------------------------------------------------------------ #
+    # Sequential build                                                     #
+    # ------------------------------------------------------------------ #
+    echo "=== Building agent for ${#SELECTED_TARGETS[@]} target(s) ==="
+    echo ""
+
+    for target in "${SELECTED_TARGETS[@]}"; do
+        echo "--- $target ---"
+        echo "  Building with cross-rs..."
+
+        build_exit=0
+        CROSS_CONFIG=agent/Cross.toml cross build --release --target "$target" -p termihub-agent 2>&1 \
+            | { grep -v "<jemalloc>:" || true; } \
+            || build_exit=$?
+
+        if [ "$build_exit" -eq 0 ]; then
+            binary="target/$target/release/termihub-agent"
+            if [ -f "$binary" ]; then
+                size=$(du -h "$binary" | cut -f1)
+                results+=("  OK    $target  ($size)")
+                echo "  -> $binary ($size)"
+                built=$((built + 1))
+            else
+                results+=("  FAIL  $target  (binary not found)")
+                echo "  FAILED: binary not found"
+                failed=$((failed + 1))
+            fi
         else
-            results+=("  FAIL  $target  (binary not found)")
-            echo "  FAILED: binary not found"
+            results+=("  FAIL  $target")
+            echo "  FAILED"
             failed=$((failed + 1))
         fi
-    else
-        results+=("  FAIL  $target")
-        echo "  FAILED"
-        failed=$((failed + 1))
-    fi
+        echo ""
+    done
+
+else
+    # ------------------------------------------------------------------ #
+    # Parallel build                                                       #
+    #                                                                      #
+    # Each target gets its own CARGO_TARGET_DIR so the builds don't       #
+    # contend on the workspace-level cargo build lock (target/.cargo-lock) #
+    # and can run in truly separate Docker containers simultaneously.      #
+    # Binaries are copied to target/<target>/release/ when done.          #
+    # ------------------------------------------------------------------ #
+    echo "=== Building agent for ${#SELECTED_TARGETS[@]} target(s) in parallel ==="
     echo ""
-done
+
+    # Parallel indexed arrays (bash 3.2 compatible — no declare -A needed).
+    # Index i matches SELECTED_TARGETS[i] throughout.
+    _pids=()
+    _cross_dirs=()
+    _exit_codes=()
+
+    for i in "${!SELECTED_TARGETS[@]}"; do
+        target="${SELECTED_TARGETS[$i]}"
+        cross_dir="target/cross/$target"
+        _cross_dirs[$i]=$cross_dir
+
+        # Stream output live with a [target] prefix so interleaved lines from
+        # concurrent builds are identifiable. A single awk replaces the former
+        # grep|sed two-stage pipe: when grep's stdout is a pipe (not a terminal)
+        # it switches to full block buffering, silencing output until the buffer
+        # fills. awk with fflush() flushes after every line regardless of whether
+        # stdout is a terminal or a pipe, keeping output immediate.
+        # The subshell inherits pipefail so cross's exit code propagates through
+        # the awk stage to the background job's exit status.
+        {
+            CARGO_TARGET_DIR="$cross_dir" CROSS_CONFIG=agent/Cross.toml \
+                cross build --release --target "$target" -p termihub-agent 2>&1 \
+                | awk -v prefix="[$target] " '
+                    {
+                        # \r in the stream is cargo'\''s in-place progress marker.
+                        # Replace with \n to split the record into visual segments,
+                        # then restore the in-place behaviour per segment type.
+                        gsub(/\r/, "\n")
+                        n = split($0, segs, "\n")
+                        for (i = 1; i <= n; i++) {
+                            seg = segs[i]
+                            if (seg == "") continue
+                            # Strip jemalloc text fused with cargo progress
+                            p = index(seg, "<jemalloc>:")
+                            if (p > 0) seg = substr(seg, 1, p - 1)
+                            sub(/[[:space:]]+$/, "", seg)
+                            if (seg == "") continue
+                            # Progress lines (NNN: or NNN/NNN: crates…) overwrite
+                            # in place; everything else is a permanent new line.
+                            if (seg ~ /^[[:space:]]*[0-9]+(\/[0-9]+)?: /) {
+                                printf "\r%s%s", prefix, seg
+                            } else {
+                                printf "\r%s%s\n", prefix, seg
+                            }
+                            fflush()
+                        }
+                    }
+                '
+        } &
+
+        _pids[$i]=$!
+        echo "  $target: building... (PID ${_pids[$i]})"
+    done
+    echo ""
+
+    # Wait for every build to finish and collect its exit code.
+    # By waiting in order we don't suppress streaming output from still-running
+    # targets — their output continues flowing while we block on an earlier wait.
+    for i in "${!SELECTED_TARGETS[@]}"; do
+        _exit_codes[$i]=0
+        wait "${_pids[$i]}" || _exit_codes[$i]=$?
+    done
+    echo ""
+
+    # All builds finished — print clean per-target results with no streaming mix.
+    for i in "${!SELECTED_TARGETS[@]}"; do
+        target="${SELECTED_TARGETS[$i]}"
+        echo "--- $target ---"
+
+        if [ "${_exit_codes[$i]}" -eq 0 ]; then
+            cross_dir="${_cross_dirs[$i]}"
+            src_binary="$cross_dir/$target/release/termihub-agent"
+            dst_dir="target/$target/release"
+            dst_binary="$dst_dir/termihub-agent"
+
+            if [ -f "$src_binary" ]; then
+                mkdir -p "$dst_dir"
+                cp "$src_binary" "$dst_binary"
+                size=$(du -h "$dst_binary" | cut -f1)
+                results+=("  OK    $target  ($size)")
+                echo "  -> $dst_binary ($size)"
+                built=$((built + 1))
+            else
+                results+=("  FAIL  $target  (binary not found)")
+                echo "  FAILED: binary not found"
+                failed=$((failed + 1))
+            fi
+        else
+            results+=("  FAIL  $target")
+            echo "  FAILED"
+            failed=$((failed + 1))
+        fi
+        echo ""
+    done
+fi
 
 # --- Summary ---
 echo "=== Summary ==="
