@@ -204,13 +204,18 @@ else
         _cross_dirs[$i]=$cross_dir
 
         # Stream output live with a [target] prefix so interleaved lines from
-        # concurrent builds are identifiable. The subshell inherits pipefail so
-        # cross's exit code propagates through the grep and sed stages.
+        # concurrent builds are identifiable. A single awk replaces the former
+        # grep|sed two-stage pipe: when grep's stdout is a pipe (not a terminal)
+        # it switches to full block buffering, silencing output until the buffer
+        # fills. awk with fflush() flushes after every line regardless of whether
+        # stdout is a terminal or a pipe, keeping output immediate.
+        # The subshell inherits pipefail so cross's exit code propagates through
+        # the awk stage to the background job's exit status.
         {
             CARGO_TARGET_DIR="$cross_dir" CROSS_CONFIG=agent/Cross.toml \
                 cross build --release --target "$target" -p termihub-agent 2>&1 \
-                | { grep -v "^<jemalloc>" || true; } \
-                | sed "s/^/[$target] /"
+                | awk -v prefix="[$target] " \
+                      '!/^<jemalloc>/ { print prefix $0; fflush() }'
         } &
 
         _pids[$i]=$!
