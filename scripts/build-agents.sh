@@ -140,7 +140,12 @@ for target in "${SELECTED_TARGETS[@]}"; do
     fi
 
     echo "  Building with cross-rs..."
-    if CROSS_CONFIG=agent/Cross.toml cross build --release --target "$target" -p termihub-agent 2>&1; then
+    # Pipe through grep to suppress the jemalloc/QEMU noise printed when running
+    # amd64 containers under emulation (Apple Silicon, Raspberry Pi, etc.).
+    # The { ... || true; } group always exits 0 so that pipefail only triggers
+    # on a non-zero exit from cross itself, not from grep filtering all lines.
+    if CROSS_CONFIG=agent/Cross.toml cross build --release --target "$target" -p termihub-agent 2>&1 \
+        | { grep -v "^<jemalloc>" || true; }; then
         binary="target/$target/release/termihub-agent"
         if [ -f "$binary" ]; then
             size=$(du -h "$binary" | cut -f1)
