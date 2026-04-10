@@ -195,43 +195,44 @@ else
     # Parallel indexed arrays (bash 3.2 compatible — no declare -A needed).
     # Index i matches SELECTED_TARGETS[i] throughout.
     _pids=()
-    _tmpfiles=()
     _cross_dirs=()
-    _tmpfile_list=()
-
-    # Clean up temp files on exit (normal or interrupted)
-    trap 'rm -f "${_tmpfile_list[@]:-}"' EXIT
+    _exit_codes=()
 
     for i in "${!SELECTED_TARGETS[@]}"; do
         target="${SELECTED_TARGETS[$i]}"
         cross_dir="target/cross/$target"
         _cross_dirs[$i]=$cross_dir
 
-        tmpfile=$(mktemp)
-        _tmpfiles[$i]=$tmpfile
-        _tmpfile_list+=("$tmpfile")
-
+        # Stream output live with a [target] prefix so interleaved lines from
+        # concurrent builds are identifiable. The subshell inherits pipefail so
+        # cross's exit code propagates through the grep and sed stages.
         {
             CARGO_TARGET_DIR="$cross_dir" CROSS_CONFIG=agent/Cross.toml \
                 cross build --release --target "$target" -p termihub-agent 2>&1 \
-                | { grep -v "^<jemalloc>" || true; }
-        } > "$tmpfile" &
+                | { grep -v "^<jemalloc>" || true; } \
+                | sed "s/^/[$target] /"
+        } &
 
         _pids[$i]=$!
         echo "  $target: building... (PID ${_pids[$i]})"
     done
     echo ""
 
+    # Wait for every build to finish and collect its exit code.
+    # By waiting in order we don't suppress streaming output from still-running
+    # targets — their output continues flowing while we block on an earlier wait.
+    for i in "${!SELECTED_TARGETS[@]}"; do
+        _exit_codes[$i]=0
+        wait "${_pids[$i]}" || _exit_codes[$i]=$?
+    done
+    echo ""
+
+    # All builds finished — print clean per-target results with no streaming mix.
     for i in "${!SELECTED_TARGETS[@]}"; do
         target="${SELECTED_TARGETS[$i]}"
         echo "--- $target ---"
 
-        build_exit=0
-        wait "${_pids[$i]}" || build_exit=$?
-
-        cat "${_tmpfiles[$i]}"
-
-        if [ "$build_exit" -eq 0 ]; then
+        if [ "${_exit_codes[$i]}" -eq 0 ]; then
             cross_dir="${_cross_dirs[$i]}"
             src_binary="$cross_dir/$target/release/termihub-agent"
             dst_dir="target/$target/release"
