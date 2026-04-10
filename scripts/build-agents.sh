@@ -62,15 +62,65 @@ if ! command -v cross >/dev/null 2>&1; then
     exit 1
 fi
 
-# If Podman is the container engine (explicit override or auto-detected), disable
-# cross-rs rootless handling.  Without this, cross-rs adds --user UID:GID to the
-# podman run command which causes the injected cargo/rustc toolchain to be
-# non-executable inside the container ("Permission denied").
-if [ "${CROSS_CONTAINER_ENGINE:-}" = "podman" ] || \
-   ( [ -z "${CROSS_CONTAINER_ENGINE:-}" ] && ! docker info >/dev/null 2>&1 && podman info >/dev/null 2>&1 ); then
-    export CROSS_CONTAINER_ENGINE=podman
+# --- Container engine detection ---
+# Auto-detect which engine to use, preferring the one that already has the
+# required cross-compilation images.  If Podman is selected, disable cross-rs
+# rootless handling — without CROSS_ROOTLESS_CONTAINER_ENGINE=false, cross-rs
+# adds --user UID:GID to the `podman run` command which makes the injected
+# cargo/rustc toolchain non-executable inside the container ("Permission denied").
+if [ "${CROSS_CONTAINER_ENGINE:-}" = "podman" ]; then
+    # Explicit override: use Podman
     export CROSS_ROOTLESS_CONTAINER_ENGINE=false
+elif [ -z "${CROSS_CONTAINER_ENGINE:-}" ]; then
+    docker_running=false
+    podman_running=false
+    docker info >/dev/null 2>&1 && docker_running=true || true
+    command -v podman >/dev/null 2>&1 && podman info >/dev/null 2>&1 && podman_running=true || true
+
+    if ! $docker_running && ! $podman_running; then
+        echo "ERROR: No running container runtime found (Docker or Podman)."
+        echo "  cross-rs requires Docker or Podman. Start one and re-run."
+        exit 1
+    elif ! $docker_running && $podman_running; then
+        export CROSS_CONTAINER_ENGINE=podman
+        export CROSS_ROOTLESS_CONTAINER_ENGINE=false
+    elif $docker_running && $podman_running; then
+        # Both available — prefer the engine that already has the required images
+        images_in_docker=0
+        images_in_podman=0
+        for _t in "${SELECTED_TARGETS[@]}"; do
+            docker image inspect "localhost/termihub-cross:$_t" >/dev/null 2>&1 \
+                && images_in_docker=$((images_in_docker + 1)) || true
+            podman image inspect "localhost/termihub-cross:$_t" >/dev/null 2>&1 \
+                && images_in_podman=$((images_in_podman + 1)) || true
+        done
+        if [ "$images_in_podman" -gt "$images_in_docker" ]; then
+            export CROSS_CONTAINER_ENGINE=podman
+            export CROSS_ROOTLESS_CONTAINER_ENGINE=false
+        fi
+        # else: Docker is running and has the images (or neither does — checked below)
+    fi
+    # else: only Docker is running — use it (default, no override needed)
 fi
+
+# --- Pre-flight: verify required images exist in the selected engine ---
+_container_cmd="${CROSS_CONTAINER_ENGINE:-docker}"
+_missing_images=()
+for _t in "${SELECTED_TARGETS[@]}"; do
+    if ! "$_container_cmd" image inspect "localhost/termihub-cross:$_t" >/dev/null 2>&1; then
+        _missing_images+=("localhost/termihub-cross:$_t")
+    fi
+done
+if [ "${#_missing_images[@]}" -gt 0 ]; then
+    echo "ERROR: The following cross-compilation image(s) are missing from $_container_cmd:"
+    for _img in "${_missing_images[@]}"; do
+        echo "  $_img"
+    done
+    echo ""
+    echo "Run ./scripts/setup-agent-cross.sh to build the required images, then retry."
+    exit 1
+fi
+unset _container_cmd _missing_images _t _img
 
 # --- Build ---
 echo "=== Building agent for ${#SELECTED_TARGETS[@]} target(s) ==="
@@ -90,7 +140,12 @@ for target in "${SELECTED_TARGETS[@]}"; do
     fi
 
     echo "  Building with cross-rs..."
-    if CROSS_CONFIG=agent/Cross.toml cross build --release --target "$target" -p termihub-agent 2>&1; then
+    # Pipe through grep to suppress the jemalloc/QEMU noise printed when running
+    # amd64 containers under emulation (Apple Silicon, Raspberry Pi, etc.).
+    # The { ... || true; } group always exits 0 so that pipefail only triggers
+    # on a non-zero exit from cross itself, not from grep filtering all lines.
+    if CROSS_CONFIG=agent/Cross.toml cross build --release --target "$target" -p termihub-agent 2>&1 \
+        | { grep -v "^<jemalloc>" || true; }; then
         binary="target/$target/release/termihub-agent"
         if [ -f "$binary" ]; then
             size=$(du -h "$binary" | cut -f1)
