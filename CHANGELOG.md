@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Terminal: `lineHeight` is now a user-configurable setting (0.8–2.0) in Appearance Settings, also available per-tab via `TerminalOptions` (#579)
+- UI: all password input fields now have a show/hide toggle (eye icon) on the right side, allowing users to verify what they typed before submitting
 
 ### Changed
 
