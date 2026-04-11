@@ -2,10 +2,15 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 use anyhow::Result;
+use tauri::{AppHandle, Emitter};
+use tracing::warn;
 
 use super::auto_lock::AutoLockTimer;
 use super::types::{CredentialKey, CredentialStoreStatus, StorageMode};
 use super::{CredentialStore, MasterPasswordStore, NullStore};
+
+/// Event emitted when a credential is requested but the store is locked.
+const EVENT_STORE_UNLOCK_NEEDED: &str = "credential-store-unlock-needed";
 
 /// Internal storage backend enum, allowing direct access to
 /// backend-specific methods without trait-object downcasting.
@@ -24,6 +29,7 @@ pub struct CredentialManager {
     inner: RwLock<StoreBackend>,
     config_dir: PathBuf,
     auto_lock_timer: RwLock<Option<Arc<AutoLockTimer>>>,
+    app_handle: RwLock<Option<AppHandle>>,
 }
 
 impl CredentialManager {
@@ -37,6 +43,7 @@ impl CredentialManager {
             inner: RwLock::new(backend),
             config_dir,
             auto_lock_timer: RwLock::new(None),
+            app_handle: RwLock::new(None),
         }
     }
 
@@ -120,6 +127,23 @@ impl CredentialManager {
         }
     }
 
+    /// Set the app handle used for emitting events.
+    pub fn set_app_handle(&self, handle: AppHandle) {
+        let mut guard = self.app_handle.write().expect("app_handle lock poisoned");
+        *guard = Some(handle);
+    }
+
+    /// Emit the unlock-needed event so the UI can prompt the user.
+    fn emit_unlock_needed(&self) {
+        if let Ok(guard) = self.app_handle.read() {
+            if let Some(ref handle) = *guard {
+                if let Err(e) = handle.emit(EVENT_STORE_UNLOCK_NEEDED, ()) {
+                    warn!("Failed to emit {EVENT_STORE_UNLOCK_NEEDED}: {e}");
+                }
+            }
+        }
+    }
+
     /// Record credential activity on the auto-lock timer.
     fn record_activity(&self) {
         if let Ok(guard) = self.auto_lock_timer.read() {
@@ -144,12 +168,19 @@ impl CredentialManager {
 impl CredentialStore for CredentialManager {
     fn get(&self, key: &CredentialKey) -> Result<Option<String>> {
         let inner = self.inner.read().expect("credential manager lock poisoned");
+        let is_master_password_mode = matches!(*inner, StoreBackend::MasterPassword(_));
         let result = match *inner {
             StoreBackend::Null(ref s) => s.get(key),
             StoreBackend::MasterPassword(ref s) => s.get(key),
         };
         drop(inner);
-        self.record_activity();
+        if result.is_err() && is_master_password_mode {
+            // Credential access failed — almost certainly because the store is locked.
+            // Notify the UI so it can prompt the user to unlock on demand.
+            self.emit_unlock_needed();
+        } else {
+            self.record_activity();
+        }
         result
     }
 
@@ -266,6 +297,22 @@ mod tests {
         let key = CredentialKey::new("conn-1", CredentialType::Password);
         mgr.set(&key, "my-secret").unwrap();
         assert_eq!(mgr.get(&key).unwrap(), Some("my-secret".to_string()));
+    }
+
+    #[test]
+    fn get_on_locked_store_returns_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = CredentialManager::new(StorageMode::MasterPassword, dir.path().to_path_buf());
+
+        // Set up and then lock the master password store
+        mgr.with_master_password_store(|s| s.setup("test-pw"))
+            .unwrap()
+            .unwrap();
+        mgr.with_master_password_store(|s| s.lock()).unwrap();
+
+        let key = CredentialKey::new("conn-1", CredentialType::Password);
+        // get() must fail when locked; without an app_handle the emit is silently skipped
+        assert!(mgr.get(&key).is_err());
     }
 
     #[test]

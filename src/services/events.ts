@@ -348,6 +348,13 @@ export async function onCredentialStoreStatusChanged(
   });
 }
 
+/** Subscribe to credential store unlock-needed events (fired when a credential is requested while locked). */
+export async function onCredentialStoreUnlockNeeded(callback: () => void): Promise<UnlistenFn> {
+  return await listen("credential-store-unlock-needed", () => {
+    callback();
+  });
+}
+
 /** Subscribe to embedded server status change events. */
 export async function onEmbeddedServerStatusChanged(
   callback: (state: ServerState) => void

@@ -6,6 +6,7 @@ vi.mock("@/services/events", () => ({
   onCredentialStoreLocked: vi.fn(),
   onCredentialStoreUnlocked: vi.fn(),
   onCredentialStoreStatusChanged: vi.fn(),
+  onCredentialStoreUnlockNeeded: vi.fn(),
 }));
 
 vi.mock("@/services/storage", () => ({
@@ -43,6 +44,7 @@ import {
   onCredentialStoreLocked,
   onCredentialStoreUnlocked,
   onCredentialStoreStatusChanged,
+  onCredentialStoreUnlockNeeded,
 } from "@/services/events";
 import { useAppStore } from "@/store/appStore";
 import { useCredentialStoreEvents } from "./useCredentialStoreEvents";
@@ -50,6 +52,7 @@ import { useCredentialStoreEvents } from "./useCredentialStoreEvents";
 const mockOnLocked = vi.mocked(onCredentialStoreLocked);
 const mockOnUnlocked = vi.mocked(onCredentialStoreUnlocked);
 const mockOnStatusChanged = vi.mocked(onCredentialStoreStatusChanged);
+const mockOnUnlockNeeded = vi.mocked(onCredentialStoreUnlockNeeded);
 
 function HookConsumer() {
   useCredentialStoreEvents();
@@ -62,9 +65,11 @@ describe("useCredentialStoreEvents", () => {
   let lockedHandler: (() => void) | undefined;
   let unlockedHandler: (() => void) | undefined;
   let statusChangedHandler: ((status: unknown) => void) | undefined;
+  let unlockNeededHandler: (() => void) | undefined;
   const unlistenLocked = vi.fn();
   const unlistenUnlocked = vi.fn();
   const unlistenStatusChanged = vi.fn();
+  const unlistenUnlockNeeded = vi.fn();
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -82,6 +87,10 @@ describe("useCredentialStoreEvents", () => {
       statusChangedHandler = cb as (status: unknown) => void;
       return Promise.resolve(unlistenStatusChanged);
     });
+    mockOnUnlockNeeded.mockImplementation((cb) => {
+      unlockNeededHandler = cb;
+      return Promise.resolve(unlistenUnlockNeeded);
+    });
 
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -93,7 +102,7 @@ describe("useCredentialStoreEvents", () => {
     container.remove();
   });
 
-  it("registers all three event listeners on mount", async () => {
+  it("registers all four event listeners on mount", async () => {
     await act(async () => {
       root.render(createElement(HookConsumer));
     });
@@ -101,9 +110,10 @@ describe("useCredentialStoreEvents", () => {
     expect(mockOnLocked).toHaveBeenCalledTimes(1);
     expect(mockOnUnlocked).toHaveBeenCalledTimes(1);
     expect(mockOnStatusChanged).toHaveBeenCalledTimes(1);
+    expect(mockOnUnlockNeeded).toHaveBeenCalledTimes(1);
   });
 
-  it("opens unlock dialog when locked event fires", async () => {
+  it("does NOT open unlock dialog when locked event fires (auto-lock is silent)", async () => {
     await act(async () => {
       root.render(createElement(HookConsumer));
     });
@@ -114,6 +124,20 @@ describe("useCredentialStoreEvents", () => {
       lockedHandler?.();
     });
 
+    expect(useAppStore.getState().unlockDialogOpen).toBe(false);
+  });
+
+  it("opens unlock dialog when unlock-needed event fires", async () => {
+    await act(async () => {
+      root.render(createElement(HookConsumer));
+    });
+
+    expect(useAppStore.getState().unlockDialogOpen).toBe(false);
+
+    await act(async () => {
+      unlockNeededHandler?.();
+    });
+
     expect(useAppStore.getState().unlockDialogOpen).toBe(true);
   });
 
@@ -122,13 +146,13 @@ describe("useCredentialStoreEvents", () => {
       root.render(createElement(HookConsumer));
     });
 
-    // First open it
+    // Open it via the unlock-needed event (demand-driven)
     await act(async () => {
-      lockedHandler?.();
+      unlockNeededHandler?.();
     });
     expect(useAppStore.getState().unlockDialogOpen).toBe(true);
 
-    // Then close it
+    // Then close it when the store is unlocked
     await act(async () => {
       unlockedHandler?.();
     });
@@ -161,5 +185,6 @@ describe("useCredentialStoreEvents", () => {
     expect(unlistenLocked).toHaveBeenCalledTimes(1);
     expect(unlistenUnlocked).toHaveBeenCalledTimes(1);
     expect(unlistenStatusChanged).toHaveBeenCalledTimes(1);
+    expect(unlistenUnlockNeeded).toHaveBeenCalledTimes(1);
   });
 });
