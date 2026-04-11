@@ -106,7 +106,12 @@ import {
   deleteWorkspace as apiDeleteWorkspace,
   duplicateWorkspace as apiDuplicateWorkspace,
 } from "@/services/workspaceApi";
-import { buildTabGroupsFromWorkspace, captureAllTabGroups } from "@/utils/workspaceLayout";
+import {
+  buildTabGroupsFromWorkspace,
+  captureAllTabGroups,
+  getWorkspaceLeaves,
+} from "@/utils/workspaceLayout";
+import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { SystemStats } from "@/types/monitoring";
 import { applyTheme, onThemeChange } from "@/themes";
 import { setOverrides as setKeybindingOverrides } from "@/services/keybindings";
@@ -2634,9 +2639,62 @@ export const useAppStore = create<AppState>((set, get) => {
       try {
         const definition = await apiLoadWorkspace(workspaceId);
         const state = get();
+
+        // Collect every tab def referenced in this workspace once.
+        const allTabDefs = definition.tabGroups.flatMap((g) =>
+          getWorkspaceLeaves(g.layout).flatMap((leaf) => leaf.tabs)
+        );
+
+        // Before opening any tabs, check whether the credential store needs to be
+        // unlocked for any connection in this workspace. If so, prompt once upfront
+        // so that all tabs can connect immediately after unlock rather than failing
+        // and prompting individually.
+        const credStatus = state.credentialStoreStatus;
+        if (credStatus?.mode === "master_password" && credStatus?.status === "locked") {
+          const needsStoredCredential = allTabDefs.some((tabDef) => {
+            if (!tabDef.connectionRef) return false;
+            const saved = state.connections.find((c) => c.id === tabDef.connectionRef);
+            if (!saved) return false;
+            const cfg = saved.config.config as Record<string, unknown>;
+            const authMethod = cfg.authMethod as string | undefined;
+            const savePassword = cfg.savePassword as boolean | undefined;
+            return authMethod === "password" || (authMethod === "key" && savePassword);
+          });
+          if (needsStoredCredential) {
+            const unlocked = await get().requestUnlock();
+            if (!unlocked) return;
+          }
+        }
+
+        // After the store is unlocked (or was already unlocked), resolve stored
+        // credentials for all referenced connections. Inject resolved passwords
+        // into the connection configs so that Terminal.tsx can connect immediately
+        // without the backend having to prompt interactively.
+        const referencedIds = new Set(
+          allTabDefs.filter((t) => t.connectionRef).map((t) => t.connectionRef!)
+        );
+        const resolvedConnections = await Promise.all(
+          state.connections.map(async (conn) => {
+            if (!referencedIds.has(conn.id)) return conn;
+            const cfg = conn.config.config as Record<string, unknown>;
+            const authMethod = cfg.authMethod as string | undefined;
+            const savePassword = cfg.savePassword as boolean | undefined;
+            if (!authMethod) return conn;
+            const resolution = await resolveConnectionCredential(conn.id, authMethod, savePassword);
+            if (!resolution.usedStoredCredential || !resolution.password) return conn;
+            return {
+              ...conn,
+              config: {
+                ...conn.config,
+                config: { ...cfg, password: resolution.password },
+              },
+            };
+          })
+        );
+
         const builtGroups = buildTabGroupsFromWorkspace(
           definition.tabGroups,
-          state.connections,
+          resolvedConnections,
           state.defaultShell
         );
         if (builtGroups.length === 0) return;
