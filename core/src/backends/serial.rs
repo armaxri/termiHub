@@ -155,6 +155,7 @@ impl ConnectionType for Serial {
                         description: Some(
                             "Serial port device name (e.g., COM3, /dev/ttyUSB0)".to_string(),
                         ),
+                        help_text: None,
                         field_type: FieldType::Text,
                         required: true,
                         default: None,
@@ -171,6 +172,7 @@ impl ConnectionType for Serial {
                         key: "baudRate".to_string(),
                         label: "Baud Rate".to_string(),
                         description: Some("Communication speed".to_string()),
+                        help_text: None,
                         field_type: FieldType::Select {
                             options: baud_rate_options(),
                         },
@@ -185,6 +187,7 @@ impl ConnectionType for Serial {
                         key: "dataBits".to_string(),
                         label: "Data Bits".to_string(),
                         description: None,
+                        help_text: None,
                         field_type: FieldType::Select {
                             options: data_bits_options(),
                         },
@@ -199,6 +202,7 @@ impl ConnectionType for Serial {
                         key: "stopBits".to_string(),
                         label: "Stop Bits".to_string(),
                         description: None,
+                        help_text: None,
                         field_type: FieldType::Select {
                             options: stop_bits_options(),
                         },
@@ -213,6 +217,7 @@ impl ConnectionType for Serial {
                         key: "parity".to_string(),
                         label: "Parity".to_string(),
                         description: None,
+                        help_text: None,
                         field_type: FieldType::Select {
                             options: parity_options(),
                         },
@@ -227,6 +232,7 @@ impl ConnectionType for Serial {
                         key: "flowControl".to_string(),
                         label: "Flow Control".to_string(),
                         description: None,
+                        help_text: None,
                         field_type: FieldType::Select {
                             options: flow_control_options(),
                         },

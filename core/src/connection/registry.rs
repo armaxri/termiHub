@@ -170,6 +170,7 @@ mod tests {
                         key: "host".to_string(),
                         label: "Host".to_string(),
                         description: None,
+                        help_text: None,
                         field_type: FieldType::Text,
                         required: true,
                         default: None,

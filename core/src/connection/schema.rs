@@ -40,6 +40,10 @@ pub struct SettingsField {
     /// Optional help text shown below the field.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Optional extended help text shown in a dialog when the user clicks
+    /// the help icon (?) next to the field. Supports multi-line plain text.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub help_text: Option<String>,
     /// The input type and any type-specific constraints.
     pub field_type: FieldType,
     /// Whether this field must have a value before connecting.
@@ -154,6 +158,7 @@ mod tests {
                             key: "host".to_string(),
                             label: "Hostname".to_string(),
                             description: Some("SSH server address".to_string()),
+                            help_text: None,
                             field_type: FieldType::Text,
                             required: true,
                             default: None,
@@ -166,6 +171,7 @@ mod tests {
                             key: "port".to_string(),
                             label: "Port".to_string(),
                             description: None,
+                            help_text: None,
                             field_type: FieldType::Port,
                             required: true,
                             default: Some(serde_json::json!(22)),
@@ -184,6 +190,7 @@ mod tests {
                             key: "authMethod".to_string(),
                             label: "Auth Method".to_string(),
                             description: None,
+                            help_text: None,
                             field_type: FieldType::Select {
                                 options: vec![
                                     SelectOption {
@@ -207,6 +214,7 @@ mod tests {
                             key: "keyPath".to_string(),
                             label: "Key Path".to_string(),
                             description: None,
+                            help_text: None,
                             field_type: FieldType::FilePath {
                                 kind: FilePathKind::File,
                             },
@@ -224,6 +232,7 @@ mod tests {
                             key: "password".to_string(),
                             label: "Password".to_string(),
                             description: None,
+                            help_text: None,
                             field_type: FieldType::Password,
                             required: false,
                             default: None,
@@ -332,6 +341,7 @@ mod tests {
                 key: "name".to_string(),
                 label: "Name".to_string(),
                 description: None,
+                help_text: None,
                 field_type: FieldType::Text,
                 required: true,
                 default: None,
@@ -380,6 +390,7 @@ mod tests {
             key: "host".to_string(),
             label: "Host".to_string(),
             description: None,
+            help_text: None,
             field_type: FieldType::Text,
             required: true,
             default: None,
@@ -391,6 +402,7 @@ mod tests {
         let json = serde_json::to_value(&field).unwrap();
         let obj = json.as_object().unwrap();
         assert!(!obj.contains_key("description"));
+        assert!(!obj.contains_key("helpText"));
         assert!(!obj.contains_key("default"));
         assert!(!obj.contains_key("placeholder"));
         assert!(!obj.contains_key("visibleWhen"));
@@ -402,6 +414,7 @@ mod tests {
             key: "keyPath".to_string(),
             label: "Key Path".to_string(),
             description: Some("Path to key".to_string()),
+            help_text: None,
             field_type: FieldType::Text,
             required: true,
             default: None,
@@ -445,12 +458,14 @@ mod tests {
                     key: "volumes".to_string(),
                     label: "Volumes".to_string(),
                     description: None,
+                    help_text: None,
                     field_type: FieldType::ObjectList {
                         fields: vec![
                             SettingsField {
                                 key: "hostPath".to_string(),
                                 label: "Host Path".to_string(),
                                 description: None,
+                                help_text: None,
                                 field_type: FieldType::FilePath {
                                     kind: FilePathKind::Directory,
                                 },
@@ -465,6 +480,7 @@ mod tests {
                                 key: "containerPath".to_string(),
                                 label: "Container Path".to_string(),
                                 description: None,
+                                help_text: None,
                                 field_type: FieldType::Text,
                                 required: true,
                                 default: None,
@@ -477,6 +493,7 @@ mod tests {
                                 key: "readOnly".to_string(),
                                 label: "Read Only".to_string(),
                                 description: None,
+                                help_text: None,
                                 field_type: FieldType::Boolean,
                                 required: false,
                                 default: Some(serde_json::json!(false)),

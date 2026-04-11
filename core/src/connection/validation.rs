@@ -232,6 +232,7 @@ mod tests {
             key: key.to_string(),
             label: key.to_string(),
             description: None,
+            help_text: None,
             field_type: FieldType::Text,
             required: true,
             default: None,
@@ -303,6 +304,7 @@ mod tests {
             key: "rate".to_string(),
             label: "Rate".to_string(),
             description: None,
+            help_text: None,
             field_type: FieldType::Number {
                 min: Some(1.0),
                 max: Some(100.0),
@@ -327,6 +329,7 @@ mod tests {
             key: "rate".to_string(),
             label: "Rate".to_string(),
             description: None,
+            help_text: None,
             field_type: FieldType::Number {
                 min: None,
                 max: Some(100.0),
@@ -351,6 +354,7 @@ mod tests {
             key: "rate".to_string(),
             label: "Rate".to_string(),
             description: None,
+            help_text: None,
             field_type: FieldType::Number {
                 min: Some(1.0),
                 max: Some(100.0),
@@ -374,6 +378,7 @@ mod tests {
             key: "rate".to_string(),
             label: "Rate".to_string(),
             description: None,
+            help_text: None,
             field_type: FieldType::Number {
                 min: None,
                 max: None,
@@ -398,6 +403,7 @@ mod tests {
             key: "enabled".to_string(),
             label: "Enabled".to_string(),
             description: None,
+            help_text: None,
             field_type: FieldType::Boolean,
             required: true,
             default: None,
@@ -419,6 +425,7 @@ mod tests {
             key: "enabled".to_string(),
             label: "Enabled".to_string(),
             description: None,
+            help_text: None,
             field_type: FieldType::Boolean,
             required: true,
             default: None,
@@ -439,6 +446,7 @@ mod tests {
             key: "auth".to_string(),
             label: "Auth".to_string(),
             description: None,
+            help_text: None,
             field_type: FieldType::Select {
                 options: vec![
                     SelectOption {
@@ -471,6 +479,7 @@ mod tests {
             key: "auth".to_string(),
             label: "Auth".to_string(),
             description: None,
+            help_text: None,
             field_type: FieldType::Select {
                 options: vec![SelectOption {
                     value: "key".to_string(),
@@ -496,6 +505,7 @@ mod tests {
             key: "auth".to_string(),
             label: "Auth".to_string(),
             description: None,
+            help_text: None,
             field_type: FieldType::Select {
                 options: vec![SelectOption {
                     value: "key".to_string(),
@@ -522,6 +532,7 @@ mod tests {
             key: "port".to_string(),
             label: "Port".to_string(),
             description: None,
+            help_text: None,
             field_type: FieldType::Port,
             required: true,
             default: None,
@@ -543,6 +554,7 @@ mod tests {
             key: "port".to_string(),
             label: "Port".to_string(),
             description: None,
+            help_text: None,
             field_type: FieldType::Port,
             required: true,
             default: None,
@@ -564,6 +576,7 @@ mod tests {
             key: "port".to_string(),
             label: "Port".to_string(),
             description: None,
+            help_text: None,
             field_type: FieldType::Port,
             required: true,
             default: None,
@@ -584,6 +597,7 @@ mod tests {
             key: "port".to_string(),
             label: "Port".to_string(),
             description: None,
+            help_text: None,
             field_type: FieldType::Port,
             required: true,
             default: None,
@@ -605,6 +619,7 @@ mod tests {
             key: "path".to_string(),
             label: "Path".to_string(),
             description: None,
+            help_text: None,
             field_type: FieldType::FilePath {
                 kind: FilePathKind::File,
             },
@@ -629,6 +644,7 @@ mod tests {
                 key: "auth".to_string(),
                 label: "Auth".to_string(),
                 description: None,
+                help_text: None,
                 field_type: FieldType::Select {
                     options: vec![
                         SelectOption {
@@ -652,6 +668,7 @@ mod tests {
                 key: "password".to_string(),
                 label: "Password".to_string(),
                 description: None,
+                help_text: None,
                 field_type: FieldType::Password,
                 required: true,
                 default: None,
@@ -679,6 +696,7 @@ mod tests {
                 key: "auth".to_string(),
                 label: "Auth".to_string(),
                 description: None,
+                help_text: None,
                 field_type: FieldType::Select {
                     options: vec![SelectOption {
                         value: "password".to_string(),
@@ -696,6 +714,7 @@ mod tests {
                 key: "password".to_string(),
                 label: "Password".to_string(),
                 description: None,
+                help_text: None,
                 field_type: FieldType::Password,
                 required: true,
                 default: None,
@@ -724,6 +743,7 @@ mod tests {
             key: "env".to_string(),
             label: "Env".to_string(),
             description: None,
+            help_text: None,
             field_type: FieldType::KeyValueList,
             required: false,
             default: None,
@@ -749,6 +769,7 @@ mod tests {
             key: "env".to_string(),
             label: "Env".to_string(),
             description: None,
+            help_text: None,
             field_type: FieldType::KeyValueList,
             required: false,
             default: None,
@@ -772,6 +793,7 @@ mod tests {
             key: "env".to_string(),
             label: "Env".to_string(),
             description: None,
+            help_text: None,
             field_type: FieldType::KeyValueList,
             required: false,
             default: None,
@@ -793,12 +815,14 @@ mod tests {
             key: "volumes".to_string(),
             label: "Volumes".to_string(),
             description: None,
+            help_text: None,
             field_type: FieldType::ObjectList {
                 fields: vec![
                     SettingsField {
                         key: "hostPath".to_string(),
                         label: "Host Path".to_string(),
                         description: None,
+                        help_text: None,
                         field_type: FieldType::Text,
                         required: true,
                         default: None,
@@ -811,6 +835,7 @@ mod tests {
                         key: "containerPath".to_string(),
                         label: "Container Path".to_string(),
                         description: None,
+                        help_text: None,
                         field_type: FieldType::Text,
                         required: true,
                         default: None,
@@ -847,6 +872,7 @@ mod tests {
             key: "volumes".to_string(),
             label: "Volumes".to_string(),
             description: None,
+            help_text: None,
             field_type: FieldType::ObjectList { fields: vec![] },
             required: false,
             default: None,
@@ -875,6 +901,7 @@ mod tests {
                             key: "port".to_string(),
                             label: "Port".to_string(),
                             description: None,
+                            help_text: None,
                             field_type: FieldType::Port,
                             required: true,
                             default: None,
@@ -887,6 +914,7 @@ mod tests {
                             key: "enabled".to_string(),
                             label: "Enabled".to_string(),
                             description: None,
+                            help_text: None,
                             field_type: FieldType::Boolean,
                             required: true,
                             default: None,
@@ -904,6 +932,7 @@ mod tests {
                         key: "password".to_string(),
                         label: "Password".to_string(),
                         description: None,
+                        help_text: None,
                         field_type: FieldType::Password,
                         required: false,
                         default: None,
@@ -949,6 +978,7 @@ mod tests {
             key: "pass".to_string(),
             label: "Pass".to_string(),
             description: None,
+            help_text: None,
             field_type: FieldType::Password,
             required: true,
             default: None,

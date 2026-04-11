@@ -326,6 +326,7 @@ impl ConnectionType for Docker {
                             description: Some(
                                 "Docker image to use (e.g., ubuntu:22.04)".to_string(),
                             ),
+                            help_text: None,
                             field_type: FieldType::Text,
                             required: true,
                             default: None,
@@ -341,6 +342,7 @@ impl ConnectionType for Docker {
                                 "Shell to use inside the container (leave empty for /bin/sh)"
                                     .to_string(),
                             ),
+                            help_text: None,
                             field_type: FieldType::Text,
                             required: false,
                             default: None,
@@ -355,6 +357,7 @@ impl ConnectionType for Docker {
                             description: Some(
                                 "Initial working directory inside the container".to_string(),
                             ),
+                            help_text: None,
                             field_type: FieldType::Text,
                             required: false,
                             default: None,
@@ -369,6 +372,7 @@ impl ConnectionType for Docker {
                             description: Some(
                                 "Remove the container when the session is closed".to_string(),
                             ),
+                            help_text: None,
                             field_type: FieldType::Boolean,
                             required: false,
                             default: Some(serde_json::json!(true)),
@@ -384,6 +388,7 @@ impl ConnectionType for Docker {
                                 "Container runtime to use (Auto detects Docker or Podman)"
                                     .to_string(),
                             ),
+                            help_text: None,
                             field_type: FieldType::Select {
                                 options: vec![
                                     SelectOption {
@@ -419,6 +424,7 @@ impl ConnectionType for Docker {
                             description: Some(
                                 "Environment variables to set inside the container".to_string(),
                             ),
+                            help_text: None,
                             field_type: FieldType::KeyValueList,
                             required: false,
                             default: None,
@@ -431,12 +437,14 @@ impl ConnectionType for Docker {
                             key: "volumes".to_string(),
                             label: "Volumes".to_string(),
                             description: Some("Volume mounts from host to container".to_string()),
+                            help_text: None,
                             field_type: FieldType::ObjectList {
                                 fields: vec![
                                     SettingsField {
                                         key: "hostPath".to_string(),
                                         label: "Host Path".to_string(),
                                         description: Some("Path on the host machine".to_string()),
+                                        help_text: None,
                                         field_type: FieldType::Text,
                                         required: true,
                                         default: None,
@@ -449,6 +457,7 @@ impl ConnectionType for Docker {
                                         key: "containerPath".to_string(),
                                         label: "Container Path".to_string(),
                                         description: Some("Path inside the container".to_string()),
+                                        help_text: None,
                                         field_type: FieldType::Text,
                                         required: true,
                                         default: None,
@@ -463,6 +472,7 @@ impl ConnectionType for Docker {
                                         description: Some(
                                             "Mount the volume as read-only".to_string(),
                                         ),
+                                        help_text: None,
                                         field_type: FieldType::Boolean,
                                         required: false,
                                         default: Some(serde_json::json!(false)),

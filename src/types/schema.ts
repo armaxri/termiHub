@@ -23,6 +23,8 @@ export interface SettingsField {
   key: string;
   label: string;
   description?: string;
+  /** Extended help text shown in a dialog when the user clicks the ? icon. */
+  helpText?: string;
   fieldType: FieldType;
   required: boolean;
   default?: unknown;
