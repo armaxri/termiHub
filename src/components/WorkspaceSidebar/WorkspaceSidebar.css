@@ -76,16 +76,6 @@
   white-space: nowrap;
 }
 
-.workspace-item__count-badge {
-  font-size: 10px;
-  padding: 1px 4px;
-  border-radius: 3px;
-  background: var(--bg-secondary);
-  color: var(--text-secondary);
-  font-weight: 500;
-  flex-shrink: 0;
-}
-
 .workspace-item__actions {
   display: flex;
   gap: 2px;
