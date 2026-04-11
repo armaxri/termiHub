@@ -314,15 +314,6 @@ pub fn initial_command_strategy(
 // Private helpers
 // ---------------------------------------------------------------------------
 
-/// Build an ANSI sequence (in bash `printf` escape format) that erases only
-/// the terminal lines occupied by the injection echo.
-///
-/// When we write a setup command to PTY stdin, the terminal line discipline
-/// echoes every character back, wrapping at `cols` columns. This function
-/// computes exactly how many lines that echo occupies — factoring in a
-/// generous allowance for the shell prompt already on screen — and returns
-/// a sequence of cursor-up + erase-line pairs that removes only those lines.
-///
 /// OSC 7 setup command for WSL shells.
 ///
 /// Changes to `$HOME` when the CWD is a Windows drive mount (`/mnt/c/...`),
