@@ -116,6 +116,7 @@ impl ConnectionType for LocalShell {
                         key: "shell".to_string(),
                         label: "Shell".to_string(),
                         description: Some("Shell program to use".to_string()),
+                        help_text: None,
                         field_type: FieldType::Select {
                             options: shell_options,
                         },
@@ -130,6 +131,7 @@ impl ConnectionType for LocalShell {
                         key: "customShellPath".to_string(),
                         label: "Shell Executable Path".to_string(),
                         description: Some("Full path to the shell executable".to_string()),
+                        help_text: None,
                         field_type: FieldType::Text,
                         required: false,
                         default: None,
@@ -147,6 +149,7 @@ impl ConnectionType for LocalShell {
                         description: Some(
                             "Directory to start the shell in (defaults to home)".to_string(),
                         ),
+                        help_text: None,
                         field_type: FieldType::FilePath {
                             kind: FilePathKind::Directory,
                         },
@@ -161,11 +164,36 @@ impl ConnectionType for LocalShell {
                         key: "initialCommand".to_string(),
                         label: "Initial Command".to_string(),
                         description: Some("Command to run after the shell starts".to_string()),
+                        help_text: None,
                         field_type: FieldType::Text,
                         required: false,
                         default: None,
                         placeholder: None,
                         supports_env_expansion: true,
+                        supports_tilde_expansion: false,
+                        visible_when: None,
+                    },
+                    SettingsField {
+                        key: "shellIntegration".to_string(),
+                        label: "Shell Integration".to_string(),
+                        description: Some(
+                            "Inject OSC 7 CWD tracking at startup (used by the file browser)"
+                                .to_string(),
+                        ),
+                        help_text: Some(concat!(
+                            "When enabled, termiHub injects a small shell function at startup ",
+                            "that emits OSC 7 (current working directory) sequences on every prompt.\n\n",
+                            "This lets the file browser automatically follow the current directory ",
+                            "as you navigate in the shell.\n\n",
+                            "The setup runs visibly in the terminal — you can always see what ",
+                            "termiHub is doing. Disable this if you manage your own shell ",
+                            "integration or prefer a clean terminal start.",
+                        ).to_string()),
+                        field_type: FieldType::Boolean,
+                        required: false,
+                        default: Some(serde_json::json!(true)),
+                        placeholder: None,
+                        supports_env_expansion: false,
                         supports_tilde_expansion: false,
                         visible_when: None,
                     },
@@ -216,6 +244,10 @@ impl ConnectionType for LocalShell {
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
             .map(String::from);
+        let shell_integration = settings
+            .get("shellIntegration")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
 
         // Resolve effective shell name for OSC 7 injection below.
         let effective_shell = shell
@@ -232,11 +264,14 @@ impl ConnectionType for LocalShell {
 
         let shell_cmd = build_shell_command(&config);
 
-        // Determine OSC 7 CWD tracking injection strategy.
-        // PowerShell: pass via -NoExit -Command so it runs silently before the
-        // interactive session starts, avoiding any visible echo in the terminal.
-        // All other shells (bash, WSL, git-bash): inject via stdin after spawn.
-        let osc7_setup = osc7_setup_command(&effective_shell, config.cols);
+        // Determine OSC 7 CWD tracking injection strategy (when shell integration is enabled).
+        // PowerShell: pass via -NoExit -Command startup args.
+        // All other shells (bash, git-bash): inject via stdin after spawn.
+        let osc7_setup = if shell_integration {
+            osc7_setup_command(&effective_shell)
+        } else {
+            None
+        };
 
         info!(
             program = %shell_cmd.program,
@@ -258,21 +293,20 @@ impl ConnectionType for LocalShell {
         for arg in &shell_cmd.args {
             command.arg(arg);
         }
-        // PowerShell / cmd: inject OSC 7 prompt hook via startup args to avoid
-        // the setup command being echoed visibly in the terminal.
+        // PowerShell / cmd: inject OSC 7 prompt hook via startup args.
         // PowerShell uses -NoExit -Command; cmd uses /K.
         match effective_shell.as_str() {
             "powershell" => {
-                if let Some(ref setup) = osc7_setup {
+                if let Some(setup) = osc7_setup {
                     command.arg("-NoExit");
                     command.arg("-Command");
-                    command.arg(setup.as_str());
+                    command.arg(setup);
                 }
             }
             "cmd" => {
-                if let Some(ref setup) = osc7_setup {
+                if let Some(setup) = osc7_setup {
                     command.arg("/K");
-                    command.arg(setup.as_str());
+                    command.arg(setup);
                 }
             }
             _ => {}
@@ -361,7 +395,7 @@ impl ConnectionType for LocalShell {
         // Inject OSC 7 PROMPT_COMMAND hook for CWD tracking via stdin.
         // Bash (and Git Bash) don't emit OSC 7 by default, so we inject a
         // PROMPT_COMMAND that emits it on each prompt. PowerShell and cmd were
-        // already handled via startup args above to avoid visible echo.
+        // already handled via startup args above.
         // Errors are non-fatal — the shell works without CWD tracking.
         let uses_startup_args = matches!(effective_shell.as_str(), "powershell" | "cmd");
         if !uses_startup_args {

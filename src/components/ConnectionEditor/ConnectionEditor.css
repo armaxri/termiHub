@@ -252,3 +252,91 @@
 .settings-form__list-add:hover {
   text-decoration: underline;
 }
+
+/* Help icon button next to boolean field labels */
+.settings-form__help-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  padding: 0;
+  margin-left: 4px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  line-height: 1;
+  vertical-align: middle;
+}
+
+.settings-form__help-btn:hover {
+  color: var(--focus-border);
+}
+
+/* Field help dialog */
+.field-help-dialog__overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 1000;
+}
+
+.field-help-dialog__content {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1001;
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.field-help-dialog__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+}
+
+.field-help-dialog__title {
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.field-help-dialog__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.field-help-dialog__close:hover {
+  color: var(--text-primary);
+  background-color: var(--bg-hover);
+}
+
+.field-help-dialog__body {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.field-help-dialog__body p {
+  margin: 0;
+}
+
+.field-help-dialog__body p + p {
+  margin-top: var(--spacing-sm);
+}

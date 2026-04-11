@@ -172,6 +172,7 @@ impl ConnectionType for Ssh {
                             description: Some(
                                 "Hostname or IP address of the SSH server".to_string(),
                             ),
+                            help_text: None,
                             field_type: FieldType::Text,
                             required: true,
                             default: None,
@@ -184,6 +185,7 @@ impl ConnectionType for Ssh {
                             key: "port".to_string(),
                             label: "Port".to_string(),
                             description: Some("SSH port number".to_string()),
+                            help_text: None,
                             field_type: FieldType::Port,
                             required: true,
                             default: Some(serde_json::json!(22)),
@@ -196,6 +198,7 @@ impl ConnectionType for Ssh {
                             key: "username".to_string(),
                             label: "Username".to_string(),
                             description: Some("SSH login username".to_string()),
+                            help_text: None,
                             field_type: FieldType::Text,
                             required: true,
                             default: None,
@@ -214,6 +217,7 @@ impl ConnectionType for Ssh {
                             key: "authMethod".to_string(),
                             label: "Method".to_string(),
                             description: Some("Authentication method to use".to_string()),
+                            help_text: None,
                             field_type: FieldType::Select {
                                 options: vec![
                                     SelectOption {
@@ -241,6 +245,7 @@ impl ConnectionType for Ssh {
                             key: "password".to_string(),
                             label: "Password".to_string(),
                             description: None,
+                            help_text: None,
                             field_type: FieldType::Password,
                             required: false,
                             default: None,
@@ -256,6 +261,7 @@ impl ConnectionType for Ssh {
                             key: "keyPath".to_string(),
                             label: "Key Path".to_string(),
                             description: Some("Path to SSH private key file".to_string()),
+                            help_text: None,
                             field_type: FieldType::FilePath {
                                 kind: FilePathKind::File,
                             },
@@ -273,6 +279,7 @@ impl ConnectionType for Ssh {
                             key: "savePassword".to_string(),
                             label: "Save credentials".to_string(),
                             description: Some("Store credentials for automatic login".to_string()),
+                            help_text: None,
                             field_type: FieldType::Boolean,
                             required: false,
                             default: Some(serde_json::json!(false)),
@@ -293,6 +300,7 @@ impl ConnectionType for Ssh {
                             description: Some(
                                 "Remote shell to use (leave empty for default)".to_string(),
                             ),
+                            help_text: None,
                             field_type: FieldType::Text,
                             required: false,
                             default: None,
@@ -307,6 +315,7 @@ impl ConnectionType for Ssh {
                             description: Some(
                                 "Forward X11 display from remote to local".to_string(),
                             ),
+                            help_text: None,
                             field_type: FieldType::Boolean,
                             required: false,
                             default: Some(serde_json::json!(false)),
@@ -321,11 +330,36 @@ impl ConnectionType for Ssh {
                             description: Some(
                                 "Additional environment variables for the remote shell".to_string(),
                             ),
+                            help_text: None,
                             field_type: FieldType::KeyValueList,
                             required: false,
                             default: None,
                             placeholder: None,
                             supports_env_expansion: true,
+                            supports_tilde_expansion: false,
+                            visible_when: None,
+                        },
+                        SettingsField {
+                            key: "shellIntegration".to_string(),
+                            label: "Shell Integration".to_string(),
+                            description: Some(
+                                "Inject OSC 7 CWD tracking at startup (used by the file browser)"
+                                    .to_string(),
+                            ),
+                            help_text: Some(concat!(
+                                "When enabled, termiHub injects a small shell function at startup ",
+                                "that emits OSC 7 (current working directory) sequences on every prompt.\n\n",
+                                "This lets the file browser automatically follow the current directory ",
+                                "as you navigate in the shell.\n\n",
+                                "The setup runs visibly in the terminal — you can always see what ",
+                                "termiHub is doing. Disable this if you manage your own shell ",
+                                "integration or prefer a clean terminal start.",
+                            ).to_string()),
+                            field_type: FieldType::Boolean,
+                            required: false,
+                            default: Some(serde_json::json!(true)),
+                            placeholder: None,
+                            supports_env_expansion: false,
                             supports_tilde_expansion: false,
                             visible_when: None,
                         },
@@ -348,6 +382,11 @@ impl ConnectionType for Ssh {
         if self.state.is_some() {
             return Err(SessionError::AlreadyExists("Already connected".to_string()));
         }
+
+        let shell_integration = settings
+            .get("shellIntegration")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
 
         let config = parse_ssh_settings(&settings);
         let config = config.expand();
@@ -425,14 +464,14 @@ impl ConnectionType for Ssh {
             }
         }
 
-        // Inject OSC 7 PROMPT_COMMAND hook for CWD tracking.
-        // The remote shell (typically bash) doesn't emit OSC 7 by default,
-        // so we inject a PROMPT_COMMAND that emits it on each prompt.
-        // Errors are non-fatal — the shell works without CWD tracking.
-        if let Some(setup) = osc7_setup_command("ssh", config.cols) {
-            let cmd = format!("{setup}\n");
-            if let Err(e) = channel.write_all(cmd.as_bytes()) {
-                debug!("Failed to inject OSC 7 hook: {e}");
+        // Inject OSC 7 PROMPT_COMMAND hook for CWD tracking when shell
+        // integration is enabled. Errors are non-fatal.
+        if shell_integration {
+            if let Some(setup) = osc7_setup_command("ssh") {
+                let cmd = format!("{setup}\n");
+                if let Err(e) = channel.write_all(cmd.as_bytes()) {
+                    debug!("Failed to inject OSC 7 hook: {e}");
+                }
             }
         }
 
@@ -698,7 +737,10 @@ mod tests {
         let schema = ssh.settings_schema();
         let group = &schema.groups[2];
         let keys: Vec<&str> = group.fields.iter().map(|f| f.key.as_str()).collect();
-        assert_eq!(keys, vec!["shell", "enableX11Forwarding", "env"]);
+        assert_eq!(
+            keys,
+            vec!["shell", "enableX11Forwarding", "env", "shellIntegration"]
+        );
     }
 
     #[test]

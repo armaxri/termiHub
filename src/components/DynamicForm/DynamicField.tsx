@@ -1,5 +1,6 @@
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { HelpCircle, X } from "lucide-react";
 import type { SettingsField, FieldType } from "@/types/schema";
 import { KeyPathInput } from "@/components/Settings/KeyPathInput";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
@@ -132,16 +133,73 @@ function NumberField({
 }
 
 function BooleanField({ field, value, onChange }: FieldProps) {
+  const [dialogOpen, setDialogOpen] = useState(false);
+
   return (
-    <label className="settings-form__field--checkbox" data-testid={`field-${field.key}-wrapper`}>
-      <input
-        type="checkbox"
-        checked={(value as boolean) ?? false}
-        onChange={(e) => onChange(e.target.checked)}
-        data-testid={`field-${field.key}`}
-      />
-      <span className="settings-form__label">{field.label}</span>
-    </label>
+    <>
+      <label className="settings-form__field--checkbox" data-testid={`field-${field.key}-wrapper`}>
+        <input
+          type="checkbox"
+          checked={(value as boolean) ?? false}
+          onChange={(e) => onChange(e.target.checked)}
+          data-testid={`field-${field.key}`}
+        />
+        <span className="settings-form__label">{field.label}</span>
+        {field.helpText && (
+          <button
+            type="button"
+            className="settings-form__help-btn"
+            onClick={(e) => {
+              e.preventDefault();
+              setDialogOpen(true);
+            }}
+            title="Learn more"
+            data-testid={`field-${field.key}-help`}
+          >
+            <HelpCircle size={13} />
+          </button>
+        )}
+      </label>
+      {dialogOpen && field.helpText && (
+        <FieldHelpDialog
+          title={field.label}
+          text={field.helpText}
+          onClose={() => setDialogOpen(false)}
+        />
+      )}
+    </>
+  );
+}
+
+interface FieldHelpDialogProps {
+  title: string;
+  text: string;
+  onClose: () => void;
+}
+
+function FieldHelpDialog({ title, text, onClose }: FieldHelpDialogProps) {
+  return (
+    <>
+      <div className="field-help-dialog__overlay" onClick={onClose} />
+      <div className="field-help-dialog__content" role="dialog" aria-modal="true">
+        <div className="field-help-dialog__header">
+          <span className="field-help-dialog__title">{title}</span>
+          <button
+            type="button"
+            className="field-help-dialog__close"
+            onClick={onClose}
+            aria-label="Close"
+          >
+            <X size={14} />
+          </button>
+        </div>
+        <div className="field-help-dialog__body">
+          {text.split("\n\n").map((paragraph, i) => (
+            <p key={i}>{paragraph}</p>
+          ))}
+        </div>
+      </div>
+    </>
   );
 }
 

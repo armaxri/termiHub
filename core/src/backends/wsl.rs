@@ -389,8 +389,7 @@ fn pty_write(writer: &Arc<Mutex<Box<dyn Write + Send>>>, data: &[u8]) {
     }
 }
 
-/// Async task that silently injects the WSL OSC 7 CWD hook after the shell
-/// is ready.
+/// Async task that injects the WSL OSC 7 CWD hook after the shell is ready.
 ///
 /// # Why temp file instead of stdin injection
 ///
@@ -404,8 +403,9 @@ fn pty_write(writer: &Arc<Mutex<Box<dyn Write + Send>>>, data: &[u8]) {
 ///    in zsh regardless of terminal echo settings.
 ///
 /// Sourcing a file sidesteps both issues: the `source` line is the only
-/// thing that appears (one short, easy-to-erase line), and the file contents
-/// are read and executed entirely out of band — ZLE never sees them.
+/// thing that appears, and the file contents are read and executed entirely
+/// out of band — ZLE never sees them. The script itself prints a visible
+/// notice so the user knows what termiHub is doing.
 ///
 /// # Protocol
 ///
@@ -420,34 +420,26 @@ fn pty_write(writer: &Arc<Mutex<Box<dyn Write + Send>>>, data: &[u8]) {
 ///    `Wsl/Service/E_UNEXPECTED` on some Windows configurations when a second
 ///    WSL process starts while the first is still initializing.
 ///
-/// 3. Inject `source INIT_SCRIPT_LINUX_PATH 2>/dev/null` into the PTY.  This
-///    line is echoed/displayed (unavoidable), but it is erased by the script's
-///    own `printf` before the next prompt appears.  The `2>/dev/null` suppresses
-///    any "no such file" error from a rare UNC-visibility race condition.
+/// 3. Inject `source INIT_SCRIPT_LINUX_PATH 2>/dev/null` into the PTY. The
+///    `source` line is echoed/displayed (unavoidable), and the script's own
+///    `echo` message appears on the next line before the prompt returns.
+///    The `2>/dev/null` suppresses any "no such file" error from a rare
+///    UNC-visibility race condition.
 ///
 /// If the UNC write fails, fall back to direct injection — the setup command
 /// will be visible, but CWD tracking still works.
-async fn wsl_silent_setup(
+async fn wsl_setup(
     mut tap_rx: tokio::sync::mpsc::Receiver<Vec<u8>>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
-    setup_cmd: String,
+    setup_cmd: &'static str,
     unc_prefix: String,
 ) {
     // Phase 1 — wait for the shell to be ready.
     wait_for_shell_ready(&mut tap_rx, 500, Duration::from_secs(5)).await;
 
     // Phase 2 — write the setup script via the Windows UNC path.
-    //
-    // The script ends with:
-    //   rm -f <path>           — self-cleanup
-    //   printf '\r\033[2K...'  — erase the `source <path>` display line
-    //
-    // Two cursor-ups cover: the blank line after the source newline + the
-    // `source <path>` line itself (fits in one terminal row for any reasonable
-    // prompt length).
-    let script = format!(
-        "{setup_cmd}\nrm -f {INIT_SCRIPT_LINUX_PATH}\nprintf '\\r\\033[2K\\033[A\\033[2K\\033[A\\033[2K'\n"
-    );
+    // The script self-cleans the temp file; no erase sequences are emitted.
+    let script = format!("{setup_cmd}\nrm -f {INIT_SCRIPT_LINUX_PATH}\n");
 
     // Convert the Linux path to a Windows UNC path for writing from the host.
     // e.g. /tmp/.termihub_init → \\wsl.localhost\Ubuntu\tmp\.termihub_init
@@ -466,9 +458,9 @@ async fn wsl_silent_setup(
 
     match write_result {
         Ok(()) => {
-            // Phase 3 — inject `source` (the only visible line; erased by script).
-            // The `2>/dev/null` silences any rare UNC-visibility race where the
-            // file isn't yet visible inside WSL at the moment source runs.
+            // Phase 3 — inject `source`. The line is echoed in the terminal;
+            // the script's echo message appears on the next line.
+            // The `2>/dev/null` suppresses any rare UNC-visibility race error.
             pty_write(
                 &writer,
                 format!("source {INIT_SCRIPT_LINUX_PATH} 2>/dev/null\n").as_bytes(),
@@ -476,7 +468,7 @@ async fn wsl_silent_setup(
             debug!("WSL setup: init script written via UNC and sourced");
         }
         Err(e) => {
-            // Fallback: direct injection.  Visible but functional.
+            // Fallback: direct injection.
             warn!("WSL setup: could not write init script via UNC ({e}); falling back to direct injection");
             pty_write(&writer, setup_cmd.as_bytes());
             pty_write(&writer, b"\n");
@@ -534,6 +526,7 @@ impl ConnectionType for Wsl {
                         key: "distribution".to_string(),
                         label: "Distribution".to_string(),
                         description: Some("WSL distribution to connect to".to_string()),
+                        help_text: None,
                         field_type: FieldType::Select {
                             options: distro_options,
                         },
@@ -550,6 +543,7 @@ impl ConnectionType for Wsl {
                         description: Some(
                             "Directory to start the shell in (defaults to home)".to_string(),
                         ),
+                        help_text: None,
                         field_type: FieldType::FilePath {
                             kind: FilePathKind::Directory,
                         },
@@ -564,11 +558,36 @@ impl ConnectionType for Wsl {
                         key: "initialCommand".to_string(),
                         label: "Initial Command".to_string(),
                         description: Some("Command to run after the shell starts".to_string()),
+                        help_text: None,
                         field_type: FieldType::Text,
                         required: false,
                         default: None,
                         placeholder: None,
                         supports_env_expansion: true,
+                        supports_tilde_expansion: false,
+                        visible_when: None,
+                    },
+                    SettingsField {
+                        key: "shellIntegration".to_string(),
+                        label: "Shell Integration".to_string(),
+                        description: Some(
+                            "Inject OSC 7 CWD tracking at startup (used by the file browser)"
+                                .to_string(),
+                        ),
+                        help_text: Some(concat!(
+                            "When enabled, termiHub injects a small shell function at startup ",
+                            "that emits OSC 7 (current working directory) sequences on every prompt.\n\n",
+                            "This lets the file browser automatically follow the current directory ",
+                            "as you navigate in the shell.\n\n",
+                            "The setup runs visibly in the terminal — you can always see what ",
+                            "termiHub is doing. Disable this if you manage your own shell ",
+                            "integration or prefer a clean terminal start.",
+                        ).to_string()),
+                        field_type: FieldType::Boolean,
+                        required: false,
+                        default: Some(serde_json::json!(true)),
+                        placeholder: None,
+                        supports_env_expansion: false,
                         supports_tilde_expansion: false,
                         visible_when: None,
                     },
@@ -612,6 +631,10 @@ impl ConnectionType for Wsl {
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
             .map(String::from);
+        let shell_integration = settings
+            .get("shellIntegration")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
 
         let config = WslConfig {
             distribution: distribution.clone(),
@@ -651,11 +674,13 @@ impl ConnectionType for Wsl {
         for arg in &args {
             command.arg(arg);
         }
-        // Pre-set PROMPT_COMMAND via env var for silent, immediate CWD tracking.
+        // Pre-set PROMPT_COMMAND via env var for immediate CWD tracking.
         // WSL bash inherits Windows environment variables, so this fires even
         // before .bashrc runs.  The async setup task below upgrades it to the
         // full __termihub_osc7 hook (with zsh support) once the shell is ready.
-        command.env("PROMPT_COMMAND", r#"printf '\e]7;file://%s\a' "$PWD""#);
+        if shell_integration {
+            command.env("PROMPT_COMMAND", r#"printf '\e]7;file://%s\a' "$PWD""#);
+        }
         // Set TERM for the WSL environment.
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
@@ -763,17 +788,15 @@ impl ConnectionType for Wsl {
             unc_prefix: unc_prefix.clone(),
         });
 
-        // Spawn the silent setup task.  It watches the tap channel for the first
-        // OSC 7 emission from the PROMPT_COMMAND env var (= shell ready, .bashrc
-        // has run, systemd startup noise is done), then writes the hook via the
-        // UNC path and sources it — no second wsl.exe process is spawned.
-        if let Some(setup_cmd) = osc7_setup_command(&shell_key, config.cols) {
-            tokio::spawn(wsl_silent_setup(
-                tap_rx,
-                setup_writer,
-                setup_cmd,
-                unc_prefix,
-            ));
+        // Spawn the setup task when shell integration is enabled.  It watches
+        // the tap channel for the first OSC 7 emission from the PROMPT_COMMAND
+        // env var (= shell ready, .bashrc has run, systemd startup noise is
+        // done), then writes the hook via the UNC path and sources it — no
+        // second wsl.exe process is spawned.
+        if shell_integration {
+            if let Some(setup_cmd) = osc7_setup_command(&shell_key) {
+                tokio::spawn(wsl_setup(tap_rx, setup_writer, setup_cmd, unc_prefix));
+            }
         }
 
         Ok(())
