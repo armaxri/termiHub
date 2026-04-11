@@ -1,4 +1,4 @@
-//! SSH Authentication Integration Tests (SSH-AUTH-01 through SSH-AUTH-12).
+//! SSH Authentication Integration Tests (SSH-AUTH-01 through SSH-AUTH-15).
 //!
 //! Tests termiHub's SSH authentication handling against Docker containers:
 //! - `ssh-password` on port 2201 (password auth)
@@ -10,8 +10,8 @@
 mod common;
 
 use common::{
-    require_docker, ssh_exec, ssh_key_config, ssh_key_passphrase_config, ssh_password_config,
-    PORT_SSH_KEYS, PORT_SSH_PASSWORD,
+    require_docker, ssh_exec, ssh_key_config, ssh_key_passphrase_config, ssh_keys_dir,
+    ssh_password_config, PORT_SSH_KEYS, PORT_SSH_PASSWORD,
 };
 use termihub_core::backends::ssh::auth::connect_and_authenticate;
 
@@ -311,5 +311,39 @@ fn ssh_auth_12_wrong_key_rejected() {
     assert!(
         result.is_err(),
         "SSH-AUTH-12: Non-matching key should be rejected"
+    );
+}
+
+// ── SSH-AUTH-15: Wrong passphrase on a valid key ─────────────────────
+
+/// Verify that providing the wrong passphrase for a passphrase-protected key
+/// is rejected. The key file itself is valid and in the server's
+/// authorized_keys, so only the incorrect passphrase causes the failure.
+#[test]
+fn ssh_auth_15_wrong_passphrase_rejected() {
+    require_docker!(PORT_SSH_KEYS);
+
+    // rsa_2048_passphrase is a valid key authorized on ssh-keys,
+    // but we supply the wrong passphrase.
+    let config = termihub_core::config::SshConfig {
+        host: "127.0.0.1".to_string(),
+        port: PORT_SSH_KEYS,
+        username: "testuser".to_string(),
+        auth_method: "key".to_string(),
+        key_path: Some(
+            ssh_keys_dir()
+                .join("rsa_2048_passphrase")
+                .to_str()
+                .unwrap()
+                .to_string(),
+        ),
+        password: Some("this-is-not-the-passphrase".to_string()),
+        ..Default::default()
+    };
+
+    let result = connect_and_authenticate(&config);
+    assert!(
+        result.is_err(),
+        "SSH-AUTH-15: Wrong passphrase should be rejected"
     );
 }

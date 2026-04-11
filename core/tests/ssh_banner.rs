@@ -1,4 +1,4 @@
-//! SSH Banner Integration Tests (SSH-BANNER-01 through SSH-BANNER-02).
+//! SSH Banner Integration Tests (SSH-BANNER-01 through SSH-BANNER-03).
 //!
 //! Tests that termiHub correctly handles SSH pre-authentication banners
 //! and distinguishes banner-enabled servers from standard ones.
@@ -11,6 +11,8 @@
 //! Skips gracefully if containers are not running.
 
 mod common;
+
+use std::net::TcpStream;
 
 use common::{require_docker, ssh_password_config, PORT_SSH_BANNER, PORT_SSH_PASSWORD};
 use termihub_core::backends::ssh::auth::connect_and_authenticate;
@@ -66,6 +68,52 @@ fn ssh_banner_02_no_banner_on_standard_server() {
     assert!(
         is_empty,
         "SSH-BANNER-02: Standard SSH server should not send a banner, got: {:?}",
+        banner
+    );
+}
+
+// ── SSH-BANNER-03: Banner sent even on failed authentication ─────────
+
+/// Verify the server sends the banner before or during failed authentication.
+///
+/// `SSH_MSG_USERAUTH_BANNER` is sent by the server independently of whether
+/// authentication ultimately succeeds. This test exercises the raw `ssh2`
+/// API directly so that we retain access to the `Session` after the auth
+/// failure and can still inspect `session.banner()`.
+#[test]
+fn ssh_banner_03_banner_received_on_failed_auth() {
+    require_docker!(PORT_SSH_BANNER);
+
+    let tcp = TcpStream::connect(("127.0.0.1", PORT_SSH_BANNER))
+        .expect("SSH-BANNER-03: TCP connection to banner server should succeed");
+
+    let mut session = ssh2::Session::new().expect("SSH-BANNER-03: Failed to create ssh2::Session");
+    session.set_tcp_stream(tcp);
+    session
+        .handshake()
+        .expect("SSH-BANNER-03: SSH handshake should succeed");
+
+    // Attempt auth with wrong password — the server should reject this.
+    let auth_result = session.userauth_password("testuser", "definitely-wrong-password");
+    assert!(
+        auth_result.is_err(),
+        "SSH-BANNER-03: Auth should fail with wrong password"
+    );
+    assert!(
+        !session.authenticated(),
+        "SSH-BANNER-03: Session must not be authenticated after failed attempt"
+    );
+
+    // Even though auth failed, the server sends SSH_MSG_USERAUTH_BANNER
+    // before processing credentials.
+    let banner = session.banner();
+    assert!(
+        banner.is_some(),
+        "SSH-BANNER-03: Banner should be received even when authentication fails"
+    );
+    assert!(
+        banner.unwrap().contains("AUTHORIZED ACCESS ONLY"),
+        "SSH-BANNER-03: Banner text should match even on failed auth, got: {:?}",
         banner
     );
 }
