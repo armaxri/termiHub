@@ -77,6 +77,21 @@ describe("appStore credential store state", () => {
     expect(useAppStore.getState().credentialStoreStatus).toEqual(status);
   });
 
+  it("loadCredentialStoreStatus does NOT open the unlock dialog when store is locked (on-demand only)", async () => {
+    // Regression test: startup must not prompt for master password unprompted.
+    // The dialog should only open when credentials are actually needed.
+    const lockedStatus: CredentialStoreStatusInfo = {
+      mode: "master_password",
+      status: "locked",
+    };
+    mockedInvoke.mockResolvedValueOnce(lockedStatus);
+
+    await useAppStore.getState().loadCredentialStoreStatus();
+
+    expect(useAppStore.getState().credentialStoreStatus).toEqual(lockedStatus);
+    expect(useAppStore.getState().unlockDialogOpen).toBe(false);
+  });
+
   it("loadCredentialStoreStatus handles errors gracefully", async () => {
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     mockedInvoke.mockRejectedValueOnce(new Error("Backend error"));

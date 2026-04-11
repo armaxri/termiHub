@@ -1581,12 +1581,8 @@ export const useAppStore = create<AppState>((set, get) => {
       get().loadWorkspaces();
       // Load app mode (portable vs. installed) for status bar and settings display
       await get().loadAppMode();
-      // Load credential store status and auto-open unlock dialog if locked
+      // Load credential store status (dialog opens on-demand when credentials are needed)
       await get().loadCredentialStoreStatus();
-      const credStatus = get().credentialStoreStatus;
-      if (credStatus?.mode === "master_password" && credStatus?.status === "locked") {
-        set({ unlockDialogOpen: true });
-      }
       // Check VS Code availability in the background
       get().checkVscodeAvailability();
       // Check for recovery warnings from corrupt config files
