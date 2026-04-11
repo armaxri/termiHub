@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Tests: `core/tests/ssh_banner.rs` — two new Rust integration tests (SSH-BANNER-01, SSH-BANNER-02) for the `ssh-banner` Docker container, verifying that the pre-auth banner text is delivered and that standard SSH servers send no banner
+- Tests: ECDSA-384 and ECDSA-521 passphrase-protected key fixtures (`tests/fixtures/ssh-keys/`) and corresponding integration tests (SSH-AUTH-13, SSH-AUTH-14), completing passphrase coverage across all supported ECDSA curve sizes
+
 ### Removed
 
 - OS Keychain credential backend removed — the `keyring` crate dependency and `KeychainStore` backend have been dropped. Credential storage now offers **Master Password** (Argon2id + AES-256-GCM encrypted file) and **None** (prompt-only). Users with `"keychain"` saved in `settings.json` will be migrated to `"none"` on next launch.

@@ -2,31 +2,6 @@ category: file-browser
 display_name: "File Browser"
 
 tests:
-  # --- Automated: local browse and navigation (Issue #460) ---
-
-  - id: MT-FB-01
-    name: "Browse local files"
-    platforms: [linux, windows]
-    prerequisites:
-      - app: true
-    verification: automated
-    automated_by: tests/e2e/file-browser-local.test.js
-    notes: >
-      Migrated to E2E in issue #460. Covers: toolbar visible when local terminal
-      is active, current path displayed, file entries listed for the CWD.
-
-  - id: MT-FB-02
-    name: "Navigate directories"
-    platforms: [linux, windows]
-    prerequisites:
-      - app: true
-    verification: automated
-    automated_by: tests/e2e/file-browser-local.test.js
-    notes: >
-      Migrated to E2E in issue #460. Covers: Up button updates path, double-click
-      enters a subdirectory and shows its contents, round-trip up-and-back-down
-      restores the original path.
-
   - id: MT-FB-04
     name: "Open in VS Code from file browser"
     pr: 51

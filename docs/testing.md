@@ -589,18 +589,19 @@ docker compose -f tests/docker/docker-compose.yml --profile all down
 
 ### Test Suites
 
-| Suite                | File                                              | Tests | Docker Containers                          | Description                                                       |
-| -------------------- | ------------------------------------------------- | ----- | ------------------------------------------ | ----------------------------------------------------------------- |
-| SSH Auth             | `core/tests/ssh_auth.rs`                          | 12    | ssh-password:2201, ssh-keys:2203           | Password, 6 key types, 3 passphrase keys, wrong credentials       |
-| SSH Compat           | `core/tests/ssh_compat.rs`                        | 2     | ssh-legacy:2202                            | Legacy OpenSSH 7.x compatibility                                  |
-| SSH Advanced         | `core/tests/ssh_advanced.rs`                      | 5     | bastion:2204, restricted:2205, tunnel:2207 | Jump host, restricted shell, TCP tunneling                        |
-| Telnet               | `core/tests/telnet.rs`                            | 3     | telnet:2301                                | Connect, output subscribe, login flow                             |
-| SFTP Stress          | `core/tests/sftp_stress.rs`                       | 16    | sftp-stress:2210                           | Large files, deep trees, symlinks, special filenames, permissions |
-| Network Resilience   | `core/tests/network_resilience.rs`                | 10    | network-fault:2209                         | Latency, packet loss, throttle, disconnect, jitter, corruption    |
-| Monitoring           | `core/tests/monitoring.rs`                        | 4     | ssh-password:2201                          | CPU, memory, disk stats, stats under load                         |
-| SSH Banner (E2E)     | `tests/e2e/infrastructure/ssh-banner.test.js`     | 2     | ssh-banner:2206                            | Pre-auth banner, MOTD display                                     |
-| SSH Keys (E2E)       | `tests/e2e/infrastructure/ssh-keys.test.js`       | 1     | ssh-keys:2203                              | Key auth UI flow                                                  |
-| Windows Shells (E2E) | `tests/e2e/infrastructure/windows-shells.test.js` | 5     | none                                       | PowerShell, cmd.exe, WSL (Windows-only)                           |
+| Suite                | File                                              | Tests | Docker Containers                          | Description                                                                   |
+| -------------------- | ------------------------------------------------- | ----- | ------------------------------------------ | ----------------------------------------------------------------------------- |
+| SSH Auth             | `core/tests/ssh_auth.rs`                          | 15    | ssh-password:2201, ssh-keys:2203           | Password, 6 key types, 5 passphrase keys, wrong credentials, wrong passphrase |
+| SSH Compat           | `core/tests/ssh_compat.rs`                        | 2     | ssh-legacy:2202                            | Legacy OpenSSH 7.x compatibility                                              |
+| SSH Advanced         | `core/tests/ssh_advanced.rs`                      | 5     | bastion:2204, restricted:2205, tunnel:2207 | Jump host, restricted shell, TCP tunneling                                    |
+| SSH Banner           | `core/tests/ssh_banner.rs`                        | 3     | ssh-banner:2206, ssh-password:2201         | Pre-auth banner text, no-banner on standard server, banner on failed auth     |
+| Telnet               | `core/tests/telnet.rs`                            | 3     | telnet:2301                                | Connect, output subscribe, login flow                                         |
+| SFTP Stress          | `core/tests/sftp_stress.rs`                       | 16    | sftp-stress:2210                           | Large files, deep trees, symlinks, special filenames, permissions             |
+| Network Resilience   | `core/tests/network_resilience.rs`                | 10    | network-fault:2209                         | Latency, packet loss, throttle, disconnect, jitter, corruption                |
+| Monitoring           | `core/tests/monitoring.rs`                        | 4     | ssh-password:2201                          | CPU, memory, disk stats, stats under load                                     |
+| SSH Banner (E2E)     | `tests/e2e/infrastructure/ssh-banner.test.js`     | 2     | ssh-banner:2206                            | Pre-auth banner UI display, MOTD display                                      |
+| SSH Keys (E2E)       | `tests/e2e/infrastructure/ssh-keys.test.js`       | 1     | ssh-keys:2203                              | Key auth UI flow                                                              |
+| Windows Shells (E2E) | `tests/e2e/infrastructure/windows-shells.test.js` | 5     | none                                       | PowerShell, cmd.exe, WSL (Windows-only)                                       |
 
 ### Skip Behavior
 

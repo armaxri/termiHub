@@ -403,4 +403,36 @@ bBVwt04qVBuGZUYxAAAADXRlc3RAdGVybWlodWIBAgMEBQ==
         let converted = std::str::from_utf8(&pem_bytes).unwrap();
         assert!(converted.contains("-----BEGIN PRIVATE KEY-----"));
     }
+
+    #[test]
+    fn encrypted_key_with_wrong_passphrase_fails() {
+        let key = ssh_key::PrivateKey::random(&mut rand::thread_rng(), ssh_key::Algorithm::Ed25519)
+            .unwrap();
+        let encrypted = key
+            .encrypt(&mut rand::thread_rng(), "correct-passphrase")
+            .unwrap();
+        let openssh_pem = encrypted.to_openssh(ssh_key::LineEnding::LF).unwrap();
+
+        let f = write_temp_key(&openssh_pem);
+        let result = convert_openssh_to_pem_bytes(f.path(), Some("wrong-passphrase"));
+        assert!(
+            result.is_err(),
+            "Wrong passphrase should fail key decryption"
+        );
+    }
+
+    #[test]
+    fn malformed_key_file_fails() {
+        // A file that starts with the OpenSSH header but has garbage body content.
+        let f = write_temp_key(
+            "-----BEGIN OPENSSH PRIVATE KEY-----\n\
+             this is not valid base64 or key material at all!!\n\
+             -----END OPENSSH PRIVATE KEY-----\n",
+        );
+        let result = convert_openssh_to_pem_bytes(f.path(), None);
+        assert!(
+            result.is_err(),
+            "Malformed key content should return an error"
+        );
+    }
 }
