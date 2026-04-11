@@ -7,8 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Shell integration (OSC 7 CWD tracking) is now **visible by default**: the setup command runs in the terminal at startup with a `# [termiHub] Shell integration: setting up OSC 7 CWD tracking` notice, instead of being silently erased. This applies to local bash, SSH, and WSL connections.
+- WSL: the setup script no longer contains erase sequences; the `source` command and the echo notice are left visible in the terminal.
+
 ### Added
 
+- Connection settings: a **Shell Integration** toggle is now available for local shell, SSH, and WSL connections (enabled by default). Disabling it skips all OSC injection at startup.
+- Connection settings: boolean fields now support an optional **help icon (?)** that opens an explanation dialog. The Shell Integration toggle uses this to explain what OSC 7 tracking is and why it's useful.
 - Tests: `core/tests/ssh_banner.rs` — two new Rust integration tests (SSH-BANNER-01, SSH-BANNER-02) for the `ssh-banner` Docker container, verifying that the pre-auth banner text is delivered and that standard SSH servers send no banner
 - Tests: ECDSA-384 and ECDSA-521 passphrase-protected key fixtures (`tests/fixtures/ssh-keys/`) and corresponding integration tests (SSH-AUTH-13, SSH-AUTH-14), completing passphrase coverage across all supported ECDSA curve sizes
 
