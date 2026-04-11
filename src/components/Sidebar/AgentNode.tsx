@@ -332,6 +332,21 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
 
   const handleConnect = useCallback(async () => {
     if (connecting) return;
+
+    // If the credential store is locked and this agent uses a stored credential,
+    // prompt for unlock first — otherwise the credential can't be read and the
+    // connection would fall back to interactive password prompts.
+    const needsStoredCredential =
+      agent.config.authMethod === "password" ||
+      (agent.config.authMethod === "key" && agent.config.savePassword);
+    if (needsStoredCredential) {
+      const credStatus = useAppStore.getState().credentialStoreStatus;
+      if (credStatus?.mode === "master_password" && credStatus?.status === "locked") {
+        useAppStore.getState().setUnlockDialogOpen(true);
+        return;
+      }
+    }
+
     setConnecting(true);
     try {
       let password: string | undefined;

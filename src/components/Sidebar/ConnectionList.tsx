@@ -311,6 +311,19 @@ export function ConnectionList() {
         const authMethod = cfg.authMethod as string;
         const savePassword = cfg.savePassword as boolean | undefined;
 
+        // Before attempting credential resolution, check whether the credential store
+        // is locked. If it is, we can't read the stored credential and SSH would fall
+        // back to interactive password prompts. Prompt for unlock first instead.
+        const needsStoredCredential =
+          authMethod === "password" || (authMethod === "key" && savePassword);
+        if (needsStoredCredential) {
+          const credStatus = useAppStore.getState().credentialStoreStatus;
+          if (credStatus?.mode === "master_password" && credStatus?.status === "locked") {
+            useAppStore.getState().setUnlockDialogOpen(true);
+            return;
+          }
+        }
+
         // Try to resolve credential from the store first
         const resolution = await resolveConnectionCredential(
           connection.id,
