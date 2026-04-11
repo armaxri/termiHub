@@ -106,7 +106,12 @@ import {
   deleteWorkspace as apiDeleteWorkspace,
   duplicateWorkspace as apiDuplicateWorkspace,
 } from "@/services/workspaceApi";
-import { buildTabGroupsFromWorkspace, captureAllTabGroups } from "@/utils/workspaceLayout";
+import {
+  buildTabGroupsFromWorkspace,
+  captureAllTabGroups,
+  getWorkspaceLeaves,
+} from "@/utils/workspaceLayout";
+import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { SystemStats } from "@/types/monitoring";
 import { applyTheme, onThemeChange } from "@/themes";
 import { setOverrides as setKeybindingOverrides } from "@/services/keybindings";
@@ -487,6 +492,16 @@ interface AppState {
   loadCredentialStoreStatus: () => Promise<void>;
   unlockDialogOpen: boolean;
   setUnlockDialogOpen: (open: boolean) => void;
+  /** Pending resolver for requestUnlock(). Internal — resolved by resolveUnlock(). */
+  unlockResolve: ((unlocked: boolean) => void) | null;
+  /**
+   * Opens the unlock dialog and returns a Promise that resolves to `true` when the
+   * store is successfully unlocked, or `false` when the user cancels/skips.
+   * Callers can `await` this before proceeding with a credential-dependent action.
+   */
+  requestUnlock: () => Promise<boolean>;
+  /** Resolves (and clears) any pending requestUnlock() promise. */
+  resolveUnlock: (unlocked: boolean) => void;
   masterPasswordSetupOpen: boolean;
   masterPasswordSetupMode: "setup" | "change";
   openMasterPasswordSetup: (mode: "setup" | "change") => void;
@@ -1571,12 +1586,8 @@ export const useAppStore = create<AppState>((set, get) => {
       get().loadWorkspaces();
       // Load app mode (portable vs. installed) for status bar and settings display
       await get().loadAppMode();
-      // Load credential store status and auto-open unlock dialog if locked
+      // Load credential store status (dialog opens on-demand when credentials are needed)
       await get().loadCredentialStoreStatus();
-      const credStatus = get().credentialStoreStatus;
-      if (credStatus?.mode === "master_password" && credStatus?.status === "locked") {
-        set({ unlockDialogOpen: true });
-      }
       // Check VS Code availability in the background
       get().checkVscodeAvailability();
       // Check for recovery warnings from corrupt config files
@@ -2628,9 +2639,62 @@ export const useAppStore = create<AppState>((set, get) => {
       try {
         const definition = await apiLoadWorkspace(workspaceId);
         const state = get();
+
+        // Collect every tab def referenced in this workspace once.
+        const allTabDefs = definition.tabGroups.flatMap((g) =>
+          getWorkspaceLeaves(g.layout).flatMap((leaf) => leaf.tabs)
+        );
+
+        // Before opening any tabs, check whether the credential store needs to be
+        // unlocked for any connection in this workspace. If so, prompt once upfront
+        // so that all tabs can connect immediately after unlock rather than failing
+        // and prompting individually.
+        const credStatus = state.credentialStoreStatus;
+        if (credStatus?.mode === "master_password" && credStatus?.status === "locked") {
+          const needsStoredCredential = allTabDefs.some((tabDef) => {
+            if (!tabDef.connectionRef) return false;
+            const saved = state.connections.find((c) => c.id === tabDef.connectionRef);
+            if (!saved) return false;
+            const cfg = saved.config.config as Record<string, unknown>;
+            const authMethod = cfg.authMethod as string | undefined;
+            const savePassword = cfg.savePassword as boolean | undefined;
+            return authMethod === "password" || (authMethod === "key" && savePassword);
+          });
+          if (needsStoredCredential) {
+            const unlocked = await get().requestUnlock();
+            if (!unlocked) return;
+          }
+        }
+
+        // After the store is unlocked (or was already unlocked), resolve stored
+        // credentials for all referenced connections. Inject resolved passwords
+        // into the connection configs so that Terminal.tsx can connect immediately
+        // without the backend having to prompt interactively.
+        const referencedIds = new Set(
+          allTabDefs.filter((t) => t.connectionRef).map((t) => t.connectionRef!)
+        );
+        const resolvedConnections = await Promise.all(
+          state.connections.map(async (conn) => {
+            if (!referencedIds.has(conn.id)) return conn;
+            const cfg = conn.config.config as Record<string, unknown>;
+            const authMethod = cfg.authMethod as string | undefined;
+            const savePassword = cfg.savePassword as boolean | undefined;
+            if (!authMethod) return conn;
+            const resolution = await resolveConnectionCredential(conn.id, authMethod, savePassword);
+            if (!resolution.usedStoredCredential || !resolution.password) return conn;
+            return {
+              ...conn,
+              config: {
+                ...conn.config,
+                config: { ...cfg, password: resolution.password },
+              },
+            };
+          })
+        );
+
         const builtGroups = buildTabGroupsFromWorkspace(
           definition.tabGroups,
-          state.connections,
+          resolvedConnections,
           state.defaultShell
         );
         if (builtGroups.length === 0) return;
@@ -2687,7 +2751,27 @@ export const useAppStore = create<AppState>((set, get) => {
       }
     },
     unlockDialogOpen: false,
-    setUnlockDialogOpen: (open) => set({ unlockDialogOpen: open }),
+    setUnlockDialogOpen: (open) => {
+      const prevOpen = get().unlockDialogOpen;
+      set({ unlockDialogOpen: open });
+      // If the dialog was closed without a prior resolveUnlock(true) call (i.e. the
+      // user clicked Skip or dismissed the dialog), cancel any pending request.
+      if (prevOpen && !open) {
+        get().resolveUnlock(false);
+      }
+    },
+    unlockResolve: null,
+    requestUnlock: () =>
+      new Promise<boolean>((resolve) => {
+        set({ unlockDialogOpen: true, unlockResolve: resolve });
+      }),
+    resolveUnlock: (unlocked) => {
+      const { unlockResolve } = get();
+      if (unlockResolve) {
+        unlockResolve(unlocked);
+        set({ unlockResolve: null });
+      }
+    },
     masterPasswordSetupOpen: false,
     masterPasswordSetupMode: "setup",
     openMasterPasswordSetup: (mode) =>

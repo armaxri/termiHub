@@ -160,6 +160,43 @@ describe("useCredentialStoreEvents", () => {
     expect(useAppStore.getState().unlockDialogOpen).toBe(false);
   });
 
+  it("resolves requestUnlock() with true when unlocked event fires", async () => {
+    await act(async () => {
+      root.render(createElement(HookConsumer));
+    });
+
+    // Capture the promise without awaiting — it will resolve once the unlock event fires
+    const unlockPromise = useAppStore.getState().requestUnlock();
+
+    // Simulate successful unlock from backend
+    await act(async () => {
+      unlockedHandler?.();
+    });
+
+    const result = await unlockPromise;
+    expect(result).toBe(true);
+    expect(useAppStore.getState().unlockDialogOpen).toBe(false);
+    expect(useAppStore.getState().unlockResolve).toBeNull();
+  });
+
+  it("resolves requestUnlock() with false when dialog is closed without unlock", async () => {
+    await act(async () => {
+      root.render(createElement(HookConsumer));
+    });
+
+    // Capture the promise without awaiting
+    const unlockPromise = useAppStore.getState().requestUnlock();
+
+    // Simulate the user closing the dialog without unlocking
+    await act(async () => {
+      useAppStore.getState().setUnlockDialogOpen(false);
+    });
+
+    const result = await unlockPromise;
+    expect(result).toBe(false);
+    expect(useAppStore.getState().unlockResolve).toBeNull();
+  });
+
   it("updates credential store status when status-changed event fires", async () => {
     await act(async () => {
       root.render(createElement(HookConsumer));

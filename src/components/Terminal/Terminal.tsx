@@ -161,7 +161,36 @@ export function Terminal({
         await terminalDispatcher.init();
         if (isCanceled()) return;
 
-        const sessionId = initialSessionIdRef.current ?? (await createTerminal(config));
+        // Fit to the actual container dimensions before creating the session.
+        // The initial fit in the outer effect runs while the element is in
+        // "parking" (hidden, zero-size), so xterm.cols is still the 80-col
+        // default at that point.  Fitting here — after the element has been
+        // moved to its real slot by the portal system — gives the correct
+        // terminal width.  This width is injected into the connection config
+        // so the backend uses it for PTY sizing and the OSC 7 erase
+        // calculation, which must know how many lines the echo occupies.
+        try {
+          fitAddon.fit();
+        } catch {
+          // Container not yet sized; fall back to current xterm dimensions
+        }
+        // Build a config that carries the actual terminal dimensions so the
+        // backend creates the PTY at the right size and calculates the OSC 7
+        // line-erase correctly.  Only override cols/rows when they are valid
+        // (> 0); otherwise keep whatever the connection config specifies.
+        const sessionConfig: typeof config =
+          xterm.cols > 0 && xterm.rows > 0
+            ? {
+                ...config,
+                config: {
+                  ...(config.config as Record<string, unknown>),
+                  cols: xterm.cols,
+                  rows: xterm.rows,
+                },
+              }
+            : config;
+
+        const sessionId = initialSessionIdRef.current ?? (await createTerminal(sessionConfig));
 
         // Guard against StrictMode race: if this setup was canceled while
         // the async createTerminal was in-flight, close the orphaned session
