@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Credential store: the unlock dialog no longer appears proactively every 15 minutes after auto-lock — the store still locks automatically, but the unlock prompt is only shown when a credential is actually needed (e.g. when connecting with stored credentials)
 - Agent build: `build-agents.sh` now builds multiple targets in parallel (each in its own `CARGO_TARGET_DIR` to avoid cargo build lock contention); add `--sequential` flag to opt out
 - Agent build: `build-agents.sh` and `setup-agent-cross.sh` now work correctly on ARM hosts (Apple Silicon, Raspberry Pi) — cross-rs Docker base images are pinned to `linux/amd64`, the container engine is auto-selected based on which engine already has the required images, missing images are caught early with a clear error, and jemalloc/QEMU noise is filtered from build output
 - Terminal: box-drawing characters (table borders, tree views) no longer render with pixel gaps between rows — the default `lineHeight` has been corrected from 1.2 to 1.0 (#579)
