@@ -205,6 +205,53 @@ fn ssh_auth_10_ecdsa_256_passphrase() {
     );
 }
 
+// ── SSH-AUTH-13: ECDSA-384 with passphrase (PEM format) ──────────────
+
+/// Passphrase-protected ECDSA-384 key in PEM/SEC1 format.
+///
+/// This key is stored as `-----BEGIN EC PRIVATE KEY-----` (PEM/SEC1) rather
+/// than OpenSSH format. That format bypasses termiHub's OpenSSH-to-PKCS8
+/// conversion (which currently supports RSA and Ed25519 only) and lets
+/// libssh2 handle the passphrase decryption directly.
+#[test]
+fn ssh_auth_13_ecdsa_384_passphrase() {
+    require_docker!(PORT_SSH_KEYS);
+
+    let config = ssh_key_passphrase_config(PORT_SSH_KEYS, "ecdsa_384_passphrase");
+    let session = connect_and_authenticate(&config)
+        .expect("SSH-AUTH-13: ECDSA-384 passphrase key auth should succeed");
+
+    assert!(session.authenticated());
+
+    let output = ssh_exec(&session, "whoami").expect("whoami should succeed");
+    assert!(
+        output.trim().contains("testuser"),
+        "Expected 'testuser', got: {output}"
+    );
+}
+
+// ── SSH-AUTH-14: ECDSA-521 with passphrase (PEM format) ──────────────
+
+/// Passphrase-protected ECDSA-521 key in PEM/SEC1 format.
+///
+/// See the note on SSH-AUTH-13 regarding PEM format and libssh2.
+#[test]
+fn ssh_auth_14_ecdsa_521_passphrase() {
+    require_docker!(PORT_SSH_KEYS);
+
+    let config = ssh_key_passphrase_config(PORT_SSH_KEYS, "ecdsa_521_passphrase");
+    let session = connect_and_authenticate(&config)
+        .expect("SSH-AUTH-14: ECDSA-521 passphrase key auth should succeed");
+
+    assert!(session.authenticated());
+
+    let output = ssh_exec(&session, "whoami").expect("whoami should succeed");
+    assert!(
+        output.trim().contains("testuser"),
+        "Expected 'testuser', got: {output}"
+    );
+}
+
 // ── SSH-AUTH-11: Wrong password rejected ─────────────────────────────
 
 #[test]
