@@ -146,6 +146,7 @@ impl ConnectionType for Telnet {
                         description: Some(
                             "Hostname or IP address of the telnet server".to_string(),
                         ),
+                        help_text: None,
                         field_type: FieldType::Text,
                         required: true,
                         default: None,
@@ -158,6 +159,7 @@ impl ConnectionType for Telnet {
                         key: "port".to_string(),
                         label: "Port".to_string(),
                         description: Some("TCP port number".to_string()),
+                        help_text: None,
                         field_type: FieldType::Port,
                         required: true,
                         default: Some(serde_json::json!(23)),
