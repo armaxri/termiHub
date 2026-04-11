@@ -4,6 +4,7 @@ import {
   onCredentialStoreLocked,
   onCredentialStoreUnlocked,
   onCredentialStoreStatusChanged,
+  onCredentialStoreUnlockNeeded,
 } from "@/services/events";
 
 /**
@@ -19,11 +20,14 @@ export function useCredentialStoreEvents(): void {
     let unlistenLocked: (() => void) | null = null;
     let unlistenUnlocked: (() => void) | null = null;
     let unlistenStatusChanged: (() => void) | null = null;
+    let unlistenUnlockNeeded: (() => void) | null = null;
 
     const setup = async () => {
+      // When the store locks (e.g. auto-lock timer), just refresh status silently.
+      // Do NOT open the unlock dialog proactively — only do so when credentials
+      // are actually needed (see unlock-needed handler below).
       unlistenLocked = await onCredentialStoreLocked(() => {
         loadCredentialStoreStatus();
-        setUnlockDialogOpen(true);
       });
 
       unlistenUnlocked = await onCredentialStoreUnlocked(() => {
@@ -34,6 +38,12 @@ export function useCredentialStoreEvents(): void {
       unlistenStatusChanged = await onCredentialStoreStatusChanged((status) => {
         setCredentialStoreStatus(status);
       });
+
+      // Open the unlock dialog only when a credential access is attempted
+      // while the store is locked (demand-driven unlock).
+      unlistenUnlockNeeded = await onCredentialStoreUnlockNeeded(() => {
+        setUnlockDialogOpen(true);
+      });
     };
 
     setup();
@@ -42,6 +52,7 @@ export function useCredentialStoreEvents(): void {
       unlistenLocked?.();
       unlistenUnlocked?.();
       unlistenStatusChanged?.();
+      unlistenUnlockNeeded?.();
     };
   }, [setCredentialStoreStatus, loadCredentialStoreStatus, setUnlockDialogOpen]);
 }

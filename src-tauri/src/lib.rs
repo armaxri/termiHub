@@ -159,6 +159,7 @@ pub fn run() {
                     .unwrap_or(false);
 
             let credential_manager = Arc::new(credential_manager);
+            credential_manager.set_app_handle(app.handle().clone());
 
             // Set up auto-lock timer for master password mode
             let auto_lock_minutes = settings.credential_auto_lock_minutes.or(Some(15));
