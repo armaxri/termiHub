@@ -15,6 +15,7 @@ export function useCredentialStoreEvents(): void {
   const setCredentialStoreStatus = useAppStore((s) => s.setCredentialStoreStatus);
   const loadCredentialStoreStatus = useAppStore((s) => s.loadCredentialStoreStatus);
   const setUnlockDialogOpen = useAppStore((s) => s.setUnlockDialogOpen);
+  const resolveUnlock = useAppStore((s) => s.resolveUnlock);
 
   useEffect(() => {
     let unlistenLocked: (() => void) | null = null;
@@ -31,6 +32,9 @@ export function useCredentialStoreEvents(): void {
       });
 
       unlistenUnlocked = await onCredentialStoreUnlocked(() => {
+        // Resolve any pending requestUnlock() promise first, so callers that are
+        // awaiting it can continue before the dialog closes.
+        resolveUnlock(true);
         loadCredentialStoreStatus();
         setUnlockDialogOpen(false);
       });
@@ -54,5 +58,5 @@ export function useCredentialStoreEvents(): void {
       unlistenStatusChanged?.();
       unlistenUnlockNeeded?.();
     };
-  }, [setCredentialStoreStatus, loadCredentialStoreStatus, setUnlockDialogOpen]);
+  }, [setCredentialStoreStatus, loadCredentialStoreStatus, setUnlockDialogOpen, resolveUnlock]);
 }

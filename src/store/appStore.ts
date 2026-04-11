@@ -487,6 +487,16 @@ interface AppState {
   loadCredentialStoreStatus: () => Promise<void>;
   unlockDialogOpen: boolean;
   setUnlockDialogOpen: (open: boolean) => void;
+  /** Pending resolver for requestUnlock(). Internal — resolved by resolveUnlock(). */
+  unlockResolve: ((unlocked: boolean) => void) | null;
+  /**
+   * Opens the unlock dialog and returns a Promise that resolves to `true` when the
+   * store is successfully unlocked, or `false` when the user cancels/skips.
+   * Callers can `await` this before proceeding with a credential-dependent action.
+   */
+  requestUnlock: () => Promise<boolean>;
+  /** Resolves (and clears) any pending requestUnlock() promise. */
+  resolveUnlock: (unlocked: boolean) => void;
   masterPasswordSetupOpen: boolean;
   masterPasswordSetupMode: "setup" | "change";
   openMasterPasswordSetup: (mode: "setup" | "change") => void;
@@ -2687,7 +2697,27 @@ export const useAppStore = create<AppState>((set, get) => {
       }
     },
     unlockDialogOpen: false,
-    setUnlockDialogOpen: (open) => set({ unlockDialogOpen: open }),
+    setUnlockDialogOpen: (open) => {
+      const prevOpen = get().unlockDialogOpen;
+      set({ unlockDialogOpen: open });
+      // If the dialog was closed without a prior resolveUnlock(true) call (i.e. the
+      // user clicked Skip or dismissed the dialog), cancel any pending request.
+      if (prevOpen && !open) {
+        get().resolveUnlock(false);
+      }
+    },
+    unlockResolve: null,
+    requestUnlock: () =>
+      new Promise<boolean>((resolve) => {
+        set({ unlockDialogOpen: true, unlockResolve: resolve });
+      }),
+    resolveUnlock: (unlocked) => {
+      const { unlockResolve } = get();
+      if (unlockResolve) {
+        unlockResolve(unlocked);
+        set({ unlockResolve: null });
+      }
+    },
     masterPasswordSetupOpen: false,
     masterPasswordSetupMode: "setup",
     openMasterPasswordSetup: (mode) =>
