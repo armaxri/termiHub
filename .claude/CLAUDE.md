@@ -41,7 +41,10 @@ Issues labeled **`Concept`** are design-only tasks. Do **not** implement code fo
 src/                          # React frontend
   components/                 # ActivityBar/, Sidebar/, Terminal/, SplitView/, Settings/,
                               # ConnectionEditor/, StatusBar/, TunnelEditor/, TunnelSidebar/,
-                              # CredentialStoreIndicator/, LogViewer/, FileEditor/, etc.
+                              # CredentialStoreIndicator/, LogViewer/, FileEditor/,
+                              # DynamicForm/ (schema-driven connection forms),
+                              # NetworkTools/ (ping, traceroute, port scanner, DNS, WoL, HTTP monitor),
+                              # WorkspaceSidebar/, EmbeddedServerSidebar/, etc.
   data/                       # Application data/fixtures
   hooks/                      # useTerminal, useConnections, useKeyboardShortcuts, etc.
   services/                   # api.ts (Tauri commands), events.ts (Tauri events)
@@ -59,8 +62,11 @@ src-tauri/src/                # Rust backend (desktop)
   monitoring/                 # SSH remote system monitoring (CPU, memory, disk, etc.)
   session/                    # manager.rs, registry.rs, remote_proxy.rs
   tunnel/                     # SSH tunnel functionality
+  embedded_servers/           # Embedded HTTP/FTP/TFTP server management
+  network/                    # Network tools backend (WoL storage, HTTP monitor)
+  workspace/                  # Workspace save/restore (config.rs, manager.rs, storage.rs)
   commands/                   # Tauri IPC command handlers
-  utils/                      # shell_detect.rs, expand.rs, errors.rs
+  utils/                      # shell_detect.rs, expand.rs, errors.rs, portable.rs
 core/src/                     # Shared Rust core library (termihub-core)
   backends/                   # Backend implementations: local_shell.rs, serial.rs, telnet.rs,
                               # ssh/ (directory), docker/ (directory), wsl.rs
@@ -157,6 +163,19 @@ examples/                     # Quick-start dev environment (SSH, Telnet, virtua
 - Single Responsibility Principle
 - Clear, descriptive naming
 - **Prefer Mermaid.js diagrams** in documentation wherever they aid understanding (flowcharts, sequence diagrams, state diagrams, etc.)
+- **Schema-driven connection forms**: connection types declare config as JSON schemas; `DynamicForm` renders them automatically — never hardcode connection UI fields
+- **Portable mode**: when `termiHub.exe` runs from a directory containing a `data/` folder, all config/data is stored there instead of the system profile path; controlled via `src-tauri/src/utils/portable.rs`
+
+---
+
+## Claude Code Skills
+
+Use these skills with `/skill-name` during development:
+
+- `/frontend-design:frontend-design` — UI components and new screens (VS Code-inspired aesthetic)
+- `/simplify` — post-implementation code quality review (run before PRs)
+- `/claude-md-management:revise-claude-md` — update CLAUDE.md with session learnings (run at session end)
+- `/claude-md-management:claude-md-improver` — full CLAUDE.md audit and improvement pass
 
 ---
 
@@ -168,7 +187,7 @@ examples/                     # Quick-start dev environment (SSH, Telnet, virtua
 - **Never push directly to `main`**: all changes must be submitted via pull request — no exceptions, even for documentation-only changes
 - **Every change requires a PR**: create a feature or bugfix branch, push it to `origin`, and open a pull request. Direct pushes to `main` are prohibited.
 - **Conventional Commits**: `type(scope): subject` — types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `chore`
-- **Scopes**: `terminal`, `ssh`, `serial`, `ui`, `backend`, `sftp`, `config`, `agent`, `credential`, `tunnel`
+- **Scopes**: `terminal`, `ssh`, `serial`, `ui`, `backend`, `sftp`, `config`, `agent`, `credential`, `tunnel`, `workspace`, `network`, `embedded-servers`
 - **Always merge with a merge commit** (`gh pr merge --merge`) — never squash or rebase, never rebase branches
 - **Commit early and often** — commit as soon as a single logical topic is complete (a single topic = a single commit). Do not batch multiple topics into one commit. Each logical step gets its own commit:
   - Refactors separate from new features
@@ -211,8 +230,9 @@ A PostToolUse hook in `.claude/settings.json` runs `scripts/internal/autoformat.
 2. **docs/testing.md (Manual Testing section)** — updated if the PR includes manual test steps
 3. **Concept documents** — if working on a `Concept` issue, ensure `docs/concepts/<name>.md` is written and committed
 4. **Other documentation** — any doc updates implied by the changes (architecture.md, README references, JSDoc, doc comments, etc.)
-5. **Formatting** — run `./scripts/format.sh` and commit any formatting fixes as a separate commit
-6. **Quality checks** — run `./scripts/check.sh` to verify linting, formatting, and clippy pass
+5. **Code quality** — run `/simplify` on changed code to review for reuse, quality, and efficiency; commit any improvements as a separate commit
+6. **Formatting** — run `./scripts/format.sh` and commit any formatting fixes as a separate commit
+7. **Quality checks** — run `./scripts/check.sh` to verify linting, formatting, and clippy pass
 
 **Workflow when user asks to push:**
 
@@ -229,6 +249,8 @@ Always run these before pushing:
 ./scripts/test.sh      # Run all unit tests (frontend + backend + agent)
 ./scripts/check.sh     # Read-only quality checks mirroring CI
 ```
+
+Also run `/simplify` on changed code before pushing.
 
 ### Individual Commands (when you need just one tool)
 
