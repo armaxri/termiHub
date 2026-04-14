@@ -746,7 +746,7 @@ See [scripts/README.md](../scripts/README.md) for all options. Reports are saved
 | Tab Management        | [`tab-management.yaml`](../tests/manual/tab-management.yaml)               | `MT-TAB`   | 7      |
 | Connection Management | [`connection-management.yaml`](../tests/manual/connection-management.yaml) | `MT-CONN`  | 10     |
 | File Browser + Editor | [`file-browser.yaml`](../tests/manual/file-browser.yaml)                   | `MT-FB`    | 10     |
-| UI / Layout           | [`ui-layout.yaml`](../tests/manual/ui-layout.yaml)                         | `MT-UI`    | 19     |
+| UI / Layout           | [`ui-layout.yaml`](../tests/manual/ui-layout.yaml)                         | `MT-UI`    | 21     |
 | Remote Agent          | [`remote-agent.yaml`](../tests/manual/remote-agent.yaml)                   | `MT-AGENT` | 2      |
 | Credential Store      | [`credential-store.yaml`](../tests/manual/credential-store.yaml)           | `MT-CRED`  | 3      |
 | Keyboard Shortcuts    | [`keyboard.yaml`](../tests/manual/keyboard.yaml)                           | `MT-KB`    | 8      |
@@ -754,7 +754,7 @@ See [scripts/README.md](../scripts/README.md) for all options. Reports are saved
 | Portable Mode         | [`portable-mode.yaml`](../tests/manual/portable-mode.yaml)                 | `MT-PORT`  | 4      |
 | Embedded Services     | [`embedded-services.yaml`](../tests/manual/embedded-services.yaml)         | `MT-SVC`   | 3      |
 | Network Tools         | [`network-tools.yaml`](../tests/manual/network-tools.yaml)                 | `MT-NET`   | 10     |
-| **Total**             |                                                                            |            | **92** |
+| **Total**             |                                                                            |            | **94** |
 
 When adding new manual tests, add the YAML definition to the appropriate file in `tests/manual/` — the YAML files are the **source of truth** for guided testing.
 

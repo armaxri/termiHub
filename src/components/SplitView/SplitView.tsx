@@ -253,7 +253,9 @@ export function SplitView() {
             </div>
             <div className="zoom-overlay__content">
               <TerminalSearchBar tabId={zoomedTabId} />
-              <TerminalSlot tabId={zoomedTabId} isVisible={true} />
+              {/* key forces a fresh mount on each zoomed-tab change so the
+                  adoption lifecycle always matches the initial-zoom case. */}
+              <TerminalSlot key={`zoom-slot-${zoomedTabId}`} tabId={zoomedTabId} isVisible={true} />
             </div>
           </div>
         </div>
@@ -572,7 +574,7 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
  */
 function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: boolean }) {
   const slotRef = useRef<HTMLDivElement>(null);
-  const { getElement, focusTerminal, parkingRef } = useTerminalRegistry();
+  const { getElement, focusTerminal, fitTerminal, parkingRef } = useTerminalRegistry();
   const tabColor = useAppStore((s) => s.tabColors[tabId]);
 
   useEffect(() => {
@@ -586,6 +588,11 @@ function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: boolean 
       const termEl = getElement(tabId);
       if (termEl && termEl.parentNode !== slotEl) {
         slotEl.appendChild(termEl);
+        // Synchronous fit immediately after reparenting: getComputedStyle forces
+        // layout so proposeDimensions() sees the new container dimensions.
+        fitTerminal(tabId);
+        // RAF fit as a second pass after the browser has painted the new layout.
+        requestAnimationFrame(() => fitTerminal(tabId));
         return true;
       }
       return !!termEl;
@@ -604,7 +611,7 @@ function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: boolean 
         parkingEl?.appendChild(termEl);
       }
     };
-  }, [tabId, getElement, parkingRef]);
+  }, [tabId, getElement, fitTerminal, parkingRef]);
 
   // Focus the terminal when it becomes visible (tab activation or initial creation)
   useEffect(() => {

@@ -305,3 +305,42 @@ tests:
       - "No pixel gaps visible between rows of a box"
     verification: manual
     tags: [terminal, visual]
+
+  - id: MT-UI-32
+    name: "Zoom overlay follows panel focus switching"
+    pr: 591
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - "Open at least two terminal sessions in separate split panels (use Split Right)"
+      - "Run a command in each so both have visible output"
+    instructions:
+      - "Focus panel 1 and press Cmd+Shift+Enter (Mac) or Ctrl+Shift+Enter (Win/Linux) to open the zoom overlay for its active tab"
+      - "Press the Focus Panel Right shortcut (Cmd+Option+Right on Mac, Ctrl+Alt+Right on Win/Linux) to move focus to panel 2 while the overlay is open"
+      - "Observe the zoom overlay"
+    expected:
+      - "The zoom overlay updates to show the active terminal from panel 2"
+      - "The header title in the overlay changes to panel 2's tab name"
+      - "The terminal content from panel 2 is fully visible (no blank/empty overlay)"
+      - "The terminal responds to keyboard input"
+    verification: manual
+    tags: [terminal, zoom, panels]
+
+  - id: MT-UI-33
+    name: "Zoom overlay follows tab switching within the zoomed panel"
+    pr: 591
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - "Open at least two terminal tabs in the same panel"
+      - "Run a distinct command in each tab so they have different visible output"
+    instructions:
+      - "Press Cmd+Shift+Enter (Mac) or Ctrl+Shift+Enter (Win/Linux) to open the zoom overlay for the active tab"
+      - "Press Ctrl+Tab to switch to the next tab while the overlay is open"
+      - "Observe the zoom overlay"
+    expected:
+      - "The zoom overlay updates to show the newly active tab"
+      - "The header title changes to the new tab's name"
+      - "The terminal content of the new tab is fully visible"
+    verification: manual
+    tags: [terminal, zoom, tabs]

@@ -1226,14 +1226,29 @@ export const useAppStore = create<AppState>((set, get) => {
       }),
 
     setActiveTab: (tabId, panelId) =>
-      set((state) => ({
-        rootPanel: updateLeaf(state.rootPanel, panelId, (leaf) => ({
+      set((state) => {
+        const newRootPanel = updateLeaf(state.rootPanel, panelId, (leaf) => ({
           ...leaf,
           tabs: leaf.tabs.map((t) => ({ ...t, isActive: t.id === tabId })),
           activeTabId: tabId,
-        })),
-        activePanelId: panelId,
-      })),
+        }));
+
+        // If the zoom overlay is showing a tab from the same panel, follow the switch
+        let newZoomedTabId = state.zoomedTabId;
+        if (state.zoomedTabId !== null) {
+          const panelLeaf = findLeaf(state.rootPanel, panelId);
+          if (panelLeaf?.tabs.some((t) => t.id === state.zoomedTabId)) {
+            const newTab = panelLeaf.tabs.find((t) => t.id === tabId);
+            newZoomedTabId = newTab?.contentType === "terminal" ? tabId : null;
+          }
+        }
+
+        return {
+          rootPanel: newRootPanel,
+          activePanelId: panelId,
+          zoomedTabId: newZoomedTabId,
+        };
+      }),
 
     moveTab: (tabId, fromPanelId, toPanelId, newIndex) =>
       set((state) => {
@@ -1307,7 +1322,21 @@ export const useAppStore = create<AppState>((set, get) => {
         return { rootPanel, activePanelId };
       }),
 
-    setActivePanel: (panelId) => set({ activePanelId: panelId }),
+    setActivePanel: (panelId) =>
+      set((state) => {
+        // If zoom is active, follow the active tab of the newly focused panel
+        let newZoomedTabId = state.zoomedTabId;
+        if (state.zoomedTabId !== null) {
+          const panelLeaf = findLeaf(state.rootPanel, panelId);
+          if (panelLeaf?.activeTabId) {
+            const activeTab = panelLeaf.tabs.find((t) => t.id === panelLeaf.activeTabId);
+            newZoomedTabId = activeTab?.contentType === "terminal" ? panelLeaf.activeTabId : null;
+          } else {
+            newZoomedTabId = null;
+          }
+        }
+        return { activePanelId: panelId, zoomedTabId: newZoomedTabId };
+      }),
 
     splitPanelWithTab: (tabId, fromPanelId, targetPanelId, edge) =>
       set((state) => {
