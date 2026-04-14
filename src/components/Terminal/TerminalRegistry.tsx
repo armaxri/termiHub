@@ -1,5 +1,6 @@
 import { createContext, useContext, useRef, useCallback, useMemo, ReactNode } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon, type ISearchOptions } from "@xterm/addon-search";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
@@ -7,12 +8,13 @@ import { readText as readClipboard } from "@tauri-apps/plugin-clipboard-manager"
 import { sendInput } from "@/services/api";
 import { SessionId } from "@/types/terminal";
 import { useAppStore } from "@/store/appStore";
+import { frontendLog } from "@/utils/frontendLog";
 
 const LARGE_PASTE_THRESHOLD = 5000;
 
 interface TerminalRegistryContextType {
-  /** Register a terminal's xterm container element and xterm instance. */
-  register: (tabId: string, element: HTMLDivElement, xterm: XTerm) => void;
+  /** Register a terminal's xterm container element, xterm instance, and fit addon. */
+  register: (tabId: string, element: HTMLDivElement, xterm: XTerm, fitAddon: FitAddon) => void;
   /** Unregister a terminal element (on terminal close). */
   unregister: (tabId: string) => void;
   /** Get the registered element for a tab. */
@@ -45,6 +47,8 @@ interface TerminalRegistryContextType {
   findPrevious: (tabId: string, query: string, options?: ISearchOptions) => boolean;
   /** Clear search decorations in the terminal. */
   clearSearchDecorations: (tabId: string) => void;
+  /** Fit the terminal to its current container dimensions. */
+  fitTerminal: (tabId: string) => void;
   /** Ref to the off-screen parking div for orphaned terminal elements. */
   parkingRef: React.RefObject<HTMLDivElement | null>;
 }
@@ -65,18 +69,24 @@ export function useTerminalRegistry() {
 export function TerminalPortalProvider({ children }: { children: ReactNode }) {
   const registryRef = useRef(new Map<string, HTMLDivElement>());
   const xtermRegistryRef = useRef(new Map<string, XTerm>());
+  const fitAddonRegistryRef = useRef(new Map<string, FitAddon>());
   const sessionRegistryRef = useRef(new Map<string, SessionId>());
   const searchAddonRegistryRef = useRef(new Map<string, SearchAddon>());
   const parkingRef = useRef<HTMLDivElement | null>(null);
 
-  const register = useCallback((tabId: string, element: HTMLDivElement, xterm: XTerm) => {
-    registryRef.current.set(tabId, element);
-    xtermRegistryRef.current.set(tabId, xterm);
-  }, []);
+  const register = useCallback(
+    (tabId: string, element: HTMLDivElement, xterm: XTerm, fitAddon: FitAddon) => {
+      registryRef.current.set(tabId, element);
+      xtermRegistryRef.current.set(tabId, xterm);
+      fitAddonRegistryRef.current.set(tabId, fitAddon);
+    },
+    []
+  );
 
   const unregister = useCallback((tabId: string) => {
     registryRef.current.delete(tabId);
     xtermRegistryRef.current.delete(tabId);
+    fitAddonRegistryRef.current.delete(tabId);
     sessionRegistryRef.current.delete(tabId);
     searchAddonRegistryRef.current.delete(tabId);
   }, []);
@@ -89,6 +99,31 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     const xterm = xtermRegistryRef.current.get(tabId);
     if (xterm) {
       xterm.focus();
+    }
+  }, []);
+
+  const fitTerminal = useCallback((tabId: string) => {
+    const fitAddon = fitAddonRegistryRef.current.get(tabId);
+    const xterm = xtermRegistryRef.current.get(tabId);
+    if (!fitAddon) return;
+    const el = registryRef.current.get(tabId);
+    const w = el?.offsetWidth ?? -1;
+    const h = el?.offsetHeight ?? -1;
+    frontendLog(
+      "terminal_registry",
+      `fitTerminal tab=${tabId} el=${w}×${h} xterm=${xterm?.cols}×${xterm?.rows}`
+    );
+    try {
+      fitAddon.fit();
+      frontendLog(
+        "terminal_registry",
+        `fitTerminal after fit tab=${tabId} xterm=${xterm?.cols}×${xterm?.rows}`
+      );
+    } catch (err) {
+      frontendLog("terminal_registry", `fitTerminal fit error tab=${tabId}: ${err}`);
+    }
+    if (xterm) {
+      requestAnimationFrame(() => xterm.scrollToBottom());
     }
   }, []);
 
@@ -233,6 +268,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       unregister,
       getElement,
       focusTerminal,
+      fitTerminal,
       clearTerminal,
       saveTerminalToFile,
       copyTerminalToClipboard,
@@ -253,6 +289,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       unregister,
       getElement,
       focusTerminal,
+      fitTerminal,
       clearTerminal,
       saveTerminalToFile,
       copyTerminalToClipboard,
