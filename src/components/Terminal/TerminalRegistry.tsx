@@ -8,6 +8,7 @@ import { readText as readClipboard } from "@tauri-apps/plugin-clipboard-manager"
 import { sendInput } from "@/services/api";
 import { SessionId } from "@/types/terminal";
 import { useAppStore } from "@/store/appStore";
+import { frontendLog } from "@/utils/frontendLog";
 
 const LARGE_PASTE_THRESHOLD = 5000;
 
@@ -105,10 +106,21 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     const fitAddon = fitAddonRegistryRef.current.get(tabId);
     const xterm = xtermRegistryRef.current.get(tabId);
     if (!fitAddon) return;
+    const el = registryRef.current.get(tabId);
+    const w = el?.offsetWidth ?? -1;
+    const h = el?.offsetHeight ?? -1;
+    frontendLog(
+      "terminal_registry",
+      `fitTerminal tab=${tabId} el=${w}×${h} xterm=${xterm?.cols}×${xterm?.rows}`
+    );
     try {
       fitAddon.fit();
-    } catch {
-      // Container may not have dimensions yet
+      frontendLog(
+        "terminal_registry",
+        `fitTerminal after fit tab=${tabId} xterm=${xterm?.cols}×${xterm?.rows}`
+      );
+    } catch (err) {
+      frontendLog("terminal_registry", `fitTerminal fit error tab=${tabId}: ${err}`);
     }
     if (xterm) {
       requestAnimationFrame(() => xterm.scrollToBottom());

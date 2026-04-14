@@ -12,6 +12,7 @@ import { useTerminalRegistry } from "./TerminalRegistry";
 import { useAppStore } from "@/store/appStore";
 import { getXtermTheme } from "@/themes";
 import { processKeyEvent, isAppShortcut, isChordPending } from "@/services/keybindings";
+import { frontendLog } from "@/utils/frontendLog";
 
 const HORIZONTAL_SCROLL_COLS = 500;
 
@@ -510,7 +511,17 @@ export function Terminal({
       // line-wrapped garbage that persists after the element is re-adopted.
       const entry = entries[0];
       if (entry && (entry.contentRect.width < 10 || entry.contentRect.height < 10)) {
+        frontendLog(
+          "terminal",
+          `ResizeObserver skipped fit (parking) tab=${tabId} rect=${entry.contentRect.width}×${entry.contentRect.height}`
+        );
         return;
+      }
+      if (entry) {
+        frontendLog(
+          "terminal",
+          `ResizeObserver fit tab=${tabId} rect=${entry.contentRect.width}×${entry.contentRect.height} xterm=${xterm.cols}×${xterm.rows}`
+        );
       }
       try {
         if (horizontalScrollingRef.current) {
