@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { Terminal as XTerm } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
 import { TerminalPortalProvider, useTerminalRegistry } from "./TerminalRegistry";
 import { sendInput } from "@/services/api";
 
@@ -32,6 +33,11 @@ function createMockXterm(selection?: string): XTerm {
       },
     },
   } as unknown as XTerm;
+}
+
+/** Creates a minimal mock FitAddon for testing. */
+function createMockFitAddon(): FitAddon {
+  return { fit: vi.fn() } as unknown as FitAddon;
 }
 
 let container: HTMLDivElement;
@@ -73,7 +79,7 @@ describe("getTerminalSelection", () => {
     const el = document.createElement("div");
 
     act(() => {
-      registryActions.register("tab-1", el, xterm);
+      registryActions.register("tab-1", el, xterm, createMockFitAddon());
     });
 
     expect(registryActions.getTerminalSelection("tab-1")).toBeUndefined();
@@ -85,7 +91,7 @@ describe("getTerminalSelection", () => {
     const el = document.createElement("div");
 
     act(() => {
-      registryActions.register("tab-1", el, xterm);
+      registryActions.register("tab-1", el, xterm, createMockFitAddon());
     });
 
     expect(registryActions.getTerminalSelection("tab-1")).toBe("selected text");
@@ -103,7 +109,7 @@ describe("copySelectionToClipboard", () => {
     const el = document.createElement("div");
 
     act(() => {
-      registryActions.register("tab-1", el, xterm);
+      registryActions.register("tab-1", el, xterm, createMockFitAddon());
     });
 
     await act(async () => {
@@ -121,7 +127,7 @@ describe("copySelectionToClipboard", () => {
     const el = document.createElement("div");
 
     act(() => {
-      registryActions.register("tab-1", el, xterm);
+      registryActions.register("tab-1", el, xterm, createMockFitAddon());
     });
 
     await act(async () => {
@@ -188,7 +194,7 @@ describe("pasteToTerminal", () => {
     const el = document.createElement("div");
 
     act(() => {
-      registryActions.register("tab-dup", el, xterm);
+      registryActions.register("tab-dup", el, xterm, createMockFitAddon());
       registryActions.registerSession("tab-dup", "session-dup");
     });
 
