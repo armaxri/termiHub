@@ -464,8 +464,8 @@ export function Terminal({
     // Expose xterm instance on the DOM element for E2E test access
     (el as HTMLDivElement & { _xtermInstance?: XTerm })._xtermInstance = xterm;
 
-    // Register element and xterm instance with the portal registry
-    register(tabId, el, xterm);
+    // Register element, xterm instance, and fit addon with the portal registry
+    register(tabId, el, xterm, fitAddon);
 
     // Initial fit (may fail since element starts in parking)
     try {
@@ -503,7 +503,15 @@ export function Terminal({
     // After fitting, kick the SmoothScrollableElement so it recalculates
     // its viewport height — it may have cached stale dimensions from when
     // the element was in parking (hidden, zero-size).
-    const resizeObserver = new ResizeObserver(() => {
+    const resizeObserver = new ResizeObserver((entries) => {
+      // Skip fit while the element is in the off-screen parking div (1×1 px).
+      // Fitting at 1×1 would resize the PTY to ~2 cols × 1 row, causing the
+      // backend shell to redraw at that width and fill the buffer with
+      // line-wrapped garbage that persists after the element is re-adopted.
+      const entry = entries[0];
+      if (entry && (entry.contentRect.width < 10 || entry.contentRect.height < 10)) {
+        return;
+      }
       try {
         if (horizontalScrollingRef.current) {
           // Only resize PTY when rows change (window/panel resize).
