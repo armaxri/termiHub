@@ -4,6 +4,14 @@ All completed concept documents have been moved to [`handled/`](handled/) — th
 
 ## Open Concepts
 
+### remote-client-mode.md (Issue #TBD)
+
+Concept for accessing termiHub as a web application (browser) and as an iPad app. Defines a
+shared transport abstraction layer (TauriTransport vs. WebSocketTransport) so the React frontend
+works unchanged across Tauri IPC and WebSocket connections. Covers the agent's embedded HTTP/WS
+server, JWT-based auth, TLS, QR-code pairing, touch toolbar for iPad, no-local-shell enforcement
+on constrained clients, and a four-phase rollout plan.
+
 ### shell-context-menu-integration.md (Issue #TBD)
 
 Concept for OS-level "Open in termiHub" context menu integration on Windows, macOS, and Linux,
