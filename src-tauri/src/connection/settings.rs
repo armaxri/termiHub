@@ -59,6 +59,22 @@ pub struct LayoutConfig {
     pub sidebar_collapsed: Option<bool>,
 }
 
+/// Persisted state for the update checker.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+pub struct UpdateSettings {
+    /// Whether to automatically check for updates on startup and every 24 hours.
+    #[serde(default = "default_true")]
+    pub auto_check: bool,
+    /// ISO 8601 timestamp of the last completed update check.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_check_time: Option<String>,
+    /// Version string the user chose to skip (e.g. `"0.2.0"`). Cleared when a
+    /// newer version is released or the user manually clears it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skipped_version: Option<String>,
+}
+
 /// Application-wide settings persisted to disk.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -115,6 +131,9 @@ pub struct AppSettings {
     /// Whether experimental features are enabled.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub experimental_features_enabled: Option<bool>,
+    /// Update checker configuration and state.
+    #[serde(default)]
+    pub updates: UpdateSettings,
 }
 
 impl Default for AppSettings {
@@ -143,6 +162,7 @@ impl Default for AppSettings {
             installed_language_packages: None,
             custom_language_grammars: None,
             experimental_features_enabled: None,
+            updates: UpdateSettings::default(),
         }
     }
 }
