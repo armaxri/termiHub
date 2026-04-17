@@ -24,6 +24,9 @@ pub struct InitializeParams {
     pub protocol_version: String,
     pub client: String,
     pub client_version: String,
+    /// Paths on the remote host to load as read-only external connection files.
+    #[serde(default)]
+    pub external_connection_files: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -442,6 +445,30 @@ mod tests {
         let params: InitializeParams = serde_json::from_value(json).unwrap();
         assert_eq!(params.protocol_version, "0.1.0");
         assert_eq!(params.client, "termihub-desktop");
+        assert!(params.external_connection_files.is_empty());
+    }
+
+    #[test]
+    fn initialize_params_with_external_files() {
+        let json = json!({
+            "protocol_version": "0.2.0",
+            "client": "termihub-desktop",
+            "client_version": "1.0.0",
+            "external_connection_files": [
+                "/home/pi/team-connections.json",
+                "/opt/shared-connections.json"
+            ]
+        });
+        let params: InitializeParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.external_connection_files.len(), 2);
+        assert_eq!(
+            params.external_connection_files[0],
+            "/home/pi/team-connections.json"
+        );
+        assert_eq!(
+            params.external_connection_files[1],
+            "/opt/shared-connections.json"
+        );
     }
 
     #[test]

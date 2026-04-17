@@ -482,6 +482,8 @@ export interface AgentDefinitionInfo {
   folderId: string | null;
   terminalOptions?: TerminalOptions;
   icon?: string;
+  /** Source file path on the remote host, or undefined for the primary store. */
+  sourceFile?: string;
 }
 
 /** Info about a folder on an agent. */

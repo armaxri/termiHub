@@ -42,6 +42,10 @@ pub struct ConnectionSnapshot {
     pub terminal_options: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
+    /// Path of the external file this connection was loaded from.
+    /// `None` means the primary `connections.json` store.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_file: Option<String>,
 }
 
 impl Connection {
@@ -55,6 +59,7 @@ impl Connection {
             folder_id: self.folder_id.clone(),
             terminal_options: self.terminal_options.clone(),
             icon: self.icon.clone(),
+            source_file: None,
         }
     }
 }
@@ -141,6 +146,14 @@ pub trait ConnectionStoreApi: Send + Sync + 'static {
 
     /// Delete a folder by ID. Returns `true` if found and removed.
     async fn delete_folder(&self, id: &str) -> bool;
+
+    /// Load connections from external files on the remote host.
+    ///
+    /// External connections are read-only: they appear in `list()` results
+    /// tagged with their source path, but `create`/`update`/`delete` always
+    /// operate on the primary store. Calling this again replaces the previous
+    /// external set.
+    async fn load_external_files(&self, _paths: &[String]) {}
 }
 
 /// Persistent storage format for connections.json.
@@ -157,6 +170,8 @@ pub struct ConnectionStore {
     connections: Mutex<HashMap<String, Connection>>,
     folders: Mutex<HashMap<String, Folder>>,
     file_path: PathBuf,
+    /// Read-only connections loaded from external files, tagged with their source path.
+    external_snapshots: Mutex<Vec<ConnectionSnapshot>>,
 }
 
 impl ConnectionStore {
@@ -168,6 +183,7 @@ impl ConnectionStore {
             connections: Mutex::new(connections),
             folders: Mutex::new(folders),
             file_path,
+            external_snapshots: Mutex::new(Vec::new()),
         }
     }
 
@@ -178,6 +194,7 @@ impl ConnectionStore {
             connections: Mutex::new(HashMap::new()),
             folders: Mutex::new(HashMap::new()),
             file_path,
+            external_snapshots: Mutex::new(Vec::new()),
         }
     }
 
@@ -241,13 +258,52 @@ impl ConnectionStore {
         Some(snapshot)
     }
 
-    /// List all connections and folders.
+    /// List all connections and folders, including read-only external file connections.
     pub async fn list(&self) -> (Vec<ConnectionSnapshot>, Vec<FolderSnapshot>) {
         let conns = self.connections.lock().await;
         let folders = self.folders.lock().await;
-        let conn_list = conns.values().map(|c| c.snapshot()).collect();
+        let external = self.external_snapshots.lock().await;
+        let mut conn_list: Vec<ConnectionSnapshot> = conns.values().map(|c| c.snapshot()).collect();
+        conn_list.extend(external.iter().cloned());
         let folder_list = folders.values().map(|f| f.snapshot()).collect();
         (conn_list, folder_list)
+    }
+
+    /// Load connections from external files on the remote host.
+    ///
+    /// Replaces the current external connection set. Files that cannot be read
+    /// or parsed are skipped with a warning.
+    pub async fn load_external_files(&self, paths: &[String]) {
+        let mut external = self.external_snapshots.lock().await;
+        external.clear();
+        for path in paths {
+            match std::fs::read_to_string(path) {
+                Ok(contents) => match serde_json::from_str::<StorageFormat>(&contents) {
+                    Ok(storage) => {
+                        info!(
+                            "Loaded {} connections from external file {}",
+                            storage.connections.len(),
+                            path
+                        );
+                        for conn in storage.connections {
+                            external.push(ConnectionSnapshot {
+                                id: conn.id,
+                                name: conn.name,
+                                session_type: conn.session_type,
+                                config: conn.config,
+                                persistent: conn.persistent,
+                                folder_id: conn.folder_id,
+                                terminal_options: conn.terminal_options,
+                                icon: conn.icon,
+                                source_file: Some(path.clone()),
+                            });
+                        }
+                    }
+                    Err(e) => warn!("Failed to parse external connections from {}: {}", path, e),
+                },
+                Err(e) => warn!("Could not read external connection file {}: {}", path, e),
+            }
+        }
     }
 
     /// Delete a connection by ID. Returns `true` if found and deleted.
@@ -521,6 +577,10 @@ impl ConnectionStoreApi for ConnectionStore {
 
     async fn delete_folder(&self, id: &str) -> bool {
         ConnectionStore::delete_folder(self, id).await
+    }
+
+    async fn load_external_files(&self, paths: &[String]) {
+        ConnectionStore::load_external_files(self, paths).await
     }
 }
 
@@ -945,7 +1005,7 @@ mod tests {
         let (conns, _) = store.list().await;
         assert_eq!(conns.len(), 1);
         assert_eq!(conns[0].name, "Default Shell");
-        assert_eq!(conns[0].session_type, "shell");
+        assert_eq!(conns[0].session_type, "local");
         assert!(conns[0].id.starts_with("conn-"));
     }
 
@@ -1018,5 +1078,127 @@ mod tests {
         let folder: Folder = serde_json::from_str(json).unwrap();
         assert_eq!(folder.parent_id, None);
         assert!(!folder.is_expanded);
+    }
+
+    // ── External files ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn load_external_files_merges_connections_with_source_tag() {
+        let tmp = TempDir::new().unwrap();
+        let primary_path = tmp.path().join("connections.json");
+        let external_path = tmp.path().join("external.json");
+
+        let external_data = json!({
+            "connections": [
+                {
+                    "id": "ext-1",
+                    "name": "External Shell",
+                    "session_type": "local",
+                    "config": {},
+                    "persistent": false
+                }
+            ],
+            "folders": []
+        });
+        fs::write(
+            &external_path,
+            serde_json::to_string(&external_data).unwrap(),
+        )
+        .unwrap();
+
+        let store = ConnectionStore::new_temp(primary_path);
+        store
+            .create(make_connection("primary-1", "Primary Shell", false))
+            .await;
+
+        // Before loading, only primary connection is listed
+        let (conns, _) = store.list().await;
+        assert_eq!(conns.len(), 1);
+        assert_eq!(conns[0].source_file, None);
+
+        // Load external file
+        let ext_path_str = external_path.to_string_lossy().to_string();
+        store
+            .load_external_files(std::slice::from_ref(&ext_path_str))
+            .await;
+
+        let (conns, _) = store.list().await;
+        assert_eq!(conns.len(), 2);
+
+        let ext = conns.iter().find(|c| c.id == "ext-1").unwrap();
+        assert_eq!(ext.name, "External Shell");
+        assert_eq!(ext.source_file, Some(ext_path_str));
+
+        let primary = conns.iter().find(|c| c.id == "primary-1").unwrap();
+        assert_eq!(primary.source_file, None);
+    }
+
+    #[tokio::test]
+    async fn load_external_files_replaces_previous_set() {
+        let tmp = TempDir::new().unwrap();
+        let primary_path = tmp.path().join("connections.json");
+        let file_a = tmp.path().join("a.json");
+        let file_b = tmp.path().join("b.json");
+
+        let make_ext = |id: &str, name: &str| {
+            json!({
+                "connections": [{"id": id, "name": name, "session_type": "local", "config": {}, "persistent": false}],
+                "folders": []
+            })
+        };
+        fs::write(
+            &file_a,
+            serde_json::to_string(&make_ext("a-1", "A")).unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            &file_b,
+            serde_json::to_string(&make_ext("b-1", "B")).unwrap(),
+        )
+        .unwrap();
+
+        let store = ConnectionStore::new_temp(primary_path);
+
+        store
+            .load_external_files(&[file_a.to_string_lossy().to_string()])
+            .await;
+        let (conns, _) = store.list().await;
+        assert_eq!(conns.len(), 1);
+        assert_eq!(conns[0].id, "a-1");
+
+        // Loading again replaces the previous external set
+        store
+            .load_external_files(&[file_b.to_string_lossy().to_string()])
+            .await;
+        let (conns, _) = store.list().await;
+        assert_eq!(conns.len(), 1);
+        assert_eq!(conns[0].id, "b-1");
+    }
+
+    #[tokio::test]
+    async fn load_external_files_skips_missing_file() {
+        let tmp = TempDir::new().unwrap();
+        let primary_path = tmp.path().join("connections.json");
+        let store = ConnectionStore::new_temp(primary_path);
+
+        store
+            .load_external_files(&["/nonexistent/path.json".to_string()])
+            .await;
+
+        let (conns, _) = store.list().await;
+        assert!(conns.is_empty());
+    }
+
+    #[tokio::test]
+    async fn primary_connections_have_no_source_file() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        let store = ConnectionStore::new_temp(path);
+        store
+            .create(make_connection("conn-1", "Shell", false))
+            .await;
+
+        let (conns, _) = store.list().await;
+        assert_eq!(conns[0].source_file, None);
     }
 }

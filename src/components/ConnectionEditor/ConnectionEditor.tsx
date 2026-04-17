@@ -4,6 +4,7 @@ import type { LucideIcon } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import {
   ConnectionConfig,
+  ExternalAgentFile,
   RemoteAgentConfig,
   ShellType,
   TerminalOptions,
@@ -24,6 +25,7 @@ import { useAvailableRuntimes } from "@/hooks/useAvailableRuntimes";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import { ConnectionTerminalSettings } from "./ConnectionTerminalSettings";
 import { ConnectionAppearanceSettings } from "./ConnectionAppearanceSettings";
+import { AgentExternalFilesSettings } from "./AgentExternalFilesSettings";
 import { findLeafByTab } from "@/utils/panelTree";
 import "./ConnectionEditor.css";
 
@@ -726,6 +728,15 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
             ))}
           </select>
         </label>
+      )}
+
+      {isAgentTransportMode && (
+        <AgentExternalFilesSettings
+          files={(connSettings.externalConnectionFiles as ExternalAgentFile[]) ?? []}
+          onChange={(files) =>
+            setConnSettings((prev) => ({ ...prev, externalConnectionFiles: files }))
+          }
+        />
       )}
     </div>
   );

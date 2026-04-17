@@ -307,6 +307,7 @@ mod tests {
                 key_path: Some("~/.ssh/id_ed25519".to_string()),
                 save_password: None,
                 agent_path: None,
+                external_connection_files: vec![],
             },
         };
         let json = serde_json::to_string(&agent).unwrap();

@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Agent: external connection files — agent transport settings now support configuring a list of remote file paths. Enabled files are passed to the agent at connect time via the `initialize` JSON-RPC call; the agent loads connections from those files and merges them into the connection list as read-only entries tagged with their source file path.
 - Agent: ARMv7 (arm32) support — a new `termihub-agent-linux-armv7` binary is now built and released for 32-bit ARM devices such as older Raspberry Pi models (Pi 2 B, Pi 1 B+). Includes cross-compilation Dockerfile, Cross.toml entry, updated build and setup scripts, and CI pipeline changes.
 - Update checker (Variant A — notify only): termiHub now checks the GitHub Releases API on startup (with a 5-second delay) and every 24 hours for new versions. When a newer release is found, an amber dot appears on the version chip in the status bar and a non-blocking notification popup offers to open the GitHub downloads page. Security releases (marked `<!-- security -->` in the release notes) show a red dot and cannot be silently skipped. Users can skip a specific version, clear a skipped version, or disable automatic checks entirely in **Settings → Updates**.
 - Connection settings: a **Shell Integration** toggle is now available for local shell, SSH, and WSL connections (enabled by default). Disabling it skips all OSC injection at startup.
