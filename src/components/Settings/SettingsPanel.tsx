@@ -11,6 +11,7 @@ import {
   HardDrive,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { applyTheme } from "@/themes/engine";
 import { AppSettings } from "@/types/connection";
@@ -28,6 +29,7 @@ import { FileTypeSettings } from "./FileTypeSettings";
 import { LanguagePackagesSettings } from "./LanguagePackagesSettings";
 import { CustomGrammarsSettings } from "./CustomGrammarsSettings";
 import { PortableModeSettings } from "./PortableModeSettings";
+import { UpdateSettings } from "./UpdateSettings";
 import "./SettingsPanel.css";
 
 const SETTINGS_ICONS: Record<SettingsCategory, LucideIcon> = {
@@ -39,6 +41,7 @@ const SETTINGS_ICONS: Record<SettingsCategory, LucideIcon> = {
   "external-files": FileJson,
   editor: FileCode2,
   portable: HardDrive,
+  updates: RefreshCw,
 };
 
 const STORAGE_KEY = "termihub-settings-category";
@@ -55,7 +58,8 @@ function loadSavedCategory(): SettingsCategory {
       saved === "security" ||
       saved === "external-files" ||
       saved === "editor" ||
-      saved === "portable"
+      saved === "portable" ||
+      saved === "updates"
     ) {
       return saved;
     }
@@ -220,6 +224,9 @@ export function SettingsPanel({ isVisible }: SettingsPanelProps) {
       if (highlightedCategories?.has("portable")) {
         sections.push(<PortableModeSettings key="portable" />);
       }
+      if (highlightedCategories?.has("updates")) {
+        sections.push(<UpdateSettings key="updates" visibleFields={visibleFields} />);
+      }
       if (sections.length === 0) {
         return <div className="settings-panel__no-results">No settings match your search.</div>;
       }
@@ -249,6 +256,8 @@ export function SettingsPanel({ isVisible }: SettingsPanelProps) {
         );
       case "portable":
         return <PortableModeSettings />;
+      case "updates":
+        return <UpdateSettings />;
     }
   };
 

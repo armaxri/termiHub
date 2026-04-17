@@ -24,6 +24,8 @@ import {
   AppModeInfo,
   ConfigFileStatus,
   ConfigMigrationResult,
+  UpdateInfo,
+  UpdateSettings,
 } from "@/types/connection";
 
 export type { ConnectionTypeInfo };
@@ -824,4 +826,31 @@ export async function importConfigFromPortable(
   files: string[]
 ): Promise<ConfigMigrationResult> {
   return await invoke<ConfigMigrationResult>("import_config_from_portable", { srcDir, files });
+}
+
+// ─── Update checker ────────────────────────────────────────────────────────
+
+/** Check GitHub for a newer termiHub release. Pass `force: true` to bypass the 1-hour rate limit. */
+export async function checkForUpdates(force: boolean): Promise<UpdateInfo> {
+  return await invoke<UpdateInfo>("check_for_updates", { force });
+}
+
+/** Persist the user's choice to skip a specific release version. */
+export async function skipUpdateVersion(version: string): Promise<void> {
+  await invoke("skip_update_version", { version });
+}
+
+/** Clear any previously skipped version so the user is reminded again. */
+export async function clearSkippedVersion(): Promise<void> {
+  await invoke("clear_skipped_version");
+}
+
+/** Persist the auto-check preference. */
+export async function setUpdateAutoCheck(enabled: boolean): Promise<void> {
+  await invoke("set_update_auto_check", { enabled });
+}
+
+/** Return current update settings (auto-check flag, last check time, skipped version). */
+export async function getUpdateSettings(): Promise<UpdateSettings> {
+  return await invoke<UpdateSettings>("get_update_settings");
 }

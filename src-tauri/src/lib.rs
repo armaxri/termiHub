@@ -478,6 +478,12 @@ pub fn run() {
             commands::portable::resolve_portable_path_cmd,
             commands::portable::export_config_to_portable,
             commands::portable::import_config_from_portable,
+            // Update checker
+            commands::update::check_for_updates,
+            commands::update::skip_update_version,
+            commands::update::clear_skipped_version,
+            commands::update::set_update_auto_check,
+            commands::update::get_update_settings,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
