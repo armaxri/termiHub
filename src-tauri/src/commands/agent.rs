@@ -7,8 +7,8 @@ use tracing::{debug, info};
 use crate::session::manager::SessionManager;
 use crate::terminal::agent_deploy::{AgentDeployConfig, AgentDeployResult, AgentProbeResult};
 use crate::terminal::agent_manager::{
-    AgentCapabilities, AgentConnectResult, AgentConnectionManager, AgentConnectionsData,
-    AgentDefinitionInfo, AgentFolderInfo, AgentSessionInfo,
+    AgentCapabilities, AgentConnectResult, AgentConnectionsData, AgentDefinitionInfo,
+    AgentFolderInfo, AgentRpcClient, AgentSessionInfo,
 };
 use crate::terminal::agent_setup::{AgentSetupConfig, AgentSetupResult};
 use crate::terminal::backend::RemoteAgentConfig;
@@ -22,7 +22,7 @@ use crate::terminal::backend::RemoteAgentConfig;
 pub async fn connect_agent(
     agent_id: String,
     config: RemoteAgentConfig,
-    agent_manager: State<'_, Arc<AgentConnectionManager>>,
+    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<AgentConnectResult, String> {
     info!(agent_id, host = %config.host, "Connecting to remote agent");
     let manager = agent_manager.inner().clone();
@@ -38,7 +38,7 @@ pub async fn connect_agent(
 #[tauri::command]
 pub fn disconnect_agent(
     agent_id: String,
-    agent_manager: State<'_, Arc<AgentConnectionManager>>,
+    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<(), String> {
     info!(agent_id, "Disconnecting remote agent");
     agent_manager
@@ -54,7 +54,7 @@ pub fn disconnect_agent(
 pub async fn shutdown_agent(
     agent_id: String,
     reason: Option<String>,
-    agent_manager: State<'_, Arc<AgentConnectionManager>>,
+    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<u32, String> {
     info!(agent_id, "Shutting down remote agent");
     let manager = agent_manager.inner().clone();
@@ -70,7 +70,7 @@ pub async fn shutdown_agent(
 #[tauri::command]
 pub fn get_agent_capabilities(
     agent_id: String,
-    agent_manager: State<'_, Arc<AgentConnectionManager>>,
+    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<AgentCapabilities, String> {
     agent_manager
         .get_capabilities(&agent_id)
@@ -83,7 +83,7 @@ pub fn get_agent_capabilities(
 #[tauri::command]
 pub async fn list_agent_sessions(
     agent_id: String,
-    agent_manager: State<'_, Arc<AgentConnectionManager>>,
+    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<Vec<AgentSessionInfo>, String> {
     debug!(agent_id, "Listing agent sessions");
     let manager = agent_manager.inner().clone();
@@ -100,7 +100,7 @@ pub async fn list_agent_sessions(
 #[tauri::command]
 pub async fn list_agent_definitions(
     agent_id: String,
-    agent_manager: State<'_, Arc<AgentConnectionManager>>,
+    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<Vec<AgentDefinitionInfo>, String> {
     debug!(agent_id, "Listing agent definitions");
     let manager = agent_manager.inner().clone();
@@ -120,7 +120,7 @@ pub async fn list_agent_definitions(
 pub async fn save_agent_definition(
     agent_id: String,
     definition: Value,
-    agent_manager: State<'_, Arc<AgentConnectionManager>>,
+    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<AgentDefinitionInfo, String> {
     debug!(agent_id, "Saving agent definition");
     let manager = agent_manager.inner().clone();
@@ -140,7 +140,7 @@ pub async fn save_agent_definition(
 pub async fn delete_agent_definition(
     agent_id: String,
     definition_id: String,
-    agent_manager: State<'_, Arc<AgentConnectionManager>>,
+    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<(), String> {
     info!(agent_id, definition_id, "Deleting agent definition");
     let manager = agent_manager.inner().clone();
@@ -159,7 +159,7 @@ pub async fn delete_agent_definition(
 #[tauri::command]
 pub async fn list_agent_connections(
     agent_id: String,
-    agent_manager: State<'_, Arc<AgentConnectionManager>>,
+    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<AgentConnectionsData, String> {
     debug!(agent_id, "Listing agent connections and folders");
     let manager = agent_manager.inner().clone();
@@ -179,7 +179,7 @@ pub async fn list_agent_connections(
 pub async fn update_agent_definition(
     agent_id: String,
     params: Value,
-    agent_manager: State<'_, Arc<AgentConnectionManager>>,
+    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<AgentDefinitionInfo, String> {
     debug!(agent_id, "Updating agent definition");
     let manager = agent_manager.inner().clone();
@@ -200,7 +200,7 @@ pub async fn create_agent_folder(
     agent_id: String,
     name: String,
     parent_id: Option<String>,
-    agent_manager: State<'_, Arc<AgentConnectionManager>>,
+    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<AgentFolderInfo, String> {
     debug!(agent_id, %name, "Creating agent folder");
     let manager = agent_manager.inner().clone();
@@ -220,7 +220,7 @@ pub async fn create_agent_folder(
 pub async fn update_agent_folder(
     agent_id: String,
     params: Value,
-    agent_manager: State<'_, Arc<AgentConnectionManager>>,
+    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<AgentFolderInfo, String> {
     debug!(agent_id, "Updating agent folder");
     let manager = agent_manager.inner().clone();
@@ -240,7 +240,7 @@ pub async fn update_agent_folder(
 pub async fn delete_agent_folder(
     agent_id: String,
     folder_id: String,
-    agent_manager: State<'_, Arc<AgentConnectionManager>>,
+    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<(), String> {
     info!(agent_id, folder_id, "Deleting agent folder");
     let manager = agent_manager.inner().clone();
@@ -326,7 +326,7 @@ pub async fn update_agent(
     config: RemoteAgentConfig,
     deploy_config: AgentDeployConfig,
     app_handle: tauri::AppHandle,
-    agent_manager: State<'_, Arc<AgentConnectionManager>>,
+    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<AgentDeployResult, String> {
     info!(agent_id, host = %config.host, "Updating agent on remote host");
     let manager = agent_manager.inner().clone();
