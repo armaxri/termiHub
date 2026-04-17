@@ -453,6 +453,10 @@ export function ConnectionList() {
     [openConnectionEditorTab]
   );
 
+  const handleNewAgent = useCallback(() => {
+    openConnectionEditorTab("new-remote-agent");
+  }, [openConnectionEditorTab]);
+
   const handlePingHost = useCallback(
     async (connection: SavedConnection) => {
       const cfg = connection.config.config as unknown as Record<string, unknown>;
@@ -524,15 +528,20 @@ export function ConnectionList() {
   );
 
   const [localCollapsed, setLocalCollapsed] = useState(false);
+  const [remoteAgentsCollapsed, setRemoteAgentsCollapsed] = useState(false);
   const rootFolders = folders.filter((f) => f.parentId === null);
   const rootConnections = connections.filter((c) => c.folderId === null);
   const LocalChevron = localCollapsed ? ChevronRight : ChevronDown;
+  const RemoteAgentsChevron = remoteAgentsCollapsed ? ChevronRight : ChevronDown;
 
   // Build expanded-section mapping for resize hook.
-  // Section 0 = Connections, sections 1..N = remote agents.
+  // Section 0 = Connections, sections 1..N = remote agents (only when not collapsed).
   const sectionsExpanded = useMemo(
-    () => [!localCollapsed, ...remoteAgents.map((a) => a.isExpanded)],
-    [localCollapsed, remoteAgents]
+    () => [
+      !localCollapsed,
+      ...(remoteAgentsCollapsed ? [] : remoteAgents.map((a) => a.isExpanded)),
+    ],
+    [localCollapsed, remoteAgentsCollapsed, remoteAgents]
   );
   const expandedCount = sectionsExpanded.filter(Boolean).length;
   const { flexValues, handleProps, sectionRefs } = useSectionResize(expandedCount);
@@ -619,6 +628,8 @@ export function ConnectionList() {
                 setCreatingFolder(false);
               }}
               onCancelCreateFolder={() => setCreatingFolder(false)}
+              onNewConnection={handleNewConnection}
+              onNewFolder={() => setCreatingFolder(true)}
               rootFolders={rootFolders}
               rootConnections={rootConnections}
               folders={folders}
@@ -635,33 +646,61 @@ export function ConnectionList() {
             />
           )}
         </div>
-        <SortableContext
-          items={experimental ? remoteAgents.map((a) => a.id) : []}
-          strategy={verticalListSortingStrategy}
-        >
-          {experimental &&
-            remoteAgents.map((agent, i) => {
-              const agentExpandedIdx = expandedIndexMap[i + 1];
-              return (
-                <Fragment key={agent.id}>
-                  <div
-                    className="connection-list__resize-handle"
-                    data-testid={`sidebar-group-separator-${i}`}
-                    {...getResizeHandleProps(i)}
-                  />
-                  <AgentNode
-                    agent={agent}
-                    style={
-                      agentExpandedIdx >= 0 ? { flex: flexValues[agentExpandedIdx] } : undefined
-                    }
-                    sectionRef={(el) => {
-                      if (agentExpandedIdx >= 0) sectionRefs.current[agentExpandedIdx] = el;
-                    }}
-                  />
-                </Fragment>
-              );
-            })}
-        </SortableContext>
+        {experimental && (
+          <>
+            <div
+              className="connection-list__group-header"
+              data-testid="sidebar-group-header-remote-agents"
+            >
+              <button
+                className="connection-list__group-toggle"
+                onClick={() => setRemoteAgentsCollapsed((v) => !v)}
+                data-testid="connection-list-remote-agents-toggle"
+              >
+                <RemoteAgentsChevron size={16} className="connection-tree__chevron" />
+                <span className="connection-list__group-title">Remote Agents</span>
+              </button>
+              <div className="connection-list__group-actions">
+                <button
+                  className="connection-list__add-btn"
+                  onClick={handleNewAgent}
+                  title="New Remote Agent"
+                  data-testid="connection-list-new-agent"
+                >
+                  <Plus size={16} />
+                </button>
+              </div>
+            </div>
+            {!remoteAgentsCollapsed && (
+              <SortableContext
+                items={remoteAgents.map((a) => a.id)}
+                strategy={verticalListSortingStrategy}
+              >
+                {remoteAgents.map((agent, i) => {
+                  const agentExpandedIdx = expandedIndexMap[i + 1];
+                  return (
+                    <Fragment key={agent.id}>
+                      <div
+                        className="connection-list__resize-handle"
+                        data-testid={`sidebar-group-separator-${i}`}
+                        {...getResizeHandleProps(i)}
+                      />
+                      <AgentNode
+                        agent={agent}
+                        style={
+                          agentExpandedIdx >= 0 ? { flex: flexValues[agentExpandedIdx] } : undefined
+                        }
+                        sectionRef={(el) => {
+                          if (agentExpandedIdx >= 0) sectionRefs.current[agentExpandedIdx] = el;
+                        }}
+                      />
+                    </Fragment>
+                  );
+                })}
+              </SortableContext>
+            )}
+          </>
+        )}
         <DragOverlay>
           {draggingConnection ? (
             <div className="connection-tree__drag-overlay">
@@ -688,6 +727,8 @@ interface RootDropZoneProps {
   isCreatingFolder: boolean;
   onCreateFolder: (name: string) => void;
   onCancelCreateFolder: () => void;
+  onNewConnection: () => void;
+  onNewFolder: () => void;
   rootFolders: ConnectionFolder[];
   rootConnections: SavedConnection[];
   folders: ConnectionFolder[];
@@ -707,6 +748,8 @@ function RootDropZone({
   isCreatingFolder,
   onCreateFolder,
   onCancelCreateFolder,
+  onNewConnection,
+  onNewFolder,
   rootFolders,
   rootConnections,
   folders,
@@ -729,45 +772,71 @@ function RootDropZone({
   const isConnectionOver = isOver && active?.data.current?.type !== "agent";
 
   return (
-    <div
-      ref={setNodeRef}
-      className={`connection-list__tree${isConnectionOver ? " connection-tree__root-drop--over" : ""}`}
-    >
-      {isCreatingFolder && (
-        <InlineFolderInput depth={0} onConfirm={onCreateFolder} onCancel={onCancelCreateFolder} />
-      )}
-      {rootFolders.map((folder) => (
-        <TreeNode
-          key={folder.id}
-          folder={folder}
-          connections={connections.filter((c) => c.folderId === folder.id)}
-          childFolders={folders.filter((f) => f.parentId === folder.id)}
-          allFolders={folders}
-          allConnections={connections}
-          onToggle={onToggle}
-          onConnect={onConnect}
-          onEdit={onEdit}
-          onDelete={onDelete}
-          onDuplicate={onDuplicate}
-          onPingHost={onPingHost}
-          onDeleteFolder={onDeleteFolder}
-          onCreateSubfolder={onCreateSubfolder}
-          onNewConnectionInFolder={onNewConnectionInFolder}
-          depth={0}
-        />
-      ))}
-      {rootConnections.map((conn) => (
-        <ConnectionItem
-          key={conn.id}
-          connection={conn}
-          depth={0}
-          onConnect={onConnect}
-          onEdit={onEdit}
-          onDelete={onDelete}
-          onDuplicate={onDuplicate}
-          onPingHost={onPingHost}
-        />
-      ))}
-    </div>
+    <ContextMenu.Root>
+      <ContextMenu.Trigger asChild>
+        <div
+          ref={setNodeRef}
+          className={`connection-list__tree${isConnectionOver ? " connection-tree__root-drop--over" : ""}`}
+        >
+          {isCreatingFolder && (
+            <InlineFolderInput
+              depth={0}
+              onConfirm={onCreateFolder}
+              onCancel={onCancelCreateFolder}
+            />
+          )}
+          {rootFolders.map((folder) => (
+            <TreeNode
+              key={folder.id}
+              folder={folder}
+              connections={connections.filter((c) => c.folderId === folder.id)}
+              childFolders={folders.filter((f) => f.parentId === folder.id)}
+              allFolders={folders}
+              allConnections={connections}
+              onToggle={onToggle}
+              onConnect={onConnect}
+              onEdit={onEdit}
+              onDelete={onDelete}
+              onDuplicate={onDuplicate}
+              onPingHost={onPingHost}
+              onDeleteFolder={onDeleteFolder}
+              onCreateSubfolder={onCreateSubfolder}
+              onNewConnectionInFolder={onNewConnectionInFolder}
+              depth={0}
+            />
+          ))}
+          {rootConnections.map((conn) => (
+            <ConnectionItem
+              key={conn.id}
+              connection={conn}
+              depth={0}
+              onConnect={onConnect}
+              onEdit={onEdit}
+              onDelete={onDelete}
+              onDuplicate={onDuplicate}
+              onPingHost={onPingHost}
+            />
+          ))}
+        </div>
+      </ContextMenu.Trigger>
+      <ContextMenu.Portal>
+        <ContextMenu.Content className="context-menu__content">
+          <ContextMenu.Item
+            className="context-menu__item"
+            onSelect={onNewConnection}
+            data-testid="context-root-new-connection"
+          >
+            <Plus size={14} /> New Connection
+          </ContextMenu.Item>
+          <ContextMenu.Item
+            className="context-menu__item"
+            onSelect={onNewFolder}
+            data-testid="context-root-new-folder"
+          >
+            <FolderPlus size={14} /> New Folder
+          </ContextMenu.Item>
+        </ContextMenu.Content>
+      </ContextMenu.Portal>
+    </ContextMenu.Root>
   );
 }

@@ -360,6 +360,30 @@ describe("appStore — connections, folders, and special tabs", () => {
       const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
       expect(leaf.tabs).toHaveLength(2);
     });
+
+    it("creates a 'New Remote Agent' tab for the new-remote-agent sentinel", () => {
+      useAppStore.getState().openConnectionEditorTab("new-remote-agent");
+
+      const state = useAppStore.getState();
+      const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
+      expect(leaf.tabs).toHaveLength(1);
+      expect(leaf.tabs[0].contentType).toBe("connection-editor");
+      expect(leaf.tabs[0].title).toBe("New Remote Agent");
+      expect(leaf.tabs[0].connectionEditorMeta?.connectionId).toBe("new-remote-agent");
+    });
+
+    it("reuses the new-remote-agent tab when opened twice", () => {
+      useAppStore.getState().openConnectionEditorTab("new-remote-agent");
+      useAppStore.getState().addTab("Shell", "local");
+      useAppStore.getState().openConnectionEditorTab("new-remote-agent");
+
+      const state = useAppStore.getState();
+      const allLeaves = getAllLeaves(state.rootPanel);
+      const editorTabs = allLeaves.flatMap((l) =>
+        l.tabs.filter((t) => t.contentType === "connection-editor")
+      );
+      expect(editorTabs).toHaveLength(1);
+    });
   });
 
   describe("openSettingsTab", () => {
