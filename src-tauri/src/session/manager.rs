@@ -12,14 +12,14 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+use tauri::Emitter;
 use termihub_core::connection::{ConnectionType, ConnectionTypeInfo, ConnectionTypeRegistry};
 use termihub_core::files::FileEntry;
 use termihub_core::output::coalescer::OutputCoalescer;
 use termihub_core::output::screen_clear::contains_screen_clear;
 use tracing::{error, info};
 
-use crate::terminal::agent_manager::AgentConnectionManager;
+use crate::terminal::agent_manager::AgentRpcClient;
 use crate::utils::errors::TerminalError;
 
 use super::remote_proxy::RemoteProxy;
@@ -56,6 +56,32 @@ pub struct TerminalErrorEvent {
     pub message: String,
 }
 
+// ── EventEmitter trait ─────────────────────────────────────────────
+
+/// Abstracts frontend event delivery for dependency injection in tests.
+///
+/// The production implementation wraps `tauri::AppHandle` and emits
+/// Tauri events to the webview. Test implementations record emitted
+/// events for assertions without requiring a real Tauri runtime.
+pub trait EventEmitter: Clone + Send + Sync + 'static {
+    /// Emit a terminal output chunk. Returns `false` if delivery failed
+    /// (e.g., the webview was closed), signalling the reader to stop.
+    fn emit_output(&self, event: &TerminalOutputEvent) -> bool;
+
+    /// Emit a session exit notification.
+    fn emit_exit(&self, event: &TerminalExitEvent);
+}
+
+impl<R: tauri::Runtime> EventEmitter for tauri::AppHandle<R> {
+    fn emit_output(&self, event: &TerminalOutputEvent) -> bool {
+        self.emit("terminal-output", event).is_ok()
+    }
+
+    fn emit_exit(&self, event: &TerminalExitEvent) {
+        let _ = self.emit("terminal-exit", event);
+    }
+}
+
 /// Information about an active session.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -81,14 +107,14 @@ struct SessionEntry {
 pub struct SessionManager {
     sessions: Arc<Mutex<HashMap<String, SessionEntry>>>,
     registry: Arc<ConnectionTypeRegistry>,
-    agent_manager: Arc<AgentConnectionManager>,
+    agent_manager: Arc<dyn AgentRpcClient>,
 }
 
 impl SessionManager {
     /// Create a new session manager with the given registry and agent manager.
     pub fn new(
         registry: ConnectionTypeRegistry,
-        agent_manager: Arc<AgentConnectionManager>,
+        agent_manager: Arc<dyn AgentRpcClient>,
     ) -> Self {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
@@ -104,12 +130,12 @@ impl SessionManager {
     /// the registry.
     ///
     /// Returns the session ID on success.
-    pub async fn create_connection(
+    pub async fn create_connection<E: EventEmitter>(
         &self,
         type_id: &str,
         settings: serde_json::Value,
         agent_id: Option<&str>,
-        app_handle: AppHandle,
+        emitter: E,
     ) -> Result<String, TerminalError> {
         // Enforce session limit.
         {
@@ -186,7 +212,7 @@ impl SessionManager {
             Self::run_output_reader(
                 sid,
                 output_rx,
-                app_handle,
+                emitter,
                 sessions_clone,
                 has_initial_command,
             )
@@ -453,10 +479,10 @@ impl SessionManager {
     ///
     /// Coalesces pending output chunks into a single event (up to
     /// `MAX_COALESCE_BYTES`) to reduce IPC overhead.
-    async fn run_output_reader(
+    async fn run_output_reader<E: EventEmitter>(
         session_id: String,
         mut output_rx: tokio::sync::mpsc::Receiver<Vec<u8>>,
-        app_handle: AppHandle,
+        emitter: E,
         sessions: Arc<Mutex<HashMap<String, SessionEntry>>>,
         wait_for_clear: bool,
     ) {
@@ -480,7 +506,7 @@ impl SessionManager {
                     }
                     Ok(None) => {
                         // Channel closed during startup.
-                        Self::emit_and_cleanup(&session_id, buffer, &app_handle, &sessions).await;
+                        Self::emit_and_cleanup(&session_id, buffer, &emitter, &sessions).await;
                         return;
                     }
                     Err(_) => break, // Timeout
@@ -493,7 +519,7 @@ impl SessionManager {
                     session_id: session_id.clone(),
                     data: buffer,
                 };
-                if app_handle.emit("terminal-output", &event).is_err() {
+                if !emitter.emit_output(&event) {
                     return;
                 }
             }
@@ -517,21 +543,21 @@ impl SessionManager {
                     session_id: session_id.clone(),
                     data,
                 };
-                if let Err(e) = app_handle.emit("terminal-output", &event) {
-                    error!("Failed to emit terminal-output event: {e}");
+                if !emitter.emit_output(&event) {
+                    error!("Failed to emit terminal-output event");
                     break;
                 }
             }
         }
 
-        Self::emit_and_cleanup(&session_id, Vec::new(), &app_handle, &sessions).await;
+        Self::emit_and_cleanup(&session_id, Vec::new(), &emitter, &sessions).await;
     }
 
     /// Emit remaining data (if any), send the exit event, and remove the session.
-    async fn emit_and_cleanup(
+    async fn emit_and_cleanup<E: EventEmitter>(
         session_id: &str,
         data: Vec<u8>,
-        app_handle: &AppHandle,
+        emitter: &E,
         sessions: &Arc<Mutex<HashMap<String, SessionEntry>>>,
     ) {
         if !data.is_empty() {
@@ -539,14 +565,14 @@ impl SessionManager {
                 session_id: session_id.to_string(),
                 data,
             };
-            let _ = app_handle.emit("terminal-output", &event);
+            emitter.emit_output(&event);
         }
 
         let exit_event = TerminalExitEvent {
             session_id: session_id.to_string(),
             exit_code: None,
         };
-        let _ = app_handle.emit("terminal-exit", &exit_event);
+        emitter.emit_exit(&exit_event);
 
         {
             let mut sessions = sessions.lock().await;
@@ -635,6 +661,40 @@ mod tests {
         sessions
     }
 
+    // ── MockEventEmitter ─────────────────────────────────────────────
+
+    #[derive(Clone, Default)]
+    struct MockEventEmitter {
+        outputs: std::sync::Arc<std::sync::Mutex<Vec<TerminalOutputEvent>>>,
+        exits: std::sync::Arc<std::sync::Mutex<Vec<TerminalExitEvent>>>,
+        fail_output: bool,
+    }
+
+    impl MockEventEmitter {
+        fn new() -> Self {
+            Self::default()
+        }
+        fn failing() -> Self {
+            Self {
+                fail_output: true,
+                ..Self::default()
+            }
+        }
+    }
+
+    impl EventEmitter for MockEventEmitter {
+        fn emit_output(&self, event: &TerminalOutputEvent) -> bool {
+            if self.fail_output {
+                return false;
+            }
+            self.outputs.lock().unwrap().push(event.clone());
+            true
+        }
+        fn emit_exit(&self, event: &TerminalExitEvent) {
+            self.exits.lock().unwrap().push(event.clone());
+        }
+    }
+
     /// Test that file browser access returns an error when the connection
     /// has no file browser capability.
     #[tokio::test]
@@ -713,5 +773,89 @@ mod tests {
         let settings = serde_json::json!({"runtime": "docker"});
         let title = SessionManager::build_title("docker", &settings, None);
         assert_eq!(title, "Docker: unknown");
+    }
+
+    // ── EventEmitter DI tests ─────────────────────────────────────────
+
+    #[tokio::test]
+    async fn emit_and_cleanup_sends_exit_event() {
+        let emitter = MockEventEmitter::new();
+        let sessions = sessions_with_mock("sess-exit").await;
+
+        SessionManager::emit_and_cleanup("sess-exit", Vec::new(), &emitter, &sessions).await;
+
+        let exits = emitter.exits.lock().unwrap();
+        assert_eq!(exits.len(), 1);
+        assert_eq!(exits[0].session_id, "sess-exit");
+        // Session should be removed after cleanup
+        assert!(!sessions.lock().await.contains_key("sess-exit"));
+    }
+
+    #[tokio::test]
+    async fn emit_and_cleanup_flushes_remaining_data() {
+        let emitter = MockEventEmitter::new();
+        let sessions = sessions_with_mock("sess-data").await;
+
+        SessionManager::emit_and_cleanup(
+            "sess-data",
+            b"final bytes".to_vec(),
+            &emitter,
+            &sessions,
+        )
+        .await;
+
+        let outputs = emitter.outputs.lock().unwrap();
+        assert_eq!(outputs.len(), 1);
+        assert_eq!(outputs[0].data, b"final bytes");
+    }
+
+    #[tokio::test]
+    async fn run_output_reader_emits_chunks_and_exit() {
+        let emitter = MockEventEmitter::new();
+        let sessions = sessions_with_mock("sess-stream").await;
+        let (tx, rx) = tokio::sync::mpsc::channel::<Vec<u8>>(10);
+
+        tx.send(b"hello ".to_vec()).await.unwrap();
+        tx.send(b"world".to_vec()).await.unwrap();
+        drop(tx); // signal EOF
+
+        SessionManager::run_output_reader(
+            "sess-stream".to_string(),
+            rx,
+            emitter.clone(),
+            sessions.clone(),
+            false,
+        )
+        .await;
+
+        let outputs = emitter.outputs.lock().unwrap();
+        let combined: Vec<u8> = outputs.iter().flat_map(|e| e.data.iter().copied()).collect();
+        assert!(combined.windows(5).any(|w| w == b"hello"), "expected 'hello' in output");
+
+        let exits = emitter.exits.lock().unwrap();
+        assert_eq!(exits.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn run_output_reader_stops_on_emitter_failure() {
+        let emitter = MockEventEmitter::failing();
+        let sessions = sessions_with_mock("sess-fail").await;
+        let (tx, rx) = tokio::sync::mpsc::channel::<Vec<u8>>(10);
+
+        tx.send(b"data".to_vec()).await.unwrap();
+
+        // run_output_reader should return quickly when emit_output returns false
+        SessionManager::run_output_reader(
+            "sess-fail".to_string(),
+            rx,
+            emitter.clone(),
+            sessions,
+            false,
+        )
+        .await;
+
+        // No outputs recorded (emitter failed)
+        let outputs = emitter.outputs.lock().unwrap();
+        assert!(outputs.is_empty());
     }
 }
