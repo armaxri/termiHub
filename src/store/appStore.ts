@@ -397,6 +397,7 @@ interface AppState {
   setAgentCapabilities: (agentId: string, capabilities: AgentCapabilities) => void;
   refreshAgentSessions: (agentId: string) => Promise<void>;
   saveAgentDef: (agentId: string, definition: Record<string, unknown>) => Promise<void>;
+  duplicateAgentDef: (agentId: string, definitionId: string) => Promise<void>;
   updateAgentDef: (agentId: string, params: Record<string, unknown>) => Promise<void>;
   deleteAgentDef: (agentId: string, definitionId: string) => Promise<void>;
   createAgentFolder: (agentId: string, name: string, parentId?: string | null) => Promise<void>;
@@ -2113,6 +2114,22 @@ export const useAppStore = create<AppState>((set, get) => {
       } catch (err) {
         console.error(`Failed to save agent definition on ${agentId}:`, err);
       }
+    },
+
+    duplicateAgentDef: async (agentId, definitionId) => {
+      const original = useAppStore
+        .getState()
+        .agentDefinitions[agentId]?.find((d) => d.id === definitionId);
+      if (!original) return;
+      await useAppStore.getState().saveAgentDef(agentId, {
+        name: `Copy of ${original.name}`,
+        type: original.sessionType,
+        config: original.config,
+        persistent: original.persistent,
+        folder_id: original.folderId,
+        terminal_options: original.terminalOptions ?? null,
+        icon: original.icon ?? null,
+      });
     },
 
     deleteAgentDef: async (agentId, definitionId) => {

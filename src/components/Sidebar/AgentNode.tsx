@@ -29,6 +29,7 @@ import {
   Folder,
   FolderPlus,
   Zap,
+  Copy,
 } from "lucide-react";
 import { ConnectionIcon } from "@/utils/connectionIcons";
 import { useAppStore } from "@/store/appStore";
@@ -83,6 +84,7 @@ interface AgentConnectionItemProps {
   depth: number;
   onOpen: (def: AgentDefinitionInfo) => void;
   onEdit: (def: AgentDefinitionInfo) => void;
+  onDuplicate: (def: AgentDefinitionInfo) => void;
 }
 
 function AgentConnectionItem({
@@ -91,6 +93,7 @@ function AgentConnectionItem({
   depth,
   onOpen,
   onEdit,
+  onDuplicate,
 }: AgentConnectionItemProps) {
   const deleteAgentDef = useAppStore((s) => s.deleteAgentDef);
 
@@ -132,6 +135,14 @@ function AgentConnectionItem({
             <Pencil size={14} />
             Edit
           </ContextMenu.Item>
+          <ContextMenu.Item
+            className="context-menu__item"
+            onSelect={() => onDuplicate(definition)}
+            data-testid="context-agent-def-duplicate"
+          >
+            <Copy size={14} />
+            Duplicate
+          </ContextMenu.Item>
           <ContextMenu.Separator className="context-menu__separator" />
           <ContextMenu.Item
             className="context-menu__item context-menu__item--danger"
@@ -157,6 +168,7 @@ interface AgentFolderNodeProps {
   onOpenDefinition: (def: AgentDefinitionInfo) => void;
   onNewConnection: (folderId: string | null) => void;
   onEditDefinition: (def: AgentDefinitionInfo) => void;
+  onDuplicateDefinition: (def: AgentDefinitionInfo) => void;
 }
 
 function AgentFolderNode({
@@ -168,6 +180,7 @@ function AgentFolderNode({
   onOpenDefinition,
   onNewConnection,
   onEditDefinition,
+  onDuplicateDefinition,
 }: AgentFolderNodeProps) {
   const toggleAgentFolder = useAppStore((s) => s.toggleAgentFolder);
   const createAgentFolder = useAppStore((s) => s.createAgentFolder);
@@ -251,6 +264,7 @@ function AgentFolderNode({
               onOpenDefinition={onOpenDefinition}
               onNewConnection={onNewConnection}
               onEditDefinition={onEditDefinition}
+              onDuplicateDefinition={onDuplicateDefinition}
             />
           ))}
           {childDefinitions.map((def) => (
@@ -261,6 +275,7 @@ function AgentFolderNode({
               depth={depth + 1}
               onOpen={onOpenDefinition}
               onEdit={onEditDefinition}
+              onDuplicate={onDuplicateDefinition}
             />
           ))}
         </div>
@@ -501,6 +516,14 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
     [agent.id, openAgentDefinitionEditorTab]
   );
 
+  const duplicateAgentDef = useAppStore((s) => s.duplicateAgentDef);
+  const handleDuplicateDefinition = useCallback(
+    (def: AgentDefinitionInfo) => {
+      duplicateAgentDef(agent.id, def.id);
+    },
+    [agent.id, duplicateAgentDef]
+  );
+
   const hasContent =
     agentSessions.length > 0 || agentDefinitions.length > 0 || agentFolders.length > 0;
 
@@ -727,6 +750,7 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
                   onOpenDefinition={handleOpenDefinition}
                   onNewConnection={handleNewConnection}
                   onEditDefinition={handleEditDefinition}
+                  onDuplicateDefinition={handleDuplicateDefinition}
                 />
               ))}
 
@@ -739,6 +763,7 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
                   depth={1}
                   onOpen={handleOpenDefinition}
                   onEdit={handleEditDefinition}
+                  onDuplicate={handleDuplicateDefinition}
                 />
               ))}
 
