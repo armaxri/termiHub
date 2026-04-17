@@ -1,8 +1,14 @@
 .icon-picker__overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(8px) saturate(120%);
+  -webkit-backdrop-filter: blur(8px) saturate(120%);
   z-index: 1000;
+}
+
+.icon-picker__overlay[data-state="open"] {
+  animation: dialog-overlay-show 200ms ease;
 }
 
 .icon-picker__content {
@@ -15,11 +21,16 @@
   max-height: 80vh;
   background: var(--bg-secondary);
   border: 1px solid var(--border-primary);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-xl);
   padding: var(--spacing-lg);
+  box-shadow: var(--shadow-overlay);
   display: flex;
   flex-direction: column;
   gap: var(--spacing-md);
+}
+
+.icon-picker__content[data-state="open"] {
+  animation: dialog-content-show 280ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .icon-picker__title {
@@ -31,19 +42,23 @@
 
 .icon-picker__search {
   width: 100%;
-  height: 30px;
+  height: 32px;
   font-size: var(--font-size-sm);
   background: var(--bg-input);
   color: var(--text-primary);
   border: 1px solid var(--border-primary);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   padding: 0 var(--spacing-sm);
   outline: none;
   box-sizing: border-box;
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
 }
 
 .icon-picker__search:focus {
   border-color: var(--focus-border);
+  box-shadow: var(--shadow-focus);
 }
 
 .icon-picker__grid {
@@ -61,7 +76,7 @@
   justify-content: center;
   width: 36px;
   height: 36px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   border: 2px solid transparent;
   background: transparent;
   color: var(--text-primary);
@@ -69,17 +84,19 @@
   padding: 0;
   transition:
     border-color var(--transition-fast),
-    background-color var(--transition-fast);
+    background-color var(--transition-fast),
+    transform var(--transition-fast);
 }
 
 .icon-picker__cell:hover {
   background: var(--bg-hover);
-  border-color: var(--text-secondary);
+  border-color: var(--border-primary);
+  transform: scale(1.08);
 }
 
 .icon-picker__cell--active {
   border-color: var(--accent-color);
-  background: var(--bg-hover);
+  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
 }
 
 .icon-picker__empty,
@@ -100,10 +117,13 @@
 .icon-picker__btn {
   padding: var(--spacing-xs) var(--spacing-md);
   font-size: var(--font-size-sm);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   border: none;
   cursor: pointer;
-  transition: background-color var(--transition-fast);
+  transition:
+    background-color var(--transition-fast),
+    transform var(--transition-fast),
+    box-shadow var(--transition-fast);
 }
 
 .icon-picker__btn--primary {
@@ -113,6 +133,12 @@
 
 .icon-picker__btn--primary:hover {
   background-color: var(--accent-hover);
+  box-shadow: 0 2px 12px rgba(61, 125, 232, 0.35);
+}
+
+.icon-picker__btn--primary:active {
+  transform: translateY(1px) scale(0.98);
+  box-shadow: none;
 }
 
 .icon-picker__btn--secondary {
@@ -123,4 +149,8 @@
 .icon-picker__btn--secondary:hover {
   background-color: var(--bg-hover);
   color: var(--text-primary);
+}
+
+.icon-picker__btn--secondary:active {
+  transform: translateY(1px) scale(0.98);
 }

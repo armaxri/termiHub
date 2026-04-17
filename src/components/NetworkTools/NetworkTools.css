@@ -44,7 +44,10 @@
   border-radius: var(--radius-md);
   font-size: var(--font-size-sm);
   cursor: pointer;
-  transition: background-color var(--transition-fast);
+  transition:
+    background-color var(--transition-fast),
+    transform var(--transition-fast),
+    box-shadow var(--transition-fast);
 }
 
 .network-panel__btn--run {
@@ -54,6 +57,12 @@
 
 .network-panel__btn--run:hover:not(:disabled) {
   background-color: var(--accent-hover);
+  box-shadow: 0 2px 12px rgba(61, 125, 232, 0.35);
+}
+
+.network-panel__btn--run:active:not(:disabled) {
+  transform: translateY(1px) scale(0.98);
+  box-shadow: none;
 }
 
 .network-panel__btn--run:disabled {
