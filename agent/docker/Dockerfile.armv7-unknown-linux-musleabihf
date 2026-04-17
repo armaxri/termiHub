@@ -15,7 +15,7 @@ RUN dpkg --add-architecture armhf \
     && chmod +x /usr/local/bin/arm-linux-gnueabihf-pkg-config \
     && curl -fsSL https://www.openssl.org/source/openssl-${OPENSSL_VERSION}.tar.gz | tar xz -C /tmp \
     && cd /tmp/openssl-${OPENSSL_VERSION} \
-    && CROSS_COMPILE=armv7-linux-musleabihf- \
+    && CROSS_COMPILE=arm-linux-musleabihf- \
        ./Configure no-shared no-zlib no-tests --libdir=lib linux-armv4 --prefix=/opt/openssl \
     && make -j$(nproc) \
     && make install_sw \
