@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- UI: Remote Agents now have their own collapsible "Remote Agents" section header in the connections sidebar, with a dedicated "+" button for adding new agents
+- UI: "Remote Agent" removed as a connection type from the connection type dropdown — agents are managed exclusively through the Remote Agents section
+- UI: The connection type selector is hidden when editing remote agent SSH transport settings (it was always "remote" and had no meaning there)
+
 ### Changed (internal)
 
 - DI testing infrastructure: extracted `LocalShellSpawner`, `SshConnector`, `SessionManagerApi`, `DaemonLauncher`, `ConnectionStoreApi`, `MonitoringManagerApi`, `EventEmitter`, and `AgentRpcClient` traits across `core`, `agent`, and `src-tauri`. Concrete types are unchanged; tests can now inject mocks without real PTY/SSH/Tauri runtimes. Tauri agent commands now depend on `Arc<dyn AgentRpcClient>` in state.

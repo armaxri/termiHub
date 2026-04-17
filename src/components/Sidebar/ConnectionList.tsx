@@ -453,6 +453,10 @@ export function ConnectionList() {
     [openConnectionEditorTab]
   );
 
+  const handleNewAgent = useCallback(() => {
+    openConnectionEditorTab("new-remote-agent");
+  }, [openConnectionEditorTab]);
+
   const handlePingHost = useCallback(
     async (connection: SavedConnection) => {
       const cfg = connection.config.config as unknown as Record<string, unknown>;
@@ -524,15 +528,20 @@ export function ConnectionList() {
   );
 
   const [localCollapsed, setLocalCollapsed] = useState(false);
+  const [remoteAgentsCollapsed, setRemoteAgentsCollapsed] = useState(false);
   const rootFolders = folders.filter((f) => f.parentId === null);
   const rootConnections = connections.filter((c) => c.folderId === null);
   const LocalChevron = localCollapsed ? ChevronRight : ChevronDown;
+  const RemoteAgentsChevron = remoteAgentsCollapsed ? ChevronRight : ChevronDown;
 
   // Build expanded-section mapping for resize hook.
-  // Section 0 = Connections, sections 1..N = remote agents.
+  // Section 0 = Connections, sections 1..N = remote agents (only when not collapsed).
   const sectionsExpanded = useMemo(
-    () => [!localCollapsed, ...remoteAgents.map((a) => a.isExpanded)],
-    [localCollapsed, remoteAgents]
+    () => [
+      !localCollapsed,
+      ...(remoteAgentsCollapsed ? [] : remoteAgents.map((a) => a.isExpanded)),
+    ],
+    [localCollapsed, remoteAgentsCollapsed, remoteAgents]
   );
   const expandedCount = sectionsExpanded.filter(Boolean).length;
   const { flexValues, handleProps, sectionRefs } = useSectionResize(expandedCount);
@@ -637,33 +646,61 @@ export function ConnectionList() {
             />
           )}
         </div>
-        <SortableContext
-          items={experimental ? remoteAgents.map((a) => a.id) : []}
-          strategy={verticalListSortingStrategy}
-        >
-          {experimental &&
-            remoteAgents.map((agent, i) => {
-              const agentExpandedIdx = expandedIndexMap[i + 1];
-              return (
-                <Fragment key={agent.id}>
-                  <div
-                    className="connection-list__resize-handle"
-                    data-testid={`sidebar-group-separator-${i}`}
-                    {...getResizeHandleProps(i)}
-                  />
-                  <AgentNode
-                    agent={agent}
-                    style={
-                      agentExpandedIdx >= 0 ? { flex: flexValues[agentExpandedIdx] } : undefined
-                    }
-                    sectionRef={(el) => {
-                      if (agentExpandedIdx >= 0) sectionRefs.current[agentExpandedIdx] = el;
-                    }}
-                  />
-                </Fragment>
-              );
-            })}
-        </SortableContext>
+        {experimental && (
+          <>
+            <div
+              className="connection-list__group-header"
+              data-testid="sidebar-group-header-remote-agents"
+            >
+              <button
+                className="connection-list__group-toggle"
+                onClick={() => setRemoteAgentsCollapsed((v) => !v)}
+                data-testid="connection-list-remote-agents-toggle"
+              >
+                <RemoteAgentsChevron size={16} className="connection-tree__chevron" />
+                <span className="connection-list__group-title">Remote Agents</span>
+              </button>
+              <div className="connection-list__group-actions">
+                <button
+                  className="connection-list__add-btn"
+                  onClick={handleNewAgent}
+                  title="New Remote Agent"
+                  data-testid="connection-list-new-agent"
+                >
+                  <Plus size={16} />
+                </button>
+              </div>
+            </div>
+            {!remoteAgentsCollapsed && (
+              <SortableContext
+                items={remoteAgents.map((a) => a.id)}
+                strategy={verticalListSortingStrategy}
+              >
+                {remoteAgents.map((agent, i) => {
+                  const agentExpandedIdx = expandedIndexMap[i + 1];
+                  return (
+                    <Fragment key={agent.id}>
+                      <div
+                        className="connection-list__resize-handle"
+                        data-testid={`sidebar-group-separator-${i}`}
+                        {...getResizeHandleProps(i)}
+                      />
+                      <AgentNode
+                        agent={agent}
+                        style={
+                          agentExpandedIdx >= 0 ? { flex: flexValues[agentExpandedIdx] } : undefined
+                        }
+                        sectionRef={(el) => {
+                          if (agentExpandedIdx >= 0) sectionRefs.current[agentExpandedIdx] = el;
+                        }}
+                      />
+                    </Fragment>
+                  );
+                })}
+              </SortableContext>
+            )}
+          </>
+        )}
         <DragOverlay>
           {draggingConnection ? (
             <div className="connection-tree__drag-overlay">

@@ -21,7 +21,6 @@ import {
   filterCredentialFields,
 } from "@/utils/schemaDefaults";
 import { useAvailableRuntimes } from "@/hooks/useAvailableRuntimes";
-import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import { ConnectionTerminalSettings } from "./ConnectionTerminalSettings";
 import { ConnectionAppearanceSettings } from "./ConnectionAppearanceSettings";
 import { findLeafByTab } from "@/utils/panelTree";
@@ -70,19 +69,11 @@ function hasTerminalOptions(opts: TerminalOptions): boolean {
   return Object.values(opts).some((v) => v !== undefined);
 }
 
-/** Build type options from the registry, optionally including the experimental "Remote Agent" entry. */
+/** Build type options from the registry. */
 function buildTypeOptions(
-  connectionTypes: ConnectionTypeInfo[],
-  includeRemoteAgent: boolean
+  connectionTypes: ConnectionTypeInfo[]
 ): { value: string; label: string }[] {
-  const options = connectionTypes.map((ct) => ({
-    value: ct.typeId,
-    label: ct.displayName,
-  }));
-  if (includeRemoteAgent) {
-    options.push({ value: "remote", label: "Remote Agent (Experimental)" });
-  }
-  return options;
+  return connectionTypes.map((ct) => ({ value: ct.typeId, label: ct.displayName }));
 }
 
 /** Find schema for a type ID in the connection types registry. */
@@ -129,7 +120,6 @@ interface ConnectionEditorProps {
 }
 
 export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorProps) {
-  const experimental = useExperimentalFeatures();
   const connections = useAppStore((s) => s.connections);
   const connectionTypes = useAppStore((s) => s.connectionTypes);
   const addConnection = useAppStore((s) => s.addConnection);
@@ -211,11 +201,16 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         settings: existingConnection.config.config,
       };
     }
+    // New remote agent opened via Remote Agents "+" button
+    if (editingConnectionId === "new-remote-agent") {
+      return { typeId: "remote", settings: buildDefaults(AGENT_SCHEMA) };
+    }
     // New local connection defaults to local shell
     const localType = findSchema(connectionTypes, "local");
     const defaults = localType ? buildTypeDefaults(localType, settings) : { shell: defaultShell };
     return { typeId: "local", settings: defaults };
   }, [
+    editingConnectionId,
     existingConnection,
     existingAgent,
     existingAgentDef,
@@ -283,8 +278,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       // Definition mode: show only agent-reported types (no "Remote Agent" entry)
       return agentConnectionTypes.map((ct) => ({ value: ct.typeId, label: ct.displayName }));
     }
-    return buildTypeOptions(connectionTypes, experimental);
-  }, [isAgentDefinitionMode, agentConnectionTypes, connectionTypes, experimental]);
+    return buildTypeOptions(connectionTypes);
+  }, [isAgentDefinitionMode, agentConnectionTypes, connectionTypes]);
 
   // Get the current schema from the effective registry
   const currentTypeInfo = useMemo(
@@ -647,27 +642,23 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           </p>
         )}
       </label>
-      <label className="settings-form__field">
-        <span className="settings-form__label">Type</span>
-        <select
-          value={selectedType}
-          onChange={(e) => handleTypeChange(e.target.value)}
-          disabled={
-            isAgentTransportMode
-              ? !!existingAgent
-              : isAgentDefinitionMode
-                ? !!existingAgentDef
-                : false
-          }
-          data-testid="connection-editor-type-select"
-        >
-          {typeOptions.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
-            </option>
-          ))}
-        </select>
-      </label>
+      {!isAgentTransportMode && (
+        <label className="settings-form__field">
+          <span className="settings-form__label">Type</span>
+          <select
+            value={selectedType}
+            onChange={(e) => handleTypeChange(e.target.value)}
+            disabled={isAgentDefinitionMode ? !!existingAgentDef : false}
+            data-testid="connection-editor-type-select"
+          >
+            {typeOptions.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
 
       {currentSchema && (
         <ConnectionSettingsForm
@@ -753,8 +744,10 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           ? existingAgentDef
             ? "Edit Agent Connection"
             : "New Agent Connection"
-          : existingAgent
-            ? "Edit Remote Agent"
+          : isAgentTransportMode
+            ? existingAgent
+              ? "Edit Remote Agent"
+              : "New Remote Agent"
             : existingConnection
               ? "Edit Connection"
               : "New Connection"}
