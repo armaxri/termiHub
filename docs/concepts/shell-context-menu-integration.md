@@ -457,7 +457,7 @@ Uninstall: the workflow bundles are removed from `~/Library/Services/`.
 
 Three complementary approaches are used, selected based on detected file managers:
 
-**1. XDG `.desktop` file (universal)**
+##### 1. XDG `.desktop` file (universal)
 
 Installed to `~/.local/share/applications/termihub-open-<slug>.desktop`. Registers termiHub as
 an application for `inode/directory` MIME type. Appears in "Open With" dialogs across all
@@ -473,19 +473,19 @@ Categories=TerminalEmulator;
 MimeType=inode/directory;
 ```
 
-**2. Nautilus scripts (GNOME)**
+##### 2. Nautilus scripts (GNOME)
 
 If `~/.local/share/nautilus/scripts/` exists, a shell script is installed for each entry. Scripts
 appear in Finder right-click → Scripts. Each script calls `termiHub spawn --entry-id <id>
 --location "$NAUTILUS_SCRIPT_SELECTED_FILE_PATHS"`.
 
-**3. KDE Dolphin service menu**
+##### 3. KDE Dolphin service menu
 
 If `~/.local/share/kservices5/ServiceMenus/` exists (KDE 5) or
 `~/.local/share/kio/servicemenus/` (KDE 6), a service menu `.desktop` file is installed.
 Dolphin shows these entries directly in the right-click menu.
 
-**4. Thunar custom actions**
+##### 4. Thunar custom actions
 
 If Thunar's `~/.config/Thunar/uca.xml` is detected, a custom action entry is appended via
 XML manipulation.
