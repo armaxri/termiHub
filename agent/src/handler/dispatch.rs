@@ -26,7 +26,9 @@ use crate::protocol::methods::{
     SessionResizeParams,
 };
 use crate::session::definitions::{Connection, ConnectionStoreApi, Folder};
-use crate::session::manager::{SessionCreateError, SessionManager, SessionManagerApi, MAX_SESSIONS};
+use crate::session::manager::{
+    SessionCreateError, SessionManager, SessionManagerApi, MAX_SESSIONS,
+};
 
 /// The agent's protocol version.
 ///
@@ -2606,8 +2608,7 @@ mod tests {
 
     fn make_mock_dispatcher() -> Dispatcher<MockSessionManager> {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        let tmp =
-            std::env::temp_dir().join(format!("termihub-mock-{}.json", uuid::Uuid::new_v4()));
+        let tmp = std::env::temp_dir().join(format!("termihub-mock-{}.json", uuid::Uuid::new_v4()));
         let conn_store = Arc::new(ConnectionStore::new_temp(tmp));
         let monitoring_manager = Arc::new(MonitoringManager::new(tx, conn_store.clone()));
         let session_manager = Arc::new(MockSessionManager::new());
@@ -2618,12 +2619,9 @@ mod tests {
         )
     }
 
-    fn make_mock_dispatcher_failing(
-        error: SessionCreateError,
-    ) -> Dispatcher<MockSessionManager> {
+    fn make_mock_dispatcher_failing(error: SessionCreateError) -> Dispatcher<MockSessionManager> {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        let tmp =
-            std::env::temp_dir().join(format!("termihub-mock-{}.json", uuid::Uuid::new_v4()));
+        let tmp = std::env::temp_dir().join(format!("termihub-mock-{}.json", uuid::Uuid::new_v4()));
         let conn_store = Arc::new(ConnectionStore::new_temp(tmp));
         let monitoring_manager = Arc::new(MonitoringManager::new(tx, conn_store.clone()));
         let session_manager = Arc::new(MockSessionManager::with_create_error(error));
@@ -2813,8 +2811,7 @@ mod tests {
 
     #[tokio::test]
     async fn mock_session_create_limit_reached_returns_error() {
-        let mut d =
-            make_mock_dispatcher_failing(SessionCreateError::LimitReached);
+        let mut d = make_mock_dispatcher_failing(SessionCreateError::LimitReached);
         init_mock(&mut d).await;
 
         let req = make_request(
@@ -2885,7 +2882,10 @@ mod tests {
             2,
         );
         let result = d.dispatch(req).await.to_json();
-        assert!(result.get("result").is_some(), "create should succeed: {result}");
+        assert!(
+            result.get("result").is_some(),
+            "create should succeed: {result}"
+        );
 
         let conns = store.connections.lock().await;
         assert_eq!(conns.len(), 1);
@@ -2927,7 +2927,10 @@ mod tests {
 
         let req = make_request("connections.delete", json!({"id": "conn-test-1"}), 2);
         let result = d.dispatch(req).await.to_json();
-        assert!(result.get("result").is_some(), "delete should succeed: {result}");
+        assert!(
+            result.get("result").is_some(),
+            "delete should succeed: {result}"
+        );
         assert!(store.connections.lock().await.is_empty());
     }
 
@@ -2948,7 +2951,10 @@ mod tests {
             2,
         );
         let result = d.dispatch(req).await.to_json();
-        assert!(result.get("result").is_some(), "subscribe should succeed: {result}");
+        assert!(
+            result.get("result").is_some(),
+            "subscribe should succeed: {result}"
+        );
         assert_eq!(subscribed.lock().await.as_slice(), ["self"]);
     }
 

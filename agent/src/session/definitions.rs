@@ -483,7 +483,18 @@ impl ConnectionStoreApi for ConnectionStore {
         terminal_options: Option<Option<serde_json::Value>>,
         icon: Option<Option<String>>,
     ) -> Option<ConnectionSnapshot> {
-        ConnectionStore::update(self, id, name, session_type, config, persistent, folder_id, terminal_options, icon).await
+        ConnectionStore::update(
+            self,
+            id,
+            name,
+            session_type,
+            config,
+            persistent,
+            folder_id,
+            terminal_options,
+            icon,
+        )
+        .await
     }
 
     async fn list(&self) -> (Vec<ConnectionSnapshot>, Vec<FolderSnapshot>) {

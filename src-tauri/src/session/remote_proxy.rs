@@ -618,10 +618,7 @@ mod tests {
             Ok(())
         }
 
-        fn list_sessions(
-            &self,
-            _agent_id: &str,
-        ) -> Result<Vec<AgentSessionInfo>, TerminalError> {
+        fn list_sessions(&self, _agent_id: &str) -> Result<Vec<AgentSessionInfo>, TerminalError> {
             Ok(vec![])
         }
 
@@ -676,11 +673,7 @@ mod tests {
             })
         }
 
-        fn delete_definition(
-            &self,
-            _agent_id: &str,
-            _def_id: &str,
-        ) -> Result<(), TerminalError> {
+        fn delete_definition(&self, _agent_id: &str, _def_id: &str) -> Result<(), TerminalError> {
             Ok(())
         }
 
@@ -811,7 +804,10 @@ mod tests {
         let mut proxy = RemoteProxy::new("agent-1".to_string(), mock.clone());
 
         let settings = json!({ "type": "local", "config": {} });
-        proxy.connect(settings).await.expect("connect should succeed");
+        proxy
+            .connect(settings)
+            .await
+            .expect("connect should succeed");
 
         let sessions = mock.created_sessions.lock().unwrap();
         assert_eq!(sessions.len(), 1);
@@ -823,7 +819,10 @@ mod tests {
     async fn connect_twice_returns_error() {
         let mut proxy = make_proxy();
         let settings = json!({ "type": "local", "config": {} });
-        proxy.connect(settings.clone()).await.expect("first connect");
+        proxy
+            .connect(settings.clone())
+            .await
+            .expect("first connect");
         let result = proxy.connect(settings).await;
         assert!(result.is_err(), "second connect should fail");
 
