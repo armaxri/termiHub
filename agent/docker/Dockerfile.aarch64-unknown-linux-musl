@@ -15,7 +15,7 @@ RUN dpkg --add-architecture arm64 \
     && chmod +x /usr/local/bin/aarch64-linux-gnu-pkg-config \
     && curl -fsSL https://www.openssl.org/source/openssl-${OPENSSL_VERSION}.tar.gz | tar xz -C /tmp \
     && cd /tmp/openssl-${OPENSSL_VERSION} \
-    && CC=aarch64-linux-musl-gcc CROSS_COMPILE=aarch64-linux-musl- \
+    && CROSS_COMPILE=aarch64-linux-musl- \
        ./Configure no-shared no-zlib no-tests --libdir=lib linux-aarch64 --prefix=/opt/openssl \
     && make -j$(nproc) \
     && make install_sw \
