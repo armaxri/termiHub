@@ -31,6 +31,20 @@ Concept for built-in VNC session support. Defines how to embed remote graphical 
 
 Concept for a package manager for extensions and tools. Builds on the plugin system concept to add repository browsing, dependency resolution, automatic updates, and tool packages (CLI utilities). Covers two package types (plugins and tools), static HTTPS repository format, multi-source priority resolution, download verification, PATH management for tool binaries, disk usage tracking, and offline mode.
 
+### release-planning-and-dependency-management.md
+
+Concept for structured release planning, dependency vulnerability monitoring, and security
+response workflows. Defines release types (security patch, bug-fix, minor, major) with SLA
+targets, Dependabot configuration for npm and Cargo, hardened CI audit checks, and a hotfix
+branching model for emergency security patches.
+
+### in-field-update-mechanism.md
+
+Concept for notifying installed users of available updates and delivering them in-app. Compares
+three variants — notify-only (Phase 1), download-and-prompt (Phase 2), fully automatic (Phase 3)
+— with full codebase impact and code signing requirement analysis. Proposes a phased adoption
+path starting with minimal notify-only implementation.
+
 ## Handled Concepts
 
 The following live in [`handled/`](handled/) because their concept issues are closed.
