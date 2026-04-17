@@ -179,15 +179,28 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   );
   const effectiveRegistry = isAgentDefinitionMode ? agentConnectionTypes : connectionTypes;
 
+  /** Normalize legacy session-type aliases to the canonical registry ID. */
+  function normalizeAgentTypeId(typeId: string, types: typeof agentConnectionTypes): string {
+    if (types.some((ct) => ct.typeId === typeId)) return typeId;
+    const aliases: Record<string, string> = { shell: "local" };
+    return aliases[typeId] ?? typeId;
+  }
+
   const defaultShell = useAppStore((s) => s.defaultShell);
 
   // Derive initial typeId and settings from existing connection or defaults
   const initialTypeAndSettings = useMemo(() => {
     // Agent definition: existing or new
     if (existingAgentDef) {
+      const typeId = normalizeAgentTypeId(existingAgentDef.sessionType, agentConnectionTypes);
+      const typeInfo = agentConnectionTypes.find((ct) => ct.typeId === typeId);
       return {
-        typeId: existingAgentDef.sessionType,
-        settings: existingAgentDef.config,
+        typeId,
+        settings: Object.keys(existingAgentDef.config as Record<string, unknown>).length
+          ? (existingAgentDef.config as Record<string, unknown>)
+          : typeInfo
+            ? buildDefaults(typeInfo.schema)
+            : {},
       };
     }
     if (isAgentDefinitionMode) {
@@ -195,7 +208,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       if (firstType) {
         return { typeId: firstType.typeId, settings: buildDefaults(firstType.schema) };
       }
-      return { typeId: "shell", settings: {} };
+      return { typeId: "", settings: {} };
     }
     // Agent transport
     if (existingAgent && !meta.agentDefinitionId) {
@@ -658,13 +671,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         <select
           value={selectedType}
           onChange={(e) => handleTypeChange(e.target.value)}
-          disabled={
-            isAgentTransportMode
-              ? !!existingAgent
-              : isAgentDefinitionMode
-                ? !!existingAgentDef
-                : false
-          }
+          disabled={isAgentTransportMode ? !!existingAgent : false}
           data-testid="connection-editor-type-select"
         >
           {typeOptions.map((opt) => (

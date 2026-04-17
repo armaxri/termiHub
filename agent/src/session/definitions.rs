@@ -283,7 +283,7 @@ impl ConnectionStore {
         let default_conn = Connection {
             id: format!("conn-{}", uuid::Uuid::new_v4()),
             name: "Default Shell".to_string(),
-            session_type: "shell".to_string(),
+            session_type: "local".to_string(),
             config: serde_json::json!({ "shell": shell }),
             persistent: false,
             folder_id: None,
