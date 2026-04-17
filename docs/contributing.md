@@ -483,10 +483,11 @@ The remote agent (`termihub-agent`) runs on Linux hosts (servers, ARM devices, N
 
 ### Targets
 
-| Triple                       | Arch  | libc | Use Case                                         |
-| ---------------------------- | ----- | ---- | ------------------------------------------------ |
-| `x86_64-unknown-linux-musl`  | x64   | musl | Standard servers, static portable binary         |
-| `aarch64-unknown-linux-musl` | ARM64 | musl | ARM64 servers, Raspberry Pi 3/4/5, static binary |
+| Triple                           | Arch  | libc | Use Case                                           |
+| -------------------------------- | ----- | ---- | -------------------------------------------------- |
+| `x86_64-unknown-linux-musl`      | x64   | musl | Standard servers, static portable binary           |
+| `aarch64-unknown-linux-musl`     | ARM64 | musl | ARM64 servers, Raspberry Pi 3/4/5, static binary   |
+| `armv7-unknown-linux-musleabihf` | ARMv7 | musl | ARMv7 devices, older Raspberry Pi (Pi 2 / Pi 1 B+) |
 
 ### Quick Start
 
