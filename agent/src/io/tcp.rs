@@ -7,10 +7,10 @@ use tracing::{info, warn};
 
 use crate::handler::dispatch::Dispatcher;
 use crate::io::transport::run_transport_loop;
-use crate::monitoring::MonitoringManager;
+use crate::monitoring::{MonitoringManager, MonitoringManagerApi};
 use crate::protocol::messages::JsonRpcNotification;
 use crate::registry::build_registry;
-use crate::session::definitions::ConnectionStore;
+use crate::session::definitions::{ConnectionStore, ConnectionStoreApi};
 use crate::session::manager::SessionManager;
 
 /// Run the NDJSON transport loop over a TCP listener.
@@ -58,7 +58,11 @@ pub async fn run_tcp_listener(addr: &str, shutdown: CancellationToken) -> anyhow
                 // replayed on attach, so these are not needed.
                 while notification_rx.try_recv().is_ok() {}
 
-                let mut dispatcher = Dispatcher::new(session_manager.clone(), connection_store.clone(), monitoring_manager.clone());
+                let mut dispatcher = Dispatcher::new(
+                    session_manager.clone(),
+                    connection_store.clone() as Arc<dyn ConnectionStoreApi>,
+                    monitoring_manager.clone() as Arc<dyn MonitoringManagerApi>,
+                );
 
                 let (reader_half, mut writer_half) = stream.into_split();
                 let mut reader = BufReader::new(reader_half);

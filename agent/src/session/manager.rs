@@ -8,15 +8,15 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
-use base64::Engine;
 use chrono::Utc;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 use crate::io::transport::NotificationSender;
-use crate::protocol::messages::JsonRpcNotification;
 use crate::session::types::{SessionBackend, SessionInfo, SessionSnapshot, SessionStatus};
+use crate::transport::JsonRpcOutputSink;
 use termihub_core::connection::{ConnectionTypeRegistry, OutputReceiver};
+use termihub_core::session::traits::OutputSink;
 
 #[cfg(unix)]
 use crate::daemon::client::DaemonClient;
@@ -27,6 +27,61 @@ use crate::state::persistence::{AgentState, PersistedSession};
 
 /// Maximum number of concurrent sessions the agent supports.
 pub const MAX_SESSIONS: u32 = 20;
+
+// ── SessionManagerApi trait ────────────────────────────────────────
+
+/// Abstract interface over the session manager.
+///
+/// Implemented by [`SessionManager`] in production and by mock structs in
+/// tests. The [`Dispatcher`](crate::handler::dispatch::Dispatcher) depends on
+/// this trait so it can be unit-tested without real backends.
+#[async_trait::async_trait(?Send)]
+pub trait SessionManagerApi: Send + Sync + 'static {
+    /// Return the registry of available connection types.
+    fn registry(&self) -> &ConnectionTypeRegistry;
+
+    /// Create a new session.
+    async fn create(
+        &self,
+        type_id: &str,
+        title: String,
+        settings: serde_json::Value,
+    ) -> Result<SessionSnapshot, SessionCreateError>;
+
+    /// List all sessions as snapshots.
+    async fn list(&self) -> Vec<SessionSnapshot>;
+
+    /// Return the type ID for an active session.
+    async fn get_session_type_id(&self, session_id: &str) -> Option<String>;
+
+    /// Close a session; returns `true` if found and removed.
+    async fn close(&self, session_id: &str) -> bool;
+
+    /// Close all sessions (called during agent shutdown).
+    // Called on the concrete type in io/tcp.rs and io/stdio.rs; not yet via trait.
+    #[allow(dead_code)]
+    async fn close_all(&self);
+
+    /// Detach all sessions without closing them.
+    // Called on the concrete type in io/tcp.rs; not yet via trait.
+    #[allow(dead_code)]
+    async fn detach_all(&self);
+
+    /// Return the number of sessions with status `Running`.
+    async fn active_count(&self) -> u32;
+
+    /// Attach a client to an existing session.
+    async fn attach(&self, session_id: &str) -> Result<(), String>;
+
+    /// Detach the client from a session.
+    async fn detach(&self, session_id: &str) -> Result<(), String>;
+
+    /// Write input data to a session's backend.
+    async fn write_input(&self, session_id: &str, data: &[u8]) -> Result<(), String>;
+
+    /// Resize a session's terminal.
+    async fn resize(&self, session_id: &str, cols: u16, rows: u16) -> Result<(), String>;
+}
 
 /// Errors that can occur during session creation.
 #[derive(Debug)]
@@ -49,6 +104,66 @@ impl fmt::Display for SessionCreateError {
     }
 }
 
+// ── DaemonLauncher trait (Unix only) ──────────────────────────────
+
+/// Abstracts the spawning of a daemon subprocess for persistent sessions.
+///
+/// The production implementation ([`SystemDaemonLauncher`]) calls
+/// `std::process::Command` to launch `termihub-agent --daemon` and
+/// connects via a Unix socket. Tests inject a mock that returns
+/// immediately without spawning a real process.
+#[cfg(unix)]
+#[async_trait::async_trait(?Send)]
+pub trait DaemonLauncher: Send + Sync + 'static {
+    /// Spawn a daemon for the given session and return the connected backend.
+    async fn launch(
+        &self,
+        session_id: &str,
+        type_id: &str,
+        settings: &serde_json::Value,
+        notification_tx: NotificationSender,
+    ) -> Result<SessionBackend, anyhow::Error>;
+}
+
+/// Production [`DaemonLauncher`] that spawns real `termihub-agent --daemon` processes.
+#[cfg(unix)]
+pub struct SystemDaemonLauncher;
+
+#[cfg(unix)]
+#[async_trait::async_trait(?Send)]
+impl DaemonLauncher for SystemDaemonLauncher {
+    async fn launch(
+        &self,
+        session_id: &str,
+        type_id: &str,
+        settings: &serde_json::Value,
+        notification_tx: NotificationSender,
+    ) -> Result<SessionBackend, anyhow::Error> {
+        let socket_path = socket_dir().join(format!("session-{session_id}.sock"));
+        let settings_json = serde_json::to_string(settings)?;
+        let agent_exe = std::env::current_exe()?;
+
+        let _child = std::process::Command::new(&agent_exe)
+            .arg("--daemon")
+            .arg(session_id)
+            .env("TERMIHUB_SOCKET_PATH", &socket_path)
+            .env("TERMIHUB_TYPE_ID", type_id)
+            .env("TERMIHUB_SETTINGS", &settings_json)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::inherit())
+            .spawn()
+            .map_err(|e| anyhow::anyhow!("Failed to spawn daemon: {e}"))?;
+
+        DaemonClient::wait_for_socket(&socket_path).await?;
+        let client =
+            DaemonClient::connect(session_id.to_string(), socket_path, notification_tx).await?;
+
+        info!("Daemon spawned for session {session_id} (type={type_id})");
+        Ok(SessionBackend::Daemon(client))
+    }
+}
+
 /// In-memory session manager.
 ///
 /// Tracks sessions in a `HashMap` protected by a `tokio::sync::Mutex`
@@ -57,6 +172,8 @@ pub struct SessionManager {
     sessions: Mutex<HashMap<String, SessionInfo>>,
     notification_tx: NotificationSender,
     registry: Arc<ConnectionTypeRegistry>,
+    #[cfg(unix)]
+    launcher: Arc<dyn DaemonLauncher>,
     #[cfg(unix)]
     state: Mutex<AgentState>,
 }
@@ -68,13 +185,26 @@ impl SessionManager {
             notification_tx,
             registry,
             #[cfg(unix)]
+            launcher: Arc::new(SystemDaemonLauncher),
+            #[cfg(unix)]
             state: Mutex::new(AgentState::load()),
         }
     }
 
-    /// Get a reference to the connection type registry.
-    pub fn registry(&self) -> &ConnectionTypeRegistry {
-        &self.registry
+    /// Create a session manager with a custom daemon launcher (for testing on Unix).
+    #[cfg(all(unix, test))]
+    pub fn with_launcher(
+        notification_tx: NotificationSender,
+        registry: Arc<ConnectionTypeRegistry>,
+        launcher: Arc<dyn DaemonLauncher>,
+    ) -> Self {
+        Self {
+            sessions: Mutex::new(HashMap::new()),
+            notification_tx,
+            registry,
+            launcher,
+            state: Mutex::new(AgentState::load()),
+        }
     }
 
     /// Create a new session.
@@ -168,7 +298,7 @@ impl SessionManager {
             .await
     }
 
-    /// Spawn a daemon process and connect via DaemonClient.
+    /// Spawn a daemon process and connect via the injected [`DaemonLauncher`].
     #[cfg(unix)]
     async fn spawn_daemon_backend(
         &self,
@@ -176,34 +306,9 @@ impl SessionManager {
         type_id: &str,
         settings: &serde_json::Value,
     ) -> Result<SessionBackend, anyhow::Error> {
-        let socket_path = socket_dir().join(format!("session-{session_id}.sock"));
-
-        let settings_json = serde_json::to_string(settings)?;
-
-        let agent_exe = std::env::current_exe()?;
-
-        let _child = std::process::Command::new(&agent_exe)
-            .arg("--daemon")
-            .arg(session_id)
-            .env("TERMIHUB_SOCKET_PATH", &socket_path)
-            .env("TERMIHUB_TYPE_ID", type_id)
-            .env("TERMIHUB_SETTINGS", &settings_json)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::inherit())
-            .spawn()
-            .map_err(|e| anyhow::anyhow!("Failed to spawn daemon: {e}"))?;
-
-        DaemonClient::wait_for_socket(&socket_path).await?;
-        let client = DaemonClient::connect(
-            session_id.to_string(),
-            socket_path,
-            self.notification_tx.clone(),
-        )
-        .await?;
-
-        info!("Daemon spawned for session {session_id} (type={type_id})");
-        Ok(SessionBackend::Daemon(client))
+        self.launcher
+            .launch(session_id, type_id, settings, self.notification_tx.clone())
+            .await
     }
 
     /// Create a ConnectionType in-process and start output forwarding.
@@ -522,46 +627,86 @@ async fn resize_backend(
 // ── Output forwarding ──────────────────────────────────────────────
 
 /// Spawn a background task that reads from the ConnectionType's output
-/// channel and sends JSON-RPC notifications.
+/// channel and sends JSON-RPC notifications via [`JsonRpcOutputSink`].
 fn spawn_output_forwarder(
     mut output_rx: OutputReceiver,
     session_id: String,
     notification_tx: NotificationSender,
 ) -> tokio::task::JoinHandle<()> {
+    let sink = JsonRpcOutputSink::new(notification_tx);
     tokio::spawn(async move {
-        let b64 = base64::engine::general_purpose::STANDARD;
         loop {
             match output_rx.recv().await {
                 Some(data) => {
-                    for chunk in data.chunks(65536) {
-                        let encoded = b64.encode(chunk);
-                        let notification = JsonRpcNotification::new(
-                            "connection.output",
-                            serde_json::json!({
-                                "session_id": session_id,
-                                "data": encoded,
-                            }),
-                        );
-                        if notification_tx.send(notification).is_err() {
-                            return; // transport loop dropped
-                        }
+                    if sink.send_output(&session_id, data).is_err() {
+                        return; // transport loop dropped
                     }
                 }
                 None => {
-                    // Connection output ended.
-                    let notification = JsonRpcNotification::new(
-                        "connection.exit",
-                        serde_json::json!({
-                            "session_id": session_id,
-                            "exit_code": 0,
-                        }),
-                    );
-                    let _ = notification_tx.send(notification);
+                    let _ = sink.send_exit(&session_id, Some(0));
                     return;
                 }
             }
         }
     })
+}
+
+// ── SessionManagerApi impl ─────────────────────────────────────────
+
+#[async_trait::async_trait(?Send)]
+impl SessionManagerApi for SessionManager {
+    fn registry(&self) -> &ConnectionTypeRegistry {
+        &self.registry
+    }
+
+    async fn create(
+        &self,
+        type_id: &str,
+        title: String,
+        settings: serde_json::Value,
+    ) -> Result<SessionSnapshot, SessionCreateError> {
+        SessionManager::create(self, type_id, title, settings).await
+    }
+
+    async fn list(&self) -> Vec<SessionSnapshot> {
+        SessionManager::list(self).await
+    }
+
+    async fn get_session_type_id(&self, session_id: &str) -> Option<String> {
+        SessionManager::get_session_type_id(self, session_id).await
+    }
+
+    async fn close(&self, session_id: &str) -> bool {
+        SessionManager::close(self, session_id).await
+    }
+
+    async fn close_all(&self) {
+        SessionManager::close_all(self).await
+    }
+
+    async fn detach_all(&self) {
+        SessionManager::detach_all(self).await
+    }
+
+    async fn active_count(&self) -> u32 {
+        SessionManager::active_count(self).await
+    }
+
+    async fn attach(&self, session_id: &str) -> Result<(), String> {
+        SessionManager::attach(self, session_id).await
+    }
+
+    async fn detach(&self, session_id: &str) -> Result<(), String> {
+        SessionManager::detach(self, session_id).await
+    }
+
+    async fn write_input(&self, session_id: &str, data: &[u8]) -> Result<(), String> {
+        SessionManager::write_input(self, session_id, data).await
+    }
+
+    async fn resize(&self, session_id: &str, cols: u16, rows: u16) -> Result<(), String> {
+        SessionManager::resize(self, session_id, cols, rows).await
+    }
 }
 
 // ── Tests ──────────────────────────────────────────────────────────
@@ -683,5 +828,154 @@ mod tests {
         let mgr = SessionManager::new(test_notification_tx(), test_registry());
         assert!(mgr.registry().has_type("local"));
         assert!(mgr.registry().has_type("ssh"));
+    }
+
+    // ── DaemonLauncher unit tests (Unix only) ─────────────────────────
+
+    #[cfg(unix)]
+    mod daemon_launcher_tests {
+        use super::*;
+        use crate::session::types::SessionBackend;
+
+        /// Mock launcher that returns a Stub backend (no real process spawned).
+        struct MockDaemonLauncher {
+            should_fail: bool,
+            launched: Arc<Mutex<Vec<(String, String)>>>,
+        }
+
+        impl MockDaemonLauncher {
+            fn new() -> Self {
+                Self {
+                    should_fail: false,
+                    launched: Arc::new(Mutex::new(Vec::new())),
+                }
+            }
+            fn failing() -> Self {
+                Self {
+                    should_fail: true,
+                    launched: Arc::new(Mutex::new(Vec::new())),
+                }
+            }
+        }
+
+        #[async_trait::async_trait(?Send)]
+        impl DaemonLauncher for MockDaemonLauncher {
+            async fn launch(
+                &self,
+                session_id: &str,
+                type_id: &str,
+                _settings: &serde_json::Value,
+                _notification_tx: NotificationSender,
+            ) -> Result<SessionBackend, anyhow::Error> {
+                if self.should_fail {
+                    return Err(anyhow::anyhow!("mock: daemon spawn failed"));
+                }
+                self.launched
+                    .lock()
+                    .await
+                    .push((session_id.to_string(), type_id.to_string()));
+                Ok(SessionBackend::Stub)
+            }
+        }
+
+        type LaunchedLog = Arc<Mutex<Vec<(String, String)>>>;
+
+        fn make_manager_with_mock(launcher: MockDaemonLauncher) -> (SessionManager, LaunchedLog) {
+            let launched = launcher.launched.clone();
+            let mgr = SessionManager::with_launcher(
+                test_notification_tx(),
+                test_registry(),
+                Arc::new(launcher),
+            );
+            (mgr, launched)
+        }
+
+        #[tokio::test]
+        async fn create_persistent_session_calls_launcher() {
+            let (mgr, launched) = make_manager_with_mock(MockDaemonLauncher::new());
+            // "ssh" is a persistent type (Capabilities::persistent = true)
+            let result = mgr
+                .create(
+                    "ssh",
+                    "test SSH".to_string(),
+                    serde_json::json!({
+                        "host": "example.com",
+                        "username": "user",
+                        "authMethod": "password",
+                    }),
+                )
+                .await;
+            assert!(
+                result.is_ok(),
+                "expected session creation to succeed: {result:?}"
+            );
+            let log = launched.lock().await;
+            assert_eq!(log.len(), 1, "expected launcher to be called once");
+            assert_eq!(log[0].1, "ssh");
+        }
+
+        #[tokio::test]
+        async fn create_nonpersistent_session_skips_launcher() {
+            let (mgr, launched) = make_manager_with_mock(MockDaemonLauncher::new());
+            // "telnet" is non-persistent — runs in-process; launcher should not be called
+            // We can't actually connect, but create() will fail at backend level (not launcher)
+            let _ = mgr
+                .create(
+                    "telnet",
+                    "test".to_string(),
+                    serde_json::json!({
+                        "host": "127.0.0.1",
+                        "port": 9999,
+                    }),
+                )
+                .await;
+            let log = launched.lock().await;
+            assert_eq!(
+                log.len(),
+                0,
+                "non-persistent session should not use launcher"
+            );
+        }
+
+        #[tokio::test]
+        async fn create_persistent_session_launcher_failure_propagates() {
+            let (mgr, _) = make_manager_with_mock(MockDaemonLauncher::failing());
+            let result = mgr
+                .create(
+                    "ssh",
+                    "fail test".to_string(),
+                    serde_json::json!({
+                        "host": "example.com",
+                        "username": "user",
+                        "authMethod": "password",
+                    }),
+                )
+                .await;
+            assert!(
+                matches!(result, Err(SessionCreateError::BackendFailed(_))),
+                "expected BackendFailed, got: {result:?}"
+            );
+        }
+
+        #[tokio::test]
+        async fn create_session_appears_in_list_after_launch() {
+            let (mgr, _) = make_manager_with_mock(MockDaemonLauncher::new());
+            let snapshot = mgr
+                .create(
+                    "ssh",
+                    "my-ssh".to_string(),
+                    serde_json::json!({
+                        "host": "example.com",
+                        "username": "user",
+                        "authMethod": "password",
+                    }),
+                )
+                .await
+                .unwrap();
+            let list = mgr.list().await;
+            assert_eq!(list.len(), 1);
+            assert_eq!(list[0].id, snapshot.id);
+            assert_eq!(list[0].title, "my-ssh");
+        }
     }
 }

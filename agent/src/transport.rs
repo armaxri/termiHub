@@ -19,18 +19,12 @@ use termihub_core::session::traits::OutputSink;
 /// Wraps the agent's notification channel (`NotificationSender`) and
 /// implements the core [`OutputSink`] trait. Each method constructs
 /// a JSON-RPC notification and sends it through the transport loop.
-///
-/// Not yet wired into the main session manager (Phase 5); the struct
-/// is exercised through tests and will be used once the core engine
-/// replaces the per-backend dispatch loop.
-#[allow(dead_code)]
 pub struct JsonRpcOutputSink {
     notification_tx: NotificationSender,
 }
 
 impl JsonRpcOutputSink {
     /// Create a new output sink backed by the given notification channel.
-    #[allow(dead_code)]
     pub fn new(notification_tx: NotificationSender) -> Self {
         Self { notification_tx }
     }
@@ -93,125 +87,6 @@ impl OutputSink for JsonRpcOutputSink {
         Ok(())
     }
 }
-
-// ── DaemonSpawner (Unix only) ──────────────────────────────────────
-
-#[cfg(unix)]
-#[allow(dead_code)]
-mod daemon_spawner {
-    use std::collections::HashMap;
-    use std::path::{Path, PathBuf};
-
-    use termihub_core::config::PtySize;
-    use termihub_core::errors::SessionError;
-    use termihub_core::session::shell::ShellCommand;
-    use termihub_core::session::traits::{ProcessHandle, ProcessSpawner};
-
-    use crate::daemon::client::DaemonClient;
-    use crate::io::transport::NotificationSender;
-
-    /// Spawns processes via daemon processes with Unix socket IPC.
-    ///
-    /// Each call to [`spawn_shell`](ProcessSpawner::spawn_shell) or
-    /// [`spawn_command`](ProcessSpawner::spawn_command) launches a
-    /// `termihub-agent --daemon` child process, waits for its socket,
-    /// and returns a connected [`DaemonClient`] as the process handle.
-    pub struct DaemonSpawner {
-        socket_dir: PathBuf,
-        notification_tx: NotificationSender,
-    }
-
-    impl DaemonSpawner {
-        /// Create a new spawner that places daemon sockets in `socket_dir`.
-        pub fn new(socket_dir: PathBuf, notification_tx: NotificationSender) -> Self {
-            Self {
-                socket_dir,
-                notification_tx,
-            }
-        }
-    }
-
-    impl ProcessSpawner for DaemonSpawner {
-        type Handle = DaemonClient;
-
-        fn spawn_shell(
-            &self,
-            command: &ShellCommand,
-            pty_size: PtySize,
-            env: &HashMap<String, String>,
-            _cwd: Option<&Path>,
-        ) -> Result<Self::Handle, SessionError> {
-            let session_id = uuid::Uuid::new_v4().to_string();
-            let socket_path = self.socket_dir.join(format!("session-{session_id}.sock"));
-
-            // Merge command env with extra env vars
-            let mut all_env = command.env.clone();
-            all_env.extend(env.iter().map(|(k, v)| (k.clone(), v.clone())));
-            let env_json = serde_json::to_string(&all_env)
-                .map_err(|e| SessionError::SpawnFailed(format!("env serialization: {e}")))?;
-
-            let agent_exe = std::env::current_exe()
-                .map_err(|e| SessionError::SpawnFailed(format!("current_exe: {e}")))?;
-
-            std::process::Command::new(&agent_exe)
-                .arg("--daemon")
-                .arg(&session_id)
-                .env("TERMIHUB_SOCKET_PATH", &socket_path)
-                .env("TERMIHUB_SHELL", &command.program)
-                .env("TERMIHUB_COLS", pty_size.cols.to_string())
-                .env("TERMIHUB_ROWS", pty_size.rows.to_string())
-                .env("TERMIHUB_ENV", &env_json)
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::inherit())
-                .spawn()
-                .map_err(|e| SessionError::SpawnFailed(format!("daemon spawn: {e}")))?;
-
-            // Block on async socket wait + connect
-            let handle = tokio::runtime::Handle::current();
-            let tx = self.notification_tx.clone();
-
-            handle
-                .block_on(async {
-                    DaemonClient::wait_for_socket(&socket_path).await?;
-                    DaemonClient::connect(session_id, socket_path, tx).await
-                })
-                .map_err(|e| SessionError::SpawnFailed(format!("daemon connect: {e}")))
-        }
-
-        fn spawn_command(
-            &self,
-            program: &str,
-            args: &[String],
-            pty_size: PtySize,
-            env: &HashMap<String, String>,
-        ) -> Result<Self::Handle, SessionError> {
-            // Build a ShellCommand from the program/args so we can reuse spawn_shell.
-            let command = ShellCommand {
-                program: program.to_string(),
-                args: args.to_vec(),
-                env: env.clone(),
-                cwd: None,
-                cols: pty_size.cols,
-                rows: pty_size.rows,
-            };
-            self.spawn_shell(&command, pty_size, &HashMap::new(), None)
-        }
-    }
-
-    // Verify trait bounds at compile time.
-    fn _assert_spawner_send_sync<T: ProcessSpawner>() {}
-    fn _assert_handle_send<T: ProcessHandle>() {}
-
-    fn _static_assertions() {
-        _assert_spawner_send_sync::<DaemonSpawner>();
-        _assert_handle_send::<DaemonClient>();
-    }
-}
-
-#[cfg(unix)]
-#[allow(unused_imports)]
-pub use daemon_spawner::DaemonSpawner;
 
 #[cfg(test)]
 mod tests {

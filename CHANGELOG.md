@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (internal)
+
+- DI testing infrastructure: extracted `LocalShellSpawner`, `SshConnector`, `SessionManagerApi`, `DaemonLauncher`, `ConnectionStoreApi`, `MonitoringManagerApi`, `EventEmitter`, and `AgentRpcClient` traits across `core`, `agent`, and `src-tauri`. Concrete types are unchanged; tests can now inject mocks without real PTY/SSH/Tauri runtimes. Tauri agent commands now depend on `Arc<dyn AgentRpcClient>` in state.
+
 ### Changed
 
 - UI: Comprehensive design refresh — new Geist typeface, deeper cool-tinted dark palette, generous border radii (4–14 px), richer multi-layer shadows, and premium `cubic-bezier(0.16, 1, 0.3, 1)` transitions throughout
@@ -24,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Agent: ARMv7 (arm32) support — a new `termihub-agent-linux-armv7` binary is now built and released for 32-bit ARM devices such as older Raspberry Pi models (Pi 2 B, Pi 1 B+). Includes cross-compilation Dockerfile, Cross.toml entry, updated build and setup scripts, and CI pipeline changes.
 - Update checker (Variant A — notify only): termiHub now checks the GitHub Releases API on startup (with a 5-second delay) and every 24 hours for new versions. When a newer release is found, an amber dot appears on the version chip in the status bar and a non-blocking notification popup offers to open the GitHub downloads page. Security releases (marked `<!-- security -->` in the release notes) show a red dot and cannot be silently skipped. Users can skip a specific version, clear a skipped version, or disable automatic checks entirely in **Settings → Updates**.
 - Connection settings: a **Shell Integration** toggle is now available for local shell, SSH, and WSL connections (enabled by default). Disabling it skips all OSC injection at startup.
 - Connection settings: boolean fields now support an optional **help icon (?)** that opens an explanation dialog. The Shell Integration toggle uses this to explain what OSC 7 tracking is and why it's useful.

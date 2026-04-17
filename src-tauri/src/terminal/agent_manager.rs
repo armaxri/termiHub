@@ -176,6 +176,154 @@ struct AgentConnection {
     protocol_version: String,
 }
 
+/// Abstract interface over an agent connection manager.
+///
+/// Implemented by [`AgentConnectionManager`] in production and by mock
+/// structs in tests. Consumers (e.g. [`RemoteProxy`]) depend on this trait
+/// so they can be tested without real SSH connections.
+///
+/// [`RemoteProxy`]: crate::session::remote_proxy::RemoteProxy
+// Methods called through Arc<AgentConnectionManager> in commands; will be
+// routed through the trait once Tauri commands use Arc<dyn AgentRpcClient>.
+#[allow(dead_code)]
+pub trait AgentRpcClient: Send + Sync + 'static {
+    /// Connect to a remote agent via SSH.
+    fn connect_agent(
+        &self,
+        agent_id: &str,
+        config: &RemoteAgentConfig,
+    ) -> Result<AgentConnectResult, TerminalError>;
+
+    /// Disconnect an agent.
+    fn disconnect_agent(&self, agent_id: &str) -> Result<(), TerminalError>;
+
+    /// Check if an agent is connected.
+    fn is_connected(&self, agent_id: &str) -> bool;
+
+    /// Get the capabilities of a connected agent.
+    fn get_capabilities(&self, agent_id: &str) -> Option<AgentCapabilities>;
+
+    /// Gracefully shut down a remote agent and disconnect.
+    fn shutdown_agent(&self, agent_id: &str, reason: Option<&str>) -> Result<u32, TerminalError>;
+
+    /// Send a JSON-RPC request to an agent and wait for the response.
+    fn send_request(
+        &self,
+        agent_id: &str,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, TerminalError>;
+
+    /// Create a session on the agent.
+    fn create_session(
+        &self,
+        agent_id: &str,
+        session_type: &str,
+        config: Value,
+        title: Option<&str>,
+    ) -> Result<AgentSessionInfo, TerminalError>;
+
+    /// Attach to a session on the agent.
+    fn attach_session(&self, agent_id: &str, remote_session_id: &str) -> Result<(), TerminalError>;
+
+    /// Close a session on the agent.
+    fn close_session(&self, agent_id: &str, remote_session_id: &str) -> Result<(), TerminalError>;
+
+    /// List sessions on the agent.
+    fn list_sessions(&self, agent_id: &str) -> Result<Vec<AgentSessionInfo>, TerminalError>;
+
+    /// List saved connections and folders on the agent.
+    fn list_connections_and_folders(
+        &self,
+        agent_id: &str,
+    ) -> Result<AgentConnectionsData, TerminalError>;
+
+    /// List saved session definitions on the agent (backward compat).
+    fn list_definitions(&self, agent_id: &str) -> Result<Vec<AgentDefinitionInfo>, TerminalError>;
+
+    /// Save a session definition on the agent.
+    fn save_definition(
+        &self,
+        agent_id: &str,
+        definition: Value,
+    ) -> Result<AgentDefinitionInfo, TerminalError>;
+
+    /// Update a saved connection definition on the agent.
+    fn update_definition(
+        &self,
+        agent_id: &str,
+        params: Value,
+    ) -> Result<AgentDefinitionInfo, TerminalError>;
+
+    /// Delete a session definition on the agent.
+    fn delete_definition(&self, agent_id: &str, def_id: &str) -> Result<(), TerminalError>;
+
+    /// Create a folder on the agent.
+    fn create_folder(
+        &self,
+        agent_id: &str,
+        name: &str,
+        parent_id: Option<&str>,
+    ) -> Result<AgentFolderInfo, TerminalError>;
+
+    /// Update a folder on the agent.
+    fn update_folder(
+        &self,
+        agent_id: &str,
+        params: Value,
+    ) -> Result<AgentFolderInfo, TerminalError>;
+
+    /// Delete a folder on the agent.
+    fn delete_folder(&self, agent_id: &str, folder_id: &str) -> Result<(), TerminalError>;
+
+    /// Register an output sender for a session.
+    fn register_session_output(
+        &self,
+        agent_id: &str,
+        remote_session_id: &str,
+        output_tx: OutputSender,
+    ) -> Result<(), TerminalError>;
+
+    /// Unregister a session's output sender.
+    fn unregister_session_output(
+        &self,
+        agent_id: &str,
+        remote_session_id: &str,
+    ) -> Result<(), TerminalError>;
+
+    /// Register a monitoring channel for a remote session.
+    fn register_monitoring_output(
+        &self,
+        agent_id: &str,
+        remote_session_id: &str,
+        monitoring_tx: MonitoringSender,
+    ) -> Result<(), TerminalError>;
+
+    /// Unregister the monitoring channel for a remote session.
+    fn unregister_monitoring_output(
+        &self,
+        agent_id: &str,
+        remote_session_id: &str,
+    ) -> Result<(), TerminalError>;
+
+    /// Send input to a session (fire-and-forget).
+    fn send_session_input(
+        &self,
+        agent_id: &str,
+        remote_session_id: &str,
+        data: &[u8],
+    ) -> Result<(), TerminalError>;
+
+    /// Resize a session (fire-and-forget).
+    fn resize_session(
+        &self,
+        agent_id: &str,
+        remote_session_id: &str,
+        cols: u16,
+        rows: u16,
+    ) -> Result<(), TerminalError>;
+}
+
 /// Manages connections to remote agents.
 ///
 /// Each agent is identified by its `agent_id` string. Multiple sessions
@@ -769,6 +917,180 @@ impl AgentConnectionManager {
                 rows,
             })
             .map_err(|_| TerminalError::ResizeFailed("Agent I/O thread gone".to_string()))
+    }
+}
+
+// ── AgentRpcClient impl ────────────────────────────────────────────
+
+impl AgentRpcClient for AgentConnectionManager {
+    fn connect_agent(
+        &self,
+        agent_id: &str,
+        config: &RemoteAgentConfig,
+    ) -> Result<AgentConnectResult, TerminalError> {
+        AgentConnectionManager::connect_agent(self, agent_id, config)
+    }
+
+    fn disconnect_agent(&self, agent_id: &str) -> Result<(), TerminalError> {
+        AgentConnectionManager::disconnect_agent(self, agent_id)
+    }
+
+    fn is_connected(&self, agent_id: &str) -> bool {
+        AgentConnectionManager::is_connected(self, agent_id)
+    }
+
+    fn get_capabilities(&self, agent_id: &str) -> Option<AgentCapabilities> {
+        AgentConnectionManager::get_capabilities(self, agent_id)
+    }
+
+    fn shutdown_agent(&self, agent_id: &str, reason: Option<&str>) -> Result<u32, TerminalError> {
+        AgentConnectionManager::shutdown_agent(self, agent_id, reason)
+    }
+
+    fn send_request(
+        &self,
+        agent_id: &str,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, TerminalError> {
+        AgentConnectionManager::send_request(self, agent_id, method, params)
+    }
+
+    fn create_session(
+        &self,
+        agent_id: &str,
+        session_type: &str,
+        config: Value,
+        title: Option<&str>,
+    ) -> Result<AgentSessionInfo, TerminalError> {
+        AgentConnectionManager::create_session(self, agent_id, session_type, config, title)
+    }
+
+    fn attach_session(&self, agent_id: &str, remote_session_id: &str) -> Result<(), TerminalError> {
+        AgentConnectionManager::attach_session(self, agent_id, remote_session_id)
+    }
+
+    fn close_session(&self, agent_id: &str, remote_session_id: &str) -> Result<(), TerminalError> {
+        AgentConnectionManager::close_session(self, agent_id, remote_session_id)
+    }
+
+    fn list_sessions(&self, agent_id: &str) -> Result<Vec<AgentSessionInfo>, TerminalError> {
+        AgentConnectionManager::list_sessions(self, agent_id)
+    }
+
+    fn list_connections_and_folders(
+        &self,
+        agent_id: &str,
+    ) -> Result<AgentConnectionsData, TerminalError> {
+        AgentConnectionManager::list_connections_and_folders(self, agent_id)
+    }
+
+    fn list_definitions(&self, agent_id: &str) -> Result<Vec<AgentDefinitionInfo>, TerminalError> {
+        AgentConnectionManager::list_definitions(self, agent_id)
+    }
+
+    fn save_definition(
+        &self,
+        agent_id: &str,
+        definition: Value,
+    ) -> Result<AgentDefinitionInfo, TerminalError> {
+        AgentConnectionManager::save_definition(self, agent_id, definition)
+    }
+
+    fn update_definition(
+        &self,
+        agent_id: &str,
+        params: Value,
+    ) -> Result<AgentDefinitionInfo, TerminalError> {
+        AgentConnectionManager::update_definition(self, agent_id, params)
+    }
+
+    fn delete_definition(&self, agent_id: &str, def_id: &str) -> Result<(), TerminalError> {
+        AgentConnectionManager::delete_definition(self, agent_id, def_id)
+    }
+
+    fn create_folder(
+        &self,
+        agent_id: &str,
+        name: &str,
+        parent_id: Option<&str>,
+    ) -> Result<AgentFolderInfo, TerminalError> {
+        AgentConnectionManager::create_folder(self, agent_id, name, parent_id)
+    }
+
+    fn update_folder(
+        &self,
+        agent_id: &str,
+        params: Value,
+    ) -> Result<AgentFolderInfo, TerminalError> {
+        AgentConnectionManager::update_folder(self, agent_id, params)
+    }
+
+    fn delete_folder(&self, agent_id: &str, folder_id: &str) -> Result<(), TerminalError> {
+        AgentConnectionManager::delete_folder(self, agent_id, folder_id)
+    }
+
+    fn register_session_output(
+        &self,
+        agent_id: &str,
+        remote_session_id: &str,
+        output_tx: OutputSender,
+    ) -> Result<(), TerminalError> {
+        AgentConnectionManager::register_session_output(
+            self,
+            agent_id,
+            remote_session_id,
+            output_tx,
+        )
+    }
+
+    fn unregister_session_output(
+        &self,
+        agent_id: &str,
+        remote_session_id: &str,
+    ) -> Result<(), TerminalError> {
+        AgentConnectionManager::unregister_session_output(self, agent_id, remote_session_id)
+    }
+
+    fn register_monitoring_output(
+        &self,
+        agent_id: &str,
+        remote_session_id: &str,
+        monitoring_tx: MonitoringSender,
+    ) -> Result<(), TerminalError> {
+        AgentConnectionManager::register_monitoring_output(
+            self,
+            agent_id,
+            remote_session_id,
+            monitoring_tx,
+        )
+    }
+
+    fn unregister_monitoring_output(
+        &self,
+        agent_id: &str,
+        remote_session_id: &str,
+    ) -> Result<(), TerminalError> {
+        AgentConnectionManager::unregister_monitoring_output(self, agent_id, remote_session_id)
+    }
+
+    fn send_session_input(
+        &self,
+        agent_id: &str,
+        remote_session_id: &str,
+        data: &[u8],
+    ) -> Result<(), TerminalError> {
+        AgentConnectionManager::send_session_input(self, agent_id, remote_session_id, data)
+    }
+
+    fn resize_session(
+        &self,
+        agent_id: &str,
+        remote_session_id: &str,
+        cols: u16,
+        rows: u16,
+    ) -> Result<(), TerminalError> {
+        AgentConnectionManager::resize_session(self, agent_id, remote_session_id, cols, rows)
     }
 }
 

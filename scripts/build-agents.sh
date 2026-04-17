@@ -14,6 +14,7 @@ cd "$(git rev-parse --show-toplevel)"
 ALL_TARGETS=(
     x86_64-unknown-linux-musl
     aarch64-unknown-linux-musl
+    armv7-unknown-linux-musleabihf
 )
 SELECTED_TARGETS=()
 SEQUENTIAL=false
@@ -45,6 +46,7 @@ Options:
 Targets:
   x86_64-unknown-linux-musl       Static x64 binaries (musl)
   aarch64-unknown-linux-musl      Static ARM64 binaries (musl)
+  armv7-unknown-linux-musleabihf  Static ARMv7 binaries (musl, older Raspberry Pi)
 
 Examples:
   ./scripts/build-agents.sh
