@@ -1,43 +1,139 @@
 //! Local shell backend implementing [`ConnectionType`](crate::connection::ConnectionType).
 //!
-//! Uses `portable-pty` for cross-platform PTY management. This is the
-//! canonical local shell implementation, used by both the desktop and
-//! agent crates (the desktop crate previously had its own implementation
-//! in `src-tauri/src/terminal/local_shell.rs`).
+//! Uses `portable-pty` for cross-platform PTY management via the injected
+//! [`LocalShellSpawner`] trait. The default spawner (`NativeLocalShellSpawner`)
+//! calls `portable_pty::native_pty_system()`; tests inject `MockLocalShellSpawner`
+//! which returns in-memory pipes and never forks a real process.
 
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use tracing::{debug, info};
 
-use crate::config::ShellConfig;
 use crate::connection::{
     Capabilities, Condition, ConnectionType, FieldType, FilePathKind, OutputReceiver, OutputSender,
     SelectOption, SettingsField, SettingsGroup, SettingsSchema,
 };
+use crate::config::ShellConfig;
 use crate::errors::SessionError;
 use crate::files::{FileBrowser, LocalFileBrowser};
 use crate::monitoring::MonitoringProvider;
 use crate::session::shell::{
     build_shell_command, detect_available_shells, detect_default_shell, osc7_setup_command,
 };
+use crate::session::traits::{LocalShellSpawner, SpawnedShell};
 
 /// Channel capacity for output data from the PTY reader thread.
 const OUTPUT_CHANNEL_CAPACITY: usize = 64;
 
-/// Local shell backend using portable-pty, implementing [`ConnectionType`].
+// ── NativeLocalShellSpawner ────────────────────────────────────────
+
+/// Production spawner: opens a real PTY pair and forks a process using
+/// `portable_pty::native_pty_system()`.
+pub struct NativeLocalShellSpawner;
+
+impl LocalShellSpawner for NativeLocalShellSpawner {
+    fn spawn(
+        &self,
+        command: &crate::session::shell::ShellCommand,
+    ) -> Result<SpawnedShell, SessionError> {
+        use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+
+        let pty_system = native_pty_system();
+        let pty_pair = pty_system
+            .openpty(PtySize {
+                rows: command.rows,
+                cols: command.cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|e| SessionError::SpawnFailed(e.to_string()))?;
+
+        let mut cmd = CommandBuilder::new(&command.program);
+        for arg in &command.args {
+            cmd.arg(arg);
+        }
+        for (key, value) in &command.env {
+            cmd.env(key, value);
+        }
+        if let Some(ref cwd) = command.cwd {
+            cmd.cwd(cwd);
+        }
+
+        let child = pty_pair
+            .slave
+            .spawn_command(cmd)
+            .map_err(|e| SessionError::SpawnFailed(e.to_string()))?;
+        drop(pty_pair.slave);
+
+        let writer = pty_pair
+            .master
+            .take_writer()
+            .map_err(|e| SessionError::SpawnFailed(e.to_string()))?;
+        let reader = pty_pair
+            .master
+            .try_clone_reader()
+            .map_err(|e| SessionError::SpawnFailed(e.to_string()))?;
+
+        let master = Arc::new(Mutex::new(pty_pair.master));
+        let child = Arc::new(Mutex::new(child));
+
+        let master_for_resize = master.clone();
+        let child_for_kill = child.clone();
+
+        Ok(SpawnedShell {
+            writer: Box::new(writer),
+            reader: Box::new(reader),
+            resize: Box::new(move |cols, rows| {
+                let m = master_for_resize.lock().map_err(|e| {
+                    SessionError::Io(std::io::Error::other(format!("lock failed: {e}")))
+                })?;
+                m.resize(PtySize {
+                    rows,
+                    cols,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                })
+                .map_err(|e| SessionError::Io(std::io::Error::other(e.to_string())))
+            }),
+            kill: Box::new(move || {
+                if let Ok(mut c) = child_for_kill.lock() {
+                    let _ = c.kill();
+                }
+            }),
+        })
+    }
+}
+
+// ── ConnectedState ─────────────────────────────────────────────────
+
+/// Internal state of an active shell connection.
+struct ConnectedState {
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    resize: Box<dyn Fn(u16, u16) -> Result<(), SessionError> + Send + Sync>,
+    kill: Box<dyn Fn() + Send + Sync>,
+    alive: Arc<AtomicBool>,
+}
+
+// ── LocalShell ─────────────────────────────────────────────────────
+
+/// Local shell backend using a [`LocalShellSpawner`], implementing
+/// [`ConnectionType`].
+///
+/// Generic over `S` so tests can inject a mock spawner without forking a
+/// real PTY. The default is [`NativeLocalShellSpawner`], so callers that
+/// just use `LocalShell::new()` get the production behaviour.
 ///
 /// # Lifecycle
 ///
-/// 1. Create with [`LocalShell::new()`] (disconnected state).
+/// 1. Create with [`LocalShell::new()`] or [`LocalShell::with_spawner()`].
 /// 2. Call [`connect()`](ConnectionType::connect) with settings JSON.
 /// 3. Use [`write()`](ConnectionType::write),
 ///    [`resize()`](ConnectionType::resize),
 ///    [`subscribe_output()`](ConnectionType::subscribe_output) for I/O.
 /// 4. Call [`disconnect()`](ConnectionType::disconnect) to clean up.
-pub struct LocalShell {
+pub struct LocalShell<S: LocalShellSpawner = NativeLocalShellSpawner> {
     /// State is `None` when disconnected, `Some` when connected.
     state: Option<ConnectedState>,
     /// The output sender is stored so `subscribe_output()` can replace
@@ -46,35 +142,39 @@ pub struct LocalShell {
     output_tx: Arc<Mutex<Option<OutputSender>>>,
     /// Local file browser capability.
     file_backend: LocalFileBrowser,
+    /// Injected spawn strategy.
+    spawner: S,
 }
 
-/// Internal state of an active shell connection.
-struct ConnectedState {
-    master: Arc<Mutex<Box<dyn MasterPty + Send>>>,
-    writer: Arc<Mutex<Box<dyn Write + Send>>>,
-    alive: Arc<AtomicBool>,
-    child: Arc<Mutex<Box<dyn portable_pty::Child + Send>>>,
-}
-
-impl LocalShell {
-    /// Create a new disconnected `LocalShell` instance.
+impl LocalShell<NativeLocalShellSpawner> {
+    /// Create a new disconnected `LocalShell` using the native PTY spawner.
     pub fn new() -> Self {
-        Self {
-            state: None,
-            output_tx: Arc::new(Mutex::new(None)),
-            file_backend: LocalFileBrowser::new(),
-        }
+        Self::with_spawner(NativeLocalShellSpawner)
     }
 }
 
-impl Default for LocalShell {
+impl Default for LocalShell<NativeLocalShellSpawner> {
     fn default() -> Self {
         Self::new()
     }
 }
 
+impl<S: LocalShellSpawner> LocalShell<S> {
+    /// Create a new disconnected `LocalShell` with an injected spawner.
+    ///
+    /// Useful in tests where `S = MockLocalShellSpawner`.
+    pub fn with_spawner(spawner: S) -> Self {
+        Self {
+            state: None,
+            output_tx: Arc::new(Mutex::new(None)),
+            file_backend: LocalFileBrowser::new(),
+            spawner,
+        }
+    }
+}
+
 #[async_trait::async_trait]
-impl ConnectionType for LocalShell {
+impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
     fn type_id(&self) -> &str {
         "local"
     }
@@ -239,7 +339,7 @@ impl ConnectionType for LocalShell {
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
             .map(String::from);
-        let _initial_command = settings
+        let initial_command = settings
             .get("initialCommand")
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
@@ -258,77 +358,50 @@ impl ConnectionType for LocalShell {
         let config = ShellConfig {
             shell: Some(effective_shell.clone()),
             starting_directory,
-            initial_command: _initial_command,
+            initial_command,
             ..ShellConfig::default()
         };
 
         let shell_cmd = build_shell_command(&config);
 
-        // Determine OSC 7 CWD tracking injection strategy (when shell integration is enabled).
-        // PowerShell: pass via -NoExit -Command startup args.
-        // All other shells (bash, git-bash): inject via stdin after spawn.
+        // Determine OSC 7 CWD tracking injection strategy.
         let osc7_setup = if shell_integration {
             osc7_setup_command(&effective_shell)
         } else {
             None
         };
 
-        info!(
-            program = %shell_cmd.program,
-            "Spawning local shell"
-        );
-
-        // Spawn PTY.
-        let pty_system = native_pty_system();
-        let pty_pair = pty_system
-            .openpty(PtySize {
-                rows: shell_cmd.rows,
-                cols: shell_cmd.cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .map_err(|e| SessionError::SpawnFailed(e.to_string()))?;
-
-        let mut command = CommandBuilder::new(&shell_cmd.program);
-        for arg in &shell_cmd.args {
-            command.arg(arg);
-        }
-        // PowerShell / cmd: inject OSC 7 prompt hook via startup args.
-        // PowerShell uses -NoExit -Command; cmd uses /K.
-        match effective_shell.as_str() {
-            "powershell" => {
-                if let Some(setup) = osc7_setup {
-                    command.arg("-NoExit");
-                    command.arg("-Command");
-                    command.arg(setup);
+        // Build the final command. For PowerShell / cmd, fold the OSC 7 setup
+        // into startup flags so it runs before the first prompt. For all other
+        // shells, keep `osc7_for_stdin` to inject via stdin after spawn.
+        let uses_startup_args = matches!(effective_shell.as_str(), "powershell" | "cmd");
+        let mut final_cmd = shell_cmd;
+        let osc7_for_stdin = if uses_startup_args {
+            if let Some(setup) = osc7_setup {
+                match effective_shell.as_str() {
+                    "powershell" => {
+                        final_cmd.args.push("-NoExit".to_string());
+                        final_cmd.args.push("-Command".to_string());
+                        final_cmd.args.push(setup.to_string());
+                    }
+                    "cmd" => {
+                        final_cmd.args.push("/K".to_string());
+                        final_cmd.args.push(setup.to_string());
+                    }
+                    _ => {}
                 }
             }
-            "cmd" => {
-                if let Some(setup) = osc7_setup {
-                    command.arg("/K");
-                    command.arg(setup);
-                }
-            }
-            _ => {}
-        }
-        for (key, value) in &shell_cmd.env {
-            command.env(key, value);
-        }
-        if let Some(ref cwd) = shell_cmd.cwd {
-            command.cwd(cwd);
-        }
+            None
+        } else {
+            osc7_setup
+        };
 
-        let child = pty_pair
-            .slave
-            .spawn_command(command)
-            .map_err(|e| SessionError::SpawnFailed(e.to_string()))?;
+        info!(program = %final_cmd.program, "Spawning local shell");
 
-        // Drop slave — we only need master.
-        drop(pty_pair.slave);
-
-        let writer = pty_pair
-            .master
-            .take_writer()
+        // Spawn PTY/process via injected spawner.
+        let spawned = self
+            .spawner
+            .spawn(&final_cmd)
             .map_err(|e| SessionError::SpawnFailed(e.to_string()))?;
 
         let alive = Arc::new(AtomicBool::new(true));
@@ -344,11 +417,7 @@ impl ConnectionType for LocalShell {
         }
 
         // Spawn reader thread: bridges sync PTY reads to async tokio channel.
-        let mut reader = pty_pair
-            .master
-            .try_clone_reader()
-            .map_err(|e| SessionError::SpawnFailed(e.to_string()))?;
-
+        let mut reader = spawned.reader;
         let alive_clone = alive.clone();
         let output_tx_clone = self.output_tx.clone();
         std::thread::spawn(move || {
@@ -362,12 +431,8 @@ impl ConnectionType for LocalShell {
                         if let Some(ref guard) = guard {
                             if let Some(ref sender) = **guard {
                                 // blocking_send blocks if channel full (backpressure).
-                                // Err means receiver dropped — subscriber replaced or
-                                // disconnected. Continue so we pick up a new sender on
-                                // the next iteration.
                                 let _ = sender.blocking_send(data);
                             } else {
-                                // No sender — disconnected.
                                 break;
                             }
                         } else {
@@ -378,32 +443,25 @@ impl ConnectionType for LocalShell {
                 }
             }
             alive_clone.store(false, Ordering::SeqCst);
-            // Drop the sender so the output channel closes, signaling
-            // consumers (e.g. the session daemon) that the shell exited.
             if let Ok(mut guard) = output_tx_clone.lock() {
                 *guard = None;
             }
         });
 
         self.state = Some(ConnectedState {
-            master: Arc::new(Mutex::new(pty_pair.master)),
-            writer: Arc::new(Mutex::new(writer)),
+            writer: Arc::new(Mutex::new(spawned.writer)),
+            resize: spawned.resize,
+            kill: spawned.kill,
             alive,
-            child: Arc::new(Mutex::new(child)),
         });
 
         // Inject OSC 7 PROMPT_COMMAND hook for CWD tracking via stdin.
-        // Bash (and Git Bash) don't emit OSC 7 by default, so we inject a
-        // PROMPT_COMMAND that emits it on each prompt. PowerShell and cmd were
-        // already handled via startup args above.
+        // PowerShell and cmd already received it via startup args above.
         // Errors are non-fatal — the shell works without CWD tracking.
-        let uses_startup_args = matches!(effective_shell.as_str(), "powershell" | "cmd");
-        if !uses_startup_args {
-            if let Some(setup) = osc7_setup {
-                let cmd = format!("{setup}\n");
-                if let Err(e) = self.write(cmd.as_bytes()) {
-                    debug!("Failed to inject OSC 7 hook: {e}");
-                }
+        if let Some(setup) = osc7_for_stdin {
+            let cmd = format!("{setup}\n");
+            if let Err(e) = self.write(cmd.as_bytes()) {
+                debug!("Failed to inject OSC 7 hook: {e}");
             }
         }
 
@@ -413,9 +471,7 @@ impl ConnectionType for LocalShell {
     async fn disconnect(&mut self) -> Result<(), SessionError> {
         if let Some(state) = self.state.take() {
             state.alive.store(false, Ordering::SeqCst);
-            if let Ok(mut child) = state.child.lock() {
-                let _ = child.kill();
-            }
+            (state.kill)();
             // Clear the sender to signal the reader thread to stop.
             if let Ok(mut guard) = self.output_tx.lock() {
                 *guard = None;
@@ -449,18 +505,7 @@ impl ConnectionType for LocalShell {
             .state
             .as_ref()
             .ok_or_else(|| SessionError::NotRunning("Not connected".to_string()))?;
-        let master = state.master.lock().map_err(|e| {
-            SessionError::Io(std::io::Error::other(format!("Failed to lock master: {e}")))
-        })?;
-        master
-            .resize(PtySize {
-                rows,
-                cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .map_err(|e| SessionError::Io(std::io::Error::other(e.to_string())))?;
-        Ok(())
+        (state.resize)(cols, rows)
     }
 
     fn subscribe_output(&self) -> OutputReceiver {
@@ -480,10 +525,114 @@ impl ConnectionType for LocalShell {
     }
 }
 
+// ── Tests ──────────────────────────────────────────────────────────
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+
     use crate::connection::validate_settings;
+    use crate::session::shell::ShellCommand;
+    use crate::session::traits::SpawnedShell;
+
+    // ── MockLocalShellSpawner ────────────────────────────────────────
+
+    /// Logs bytes written to the spawned process's stdin.
+    struct LogWriter {
+        log: Arc<Mutex<Vec<Vec<u8>>>>,
+    }
+
+    impl Write for LogWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.log.lock().unwrap().push(buf.to_vec());
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Returns pre-loaded output bytes then EOF.
+    struct PreloadedReader {
+        cursor: std::io::Cursor<Vec<u8>>,
+    }
+
+    impl Read for PreloadedReader {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.cursor.read(buf)
+        }
+    }
+
+    struct MockLocalShellSpawner {
+        /// When `true`, `spawn()` returns an error.
+        should_fail: bool,
+        /// Bytes the mock reader will produce before EOF.
+        output_data: Vec<u8>,
+        /// Shared log of bytes written via the mock writer.
+        write_log: Arc<Mutex<Vec<Vec<u8>>>>,
+        /// Shared log of resize calls `(cols, rows)`.
+        resize_log: Arc<Mutex<Vec<(u16, u16)>>>,
+        /// Set to `true` when kill is invoked.
+        killed: Arc<AtomicBool>,
+    }
+
+    impl MockLocalShellSpawner {
+        fn new() -> Self {
+            Self {
+                should_fail: false,
+                output_data: Vec::new(),
+                write_log: Arc::new(Mutex::new(Vec::new())),
+                resize_log: Arc::new(Mutex::new(Vec::new())),
+                killed: Arc::new(AtomicBool::new(false)),
+            }
+        }
+
+        fn failing() -> Self {
+            Self {
+                should_fail: true,
+                ..Self::new()
+            }
+        }
+    }
+
+    impl LocalShellSpawner for MockLocalShellSpawner {
+        fn spawn(&self, _command: &ShellCommand) -> Result<SpawnedShell, SessionError> {
+            if self.should_fail {
+                return Err(SessionError::SpawnFailed("mock spawn failure".to_string()));
+            }
+            let write_log = self.write_log.clone();
+            let resize_log = self.resize_log.clone();
+            let killed = self.killed.clone();
+
+            Ok(SpawnedShell {
+                writer: Box::new(LogWriter { log: write_log }),
+                reader: Box::new(PreloadedReader {
+                    cursor: std::io::Cursor::new(self.output_data.clone()),
+                }),
+                resize: Box::new(move |c, r| {
+                    resize_log.lock().unwrap().push((c, r));
+                    Ok(())
+                }),
+                kill: Box::new(move || {
+                    killed.store(true, Ordering::SeqCst);
+                }),
+            })
+        }
+    }
+
+    fn valid_settings() -> serde_json::Value {
+        let shells = detect_available_shells();
+        let shell = shells
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "sh".to_string());
+        serde_json::json!({ "shell": shell })
+    }
+
+    // ── Unit tests (no real PTY) ─────────────────────────────────────
 
     #[test]
     fn type_id() {
@@ -564,7 +713,6 @@ mod tests {
                     default_opt.unwrap().label
                 );
             }
-            // Non-default shells should NOT have the suffix
             for opt in options {
                 if Some(opt.value.as_str()) != default_shell.as_deref() {
                     assert!(
@@ -687,9 +835,147 @@ mod tests {
         assert!(!shell.is_connected());
     }
 
-    // -----------------------------------------------------------------------
-    // Integration tests (spawn real shells)
-    // -----------------------------------------------------------------------
+    // ── DI unit tests (use mock spawner, no real PTY) ────────────────
+
+    #[tokio::test]
+    async fn spawn_failure_propagates_as_connect_error() {
+        let mut shell = LocalShell::with_spawner(MockLocalShellSpawner::failing());
+        let result = shell.connect(valid_settings()).await;
+        assert!(
+            result.is_err(),
+            "connect should fail when spawner fails"
+        );
+        assert!(!shell.is_connected());
+    }
+
+    #[tokio::test]
+    async fn connect_already_connected_fails_with_mock() {
+        let mock = MockLocalShellSpawner::new();
+        let mut shell = LocalShell::with_spawner(mock);
+
+        shell.connect(valid_settings()).await.expect("first connect");
+        let result = shell.connect(valid_settings()).await;
+        assert!(result.is_err(), "second connect should fail");
+
+        shell.disconnect().await.ok();
+    }
+
+    #[tokio::test]
+    async fn resize_delegated_to_spawner() {
+        let mock = MockLocalShellSpawner::new();
+        let resize_log = mock.resize_log.clone();
+
+        let mut shell = LocalShell::with_spawner(mock);
+        shell.connect(valid_settings()).await.expect("connect");
+
+        shell.resize(120, 40).expect("resize");
+        shell.resize(80, 24).expect("resize");
+
+        let log = resize_log.lock().unwrap();
+        assert_eq!(log.len(), 2);
+        assert_eq!(log[0], (120, 40));
+        assert_eq!(log[1], (80, 24));
+
+        shell.disconnect().await.ok();
+    }
+
+    #[tokio::test]
+    async fn disconnect_invokes_kill() {
+        let mock = MockLocalShellSpawner::new();
+        let killed = mock.killed.clone();
+
+        let mut shell = LocalShell::with_spawner(mock);
+        shell.connect(valid_settings()).await.expect("connect");
+        assert!(!killed.load(Ordering::SeqCst));
+
+        shell.disconnect().await.expect("disconnect");
+        assert!(killed.load(Ordering::SeqCst), "kill should be called on disconnect");
+    }
+
+    #[tokio::test]
+    async fn write_routed_through_mock_writer() {
+        let mock = MockLocalShellSpawner::new();
+        let write_log = mock.write_log.clone();
+
+        let mut shell = LocalShell::with_spawner(mock);
+        shell.connect(valid_settings()).await.expect("connect");
+        shell.write(b"hello world").expect("write");
+
+        let log = write_log.lock().unwrap();
+        let all_bytes: Vec<u8> = log.iter().flat_map(|v| v.iter().copied()).collect();
+        assert!(
+            all_bytes.windows(11).any(|w| w == b"hello world"),
+            "write_log should contain 'hello world', got: {all_bytes:?}"
+        );
+
+        shell.disconnect().await.ok();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn osc7_setup_injected_via_stdin_for_bash() {
+        let mock = MockLocalShellSpawner::new();
+        let write_log = mock.write_log.clone();
+
+        let mut shell = LocalShell::with_spawner(mock);
+        let settings = serde_json::json!({
+            "shell": "bash",
+            "shellIntegration": true,
+        });
+        shell.connect(settings).await.expect("connect");
+
+        // After connect(), the OSC7 hook is written to stdin.
+        let log = write_log.lock().unwrap();
+        let all: Vec<u8> = log.iter().flat_map(|v| v.iter().copied()).collect();
+        let text = String::from_utf8_lossy(&all);
+        assert!(
+            text.contains("__termihub_osc7") || text.contains("PROMPT_COMMAND"),
+            "OSC7 hook should be written to stdin for bash, got: {text:?}"
+        );
+
+        shell.disconnect().await.ok();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn osc7_not_injected_via_stdin_when_disabled() {
+        let mock = MockLocalShellSpawner::new();
+        let write_log = mock.write_log.clone();
+
+        let mut shell = LocalShell::with_spawner(mock);
+        let settings = serde_json::json!({
+            "shell": "bash",
+            "shellIntegration": false,
+        });
+        shell.connect(settings).await.expect("connect");
+
+        let log = write_log.lock().unwrap();
+        let all: Vec<u8> = log.iter().flat_map(|v| v.iter().copied()).collect();
+        let text = String::from_utf8_lossy(&all);
+        assert!(
+            !text.contains("__termihub_osc7"),
+            "OSC7 should not be written when shellIntegration=false, got: {text:?}"
+        );
+
+        shell.disconnect().await.ok();
+    }
+
+    #[tokio::test]
+    async fn disconnect_when_not_connected_is_noop_with_mock() {
+        let mut shell = LocalShell::with_spawner(MockLocalShellSpawner::new());
+        shell.disconnect().await.expect("should not fail");
+    }
+
+    #[tokio::test]
+    async fn is_connected_true_after_connect_with_mock() {
+        let mock = MockLocalShellSpawner::new();
+        let mut shell = LocalShell::with_spawner(mock);
+        shell.connect(valid_settings()).await.expect("connect");
+        assert!(shell.is_connected());
+        shell.disconnect().await.ok();
+    }
+
+    // ── Integration tests (spawn real shells, require PTY) ───────────
 
     #[tokio::test]
     async fn connect_and_receive_output() {
@@ -705,13 +991,9 @@ mod tests {
         shell.connect(settings).await.expect("connect failed");
         assert!(shell.is_connected());
 
-        // Subscribe to output.
         let mut rx = shell.subscribe_output();
-
-        // Write a command.
         shell.write(b"echo HELLO_TERMIHUB\n").expect("write failed");
 
-        // Read output with timeout.
         let mut output = Vec::new();
         let deadline = tokio::time::Duration::from_secs(5);
         let result = tokio::time::timeout(deadline, async {
@@ -732,10 +1014,7 @@ mod tests {
             String::from_utf8_lossy(&output)
         );
 
-        // Resize should succeed.
         shell.resize(120, 40).expect("resize failed");
-
-        // Disconnect.
         shell.disconnect().await.expect("disconnect failed");
         assert!(!shell.is_connected());
     }
@@ -767,7 +1046,7 @@ mod tests {
         shell.connect(settings).await.expect("connect failed");
 
         let _rx1 = shell.subscribe_output();
-        let mut rx2 = shell.subscribe_output(); // replaces rx1
+        let mut rx2 = shell.subscribe_output();
 
         shell.write(b"echo TEST_REPLACE\n").expect("write failed");
 
@@ -794,7 +1073,6 @@ mod tests {
     #[tokio::test]
     async fn disconnect_when_not_connected_is_noop() {
         let mut shell = LocalShell::new();
-        // Should not error.
         shell
             .disconnect()
             .await
@@ -809,7 +1087,6 @@ mod tests {
     async fn osc7_setup_injected_for_bash() {
         use std::path::Path;
 
-        // Skip if bash is not available.
         if !Path::new("/bin/bash").exists() && !Path::new("/usr/bin/bash").exists() {
             eprintln!("bash not found — skipping OSC 7 injection test");
             return;
@@ -821,7 +1098,6 @@ mod tests {
         shell.connect(settings).await.expect("connect failed");
         let mut rx = shell.subscribe_output();
 
-        // Wait for the setup command to be echoed back by the PTY.
         let mut output = Vec::new();
         let deadline = tokio::time::Duration::from_secs(5);
         let found = tokio::time::timeout(deadline, async {
@@ -846,14 +1122,12 @@ mod tests {
     }
 
     /// Old saved connections use `"shellType"` instead of `"shell"`.
-    /// Verify that `connect()` still works with the legacy key.
     #[tokio::test]
     async fn connect_with_legacy_shell_type_key() {
         let mut shell = LocalShell::new();
         let shells = detect_available_shells();
         let shell_name = shells.first().expect("at least one shell available");
 
-        // Use legacy "shellType" key instead of "shell"
         let settings = serde_json::json!({ "shellType": shell_name });
 
         shell

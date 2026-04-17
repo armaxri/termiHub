@@ -16,6 +16,7 @@
 //! dynamic dispatch overhead in hot paths.
 
 use std::collections::HashMap;
+use std::io::{Read, Write};
 use std::path::Path;
 
 use crate::config::PtySize;
@@ -124,6 +125,46 @@ pub trait ProcessHandle: Send {
 
     /// Check whether the process is still running.
     fn is_alive(&self) -> bool;
+}
+
+// ── LocalShell PTY injection ───────────────────────────────────────
+
+/// Handles returned after a successful [`LocalShellSpawner::spawn`] call.
+///
+/// The caller stores the writer in `ConnectedState` (for `write()`),
+/// hands the reader to the output-reader thread, and stores the closures
+/// for resize and kill.
+pub struct SpawnedShell {
+    /// Synchronous writer for sending data to the shell's PTY input.
+    pub writer: Box<dyn Write + Send>,
+    /// Synchronous reader from the shell's PTY output.
+    ///
+    /// Consumed by the background reader thread spawned in `connect()`.
+    pub reader: Box<dyn Read + Send>,
+    /// Resize the PTY to the given `(cols, rows)`.
+    pub resize: Box<dyn Fn(u16, u16) -> Result<(), SessionError> + Send + Sync>,
+    /// Kill the shell process.
+    pub kill: Box<dyn Fn() + Send + Sync>,
+}
+
+/// PTY / process spawn abstraction for the local shell backend.
+///
+/// # Production implementation
+///
+/// `NativeLocalShellSpawner` (in `core::backends::local_shell`) calls
+/// `portable_pty::native_pty_system()` and spawns a real process.
+///
+/// # Test implementation
+///
+/// Inject a mock that returns in-memory pipes so unit tests never fork
+/// a real PTY or process.
+pub trait LocalShellSpawner: Send + Sync + 'static {
+    /// Spawn the shell described by `command` and return I/O handles.
+    ///
+    /// `command` is fully resolved: program, arguments (including any
+    /// shell-type-specific startup flags already added by the caller),
+    /// environment variables, working directory, and PTY dimensions.
+    fn spawn(&self, command: &ShellCommand) -> Result<SpawnedShell, SessionError>;
 }
 
 #[cfg(test)]
