@@ -732,7 +732,9 @@ export const useAppStore = create<AppState>((set, get) => {
         // Follow zoom to the new group's active tab so the overlay never goes stale
         let newZoomedTabId = state.zoomedTabId;
         if (state.zoomedTabId !== null) {
-          const newActivePanel = findLeaf(targetGroup.rootPanel, targetGroup.activePanelId);
+          const newActivePanel = targetGroup.activePanelId
+            ? findLeaf(targetGroup.rootPanel, targetGroup.activePanelId)
+            : null;
           newZoomedTabId = newActivePanel?.activeTabId ?? null;
         }
         return {
