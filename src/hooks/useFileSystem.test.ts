@@ -93,7 +93,100 @@ describe("useFileSystem (SFTP) — uploadFileFromPath path logic", () => {
   });
 });
 
+import React, { act } from "react";
+import { createRoot } from "react-dom/client";
+import { sftpUpload } from "@/services/api";
+import { useFileSystem } from "./useFileSystem";
 import { useAppStore } from "@/store/appStore";
+
+describe("useFileSystem (SFTP) — uploadFileFromPath API call", () => {
+  let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot>;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState(useAppStore.getInitialState());
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it("calls sftpUpload with the correct remote path", async () => {
+    useAppStore.setState({ sftpSessionId: "sess-1", currentPath: "/uploads" });
+
+    let uploadFn: ((path: string) => Promise<void>) | undefined;
+    function Harness() {
+      const { uploadFileFromPath } = useFileSystem();
+      uploadFn = uploadFileFromPath;
+      return null;
+    }
+
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+
+    await act(async () => {
+      await uploadFn!("/local/image.png");
+    });
+
+    expect(vi.mocked(sftpUpload)).toHaveBeenCalledWith(
+      "sess-1",
+      "/local/image.png",
+      "/uploads/image.png"
+    );
+  });
+
+  it("calls sftpUpload with root-level remote path when currentPath is /", async () => {
+    useAppStore.setState({ sftpSessionId: "sess-1", currentPath: "/" });
+
+    let uploadFn: ((path: string) => Promise<void>) | undefined;
+    function Harness() {
+      const { uploadFileFromPath } = useFileSystem();
+      uploadFn = uploadFileFromPath;
+      return null;
+    }
+
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+
+    await act(async () => {
+      await uploadFn!("/local/report.pdf");
+    });
+
+    expect(vi.mocked(sftpUpload)).toHaveBeenCalledWith(
+      "sess-1",
+      "/local/report.pdf",
+      "/report.pdf"
+    );
+  });
+
+  it("does nothing when sftpSessionId is null", async () => {
+    useAppStore.setState({ sftpSessionId: null, currentPath: "/uploads" });
+
+    let uploadFn: ((path: string) => Promise<void>) | undefined;
+    function Harness() {
+      const { uploadFileFromPath } = useFileSystem();
+      uploadFn = uploadFileFromPath;
+      return null;
+    }
+
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+
+    await act(async () => {
+      await uploadFn!("/local/file.txt");
+    });
+
+    expect(vi.mocked(sftpUpload)).not.toHaveBeenCalled();
+  });
+});
 
 describe("useFileSystem (SFTP) — store integration", () => {
   beforeEach(() => {

@@ -99,7 +99,100 @@ describe("useSessionFileSystem — path construction", () => {
   });
 });
 
+import React, { act } from "react";
+import { createRoot } from "react-dom/client";
+import { sessionWriteFile } from "@/services/api";
+import { useSessionFileSystem } from "./useSessionFileSystem";
 import { useAppStore } from "@/store/appStore";
+
+describe("useSessionFileSystem — uploadFileFromPath API call", () => {
+  let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot>;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState(useAppStore.getInitialState());
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it("calls sessionWriteFile with the correct remote path", async () => {
+    useAppStore.setState({ sessionFileBrowserId: "sess-1", sessionCurrentPath: "/remote/dir" });
+
+    let uploadFn: ((path: string) => Promise<void>) | undefined;
+    function Harness() {
+      const { uploadFileFromPath } = useSessionFileSystem();
+      uploadFn = uploadFileFromPath;
+      return null;
+    }
+
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+
+    await act(async () => {
+      await uploadFn!("/local/data.csv");
+    });
+
+    expect(vi.mocked(sessionWriteFile)).toHaveBeenCalledWith(
+      "sess-1",
+      "/remote/dir/data.csv",
+      expect.any(Array)
+    );
+  });
+
+  it("calls sessionWriteFile with root-level path when sessionCurrentPath is /", async () => {
+    useAppStore.setState({ sessionFileBrowserId: "sess-1", sessionCurrentPath: "/" });
+
+    let uploadFn: ((path: string) => Promise<void>) | undefined;
+    function Harness() {
+      const { uploadFileFromPath } = useSessionFileSystem();
+      uploadFn = uploadFileFromPath;
+      return null;
+    }
+
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+
+    await act(async () => {
+      await uploadFn!("/local/config.json");
+    });
+
+    expect(vi.mocked(sessionWriteFile)).toHaveBeenCalledWith(
+      "sess-1",
+      "/config.json",
+      expect.any(Array)
+    );
+  });
+
+  it("does nothing when sessionFileBrowserId is null", async () => {
+    useAppStore.setState({ sessionFileBrowserId: null, sessionCurrentPath: "/remote/dir" });
+
+    let uploadFn: ((path: string) => Promise<void>) | undefined;
+    function Harness() {
+      const { uploadFileFromPath } = useSessionFileSystem();
+      uploadFn = uploadFileFromPath;
+      return null;
+    }
+
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+
+    await act(async () => {
+      await uploadFn!("/local/file.txt");
+    });
+
+    expect(vi.mocked(sessionWriteFile)).not.toHaveBeenCalled();
+  });
+});
 
 describe("useSessionFileSystem — store integration", () => {
   beforeEach(() => {
