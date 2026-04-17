@@ -272,6 +272,22 @@ impl Default for TelnetConfig {
 
 // --- Expand methods ---
 
+impl ShellConfig {
+    /// Return a copy with all `${env:...}` placeholders and `~` expanded.
+    pub fn expand(mut self) -> Self {
+        self.shell = self
+            .shell
+            .map(|s| expand::expand_tilde(&expand::expand_env_placeholders(&s)));
+        self.starting_directory = self
+            .starting_directory
+            .map(|s| expand::expand_tilde(&expand::expand_env_placeholders(&s)));
+        self.initial_command = self
+            .initial_command
+            .map(|s| expand::expand_env_placeholders(&s));
+        self
+    }
+}
+
 impl WslConfig {
     /// Return a copy with all `${env:...}` placeholders and `~` expanded.
     pub fn expand(mut self) -> Self {

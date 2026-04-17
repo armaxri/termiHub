@@ -703,9 +703,10 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         </label>
       )}
 
-      {!isAnyAgentMode && (
+      {!isAgentTransportMode && (
         <p className="settings-form__hint">
           Use {"${env:VAR}"} for environment variables, e.g. {"${env:USER}"}
+          {isAgentDefinitionMode && " (resolved on the remote machine)"}
         </p>
       )}
 

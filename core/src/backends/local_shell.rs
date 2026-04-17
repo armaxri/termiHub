@@ -260,7 +260,8 @@ impl ConnectionType for LocalShell {
             starting_directory,
             initial_command: _initial_command,
             ..ShellConfig::default()
-        };
+        }
+        .expand();
 
         let shell_cmd = build_shell_command(&config);
 
