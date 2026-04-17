@@ -4,6 +4,13 @@ All completed concept documents have been moved to [`handled/`](handled/) — th
 
 ## Open Concepts
 
+### shell-context-menu-integration.md (Issue #TBD)
+
+Concept for OS-level "Open in termiHub" context menu integration on Windows, macOS, and Linux,
+plus a `termiHub spawn` CLI subcommand. Covers multi-entry configuration, Windows extended
+(Shift+Right-click) variants, an in-app session picker dialog, Docker/Podman container mounting,
+IPC architecture (named pipe / Unix socket), and platform-specific registration mechanics.
+
 ### ssh-jump-host.md (Issue #520)
 
 Concept for first-class SSH jump host / gateway support in the connection editor. Allows users to configure proxy hops (single or multi-hop) directly in the SSH connection settings without requiring remote agent deployment. Covers UI design for saved-connection references and inline gateway configuration, session pooling across shared gateways, credential handling per hop, tunnel compatibility, and visual indicators in the connection tree and status bar.
