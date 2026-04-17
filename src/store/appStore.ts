@@ -75,6 +75,9 @@ import {
   getCredentialStoreStatus as apiGetCredentialStoreStatus,
   getConnectionTypes,
   getAppMode as apiGetAppMode,
+  checkForUpdates as apiCheckForUpdates,
+  skipUpdateVersion as apiSkipUpdateVersion,
+  clearSkippedVersion as apiClearSkippedVersion,
 } from "@/services/api";
 import type { ConnectionTypeInfo } from "@/services/api";
 import { RemoteAgentConfig } from "@/types/terminal";
@@ -511,6 +514,15 @@ interface AppState {
   isPortableMode: boolean;
   portableDataDir: string | null;
   loadAppMode: () => Promise<void>;
+
+  // Update checker
+  updateCheckState: "idle" | "checking" | "up-to-date" | "available" | "error";
+  updateInfo: import("@/types/connection").UpdateInfo | null;
+  updateNotificationDismissed: boolean;
+  checkForUpdates: (force: boolean) => Promise<void>;
+  dismissUpdateNotification: () => void;
+  skipUpdate: () => Promise<void>;
+  clearSkippedUpdateVersion: () => Promise<void>;
 }
 
 let tabCounter = 0;
@@ -729,11 +741,20 @@ export const useAppStore = create<AppState>((set, get) => {
             ? { ...g, rootPanel: state.rootPanel, activePanelId: state.activePanelId }
             : g
         );
+        // Follow zoom to the new group's active tab so the overlay never goes stale
+        let newZoomedTabId = state.zoomedTabId;
+        if (state.zoomedTabId !== null) {
+          const newActivePanel = targetGroup.activePanelId
+            ? findLeaf(targetGroup.rootPanel, targetGroup.activePanelId)
+            : null;
+          newZoomedTabId = newActivePanel?.activeTabId ?? null;
+        }
         return {
           tabGroups: savedGroups,
           activeTabGroupId: groupId,
           rootPanel: targetGroup.rootPanel,
           activePanelId: targetGroup.activePanelId,
+          zoomedTabId: newZoomedTabId,
         };
       }),
 
@@ -1238,8 +1259,7 @@ export const useAppStore = create<AppState>((set, get) => {
         if (state.zoomedTabId !== null) {
           const panelLeaf = findLeaf(state.rootPanel, panelId);
           if (panelLeaf?.tabs.some((t) => t.id === state.zoomedTabId)) {
-            const newTab = panelLeaf.tabs.find((t) => t.id === tabId);
-            newZoomedTabId = newTab?.contentType === "terminal" ? tabId : null;
+            newZoomedTabId = tabId;
           }
         }
 
@@ -1324,16 +1344,10 @@ export const useAppStore = create<AppState>((set, get) => {
 
     setActivePanel: (panelId) =>
       set((state) => {
-        // If zoom is active, follow the active tab of the newly focused panel
         let newZoomedTabId = state.zoomedTabId;
         if (state.zoomedTabId !== null) {
-          const panelLeaf = findLeaf(state.rootPanel, panelId);
-          if (panelLeaf?.activeTabId) {
-            const activeTab = panelLeaf.tabs.find((t) => t.id === panelLeaf.activeTabId);
-            newZoomedTabId = activeTab?.contentType === "terminal" ? panelLeaf.activeTabId : null;
-          } else {
-            newZoomedTabId = null;
-          }
+          const newPanel = findLeaf(state.rootPanel, panelId);
+          newZoomedTabId = newPanel?.activeTabId ?? null;
         }
         return { activePanelId: panelId, zoomedTabId: newZoomedTabId };
       }),
@@ -1442,10 +1456,7 @@ export const useAppStore = create<AppState>((set, get) => {
       const leaves = getAllLeaves(rootPanel);
       const panel = leaves.find((p) => p.id === activePanelId) ?? leaves[0];
       if (panel?.activeTabId) {
-        const tab = panel.tabs.find((t) => t.id === panel.activeTabId);
-        if (tab?.contentType === "terminal") {
-          set({ zoomedTabId: panel.activeTabId });
-        }
+        set({ zoomedTabId: panel.activeTabId });
       }
     },
 
@@ -2816,6 +2827,59 @@ export const useAppStore = create<AppState>((set, get) => {
         set({ isPortableMode: info.isPortable, portableDataDir: info.dataDir });
       } catch (err) {
         console.error("Failed to load app mode:", err);
+      }
+    },
+
+    // Update checker
+    updateCheckState: "idle",
+    updateInfo: null,
+    updateNotificationDismissed: false,
+    checkForUpdates: async (force: boolean) => {
+      set({ updateCheckState: "checking" });
+      try {
+        const info = await apiCheckForUpdates(force);
+        if (info.available) {
+          const currentSettings = get().settings;
+          const skippedVersion = currentSettings.updates?.skippedVersion;
+          // If the update is available but the user previously skipped this exact
+          // version (and it's not a security patch), keep the dot visible but don't
+          // reset the dismissed flag so no popup re-appears.
+          const isSkipped = !info.isSecurity && skippedVersion === info.latestVersion;
+          set({
+            updateCheckState: "available",
+            updateInfo: info,
+            // Reset dismissed flag so the popup shows for newly detected versions,
+            // unless the user already skipped this version.
+            updateNotificationDismissed: isSkipped,
+          });
+        } else {
+          set({ updateCheckState: "up-to-date", updateInfo: info });
+        }
+      } catch {
+        set({ updateCheckState: "error" });
+        frontendLog("update", "Update check failed");
+      }
+    },
+    dismissUpdateNotification: () => set({ updateNotificationDismissed: true }),
+    skipUpdate: async () => {
+      const { updateInfo } = get();
+      if (!updateInfo) return;
+      try {
+        await apiSkipUpdateVersion(updateInfo.latestVersion);
+        // Refresh the settings in the store so skippedVersion is current.
+        const updatedSettings = await import("@/services/storage").then((m) => m.getSettings());
+        set({ settings: updatedSettings, updateNotificationDismissed: true });
+      } catch (err) {
+        frontendLog("update", `Failed to skip version: ${err}`);
+      }
+    },
+    clearSkippedUpdateVersion: async () => {
+      try {
+        await apiClearSkippedVersion();
+        const updatedSettings = await import("@/services/storage").then((m) => m.getSettings());
+        set({ settings: updatedSettings });
+      } catch (err) {
+        frontendLog("update", `Failed to clear skipped version: ${err}`);
       }
     },
   };

@@ -238,7 +238,27 @@ export function SplitView() {
         <div className="zoom-overlay" onClick={dismissZoom}>
           <div className="zoom-overlay__panel" onClick={(e) => e.stopPropagation()}>
             <div className="zoom-overlay__header">
-              <ConnectionIcon config={zoomedTab.config} size={14} className="zoom-overlay__icon" />
+              {zoomedTab.contentType === "settings" ? (
+                <SettingsIcon size={14} className="zoom-overlay__icon" />
+              ) : zoomedTab.contentType === "log-viewer" ? (
+                <ScrollText size={14} className="zoom-overlay__icon" />
+              ) : zoomedTab.contentType === "editor" ? (
+                <FileEdit size={14} className="zoom-overlay__icon" />
+              ) : zoomedTab.contentType === "connection-editor" ? (
+                <SquarePen size={14} className="zoom-overlay__icon" />
+              ) : zoomedTab.contentType === "tunnel-editor" ? (
+                <ArrowLeftRight size={14} className="zoom-overlay__icon" />
+              ) : zoomedTab.contentType === "workspace-editor" ? (
+                <LayoutGrid size={14} className="zoom-overlay__icon" />
+              ) : zoomedTab.contentType === "network-diagnostic" ? (
+                <Stethoscope size={14} className="zoom-overlay__icon" />
+              ) : (
+                <ConnectionIcon
+                  config={zoomedTab.config}
+                  size={14}
+                  className="zoom-overlay__icon"
+                />
+              )}
               <span className="zoom-overlay__title">{zoomedTab.title}</span>
               <span className="zoom-overlay__hint">
                 {isMac() ? "⌘⇧↵" : "Ctrl+Shift+Enter"} · Esc to close
@@ -252,10 +272,59 @@ export function SplitView() {
               </button>
             </div>
             <div className="zoom-overlay__content">
-              <TerminalSearchBar tabId={zoomedTabId} />
-              {/* key forces a fresh mount on each zoomed-tab change so the
-                  adoption lifecycle always matches the initial-zoom case. */}
-              <TerminalSlot key={`zoom-slot-${zoomedTabId}`} tabId={zoomedTabId} isVisible={true} />
+              {zoomedTab.contentType === "terminal" ? (
+                <>
+                  <TerminalSearchBar tabId={zoomedTabId} />
+                  {/* key forces a fresh mount on each zoomed-tab change so the
+                      adoption lifecycle always matches the initial-zoom case. */}
+                  <TerminalSlot
+                    key={`zoom-slot-${zoomedTabId}`}
+                    tabId={zoomedTabId}
+                    isVisible={true}
+                  />
+                </>
+              ) : zoomedTab.contentType === "settings" ? (
+                <SettingsPanel isVisible={true} />
+              ) : zoomedTab.contentType === "log-viewer" ? (
+                <LogViewer isVisible={true} />
+              ) : zoomedTab.contentType === "editor" && zoomedTab.editorMeta ? (
+                <FileEditor
+                  key={`zoom-${zoomedTabId}`}
+                  tabId={zoomedTabId}
+                  meta={zoomedTab.editorMeta}
+                  isVisible={true}
+                  keepModel={true}
+                />
+              ) : zoomedTab.contentType === "connection-editor" &&
+                zoomedTab.connectionEditorMeta ? (
+                <ConnectionEditor
+                  key={`zoom-${zoomedTabId}`}
+                  tabId={zoomedTabId}
+                  meta={zoomedTab.connectionEditorMeta}
+                  isVisible={true}
+                />
+              ) : zoomedTab.contentType === "tunnel-editor" && zoomedTab.tunnelEditorMeta ? (
+                <TunnelEditor
+                  key={`zoom-${zoomedTabId}`}
+                  tabId={zoomedTabId}
+                  meta={zoomedTab.tunnelEditorMeta}
+                  isVisible={true}
+                />
+              ) : zoomedTab.contentType === "workspace-editor" && zoomedTab.workspaceEditorMeta ? (
+                <WorkspaceEditor
+                  key={`zoom-${zoomedTabId}`}
+                  tabId={zoomedTabId}
+                  meta={zoomedTab.workspaceEditorMeta}
+                  isVisible={true}
+                />
+              ) : zoomedTab.contentType === "network-diagnostic" &&
+                zoomedTab.networkDiagnosticMeta ? (
+                <NetworkDiagnosticPanel
+                  key={`zoom-${zoomedTabId}`}
+                  meta={zoomedTab.networkDiagnosticMeta}
+                  isVisible={true}
+                />
+              ) : null}
             </div>
           </div>
         </div>
@@ -390,42 +459,48 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
         )}
         {panel.tabs.map((tab) =>
           tab.contentType === "settings" ? (
-            <SettingsPanel key={tab.id} isVisible={tab.id === panel.activeTabId} />
+            <SettingsPanel
+              key={tab.id}
+              isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
+            />
           ) : tab.contentType === "log-viewer" ? (
-            <LogViewer key={tab.id} isVisible={tab.id === panel.activeTabId} />
+            <LogViewer
+              key={tab.id}
+              isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
+            />
           ) : tab.contentType === "editor" && tab.editorMeta ? (
             <FileEditor
               key={tab.id}
               tabId={tab.id}
               meta={tab.editorMeta}
-              isVisible={tab.id === panel.activeTabId}
+              isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
             />
           ) : tab.contentType === "connection-editor" && tab.connectionEditorMeta ? (
             <ConnectionEditor
               key={tab.id}
               tabId={tab.id}
               meta={tab.connectionEditorMeta}
-              isVisible={tab.id === panel.activeTabId}
+              isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
             />
           ) : tab.contentType === "tunnel-editor" && tab.tunnelEditorMeta ? (
             <TunnelEditor
               key={tab.id}
               tabId={tab.id}
               meta={tab.tunnelEditorMeta}
-              isVisible={tab.id === panel.activeTabId}
+              isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
             />
           ) : tab.contentType === "workspace-editor" && tab.workspaceEditorMeta ? (
             <WorkspaceEditor
               key={tab.id}
               tabId={tab.id}
               meta={tab.workspaceEditorMeta}
-              isVisible={tab.id === panel.activeTabId}
+              isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
             />
           ) : tab.contentType === "network-diagnostic" && tab.networkDiagnosticMeta ? (
             <NetworkDiagnosticPanel
               key={tab.id}
               meta={tab.networkDiagnosticMeta}
-              isVisible={tab.id === panel.activeTabId}
+              isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
             />
           ) : useQuickAction ? (
             <div

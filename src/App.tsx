@@ -12,6 +12,7 @@ import { MasterPasswordSetup } from "@/components/MasterPasswordSetup";
 import { RecoveryDialog } from "@/components/Settings/RecoveryDialog";
 import { ShortcutsOverlay } from "@/components/KeyboardShortcuts/ShortcutsOverlay";
 import { LargePasteDialog } from "@/components/Terminal/LargePasteDialog";
+import { UpdateNotification } from "@/components/UpdateNotification/UpdateNotification";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useTunnelEvents } from "@/hooks/useTunnelEvents";
 import { useEmbeddedServerEvents } from "@/hooks/useEmbeddedServerEvents";
@@ -94,6 +95,8 @@ function App() {
   useCredentialStoreEvents();
   useWebviewZoom();
   const loadFromBackend = useAppStore((s) => s.loadFromBackend);
+  const checkForUpdates = useAppStore((s) => s.checkForUpdates);
+  const settings = useAppStore((s) => s.settings);
   const layoutConfig = useAppStore((s) => s.layoutConfig);
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
   const { sidebarWidth, handleProps, isResizing } = useSidebarResize(layoutConfig.sidebarPosition);
@@ -129,6 +132,20 @@ function App() {
       }
     })();
   }, [loadFromBackend]);
+
+  // Schedule update check: 5-second delay on startup, then every 24 hours.
+  useEffect(() => {
+    if (!settings.updates?.autoCheck && settings.updates?.autoCheck !== undefined) return;
+    const STARTUP_DELAY_MS = 5000;
+    const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+    const startupTimer = setTimeout(() => checkForUpdates(false), STARTUP_DELAY_MS);
+    const periodicTimer = setInterval(() => checkForUpdates(false), CHECK_INTERVAL_MS);
+    return () => {
+      clearTimeout(startupTimer);
+      clearInterval(periodicTimer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Suppress the browser's default context menu globally so only custom
   // Radix UI context menus appear on right-click.
@@ -199,6 +216,7 @@ function App() {
           }}
           onCancel={closeLargePasteDialog}
         />
+        <UpdateNotification />
       </div>
     </ErrorBoundary>
   );

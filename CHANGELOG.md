@@ -16,13 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - UI: Input fields gain a focus glow ring (`box-shadow: 0 0 0 3px rgba(61, 125, 232, 0.22)`) across all dialogs and settings panels
 - UI: Settings nav items use rounded-pill active highlight instead of a bare left-border indicator
 - UI: Toggle switches enlarged (34 × 20 px) with smoother spring-like transition
-
-- Terminal: the panel zoom overlay (Cmd+Shift+Enter / Ctrl+Shift+Enter) now follows panel focus — navigating between split panels while a terminal is zoomed updates the overlay to show the active tab of the newly focused panel; switching tabs within the zoomed panel also updates the overlay to follow the new active tab
+- Terminal: the panel zoom overlay (Cmd+Shift+Enter / Ctrl+Shift+Enter) now works for **all tab types** — file editors, settings, log viewer, connection/tunnel/workspace editors, and network diagnostics can all be zoomed, with the same overlay look and feel (dark backdrop, header bar with icon/title/hint, close button) as terminal zoom
+- Terminal: the zoom overlay now **follows panel and tab-group focus** — switching between split panels or tab groups while a tab is zoomed moves the overlay to show the active tab of the newly focused panel/group rather than dismissing it
+- Terminal: right-clicking a non-terminal tab (file editor, settings, etc.) now shows a context menu with **Set Color…** to colorize the tab
 - Shell integration (OSC 7 CWD tracking) is now **visible by default**: the setup command runs in the terminal at startup with a `# [termiHub] Shell integration: setting up OSC 7 CWD tracking` notice, instead of being silently erased. This applies to local bash, SSH, and WSL connections.
 - WSL: the setup script no longer contains erase sequences; the `source` command and the echo notice are left visible in the terminal.
 
 ### Added
 
+- Update checker (Variant A — notify only): termiHub now checks the GitHub Releases API on startup (with a 5-second delay) and every 24 hours for new versions. When a newer release is found, an amber dot appears on the version chip in the status bar and a non-blocking notification popup offers to open the GitHub downloads page. Security releases (marked `<!-- security -->` in the release notes) show a red dot and cannot be silently skipped. Users can skip a specific version, clear a skipped version, or disable automatic checks entirely in **Settings → Updates**.
 - Connection settings: a **Shell Integration** toggle is now available for local shell, SSH, and WSL connections (enabled by default). Disabling it skips all OSC injection at startup.
 - Connection settings: boolean fields now support an optional **help icon (?)** that opens an explanation dialog. The Shell Integration toggle uses this to explain what OSC 7 tracking is and why it's useful.
 - Tests: `core/tests/ssh_banner.rs` — two new Rust integration tests (SSH-BANNER-01, SSH-BANNER-02) for the `ssh-banner` Docker container, verifying that the pre-auth banner text is delivered and that standard SSH servers send no banner
@@ -34,6 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- File editor: closing the zoom overlay no longer leaves the panel's file editor blank — the Monaco model is now preserved across overlay mount/unmount cycles (`keepCurrentModel`) so the panel editor retains its content when zoom is dismissed
+- UI: the zoom shortcut (Cmd/Ctrl+Shift+Enter) no longer inserts a blank line in Monaco-based editors — a capture-phase keyboard listener intercepts the key before Monaco's "Insert Line Above" keybinding fires
 - Terminal: zoom overlay no longer shows blank or garbled content after the zoomed tab changes — the `ResizeObserver` now skips fitting while the terminal element is in transit through the off-screen parking div, which previously caused the PTY to be briefly resized to 1–2 columns and the shell to redraw its prompt at that width (filling the buffer with wrapped garbage)
 - Credential store: the unlock dialog no longer appears proactively every 15 minutes after auto-lock — the store still locks automatically, but the unlock prompt is only shown when a credential is actually needed (e.g. when connecting with stored credentials)
 - Workspace launch: the master password dialog is now shown **once upfront** before any tabs open (instead of after the first connection attempt fails), and stored credentials are resolved and injected into each tab's config so all connections authenticate silently without interactive password prompts

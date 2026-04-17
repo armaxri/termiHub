@@ -114,7 +114,22 @@ export function Tab({
   );
 
   if (!isTerminalTab) {
-    return tabElement;
+    return (
+      <ContextMenu.Root>
+        <ContextMenu.Trigger asChild>{tabElement}</ContextMenu.Trigger>
+        <ContextMenu.Portal>
+          <ContextMenu.Content className="context-menu__content">
+            <ContextMenu.Item
+              className="context-menu__item"
+              onSelect={() => onSetColor?.()}
+              data-testid="tab-context-set-color"
+            >
+              <Palette size={14} /> Set Color...
+            </ContextMenu.Item>
+          </ContextMenu.Content>
+        </ContextMenu.Portal>
+      </ContextMenu.Root>
+    );
   }
 
   return (

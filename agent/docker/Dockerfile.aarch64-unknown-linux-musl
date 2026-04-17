@@ -1,12 +1,30 @@
 FROM --platform=linux/amd64 ghcr.io/cross-rs/aarch64-unknown-linux-musl:main
+
+ARG OPENSSL_VERSION=3.3.2
+
+# Pre-build static OpenSSL cross-compiled for aarch64 musl.  OPENSSL_NO_VENDOR
+# causes openssl-sys to skip its bundled compilation and use these libs instead,
+# moving the ~2 min OpenSSL build cost from every cargo run into this cached layer.
 # lld: system LLD linker fallback for when Rust's bundled rust-lld lacks execute
 # permission after being copied from Windows via podman cp (DrvFs strips +x bits).
 RUN dpkg --add-architecture arm64 \
     && apt-get update \
-    && apt-get install -y libudev-dev:arm64 lld \
+    && apt-get install -y libudev-dev:arm64 lld perl make curl \
     && printf '#!/bin/sh\nPKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig PKG_CONFIG_ALLOW_SYSTEM_LIBS=1 exec pkg-config "$@"\n' \
        > /usr/local/bin/aarch64-linux-gnu-pkg-config \
-    && chmod +x /usr/local/bin/aarch64-linux-gnu-pkg-config
+    && chmod +x /usr/local/bin/aarch64-linux-gnu-pkg-config \
+    && curl -fsSL https://www.openssl.org/source/openssl-${OPENSSL_VERSION}.tar.gz | tar xz -C /tmp \
+    && cd /tmp/openssl-${OPENSSL_VERSION} \
+    && CROSS_COMPILE=aarch64-linux-musl- \
+       ./Configure no-shared no-zlib no-tests --libdir=lib linux-aarch64 --prefix=/opt/openssl \
+    && make -j$(nproc) \
+    && make install_sw \
+    && rm -rf /tmp/openssl-${OPENSSL_VERSION}
+
+ENV OPENSSL_NO_VENDOR=1 \
+    OPENSSL_STATIC=1 \
+    OPENSSL_LIB_DIR=/opt/openssl/lib \
+    OPENSSL_INCLUDE_DIR=/opt/openssl/include
 
 # Podman+Windows fix: cross-rs copies the Rust toolchain from the Windows
 # filesystem via `podman cp`, which strips execute bits from ELF binaries
