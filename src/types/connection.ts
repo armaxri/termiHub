@@ -159,6 +159,7 @@ export interface AppSettings {
    */
   customLanguageGrammars?: CustomLanguageGrammar[];
   experimentalFeaturesEnabled?: boolean;
+  updates?: UpdateSettings;
 }
 
 /**
@@ -172,6 +173,22 @@ export interface CustomLanguageGrammar {
   name: string;
   /** The raw TextMate grammar object (contents of the `.tmLanguage.json` file). */
   grammar: Record<string, unknown>;
+}
+
+/** Persisted update-checker configuration returned from the backend. */
+export interface UpdateSettings {
+  autoCheck: boolean;
+  lastCheckTime?: string;
+  skippedVersion?: string;
+}
+
+/** Result of an update check returned from the backend. */
+export interface UpdateInfo {
+  available: boolean;
+  latestVersion: string;
+  releaseUrl: string;
+  releaseNotes: string;
+  isSecurity: boolean;
 }
 
 /** Current app mode returned by the backend. */
