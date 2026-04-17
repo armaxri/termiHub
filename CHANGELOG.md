@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - File browser: drag files from OS file managers (Finder, Explorer, etc.) directly onto the file browser panel to upload them (SFTP/session) or copy them (local mode). A dashed overlay confirms the drop target.
 - Terminal: drag files from OS file managers onto any terminal panel to insert their shell-safe quoted path(s) at the cursor.
 
+### Fixed
+
+- File browser: delete confirmation now uses a themed in-app dialog instead of the native OS `window.confirm()` popup
+
 ### Changed
 
 - UI: Remote Agents now have their own collapsible "Remote Agents" section header in the connections sidebar, with a dedicated "+" button for adding new agents

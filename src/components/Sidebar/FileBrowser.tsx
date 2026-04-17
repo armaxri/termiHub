@@ -39,6 +39,7 @@ import { getWslDistroName, wslToWindowsPath, windowsToWslPath } from "@/utils/sh
 import { formatBytes } from "@/utils/formatters";
 import { resolveFeatureEnabled } from "@/utils/featureFlags";
 import { useOsFileDrop } from "@/hooks/useOsFileDrop";
+import { ConfirmDeleteDialog } from "./ConfirmDeleteDialog";
 import "./FileBrowser.css";
 
 interface FileRowProps {
@@ -701,6 +702,10 @@ export function FileBrowser() {
   const [newFileName, setNewFileName] = useState<string | null>(null);
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
   const [lastClickedPath, setLastClickedPath] = useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{
+    message: string;
+    onConfirm: () => void;
+  } | null>(null);
 
   // Listen for VS Code edit-complete events (remote file re-upload)
   useEffect(() => {
@@ -779,14 +784,14 @@ export function FileBrowser() {
           break;
         }
         case "delete": {
-          const ok = window.confirm(
-            `Delete ${entry.isDirectory ? "directory" : "file"} "${entry.name}"?`
-          );
-          if (ok) {
-            deleteEntry(entry.path, entry.isDirectory).catch((err: unknown) =>
-              console.error("Delete failed:", err)
-            );
-          }
+          setDeleteConfirm({
+            message: `Delete ${entry.isDirectory ? "directory" : "file"} "${entry.name}"?`,
+            onConfirm: () => {
+              deleteEntry(entry.path, entry.isDirectory).catch((err: unknown) =>
+                console.error("Delete failed:", err)
+              );
+            },
+          });
           break;
         }
       }
@@ -854,14 +859,16 @@ export function FileBrowser() {
           cutEntry(entries);
           break;
         case "delete": {
-          const ok = window.confirm(`Delete ${entries.length} items?`);
-          if (ok) {
-            Promise.all(entries.map((e) => deleteEntry(e.path, e.isDirectory))).catch(
-              (err: unknown) => console.error("Delete failed:", err)
-            );
-            setSelectedPaths(new Set());
-            setLastClickedPath(null);
-          }
+          setDeleteConfirm({
+            message: `Delete ${entries.length} items?`,
+            onConfirm: () => {
+              Promise.all(entries.map((e) => deleteEntry(e.path, e.isDirectory))).catch(
+                (err: unknown) => console.error("Delete failed:", err)
+              );
+              setSelectedPaths(new Set());
+              setLastClickedPath(null);
+            },
+          });
           break;
         }
       }
@@ -1174,6 +1181,15 @@ export function FileBrowser() {
           </ContextMenu.Content>
         </ContextMenu.Portal>
       </ContextMenu.Root>
+      <ConfirmDeleteDialog
+        open={deleteConfirm !== null}
+        message={deleteConfirm?.message ?? ""}
+        onConfirm={() => {
+          deleteConfirm?.onConfirm();
+          setDeleteConfirm(null);
+        }}
+        onCancel={() => setDeleteConfirm(null)}
+      />
     </div>
   );
 }
