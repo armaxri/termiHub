@@ -28,6 +28,7 @@ pub struct RemoteAgentConfig {
     pub host: String,
     pub port: u16,
     pub username: String,
+    #[serde(default = "default_auth_method")]
     pub auth_method: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub password: Option<String>,
@@ -42,6 +43,10 @@ pub struct RemoteAgentConfig {
     /// where `~/.local/bin` may not be on the PATH.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_path: Option<String>,
+}
+
+fn default_auth_method() -> String {
+    "password".to_string()
 }
 
 impl RemoteAgentConfig {
@@ -407,6 +412,19 @@ mod tests {
             config.agent_version_command(),
             "/opt/termihub-agent --version 2>/dev/null"
         );
+    }
+
+    /// Regression: configs saved without `authMethod` (e.g. created by an old
+    /// version) must deserialize successfully and default to "password".
+    #[test]
+    fn remote_agent_config_auth_method_defaults_to_password() {
+        let json = r#"{
+            "host": "pi.local",
+            "port": 22,
+            "username": "pi"
+        }"#;
+        let config: RemoteAgentConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.auth_method, "password");
     }
 
     #[test]

@@ -361,6 +361,12 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const handleTypeChange = useCallback(
     (typeId: string) => {
       setSelectedType(typeId);
+      if (typeId === "remote") {
+        // "remote" is not in the registry; seed defaults from AGENT_SCHEMA so
+        // required fields like authMethod are present from the start.
+        setConnSettings(buildDefaults(AGENT_SCHEMA));
+        return;
+      }
       const typeInfo = findSchema(effectiveRegistry, typeId);
       const defaults = buildTypeDefaults(typeInfo, settings);
       setConnSettings(defaults);
