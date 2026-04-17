@@ -257,6 +257,101 @@ describe("appStore", () => {
     });
   });
 
+  describe("toggleZoomActiveTab", () => {
+    it("zooms a terminal tab", () => {
+      useAppStore.getState().addTab("Shell", "local");
+      const state = useAppStore.getState();
+      const leaves = getAllLeaves(state.rootPanel);
+      const tabId = leaves[0].activeTabId!;
+
+      useAppStore.getState().toggleZoomActiveTab();
+
+      expect(useAppStore.getState().zoomedTabId).toBe(tabId);
+    });
+
+    it("zooms a non-terminal (editor) tab", () => {
+      useAppStore.getState().openEditorTab("/some/file.txt", false);
+      const state = useAppStore.getState();
+      const leaves = getAllLeaves(state.rootPanel);
+      const tabId = leaves[0].activeTabId!;
+
+      useAppStore.getState().toggleZoomActiveTab();
+
+      expect(useAppStore.getState().zoomedTabId).toBe(tabId);
+    });
+
+    it("dismisses zoom when already zoomed", () => {
+      useAppStore.getState().addTab("Shell", "local");
+      useAppStore.getState().toggleZoomActiveTab();
+      expect(useAppStore.getState().zoomedTabId).not.toBeNull();
+
+      useAppStore.getState().toggleZoomActiveTab();
+
+      expect(useAppStore.getState().zoomedTabId).toBeNull();
+    });
+  });
+
+  describe("setActivePanel zoom follow", () => {
+    it("follows zoom to the new panel's active tab when switching panels", () => {
+      useAppStore.getState().addTab("Shell", "local");
+      const state0 = useAppStore.getState();
+      const panel1Id = state0.activePanelId!;
+      const tab1Id = getAllLeaves(state0.rootPanel)[0].activeTabId!;
+
+      useAppStore.getState().splitPanel("horizontal");
+      useAppStore.getState().addTab("Shell 2", "local");
+      const state1 = useAppStore.getState();
+      const panel2Id = state1.activePanelId!;
+      const tab2Id = getAllLeaves(state1.rootPanel).find((l) => l.id === panel2Id)!.activeTabId!;
+
+      // Zoom the first panel's tab, then switch focus to the second panel
+      useAppStore.getState().setActivePanel(panel1Id);
+      useAppStore.getState().toggleZoomActiveTab();
+      expect(useAppStore.getState().zoomedTabId).toBe(tab1Id);
+
+      useAppStore.getState().setActivePanel(panel2Id);
+
+      expect(useAppStore.getState().zoomedTabId).toBe(tab2Id);
+    });
+
+    it("clears zoom when switching to a panel with no active tab", () => {
+      useAppStore.getState().addTab("Shell", "local");
+      const state0 = useAppStore.getState();
+      const panel1Id = state0.activePanelId!;
+      useAppStore.getState().splitPanel("horizontal");
+      const panel2Id = useAppStore.getState().activePanelId!;
+
+      useAppStore.getState().setActivePanel(panel1Id);
+      useAppStore.getState().toggleZoomActiveTab();
+      expect(useAppStore.getState().zoomedTabId).not.toBeNull();
+
+      // Close all tabs in panel 2 so it has no active tab, then switch
+      useAppStore.getState().setActivePanel(panel2Id);
+      // panel2 has no tabs → activeTabId is null → zoom clears
+      expect(useAppStore.getState().zoomedTabId).toBeNull();
+    });
+  });
+
+  describe("setActiveTab zoom follow", () => {
+    it("follows zoom to any tab type when switching in the same panel", () => {
+      useAppStore.getState().addTab("Shell", "local");
+      useAppStore.getState().openEditorTab("/file.txt", false);
+      const state = useAppStore.getState();
+      const leaves = getAllLeaves(state.rootPanel);
+      const terminalTabId = leaves[0].tabs.find((t) => t.contentType === "terminal")!.id;
+      const editorTabId = leaves[0].tabs.find((t) => t.contentType === "editor")!.id;
+
+      // Zoom the terminal tab, then switch to the editor tab
+      useAppStore.getState().setActiveTab(terminalTabId, leaves[0].id);
+      useAppStore.getState().toggleZoomActiveTab();
+      expect(useAppStore.getState().zoomedTabId).toBe(terminalTabId);
+
+      useAppStore.getState().setActiveTab(editorTabId, leaves[0].id);
+
+      expect(useAppStore.getState().zoomedTabId).toBe(editorTabId);
+    });
+  });
+
   describe("openEditorTab", () => {
     it("creates a new editor tab with the given session ID", () => {
       useAppStore.getState().openEditorTab("/remote/file.txt", true, "session-abc");

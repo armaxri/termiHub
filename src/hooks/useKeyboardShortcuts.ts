@@ -8,6 +8,22 @@ import { processKeyEvent, onChordStateChange, cancelChord } from "@/services/key
  * Uses the KeybindingService's chord-aware processKeyEvent() for matching.
  */
 export function useKeyboardShortcuts() {
+  // Capture-phase interception for zoom-panel: must fire before Monaco (and other
+  // editors) so they don't process the key themselves (e.g. Monaco's "Insert Line
+  // Above" on Cmd/Ctrl+Shift+Enter).  We match the key directly here to avoid
+  // calling processKeyEvent() in two phases for the same event.
+  useEffect(() => {
+    const handleZoomCapture = (e: KeyboardEvent) => {
+      if (e.key !== "Enter" || !e.shiftKey || (!e.metaKey && !e.ctrlKey) || e.altKey) return;
+      e.preventDefault();
+      e.stopPropagation();
+      cancelChord();
+      useAppStore.getState().toggleZoomActiveTab();
+    };
+    window.addEventListener("keydown", handleZoomCapture, { capture: true });
+    return () => window.removeEventListener("keydown", handleZoomCapture, { capture: true });
+  }, []);
+
   const addTab = useAppStore((s) => s.addTab);
   const rootPanel = useAppStore((s) => s.rootPanel);
   const activePanelId = useAppStore((s) => s.activePanelId);
