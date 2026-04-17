@@ -42,13 +42,15 @@ interface FileEditorProps {
   tabId: string;
   meta: EditorTabMeta;
   isVisible: boolean;
+  /** When true, the Monaco model is preserved on unmount (used by zoom overlay instances). */
+  keepModel?: boolean;
 }
 
 /**
  * Built-in file editor using Monaco Editor.
  * Supports both local and remote (SFTP) files.
  */
-export function FileEditor({ tabId, meta, isVisible }: FileEditorProps) {
+export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEditorProps) {
   const setEditorDirty = useAppStore((s) => s.setEditorDirty);
   const setEditorStatus = useAppStore((s) => s.setEditorStatus);
   const setEditorActions = useAppStore((s) => s.setEditorActions);
@@ -294,6 +296,7 @@ export function FileEditor({ tabId, meta, isVisible }: FileEditorProps) {
           path={fileName}
           language={detectedLanguage}
           theme={monacoTheme}
+          keepCurrentModel={keepModel}
           onChange={(value) => setContent(value ?? "")}
           onMount={handleEditorMount}
           options={{

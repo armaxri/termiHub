@@ -741,11 +741,20 @@ export const useAppStore = create<AppState>((set, get) => {
             ? { ...g, rootPanel: state.rootPanel, activePanelId: state.activePanelId }
             : g
         );
+        // Follow zoom to the new group's active tab so the overlay never goes stale
+        let newZoomedTabId = state.zoomedTabId;
+        if (state.zoomedTabId !== null) {
+          const newActivePanel = targetGroup.activePanelId
+            ? findLeaf(targetGroup.rootPanel, targetGroup.activePanelId)
+            : null;
+          newZoomedTabId = newActivePanel?.activeTabId ?? null;
+        }
         return {
           tabGroups: savedGroups,
           activeTabGroupId: groupId,
           rootPanel: targetGroup.rootPanel,
           activePanelId: targetGroup.activePanelId,
+          zoomedTabId: newZoomedTabId,
         };
       }),
 
@@ -1250,8 +1259,7 @@ export const useAppStore = create<AppState>((set, get) => {
         if (state.zoomedTabId !== null) {
           const panelLeaf = findLeaf(state.rootPanel, panelId);
           if (panelLeaf?.tabs.some((t) => t.id === state.zoomedTabId)) {
-            const newTab = panelLeaf.tabs.find((t) => t.id === tabId);
-            newZoomedTabId = newTab?.contentType === "terminal" ? tabId : null;
+            newZoomedTabId = tabId;
           }
         }
 
@@ -1336,16 +1344,10 @@ export const useAppStore = create<AppState>((set, get) => {
 
     setActivePanel: (panelId) =>
       set((state) => {
-        // If zoom is active, follow the active tab of the newly focused panel
         let newZoomedTabId = state.zoomedTabId;
         if (state.zoomedTabId !== null) {
-          const panelLeaf = findLeaf(state.rootPanel, panelId);
-          if (panelLeaf?.activeTabId) {
-            const activeTab = panelLeaf.tabs.find((t) => t.id === panelLeaf.activeTabId);
-            newZoomedTabId = activeTab?.contentType === "terminal" ? panelLeaf.activeTabId : null;
-          } else {
-            newZoomedTabId = null;
-          }
+          const newPanel = findLeaf(state.rootPanel, panelId);
+          newZoomedTabId = newPanel?.activeTabId ?? null;
         }
         return { activePanelId: panelId, zoomedTabId: newZoomedTabId };
       }),
@@ -1454,10 +1456,7 @@ export const useAppStore = create<AppState>((set, get) => {
       const leaves = getAllLeaves(rootPanel);
       const panel = leaves.find((p) => p.id === activePanelId) ?? leaves[0];
       if (panel?.activeTabId) {
-        const tab = panel.tabs.find((t) => t.id === panel.activeTabId);
-        if (tab?.contentType === "terminal") {
-          set({ zoomedTabId: panel.activeTabId });
-        }
+        set({ zoomedTabId: panel.activeTabId });
       }
     },
 
