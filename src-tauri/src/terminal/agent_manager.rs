@@ -207,11 +207,16 @@ impl AgentConnectionManager {
             .lock()
             .map_err(|e| TerminalError::RemoteError(format!("Lock failed: {}", e)))?;
 
-        if agents.contains_key(agent_id) {
-            return Err(TerminalError::RemoteError(format!(
-                "Agent {} is already connected",
-                agent_id
-            )));
+        // Evict a dead entry left behind when the I/O thread exits without
+        // removing itself (e.g. reconnection failed after a dropped connection).
+        if let Some(existing) = agents.get(agent_id) {
+            if existing.alive.load(Ordering::SeqCst) {
+                return Err(TerminalError::RemoteError(format!(
+                    "Agent {} is already connected",
+                    agent_id
+                )));
+            }
+            agents.remove(agent_id);
         }
 
         // Emit connecting state
