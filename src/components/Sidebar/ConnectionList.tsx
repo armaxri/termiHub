@@ -619,6 +619,8 @@ export function ConnectionList() {
                 setCreatingFolder(false);
               }}
               onCancelCreateFolder={() => setCreatingFolder(false)}
+              onNewConnection={handleNewConnection}
+              onNewFolder={() => setCreatingFolder(true)}
               rootFolders={rootFolders}
               rootConnections={rootConnections}
               folders={folders}
@@ -688,6 +690,8 @@ interface RootDropZoneProps {
   isCreatingFolder: boolean;
   onCreateFolder: (name: string) => void;
   onCancelCreateFolder: () => void;
+  onNewConnection: () => void;
+  onNewFolder: () => void;
   rootFolders: ConnectionFolder[];
   rootConnections: SavedConnection[];
   folders: ConnectionFolder[];
@@ -707,6 +711,8 @@ function RootDropZone({
   isCreatingFolder,
   onCreateFolder,
   onCancelCreateFolder,
+  onNewConnection,
+  onNewFolder,
   rootFolders,
   rootConnections,
   folders,
@@ -729,45 +735,71 @@ function RootDropZone({
   const isConnectionOver = isOver && active?.data.current?.type !== "agent";
 
   return (
-    <div
-      ref={setNodeRef}
-      className={`connection-list__tree${isConnectionOver ? " connection-tree__root-drop--over" : ""}`}
-    >
-      {isCreatingFolder && (
-        <InlineFolderInput depth={0} onConfirm={onCreateFolder} onCancel={onCancelCreateFolder} />
-      )}
-      {rootFolders.map((folder) => (
-        <TreeNode
-          key={folder.id}
-          folder={folder}
-          connections={connections.filter((c) => c.folderId === folder.id)}
-          childFolders={folders.filter((f) => f.parentId === folder.id)}
-          allFolders={folders}
-          allConnections={connections}
-          onToggle={onToggle}
-          onConnect={onConnect}
-          onEdit={onEdit}
-          onDelete={onDelete}
-          onDuplicate={onDuplicate}
-          onPingHost={onPingHost}
-          onDeleteFolder={onDeleteFolder}
-          onCreateSubfolder={onCreateSubfolder}
-          onNewConnectionInFolder={onNewConnectionInFolder}
-          depth={0}
-        />
-      ))}
-      {rootConnections.map((conn) => (
-        <ConnectionItem
-          key={conn.id}
-          connection={conn}
-          depth={0}
-          onConnect={onConnect}
-          onEdit={onEdit}
-          onDelete={onDelete}
-          onDuplicate={onDuplicate}
-          onPingHost={onPingHost}
-        />
-      ))}
-    </div>
+    <ContextMenu.Root>
+      <ContextMenu.Trigger asChild>
+        <div
+          ref={setNodeRef}
+          className={`connection-list__tree${isConnectionOver ? " connection-tree__root-drop--over" : ""}`}
+        >
+          {isCreatingFolder && (
+            <InlineFolderInput
+              depth={0}
+              onConfirm={onCreateFolder}
+              onCancel={onCancelCreateFolder}
+            />
+          )}
+          {rootFolders.map((folder) => (
+            <TreeNode
+              key={folder.id}
+              folder={folder}
+              connections={connections.filter((c) => c.folderId === folder.id)}
+              childFolders={folders.filter((f) => f.parentId === folder.id)}
+              allFolders={folders}
+              allConnections={connections}
+              onToggle={onToggle}
+              onConnect={onConnect}
+              onEdit={onEdit}
+              onDelete={onDelete}
+              onDuplicate={onDuplicate}
+              onPingHost={onPingHost}
+              onDeleteFolder={onDeleteFolder}
+              onCreateSubfolder={onCreateSubfolder}
+              onNewConnectionInFolder={onNewConnectionInFolder}
+              depth={0}
+            />
+          ))}
+          {rootConnections.map((conn) => (
+            <ConnectionItem
+              key={conn.id}
+              connection={conn}
+              depth={0}
+              onConnect={onConnect}
+              onEdit={onEdit}
+              onDelete={onDelete}
+              onDuplicate={onDuplicate}
+              onPingHost={onPingHost}
+            />
+          ))}
+        </div>
+      </ContextMenu.Trigger>
+      <ContextMenu.Portal>
+        <ContextMenu.Content className="context-menu__content">
+          <ContextMenu.Item
+            className="context-menu__item"
+            onSelect={onNewConnection}
+            data-testid="context-root-new-connection"
+          >
+            <Plus size={14} /> New Connection
+          </ContextMenu.Item>
+          <ContextMenu.Item
+            className="context-menu__item"
+            onSelect={onNewFolder}
+            data-testid="context-root-new-folder"
+          >
+            <FolderPlus size={14} /> New Folder
+          </ContextMenu.Item>
+        </ContextMenu.Content>
+      </ContextMenu.Portal>
+    </ContextMenu.Root>
   );
 }
