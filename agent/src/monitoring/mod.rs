@@ -29,6 +29,25 @@ const DEFAULT_INTERVAL_MS: u64 = 2000;
 /// Minimum allowed collection interval in milliseconds.
 const MIN_INTERVAL_MS: u64 = 500;
 
+// ── MonitoringManagerApi trait ─────────────────────────────────────
+
+/// Abstract interface over the monitoring manager.
+///
+/// Implemented by [`MonitoringManager`] in production and by mock structs
+/// in tests. [`crate::handler::dispatch::Dispatcher`] depends on this trait
+/// so it can be tested without spawning real background tasks.
+#[async_trait::async_trait]
+pub trait MonitoringManagerApi: Send + Sync + 'static {
+    /// Start monitoring a host (or replace an existing subscription).
+    async fn subscribe(&self, host: &str, interval_ms: Option<u64>) -> Result<()>;
+
+    /// Stop monitoring a host.
+    async fn unsubscribe(&self, host: &str);
+
+    /// Cancel all subscriptions (called on agent shutdown).
+    async fn shutdown(&self);
+}
+
 /// Manages active monitoring subscriptions.
 ///
 /// Each subscription spawns a background tokio task that periodically
@@ -158,6 +177,23 @@ impl MonitoringManager {
             sub.join_handle.abort();
             debug!("Shutdown: cancelled monitoring for '{host}'");
         }
+    }
+}
+
+// ── MonitoringManagerApi impl ──────────────────────────────────────
+
+#[async_trait::async_trait]
+impl MonitoringManagerApi for MonitoringManager {
+    async fn subscribe(&self, host: &str, interval_ms: Option<u64>) -> Result<()> {
+        MonitoringManager::subscribe(self, host, interval_ms).await
+    }
+
+    async fn unsubscribe(&self, host: &str) {
+        MonitoringManager::unsubscribe(self, host).await;
+    }
+
+    async fn shutdown(&self) {
+        MonitoringManager::shutdown(self).await;
     }
 }
 

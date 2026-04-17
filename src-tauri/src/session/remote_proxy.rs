@@ -22,7 +22,7 @@ use termihub_core::errors::{CoreError, FileError, SessionError};
 use termihub_core::files::{FileBrowser, FileEntry};
 use termihub_core::monitoring::{MonitoringProvider, MonitoringReceiver};
 
-use crate::terminal::agent_manager::AgentConnectionManager;
+use crate::terminal::agent_manager::AgentRpcClient;
 use crate::terminal::backend::OUTPUT_CHANNEL_CAPACITY;
 
 /// A [`ConnectionType`] implementation that proxies all operations to a
@@ -34,7 +34,7 @@ pub struct RemoteProxy {
     agent_id: String,
     /// The remote session ID assigned by the agent after `connection.create`.
     remote_session_id: Mutex<Option<String>>,
-    agent_manager: Arc<AgentConnectionManager>,
+    agent_manager: Arc<dyn AgentRpcClient>,
     /// The type_id of the remote connection (e.g., "local", "ssh").
     remote_type_id: Mutex<String>,
     /// Capabilities reported by the agent for this connection type.
@@ -55,7 +55,7 @@ impl RemoteProxy {
     /// Call [`connect()`](ConnectionType::connect) with settings JSON
     /// containing `type` and connection-specific parameters to establish
     /// the remote session.
-    pub fn new(agent_id: String, agent_manager: Arc<AgentConnectionManager>) -> Self {
+    pub fn new(agent_id: String, agent_manager: Arc<dyn AgentRpcClient>) -> Self {
         Self {
             agent_id,
             remote_session_id: Mutex::new(None),
@@ -315,7 +315,7 @@ impl ConnectionType for RemoteProxy {
 pub struct RemoteFileBrowserProxy {
     agent_id: String,
     remote_session_id: String,
-    agent_manager: Arc<AgentConnectionManager>,
+    agent_manager: Arc<dyn AgentRpcClient>,
 }
 
 #[async_trait::async_trait]
@@ -438,7 +438,7 @@ impl FileBrowser for RemoteFileBrowserProxy {
 pub struct RemoteMonitoringProxy {
     agent_id: String,
     remote_session_id: String,
-    agent_manager: Arc<AgentConnectionManager>,
+    agent_manager: Arc<dyn AgentRpcClient>,
 }
 
 #[async_trait::async_trait]
@@ -495,9 +495,279 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, FileError> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::sync::Mutex;
 
-    /// Compile-time verification that `RemoteProxy` is Send.
+    use serde_json::json;
+
+    use super::*;
+    use crate::terminal::agent_manager::{
+        AgentCapabilities, AgentConnectResult, AgentConnectionsData, AgentDefinitionInfo,
+        AgentFolderInfo, AgentRpcClient, AgentSessionInfo,
+    };
+    use crate::terminal::backend::{OutputSender, RemoteAgentConfig};
+    use crate::utils::errors::TerminalError;
+    use termihub_core::monitoring::MonitoringSender;
+
+    // ── MockAgentRpcClient ────────────────────────────────────────────
+
+    /// Minimal in-memory mock of `AgentRpcClient` for unit tests.
+    ///
+    /// `create_session` records calls and returns a canned session.
+    /// All other mutating methods succeed silently. `is_connected` returns
+    /// `true` once at least one `create_session` call has been recorded.
+    struct MockAgentRpcClient {
+        created_sessions: Mutex<Vec<(String, String, serde_json::Value)>>,
+        send_request_result: Option<serde_json::Value>,
+    }
+
+    impl MockAgentRpcClient {
+        fn new() -> Self {
+            Self {
+                created_sessions: Mutex::new(Vec::new()),
+                send_request_result: None,
+            }
+        }
+    }
+
+    impl AgentRpcClient for MockAgentRpcClient {
+        fn connect_agent(
+            &self,
+            _agent_id: &str,
+            _config: &RemoteAgentConfig,
+        ) -> Result<AgentConnectResult, TerminalError> {
+            Ok(AgentConnectResult {
+                capabilities: AgentCapabilities {
+                    connection_types: vec![],
+                    max_sessions: 10,
+                    available_shells: vec![],
+                    available_serial_ports: vec![],
+                    docker_available: false,
+                    available_docker_images: vec![],
+                },
+                agent_version: "mock".to_string(),
+                protocol_version: "0.2.0".to_string(),
+            })
+        }
+
+        fn disconnect_agent(&self, _agent_id: &str) -> Result<(), TerminalError> {
+            Ok(())
+        }
+
+        fn is_connected(&self, _agent_id: &str) -> bool {
+            !self.created_sessions.lock().unwrap().is_empty()
+        }
+
+        fn get_capabilities(&self, _agent_id: &str) -> Option<AgentCapabilities> {
+            None
+        }
+
+        fn shutdown_agent(
+            &self,
+            _agent_id: &str,
+            _reason: Option<&str>,
+        ) -> Result<u32, TerminalError> {
+            Ok(0)
+        }
+
+        fn send_request(
+            &self,
+            _agent_id: &str,
+            _method: &str,
+            _params: serde_json::Value,
+        ) -> Result<serde_json::Value, TerminalError> {
+            Ok(self
+                .send_request_result
+                .clone()
+                .unwrap_or(serde_json::Value::Null))
+        }
+
+        fn create_session(
+            &self,
+            agent_id: &str,
+            session_type: &str,
+            config: serde_json::Value,
+            _title: Option<&str>,
+        ) -> Result<AgentSessionInfo, TerminalError> {
+            self.created_sessions.lock().unwrap().push((
+                agent_id.to_string(),
+                session_type.to_string(),
+                config,
+            ));
+            Ok(AgentSessionInfo {
+                session_id: "mock-session-1".to_string(),
+                title: "Mock Session".to_string(),
+                session_type: session_type.to_string(),
+                status: "running".to_string(),
+                attached: false,
+            })
+        }
+
+        fn attach_session(
+            &self,
+            _agent_id: &str,
+            _remote_session_id: &str,
+        ) -> Result<(), TerminalError> {
+            Ok(())
+        }
+
+        fn close_session(
+            &self,
+            _agent_id: &str,
+            _remote_session_id: &str,
+        ) -> Result<(), TerminalError> {
+            Ok(())
+        }
+
+        fn list_sessions(&self, _agent_id: &str) -> Result<Vec<AgentSessionInfo>, TerminalError> {
+            Ok(vec![])
+        }
+
+        fn list_connections_and_folders(
+            &self,
+            _agent_id: &str,
+        ) -> Result<AgentConnectionsData, TerminalError> {
+            Ok(AgentConnectionsData {
+                connections: vec![],
+                folders: vec![],
+            })
+        }
+
+        fn list_definitions(
+            &self,
+            _agent_id: &str,
+        ) -> Result<Vec<AgentDefinitionInfo>, TerminalError> {
+            Ok(vec![])
+        }
+
+        fn save_definition(
+            &self,
+            _agent_id: &str,
+            _definition: serde_json::Value,
+        ) -> Result<AgentDefinitionInfo, TerminalError> {
+            Ok(AgentDefinitionInfo {
+                id: "mock-def".to_string(),
+                name: "Mock".to_string(),
+                session_type: "local".to_string(),
+                config: serde_json::Value::Null,
+                persistent: false,
+                folder_id: None,
+                terminal_options: None,
+                icon: None,
+            })
+        }
+
+        fn update_definition(
+            &self,
+            _agent_id: &str,
+            _params: serde_json::Value,
+        ) -> Result<AgentDefinitionInfo, TerminalError> {
+            Ok(AgentDefinitionInfo {
+                id: "mock-def".to_string(),
+                name: "Updated".to_string(),
+                session_type: "local".to_string(),
+                config: serde_json::Value::Null,
+                persistent: false,
+                folder_id: None,
+                terminal_options: None,
+                icon: None,
+            })
+        }
+
+        fn delete_definition(&self, _agent_id: &str, _def_id: &str) -> Result<(), TerminalError> {
+            Ok(())
+        }
+
+        fn create_folder(
+            &self,
+            _agent_id: &str,
+            _name: &str,
+            _parent_id: Option<&str>,
+        ) -> Result<AgentFolderInfo, TerminalError> {
+            Ok(AgentFolderInfo {
+                id: "mock-folder".to_string(),
+                name: "Mock Folder".to_string(),
+                parent_id: None,
+                is_expanded: false,
+            })
+        }
+
+        fn update_folder(
+            &self,
+            _agent_id: &str,
+            _params: serde_json::Value,
+        ) -> Result<AgentFolderInfo, TerminalError> {
+            Ok(AgentFolderInfo {
+                id: "mock-folder".to_string(),
+                name: "Updated Folder".to_string(),
+                parent_id: None,
+                is_expanded: false,
+            })
+        }
+
+        fn delete_folder(&self, _agent_id: &str, _folder_id: &str) -> Result<(), TerminalError> {
+            Ok(())
+        }
+
+        fn register_session_output(
+            &self,
+            _agent_id: &str,
+            _remote_session_id: &str,
+            _output_tx: OutputSender,
+        ) -> Result<(), TerminalError> {
+            Ok(())
+        }
+
+        fn unregister_session_output(
+            &self,
+            _agent_id: &str,
+            _remote_session_id: &str,
+        ) -> Result<(), TerminalError> {
+            Ok(())
+        }
+
+        fn register_monitoring_output(
+            &self,
+            _agent_id: &str,
+            _remote_session_id: &str,
+            _monitoring_tx: MonitoringSender,
+        ) -> Result<(), TerminalError> {
+            Ok(())
+        }
+
+        fn unregister_monitoring_output(
+            &self,
+            _agent_id: &str,
+            _remote_session_id: &str,
+        ) -> Result<(), TerminalError> {
+            Ok(())
+        }
+
+        fn send_session_input(
+            &self,
+            _agent_id: &str,
+            _remote_session_id: &str,
+            _data: &[u8],
+        ) -> Result<(), TerminalError> {
+            Ok(())
+        }
+
+        fn resize_session(
+            &self,
+            _agent_id: &str,
+            _remote_session_id: &str,
+            _cols: u16,
+            _rows: u16,
+        ) -> Result<(), TerminalError> {
+            Ok(())
+        }
+    }
+
+    fn make_proxy() -> RemoteProxy {
+        RemoteProxy::new("agent-1".to_string(), Arc::new(MockAgentRpcClient::new()))
+    }
+
+    // ── Compile-time trait checks ─────────────────────────────────────
+
     fn _assert_send<T: Send>() {}
 
     #[test]
@@ -515,11 +785,100 @@ mod tests {
         _assert_send::<RemoteMonitoringProxy>();
     }
 
-    /// Compile-time verification that `file_browser()` returns a trait
-    /// reference (not `None` unconditionally) — i.e. the `Option<&dyn
-    /// FileBrowser>` return compiles from `Option<RemoteFileBrowserProxy>`.
     fn _assert_file_browser_compiles(proxy: &RemoteProxy) {
         let _: Option<&dyn FileBrowser> = proxy.file_browser();
         let _: Option<&dyn MonitoringProvider> = proxy.monitoring();
+    }
+
+    // ── Behaviour tests using MockAgentRpcClient ──────────────────────
+
+    #[test]
+    fn new_proxy_is_not_connected() {
+        let proxy = make_proxy();
+        assert!(!proxy.is_connected());
+    }
+
+    #[tokio::test]
+    async fn connect_calls_create_and_attach_session() {
+        let mock = Arc::new(MockAgentRpcClient::new());
+        let mut proxy = RemoteProxy::new("agent-1".to_string(), mock.clone());
+
+        let settings = json!({ "type": "local", "config": {} });
+        proxy
+            .connect(settings)
+            .await
+            .expect("connect should succeed");
+
+        let sessions = mock.created_sessions.lock().unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].0, "agent-1");
+        assert_eq!(sessions[0].1, "local");
+    }
+
+    #[tokio::test]
+    async fn connect_twice_returns_error() {
+        let mut proxy = make_proxy();
+        let settings = json!({ "type": "local", "config": {} });
+        proxy
+            .connect(settings.clone())
+            .await
+            .expect("first connect");
+        let result = proxy.connect(settings).await;
+        assert!(result.is_err(), "second connect should fail");
+
+        proxy.disconnect().await.ok();
+    }
+
+    #[tokio::test]
+    async fn disconnect_clears_connected_state() {
+        let mut proxy = make_proxy();
+        let settings = json!({ "type": "local", "config": {} });
+        proxy.connect(settings).await.expect("connect");
+
+        proxy.disconnect().await.expect("disconnect");
+
+        // is_connected checks both local flag and mock.is_connected()
+        // After disconnect the local flag is false.
+        assert!(!proxy.is_connected());
+    }
+
+    #[tokio::test]
+    async fn write_after_connect_succeeds() {
+        let mut proxy = make_proxy();
+        proxy
+            .connect(json!({ "type": "local", "config": {} }))
+            .await
+            .expect("connect");
+
+        let result = proxy.write(b"hello");
+        assert!(result.is_ok());
+
+        proxy.disconnect().await.ok();
+    }
+
+    #[tokio::test]
+    async fn resize_after_connect_succeeds() {
+        let mut proxy = make_proxy();
+        proxy
+            .connect(json!({ "type": "local", "config": {} }))
+            .await
+            .expect("connect");
+
+        let result = proxy.resize(120, 40);
+        assert!(result.is_ok());
+
+        proxy.disconnect().await.ok();
+    }
+
+    #[test]
+    fn write_before_connect_returns_error() {
+        let proxy = make_proxy();
+        assert!(proxy.write(b"data").is_err());
+    }
+
+    #[test]
+    fn resize_before_connect_returns_error() {
+        let proxy = make_proxy();
+        assert!(proxy.resize(80, 24).is_err());
     }
 }

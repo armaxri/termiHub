@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (internal)
+
+- DI testing infrastructure: extracted `LocalShellSpawner`, `SshConnector`, `SessionManagerApi`, `DaemonLauncher`, `ConnectionStoreApi`, `MonitoringManagerApi`, `EventEmitter`, and `AgentRpcClient` traits across `core`, `agent`, and `src-tauri`. Concrete types are unchanged; tests can now inject mocks without real PTY/SSH/Tauri runtimes. Tauri agent commands now depend on `Arc<dyn AgentRpcClient>` in state.
+
 ### Changed
 
 - UI: Comprehensive design refresh — new Geist typeface, deeper cool-tinted dark palette, generous border radii (4–14 px), richer multi-layer shadows, and premium `cubic-bezier(0.16, 1, 0.3, 1)` transitions throughout

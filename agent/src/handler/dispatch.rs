@@ -9,7 +9,7 @@ use base64::Engine;
 
 use crate::files::local::LocalFileBackend;
 use crate::files::{FileBackend, FileError};
-use crate::monitoring::MonitoringManager;
+use crate::monitoring::MonitoringManagerApi;
 use crate::network;
 use crate::protocol::errors;
 use crate::protocol::messages::{JsonRpcErrorResponse, JsonRpcRequest, JsonRpcResponse};
@@ -25,8 +25,10 @@ use crate::protocol::methods::{
     SessionDetachParams, SessionInputParams, SessionListEntry, SessionListResult,
     SessionResizeParams,
 };
-use crate::session::definitions::{Connection, ConnectionStore, Folder};
-use crate::session::manager::{SessionCreateError, SessionManager, MAX_SESSIONS};
+use crate::session::definitions::{Connection, ConnectionStoreApi, Folder};
+use crate::session::manager::{
+    SessionCreateError, SessionManager, SessionManagerApi, MAX_SESSIONS,
+};
 
 /// The agent's protocol version.
 ///
@@ -35,10 +37,14 @@ const AGENT_PROTOCOL_VERSION: &str = "0.2.0";
 
 /// Dispatcher handles incoming JSON-RPC requests and routes them
 /// to the appropriate handler function.
-pub struct Dispatcher {
-    session_manager: Arc<SessionManager>,
-    connection_store: Arc<ConnectionStore>,
-    monitoring_manager: Arc<MonitoringManager>,
+///
+/// Generic over `M: SessionManagerApi` so it can be tested with a mock
+/// session manager without spawning real backends or registries.
+/// Defaults to [`SessionManager`] in production.
+pub struct Dispatcher<M: SessionManagerApi = SessionManager> {
+    session_manager: Arc<M>,
+    connection_store: Arc<dyn ConnectionStoreApi>,
+    monitoring_manager: Arc<dyn MonitoringManagerApi>,
     initialized: bool,
     start_time: Instant,
 }
@@ -69,11 +75,11 @@ impl DispatchResult {
     }
 }
 
-impl Dispatcher {
+impl<M: SessionManagerApi> Dispatcher<M> {
     pub fn new(
-        session_manager: Arc<SessionManager>,
-        connection_store: Arc<ConnectionStore>,
-        monitoring_manager: Arc<MonitoringManager>,
+        session_manager: Arc<M>,
+        connection_store: Arc<dyn ConnectionStoreApi>,
+        monitoring_manager: Arc<dyn MonitoringManagerApi>,
     ) -> Self {
         Self {
             session_manager,
@@ -1309,7 +1315,11 @@ mod tests {
         let registry = Arc::new(crate::registry::build_registry());
         let session_manager = Arc::new(SessionManager::new(tx.clone(), registry));
         let monitoring_manager = Arc::new(MonitoringManager::new(tx, conn_store.clone()));
-        let dispatcher = Dispatcher::new(session_manager.clone(), conn_store, monitoring_manager);
+        let dispatcher = Dispatcher::new(
+            session_manager.clone(),
+            conn_store as Arc<dyn ConnectionStoreApi>,
+            monitoring_manager as Arc<dyn MonitoringManagerApi>,
+        );
         (dispatcher, session_manager)
     }
 
@@ -2455,5 +2465,516 @@ mod tests {
         let req = make_request("network.open_ports", json!({}), 1);
         let result = d.dispatch(req).await.to_json();
         assert_eq!(result["error"]["code"], errors::NOT_INITIALIZED);
+    }
+
+    // ── MockSessionManager + DI tests ──────────────────────────────
+
+    use crate::monitoring::MonitoringManager;
+    use crate::session::definitions::{
+        Connection, ConnectionSnapshot, ConnectionStore, ConnectionStoreApi, Folder, FolderSnapshot,
+    };
+    use crate::session::manager::SessionManagerApi;
+    use crate::session::types::{SessionSnapshot, SessionStatus};
+    use termihub_core::connection::ConnectionTypeRegistry;
+    use tokio::sync::Mutex as AsyncMutex;
+
+    struct MockSessionManager {
+        registry: ConnectionTypeRegistry,
+        /// When `Some`, `create()` returns this error.
+        create_error: Option<SessionCreateError>,
+        sessions: Arc<AsyncMutex<Vec<SessionSnapshot>>>,
+    }
+
+    impl MockSessionManager {
+        fn new() -> Self {
+            Self {
+                registry: crate::registry::build_registry(),
+                create_error: None,
+                sessions: Arc::new(AsyncMutex::new(Vec::new())),
+            }
+        }
+
+        fn with_create_error(error: SessionCreateError) -> Self {
+            Self {
+                registry: crate::registry::build_registry(),
+                create_error: Some(error),
+                sessions: Arc::new(AsyncMutex::new(Vec::new())),
+            }
+        }
+    }
+
+    #[async_trait::async_trait(?Send)]
+    impl SessionManagerApi for MockSessionManager {
+        fn registry(&self) -> &ConnectionTypeRegistry {
+            &self.registry
+        }
+
+        async fn create(
+            &self,
+            type_id: &str,
+            title: String,
+            _settings: serde_json::Value,
+        ) -> Result<SessionSnapshot, SessionCreateError> {
+            if let Some(ref e) = self.create_error {
+                return Err(match e {
+                    SessionCreateError::LimitReached => SessionCreateError::LimitReached,
+                    SessionCreateError::InvalidConfig(m) => {
+                        SessionCreateError::InvalidConfig(m.clone())
+                    }
+                    SessionCreateError::BackendFailed(m) => {
+                        SessionCreateError::BackendFailed(m.clone())
+                    }
+                });
+            }
+            let snapshot = SessionSnapshot {
+                id: uuid::Uuid::new_v4().to_string(),
+                title,
+                type_id: type_id.to_string(),
+                status: SessionStatus::Running,
+                created_at: chrono::Utc::now(),
+                last_activity: chrono::Utc::now(),
+                attached: false,
+            };
+            self.sessions.lock().await.push(snapshot.clone());
+            Ok(snapshot)
+        }
+
+        async fn list(&self) -> Vec<SessionSnapshot> {
+            self.sessions.lock().await.clone()
+        }
+
+        async fn get_session_type_id(&self, session_id: &str) -> Option<String> {
+            self.sessions
+                .lock()
+                .await
+                .iter()
+                .find(|s| s.id == session_id)
+                .map(|s| s.type_id.clone())
+        }
+
+        async fn close(&self, session_id: &str) -> bool {
+            let mut sessions = self.sessions.lock().await;
+            let before = sessions.len();
+            sessions.retain(|s| s.id != session_id);
+            sessions.len() < before
+        }
+
+        async fn close_all(&self) {
+            self.sessions.lock().await.clear();
+        }
+
+        async fn detach_all(&self) {}
+
+        async fn active_count(&self) -> u32 {
+            self.sessions.lock().await.len() as u32
+        }
+
+        async fn attach(&self, session_id: &str) -> Result<(), String> {
+            let sessions = self.sessions.lock().await;
+            if sessions.iter().any(|s| s.id == session_id) {
+                Ok(())
+            } else {
+                Err("Session not found".to_string())
+            }
+        }
+
+        async fn detach(&self, session_id: &str) -> Result<(), String> {
+            let sessions = self.sessions.lock().await;
+            if sessions.iter().any(|s| s.id == session_id) {
+                Ok(())
+            } else {
+                Err("Session not found".to_string())
+            }
+        }
+
+        async fn write_input(&self, session_id: &str, _data: &[u8]) -> Result<(), String> {
+            let sessions = self.sessions.lock().await;
+            if sessions.iter().any(|s| s.id == session_id) {
+                Ok(())
+            } else {
+                Err("Session not found".to_string())
+            }
+        }
+
+        async fn resize(&self, session_id: &str, _cols: u16, _rows: u16) -> Result<(), String> {
+            let sessions = self.sessions.lock().await;
+            if sessions.iter().any(|s| s.id == session_id) {
+                Ok(())
+            } else {
+                Err("Session not found".to_string())
+            }
+        }
+    }
+
+    fn make_mock_dispatcher() -> Dispatcher<MockSessionManager> {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let tmp = std::env::temp_dir().join(format!("termihub-mock-{}.json", uuid::Uuid::new_v4()));
+        let conn_store = Arc::new(ConnectionStore::new_temp(tmp));
+        let monitoring_manager = Arc::new(MonitoringManager::new(tx, conn_store.clone()));
+        let session_manager = Arc::new(MockSessionManager::new());
+        Dispatcher::new(
+            session_manager,
+            conn_store as Arc<dyn ConnectionStoreApi>,
+            monitoring_manager as Arc<dyn MonitoringManagerApi>,
+        )
+    }
+
+    fn make_mock_dispatcher_failing(error: SessionCreateError) -> Dispatcher<MockSessionManager> {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let tmp = std::env::temp_dir().join(format!("termihub-mock-{}.json", uuid::Uuid::new_v4()));
+        let conn_store = Arc::new(ConnectionStore::new_temp(tmp));
+        let monitoring_manager = Arc::new(MonitoringManager::new(tx, conn_store.clone()));
+        let session_manager = Arc::new(MockSessionManager::with_create_error(error));
+        Dispatcher::new(
+            session_manager,
+            conn_store as Arc<dyn ConnectionStoreApi>,
+            monitoring_manager as Arc<dyn MonitoringManagerApi>,
+        )
+    }
+
+    // ── Mock ConnectionStore and MonitoringManager for DI tests ──────
+
+    /// In-memory mock connection store (no filesystem).
+    struct MockConnectionStore {
+        connections: AsyncMutex<Vec<ConnectionSnapshot>>,
+        folders: AsyncMutex<Vec<FolderSnapshot>>,
+    }
+
+    impl MockConnectionStore {
+        fn new() -> Self {
+            Self {
+                connections: AsyncMutex::new(Vec::new()),
+                folders: AsyncMutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ConnectionStoreApi for MockConnectionStore {
+        async fn get(&self, id: &str) -> Option<ConnectionSnapshot> {
+            self.connections
+                .lock()
+                .await
+                .iter()
+                .find(|c| c.id == id)
+                .cloned()
+        }
+
+        async fn create(&self, conn: Connection) -> ConnectionSnapshot {
+            let snap = ConnectionSnapshot {
+                id: conn.id.clone(),
+                name: conn.name,
+                session_type: conn.session_type,
+                config: conn.config,
+                persistent: conn.persistent,
+                folder_id: conn.folder_id,
+                terminal_options: conn.terminal_options,
+                icon: conn.icon,
+            };
+            self.connections.lock().await.push(snap.clone());
+            snap
+        }
+
+        async fn update(
+            &self,
+            id: &str,
+            name: Option<String>,
+            _session_type: Option<String>,
+            _config: Option<serde_json::Value>,
+            _persistent: Option<bool>,
+            _folder_id: Option<Option<String>>,
+            _terminal_options: Option<Option<serde_json::Value>>,
+            _icon: Option<Option<String>>,
+        ) -> Option<ConnectionSnapshot> {
+            let mut conns = self.connections.lock().await;
+            let conn = conns.iter_mut().find(|c| c.id == id)?;
+            if let Some(n) = name {
+                conn.name = n;
+            }
+            Some(conn.clone())
+        }
+
+        async fn list(&self) -> (Vec<ConnectionSnapshot>, Vec<FolderSnapshot>) {
+            (
+                self.connections.lock().await.clone(),
+                self.folders.lock().await.clone(),
+            )
+        }
+
+        async fn delete(&self, id: &str) -> bool {
+            let mut conns = self.connections.lock().await;
+            let before = conns.len();
+            conns.retain(|c| c.id != id);
+            conns.len() < before
+        }
+
+        async fn create_folder(&self, folder: Folder) -> FolderSnapshot {
+            let snap = FolderSnapshot {
+                id: folder.id,
+                name: folder.name,
+                parent_id: folder.parent_id,
+                is_expanded: folder.is_expanded,
+            };
+            self.folders.lock().await.push(snap.clone());
+            snap
+        }
+
+        async fn update_folder(
+            &self,
+            id: &str,
+            name: Option<String>,
+            _parent_id: Option<Option<String>>,
+            _is_expanded: Option<bool>,
+        ) -> Option<FolderSnapshot> {
+            let mut folders = self.folders.lock().await;
+            let folder = folders.iter_mut().find(|f| f.id == id)?;
+            if let Some(n) = name {
+                folder.name = n;
+            }
+            Some(folder.clone())
+        }
+
+        async fn delete_folder(&self, id: &str) -> bool {
+            let mut folders = self.folders.lock().await;
+            let before = folders.len();
+            folders.retain(|f| f.id != id);
+            folders.len() < before
+        }
+    }
+
+    /// Mock monitoring manager that records calls.
+    struct MockMonitoringManager {
+        subscribed: Arc<AsyncMutex<Vec<String>>>,
+        unsubscribed: Arc<AsyncMutex<Vec<String>>>,
+        shutdown_called: Arc<AsyncMutex<bool>>,
+    }
+
+    impl MockMonitoringManager {
+        fn new() -> Self {
+            Self {
+                subscribed: Arc::new(AsyncMutex::new(Vec::new())),
+                unsubscribed: Arc::new(AsyncMutex::new(Vec::new())),
+                shutdown_called: Arc::new(AsyncMutex::new(false)),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MonitoringManagerApi for MockMonitoringManager {
+        async fn subscribe(&self, host: &str, _interval_ms: Option<u64>) -> anyhow::Result<()> {
+            self.subscribed.lock().await.push(host.to_string());
+            Ok(())
+        }
+
+        async fn unsubscribe(&self, host: &str) {
+            self.unsubscribed.lock().await.push(host.to_string());
+        }
+
+        async fn shutdown(&self) {
+            *self.shutdown_called.lock().await = true;
+        }
+    }
+
+    fn make_mock_dispatcher_with_stores(
+        conn_store: Arc<dyn ConnectionStoreApi>,
+        monitor: Arc<dyn MonitoringManagerApi>,
+    ) -> Dispatcher<MockSessionManager> {
+        let session_manager = Arc::new(MockSessionManager::new());
+        Dispatcher::new(session_manager, conn_store, monitor)
+    }
+
+    async fn init_mock(d: &mut Dispatcher<MockSessionManager>) {
+        let req = make_request("initialize", init_params(), 1);
+        let result = d.dispatch(req).await;
+        assert!(matches!(result, DispatchResult::Success(_)));
+    }
+
+    #[tokio::test]
+    async fn mock_session_create_backend_failed_returns_error() {
+        let mut d = make_mock_dispatcher_failing(SessionCreateError::BackendFailed(
+            "PTY spawn failed".to_string(),
+        ));
+        init_mock(&mut d).await;
+
+        let req = make_request(
+            "connection.create",
+            json!({"type": "local", "config": {}}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["error"]["code"], errors::SESSION_CREATION_FAILED);
+        assert!(result["error"]["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("PTY spawn failed"));
+    }
+
+    #[tokio::test]
+    async fn mock_session_create_limit_reached_returns_error() {
+        let mut d = make_mock_dispatcher_failing(SessionCreateError::LimitReached);
+        init_mock(&mut d).await;
+
+        let req = make_request(
+            "connection.create",
+            json!({"type": "local", "config": {}}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["error"]["code"], errors::SESSION_LIMIT_REACHED);
+    }
+
+    #[tokio::test]
+    async fn mock_session_create_and_list() {
+        let mut d = make_mock_dispatcher();
+        init_mock(&mut d).await;
+
+        let req = make_request(
+            "connection.create",
+            json!({"type": "local", "title": "My Shell", "config": {}}),
+            2,
+        );
+        let create_result = d.dispatch(req).await.to_json();
+        assert!(
+            create_result.get("result").is_some(),
+            "expected session create to succeed: {create_result}"
+        );
+        let sid = create_result["result"]["session_id"].as_str().unwrap();
+
+        let req = make_request("connection.list", json!({}), 3);
+        let list_result = d.dispatch(req).await.to_json();
+        let sessions = list_result["result"]["sessions"].as_array().unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0]["session_id"], sid);
+    }
+
+    #[tokio::test]
+    async fn mock_health_check_counts_sessions() {
+        let mut d = make_mock_dispatcher();
+        init_mock(&mut d).await;
+
+        let req = make_request(
+            "connection.create",
+            json!({"type": "local", "config": {}}),
+            2,
+        );
+        d.dispatch(req).await;
+
+        let req = make_request("health.check", json!({}), 3);
+        let result = d.dispatch(req).await.to_json();
+        assert_eq!(result["result"]["active_sessions"], 1);
+    }
+
+    // ── ConnectionStoreApi + MonitoringManagerApi DI tests ────────────
+
+    #[tokio::test]
+    async fn mock_connections_create_via_store_trait() {
+        let store = Arc::new(MockConnectionStore::new());
+        let monitor = Arc::new(MockMonitoringManager::new());
+        let mut d = make_mock_dispatcher_with_stores(
+            store.clone() as Arc<dyn ConnectionStoreApi>,
+            monitor.clone() as Arc<dyn MonitoringManagerApi>,
+        );
+        init_mock(&mut d).await;
+
+        let req = make_request(
+            "connections.create",
+            json!({"name": "My SSH", "type": "ssh", "config": {"host": "example.com"}}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert!(
+            result.get("result").is_some(),
+            "create should succeed: {result}"
+        );
+
+        let conns = store.connections.lock().await;
+        assert_eq!(conns.len(), 1);
+        assert_eq!(conns[0].name, "My SSH");
+    }
+
+    #[tokio::test]
+    async fn mock_connections_delete_via_store_trait() {
+        let store = Arc::new(MockConnectionStore::new());
+        let monitor = Arc::new(MockMonitoringManager::new());
+
+        // Pre-seed a connection
+        let conn = Connection {
+            id: "conn-test-1".to_string(),
+            name: "Test".to_string(),
+            session_type: "ssh".to_string(),
+            config: serde_json::json!({}),
+            persistent: false,
+            folder_id: None,
+            terminal_options: None,
+            icon: None,
+        };
+        store.connections.lock().await.push(ConnectionSnapshot {
+            id: conn.id.clone(),
+            name: conn.name.clone(),
+            session_type: conn.session_type.clone(),
+            config: conn.config.clone(),
+            persistent: conn.persistent,
+            folder_id: None,
+            terminal_options: None,
+            icon: None,
+        });
+
+        let mut d = make_mock_dispatcher_with_stores(
+            store.clone() as Arc<dyn ConnectionStoreApi>,
+            monitor as Arc<dyn MonitoringManagerApi>,
+        );
+        init_mock(&mut d).await;
+
+        let req = make_request("connections.delete", json!({"id": "conn-test-1"}), 2);
+        let result = d.dispatch(req).await.to_json();
+        assert!(
+            result.get("result").is_some(),
+            "delete should succeed: {result}"
+        );
+        assert!(store.connections.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn mock_monitoring_subscribe_via_trait() {
+        let store = Arc::new(MockConnectionStore::new());
+        let monitor = Arc::new(MockMonitoringManager::new());
+        let subscribed = monitor.subscribed.clone();
+        let mut d = make_mock_dispatcher_with_stores(
+            store as Arc<dyn ConnectionStoreApi>,
+            monitor as Arc<dyn MonitoringManagerApi>,
+        );
+        init_mock(&mut d).await;
+
+        let req = make_request(
+            "connection.monitoring.subscribe",
+            json!({"host": "self"}),
+            2,
+        );
+        let result = d.dispatch(req).await.to_json();
+        assert!(
+            result.get("result").is_some(),
+            "subscribe should succeed: {result}"
+        );
+        assert_eq!(subscribed.lock().await.as_slice(), ["self"]);
+    }
+
+    #[tokio::test]
+    async fn mock_monitoring_unsubscribe_via_trait() {
+        let store = Arc::new(MockConnectionStore::new());
+        let monitor = Arc::new(MockMonitoringManager::new());
+        let unsubscribed = monitor.unsubscribed.clone();
+        let mut d = make_mock_dispatcher_with_stores(
+            store as Arc<dyn ConnectionStoreApi>,
+            monitor as Arc<dyn MonitoringManagerApi>,
+        );
+        init_mock(&mut d).await;
+
+        let req = make_request(
+            "connection.monitoring.unsubscribe",
+            json!({"host": "self"}),
+            2,
+        );
+        d.dispatch(req).await;
+        assert_eq!(unsubscribed.lock().await.as_slice(), ["self"]);
     }
 }

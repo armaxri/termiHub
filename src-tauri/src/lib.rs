@@ -27,7 +27,7 @@ use monitoring::MonitoringManager;
 use network::NetworkManager;
 use session::manager::SessionManager;
 use session::registry::build_desktop_registry;
-use terminal::agent_manager::AgentConnectionManager;
+use terminal::agent_manager::{AgentConnectionManager, AgentRpcClient};
 use utils::log_capture::{create_log_buffer, LogCaptureLayer};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -200,7 +200,8 @@ pub fn run() {
                 });
             }
 
-            let agent_manager = Arc::new(AgentConnectionManager::new(app.handle().clone()));
+            let agent_manager: Arc<dyn AgentRpcClient> =
+                Arc::new(AgentConnectionManager::new(app.handle().clone()));
 
             // Build the desktop ConnectionType registry and create the SessionManager.
             let registry = build_desktop_registry();
