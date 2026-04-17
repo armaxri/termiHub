@@ -28,6 +28,7 @@ fi
 TARGETS=(
     x86_64-unknown-linux-musl
     aarch64-unknown-linux-musl
+    armv7-unknown-linux-musleabihf
 )
 
 echo "=== Agent Cross-Compilation Setup ==="

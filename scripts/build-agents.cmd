@@ -19,6 +19,7 @@ echo.
 echo Targets:
 echo   x86_64-unknown-linux-musl       Static x64 binaries (musl)
 echo   aarch64-unknown-linux-musl      Static ARM64 binaries (musl)
+echo   armv7-unknown-linux-musleabihf  Static ARMv7 binaries (musl, older Raspberry Pi)
 echo.
 echo Prerequisites:
 echo   - Rust toolchain (rustup)
@@ -29,7 +30,7 @@ exit /b 0
 :start
 cd /d "%~dp0\.."
 
-echo === Building agent for 2 Linux targets ===
+echo === Building agent for 3 Linux targets ===
 echo.
 
 REM Verify cross-rs
@@ -121,6 +122,7 @@ set FAILED=0
 for %%T in (
     x86_64-unknown-linux-musl
     aarch64-unknown-linux-musl
+    armv7-unknown-linux-musleabihf
 ) do (
     call :build_target %%T
 )

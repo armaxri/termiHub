@@ -20,7 +20,7 @@ echo.
 echo Windows:
 echo   - cross-rs (via cargo install) for all targets
 echo   - Verifies Docker Desktop or Podman Desktop is available
-echo   - Adds Rust targets for both architectures
+echo   - Adds Rust targets for all architectures
 echo   - Builds localhost/termihub-cross:^<target^> images with libudev-dev
 echo.
 echo Prerequisites:
@@ -38,6 +38,7 @@ echo --- Adding Rust targets ---
 for %%T in (
     x86_64-unknown-linux-musl
     aarch64-unknown-linux-musl
+    armv7-unknown-linux-musleabihf
 ) do (
     rustup target add %%T
 )
@@ -89,6 +90,7 @@ set BUILD_FAILED=0
 for %%T in (
     x86_64-unknown-linux-musl
     aarch64-unknown-linux-musl
+    armv7-unknown-linux-musleabihf
 ) do (
     call :build_image %%T
 )

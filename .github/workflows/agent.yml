@@ -27,6 +27,8 @@ jobs:
             artifact_name: termihub-agent-linux-x64
           - target: aarch64-unknown-linux-musl
             artifact_name: termihub-agent-linux-arm64
+          - target: armv7-unknown-linux-musleabihf
+            artifact_name: termihub-agent-linux-armv7
 
     steps:
       - name: Checkout code
