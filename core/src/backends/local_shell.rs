@@ -555,38 +555,53 @@ mod tests {
         }
     }
 
-    /// Returns pre-loaded output bytes then EOF.
-    struct PreloadedReader {
-        cursor: std::io::Cursor<Vec<u8>>,
+    /// Blocks in `read()` until the sender is dropped (simulates a live process).
+    ///
+    /// When the sender is dropped (via `kill()`), `rx.recv()` returns `Err`,
+    /// and `read()` returns `Ok(0)` (EOF), allowing the reader thread to exit cleanly.
+    struct ChannelReader {
+        rx: std::sync::mpsc::Receiver<Vec<u8>>,
+        current: std::io::Cursor<Vec<u8>>,
     }
 
-    impl Read for PreloadedReader {
+    impl Read for ChannelReader {
         fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-            self.cursor.read(buf)
+            loop {
+                let n = self.current.read(buf)?;
+                if n > 0 {
+                    return Ok(n);
+                }
+                // Current buffer exhausted — wait for next chunk or EOF
+                match self.rx.recv() {
+                    Ok(chunk) => self.current = std::io::Cursor::new(chunk),
+                    // Sender dropped → signal EOF
+                    Err(_) => return Ok(0),
+                }
+            }
         }
     }
 
     struct MockLocalShellSpawner {
         /// When `true`, `spawn()` returns an error.
         should_fail: bool,
-        /// Bytes the mock reader will produce before EOF.
-        output_data: Vec<u8>,
         /// Shared log of bytes written via the mock writer.
         write_log: Arc<Mutex<Vec<Vec<u8>>>>,
         /// Shared log of resize calls `(cols, rows)`.
         resize_log: Arc<Mutex<Vec<(u16, u16)>>>,
         /// Set to `true` when kill is invoked.
         killed: Arc<AtomicBool>,
+        /// Dropping this sender signals EOF to the `ChannelReader`.
+        reader_tx: Arc<Mutex<Option<std::sync::mpsc::SyncSender<Vec<u8>>>>>,
     }
 
     impl MockLocalShellSpawner {
         fn new() -> Self {
             Self {
                 should_fail: false,
-                output_data: Vec::new(),
                 write_log: Arc::new(Mutex::new(Vec::new())),
                 resize_log: Arc::new(Mutex::new(Vec::new())),
                 killed: Arc::new(AtomicBool::new(false)),
+                reader_tx: Arc::new(Mutex::new(None)),
             }
         }
 
@@ -606,11 +621,17 @@ mod tests {
             let write_log = self.write_log.clone();
             let resize_log = self.resize_log.clone();
             let killed = self.killed.clone();
+            let reader_tx_slot = self.reader_tx.clone();
+
+            // Bounded-0 channel: no buffering; drop sender to signal EOF.
+            let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(0);
+            *reader_tx_slot.lock().unwrap() = Some(tx);
 
             Ok(SpawnedShell {
                 writer: Box::new(LogWriter { log: write_log }),
-                reader: Box::new(PreloadedReader {
-                    cursor: std::io::Cursor::new(self.output_data.clone()),
+                reader: Box::new(ChannelReader {
+                    rx,
+                    current: std::io::Cursor::new(Vec::new()),
                 }),
                 resize: Box::new(move |c, r| {
                     resize_log.lock().unwrap().push((c, r));
@@ -618,6 +639,8 @@ mod tests {
                 }),
                 kill: Box::new(move || {
                     killed.store(true, Ordering::SeqCst);
+                    // Drop the sender → ChannelReader.read() returns Ok(0) (EOF)
+                    *reader_tx_slot.lock().unwrap() = None;
                 }),
             })
         }
