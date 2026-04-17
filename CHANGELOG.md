@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- UI: Comprehensive design refresh — new Geist typeface, deeper cool-tinted dark palette, generous border radii (4–14 px), richer multi-layer shadows, and premium `cubic-bezier(0.16, 1, 0.3, 1)` transitions throughout
+- UI: All dialogs now animate in with a smooth scale-up fade (CSS `@keyframes`) and feature frosted-glass overlays (`backdrop-filter: blur(8px)`)
+- UI: Primary buttons have tactile press feedback (`translateY + scale(0.98)`) and a soft glow shadow on hover; secondary buttons have smooth hover transitions
+- UI: All dropdown menus (settings gear, context menus, status bar pickers) use refined rounded-item hover instead of the jarring full-accent-blue fill
+- UI: Input fields gain a focus glow ring (`box-shadow: 0 0 0 3px rgba(61, 125, 232, 0.22)`) across all dialogs and settings panels
+- UI: Settings nav items use rounded-pill active highlight instead of a bare left-border indicator
+- UI: Toggle switches enlarged (34 × 20 px) with smoother spring-like transition
+
 - Terminal: the panel zoom overlay (Cmd+Shift+Enter / Ctrl+Shift+Enter) now follows panel focus — navigating between split panels while a terminal is zoomed updates the overlay to show the active tab of the newly focused panel; switching tabs within the zoomed panel also updates the overlay to follow the new active tab
 - Shell integration (OSC 7 CWD tracking) is now **visible by default**: the setup command runs in the terminal at startup with a `# [termiHub] Shell integration: setting up OSC 7 CWD tracking` notice, instead of being silently erased. This applies to local bash, SSH, and WSL connections.
 - WSL: the setup script no longer contains erase sequences; the `source` command and the echo notice are left visible in the terminal.

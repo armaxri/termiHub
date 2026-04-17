@@ -3,8 +3,8 @@
   flex-direction: column;
   width: 180px;
   flex-shrink: 0;
-  padding: var(--spacing-sm) 0;
-  border-right: 1px solid var(--border-primary);
+  padding: var(--spacing-xs) 0;
+  border-right: 1px solid var(--border-secondary);
   overflow-y: auto;
 }
 
@@ -12,30 +12,33 @@
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
-  padding: 8px var(--spacing-md);
+  padding: 7px var(--spacing-sm);
+  margin: 1px var(--spacing-xs);
   border: none;
-  border-left: 2px solid transparent;
+  border-radius: var(--radius-md);
   background: none;
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-normal);
   cursor: pointer;
   transition:
     color var(--transition-fast),
-    background-color var(--transition-fast),
-    border-color var(--transition-fast);
+    background-color var(--transition-fast);
   text-align: left;
   white-space: nowrap;
+  width: calc(100% - 8px);
 }
 
 .settings-nav__item:hover {
   color: var(--text-primary);
   background-color: var(--bg-hover);
+  font-weight: var(--font-weight-medium);
 }
 
 .settings-nav__item--active {
   color: var(--text-primary);
-  border-left-color: var(--accent-color);
-  background-color: var(--bg-active);
+  font-weight: var(--font-weight-semibold);
+  background-color: color-mix(in srgb, var(--accent-color) 12%, var(--bg-hover));
 }
 
 .settings-nav__item--dimmed {
@@ -47,21 +50,27 @@
   flex-direction: row;
   width: 100%;
   border-right: none;
-  border-bottom: 1px solid var(--border-primary);
+  border-bottom: 1px solid var(--border-secondary);
   padding: 0;
   overflow-x: auto;
   overflow-y: hidden;
 }
 
 .settings-nav--compact .settings-nav__item {
-  border-left: none;
+  border-radius: 0;
+  margin: 0;
+  width: auto;
   border-bottom: 2px solid transparent;
   padding: 6px var(--spacing-md);
+  transition:
+    color var(--transition-fast),
+    background-color var(--transition-fast),
+    border-color var(--transition-fast);
 }
 
 .settings-nav--compact .settings-nav__item--active {
   border-bottom-color: var(--accent-color);
-  background-color: var(--bg-active);
+  background-color: transparent;
 }
 
 .settings-nav--compact .settings-nav__label {

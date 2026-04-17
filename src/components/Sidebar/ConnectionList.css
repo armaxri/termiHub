@@ -54,10 +54,10 @@
   background: none;
   border: none;
   color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: var(--letter-spacing-label);
   cursor: pointer;
   padding: 0;
   min-width: 0;
@@ -152,12 +152,12 @@
 
 /* Context menu styling */
 .context-menu__content {
-  min-width: 160px;
+  min-width: 170px;
   background-color: var(--bg-dropdown);
   border: 1px solid var(--border-primary);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   padding: var(--spacing-xs) 0;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-dropdown);
   z-index: 100;
 }
 
@@ -165,19 +165,24 @@
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
-  width: 100%;
-  padding: var(--spacing-xs) var(--spacing-md);
+  padding: 5px var(--spacing-sm);
+  margin: 1px var(--spacing-xs);
+  width: calc(100% - 8px);
+  border-radius: var(--radius-md);
   font-size: var(--font-size-sm);
   color: var(--text-primary);
   text-align: left;
   cursor: pointer;
   outline: none;
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast);
 }
 
 .context-menu__item:hover,
 .context-menu__item[data-highlighted] {
-  background-color: var(--accent-color);
-  color: #ffffff;
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .context-menu__item--danger {
@@ -186,14 +191,14 @@
 
 .context-menu__item--danger:hover,
 .context-menu__item--danger[data-highlighted] {
-  background-color: var(--color-error);
-  color: #ffffff;
+  background-color: color-mix(in srgb, var(--color-error) 12%, var(--bg-hover));
+  color: var(--color-error);
 }
 
 .context-menu__separator {
   height: 1px;
-  background-color: var(--border-primary);
-  margin: var(--spacing-xs) 0;
+  background-color: var(--border-secondary);
+  margin: var(--spacing-xs) var(--spacing-sm);
 }
 
 .context-menu__indicator {
@@ -267,7 +272,7 @@
   border-radius: var(--radius-md);
   font-size: var(--font-size-sm);
   color: var(--text-primary);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-dropdown);
   white-space: nowrap;
 }
 

@@ -41,6 +41,7 @@
 
 .tab:hover {
   background-color: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .tab--active {
@@ -76,7 +77,8 @@
   opacity: 0;
   transition:
     opacity var(--transition-fast),
-    background-color var(--transition-fast);
+    background-color var(--transition-fast),
+    color var(--transition-fast);
 }
 
 .tab:hover .tab__close,
@@ -86,6 +88,7 @@
 
 .tab__close:hover {
   background-color: var(--bg-active);
+  color: var(--text-primary);
 }
 
 .tab__dirty-dot {
@@ -137,7 +140,7 @@
   color: var(--text-primary);
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-sm);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-dropdown);
   opacity: 0.9;
   pointer-events: none;
 }

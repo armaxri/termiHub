@@ -1,3 +1,6 @@
+/* UI font: Geist for premium, developer-tool typography */
+@import url("https://fonts.googleapis.com/css2?family=Geist:wght@100..900&display=swap");
+
 /* Bundled MesloLGS Nerd Font Mono for Powerline glyph support */
 
 @font-face {

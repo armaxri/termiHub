@@ -31,11 +31,30 @@
   align-items: center;
   justify-content: center;
   color: var(--activity-bar-inactive);
-  transition: color var(--transition-fast);
+  transition:
+    color var(--transition-fast),
+    background-color var(--transition-fast);
+}
+
+.activity-bar__item::before {
+  content: "";
+  position: absolute;
+  inset: 6px 5px;
+  border-radius: var(--radius-md);
+  background-color: transparent;
+  transition: background-color var(--transition-fast);
 }
 
 .activity-bar__item:hover {
   color: var(--activity-bar-active);
+}
+
+.activity-bar__item:hover::before {
+  background-color: rgba(255, 255, 255, 0.06);
+}
+
+.activity-bar__item:active::before {
+  background-color: rgba(255, 255, 255, 0.1);
 }
 
 .activity-bar__item--active {
@@ -49,11 +68,13 @@
   bottom: 0;
   width: 2px;
   background-color: var(--activity-bar-indicator);
+  border-radius: 0 2px 2px 0;
 }
 
 .activity-bar--right .activity-bar__indicator {
   left: auto;
   right: 0;
+  border-radius: 2px 0 0 2px;
 }
 
 /* Horizontal mode (top position) */
@@ -85,16 +106,17 @@
   bottom: 0;
   width: auto;
   height: 2px;
+  border-radius: 2px 2px 0 0;
 }
 
 /* Settings dropdown menu */
 .settings-menu__content {
-  min-width: 180px;
+  min-width: 190px;
   background-color: var(--bg-dropdown);
   border: 1px solid var(--border-primary);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   padding: var(--spacing-xs) 0;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-dropdown);
   z-index: 100;
 }
 
@@ -103,33 +125,43 @@
   align-items: center;
   gap: var(--spacing-sm);
   width: 100%;
-  padding: var(--spacing-xs) var(--spacing-md);
+  padding: 5px var(--spacing-sm);
+  margin: 1px var(--spacing-xs);
+  width: calc(100% - 8px);
   font-size: var(--font-size-sm);
   color: var(--text-primary);
   text-align: left;
   cursor: pointer;
   outline: none;
+  border-radius: var(--radius-md);
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast);
 }
 
 .settings-menu__item:hover,
 .settings-menu__item[data-highlighted] {
-  background-color: var(--accent-color);
-  color: #ffffff;
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.settings-menu__item:active {
+  background-color: var(--bg-active);
 }
 
 .settings-menu__separator {
   height: 1px;
-  background-color: var(--border-primary);
-  margin: var(--spacing-xs) 0;
+  background-color: var(--border-secondary);
+  margin: var(--spacing-xs) var(--spacing-sm);
 }
 
 .settings-menu__label {
   padding: var(--spacing-xs) var(--spacing-md);
   font-size: var(--font-size-xs);
-  color: var(--text-muted);
-  font-weight: 600;
+  color: var(--text-secondary);
+  font-weight: var(--font-weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: var(--letter-spacing-label);
 }
 
 .settings-menu__item-indicator {
@@ -150,6 +182,6 @@
   margin-left: auto;
   padding-left: var(--spacing-sm);
   font-size: var(--font-size-xs);
-  color: var(--text-muted);
+  color: var(--text-secondary);
   white-space: nowrap;
 }

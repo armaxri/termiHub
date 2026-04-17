@@ -1,8 +1,14 @@
 .rename-dialog__overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(8px) saturate(120%);
+  -webkit-backdrop-filter: blur(8px) saturate(120%);
   z-index: 1000;
+}
+
+.rename-dialog__overlay[data-state="open"] {
+  animation: dialog-overlay-show 200ms ease;
 }
 
 .rename-dialog__content {
@@ -14,11 +20,16 @@
   width: 320px;
   background: var(--bg-secondary);
   border: 1px solid var(--border-primary);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-xl);
   padding: var(--spacing-lg);
+  box-shadow: var(--shadow-overlay);
   display: flex;
   flex-direction: column;
   gap: var(--spacing-md);
+}
+
+.rename-dialog__content[data-state="open"] {
+  animation: dialog-content-show 280ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .rename-dialog__title {
@@ -30,19 +41,23 @@
 
 .rename-dialog__input {
   width: 100%;
-  height: 30px;
+  height: 32px;
   font-size: var(--font-size-sm);
   background: var(--bg-input);
   color: var(--text-primary);
   border: 1px solid var(--border-primary);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   padding: 0 var(--spacing-sm);
   outline: none;
   box-sizing: border-box;
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
 }
 
 .rename-dialog__input:focus {
   border-color: var(--focus-border);
+  box-shadow: var(--shadow-focus);
 }
 
 .rename-dialog__actions {
@@ -54,10 +69,13 @@
 .rename-dialog__btn {
   padding: var(--spacing-xs) var(--spacing-md);
   font-size: var(--font-size-sm);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   border: none;
   cursor: pointer;
-  transition: background-color var(--transition-fast);
+  transition:
+    background-color var(--transition-fast),
+    transform var(--transition-fast),
+    box-shadow var(--transition-fast);
 }
 
 .rename-dialog__btn--primary {
@@ -67,6 +85,12 @@
 
 .rename-dialog__btn--primary:hover {
   background-color: var(--accent-hover);
+  box-shadow: 0 2px 12px rgba(61, 125, 232, 0.35);
+}
+
+.rename-dialog__btn--primary:active {
+  transform: translateY(1px) scale(0.98);
+  box-shadow: none;
 }
 
 .rename-dialog__btn--secondary {
@@ -77,4 +101,8 @@
 .rename-dialog__btn--secondary:hover {
   background-color: var(--bg-hover);
   color: var(--text-primary);
+}
+
+.rename-dialog__btn--secondary:active {
+  transform: translateY(1px) scale(0.98);
 }
