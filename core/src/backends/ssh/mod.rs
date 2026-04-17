@@ -5,15 +5,16 @@
 //! used by both the desktop and agent crates.
 
 pub mod auth;
+pub mod connector;
 mod file_browser;
 mod monitoring;
 pub mod x11;
 
-use std::io::{Read, Write};
+use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::config::SshConfig;
 use crate::connection::{
@@ -26,10 +27,9 @@ use crate::monitoring::MonitoringProvider;
 use crate::session::shell::osc7_setup_command;
 use crate::session::ssh::validate_ssh_config;
 
-use self::auth::connect_and_authenticate;
+use self::connector::{Ssh2SshConnector, SshConnector};
 use self::file_browser::SftpFileBrowser;
 use self::monitoring::SshMonitoringProvider;
-use self::x11::X11Forwarder;
 
 /// Channel capacity for output data from the SSH reader thread.
 const OUTPUT_CHANNEL_CAPACITY: usize = 64;
@@ -46,6 +46,7 @@ const OUTPUT_CHANNEL_CAPACITY: usize = 64;
 ///    [`file_browser()`](ConnectionType::file_browser).
 /// 5. Call [`disconnect()`](ConnectionType::disconnect) to clean up.
 pub struct Ssh {
+    connector: Box<dyn SshConnector>,
     /// State is `None` when disconnected, `Some` when connected.
     state: Option<ConnectedState>,
     /// The output sender is stored so `subscribe_output()` can replace
@@ -60,16 +61,25 @@ pub struct Ssh {
 
 /// Internal state of an active SSH connection.
 struct ConnectedState {
-    session: Arc<ssh2::Session>,
-    channel: Arc<Mutex<ssh2::Channel>>,
+    write: Arc<dyn Fn(&[u8]) -> Result<(), SessionError> + Send + Sync>,
+    resize: Arc<dyn Fn(u16, u16) -> Result<(), SessionError> + Send + Sync>,
+    _send_eof: Arc<dyn Fn() -> Result<(), SessionError> + Send + Sync>,
+    close: Arc<dyn Fn() -> Result<(), SessionError> + Send + Sync>,
     alive: Arc<AtomicBool>,
-    _x11_forwarder: Option<X11Forwarder>,
+    /// Keeps opaque resources alive for the session lifetime (e.g. X11Forwarder).
+    _extensions: Vec<Box<dyn std::any::Any + Send>>,
 }
 
 impl Ssh {
-    /// Create a new disconnected `Ssh` instance.
+    /// Create a new disconnected `Ssh` instance backed by the real libssh2 connector.
     pub fn new() -> Self {
+        Self::with_connector(Box::new(Ssh2SshConnector))
+    }
+
+    /// Create a new disconnected `Ssh` instance with a custom connector (for testing).
+    pub fn with_connector(connector: Box<dyn SshConnector>) -> Self {
         Self {
+            connector,
             state: None,
             output_tx: Arc::new(Mutex::new(None)),
             monitoring_provider: None,
@@ -400,86 +410,18 @@ impl ConnectionType for Ssh {
             "Connecting SSH session"
         );
 
-        let session = connect_and_authenticate(&config)?;
-
         let alive = Arc::new(AtomicBool::new(true));
+        let handle = self.connector.open_shell(&config, alive.clone())?;
 
-        // Start X11 forwarding if enabled (before opening the shell channel).
-        let (x11_forwarder, x11_display, x11_cookie) = if config.enable_x11_forwarding {
-            match X11Forwarder::start(&config, alive.clone()) {
-                Ok((forwarder, display_num, cookie)) => {
-                    (Some(forwarder), Some(display_num), cookie)
-                }
-                Err(e) => {
-                    warn!("X11 forwarding setup failed, continuing without it: {}", e);
-                    (None, None, None)
-                }
-            }
-        } else {
-            (None, None, None)
-        };
-
-        debug!("Opening SSH shell channel");
-        let mut channel = session
-            .channel_session()
-            .map_err(|e| SessionError::SpawnFailed(format!("Channel open failed: {e}")))?;
-
-        // Try to set DISPLAY via setenv before PTY/shell.
-        let mut display_set_via_env = false;
-        if let Some(display_num) = x11_display {
-            let display_val = format!("localhost:{display_num}.0");
-            if channel.setenv("DISPLAY", &display_val).is_ok() {
-                display_set_via_env = true;
-            }
-        }
-
-        // Set user-specified environment variables.
-        for (key, value) in &config.env {
-            let _ = channel.setenv(key, value);
-        }
-
-        channel
-            .request_pty(
-                "xterm-256color",
-                None,
-                Some((config.cols as u32, config.rows as u32, 0, 0)),
-            )
-            .map_err(|e| SessionError::SpawnFailed(format!("PTY request failed: {e}")))?;
-
-        channel
-            .shell()
-            .map_err(|e| SessionError::SpawnFailed(format!("Shell request failed: {e}")))?;
-
-        // If setenv failed (most servers reject it), inject export DISPLAY after shell starts.
-        if let Some(display_num) = x11_display {
-            if !display_set_via_env {
-                let display_cmd = format!("export DISPLAY=localhost:{display_num}.0\n");
-                let _ = channel.write_all(display_cmd.as_bytes());
-            }
-            if let Some(ref cookie) = x11_cookie {
-                let xauth_cmd = format!(
-                    "xauth add localhost:{display_num} MIT-MAGIC-COOKIE-1 {cookie} 2>/dev/null\n",
-                );
-                let _ = channel.write_all(xauth_cmd.as_bytes());
-            }
-        }
-
-        // Inject OSC 7 PROMPT_COMMAND hook for CWD tracking when shell
-        // integration is enabled. Errors are non-fatal.
+        // Inject OSC 7 PROMPT_COMMAND hook for CWD tracking when enabled.
         if shell_integration {
             if let Some(setup) = osc7_setup_command("ssh") {
                 let cmd = format!("{setup}\n");
-                if let Err(e) = channel.write_all(cmd.as_bytes()) {
+                if let Err(e) = (handle.write)(cmd.as_bytes()) {
                     debug!("Failed to inject OSC 7 hook: {e}");
                 }
             }
         }
-
-        // Set non-blocking for reading.
-        session.set_blocking(false);
-
-        let channel = Arc::new(Mutex::new(channel));
-        let session = Arc::new(session);
 
         // Set up output channel.
         let (tx, _rx) = tokio::sync::mpsc::channel(OUTPUT_CHANNEL_CAPACITY);
@@ -491,21 +433,15 @@ impl ConnectionType for Ssh {
             *guard = Some(tx);
         }
 
-        // Spawn reader thread: bridges sync SSH reads to async tokio channel.
-        let channel_clone = channel.clone();
+        // Spawn reader thread: `handle.reader` blocks internally until data arrives
+        // or the `alive` flag is cleared, so no WouldBlock handling is needed here.
+        let mut reader = handle.reader;
         let alive_clone = alive.clone();
         let output_tx_clone = self.output_tx.clone();
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
-            while alive_clone.load(Ordering::SeqCst) {
-                let result = {
-                    let mut ch = match channel_clone.lock() {
-                        Ok(ch) => ch,
-                        Err(_) => break,
-                    };
-                    ch.read(&mut buf)
-                };
-                match result {
+            loop {
+                match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
                         let guard = output_tx_clone.lock().ok();
@@ -519,26 +455,23 @@ impl ConnectionType for Ssh {
                             break;
                         }
                     }
-                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        std::thread::sleep(std::time::Duration::from_millis(10));
-                    }
                     Err(_) => break,
                 }
             }
             alive_clone.store(false, Ordering::SeqCst);
         });
 
-        // Create monitoring provider.
+        // Create monitoring and file browser providers.
         self.monitoring_provider = Some(SshMonitoringProvider::new(config.clone()));
-
-        // Create file browser provider (SFTP).
         self.file_browser_provider = Some(SftpFileBrowser::new(config));
 
         self.state = Some(ConnectedState {
-            session,
-            channel,
+            write: handle.write,
+            resize: handle.resize,
+            _send_eof: handle.send_eof,
+            close: handle.close,
             alive,
-            _x11_forwarder: x11_forwarder,
+            _extensions: handle.extensions,
         });
 
         Ok(())
@@ -554,13 +487,7 @@ impl ConnectionType for Ssh {
 
         if let Some(state) = self.state.take() {
             state.alive.store(false, Ordering::SeqCst);
-            if let Ok(mut channel) = state.channel.lock() {
-                // Switch to blocking for clean shutdown.
-                state.session.set_blocking(true);
-                let _ = channel.send_eof();
-                let _ = channel.close();
-            }
-            // Clear the sender to signal the reader thread to stop.
+            let _ = (state.close)();
             if let Ok(mut guard) = self.output_tx.lock() {
                 *guard = None;
             }
@@ -580,18 +507,7 @@ impl ConnectionType for Ssh {
             .state
             .as_ref()
             .ok_or_else(|| SessionError::NotRunning("Not connected".to_string()))?;
-        // Acquire the channel lock BEFORE toggling blocking mode so the reader
-        // thread cannot start a blocking read while we hold the session flag.
-        let mut channel = state.channel.lock().map_err(|e| {
-            SessionError::Io(std::io::Error::other(format!(
-                "Failed to lock channel: {e}"
-            )))
-        })?;
-        state.session.set_blocking(true);
-        let result = channel.write_all(data);
-        state.session.set_blocking(false);
-        drop(channel);
-        result.map_err(SessionError::Io)
+        (state.write)(data)
     }
 
     fn resize(&self, cols: u16, rows: u16) -> Result<(), SessionError> {
@@ -599,17 +515,7 @@ impl ConnectionType for Ssh {
             .state
             .as_ref()
             .ok_or_else(|| SessionError::NotRunning("Not connected".to_string()))?;
-        let mut channel = state.channel.lock().map_err(|e| {
-            SessionError::Io(std::io::Error::other(format!(
-                "Failed to lock channel: {e}"
-            )))
-        })?;
-        state.session.set_blocking(true);
-        let result = channel.request_pty_size(cols as u32, rows as u32, None, None);
-        state.session.set_blocking(false);
-        drop(channel);
-        result
-            .map_err(|e| SessionError::Io(std::io::Error::other(format!("PTY resize failed: {e}"))))
+        (state.resize)(cols, rows)
     }
 
     fn subscribe_output(&self) -> OutputReceiver {
@@ -637,6 +543,89 @@ impl ConnectionType for Ssh {
 mod tests {
     use super::*;
     use crate::connection::validate_settings;
+
+    // ── MockSshConnector ───────────────────────────────────────────────
+
+    use connector::{SshShellHandle, SshConnector};
+    use std::time::Duration;
+
+    struct MockSshConnector {
+        should_fail: bool,
+        write_log: Arc<Mutex<Vec<Vec<u8>>>>,
+        resize_log: Arc<Mutex<Vec<(u16, u16)>>>,
+    }
+
+    impl MockSshConnector {
+        fn new() -> Self {
+            Self {
+                should_fail: false,
+                write_log: Arc::new(Mutex::new(Vec::new())),
+                resize_log: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        fn failing() -> Self {
+            Self {
+                should_fail: true,
+                write_log: Arc::new(Mutex::new(Vec::new())),
+                resize_log: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+    }
+
+    impl SshConnector for MockSshConnector {
+        fn open_shell(
+            &self,
+            _config: &SshConfig,
+            alive: Arc<AtomicBool>,
+        ) -> Result<SshShellHandle, SessionError> {
+            if self.should_fail {
+                return Err(SessionError::SpawnFailed(
+                    "mock: connection refused".to_string(),
+                ));
+            }
+            let write_log = self.write_log.clone();
+            let resize_log = self.resize_log.clone();
+            let alive_for_reader = alive.clone();
+            let alive_for_close = alive.clone();
+            Ok(SshShellHandle {
+                reader: Box::new(MockReader {
+                    alive: alive_for_reader,
+                }),
+                write: Arc::new(move |data: &[u8]| {
+                    write_log.lock().unwrap().push(data.to_vec());
+                    Ok(())
+                }),
+                resize: Arc::new(move |cols, rows| {
+                    resize_log.lock().unwrap().push((cols, rows));
+                    Ok(())
+                }),
+                set_blocking: Arc::new(|_| {}),
+                send_eof: Arc::new(|| Ok(())),
+                close: Arc::new(move || {
+                    alive_for_close.store(false, Ordering::SeqCst);
+                    Ok(())
+                }),
+                extensions: Vec::new(),
+            })
+        }
+    }
+
+    /// Blocks until `alive` is cleared, then returns EOF — mirrors `Ssh2SshShellReader`.
+    struct MockReader {
+        alive: Arc<AtomicBool>,
+    }
+
+    impl Read for MockReader {
+        fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+            while self.alive.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Ok(0)
+        }
+    }
+
+    // ── Original unit tests (no real connection) ───────────────────────
 
     #[test]
     fn type_id() {
@@ -1037,7 +1026,7 @@ mod tests {
         assert_eq!(config.port, 2222);
     }
 
-    // --- Async tests ---
+    // --- Async tests (validation only — no real connection) ---
 
     #[tokio::test]
     async fn connect_empty_host_fails() {
@@ -1123,5 +1112,144 @@ mod tests {
         assert_eq!(config.port, 22);
         assert_eq!(config.username, "");
         assert!(config.env.is_empty());
+    }
+
+    // ── DI unit tests (MockSshConnector — no real TCP/SSH needed) ─────
+
+    fn mock_settings() -> serde_json::Value {
+        serde_json::json!({
+            "host": "test.example.com",
+            "port": 22,
+            "username": "admin",
+            "authMethod": "password",
+            "shellIntegration": false,
+        })
+    }
+
+    #[tokio::test]
+    async fn connect_with_mock_succeeds() {
+        let mut ssh = Ssh::with_connector(Box::new(MockSshConnector::new()));
+        ssh.connect(mock_settings()).await.unwrap();
+        assert!(ssh.is_connected());
+        ssh.disconnect().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn connect_failure_propagates_as_error() {
+        let mut ssh = Ssh::with_connector(Box::new(MockSshConnector::failing()));
+        let result = ssh.connect(mock_settings()).await;
+        assert!(result.is_err(), "expected connection failure");
+        assert!(!ssh.is_connected());
+    }
+
+    #[tokio::test]
+    async fn connect_already_connected_fails_with_mock() {
+        let mut ssh = Ssh::with_connector(Box::new(MockSshConnector::new()));
+        ssh.connect(mock_settings()).await.unwrap();
+        let result = ssh.connect(mock_settings()).await;
+        assert!(result.is_err(), "second connect should fail");
+        ssh.disconnect().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn write_delegated_to_connector() {
+        let connector = MockSshConnector::new();
+        let write_log = connector.write_log.clone();
+        let mut ssh = Ssh::with_connector(Box::new(connector));
+        ssh.connect(mock_settings()).await.unwrap();
+        ssh.write(b"hello\n").unwrap();
+        let log = write_log.lock().unwrap();
+        assert!(
+            log.iter().any(|d| d == b"hello\n"),
+            "expected write to be forwarded to connector"
+        );
+        drop(log);
+        ssh.disconnect().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn resize_delegated_to_connector() {
+        let connector = MockSshConnector::new();
+        let resize_log = connector.resize_log.clone();
+        let mut ssh = Ssh::with_connector(Box::new(connector));
+        ssh.connect(mock_settings()).await.unwrap();
+        ssh.resize(120, 40).unwrap();
+        let log = resize_log.lock().unwrap();
+        assert!(
+            log.contains(&(120, 40)),
+            "expected resize to be forwarded to connector"
+        );
+        drop(log);
+        ssh.disconnect().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn disconnect_clears_alive_flag() {
+        let mut ssh = Ssh::with_connector(Box::new(MockSshConnector::new()));
+        ssh.connect(mock_settings()).await.unwrap();
+        assert!(ssh.is_connected());
+        ssh.disconnect().await.unwrap();
+        assert!(!ssh.is_connected());
+    }
+
+    #[tokio::test]
+    async fn disconnect_when_not_connected_is_noop_with_mock() {
+        let mut ssh = Ssh::with_connector(Box::new(MockSshConnector::new()));
+        ssh.disconnect().await.expect("disconnect on unconnected should not fail");
+        assert!(!ssh.is_connected());
+    }
+
+    #[tokio::test]
+    async fn write_when_disconnected_errors_with_mock() {
+        let ssh = Ssh::with_connector(Box::new(MockSshConnector::new()));
+        let result = ssh.write(b"data");
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn resize_when_disconnected_errors_with_mock() {
+        let ssh = Ssh::with_connector(Box::new(MockSshConnector::new()));
+        let result = ssh.resize(80, 24);
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn osc7_injected_when_shell_integration_enabled() {
+        if osc7_setup_command("ssh").is_none() {
+            return; // platform does not provide an OSC7 command
+        }
+        let connector = MockSshConnector::new();
+        let write_log = connector.write_log.clone();
+        let mut ssh = Ssh::with_connector(Box::new(connector));
+        let settings = serde_json::json!({
+            "host": "test.example.com",
+            "port": 22,
+            "username": "admin",
+            "authMethod": "password",
+            "shellIntegration": true,
+        });
+        ssh.connect(settings).await.unwrap();
+        let log = write_log.lock().unwrap();
+        assert!(
+            !log.is_empty(),
+            "expected OSC7 setup to be written when shell integration is enabled"
+        );
+        drop(log);
+        ssh.disconnect().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn osc7_not_injected_when_shell_integration_disabled() {
+        let connector = MockSshConnector::new();
+        let write_log = connector.write_log.clone();
+        let mut ssh = Ssh::with_connector(Box::new(connector));
+        ssh.connect(mock_settings()).await.unwrap(); // shellIntegration: false
+        let log = write_log.lock().unwrap();
+        assert!(
+            log.is_empty(),
+            "expected no writes when shell integration is disabled"
+        );
+        drop(log);
+        ssh.disconnect().await.unwrap();
     }
 }
