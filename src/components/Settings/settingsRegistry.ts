@@ -6,7 +6,8 @@ export type SettingsCategory =
   | "security"
   | "external-files"
   | "editor"
-  | "portable";
+  | "portable"
+  | "updates";
 
 export interface CategoryDefinition {
   id: SettingsCategory;
@@ -30,6 +31,7 @@ export const CATEGORIES: CategoryDefinition[] = [
   { id: "external-files", label: "External Files" },
   { id: "editor", label: "Editor" },
   { id: "portable", label: "Portable Mode" },
+  { id: "updates", label: "Updates" },
 ];
 
 export const SETTINGS_REGISTRY: SettingDefinition[] = [
@@ -205,6 +207,20 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     description: "Export or import configuration between installed and portable mode",
     category: "portable",
     keywords: ["export", "import", "migrate", "copy", "transfer", "backup", "portable"],
+  },
+  {
+    id: "updateStatus",
+    label: "Update Status",
+    description: "Check whether a new version of termiHub is available",
+    category: "updates",
+    keywords: ["update", "version", "upgrade", "release", "check", "new version"],
+  },
+  {
+    id: "updateAutoCheck",
+    label: "Auto-Check for Updates",
+    description: "Automatically check for new releases on startup",
+    category: "updates",
+    keywords: ["update", "auto", "automatic", "startup", "check", "notify"],
   },
 ];
 

@@ -9,6 +9,7 @@ import { SystemStats } from "@/types/monitoring";
 import { resolveFeatureEnabled } from "@/utils/featureFlags";
 import { CredentialStoreIndicator } from "@/components/CredentialStoreIndicator";
 import { PortableBadge } from "./PortableBadge";
+import { UpdateIndicator } from "./UpdateIndicator";
 import "./StatusBar.css";
 
 const INDENT_SIZES = [1, 2, 4, 8] as const;
@@ -82,6 +83,7 @@ export function StatusBar() {
         )}
       </div>
       <div className="status-bar__section status-bar__section--right">
+        <UpdateIndicator />
         {editorStatus && (
           <>
             <span className="status-bar__item">
