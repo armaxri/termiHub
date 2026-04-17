@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Update checker (Variant A — notify only): termiHub now checks the GitHub Releases API on startup (with a 5-second delay) and every 24 hours for new versions. When a newer release is found, an amber dot appears on the version chip in the status bar and a non-blocking notification popup offers to open the GitHub downloads page. Security releases (marked `<!-- security -->` in the release notes) show a red dot and cannot be silently skipped. Users can skip a specific version, clear a skipped version, or disable automatic checks entirely in **Settings → Updates**.
 - Connection settings: a **Shell Integration** toggle is now available for local shell, SSH, and WSL connections (enabled by default). Disabling it skips all OSC injection at startup.
 - Connection settings: boolean fields now support an optional **help icon (?)** that opens an explanation dialog. The Shell Integration toggle uses this to explain what OSC 7 tracking is and why it's useful.
 - Tests: `core/tests/ssh_banner.rs` — two new Rust integration tests (SSH-BANNER-01, SSH-BANNER-02) for the `ssh-banner` Docker container, verifying that the pre-auth banner text is delivered and that standard SSH servers send no banner
