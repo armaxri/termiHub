@@ -60,7 +60,7 @@ pub struct LayoutConfig {
 }
 
 /// Persisted state for the update checker.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct UpdateSettings {
     /// Whether to automatically check for updates on startup and every 24 hours.
@@ -73,6 +73,16 @@ pub struct UpdateSettings {
     /// newer version is released or the user manually clears it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skipped_version: Option<String>,
+}
+
+impl Default for UpdateSettings {
+    fn default() -> Self {
+        Self {
+            auto_check: true,
+            last_check_time: None,
+            skipped_version: None,
+        }
+    }
 }
 
 /// Application-wide settings persisted to disk.
@@ -690,5 +700,59 @@ mod tests {
         // Fields left as None should not appear in JSON
         assert!(!json.contains("cursorBlink"));
         assert!(!json.contains("scrollbackBuffer"));
+    }
+
+    #[test]
+    fn update_settings_default_auto_check_is_true() {
+        let settings = UpdateSettings::default();
+        assert!(settings.auto_check, "auto_check must default to true");
+        assert!(settings.last_check_time.is_none());
+        assert!(settings.skipped_version.is_none());
+    }
+
+    #[test]
+    fn app_settings_default_update_auto_check_is_true() {
+        let settings = AppSettings::default();
+        assert!(
+            settings.updates.auto_check,
+            "AppSettings default must have auto_check = true"
+        );
+    }
+
+    #[test]
+    fn update_settings_deserializes_missing_auto_check_as_true() {
+        let json = r#"{"version":"1","externalConnectionFiles":[]}"#;
+        let settings: AppSettings = serde_json::from_str(json).unwrap();
+        assert!(settings.updates.auto_check);
+    }
+
+    #[test]
+    fn update_settings_respects_explicit_false() {
+        let json = r#"{"version":"1","externalConnectionFiles":[],"updates":{"autoCheck":false}}"#;
+        let settings: AppSettings = serde_json::from_str(json).unwrap();
+        assert!(!settings.updates.auto_check);
+    }
+
+    #[test]
+    fn update_settings_round_trip() {
+        let settings = AppSettings {
+            updates: UpdateSettings {
+                auto_check: false,
+                last_check_time: Some("2026-04-17T14:32:00Z".to_string()),
+                skipped_version: Some("0.2.0".to_string()),
+            },
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
+        assert!(!deserialized.updates.auto_check);
+        assert_eq!(
+            deserialized.updates.last_check_time.as_deref(),
+            Some("2026-04-17T14:32:00Z")
+        );
+        assert_eq!(
+            deserialized.updates.skipped_version.as_deref(),
+            Some("0.2.0")
+        );
     }
 }
