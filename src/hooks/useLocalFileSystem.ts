@@ -93,6 +93,19 @@ export function useLocalFileSystem() {
     await vscodeOpenLocal(path);
   }, []);
 
+  const uploadFileFromPath = useCallback(
+    async (localPath: string) => {
+      const parts = localPath.replace(/\\/g, "/").split("/");
+      const fileName = parts[parts.length - 1] || "file";
+      const base = currentPath.endsWith("/") ? currentPath.slice(0, -1) : currentPath;
+      const destPath = base ? `${base}/${fileName}` : `/${fileName}`;
+      if (localPath === destPath) return;
+      await localCopyFile(localPath, destPath, false);
+      refreshLocal();
+    },
+    [currentPath, refreshLocal]
+  );
+
   const downloadFile = useCallback(async (filePath: string, fileName: string) => {
     const localPath = await save({ title: "Save file as...", defaultPath: fileName });
     if (!localPath) return;
@@ -172,6 +185,7 @@ export function useLocalFileSystem() {
     uploadFile: async () => {
       /* no-op: files are already local */
     },
+    uploadFileFromPath,
     createDirectory,
     createFile,
     deleteEntry,

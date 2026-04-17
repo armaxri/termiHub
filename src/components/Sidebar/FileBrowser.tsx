@@ -1,4 +1,4 @@
-import { useCallback, useState, useEffect } from "react";
+import { useCallback, useState, useEffect, useRef } from "react";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
@@ -38,6 +38,7 @@ import type { ConnectionTypeInfo } from "@/services/api";
 import { getWslDistroName, wslToWindowsPath, windowsToWslPath } from "@/utils/shell-detection";
 import { formatBytes } from "@/utils/formatters";
 import { resolveFeatureEnabled } from "@/utils/featureFlags";
+import { useOsFileDrop } from "@/hooks/useOsFileDrop";
 import "./FileBrowser.css";
 
 interface FileRowProps {
@@ -666,6 +667,7 @@ export function FileBrowser() {
     refresh,
     downloadFile,
     uploadFile,
+    uploadFileFromPath,
     createDirectory,
     createFile,
     deleteEntry,
@@ -676,6 +678,19 @@ export function FileBrowser() {
     pasteEntry,
     mode,
   } = useFileBrowser();
+
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const handleOsDrop = useCallback(
+    async (paths: string[]) => {
+      for (const path of paths) {
+        await uploadFileFromPath(path);
+      }
+    },
+    [uploadFileFromPath]
+  );
+
+  const { isDragOver } = useOsFileDrop(containerRef, handleOsDrop);
 
   const disconnectSftp = useAppStore((s) => s.disconnectSftp);
   const vscodeAvailable = useAppStore((s) => s.vscodeAvailable);
@@ -938,7 +953,16 @@ export function FileBrowser() {
   const selectedEntries = sortedEntries.filter((e) => selectedPaths.has(e.path));
 
   return (
-    <div className="file-browser">
+    <div
+      className={`file-browser${isDragOver ? " file-browser--drag-over" : ""}`}
+      ref={containerRef}
+    >
+      {isDragOver && (
+        <div className="file-browser__drag-overlay">
+          <Upload size={24} />
+          <span>{mode === "local" ? "Drop to copy here" : "Drop to upload"}</span>
+        </div>
+      )}
       <div className="file-browser__toolbar">
         <span
           className="file-browser__path"

@@ -68,6 +68,31 @@ describe("useFileSystem (SFTP) — navigateUp path logic", () => {
   });
 });
 
+// Pure logic tests for uploadFileFromPath remote path building
+function buildSftpRemotePath(currentPath: string, localPath: string): string {
+  const parts = localPath.replace(/\\/g, "/").split("/");
+  const fileName = parts[parts.length - 1] || "upload";
+  return currentPath === "/" ? `/${fileName}` : `${currentPath}/${fileName}`;
+}
+
+describe("useFileSystem (SFTP) — uploadFileFromPath path logic", () => {
+  it("builds remote path at root", () => {
+    expect(buildSftpRemotePath("/", "/home/user/report.pdf")).toBe("/report.pdf");
+  });
+
+  it("builds remote path in subdirectory", () => {
+    expect(buildSftpRemotePath("/uploads", "/home/user/image.png")).toBe("/uploads/image.png");
+  });
+
+  it("handles Windows-style backslash local paths", () => {
+    expect(buildSftpRemotePath("/remote", "C:\\Users\\Alice\\doc.txt")).toBe("/remote/doc.txt");
+  });
+
+  it("falls back to 'upload' when no filename segment", () => {
+    expect(buildSftpRemotePath("/remote", "")).toBe("/remote/upload");
+  });
+});
+
 import { useAppStore } from "@/store/appStore";
 
 describe("useFileSystem (SFTP) — store integration", () => {

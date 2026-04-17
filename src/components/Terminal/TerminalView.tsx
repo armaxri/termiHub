@@ -1,7 +1,7 @@
-import { useEffect, useMemo } from "react";
-import { Plus, Columns2, Rows2, X, PanelLeft } from "lucide-react";
+import { useEffect, useMemo, useRef, useCallback } from "react";
+import { Plus, Columns2, Rows2, X, PanelLeft, FileInput } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
-import { useAppStore } from "@/store/appStore";
+import { useAppStore, getActiveTab } from "@/store/appStore";
 import { TerminalTab } from "@/types/terminal";
 import { getAllLeaves } from "@/utils/panelTree";
 import { TerminalPortalProvider } from "./TerminalRegistry";
@@ -10,7 +10,17 @@ import { Terminal } from "./Terminal";
 import { TabGroupChips } from "./TabGroupChips";
 import { SplitView } from "@/components/SplitView";
 import { terminalDispatcher } from "@/services/events";
+import { sendInput } from "@/services/api";
+import { useOsFileDrop } from "@/hooks/useOsFileDrop";
 import "./TerminalView.css";
+
+/** Shell-safe quoting for a file path dropped onto a terminal. */
+function quotePath(path: string): string {
+  if (/^[A-Za-z]:/.test(path) || path.includes("\\")) {
+    return `"${path.replace(/"/g, '\\"')}"`;
+  }
+  return `'${path.replace(/'/g, "'\\''")}'`;
+}
 
 export function TerminalView() {
   // Initialize the singleton event dispatcher once.
@@ -67,6 +77,20 @@ export function TerminalView() {
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
   const isMac = navigator.platform.toUpperCase().includes("MAC");
   const sidebarToggleTitle = `Toggle Sidebar (${isMac ? "Cmd" : "Ctrl"}+B)`;
+
+  const terminalContentRef = useRef<HTMLDivElement>(null);
+  const activeSessionId = useAppStore((s) => getActiveTab(s)?.sessionId ?? null);
+
+  const handleTerminalDrop = useCallback(
+    async (paths: string[]) => {
+      if (!activeSessionId || paths.length === 0) return;
+      const text = paths.map(quotePath).join(" ");
+      await sendInput(activeSessionId, text);
+    },
+    [activeSessionId]
+  );
+
+  const { isDragOver: isTerminalDragOver } = useOsFileDrop(terminalContentRef, handleTerminalDrop);
 
   const allLeaves = getAllLeaves(rootPanel);
 
@@ -139,7 +163,13 @@ export function TerminalView() {
             </button>
           </div>
         </div>
-        <div className="terminal-view__content">
+        <div className="terminal-view__content" ref={terminalContentRef}>
+          {isTerminalDragOver && activeSessionId && (
+            <div className="terminal-view__drag-overlay">
+              <FileInput size={24} />
+              <span>Drop to insert path</span>
+            </div>
+          )}
           <TerminalHost />
           <SplitView />
         </div>

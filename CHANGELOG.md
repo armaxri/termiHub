@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- File browser: drag files from OS file managers (Finder, Explorer, etc.) directly onto the file browser panel to upload them (SFTP/session) or copy them (local mode). A dashed overlay confirms the drop target.
+- Terminal: drag files from OS file managers onto any terminal panel to insert their shell-safe quoted path(s) at the cursor.
+
 ### Changed (internal)
 
 - DI testing infrastructure: extracted `LocalShellSpawner`, `SshConnector`, `SessionManagerApi`, `DaemonLauncher`, `ConnectionStoreApi`, `MonitoringManagerApi`, `EventEmitter`, and `AgentRpcClient` traits across `core`, `agent`, and `src-tauri`. Concrete types are unchanged; tests can now inject mocks without real PTY/SSH/Tauri runtimes. Tauri agent commands now depend on `Arc<dyn AgentRpcClient>` in state.
