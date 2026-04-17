@@ -6,10 +6,10 @@ use tracing::info;
 
 use crate::handler::dispatch::Dispatcher;
 use crate::io::transport::run_transport_loop;
-use crate::monitoring::MonitoringManager;
+use crate::monitoring::{MonitoringManager, MonitoringManagerApi};
 use crate::protocol::messages::JsonRpcNotification;
 use crate::registry::build_registry;
-use crate::session::definitions::ConnectionStore;
+use crate::session::definitions::{ConnectionStore, ConnectionStoreApi};
 use crate::session::manager::SessionManager;
 
 /// Run the NDJSON stdio transport loop.
@@ -38,8 +38,8 @@ pub async fn run_stdio_loop(shutdown: CancellationToken) -> anyhow::Result<()> {
 
     let mut dispatcher = Dispatcher::new(
         session_manager.clone(),
-        connection_store,
-        monitoring_manager.clone(),
+        connection_store.clone() as Arc<dyn ConnectionStoreApi>,
+        monitoring_manager.clone() as Arc<dyn MonitoringManagerApi>,
     );
 
     let stdin = tokio::io::stdin();

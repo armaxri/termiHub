@@ -92,6 +92,57 @@ impl Folder {
     }
 }
 
+// ── ConnectionStoreApi trait ───────────────────────────────────────
+
+/// Abstract interface over the connection store.
+///
+/// Implemented by [`ConnectionStore`] in production and by mock structs in
+/// tests. [`crate::handler::dispatch::Dispatcher`] depends on this trait so
+/// it can be tested without touching the filesystem.
+#[async_trait::async_trait]
+pub trait ConnectionStoreApi: Send + Sync + 'static {
+    /// Return a connection snapshot by ID.
+    async fn get(&self, id: &str) -> Option<ConnectionSnapshot>;
+
+    /// Create a new connection and return its snapshot.
+    async fn create(&self, conn: Connection) -> ConnectionSnapshot;
+
+    /// Update an existing connection's fields. Returns `None` if not found.
+    #[allow(clippy::too_many_arguments)]
+    async fn update(
+        &self,
+        id: &str,
+        name: Option<String>,
+        session_type: Option<String>,
+        config: Option<serde_json::Value>,
+        persistent: Option<bool>,
+        folder_id: Option<Option<String>>,
+        terminal_options: Option<Option<serde_json::Value>>,
+        icon: Option<Option<String>>,
+    ) -> Option<ConnectionSnapshot>;
+
+    /// List all connections and folders.
+    async fn list(&self) -> (Vec<ConnectionSnapshot>, Vec<FolderSnapshot>);
+
+    /// Delete a connection by ID. Returns `true` if found and removed.
+    async fn delete(&self, id: &str) -> bool;
+
+    /// Create a new folder and return its snapshot.
+    async fn create_folder(&self, folder: Folder) -> FolderSnapshot;
+
+    /// Update an existing folder's fields. Returns `None` if not found.
+    async fn update_folder(
+        &self,
+        id: &str,
+        name: Option<String>,
+        parent_id: Option<Option<String>>,
+        is_expanded: Option<bool>,
+    ) -> Option<FolderSnapshot>;
+
+    /// Delete a folder by ID. Returns `true` if found and removed.
+    async fn delete_folder(&self, id: &str) -> bool;
+}
+
 /// Persistent storage format for connections.json.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StorageFormat {
@@ -405,6 +456,60 @@ impl ConnectionStore {
                 warn!("Failed to serialize connections: {}", e);
             }
         }
+    }
+}
+
+// ── ConnectionStoreApi impl ────────────────────────────────────────
+
+#[async_trait::async_trait]
+impl ConnectionStoreApi for ConnectionStore {
+    async fn get(&self, id: &str) -> Option<ConnectionSnapshot> {
+        ConnectionStore::get(self, id).await
+    }
+
+    async fn create(&self, conn: Connection) -> ConnectionSnapshot {
+        ConnectionStore::create(self, conn).await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn update(
+        &self,
+        id: &str,
+        name: Option<String>,
+        session_type: Option<String>,
+        config: Option<serde_json::Value>,
+        persistent: Option<bool>,
+        folder_id: Option<Option<String>>,
+        terminal_options: Option<Option<serde_json::Value>>,
+        icon: Option<Option<String>>,
+    ) -> Option<ConnectionSnapshot> {
+        ConnectionStore::update(self, id, name, session_type, config, persistent, folder_id, terminal_options, icon).await
+    }
+
+    async fn list(&self) -> (Vec<ConnectionSnapshot>, Vec<FolderSnapshot>) {
+        ConnectionStore::list(self).await
+    }
+
+    async fn delete(&self, id: &str) -> bool {
+        ConnectionStore::delete(self, id).await
+    }
+
+    async fn create_folder(&self, folder: Folder) -> FolderSnapshot {
+        ConnectionStore::create_folder(self, folder).await
+    }
+
+    async fn update_folder(
+        &self,
+        id: &str,
+        name: Option<String>,
+        parent_id: Option<Option<String>>,
+        is_expanded: Option<bool>,
+    ) -> Option<FolderSnapshot> {
+        ConnectionStore::update_folder(self, id, name, parent_id, is_expanded).await
+    }
+
+    async fn delete_folder(&self, id: &str) -> bool {
+        ConnectionStore::delete_folder(self, id).await
     }
 }
 
