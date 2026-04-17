@@ -1117,7 +1117,9 @@ export const useAppStore = create<AppState>((set, get) => {
 
         // Determine tab title
         let title = "New Connection";
-        if (connectionId !== "new") {
+        if (connectionId === "new-remote-agent") {
+          title = "New Remote Agent";
+        } else if (connectionId !== "new") {
           const conn = state.connections.find((c) => c.id === connectionId);
           if (conn) {
             title = `Edit: ${conn.name}`;
