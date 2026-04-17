@@ -59,12 +59,16 @@ pub struct Ssh {
     file_browser_provider: Option<SftpFileBrowser>,
 }
 
+type WriteFn = Arc<dyn Fn(&[u8]) -> Result<(), SessionError> + Send + Sync>;
+type ResizeFn = Arc<dyn Fn(u16, u16) -> Result<(), SessionError> + Send + Sync>;
+type IoFn = Arc<dyn Fn() -> Result<(), SessionError> + Send + Sync>;
+
 /// Internal state of an active SSH connection.
 struct ConnectedState {
-    write: Arc<dyn Fn(&[u8]) -> Result<(), SessionError> + Send + Sync>,
-    resize: Arc<dyn Fn(u16, u16) -> Result<(), SessionError> + Send + Sync>,
-    _send_eof: Arc<dyn Fn() -> Result<(), SessionError> + Send + Sync>,
-    close: Arc<dyn Fn() -> Result<(), SessionError> + Send + Sync>,
+    write: WriteFn,
+    resize: ResizeFn,
+    _send_eof: IoFn,
+    close: IoFn,
     alive: Arc<AtomicBool>,
     /// Keeps opaque resources alive for the session lifetime (e.g. X11Forwarder).
     _extensions: Vec<Box<dyn std::any::Any + Send>>,
@@ -546,7 +550,7 @@ mod tests {
 
     // ── MockSshConnector ───────────────────────────────────────────────
 
-    use connector::{SshShellHandle, SshConnector};
+    use connector::{SshConnector, SshShellHandle};
     use std::time::Duration;
 
     struct MockSshConnector {
@@ -1158,12 +1162,13 @@ mod tests {
         let mut ssh = Ssh::with_connector(Box::new(connector));
         ssh.connect(mock_settings()).await.unwrap();
         ssh.write(b"hello\n").unwrap();
-        let log = write_log.lock().unwrap();
-        assert!(
-            log.iter().any(|d| d == b"hello\n"),
-            "expected write to be forwarded to connector"
-        );
-        drop(log);
+        {
+            let log = write_log.lock().unwrap();
+            assert!(
+                log.iter().any(|d| d == b"hello\n"),
+                "expected write to be forwarded to connector"
+            );
+        }
         ssh.disconnect().await.unwrap();
     }
 
@@ -1174,12 +1179,13 @@ mod tests {
         let mut ssh = Ssh::with_connector(Box::new(connector));
         ssh.connect(mock_settings()).await.unwrap();
         ssh.resize(120, 40).unwrap();
-        let log = resize_log.lock().unwrap();
-        assert!(
-            log.contains(&(120, 40)),
-            "expected resize to be forwarded to connector"
-        );
-        drop(log);
+        {
+            let log = resize_log.lock().unwrap();
+            assert!(
+                log.contains(&(120, 40)),
+                "expected resize to be forwarded to connector"
+            );
+        }
         ssh.disconnect().await.unwrap();
     }
 
@@ -1195,7 +1201,9 @@ mod tests {
     #[tokio::test]
     async fn disconnect_when_not_connected_is_noop_with_mock() {
         let mut ssh = Ssh::with_connector(Box::new(MockSshConnector::new()));
-        ssh.disconnect().await.expect("disconnect on unconnected should not fail");
+        ssh.disconnect()
+            .await
+            .expect("disconnect on unconnected should not fail");
         assert!(!ssh.is_connected());
     }
 
@@ -1229,12 +1237,13 @@ mod tests {
             "shellIntegration": true,
         });
         ssh.connect(settings).await.unwrap();
-        let log = write_log.lock().unwrap();
-        assert!(
-            !log.is_empty(),
-            "expected OSC7 setup to be written when shell integration is enabled"
-        );
-        drop(log);
+        {
+            let log = write_log.lock().unwrap();
+            assert!(
+                !log.is_empty(),
+                "expected OSC7 setup to be written when shell integration is enabled"
+            );
+        }
         ssh.disconnect().await.unwrap();
     }
 
@@ -1244,12 +1253,13 @@ mod tests {
         let write_log = connector.write_log.clone();
         let mut ssh = Ssh::with_connector(Box::new(connector));
         ssh.connect(mock_settings()).await.unwrap(); // shellIntegration: false
-        let log = write_log.lock().unwrap();
-        assert!(
-            log.is_empty(),
-            "expected no writes when shell integration is disabled"
-        );
-        drop(log);
+        {
+            let log = write_log.lock().unwrap();
+            assert!(
+                log.is_empty(),
+                "expected no writes when shell integration is disabled"
+            );
+        }
         ssh.disconnect().await.unwrap();
     }
 }

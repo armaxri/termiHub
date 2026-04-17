@@ -15,8 +15,8 @@ use tracing::{info, warn};
 use crate::io::transport::NotificationSender;
 use crate::session::types::{SessionBackend, SessionInfo, SessionSnapshot, SessionStatus};
 use crate::transport::JsonRpcOutputSink;
-use termihub_core::session::traits::OutputSink;
 use termihub_core::connection::{ConnectionTypeRegistry, OutputReceiver};
+use termihub_core::session::traits::OutputSink;
 
 #[cfg(unix)]
 use crate::daemon::client::DaemonClient;
@@ -156,8 +156,8 @@ impl DaemonLauncher for SystemDaemonLauncher {
             .map_err(|e| anyhow::anyhow!("Failed to spawn daemon: {e}"))?;
 
         DaemonClient::wait_for_socket(&socket_path).await?;
-        let client = DaemonClient::connect(session_id.to_string(), socket_path, notification_tx)
-            .await?;
+        let client =
+            DaemonClient::connect(session_id.to_string(), socket_path, notification_tx).await?;
 
         info!("Daemon spawned for session {session_id} (type={type_id})");
         Ok(SessionBackend::Daemon(client))
@@ -878,7 +878,9 @@ mod tests {
             }
         }
 
-        fn make_manager_with_mock(launcher: MockDaemonLauncher) -> (SessionManager, Arc<Mutex<Vec<(String, String)>>>) {
+        type LaunchedLog = Arc<Mutex<Vec<(String, String)>>>;
+
+        fn make_manager_with_mock(launcher: MockDaemonLauncher) -> (SessionManager, LaunchedLog) {
             let launched = launcher.launched.clone();
             let mgr = SessionManager::with_launcher(
                 test_notification_tx(),
@@ -892,12 +894,21 @@ mod tests {
         async fn create_persistent_session_calls_launcher() {
             let (mgr, launched) = make_manager_with_mock(MockDaemonLauncher::new());
             // "ssh" is a persistent type (Capabilities::persistent = true)
-            let result = mgr.create("ssh", "test SSH".to_string(), serde_json::json!({
-                "host": "example.com",
-                "username": "user",
-                "authMethod": "password",
-            })).await;
-            assert!(result.is_ok(), "expected session creation to succeed: {result:?}");
+            let result = mgr
+                .create(
+                    "ssh",
+                    "test SSH".to_string(),
+                    serde_json::json!({
+                        "host": "example.com",
+                        "username": "user",
+                        "authMethod": "password",
+                    }),
+                )
+                .await;
+            assert!(
+                result.is_ok(),
+                "expected session creation to succeed: {result:?}"
+            );
             let log = launched.lock().await;
             assert_eq!(log.len(), 1, "expected launcher to be called once");
             assert_eq!(log[0].1, "ssh");
@@ -908,22 +919,38 @@ mod tests {
             let (mgr, launched) = make_manager_with_mock(MockDaemonLauncher::new());
             // "telnet" is non-persistent — runs in-process; launcher should not be called
             // We can't actually connect, but create() will fail at backend level (not launcher)
-            let _ = mgr.create("telnet", "test".to_string(), serde_json::json!({
-                "host": "127.0.0.1",
-                "port": 9999,
-            })).await;
+            let _ = mgr
+                .create(
+                    "telnet",
+                    "test".to_string(),
+                    serde_json::json!({
+                        "host": "127.0.0.1",
+                        "port": 9999,
+                    }),
+                )
+                .await;
             let log = launched.lock().await;
-            assert_eq!(log.len(), 0, "non-persistent session should not use launcher");
+            assert_eq!(
+                log.len(),
+                0,
+                "non-persistent session should not use launcher"
+            );
         }
 
         #[tokio::test]
         async fn create_persistent_session_launcher_failure_propagates() {
             let (mgr, _) = make_manager_with_mock(MockDaemonLauncher::failing());
-            let result = mgr.create("ssh", "fail test".to_string(), serde_json::json!({
-                "host": "example.com",
-                "username": "user",
-                "authMethod": "password",
-            })).await;
+            let result = mgr
+                .create(
+                    "ssh",
+                    "fail test".to_string(),
+                    serde_json::json!({
+                        "host": "example.com",
+                        "username": "user",
+                        "authMethod": "password",
+                    }),
+                )
+                .await;
             assert!(
                 matches!(result, Err(SessionCreateError::BackendFailed(_))),
                 "expected BackendFailed, got: {result:?}"
@@ -933,11 +960,18 @@ mod tests {
         #[tokio::test]
         async fn create_session_appears_in_list_after_launch() {
             let (mgr, _) = make_manager_with_mock(MockDaemonLauncher::new());
-            let snapshot = mgr.create("ssh", "my-ssh".to_string(), serde_json::json!({
-                "host": "example.com",
-                "username": "user",
-                "authMethod": "password",
-            })).await.unwrap();
+            let snapshot = mgr
+                .create(
+                    "ssh",
+                    "my-ssh".to_string(),
+                    serde_json::json!({
+                        "host": "example.com",
+                        "username": "user",
+                        "authMethod": "password",
+                    }),
+                )
+                .await
+                .unwrap();
             let list = mgr.list().await;
             assert_eq!(list.len(), 1);
             assert_eq!(list[0].id, snapshot.id);

@@ -11,11 +11,11 @@ use std::sync::{Arc, Mutex};
 
 use tracing::{debug, info};
 
+use crate::config::ShellConfig;
 use crate::connection::{
     Capabilities, Condition, ConnectionType, FieldType, FilePathKind, OutputReceiver, OutputSender,
     SelectOption, SettingsField, SettingsGroup, SettingsSchema,
 };
-use crate::config::ShellConfig;
 use crate::errors::SessionError;
 use crate::files::{FileBrowser, LocalFileBrowser};
 use crate::monitoring::MonitoringProvider;
@@ -648,10 +648,7 @@ mod tests {
 
     fn valid_settings() -> serde_json::Value {
         let shells = detect_available_shells();
-        let shell = shells
-            .first()
-            .cloned()
-            .unwrap_or_else(|| "sh".to_string());
+        let shell = shells.first().cloned().unwrap_or_else(|| "sh".to_string());
         serde_json::json!({ "shell": shell })
     }
 
@@ -864,10 +861,7 @@ mod tests {
     async fn spawn_failure_propagates_as_connect_error() {
         let mut shell = LocalShell::with_spawner(MockLocalShellSpawner::failing());
         let result = shell.connect(valid_settings()).await;
-        assert!(
-            result.is_err(),
-            "connect should fail when spawner fails"
-        );
+        assert!(result.is_err(), "connect should fail when spawner fails");
         assert!(!shell.is_connected());
     }
 
@@ -876,7 +870,10 @@ mod tests {
         let mock = MockLocalShellSpawner::new();
         let mut shell = LocalShell::with_spawner(mock);
 
-        shell.connect(valid_settings()).await.expect("first connect");
+        shell
+            .connect(valid_settings())
+            .await
+            .expect("first connect");
         let result = shell.connect(valid_settings()).await;
         assert!(result.is_err(), "second connect should fail");
 
@@ -894,10 +891,12 @@ mod tests {
         shell.resize(120, 40).expect("resize");
         shell.resize(80, 24).expect("resize");
 
-        let log = resize_log.lock().unwrap();
-        assert_eq!(log.len(), 2);
-        assert_eq!(log[0], (120, 40));
-        assert_eq!(log[1], (80, 24));
+        {
+            let log = resize_log.lock().unwrap();
+            assert_eq!(log.len(), 2);
+            assert_eq!(log[0], (120, 40));
+            assert_eq!(log[1], (80, 24));
+        }
 
         shell.disconnect().await.ok();
     }
@@ -912,7 +911,10 @@ mod tests {
         assert!(!killed.load(Ordering::SeqCst));
 
         shell.disconnect().await.expect("disconnect");
-        assert!(killed.load(Ordering::SeqCst), "kill should be called on disconnect");
+        assert!(
+            killed.load(Ordering::SeqCst),
+            "kill should be called on disconnect"
+        );
     }
 
     #[tokio::test]
@@ -924,12 +926,14 @@ mod tests {
         shell.connect(valid_settings()).await.expect("connect");
         shell.write(b"hello world").expect("write");
 
-        let log = write_log.lock().unwrap();
-        let all_bytes: Vec<u8> = log.iter().flat_map(|v| v.iter().copied()).collect();
-        assert!(
-            all_bytes.windows(11).any(|w| w == b"hello world"),
-            "write_log should contain 'hello world', got: {all_bytes:?}"
-        );
+        {
+            let log = write_log.lock().unwrap();
+            let all_bytes: Vec<u8> = log.iter().flat_map(|v| v.iter().copied()).collect();
+            assert!(
+                all_bytes.windows(11).any(|w| w == b"hello world"),
+                "write_log should contain 'hello world', got: {all_bytes:?}"
+            );
+        }
 
         shell.disconnect().await.ok();
     }
@@ -948,13 +952,15 @@ mod tests {
         shell.connect(settings).await.expect("connect");
 
         // After connect(), the OSC7 hook is written to stdin.
-        let log = write_log.lock().unwrap();
-        let all: Vec<u8> = log.iter().flat_map(|v| v.iter().copied()).collect();
-        let text = String::from_utf8_lossy(&all);
-        assert!(
-            text.contains("__termihub_osc7") || text.contains("PROMPT_COMMAND"),
-            "OSC7 hook should be written to stdin for bash, got: {text:?}"
-        );
+        {
+            let log = write_log.lock().unwrap();
+            let all: Vec<u8> = log.iter().flat_map(|v| v.iter().copied()).collect();
+            let text = String::from_utf8_lossy(&all);
+            assert!(
+                text.contains("__termihub_osc7") || text.contains("PROMPT_COMMAND"),
+                "OSC7 hook should be written to stdin for bash, got: {text:?}"
+            );
+        }
 
         shell.disconnect().await.ok();
     }
@@ -972,13 +978,15 @@ mod tests {
         });
         shell.connect(settings).await.expect("connect");
 
-        let log = write_log.lock().unwrap();
-        let all: Vec<u8> = log.iter().flat_map(|v| v.iter().copied()).collect();
-        let text = String::from_utf8_lossy(&all);
-        assert!(
-            !text.contains("__termihub_osc7"),
-            "OSC7 should not be written when shellIntegration=false, got: {text:?}"
-        );
+        {
+            let log = write_log.lock().unwrap();
+            let all: Vec<u8> = log.iter().flat_map(|v| v.iter().copied()).collect();
+            let text = String::from_utf8_lossy(&all);
+            assert!(
+                !text.contains("__termihub_osc7"),
+                "OSC7 should not be written when shellIntegration=false, got: {text:?}"
+            );
+        }
 
         shell.disconnect().await.ok();
     }

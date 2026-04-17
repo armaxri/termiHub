@@ -112,10 +112,7 @@ pub struct SessionManager {
 
 impl SessionManager {
     /// Create a new session manager with the given registry and agent manager.
-    pub fn new(
-        registry: ConnectionTypeRegistry,
-        agent_manager: Arc<dyn AgentRpcClient>,
-    ) -> Self {
+    pub fn new(registry: ConnectionTypeRegistry, agent_manager: Arc<dyn AgentRpcClient>) -> Self {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             registry: Arc::new(registry),
@@ -209,14 +206,8 @@ impl SessionManager {
         let sessions_clone = self.sessions.clone();
         let sid = session_id.clone();
         tokio::spawn(async move {
-            Self::run_output_reader(
-                sid,
-                output_rx,
-                emitter,
-                sessions_clone,
-                has_initial_command,
-            )
-            .await;
+            Self::run_output_reader(sid, output_rx, emitter, sessions_clone, has_initial_command)
+                .await;
         });
 
         // Send initial command after a short delay.
@@ -784,9 +775,11 @@ mod tests {
 
         SessionManager::emit_and_cleanup("sess-exit", Vec::new(), &emitter, &sessions).await;
 
-        let exits = emitter.exits.lock().unwrap();
-        assert_eq!(exits.len(), 1);
-        assert_eq!(exits[0].session_id, "sess-exit");
+        {
+            let exits = emitter.exits.lock().unwrap();
+            assert_eq!(exits.len(), 1);
+            assert_eq!(exits[0].session_id, "sess-exit");
+        }
         // Session should be removed after cleanup
         assert!(!sessions.lock().await.contains_key("sess-exit"));
     }
@@ -796,17 +789,14 @@ mod tests {
         let emitter = MockEventEmitter::new();
         let sessions = sessions_with_mock("sess-data").await;
 
-        SessionManager::emit_and_cleanup(
-            "sess-data",
-            b"final bytes".to_vec(),
-            &emitter,
-            &sessions,
-        )
-        .await;
+        SessionManager::emit_and_cleanup("sess-data", b"final bytes".to_vec(), &emitter, &sessions)
+            .await;
 
-        let outputs = emitter.outputs.lock().unwrap();
-        assert_eq!(outputs.len(), 1);
-        assert_eq!(outputs[0].data, b"final bytes");
+        {
+            let outputs = emitter.outputs.lock().unwrap();
+            assert_eq!(outputs.len(), 1);
+            assert_eq!(outputs[0].data, b"final bytes");
+        }
     }
 
     #[tokio::test]
@@ -828,12 +818,21 @@ mod tests {
         )
         .await;
 
-        let outputs = emitter.outputs.lock().unwrap();
-        let combined: Vec<u8> = outputs.iter().flat_map(|e| e.data.iter().copied()).collect();
-        assert!(combined.windows(5).any(|w| w == b"hello"), "expected 'hello' in output");
-
-        let exits = emitter.exits.lock().unwrap();
-        assert_eq!(exits.len(), 1);
+        {
+            let outputs = emitter.outputs.lock().unwrap();
+            let combined: Vec<u8> = outputs
+                .iter()
+                .flat_map(|e| e.data.iter().copied())
+                .collect();
+            assert!(
+                combined.windows(5).any(|w| w == b"hello"),
+                "expected 'hello' in output"
+            );
+        }
+        {
+            let exits = emitter.exits.lock().unwrap();
+            assert_eq!(exits.len(), 1);
+        }
     }
 
     #[tokio::test]

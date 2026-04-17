@@ -22,6 +22,13 @@ use std::time::Duration;
 use crate::config::SshConfig;
 use crate::errors::SessionError;
 
+// ── Type aliases for complex closure types ─────────────────────────
+
+type WriteFn = Arc<dyn Fn(&[u8]) -> Result<(), SessionError> + Send + Sync>;
+type ResizeFn = Arc<dyn Fn(u16, u16) -> Result<(), SessionError> + Send + Sync>;
+type SetBlockingFn = Arc<dyn Fn(bool) + Send + Sync>;
+type IoFn = Arc<dyn Fn() -> Result<(), SessionError> + Send + Sync>;
+
 // ── SshShellHandle ─────────────────────────────────────────────────
 
 /// Handles for an established SSH shell session.
@@ -34,15 +41,15 @@ pub struct SshShellHandle {
     /// handles the retry loop.
     pub reader: Box<dyn Read + Send>,
     /// Writes input data to the channel (handles blocking-mode toggle internally).
-    pub write: Arc<dyn Fn(&[u8]) -> Result<(), SessionError> + Send + Sync>,
+    pub write: WriteFn,
     /// Resizes the PTY to `(cols, rows)`.
-    pub resize: Arc<dyn Fn(u16, u16) -> Result<(), SessionError> + Send + Sync>,
+    pub resize: ResizeFn,
     /// Switches the underlying session's blocking mode.
-    pub set_blocking: Arc<dyn Fn(bool) + Send + Sync>,
+    pub set_blocking: SetBlockingFn,
     /// Sends EOF on the channel.
-    pub send_eof: Arc<dyn Fn() -> Result<(), SessionError> + Send + Sync>,
+    pub send_eof: IoFn,
     /// Closes the channel.
-    pub close: Arc<dyn Fn() -> Result<(), SessionError> + Send + Sync>,
+    pub close: IoFn,
     /// Opaque extensions kept alive for the session lifetime (e.g. X11Forwarder).
     pub extensions: Vec<Box<dyn std::any::Any + Send>>,
 }
