@@ -18,6 +18,7 @@
   background: none;
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-normal);
   cursor: pointer;
   transition:
     color var(--transition-fast),
@@ -30,10 +31,12 @@
 .settings-nav__item:hover {
   color: var(--text-primary);
   background-color: var(--bg-hover);
+  font-weight: var(--font-weight-medium);
 }
 
 .settings-nav__item--active {
   color: var(--text-primary);
+  font-weight: var(--font-weight-semibold);
   border-left-color: var(--accent-color);
   background-color: var(--bg-active);
 }

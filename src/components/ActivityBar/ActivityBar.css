@@ -31,11 +31,26 @@
   align-items: center;
   justify-content: center;
   color: var(--activity-bar-inactive);
-  transition: color var(--transition-fast);
+  transition:
+    color var(--transition-fast),
+    background-color var(--transition-fast);
+}
+
+.activity-bar__item::before {
+  content: "";
+  position: absolute;
+  inset: 7px 6px;
+  border-radius: var(--radius-md);
+  background-color: transparent;
+  transition: background-color var(--transition-fast);
 }
 
 .activity-bar__item:hover {
   color: var(--activity-bar-active);
+}
+
+.activity-bar__item:hover::before {
+  background-color: rgba(255, 255, 255, 0.07);
 }
 
 .activity-bar__item--active {
@@ -94,7 +109,7 @@
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-md);
   padding: var(--spacing-xs) 0;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-dropdown);
   z-index: 100;
 }
 
@@ -127,9 +142,9 @@
   padding: var(--spacing-xs) var(--spacing-md);
   font-size: var(--font-size-xs);
   color: var(--text-muted);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: var(--letter-spacing-label);
 }
 
 .settings-menu__item-indicator {

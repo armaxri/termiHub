@@ -1,3 +1,6 @@
+/* UI font: Inter for crisp, legible interface text */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap");
+
 /* Bundled MesloLGS Nerd Font Mono for Powerline glyph support */
 
 @font-face {

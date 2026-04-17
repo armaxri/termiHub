@@ -18,7 +18,7 @@
   background-color: var(--bg-secondary);
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-lg, 8px);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-overlay);
   z-index: 1001;
   overflow: hidden;
 }
