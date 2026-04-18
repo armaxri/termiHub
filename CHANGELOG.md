@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- UI: Connections view is now always shown on startup instead of restoring the file browser from the previous session
+
 ### Changed
 
 - UI: Remote Agents now have their own collapsible "Remote Agents" section header in the connections sidebar, with a dedicated "+" button for adding new agents
