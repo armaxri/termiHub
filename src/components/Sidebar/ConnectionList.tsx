@@ -276,6 +276,15 @@ function ConnectionItem({
   );
 }
 
+function buildExpandedIndexMap(sectionsExpanded: boolean[]): { map: number[]; count: number } {
+  const map: number[] = [];
+  let count = 0;
+  for (const isExpanded of sectionsExpanded) {
+    map.push(isExpanded ? count++ : -1);
+  }
+  return { map, count };
+}
+
 export function ConnectionList() {
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [draggingConnection, setDraggingConnection] = useState<SavedConnection | null>(null);
@@ -534,42 +543,52 @@ export function ConnectionList() {
   const LocalChevron = localCollapsed ? ChevronRight : ChevronDown;
   const RemoteAgentsChevron = remoteAgentsCollapsed ? ChevronRight : ChevronDown;
 
-  // Build expanded-section mapping for resize hook.
-  // Section 0 = Connections, sections 1..N = remote agents (only when not collapsed).
-  const sectionsExpanded = useMemo(
-    () => [
-      !localCollapsed,
-      ...(remoteAgentsCollapsed ? [] : remoteAgents.map((a) => a.isExpanded)),
-    ],
-    [localCollapsed, remoteAgentsCollapsed, remoteAgents]
+  const outerSectionsExpanded = useMemo(
+    () => [!localCollapsed, experimental] as boolean[],
+    [localCollapsed, experimental]
   );
-  const expandedCount = sectionsExpanded.filter(Boolean).length;
-  const { flexValues, handleProps, sectionRefs } = useSectionResize(expandedCount);
+  const { map: outerExpandedIndexMap, count: outerExpandedCount } = useMemo(
+    () => buildExpandedIndexMap(outerSectionsExpanded),
+    [outerSectionsExpanded]
+  );
+  const {
+    flexValues: outerFlexValues,
+    handleProps: outerHandleProps,
+    sectionRefs: outerSectionRefs,
+  } = useSectionResize(outerExpandedCount);
+  const outerConnIdx = outerExpandedIndexMap[0];
+  const outerRemoteIdx = outerExpandedIndexMap[1];
+  const outerResizeProps =
+    outerConnIdx >= 0 && outerRemoteIdx >= 0 && outerRemoteIdx === outerConnIdx + 1
+      ? outerHandleProps(outerConnIdx)
+      : {};
+  const isOuterResizable = "onMouseDown" in outerResizeProps;
 
-  // Map each section index to its expanded-section index (or -1 if collapsed).
-  const expandedIndexMap = useMemo(() => {
-    const map: number[] = [];
-    let ei = 0;
-    for (const isExpanded of sectionsExpanded) {
-      map.push(isExpanded ? ei++ : -1);
-    }
-    return map;
-  }, [sectionsExpanded]);
+  const innerSectionsExpanded = useMemo(
+    () => (remoteAgentsCollapsed ? [] : remoteAgents.map((a) => a.isExpanded)),
+    [remoteAgentsCollapsed, remoteAgents]
+  );
+  const { map: innerExpandedIndexMap, count: innerExpandedCount } = useMemo(
+    () => buildExpandedIndexMap(innerSectionsExpanded),
+    [innerSectionsExpanded]
+  );
+  const {
+    flexValues: innerFlexValues,
+    handleProps: innerHandleProps,
+    sectionRefs: innerSectionRefs,
+  } = useSectionResize(innerExpandedCount);
 
-  /** Props for a resize handle between section `i` and section `i+1`. */
-  const getResizeHandleProps = useCallback(
-    (sectionIndex: number) => {
-      const eiAbove = expandedIndexMap[sectionIndex];
-      const eiBelow = expandedIndexMap[sectionIndex + 1];
+  const getInnerResizeHandleProps = useCallback(
+    (agentIndex: number) => {
+      const eiAbove = innerExpandedIndexMap[agentIndex - 1];
+      const eiBelow = innerExpandedIndexMap[agentIndex];
       if (eiAbove >= 0 && eiBelow >= 0 && eiBelow === eiAbove + 1) {
-        return handleProps(eiAbove);
+        return innerHandleProps(eiAbove);
       }
       return {};
     },
-    [expandedIndexMap, handleProps]
+    [innerExpandedIndexMap, innerHandleProps]
   );
-
-  const connExpandedIdx = expandedIndexMap[0];
 
   return (
     <div className="connection-list">
@@ -581,10 +600,10 @@ export function ConnectionList() {
       >
         <div
           ref={(el) => {
-            if (connExpandedIdx >= 0) sectionRefs.current[connExpandedIdx] = el;
+            if (outerConnIdx >= 0) outerSectionRefs.current[outerConnIdx] = el;
           }}
           className={`connection-list__group${!localCollapsed ? " connection-list__group--expanded" : ""}`}
-          style={connExpandedIdx >= 0 ? { flex: flexValues[connExpandedIdx] } : undefined}
+          style={outerConnIdx >= 0 ? { flex: outerFlexValues[outerConnIdx] } : undefined}
         >
           <div
             className="connection-list__group-header"
@@ -649,56 +668,71 @@ export function ConnectionList() {
         {experimental && (
           <>
             <div
-              className="connection-list__group-header"
-              data-testid="sidebar-group-header-remote-agents"
+              className={`connection-list__resize-handle${isOuterResizable ? " connection-list__resize-handle--resizable" : ""}`}
+              data-testid="sidebar-outer-separator"
+              {...outerResizeProps}
+            />
+            <div
+              ref={(el) => {
+                if (outerRemoteIdx >= 0) outerSectionRefs.current[outerRemoteIdx] = el;
+              }}
+              className="connection-list__remote-agents"
+              style={outerRemoteIdx >= 0 ? { flex: outerFlexValues[outerRemoteIdx] } : undefined}
             >
-              <button
-                className="connection-list__group-toggle"
-                onClick={() => setRemoteAgentsCollapsed((v) => !v)}
-                data-testid="connection-list-remote-agents-toggle"
+              <div
+                className="connection-list__group-header"
+                data-testid="sidebar-group-header-remote-agents"
               >
-                <RemoteAgentsChevron size={16} className="connection-tree__chevron" />
-                <span className="connection-list__group-title">Remote Agents</span>
-              </button>
-              <div className="connection-list__group-actions">
                 <button
-                  className="connection-list__add-btn"
-                  onClick={handleNewAgent}
-                  title="New Remote Agent"
-                  data-testid="connection-list-new-agent"
+                  className="connection-list__group-toggle"
+                  onClick={() => setRemoteAgentsCollapsed((v) => !v)}
+                  data-testid="connection-list-remote-agents-toggle"
                 >
-                  <Plus size={16} />
+                  <RemoteAgentsChevron size={16} className="connection-tree__chevron" />
+                  <span className="connection-list__group-title">Remote Agents</span>
                 </button>
+                <div className="connection-list__group-actions">
+                  <button
+                    className="connection-list__add-btn"
+                    onClick={handleNewAgent}
+                    title="New Remote Agent"
+                    data-testid="connection-list-new-agent"
+                  >
+                    <Plus size={16} />
+                  </button>
+                </div>
               </div>
+              {!remoteAgentsCollapsed && (
+                <SortableContext
+                  items={remoteAgents.map((a) => a.id)}
+                  strategy={verticalListSortingStrategy}
+                >
+                  {remoteAgents.map((agent, i) => {
+                    const innerIdx = innerExpandedIndexMap[i];
+                    const innerResizeProps = i > 0 ? getInnerResizeHandleProps(i) : {};
+                    const isInnerResizable = "onMouseDown" in innerResizeProps;
+                    return (
+                      <Fragment key={agent.id}>
+                        {i > 0 && (
+                          <div
+                            className={`connection-list__resize-handle${isInnerResizable ? " connection-list__resize-handle--resizable" : ""}`}
+                            data-testid={`sidebar-group-separator-${i - 1}`}
+                            {...innerResizeProps}
+                          />
+                        )}
+                        <AgentNode
+                          agent={agent}
+                          style={innerIdx >= 0 ? { flex: innerFlexValues[innerIdx] } : undefined}
+                          sectionRef={(el) => {
+                            if (innerIdx >= 0) innerSectionRefs.current[innerIdx] = el;
+                          }}
+                        />
+                      </Fragment>
+                    );
+                  })}
+                </SortableContext>
+              )}
             </div>
-            {!remoteAgentsCollapsed && (
-              <SortableContext
-                items={remoteAgents.map((a) => a.id)}
-                strategy={verticalListSortingStrategy}
-              >
-                {remoteAgents.map((agent, i) => {
-                  const agentExpandedIdx = expandedIndexMap[i + 1];
-                  return (
-                    <Fragment key={agent.id}>
-                      <div
-                        className="connection-list__resize-handle"
-                        data-testid={`sidebar-group-separator-${i}`}
-                        {...getResizeHandleProps(i)}
-                      />
-                      <AgentNode
-                        agent={agent}
-                        style={
-                          agentExpandedIdx >= 0 ? { flex: flexValues[agentExpandedIdx] } : undefined
-                        }
-                        sectionRef={(el) => {
-                          if (agentExpandedIdx >= 0) sectionRefs.current[agentExpandedIdx] = el;
-                        }}
-                      />
-                    </Fragment>
-                  );
-                })}
-              </SortableContext>
-            )}
           </>
         )}
         <DragOverlay>

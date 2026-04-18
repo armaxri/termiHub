@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - UI: Connections view is now always shown on startup instead of restoring the file browser from the previous session
+- UI: Resize handle between Connections and Remote Agent sections no longer shows a resize cursor when the agent is not expanded (cursor was misleading — dragging appeared broken)
+- UI: Added resize separator above the "Remote Agents" header to resize the Connections section against the entire Remote Agents section; individual agent resize handles now appear only between agents (not before the first one)
 
 ### Added
 
