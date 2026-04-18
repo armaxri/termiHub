@@ -10,10 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - UI: Connections view is now always shown on startup instead of restoring the file browser from the previous session
+
 ### Added
 
 - File browser: drag files from OS file managers (Finder, Explorer, etc.) directly onto the file browser panel to upload them (SFTP/session) or copy them (local mode). A dashed overlay confirms the drop target.
 - Terminal: drag files from OS file managers onto any terminal panel to insert their shell-safe quoted path(s) at the cursor.
+- Version display: dev builds now show a `-dev` suffix (e.g. `v0.1.0-dev`) in the status bar, Settings footer, and Update Settings panel; a git commit hash is shown alongside the version in the Settings panel and Update Settings for both dev and release builds. Dev builds are offered an update when the matching stable release (`v0.1.0`) becomes available.
 
 ### Fixed
 
