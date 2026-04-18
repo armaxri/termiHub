@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Agent: persisting (daemon-backed) sessions now survive agent reconnects — previously the agent killed daemon subprocesses on exit instead of detaching, causing recovered sessions to appear missing after disconnect/reconnect
+
 ### Changed
 
 - UI: Remote Agents now have their own collapsible "Remote Agents" section header in the connections sidebar, with a dedicated "+" button for adding new agents

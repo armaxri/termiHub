@@ -390,10 +390,14 @@ impl SessionManager {
     }
 
     /// Close all sessions. Called during agent shutdown.
+    ///
+    /// Daemon-backed sessions are detached (not killed) so they survive
+    /// the agent process exit and can be recovered on the next run.
+    /// In-process sessions are disconnected normally.
     pub async fn close_all(&self) {
         let mut sessions = self.sessions.lock().await;
         for (_, mut info) in sessions.drain() {
-            close_backend(&mut info.backend).await;
+            shutdown_backend(&mut info.backend).await;
         }
     }
 
@@ -542,6 +546,33 @@ async fn close_backend(backend: &mut SessionBackend) {
         #[cfg(unix)]
         SessionBackend::Daemon(ref mut client) => {
             client.close().await;
+        }
+        SessionBackend::InProcess {
+            connection,
+            output_task,
+        } => {
+            if let Err(e) = connection.disconnect().await {
+                warn!("Disconnect error: {e}");
+            }
+            if let Some(task) = output_task.take() {
+                task.abort();
+            }
+        }
+        #[cfg(test)]
+        SessionBackend::Stub => {}
+    }
+}
+
+/// Shut down a backend during agent exit.
+///
+/// Daemon backends are detached (not killed) so the daemon process
+/// survives and can be recovered when the agent restarts. In-process
+/// backends are disconnected normally.
+async fn shutdown_backend(backend: &mut SessionBackend) {
+    match backend {
+        #[cfg(unix)]
+        SessionBackend::Daemon(ref mut client) => {
+            client.detach().await;
         }
         SessionBackend::InProcess {
             connection,
@@ -976,6 +1007,30 @@ mod tests {
             assert_eq!(list.len(), 1);
             assert_eq!(list[0].id, snapshot.id);
             assert_eq!(list[0].title, "my-ssh");
+        }
+
+        /// Regression: close_all() must drain the in-memory session list
+        /// even with the new shutdown_backend behaviour (detach daemons, don't kill).
+        #[tokio::test]
+        async fn close_all_drains_daemon_sessions() {
+            let (mgr, _) = make_manager_with_mock(MockDaemonLauncher::new());
+            mgr.create(
+                "ssh",
+                "session-a".to_string(),
+                serde_json::json!({
+                    "host": "example.com",
+                    "username": "user",
+                    "authMethod": "password",
+                }),
+            )
+            .await
+            .unwrap();
+            assert_eq!(mgr.list().await.len(), 1);
+            mgr.close_all().await;
+            assert!(
+                mgr.list().await.is_empty(),
+                "close_all() must remove sessions from the in-memory list"
+            );
         }
     }
 }
