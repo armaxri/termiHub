@@ -480,6 +480,7 @@ pub fn run() {
             commands::portable::export_config_to_portable,
             commands::portable::import_config_from_portable,
             // Update checker
+            commands::update::get_app_info,
             commands::update::check_for_updates,
             commands::update::skip_update_version,
             commands::update::clear_skipped_version,

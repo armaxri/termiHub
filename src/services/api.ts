@@ -828,6 +828,22 @@ export async function importConfigFromPortable(
   return await invoke<ConfigMigrationResult>("import_config_from_portable", { srcDir, files });
 }
 
+// ─── App info ──────────────────────────────────────────────────────────────
+
+export interface AppInfo {
+  /** Running version string, including `-dev` suffix for dev builds. */
+  version: string;
+  /** Short git commit hash embedded at build time. */
+  gitHash: string;
+  /** Whether this is a development (non-production) build. */
+  isDev: boolean;
+}
+
+/** Return build-time info: version (with `-dev` suffix in dev builds), git hash, and dev flag. */
+export async function getAppInfo(): Promise<AppInfo> {
+  return await invoke<AppInfo>("get_app_info");
+}
+
 // ─── Update checker ────────────────────────────────────────────────────────
 
 /** Check GitHub for a newer termiHub release. Pass `force: true` to bypass the 1-hour rate limit. */

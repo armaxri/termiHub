@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { getVersion } from "@tauri-apps/api/app";
 import {
   Settings2,
   Palette,
@@ -30,6 +29,7 @@ import { LanguagePackagesSettings } from "./LanguagePackagesSettings";
 import { CustomGrammarsSettings } from "./CustomGrammarsSettings";
 import { PortableModeSettings } from "./PortableModeSettings";
 import { UpdateSettings } from "./UpdateSettings";
+import { getAppInfo, type AppInfo } from "@/services/api";
 import "./SettingsPanel.css";
 
 const SETTINGS_ICONS: Record<SettingsCategory, LucideIcon> = {
@@ -83,16 +83,15 @@ export function SettingsPanel({ isVisible }: SettingsPanelProps) {
   const [activeCategory, setActiveCategory] = useState<SettingsCategory>(loadSavedCategory);
   const [searchQuery, setSearchQuery] = useState("");
   const [isCompact, setIsCompact] = useState(false);
-  const [appVersion, setAppVersion] = useState("");
+  const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingSettingsRef = useRef<AppSettings | null>(null);
 
-  // Load app version
   useEffect(() => {
-    getVersion()
-      .then(setAppVersion)
-      .catch(() => setAppVersion("unknown"));
+    getAppInfo()
+      .then(setAppInfo)
+      .catch(() => setAppInfo(null));
   }, []);
 
   // ResizeObserver for compact mode
@@ -278,7 +277,14 @@ export function SettingsPanel({ isVisible }: SettingsPanelProps) {
         />
         <div className="settings-panel__content">{renderContent()}</div>
       </div>
-      <div className="settings-panel__footer">termiHub v{appVersion}</div>
+      <div className="settings-panel__footer">
+        termiHub {appInfo ? `v${appInfo.version}` : ""}
+        {appInfo && (
+          <span className="settings-panel__footer-hash" title="Git commit hash">
+            {appInfo.gitHash}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
