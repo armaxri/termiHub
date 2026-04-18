@@ -1568,7 +1568,9 @@ export const useAppStore = create<AppState>((set, get) => {
           }
         }
         const layoutConfig = settings.layout ?? DEFAULT_LAYOUT;
-        const sidebarView = (layoutConfig.sidebarView as SidebarView | undefined) ?? "connections";
+        const persistedView =
+          (layoutConfig.sidebarView as SidebarView | undefined) ?? "connections";
+        const sidebarView: SidebarView = persistedView === "files" ? "connections" : persistedView;
         const sidebarCollapsed = layoutConfig.sidebarCollapsed ?? false;
         set({
           connections,

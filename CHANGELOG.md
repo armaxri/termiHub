@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- UI: Connections view is now always shown on startup instead of restoring the file browser from the previous session
 ### Added
 
 - File browser: drag files from OS file managers (Finder, Explorer, etc.) directly onto the file browser panel to upload them (SFTP/session) or copy them (local mode). A dashed overlay confirms the drop target.

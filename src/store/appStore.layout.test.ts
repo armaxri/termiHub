@@ -215,6 +215,30 @@ describe("appStore — layout state", () => {
         sidebarVisible: true,
         statusBarVisible: true,
         hiddenActivityBarViews: [],
+        sidebarView: "tunnels",
+        sidebarCollapsed: true,
+      },
+    });
+
+    await useAppStore.getState().loadFromBackend();
+
+    expect(useAppStore.getState().sidebarView).toBe("tunnels");
+    expect(useAppStore.getState().sidebarCollapsed).toBe(true);
+  });
+
+  it("loadFromBackend resets sidebarView to connections when saved view is files", async () => {
+    const { getSettings } = await import("@/services/storage");
+    vi.mocked(getSettings).mockResolvedValueOnce({
+      version: "1",
+      externalConnectionFiles: [],
+      powerMonitoringEnabled: true,
+      fileBrowserEnabled: true,
+      layout: {
+        activityBarPosition: "left",
+        sidebarPosition: "left",
+        sidebarVisible: true,
+        statusBarVisible: true,
+        hiddenActivityBarViews: [],
         sidebarView: "files",
         sidebarCollapsed: true,
       },
@@ -222,7 +246,7 @@ describe("appStore — layout state", () => {
 
     await useAppStore.getState().loadFromBackend();
 
-    expect(useAppStore.getState().sidebarView).toBe("files");
+    expect(useAppStore.getState().sidebarView).toBe("connections");
     expect(useAppStore.getState().sidebarCollapsed).toBe(true);
   });
 
