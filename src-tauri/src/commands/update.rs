@@ -13,6 +13,35 @@ const GITHUB_API_URL: &str = "https://api.github.com/repos/armaxri/termiHub/rele
 /// Minimum interval between automatic update checks (1 hour).
 const MIN_CHECK_INTERVAL_SECS: i64 = 3600;
 
+/// Build-time information exposed to the frontend.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppInfo {
+    /// Running version string, including `-dev` suffix for dev builds.
+    pub version: String,
+    /// Short git commit hash embedded at build time.
+    pub git_hash: String,
+    /// Whether this is a development (non-production) build.
+    pub is_dev: bool,
+}
+
+/// Return build-time info (version, git hash, dev flag) to the frontend.
+#[tauri::command]
+pub fn get_app_info(app_handle: AppHandle) -> AppInfo {
+    let base = app_handle.package_info().version.to_string();
+    let is_dev = tauri::is_dev();
+    let version = if is_dev {
+        format!("{base}-dev")
+    } else {
+        base
+    };
+    AppInfo {
+        version,
+        git_hash: env!("GIT_HASH").to_string(),
+        is_dev,
+    }
+}
+
 /// Result returned to the frontend after an update check.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -137,7 +166,12 @@ pub async fn check_for_updates(
     app_handle: AppHandle,
     manager: State<'_, ConnectionManager>,
 ) -> Result<UpdateInfo, String> {
-    let running_version = app_handle.package_info().version.to_string();
+    let base_version = app_handle.package_info().version.to_string();
+    let running_version = if tauri::is_dev() {
+        format!("{base_version}-dev")
+    } else {
+        base_version
+    };
     debug!("Checking for updates (running={running_version}, force={force})");
 
     let settings = manager.get_settings();
@@ -366,5 +400,44 @@ mod tests {
         let info = detect_from_json("1.9.9", &json);
         assert!(info.available);
         assert_eq!(info.latest_version, "2.0.0");
+    }
+
+    // ── dev build version comparison ──────────────────────────────────────────
+
+    /// The release `v0.1.0` is semver-greater than the pre-release `0.1.0-dev`,
+    /// so a dev build should be offered an update to the matching release.
+    #[test]
+    fn dev_build_offered_matching_release_as_update() {
+        let json = make_release_json("v0.1.0", false, "First stable release");
+        let info = detect_from_json("0.1.0-dev", &json);
+        assert!(info.available);
+        assert_eq!(info.latest_version, "0.1.0");
+    }
+
+    /// A dev build running ahead of any release should not be offered a downgrade.
+    #[test]
+    fn dev_build_ahead_of_release_is_up_to_date() {
+        let json = make_release_json("v0.1.0", false, "Old release");
+        let info = detect_from_json("0.2.0-dev", &json);
+        assert!(!info.available);
+    }
+
+    /// A dev build is offered a newer release when one exists.
+    #[test]
+    fn dev_build_offered_newer_release() {
+        let json = make_release_json("v0.2.0", false, "New release");
+        let info = detect_from_json("0.1.0-dev", &json);
+        assert!(info.available);
+        assert_eq!(info.latest_version, "0.2.0");
+    }
+
+    /// The `-dev` suffix is valid semver pre-release syntax and parses correctly.
+    #[test]
+    fn parse_tag_dev_suffix() {
+        let v = parse_tag("0.1.0-dev").unwrap();
+        assert_eq!(v.major, 0);
+        assert_eq!(v.minor, 1);
+        assert_eq!(v.patch, 0);
+        assert!(!v.pre.is_empty());
     }
 }
