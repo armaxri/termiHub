@@ -1,10 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { RefreshCw, Loader2 } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { getVersion } from "@tauri-apps/api/app";
-import { useEffect } from "react";
 import { useAppStore } from "@/store/appStore";
-import { setUpdateAutoCheck } from "@/services/api";
+import { setUpdateAutoCheck, getAppInfo, type AppInfo } from "@/services/api";
 import { frontendLog } from "@/utils/frontendLog";
 import "./UpdateSettings.css";
 
@@ -31,12 +29,12 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
   const updateSettings = useAppStore((s) => s.updateSettings);
 
   const [savingAutoCheck, setSavingAutoCheck] = useState(false);
-  const [appVersion, setAppVersion] = useState("");
+  const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
 
   useEffect(() => {
-    getVersion()
-      .then(setAppVersion)
-      .catch(() => setAppVersion("?"));
+    getAppInfo()
+      .then(setAppInfo)
+      .catch(() => setAppInfo(null));
   }, []);
 
   const autoCheck = settings.updates?.autoCheck ?? true;
@@ -86,7 +84,19 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
           <div className="update-settings__info-table">
             <div className="update-settings__row">
               <span className="update-settings__label">Current version</span>
-              <span data-testid="update-current-version">v{appVersion}</span>
+              <span data-testid="update-current-version">
+                {appInfo ? `v${appInfo.version}` : "—"}
+              </span>
+            </div>
+            <div className="update-settings__row">
+              <span className="update-settings__label">Build</span>
+              <span
+                className="update-settings__build-hash"
+                data-testid="update-build-hash"
+                title="Git commit hash"
+              >
+                {appInfo ? appInfo.gitHash : "—"}
+              </span>
             </div>
 
             <div className="update-settings__row">

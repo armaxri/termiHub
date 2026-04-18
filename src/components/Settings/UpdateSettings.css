@@ -57,3 +57,9 @@
   font-size: var(--font-size-sm);
   color: var(--text-primary);
 }
+
+.update-settings__build-hash {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  color: var(--text-secondary);
+}

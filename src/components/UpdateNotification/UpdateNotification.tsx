@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { X, Shield, RefreshCw } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useAppStore } from "@/store/appStore";
+import { getAppInfo } from "@/services/api";
 import { frontendLog } from "@/utils/frontendLog";
 import "./UpdateNotification.css";
 
@@ -21,6 +22,13 @@ export function UpdateNotification() {
   const settings = useAppStore((s) => s.settings);
 
   const [showNotes, setShowNotes] = useState(false);
+  const [runningVersion, setRunningVersion] = useState("");
+
+  useEffect(() => {
+    getAppInfo()
+      .then((info) => setRunningVersion(info.version))
+      .catch(() => setRunningVersion(""));
+  }, []);
 
   // Reset "what's new" panel whenever the detected version changes.
   useEffect(() => {
@@ -87,7 +95,9 @@ export function UpdateNotification() {
             This release addresses a security vulnerability. Updating is strongly recommended.
           </p>
         ) : (
-          <p className="update-notification__message">You are running v0.1.0</p>
+          <p className="update-notification__message">
+            {runningVersion ? `You are running v${runningVersion}` : "A newer version is available"}
+          </p>
         )}
 
         {showNotes && updateInfo.releaseNotes && (
