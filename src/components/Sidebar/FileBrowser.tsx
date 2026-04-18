@@ -1,4 +1,4 @@
-import { useCallback, useState, useEffect } from "react";
+import { useCallback, useState, useEffect, useRef } from "react";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
@@ -38,6 +38,8 @@ import type { ConnectionTypeInfo } from "@/services/api";
 import { getWslDistroName, wslToWindowsPath, windowsToWslPath } from "@/utils/shell-detection";
 import { formatBytes } from "@/utils/formatters";
 import { resolveFeatureEnabled } from "@/utils/featureFlags";
+import { useOsFileDrop } from "@/hooks/useOsFileDrop";
+import { ConfirmDeleteDialog } from "./ConfirmDeleteDialog";
 import "./FileBrowser.css";
 
 interface FileRowProps {
@@ -666,6 +668,7 @@ export function FileBrowser() {
     refresh,
     downloadFile,
     uploadFile,
+    uploadFileFromPath,
     createDirectory,
     createFile,
     deleteEntry,
@@ -677,6 +680,19 @@ export function FileBrowser() {
     mode,
   } = useFileBrowser();
 
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const handleOsDrop = useCallback(
+    async (paths: string[]) => {
+      for (const path of paths) {
+        await uploadFileFromPath(path);
+      }
+    },
+    [uploadFileFromPath]
+  );
+
+  const { isDragOver } = useOsFileDrop(containerRef, handleOsDrop);
+
   const disconnectSftp = useAppStore((s) => s.disconnectSftp);
   const vscodeAvailable = useAppStore((s) => s.vscodeAvailable);
   const fileClipboard = useAppStore((s) => s.fileClipboard);
@@ -686,6 +702,10 @@ export function FileBrowser() {
   const [newFileName, setNewFileName] = useState<string | null>(null);
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
   const [lastClickedPath, setLastClickedPath] = useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{
+    message: string;
+    onConfirm: () => void;
+  } | null>(null);
 
   // Listen for VS Code edit-complete events (remote file re-upload)
   useEffect(() => {
@@ -764,14 +784,14 @@ export function FileBrowser() {
           break;
         }
         case "delete": {
-          const ok = window.confirm(
-            `Delete ${entry.isDirectory ? "directory" : "file"} "${entry.name}"?`
-          );
-          if (ok) {
-            deleteEntry(entry.path, entry.isDirectory).catch((err: unknown) =>
-              console.error("Delete failed:", err)
-            );
-          }
+          setDeleteConfirm({
+            message: `Delete ${entry.isDirectory ? "directory" : "file"} "${entry.name}"?`,
+            onConfirm: () => {
+              deleteEntry(entry.path, entry.isDirectory).catch((err: unknown) =>
+                console.error("Delete failed:", err)
+              );
+            },
+          });
           break;
         }
       }
@@ -839,14 +859,16 @@ export function FileBrowser() {
           cutEntry(entries);
           break;
         case "delete": {
-          const ok = window.confirm(`Delete ${entries.length} items?`);
-          if (ok) {
-            Promise.all(entries.map((e) => deleteEntry(e.path, e.isDirectory))).catch(
-              (err: unknown) => console.error("Delete failed:", err)
-            );
-            setSelectedPaths(new Set());
-            setLastClickedPath(null);
-          }
+          setDeleteConfirm({
+            message: `Delete ${entries.length} items?`,
+            onConfirm: () => {
+              Promise.all(entries.map((e) => deleteEntry(e.path, e.isDirectory))).catch(
+                (err: unknown) => console.error("Delete failed:", err)
+              );
+              setSelectedPaths(new Set());
+              setLastClickedPath(null);
+            },
+          });
           break;
         }
       }
@@ -938,7 +960,16 @@ export function FileBrowser() {
   const selectedEntries = sortedEntries.filter((e) => selectedPaths.has(e.path));
 
   return (
-    <div className="file-browser">
+    <div
+      className={`file-browser${isDragOver ? " file-browser--drag-over" : ""}`}
+      ref={containerRef}
+    >
+      {isDragOver && (
+        <div className="file-browser__drag-overlay">
+          <Upload size={24} />
+          <span>{mode === "local" ? "Drop to copy here" : "Drop to upload"}</span>
+        </div>
+      )}
       <div className="file-browser__toolbar">
         <span
           className="file-browser__path"
@@ -1150,6 +1181,15 @@ export function FileBrowser() {
           </ContextMenu.Content>
         </ContextMenu.Portal>
       </ContextMenu.Root>
+      <ConfirmDeleteDialog
+        open={deleteConfirm !== null}
+        message={deleteConfirm?.message ?? ""}
+        onConfirm={() => {
+          deleteConfirm?.onConfirm();
+          setDeleteConfirm(null);
+        }}
+        onCancel={() => setDeleteConfirm(null)}
+      />
     </div>
   );
 }

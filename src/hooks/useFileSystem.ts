@@ -61,6 +61,18 @@ export function useFileSystem() {
     refreshSftp();
   }, [sftpSessionId, currentPath, refreshSftp]);
 
+  const uploadFileFromPath = useCallback(
+    async (localPath: string) => {
+      if (!sftpSessionId) return;
+      const parts = localPath.replace(/\\/g, "/").split("/");
+      const fileName = parts[parts.length - 1] || "upload";
+      const remotePath = currentPath === "/" ? `/${fileName}` : `${currentPath}/${fileName}`;
+      await sftpUpload(sftpSessionId, localPath, remotePath);
+      refreshSftp();
+    },
+    [sftpSessionId, currentPath, refreshSftp]
+  );
+
   const createDirectory = useCallback(
     async (name: string) => {
       if (!sftpSessionId) return;
@@ -187,6 +199,7 @@ export function useFileSystem() {
     refresh,
     downloadFile,
     uploadFile,
+    uploadFileFromPath,
     createDirectory,
     createFile,
     deleteEntry,

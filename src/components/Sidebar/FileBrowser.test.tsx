@@ -7,6 +7,12 @@ import { FileBrowser, FileMenuItems, MultiSelectMenuItems } from "./FileBrowser"
 import type { TerminalTab, LeafPanel } from "@/types/terminal";
 import type { FileEntry } from "@/types/connection";
 
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: () => ({
+    onDragDropEvent: vi.fn(() => Promise.resolve(vi.fn())),
+  }),
+}));
+
 vi.mock("@/themes", () => ({
   applyTheme: vi.fn(),
   onThemeChange: vi.fn(() => vi.fn()),
