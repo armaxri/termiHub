@@ -30,11 +30,7 @@ pub struct AppInfo {
 pub fn get_app_info(app_handle: AppHandle) -> AppInfo {
     let base = app_handle.package_info().version.to_string();
     let is_dev = tauri::is_dev();
-    let version = if is_dev {
-        format!("{base}-dev")
-    } else {
-        base
-    };
+    let version = if is_dev { format!("{base}-dev") } else { base };
     AppInfo {
         version,
         git_hash: env!("GIT_HASH").to_string(),
