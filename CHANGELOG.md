@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - UI: Connections view is now always shown on startup instead of restoring the file browser from the previous session
+### Added
+
+- File browser: drag files from OS file managers (Finder, Explorer, etc.) directly onto the file browser panel to upload them (SFTP/session) or copy them (local mode). A dashed overlay confirms the drop target.
+- Terminal: drag files from OS file managers onto any terminal panel to insert their shell-safe quoted path(s) at the cursor.
+
+### Fixed
+
+- File browser: delete confirmation now uses a themed in-app dialog instead of the native OS `window.confirm()` popup
 
 ### Changed
 

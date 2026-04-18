@@ -71,6 +71,21 @@ export function useSessionFileSystem() {
     refreshSession();
   }, [sessionFileBrowserId, sessionCurrentPath, refreshSession]);
 
+  const uploadFileFromPath = useCallback(
+    async (localPath: string) => {
+      if (!sessionFileBrowserId) return;
+      const { readFile } = await import("@tauri-apps/plugin-fs");
+      const data = await readFile(localPath);
+      const parts = localPath.replace(/\\/g, "/").split("/");
+      const fileName = parts[parts.length - 1] || "upload";
+      const remotePath =
+        sessionCurrentPath === "/" ? `/${fileName}` : `${sessionCurrentPath}/${fileName}`;
+      await sessionWriteFile(sessionFileBrowserId, remotePath, Array.from(data));
+      refreshSession();
+    },
+    [sessionFileBrowserId, sessionCurrentPath, refreshSession]
+  );
+
   const createDirectory = useCallback(
     async (name: string) => {
       if (!sessionFileBrowserId) return;
@@ -192,6 +207,7 @@ export function useSessionFileSystem() {
     refresh,
     downloadFile,
     uploadFile,
+    uploadFileFromPath,
     createDirectory,
     createFile,
     deleteEntry,
