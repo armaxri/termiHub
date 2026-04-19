@@ -355,6 +355,7 @@ mod tests {
                     tabs: vec![WorkspaceTabDef {
                         connection_ref: Some("conn-1".to_string()),
                         inline_config: None,
+                        agent_ref: None,
                         title: None,
                         initial_command: None,
                     }],
@@ -376,6 +377,7 @@ mod tests {
                         tabs: vec![WorkspaceTabDef {
                             connection_ref: Some("conn-1".to_string()),
                             inline_config: None,
+                            agent_ref: None,
                             title: None,
                             initial_command: None,
                         }],
@@ -388,6 +390,7 @@ mod tests {
                         tabs: vec![WorkspaceTabDef {
                             connection_ref: Some("conn-2".to_string()),
                             inline_config: None,
+                            agent_ref: None,
                             title: None,
                             initial_command: None,
                         }],
@@ -455,6 +458,7 @@ mod tests {
                             tabs: vec![WorkspaceTabDef {
                                 connection_ref: Some("conn-1".to_string()),
                                 inline_config: None,
+                                agent_ref: None,
                                 title: None,
                                 initial_command: None,
                             }],
@@ -463,6 +467,7 @@ mod tests {
                             tabs: vec![WorkspaceTabDef {
                                 connection_ref: Some("conn-2".to_string()),
                                 inline_config: None,
+                                agent_ref: None,
                                 title: None,
                                 initial_command: None,
                             }],

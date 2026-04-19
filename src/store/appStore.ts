@@ -403,6 +403,8 @@ interface AppState {
   updateAgentFolder: (agentId: string, params: Record<string, unknown>) => Promise<void>;
   deleteAgentFolder: (agentId: string, folderId: string) => Promise<void>;
   toggleAgentFolder: (agentId: string, folderId: string) => void;
+  /** Convert all agent-error tabs for the given agent into live terminal tabs after reconnect. */
+  resolveAgentErrorTabs: (agentId: string) => void;
 
   // Local file browser state
   localFileEntries: FileEntry[];
@@ -2218,6 +2220,49 @@ export const useAppStore = create<AppState>((set, get) => {
       }
     },
 
+    resolveAgentErrorTabs: (agentId) => {
+      const defs = get().agentDefinitions[agentId] ?? [];
+
+      const convertPanel = (panel: PanelNode): PanelNode => {
+        if (panel.type === "split") {
+          return { ...panel, children: panel.children.map(convertPanel) };
+        }
+        const updatedTabs = panel.tabs.map((tab) => {
+          if (tab.contentType !== "agent-error" || tab.agentErrorMeta?.agentId !== agentId) {
+            return tab;
+          }
+          const def = defs.find((d) => d.id === tab.agentErrorMeta!.definitionId);
+          if (!def) return tab; // definition still missing — keep error tab
+          const config: ConnectionConfig = {
+            type: "remote-session",
+            config: {
+              agentId,
+              sessionType: def.sessionType,
+              shell: def.config["shell"] as string | undefined,
+              serialPort: def.config["port"] as string | undefined,
+              persistent: def.persistent,
+              title: def.name,
+            },
+          };
+          return {
+            ...tab,
+            contentType: "terminal" as const,
+            connectionType: "remote-session" as const,
+            config,
+            sessionId: null,
+            agentErrorMeta: undefined,
+            initialCommand: tab.agentErrorMeta!.initialCommand,
+          };
+        });
+        return { ...panel, tabs: updatedTabs };
+      };
+
+      set((s) => ({
+        rootPanel: convertPanel(s.rootPanel),
+        tabGroups: s.tabGroups.map((g) => ({ ...g, rootPanel: convertPanel(g.rootPanel) })),
+      }));
+    },
+
     // Local file browser state
     localFileEntries: [],
     localCurrentPath: "/",
@@ -2736,10 +2781,20 @@ export const useAppStore = create<AppState>((set, get) => {
           })
         );
 
+        const agentContext = {
+          agents: state.remoteAgents.map((a) => ({
+            id: a.id,
+            name: a.name,
+            connected: a.connectionState === "connected",
+          })),
+          definitions: state.agentDefinitions,
+        };
+
         const builtGroups = buildTabGroupsFromWorkspace(
           definition.tabGroups,
           resolvedConnections,
-          state.defaultShell
+          state.defaultShell,
+          agentContext
         );
         if (builtGroups.length === 0) return;
         const firstGroup = builtGroups[0];
