@@ -27,6 +27,7 @@ import {
   Check,
   Palette,
   Stethoscope,
+  WifiOff,
   X,
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
@@ -47,6 +48,7 @@ import { TunnelEditor } from "@/components/TunnelEditor";
 import { WorkspaceEditor } from "@/components/WorkspaceEditor";
 import { NetworkDiagnosticPanel } from "@/components/NetworkTools/NetworkDiagnosticPanel";
 import { TerminalSearchBar } from "@/components/Terminal/TerminalSearchBar";
+import { AgentErrorTab } from "@/components/Terminal/AgentErrorTab";
 import { PanelDropZone } from "./PanelDropZone";
 import "./SplitView.css";
 
@@ -252,6 +254,8 @@ export function SplitView() {
                 <LayoutGrid size={14} className="zoom-overlay__icon" />
               ) : zoomedTab.contentType === "network-diagnostic" ? (
                 <Stethoscope size={14} className="zoom-overlay__icon" />
+              ) : zoomedTab.contentType === "agent-error" ? (
+                <WifiOff size={14} className="zoom-overlay__icon" />
               ) : (
                 <ConnectionIcon
                   config={zoomedTab.config}
@@ -322,6 +326,13 @@ export function SplitView() {
                 <NetworkDiagnosticPanel
                   key={`zoom-${zoomedTabId}`}
                   meta={zoomedTab.networkDiagnosticMeta}
+                  isVisible={true}
+                />
+              ) : zoomedTab.contentType === "agent-error" && zoomedTab.agentErrorMeta ? (
+                <AgentErrorTab
+                  key={`zoom-${zoomedTabId}`}
+                  tabId={zoomedTabId}
+                  meta={zoomedTab.agentErrorMeta}
                   isVisible={true}
                 />
               ) : null}
@@ -500,6 +511,13 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
             <NetworkDiagnosticPanel
               key={tab.id}
               meta={tab.networkDiagnosticMeta}
+              isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
+            />
+          ) : tab.contentType === "agent-error" && tab.agentErrorMeta ? (
+            <AgentErrorTab
+              key={tab.id}
+              tabId={tab.id}
+              meta={tab.agentErrorMeta}
               isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
             />
           ) : useQuickAction ? (
