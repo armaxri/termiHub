@@ -1111,6 +1111,7 @@ mod tests {
                 key_path: None,
                 save_password,
                 agent_path: None,
+                external_connection_files: vec![],
             },
             agent_settings: Default::default(),
         }

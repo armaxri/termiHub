@@ -204,6 +204,12 @@ impl<M: SessionManagerApi> Dispatcher<M> {
         self.initialized = true;
         self.agent_settings = params.agent_settings;
 
+        if !params.external_connection_files.is_empty() {
+            self.connection_store
+                .load_external_files(&params.external_connection_files)
+                .await;
+        }
+
         let docker_available = detect_docker_available();
         let connection_types = self.session_manager.registry().available_types();
 
@@ -2709,6 +2715,7 @@ mod tests {
                 folder_id: conn.folder_id,
                 terminal_options: conn.terminal_options,
                 icon: conn.icon,
+                source_file: None,
             };
             self.connections.lock().await.push(snap.clone());
             snap
@@ -2956,6 +2963,7 @@ mod tests {
             folder_id: None,
             terminal_options: None,
             icon: None,
+            source_file: None,
         });
 
         let mut d = make_mock_dispatcher_with_stores(

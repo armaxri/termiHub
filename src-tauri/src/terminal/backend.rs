@@ -21,6 +21,14 @@ pub use termihub_core::config::SshConfig;
 /// Uses `~/.local/bin` so setup works without privilege escalation.
 const DEFAULT_AGENT_PATH: &str = "~/.local/bin/termihub-agent";
 
+/// An external connection file configured for a remote agent.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExternalAgentFile {
+    /// Absolute path on the remote host.
+    pub path: String,
+    pub enabled: bool,
+}
+
 /// SSH transport configuration for a remote agent (no session details).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -28,6 +36,7 @@ pub struct RemoteAgentConfig {
     pub host: String,
     pub port: u16,
     pub username: String,
+    #[serde(default = "default_auth_method")]
     pub auth_method: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub password: Option<String>,
@@ -42,6 +51,13 @@ pub struct RemoteAgentConfig {
     /// where `~/.local/bin` may not be on the PATH.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_path: Option<String>,
+    /// External connection files to load on the remote host.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub external_connection_files: Vec<ExternalAgentFile>,
+}
+
+fn default_auth_method() -> String {
+    "password".to_string()
 }
 
 impl RemoteAgentConfig {
@@ -147,6 +163,7 @@ mod tests {
             key_path: Some("/home/user/.ssh/id_rsa".to_string()),
             save_password: None,
             agent_path: None,
+            external_connection_files: vec![],
         };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: RemoteAgentConfig = serde_json::from_str(&json).unwrap();
@@ -175,6 +192,7 @@ mod tests {
             key_path: Some("${env:HOME}/.ssh/id_rsa".to_string()),
             save_password: None,
             agent_path: None,
+            external_connection_files: vec![],
         };
         let expanded = config.expand();
         assert_eq!(expanded.host, "10.0.0.99");
@@ -195,6 +213,7 @@ mod tests {
             key_path: Some("/home/.ssh/id_rsa".to_string()),
             save_password: None,
             agent_path: None,
+            external_connection_files: vec![],
         };
         let ssh = agent.to_ssh_config();
         assert_eq!(ssh.host, "pi.local");
@@ -215,6 +234,7 @@ mod tests {
             key_path: None,
             save_password: Some(true),
             agent_path: None,
+            external_connection_files: vec![],
         };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: RemoteAgentConfig = serde_json::from_str(&json).unwrap();
@@ -232,6 +252,7 @@ mod tests {
             key_path: None,
             save_password: None,
             agent_path: None,
+            external_connection_files: vec![],
         };
         let json = serde_json::to_string(&config).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -252,6 +273,7 @@ mod tests {
             key_path: None,
             save_password: Some(true),
             agent_path: None,
+            external_connection_files: vec![],
         };
         let ssh = agent.to_ssh_config();
         assert_eq!(ssh.save_password, Some(true));
@@ -330,6 +352,7 @@ mod tests {
             key_path: None,
             save_password: None,
             agent_path: None,
+            external_connection_files: vec![],
         };
         assert_eq!(
             config.agent_exec_command(),
@@ -348,6 +371,7 @@ mod tests {
             key_path: None,
             save_password: None,
             agent_path: Some("~/bin/termihub-agent".to_string()),
+            external_connection_files: vec![],
         };
         assert_eq!(
             config.agent_exec_command(),
@@ -366,6 +390,7 @@ mod tests {
             key_path: None,
             save_password: None,
             agent_path: Some("/usr/local/bin/termihub-agent".to_string()),
+            external_connection_files: vec![],
         };
         assert_eq!(
             config.agent_exec_command(),
@@ -384,6 +409,7 @@ mod tests {
             key_path: None,
             save_password: None,
             agent_path: None,
+            external_connection_files: vec![],
         };
         assert_eq!(
             config.agent_version_command(),
@@ -402,11 +428,25 @@ mod tests {
             key_path: None,
             save_password: None,
             agent_path: Some("/opt/termihub-agent".to_string()),
+            external_connection_files: vec![],
         };
         assert_eq!(
             config.agent_version_command(),
             "/opt/termihub-agent --version 2>/dev/null"
         );
+    }
+
+    /// Regression: configs saved without `authMethod` (e.g. created by an old
+    /// version) must deserialize successfully and default to "password".
+    #[test]
+    fn remote_agent_config_auth_method_defaults_to_password() {
+        let json = r#"{
+            "host": "pi.local",
+            "port": 22,
+            "username": "pi"
+        }"#;
+        let config: RemoteAgentConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.auth_method, "password");
     }
 
     #[test]
@@ -449,6 +489,7 @@ mod tests {
                 key_path: None,
                 save_password: None,
                 agent_path,
+                external_connection_files: vec![],
             };
             let cmd = config.agent_exec_command();
             let binary = cmd.split_whitespace().next().unwrap();
@@ -477,6 +518,7 @@ mod tests {
             key_path: None,
             save_password: None,
             agent_path: None,
+            external_connection_files: vec![],
         };
         let json = serde_json::to_string(&config).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -484,5 +526,67 @@ mod tests {
             v.get("agentPath").is_none(),
             "agentPath should be omitted when None, got: {json}"
         );
+    }
+
+    #[test]
+    fn external_connection_files_serde_round_trip() {
+        let config = RemoteAgentConfig {
+            host: "pi.local".to_string(),
+            port: 22,
+            username: "pi".to_string(),
+            auth_method: "key".to_string(),
+            password: None,
+            key_path: None,
+            save_password: None,
+            agent_path: None,
+            external_connection_files: vec![
+                ExternalAgentFile {
+                    path: "/home/pi/team-connections.json".to_string(),
+                    enabled: true,
+                },
+                ExternalAgentFile {
+                    path: "/home/pi/extra.json".to_string(),
+                    enabled: false,
+                },
+            ],
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: RemoteAgentConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.external_connection_files.len(), 2);
+        assert_eq!(
+            deserialized.external_connection_files[0].path,
+            "/home/pi/team-connections.json"
+        );
+        assert!(deserialized.external_connection_files[0].enabled);
+        assert!(!deserialized.external_connection_files[1].enabled);
+    }
+
+    #[test]
+    fn external_connection_files_empty_omitted_in_json() {
+        let config = RemoteAgentConfig {
+            host: "pi.local".to_string(),
+            port: 22,
+            username: "pi".to_string(),
+            auth_method: "key".to_string(),
+            password: None,
+            key_path: None,
+            save_password: None,
+            agent_path: None,
+            external_connection_files: vec![],
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(
+            v.get("externalConnectionFiles").is_none(),
+            "externalConnectionFiles should be omitted when empty, got: {json}"
+        );
+    }
+
+    /// Configs saved before this field existed must deserialize successfully.
+    #[test]
+    fn external_connection_files_defaults_when_missing() {
+        let json = r#"{"host":"pi.local","port":22,"username":"pi","authMethod":"key"}"#;
+        let config: RemoteAgentConfig = serde_json::from_str(json).unwrap();
+        assert!(config.external_connection_files.is_empty());
     }
 }

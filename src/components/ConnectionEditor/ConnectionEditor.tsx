@@ -4,6 +4,7 @@ import type { LucideIcon } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import {
   ConnectionConfig,
+  ExternalAgentFile,
   RemoteAgentConfig,
   ShellType,
   TerminalOptions,
@@ -28,6 +29,7 @@ import {
 import { useAvailableRuntimes } from "@/hooks/useAvailableRuntimes";
 import { ConnectionTerminalSettings } from "./ConnectionTerminalSettings";
 import { ConnectionAppearanceSettings } from "./ConnectionAppearanceSettings";
+import { AgentExternalFilesSettings } from "./AgentExternalFilesSettings";
 import { AgentSettingsForm } from "./AgentSettingsForm";
 import { findLeafByTab } from "@/utils/panelTree";
 import "./ConnectionEditor.css";
@@ -184,15 +186,28 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   );
   const effectiveRegistry = isAgentDefinitionMode ? agentConnectionTypes : connectionTypes;
 
+  /** Normalize legacy session-type aliases to the canonical registry ID. */
+  function normalizeAgentTypeId(typeId: string, types: typeof agentConnectionTypes): string {
+    if (types.some((ct) => ct.typeId === typeId)) return typeId;
+    const aliases: Record<string, string> = { shell: "local" };
+    return aliases[typeId] ?? typeId;
+  }
+
   const defaultShell = useAppStore((s) => s.defaultShell);
 
   // Derive initial typeId and settings from existing connection or defaults
   const initialTypeAndSettings = useMemo(() => {
     // Agent definition: existing or new
     if (existingAgentDef) {
+      const typeId = normalizeAgentTypeId(existingAgentDef.sessionType, agentConnectionTypes);
+      const typeInfo = agentConnectionTypes.find((ct) => ct.typeId === typeId);
       return {
-        typeId: existingAgentDef.sessionType,
-        settings: existingAgentDef.config,
+        typeId,
+        settings: Object.keys(existingAgentDef.config as Record<string, unknown>).length
+          ? (existingAgentDef.config as Record<string, unknown>)
+          : typeInfo
+            ? buildDefaults(typeInfo.schema)
+            : {},
       };
     }
     if (isAgentDefinitionMode) {
@@ -200,7 +215,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       if (firstType) {
         return { typeId: firstType.typeId, settings: buildDefaults(firstType.schema) };
       }
-      return { typeId: "shell", settings: {} };
+      return { typeId: "", settings: {} };
     }
     // Agent transport
     if (existingAgent && !meta.agentDefinitionId) {
@@ -375,6 +390,12 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const handleTypeChange = useCallback(
     (typeId: string) => {
       setSelectedType(typeId);
+      if (typeId === "remote") {
+        // "remote" is not in the registry; seed defaults from AGENT_SCHEMA so
+        // required fields like authMethod are present from the start.
+        setConnSettings(buildDefaults(AGENT_SCHEMA));
+        return;
+      }
       const typeInfo = findSchema(effectiveRegistry, typeId);
       const defaults = buildTypeDefaults(typeInfo, settings);
       setConnSettings(defaults);
@@ -707,9 +728,10 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         </label>
       )}
 
-      {!isAnyAgentMode && (
+      {!isAgentTransportMode && (
         <p className="settings-form__hint">
           Use {"${env:VAR}"} for environment variables, e.g. {"${env:USER}"}
+          {isAgentDefinitionMode && " (resolved on the remote machine)"}
         </p>
       )}
 
@@ -729,6 +751,15 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
             ))}
           </select>
         </label>
+      )}
+
+      {isAgentTransportMode && (
+        <AgentExternalFilesSettings
+          files={(connSettings.externalConnectionFiles as ExternalAgentFile[]) ?? []}
+          onChange={(files) =>
+            setConnSettings((prev) => ({ ...prev, externalConnectionFiles: files }))
+          }
+        />
       )}
     </div>
   );

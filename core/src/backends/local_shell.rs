@@ -360,7 +360,8 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
             starting_directory,
             initial_command,
             ..ShellConfig::default()
-        };
+        }
+        .expand();
 
         let shell_cmd = build_shell_command(&config);
 

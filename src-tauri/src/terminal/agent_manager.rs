@@ -87,6 +87,9 @@ pub struct AgentDefinitionInfo {
     pub terminal_options: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
+    /// Source file path on the remote host, or `None` for the primary store.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_file: Option<String>,
 }
 
 /// Info about a folder on the agent.
@@ -123,6 +126,7 @@ fn parse_agent_definition(v: &Value) -> Option<AgentDefinitionInfo> {
             }
         }),
         icon: v["icon"].as_str().map(|s| s.to_string()),
+        source_file: v["source_file"].as_str().map(|s| s.to_string()),
     })
 }
 
@@ -373,11 +377,16 @@ impl AgentConnectionManager {
             .lock()
             .map_err(|e| TerminalError::RemoteError(format!("Lock failed: {}", e)))?;
 
-        if agents.contains_key(agent_id) {
-            return Err(TerminalError::RemoteError(format!(
-                "Agent {} is already connected",
-                agent_id
-            )));
+        // Evict a dead entry left behind when the I/O thread exits without
+        // removing itself (e.g. reconnection failed after a dropped connection).
+        if let Some(existing) = agents.get(agent_id) {
+            if existing.alive.load(Ordering::SeqCst) {
+                return Err(TerminalError::RemoteError(format!(
+                    "Agent {} is already connected",
+                    agent_id
+                )));
+            }
+            agents.remove(agent_id);
         }
 
         // Emit connecting state
@@ -401,6 +410,13 @@ impl AgentConnectionManager {
         })?;
 
         // 3. Blocking handshake: initialize
+        let enabled_external_files: Vec<&str> = config
+            .external_connection_files
+            .iter()
+            .filter(|f| f.enabled)
+            .map(|f| f.path.as_str())
+            .collect();
+
         let mut request_id: u64 = 0;
         request_id += 1;
         let default_settings;
@@ -411,7 +427,7 @@ impl AgentConnectionManager {
                 &default_settings
             }
         };
-        let init_params = build_initialize_params(settings_ref);
+        let init_params = build_initialize_params(settings_ref, &enabled_external_files);
         jsonrpc::write_request(&mut channel, request_id, "initialize", init_params).map_err(
             |e| {
                 emit_agent_state(&self.app_handle, agent_id, "disconnected");
@@ -1124,13 +1140,14 @@ impl AgentRpcClient for AgentConnectionManager {
     }
 }
 
-/// Build the `initialize` JSON-RPC params including agent runtime settings.
-fn build_initialize_params(settings: &AgentSettings) -> Value {
+/// Build the `initialize` JSON-RPC params including agent runtime settings and external files.
+fn build_initialize_params(settings: &AgentSettings, external_files: &[&str]) -> Value {
     serde_json::json!({
         "protocol_version": "0.2.0",
         "client": "termihub-desktop",
         "client_version": "0.1.0",
-        "agentSettings": settings
+        "agentSettings": settings,
+        "external_connection_files": external_files
     })
 }
 
@@ -1423,7 +1440,13 @@ fn reconnect_agent(
 
         // 3. Initialize
         *request_id += 1;
-        let init_params = build_initialize_params(agent_settings);
+        let enabled_files: Vec<&str> = config
+            .external_connection_files
+            .iter()
+            .filter(|f| f.enabled)
+            .map(|f| f.path.as_str())
+            .collect();
+        let init_params = build_initialize_params(agent_settings, &enabled_files);
         if let Err(e) = jsonrpc::write_request(&mut channel, *request_id, "initialize", init_params)
         {
             warn!(
@@ -1621,6 +1644,67 @@ mod tests {
         assert!(parse_agent_definition(&wire).is_none());
     }
 
+    /// parse_agent_definition reads the source_file field for external connections.
+    #[test]
+    fn parse_definition_with_source_file() {
+        let wire = json!({
+            "id": "ext-1",
+            "name": "Team Shell",
+            "session_type": "local",
+            "source_file": "/home/pi/team-connections.json"
+        });
+        let def = parse_agent_definition(&wire).unwrap();
+        assert_eq!(
+            def.source_file,
+            Some("/home/pi/team-connections.json".to_string())
+        );
+    }
+
+    /// Primary connections have no source_file.
+    #[test]
+    fn parse_definition_without_source_file() {
+        let wire = json!({"id": "conn-1", "name": "Shell", "session_type": "local"});
+        let def = parse_agent_definition(&wire).unwrap();
+        assert_eq!(def.source_file, None);
+    }
+
+    /// source_file is omitted from JSON when None.
+    #[test]
+    fn definition_info_source_file_omitted_when_none() {
+        let def = AgentDefinitionInfo {
+            id: "conn-1".to_string(),
+            name: "Test".to_string(),
+            session_type: "shell".to_string(),
+            config: json!({}),
+            persistent: false,
+            folder_id: None,
+            terminal_options: None,
+            icon: None,
+            source_file: None,
+        };
+        let v = serde_json::to_value(&def).unwrap();
+        assert!(v.get("sourceFile").is_none());
+    }
+
+    /// source_file is camelCase in JSON when present.
+    #[test]
+    fn definition_info_source_file_camel_case() {
+        let def = AgentDefinitionInfo {
+            id: "ext-1".to_string(),
+            name: "External".to_string(),
+            session_type: "local".to_string(),
+            config: json!({}),
+            persistent: false,
+            folder_id: None,
+            terminal_options: None,
+            icon: None,
+            source_file: Some("/home/pi/team.json".to_string()),
+        };
+        let v = serde_json::to_value(&def).unwrap();
+        assert_eq!(v["sourceFile"], "/home/pi/team.json");
+        assert!(v.get("source_file").is_none());
+    }
+
     /// Regression: parse_agent_folder reads snake_case fields from agent wire format.
     #[test]
     fn parse_folder_from_snake_case_wire_format() {
@@ -1658,6 +1742,7 @@ mod tests {
             folder_id: Some("folder-1".to_string()),
             terminal_options: None,
             icon: None,
+            source_file: None,
         };
         let v = serde_json::to_value(&def).unwrap();
         assert_eq!(v["sessionType"], "shell");
@@ -1697,6 +1782,7 @@ mod tests {
                 folder_id: None,
                 terminal_options: None,
                 icon: None,
+                source_file: None,
             }],
             folders: vec![AgentFolderInfo {
                 id: "folder-1".to_string(),

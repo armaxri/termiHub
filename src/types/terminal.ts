@@ -94,6 +94,13 @@ export interface TerminalOptions {
   cursorBlink?: boolean;
 }
 
+/** An external connection file configured for a remote agent. */
+export interface ExternalAgentFile {
+  /** Absolute path on the remote host. */
+  path: string;
+  enabled: boolean;
+}
+
 /** SSH transport configuration for a remote agent (no session details). */
 export interface RemoteAgentConfig {
   host: string;
@@ -105,6 +112,8 @@ export interface RemoteAgentConfig {
   savePassword?: boolean;
   /** Path to the agent binary on the remote host (default: ~/.local/bin/termihub-agent). */
   agentPath?: string;
+  /** External connection files to load on the remote host (read-only). */
+  externalConnectionFiles?: ExternalAgentFile[];
 }
 
 /** Key-value pair for Docker environment variables. */

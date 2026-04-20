@@ -3,9 +3,9 @@
 # Uses cross-rs for all targets. Multiple targets are built in parallel by default,
 # each in its own CARGO_TARGET_DIR to avoid cargo's workspace build lock.
 #
-# Usage: ./scripts/build-agents.sh [--targets <list>] [--sequential] [--help]
+# Usage: ./scripts/build-agents.sh [--targets <list>] [--sequential] [--native] [--dev] [--help]
 #
-# Run ./scripts/setup-agent-cross.sh first to install required toolchains.
+# Run ./scripts/setup-agent-cross.sh first to install required toolchains (not needed for --native).
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
@@ -18,6 +18,8 @@ ALL_TARGETS=(
 )
 SELECTED_TARGETS=()
 SEQUENTIAL=false
+NATIVE=false
+DEV=false
 
 # --- Argument parsing ---
 while [[ $# -gt 0 ]]; do
@@ -31,6 +33,14 @@ while [[ $# -gt 0 ]]; do
             SEQUENTIAL=true
             shift
             ;;
+        --native)
+            NATIVE=true
+            shift
+            ;;
+        --dev)
+            DEV=true
+            shift
+            ;;
         --help|-h)
             cat <<'USAGE'
 Usage: build-agents.sh [OPTIONS]
@@ -39,11 +49,16 @@ Cross-compile the remote agent for Linux targets (static musl binaries).
 Multiple targets are built in parallel by default.
 
 Options:
-  --targets <list>   Comma-separated list of targets to build (default: all)
+  --targets <list>   Comma-separated list of targets to build (default: all, or host for --native)
   --sequential       Build targets one at a time (useful for debugging)
+  --native           Build using the local cargo toolchain instead of cross-rs/Docker.
+                     Defaults to the host target triple. Faster for local development on
+                     the target machine; no container runtime required.
+  --dev              Build in debug profile (omits --release). Much faster to compile;
+                     binary lands in target/<triple>/debug/ instead of release/.
   --help, -h         Show this help message
 
-Targets:
+Targets (cross-rs mode only):
   x86_64-unknown-linux-musl       Static x64 binaries (musl)
   aarch64-unknown-linux-musl      Static ARM64 binaries (musl)
   armv7-unknown-linux-musleabihf  Static ARMv7 binaries (musl, older Raspberry Pi)
@@ -52,6 +67,8 @@ Examples:
   ./scripts/build-agents.sh
   ./scripts/build-agents.sh --targets aarch64-unknown-linux-musl
   ./scripts/build-agents.sh --sequential
+  ./scripts/build-agents.sh --native --dev
+  ./scripts/build-agents.sh --native --targets aarch64-unknown-linux-gnu
 USAGE
             exit 0
             ;;
@@ -64,22 +81,44 @@ USAGE
 done
 
 if [ ${#SELECTED_TARGETS[@]} -eq 0 ]; then
-    SELECTED_TARGETS=("${ALL_TARGETS[@]}")
+    if [ "$NATIVE" = true ]; then
+        host_triple=$(rustc -vV 2>/dev/null | awk '/^host:/{print $2}')
+        if [ -z "$host_triple" ]; then
+            echo "ERROR: Could not determine host target triple from rustc."
+            exit 1
+        fi
+        SELECTED_TARGETS=("$host_triple")
+    else
+        SELECTED_TARGETS=("${ALL_TARGETS[@]}")
+    fi
 fi
 
-# --- Detect cross-rs ---
-if ! command -v cross >/dev/null 2>&1; then
-    echo "ERROR: cross-rs not found. Run ./scripts/setup-agent-cross.sh first."
-    exit 1
+# --- Profile setup ---
+if [ "$DEV" = true ]; then
+    PROFILE_FLAG=""
+    PROFILE_DIR="debug"
+else
+    PROFILE_FLAG="--release"
+    PROFILE_DIR="release"
 fi
 
-# --- Container engine detection ---
+# --- Detect cross-rs (skipped for --native) ---
+if [ "$NATIVE" = false ]; then
+    if ! command -v cross >/dev/null 2>&1; then
+        echo "ERROR: cross-rs not found. Run ./scripts/setup-agent-cross.sh first."
+        exit 1
+    fi
+fi
+
+# --- Container engine detection (skipped for --native) ---
 # Auto-detect which engine to use, preferring the one that already has the
 # required cross-compilation images.  If Podman is selected, disable cross-rs
 # rootless handling — without CROSS_ROOTLESS_CONTAINER_ENGINE=false, cross-rs
 # adds --user UID:GID to the `podman run` command which makes the injected
 # cargo/rustc toolchain non-executable inside the container ("Permission denied").
-if [ "${CROSS_CONTAINER_ENGINE:-}" = "podman" ]; then
+if [ "$NATIVE" = true ]; then
+    : # No container engine needed
+elif [ "${CROSS_CONTAINER_ENGINE:-}" = "podman" ]; then
     # Explicit override: use Podman
     export CROSS_ROOTLESS_CONTAINER_ENGINE=false
 elif [ -z "${CROSS_CONTAINER_ENGINE:-}" ]; then
@@ -114,32 +153,34 @@ elif [ -z "${CROSS_CONTAINER_ENGINE:-}" ]; then
     # else: only Docker is running — use it (default, no override needed)
 fi
 
-# --- Pre-flight: verify required images exist in the selected engine ---
-_container_cmd="${CROSS_CONTAINER_ENGINE:-docker}"
-_missing_images=()
-for _t in "${SELECTED_TARGETS[@]}"; do
-    if ! "$_container_cmd" image inspect "localhost/termihub-cross:$_t" >/dev/null 2>&1; then
-        _missing_images+=("localhost/termihub-cross:$_t")
-    fi
-done
-if [ "${#_missing_images[@]}" -gt 0 ]; then
-    echo "ERROR: The following cross-compilation image(s) are missing from $_container_cmd:"
-    for _img in "${_missing_images[@]}"; do
-        echo "  $_img"
+# --- Pre-flight: verify required images exist in the selected engine (skipped for --native) ---
+if [ "$NATIVE" = false ]; then
+    _container_cmd="${CROSS_CONTAINER_ENGINE:-docker}"
+    _missing_images=()
+    for _t in "${SELECTED_TARGETS[@]}"; do
+        if ! "$_container_cmd" image inspect "localhost/termihub-cross:$_t" >/dev/null 2>&1; then
+            _missing_images+=("localhost/termihub-cross:$_t")
+        fi
     done
-    echo ""
-    echo "Run ./scripts/setup-agent-cross.sh to build the required images, then retry."
-    exit 1
-fi
-unset _container_cmd _missing_images _t _img
-
-# --- Ensure Rust targets are installed (before any parallel work starts) ---
-for target in "${SELECTED_TARGETS[@]}"; do
-    if ! rustup target list --installed | grep -q "^${target}$"; then
-        echo "  Adding Rust target $target..."
-        rustup target add "$target"
+    if [ "${#_missing_images[@]}" -gt 0 ]; then
+        echo "ERROR: The following cross-compilation image(s) are missing from $_container_cmd:"
+        for _img in "${_missing_images[@]}"; do
+            echo "  $_img"
+        done
+        echo ""
+        echo "Run ./scripts/setup-agent-cross.sh to build the required images, then retry."
+        exit 1
     fi
-done
+    unset _container_cmd _missing_images _t _img
+
+    # --- Ensure Rust targets are installed (before any parallel work starts) ---
+    for target in "${SELECTED_TARGETS[@]}"; do
+        if ! rustup target list --installed | grep -q "^${target}$"; then
+            echo "  Adding Rust target $target..."
+            rustup target add "$target"
+        fi
+    done
+fi
 
 # --- Build ---
 built=0
@@ -155,15 +196,24 @@ if [ "$SEQUENTIAL" = true ] || [ "${#SELECTED_TARGETS[@]}" -le 1 ]; then
 
     for target in "${SELECTED_TARGETS[@]}"; do
         echo "--- $target ---"
-        echo "  Building with cross-rs..."
 
         build_exit=0
-        CROSS_CONFIG=agent/Cross.toml cross build --release --target "$target" -p termihub-agent 2>&1 \
-            | { grep -v "<jemalloc>:" || true; } \
-            || build_exit=$?
+        if [ "$NATIVE" = true ]; then
+            echo "  Building with cargo (native)..."
+            # shellcheck disable=SC2086
+            cargo build $PROFILE_FLAG --target "$target" -p termihub-agent 2>&1 \
+                | { grep -v "<jemalloc>:" || true; } \
+                || build_exit=$?
+        else
+            echo "  Building with cross-rs..."
+            # shellcheck disable=SC2086
+            CROSS_CONFIG=agent/Cross.toml cross build $PROFILE_FLAG --target "$target" -p termihub-agent 2>&1 \
+                | { grep -v "<jemalloc>:" || true; } \
+                || build_exit=$?
+        fi
 
         if [ "$build_exit" -eq 0 ]; then
-            binary="target/$target/release/termihub-agent"
+            binary="target/$target/$PROFILE_DIR/termihub-agent"
             if [ -f "$binary" ]; then
                 size=$(du -h "$binary" | cut -f1)
                 results+=("  OK    $target  ($size)")
@@ -211,11 +261,18 @@ else
         # it switches to full block buffering, silencing output until the buffer
         # fills. awk with fflush() flushes after every line regardless of whether
         # stdout is a terminal or a pipe, keeping output immediate.
-        # The subshell inherits pipefail so cross's exit code propagates through
-        # the awk stage to the background job's exit status.
+        # The subshell inherits pipefail so cross's/cargo's exit code propagates
+        # through the awk stage to the background job's exit status.
         {
-            CARGO_TARGET_DIR="$cross_dir" CROSS_CONFIG=agent/Cross.toml \
-                cross build --release --target "$target" -p termihub-agent 2>&1 \
+            if [ "$NATIVE" = true ]; then
+                # shellcheck disable=SC2086
+                CARGO_TARGET_DIR="$cross_dir" \
+                    cargo build $PROFILE_FLAG --target "$target" -p termihub-agent 2>&1
+            else
+                # shellcheck disable=SC2086
+                CARGO_TARGET_DIR="$cross_dir" CROSS_CONFIG=agent/Cross.toml \
+                    cross build $PROFILE_FLAG --target "$target" -p termihub-agent 2>&1
+            fi \
                 | awk -v prefix="[$target] " '
                     {
                         # \r in the stream is cargo'\''s in-place progress marker.
@@ -265,8 +322,8 @@ else
 
         if [ "${_exit_codes[$i]}" -eq 0 ]; then
             cross_dir="${_cross_dirs[$i]}"
-            src_binary="$cross_dir/$target/release/termihub-agent"
-            dst_dir="target/$target/release"
+            src_binary="$cross_dir/$target/$PROFILE_DIR/termihub-agent"
+            dst_dir="target/$target/$PROFILE_DIR"
             dst_binary="$dst_dir/termihub-agent"
 
             if [ -f "$src_binary" ]; then

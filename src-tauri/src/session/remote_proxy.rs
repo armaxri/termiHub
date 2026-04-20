@@ -657,6 +657,7 @@ mod tests {
                 folder_id: None,
                 terminal_options: None,
                 icon: None,
+                source_file: None,
             })
         }
 
@@ -674,6 +675,7 @@ mod tests {
                 folder_id: None,
                 terminal_options: None,
                 icon: None,
+                source_file: None,
             })
         }
 
