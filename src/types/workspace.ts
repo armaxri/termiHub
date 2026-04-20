@@ -1,9 +1,11 @@
 /** A tab definition within a workspace leaf panel. */
 export interface WorkspaceTabDef {
-  /** Reference to a saved connection by ID (preferred). */
+  /** Reference to a saved connection by ID. */
   connectionRef?: string;
   /** Inline connection config as fallback when no saved connection is referenced. */
   inlineConfig?: { type: string; config: Record<string, unknown> };
+  /** Reference to a remote agent definition (agentId + definitionId on that agent). */
+  agentRef?: { agentId: string; definitionId: string };
   /** Optional title override for the tab. */
   title?: string;
   /** Optional command to run after the session connects. */

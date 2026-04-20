@@ -27,6 +27,7 @@ import {
   Check,
   Palette,
   Stethoscope,
+  WifiOff,
   X,
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
@@ -47,6 +48,8 @@ import { TunnelEditor } from "@/components/TunnelEditor";
 import { WorkspaceEditor } from "@/components/WorkspaceEditor";
 import { NetworkDiagnosticPanel } from "@/components/NetworkTools/NetworkDiagnosticPanel";
 import { TerminalSearchBar } from "@/components/Terminal/TerminalSearchBar";
+import { AgentErrorTab } from "@/components/Terminal/AgentErrorTab";
+import { TerminalSpawnErrorOverlay } from "@/components/Terminal/TerminalSpawnErrorOverlay";
 import { PanelDropZone } from "./PanelDropZone";
 import "./SplitView.css";
 
@@ -63,6 +66,7 @@ export function SplitView() {
   const setDraggingTabId = useAppStore((s) => s.setDraggingTabId);
   const zoomedTabId = useAppStore((s) => s.zoomedTabId);
   const setZoomedTabId = useAppStore((s) => s.setZoomedTabId);
+  const terminalSpawnErrors = useAppStore((s) => s.terminalSpawnErrors);
 
   // Find the zoomed tab's metadata for the overlay header
   const zoomedTab = useMemo(() => {
@@ -252,6 +256,8 @@ export function SplitView() {
                 <LayoutGrid size={14} className="zoom-overlay__icon" />
               ) : zoomedTab.contentType === "network-diagnostic" ? (
                 <Stethoscope size={14} className="zoom-overlay__icon" />
+              ) : zoomedTab.contentType === "agent-error" ? (
+                <WifiOff size={14} className="zoom-overlay__icon" />
               ) : (
                 <ConnectionIcon
                   config={zoomedTab.config}
@@ -272,7 +278,15 @@ export function SplitView() {
               </button>
             </div>
             <div className="zoom-overlay__content">
-              {zoomedTab.contentType === "terminal" ? (
+              {zoomedTab.contentType === "terminal" && terminalSpawnErrors[zoomedTabId] ? (
+                <TerminalSpawnErrorOverlay
+                  key={`zoom-${zoomedTabId}`}
+                  tabId={zoomedTabId}
+                  error={terminalSpawnErrors[zoomedTabId]}
+                  tabTitle={zoomedTab.title}
+                  isVisible={true}
+                />
+              ) : zoomedTab.contentType === "terminal" ? (
                 <>
                   <TerminalSearchBar tabId={zoomedTabId} />
                   {/* key forces a fresh mount on each zoomed-tab change so the
@@ -322,6 +336,13 @@ export function SplitView() {
                 <NetworkDiagnosticPanel
                   key={`zoom-${zoomedTabId}`}
                   meta={zoomedTab.networkDiagnosticMeta}
+                  isVisible={true}
+                />
+              ) : zoomedTab.contentType === "agent-error" && zoomedTab.agentErrorMeta ? (
+                <AgentErrorTab
+                  key={`zoom-${zoomedTabId}`}
+                  tabId={zoomedTabId}
+                  meta={zoomedTab.agentErrorMeta}
                   isVisible={true}
                 />
               ) : null}
@@ -400,6 +421,7 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
   const setTabHorizontalScrolling = useAppStore((s) => s.setTabHorizontalScrolling);
   const tabColors = useAppStore((s) => s.tabColors);
   const setTabColor = useAppStore((s) => s.setTabColor);
+  const terminalSpawnErrors = useAppStore((s) => s.terminalSpawnErrors);
   const rightClickBehavior = useAppStore((s) => s.settings.rightClickBehavior);
   const useQuickAction =
     rightClickBehavior === "quickAction" || (!rightClickBehavior && isWindows());
@@ -500,6 +522,21 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
             <NetworkDiagnosticPanel
               key={tab.id}
               meta={tab.networkDiagnosticMeta}
+              isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
+            />
+          ) : tab.contentType === "agent-error" && tab.agentErrorMeta ? (
+            <AgentErrorTab
+              key={tab.id}
+              tabId={tab.id}
+              meta={tab.agentErrorMeta}
+              isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
+            />
+          ) : tab.contentType === "terminal" && terminalSpawnErrors[tab.id] ? (
+            <TerminalSpawnErrorOverlay
+              key={tab.id}
+              tabId={tab.id}
+              error={terminalSpawnErrors[tab.id]}
+              tabTitle={tab.title}
               isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
             />
           ) : useQuickAction ? (

@@ -1,15 +1,28 @@
 use serde::{Deserialize, Serialize};
 
+/// Reference to a remote agent connection definition.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRef {
+    /// The remote agent's ID.
+    pub agent_id: String,
+    /// The definition ID on that agent.
+    pub definition_id: String,
+}
+
 /// A tab definition within a workspace leaf panel.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceTabDef {
-    /// Reference to a saved connection by ID (preferred).
+    /// Reference to a saved connection by ID.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub connection_ref: Option<String>,
     /// Inline connection config as fallback when no saved connection is referenced.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub inline_config: Option<serde_json::Value>,
+    /// Reference to a remote agent definition.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_ref: Option<AgentRef>,
     /// Optional title override for the tab.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
@@ -170,6 +183,7 @@ mod tests {
                 tabs: vec![WorkspaceTabDef {
                     connection_ref: Some(connection_ref.to_string()),
                     inline_config: None,
+                    agent_ref: None,
                     title: None,
                     initial_command: None,
                 }],
@@ -193,6 +207,7 @@ mod tests {
                                 tabs: vec![WorkspaceTabDef {
                                     connection_ref: Some("conn-1".to_string()),
                                     inline_config: None,
+                                    agent_ref: None,
                                     title: Some("Server".to_string()),
                                     initial_command: Some("cd /app && npm start".to_string()),
                                 }],
@@ -202,6 +217,7 @@ mod tests {
                                     WorkspaceTabDef {
                                         connection_ref: Some("conn-2".to_string()),
                                         inline_config: None,
+                                        agent_ref: None,
                                         title: None,
                                         initial_command: None,
                                     },
@@ -211,6 +227,7 @@ mod tests {
                                             "type": "local",
                                             "config": { "shell": "zsh" }
                                         })),
+                                        agent_ref: None,
                                         title: Some("Local Shell".to_string()),
                                         initial_command: None,
                                     },
@@ -247,6 +264,7 @@ mod tests {
             tabs: vec![WorkspaceTabDef {
                 connection_ref: Some("conn-1".to_string()),
                 inline_config: None,
+                agent_ref: None,
                 title: None,
                 initial_command: None,
             }],
@@ -270,6 +288,7 @@ mod tests {
                     tabs: vec![WorkspaceTabDef {
                         connection_ref: Some("conn-1".to_string()),
                         inline_config: None,
+                        agent_ref: None,
                         title: None,
                         initial_command: None,
                     }],
@@ -278,6 +297,7 @@ mod tests {
                     tabs: vec![WorkspaceTabDef {
                         connection_ref: Some("conn-2".to_string()),
                         inline_config: None,
+                        agent_ref: None,
                         title: None,
                         initial_command: None,
                     }],
@@ -308,6 +328,7 @@ mod tests {
                 "type": "local",
                 "config": { "shell": "bash" }
             })),
+            agent_ref: None,
             title: Some("My Shell".to_string()),
             initial_command: Some("ls -la".to_string()),
         };
@@ -325,13 +346,51 @@ mod tests {
         let tab = WorkspaceTabDef {
             connection_ref: Some("conn-1".to_string()),
             inline_config: None,
+            agent_ref: None,
             title: None,
             initial_command: None,
         };
         let json = serde_json::to_string(&tab).unwrap();
         assert!(!json.contains("inlineConfig"));
+        assert!(!json.contains("agentRef"));
         assert!(!json.contains("title"));
         assert!(!json.contains("initialCommand"));
+    }
+
+    #[test]
+    fn workspace_tab_def_agent_ref_round_trip() {
+        let tab = WorkspaceTabDef {
+            connection_ref: None,
+            inline_config: None,
+            agent_ref: Some(AgentRef {
+                agent_id: "agent-1".to_string(),
+                definition_id: "def-42".to_string(),
+            }),
+            title: Some("My Remote Shell".to_string()),
+            initial_command: None,
+        };
+        let json = serde_json::to_string(&tab).unwrap();
+        assert!(json.contains("agentRef"));
+        assert!(json.contains("agentId"));
+        assert!(json.contains("definitionId"));
+        assert!(!json.contains("connectionRef"));
+        let deserialized: WorkspaceTabDef = serde_json::from_str(&json).unwrap();
+        let agent_ref = deserialized.agent_ref.unwrap();
+        assert_eq!(agent_ref.agent_id, "agent-1");
+        assert_eq!(agent_ref.definition_id, "def-42");
+    }
+
+    #[test]
+    fn workspace_tab_def_agent_ref_omitted_when_none() {
+        let tab = WorkspaceTabDef {
+            connection_ref: Some("conn-1".to_string()),
+            inline_config: None,
+            agent_ref: None,
+            title: None,
+            initial_command: None,
+        };
+        let json = serde_json::to_string(&tab).unwrap();
+        assert!(!json.contains("agentRef"));
     }
 
     #[test]
@@ -393,12 +452,14 @@ mod tests {
                                 WorkspaceTabDef {
                                     connection_ref: Some("a".to_string()),
                                     inline_config: None,
+                                    agent_ref: None,
                                     title: None,
                                     initial_command: None,
                                 },
                                 WorkspaceTabDef {
                                     connection_ref: Some("b".to_string()),
                                     inline_config: None,
+                                    agent_ref: None,
                                     title: None,
                                     initial_command: None,
                                 },
@@ -408,6 +469,7 @@ mod tests {
                             tabs: vec![WorkspaceTabDef {
                                 connection_ref: Some("c".to_string()),
                                 inline_config: None,
+                                agent_ref: None,
                                 title: None,
                                 initial_command: None,
                             }],
@@ -419,6 +481,7 @@ mod tests {
                     tabs: vec![WorkspaceTabDef {
                         connection_ref: Some("d".to_string()),
                         inline_config: None,
+                        agent_ref: None,
                         title: None,
                         initial_command: None,
                     }],
@@ -483,6 +546,7 @@ mod tests {
                     tabs: vec![WorkspaceTabDef {
                         connection_ref: Some("conn-1".to_string()),
                         inline_config: None,
+                        agent_ref: None,
                         title: None,
                         initial_command: None,
                     }],
@@ -491,6 +555,7 @@ mod tests {
                     tabs: vec![WorkspaceTabDef {
                         connection_ref: Some("conn-2".to_string()),
                         inline_config: None,
+                        agent_ref: None,
                         title: None,
                         initial_command: None,
                     }],

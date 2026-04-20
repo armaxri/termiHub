@@ -951,3 +951,106 @@ describe("captureAllTabGroups", () => {
     expect(defs[0].color).toBe("#abc");
   });
 });
+
+// --- agentRef resolution ---
+
+describe("agentRef workspace tab resolution", () => {
+  const agentContext = {
+    agents: [
+      { id: "agent-1", name: "Pi Server", connected: true },
+      { id: "agent-2", name: "Work Server", connected: false },
+    ],
+    definitions: {
+      "agent-1": [
+        {
+          id: "def-shell",
+          name: "Bash Shell",
+          sessionType: "shell",
+          persistent: false,
+          config: { shell: "/bin/bash" },
+        },
+      ],
+    },
+  };
+
+  it("resolves agentRef to terminal tab when agent is connected", () => {
+    const layout: WorkspaceLayoutNode = {
+      type: "leaf",
+      tabs: [{ agentRef: { agentId: "agent-1", definitionId: "def-shell" } }],
+    };
+    const panel = buildPanelTreeFromWorkspace(layout, [], "zsh", agentContext);
+    expect(panel.type).toBe("leaf");
+    if (panel.type === "leaf") {
+      const tab = panel.tabs[0];
+      expect(tab.contentType).toBe("terminal");
+      expect(tab.connectionType).toBe("remote-session");
+      expect(tab.config.config).toMatchObject({ agentId: "agent-1", sessionType: "shell" });
+      expect(tab.workspaceAgentRef).toEqual({ agentId: "agent-1", definitionId: "def-shell" });
+      expect(tab.agentErrorMeta).toBeUndefined();
+    }
+  });
+
+  it("resolves agentRef to agent-error tab when agent is disconnected", () => {
+    const layout: WorkspaceLayoutNode = {
+      type: "leaf",
+      tabs: [{ agentRef: { agentId: "agent-2", definitionId: "def-shell" } }],
+    };
+    const panel = buildPanelTreeFromWorkspace(layout, [], "zsh", agentContext);
+    expect(panel.type).toBe("leaf");
+    if (panel.type === "leaf") {
+      const tab = panel.tabs[0];
+      expect(tab.contentType).toBe("agent-error");
+      expect(tab.agentErrorMeta?.agentId).toBe("agent-2");
+      expect(tab.agentErrorMeta?.error).toContain("not connected");
+      expect(tab.workspaceAgentRef).toEqual({ agentId: "agent-2", definitionId: "def-shell" });
+    }
+  });
+
+  it("resolves agentRef to agent-error tab when definition is not found", () => {
+    const layout: WorkspaceLayoutNode = {
+      type: "leaf",
+      tabs: [{ agentRef: { agentId: "agent-1", definitionId: "missing-def" } }],
+    };
+    const panel = buildPanelTreeFromWorkspace(layout, [], "zsh", agentContext);
+    expect(panel.type).toBe("leaf");
+    if (panel.type === "leaf") {
+      const tab = panel.tabs[0];
+      expect(tab.contentType).toBe("agent-error");
+      expect(tab.agentErrorMeta?.error).toContain("not found");
+    }
+  });
+
+  it("resolves agentRef to agent-error tab when agent context is absent", () => {
+    const layout: WorkspaceLayoutNode = {
+      type: "leaf",
+      tabs: [{ agentRef: { agentId: "agent-1", definitionId: "def-shell" } }],
+    };
+    const panel = buildPanelTreeFromWorkspace(layout, [], "zsh");
+    expect(panel.type).toBe("leaf");
+    if (panel.type === "leaf") {
+      expect(panel.tabs[0].contentType).toBe("agent-error");
+    }
+  });
+
+  it("captures agent-error tab back as agentRef", () => {
+    const layout: WorkspaceLayoutNode = {
+      type: "leaf",
+      tabs: [
+        {
+          agentRef: { agentId: "agent-2", definitionId: "def-shell" },
+          title: "My Shell",
+          initialCommand: "ls",
+        },
+      ],
+    };
+    const panel = buildPanelTreeFromWorkspace(layout, [], "zsh", agentContext);
+    const captured = captureCurrentLayout(panel, []);
+    expect(captured.type).toBe("leaf");
+    if (captured.type === "leaf") {
+      const tabDef = captured.tabs[0];
+      expect(tabDef.agentRef).toEqual({ agentId: "agent-2", definitionId: "def-shell" });
+      expect(tabDef.title).toBe("My Shell");
+      expect(tabDef.initialCommand).toBe("ls");
+    }
+  });
+});

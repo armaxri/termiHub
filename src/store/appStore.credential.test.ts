@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { CredentialStoreStatusInfo } from "@/types/credential";
-import type { SavedConnection } from "@/types/connection";
+import type { SavedConnection, RemoteAgentDefinition } from "@/types/connection";
 import type { WorkspaceDefinition } from "@/types/workspace";
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -331,5 +331,140 @@ describe("launchWorkspace — credential store pre-unlock", () => {
     await useAppStore.getState().launchWorkspace("ws-3");
 
     expect(mockRequestUnlock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("launchWorkspace — agentRef credential store pre-unlock", () => {
+  const disconnectedAgent: RemoteAgentDefinition = {
+    id: "agent-1",
+    name: "My Remote Agent",
+    config: {
+      host: "remote.example.com",
+      port: 22,
+      username: "user",
+      authMethod: "password",
+      savePassword: true,
+    },
+    isExpanded: false,
+    connectionState: "disconnected",
+  };
+
+  const workspaceWithAgentRef: WorkspaceDefinition = {
+    id: "ws-agent-1",
+    name: "Agent Workspace",
+    tabGroups: [
+      {
+        name: "Main",
+        layout: {
+          type: "leaf",
+          tabs: [{ agentRef: { agentId: "agent-1", definitionId: "def-shell" } }],
+        },
+      },
+    ],
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useAppStore.setState({
+      credentialStoreStatus: null,
+      unlockDialogOpen: false,
+      activeWorkspaceName: null,
+      connections: [],
+      remoteAgents: [],
+      agentDefinitions: {},
+    });
+  });
+
+  it("prompts for unlock when store is locked and workspace has an agentRef with stored credential", async () => {
+    mockedInvoke.mockResolvedValueOnce(workspaceWithAgentRef);
+    const mockRequestUnlock = vi.fn().mockResolvedValue(true);
+    const mockConnectAgent = vi.fn().mockResolvedValue({ capabilities: {} });
+    mockedInvoke.mockResolvedValueOnce("stored-agent-pass"); // resolve_credential
+    useAppStore.setState({
+      credentialStoreStatus: { mode: "master_password", status: "locked" },
+      remoteAgents: [disconnectedAgent],
+      requestUnlock: mockRequestUnlock,
+      connectRemoteAgent: mockConnectAgent,
+    });
+
+    await useAppStore.getState().launchWorkspace("ws-agent-1");
+
+    expect(mockRequestUnlock).toHaveBeenCalledTimes(1);
+  });
+
+  it("calls connectRemoteAgent with the resolved password after unlock for agentRef tabs", async () => {
+    mockedInvoke.mockResolvedValueOnce(workspaceWithAgentRef);
+    mockedInvoke.mockResolvedValueOnce("stored-agent-pass"); // resolve_credential
+    const mockRequestUnlock = vi.fn().mockResolvedValue(true);
+    const mockConnectAgent = vi.fn().mockResolvedValue(undefined);
+    useAppStore.setState({
+      credentialStoreStatus: { mode: "master_password", status: "unlocked" },
+      remoteAgents: [disconnectedAgent],
+      requestUnlock: mockRequestUnlock,
+      connectRemoteAgent: mockConnectAgent,
+    });
+
+    await useAppStore.getState().launchWorkspace("ws-agent-1");
+
+    expect(mockConnectAgent).toHaveBeenCalledWith("agent-1", "stored-agent-pass");
+    expect(useAppStore.getState().activeWorkspaceName).toBe("Agent Workspace");
+  });
+
+  it("aborts workspace launch if unlock is dismissed for agentRef tab", async () => {
+    mockedInvoke.mockResolvedValueOnce(workspaceWithAgentRef);
+    const mockRequestUnlock = vi.fn().mockResolvedValue(false);
+    const mockConnectAgent = vi.fn();
+    useAppStore.setState({
+      credentialStoreStatus: { mode: "master_password", status: "locked" },
+      remoteAgents: [disconnectedAgent],
+      requestUnlock: mockRequestUnlock,
+      connectRemoteAgent: mockConnectAgent,
+    });
+
+    await useAppStore.getState().launchWorkspace("ws-agent-1");
+
+    expect(mockRequestUnlock).toHaveBeenCalledTimes(1);
+    expect(mockConnectAgent).not.toHaveBeenCalled();
+    expect(useAppStore.getState().activeWorkspaceName).toBeNull();
+  });
+
+  it("still opens workspace with agent-error tabs if agent connection fails", async () => {
+    mockedInvoke.mockResolvedValueOnce(workspaceWithAgentRef);
+    mockedInvoke.mockResolvedValueOnce("stored-agent-pass"); // resolve_credential
+    const mockRequestUnlock = vi.fn().mockResolvedValue(true);
+    const mockConnectAgent = vi.fn().mockRejectedValue(new Error("SSH auth failed"));
+    useAppStore.setState({
+      credentialStoreStatus: { mode: "master_password", status: "unlocked" },
+      remoteAgents: [disconnectedAgent],
+      requestUnlock: mockRequestUnlock,
+      connectRemoteAgent: mockConnectAgent,
+    });
+
+    await useAppStore.getState().launchWorkspace("ws-agent-1");
+
+    // Workspace should still open even if agent connection failed
+    expect(useAppStore.getState().activeWorkspaceName).toBe("Agent Workspace");
+  });
+
+  it("skips unlock and connect for already-connected agents", async () => {
+    const connectedAgent: RemoteAgentDefinition = {
+      ...disconnectedAgent,
+      connectionState: "connected",
+    };
+    mockedInvoke.mockResolvedValueOnce(workspaceWithAgentRef);
+    const mockRequestUnlock = vi.fn().mockResolvedValue(true);
+    const mockConnectAgent = vi.fn();
+    useAppStore.setState({
+      credentialStoreStatus: { mode: "master_password", status: "locked" },
+      remoteAgents: [connectedAgent],
+      requestUnlock: mockRequestUnlock,
+      connectRemoteAgent: mockConnectAgent,
+    });
+
+    await useAppStore.getState().launchWorkspace("ws-agent-1");
+
+    expect(mockRequestUnlock).not.toHaveBeenCalled();
+    expect(mockConnectAgent).not.toHaveBeenCalled();
+    expect(useAppStore.getState().activeWorkspaceName).toBe("Agent Workspace");
   });
 });
