@@ -2,6 +2,7 @@ import { useState, useCallback } from "react";
 import { WifiOff, RefreshCw } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { AgentErrorMeta } from "@/types/terminal";
+import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import "./AgentErrorTab.css";
 
 interface AgentErrorTabProps {
@@ -27,7 +28,35 @@ export function AgentErrorTab({ tabId: _tabId, meta, isVisible }: AgentErrorTabP
     setIsReconnecting(true);
     setReconnectError(null);
     try {
-      await connectRemoteAgent(meta.agentId);
+      const storeState = useAppStore.getState();
+      const agent = storeState.remoteAgents.find((a) => a.id === meta.agentId);
+      let password: string | undefined;
+
+      if (agent) {
+        const needsStoredCredential =
+          agent.config.authMethod === "password" ||
+          (agent.config.authMethod === "key" && agent.config.savePassword);
+        if (needsStoredCredential) {
+          const credStatus = storeState.credentialStoreStatus;
+          if (credStatus?.mode === "master_password" && credStatus?.status === "locked") {
+            const unlocked = await useAppStore.getState().requestUnlock();
+            if (!unlocked) {
+              setIsReconnecting(false);
+              return;
+            }
+          }
+          const resolution = await resolveConnectionCredential(
+            meta.agentId,
+            agent.config.authMethod,
+            agent.config.savePassword
+          );
+          if (resolution.usedStoredCredential && resolution.password) {
+            password = resolution.password;
+          }
+        }
+      }
+
+      await connectRemoteAgent(meta.agentId, password);
       resolveAgentErrorTabs(meta.agentId);
     } catch (err) {
       setReconnectError(String(err));

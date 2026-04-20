@@ -2769,25 +2769,62 @@ export const useAppStore = create<AppState>((set, get) => {
           getWorkspaceLeaves(g.layout).flatMap((leaf) => leaf.tabs)
         );
 
+        // Collect disconnected agents referenced by agentRef tabs that use stored credentials.
+        const referencedAgentIds = new Set(
+          allTabDefs.filter((t) => t.agentRef).map((t) => t.agentRef!.agentId)
+        );
+        const disconnectedAgentsNeedingCreds = state.remoteAgents.filter((agent) => {
+          if (!referencedAgentIds.has(agent.id)) return false;
+          if (agent.connectionState === "connected") return false;
+          return (
+            agent.config.authMethod === "password" ||
+            (agent.config.authMethod === "key" && agent.config.savePassword)
+          );
+        });
+
         // Before opening any tabs, check whether the credential store needs to be
         // unlocked for any connection in this workspace. If so, prompt once upfront
         // so that all tabs can connect immediately after unlock rather than failing
         // and prompting individually.
         const credStatus = state.credentialStoreStatus;
         if (credStatus?.mode === "master_password" && credStatus?.status === "locked") {
-          const needsStoredCredential = allTabDefs.some((tabDef) => {
-            if (!tabDef.connectionRef) return false;
-            const saved = state.connections.find((c) => c.id === tabDef.connectionRef);
-            if (!saved) return false;
-            const cfg = saved.config.config as Record<string, unknown>;
-            const authMethod = cfg.authMethod as string | undefined;
-            const savePassword = cfg.savePassword as boolean | undefined;
-            return authMethod === "password" || (authMethod === "key" && savePassword);
-          });
+          const needsStoredCredential =
+            allTabDefs.some((tabDef) => {
+              if (!tabDef.connectionRef) return false;
+              const saved = state.connections.find((c) => c.id === tabDef.connectionRef);
+              if (!saved) return false;
+              const cfg = saved.config.config as Record<string, unknown>;
+              const authMethod = cfg.authMethod as string | undefined;
+              const savePassword = cfg.savePassword as boolean | undefined;
+              return authMethod === "password" || (authMethod === "key" && savePassword);
+            }) || disconnectedAgentsNeedingCreds.length > 0;
           if (needsStoredCredential) {
             const unlocked = await get().requestUnlock();
             if (!unlocked) return;
           }
+        }
+
+        // Connect any disconnected agents that have stored credentials so that
+        // buildTabGroupsFromWorkspace can resolve their tabs to live terminals.
+        if (disconnectedAgentsNeedingCreds.length > 0) {
+          await Promise.all(
+            disconnectedAgentsNeedingCreds.map(async (agent) => {
+              try {
+                const resolution = await resolveConnectionCredential(
+                  agent.id,
+                  agent.config.authMethod,
+                  agent.config.savePassword
+                );
+                const password =
+                  resolution.usedStoredCredential && resolution.password
+                    ? resolution.password
+                    : undefined;
+                await get().connectRemoteAgent(agent.id, password);
+              } catch {
+                // Connection failure is surfaced as agent-error tabs below
+              }
+            })
+          );
         }
 
         // After the store is unlocked (or was already unlocked), resolve stored
@@ -2816,13 +2853,15 @@ export const useAppStore = create<AppState>((set, get) => {
           })
         );
 
+        // Re-read agent state so newly-connected agents are reflected in tab resolution.
+        const freshState = get();
         const agentContext = {
-          agents: state.remoteAgents.map((a) => ({
+          agents: freshState.remoteAgents.map((a) => ({
             id: a.id,
             name: a.name,
             connected: a.connectionState === "connected",
           })),
-          definitions: state.agentDefinitions,
+          definitions: freshState.agentDefinitions,
         };
 
         const builtGroups = buildTabGroupsFromWorkspace(

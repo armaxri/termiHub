@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Workspace launch: agent connection tabs (agentRef) now trigger the master password prompt upfront when their agents are disconnected and have stored credentials — previously these tabs would open as "Agent not connected" error tabs without ever asking for the password, and clicking Reconnect would immediately fail with an auth error
+- Agent error tab: the Reconnect button now unlocks the credential store and resolves the stored password before reconnecting — previously it always connected without a password, causing an immediate authentication failure
 - Terminal: connection failures (e.g. agent timeout, SSH auth errors) now show a proper error panel with the error message and a Retry button instead of raw red text in the terminal canvas.
 - UI: Connections view is now always shown on startup instead of restoring the file browser from the previous session
 - UI: Resize handle between Connections and Remote Agent sections no longer shows a resize cursor when the agent is not expanded (cursor was misleading — dragging appeared broken)
