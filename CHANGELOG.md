@@ -7,9 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Remote Agents: agent runtime settings (feature toggles, session defaults, diagnostics) are now stored per-agent and configured in a dedicated "Agent" tab in the connection editor. Settings include enabling/disabling monitoring, file browser (SFTP), and Docker support; setting a default shell and starting directory; and configuring log level and verbose protocol tracing. Settings are sent to the agent on connect and can be updated live without reconnecting.
+
 ### Fixed
 
 - Agent: persisting (daemon-backed) sessions now survive agent reconnects — previously the agent killed daemon subprocesses on exit instead of detaching, causing recovered sessions to appear missing after disconnect/reconnect
+- Workspace launch: agent connection tabs (agentRef) now trigger the master password prompt upfront when their agents are disconnected and have stored credentials — previously these tabs would open as "Agent not connected" error tabs without ever asking for the password, and clicking Reconnect would immediately fail with an auth error
+- Agent error tab: the Reconnect button now unlocks the credential store and resolves the stored password before reconnecting — previously it always connected without a password, causing an immediate authentication failure
+- Terminal: connection failures (e.g. agent timeout, SSH auth errors) now show a proper error panel with the error message and a Retry button instead of raw red text in the terminal canvas.
+- UI: Connections view is now always shown on startup instead of restoring the file browser from the previous session
+- UI: Resize handle between Connections and Remote Agent sections no longer shows a resize cursor when the agent is not expanded (cursor was misleading — dragging appeared broken)
+- UI: Added resize separator above the "Remote Agents" header to resize the Connections section against the entire Remote Agents section; individual agent resize handles now appear only between agents (not before the first one)
+
+### Added
+
+- File browser: drag files from OS file managers (Finder, Explorer, etc.) directly onto the file browser panel to upload them (SFTP/session) or copy them (local mode). A dashed overlay confirms the drop target.
+- Terminal: drag files from OS file managers onto any terminal panel to insert their shell-safe quoted path(s) at the cursor.
+- Version display: dev builds now show a `-dev` suffix (e.g. `v0.1.0-dev`) in the status bar, Settings footer, and Update Settings panel; a git commit hash is shown alongside the version in the Settings panel and Update Settings for both dev and release builds. Dev builds are offered an update when the matching stable release (`v0.1.0`) becomes available.
+
+### Fixed
+
+- File browser: delete confirmation now uses a themed in-app dialog instead of the native OS `window.confirm()` popup
 
 ### Changed
 

@@ -23,6 +23,7 @@ export type ConnectionType =
 
 export type TabContentType =
   | "terminal"
+  | "agent-error"
   | "settings"
   | "editor"
   | "connection-editor"
@@ -70,6 +71,16 @@ export interface NetworkDiagnosticMeta {
   prefillHost?: string;
   /** Connection ID that triggered this diagnostic (for context). */
   connectionId?: string;
+}
+
+/** Metadata for an agent-error tab shown when a workspace agent connection fails. */
+export interface AgentErrorMeta {
+  agentId: string;
+  agentName: string;
+  definitionId: string;
+  definitionName: string;
+  error: string;
+  initialCommand?: string;
 }
 
 export interface TerminalOptions {
@@ -142,6 +153,9 @@ export interface TerminalTab {
   tunnelEditorMeta?: TunnelEditorMeta;
   workspaceEditorMeta?: WorkspaceEditorMeta;
   networkDiagnosticMeta?: NetworkDiagnosticMeta;
+  agentErrorMeta?: AgentErrorMeta;
+  /** Set when this tab was launched from a workspace agentRef — enables proper workspace capture. */
+  workspaceAgentRef?: { agentId: string; definitionId: string };
   /** Optional command to send after the terminal session connects. */
   initialCommand?: string;
 }

@@ -37,6 +37,7 @@ export function useFileBrowser() {
     refresh: async () => {},
     downloadFile: async () => {},
     uploadFile: async () => {},
+    uploadFileFromPath: async () => {},
     createDirectory: async () => {},
     createFile: async () => {},
     deleteEntry: async () => {},

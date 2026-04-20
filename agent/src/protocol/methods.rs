@@ -19,7 +19,36 @@ pub type DockerVolumeMount = VolumeMount;
 
 // ── initialize ──────────────────────────────────────────────────────
 
+/// Runtime behaviour preferences sent by the desktop on connect.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSettings {
+    #[serde(default = "default_true")]
+    pub enable_monitoring: bool,
+    #[serde(default = "default_true")]
+    pub enable_file_browser: bool,
+    #[serde(default = "default_true")]
+    pub enable_docker: bool,
+    #[serde(default)]
+    pub default_shell: Option<String>,
+    #[serde(default)]
+    pub starting_directory: String,
+    #[serde(default = "default_log_level")]
+    pub log_level: String,
+    #[serde(default)]
+    pub verbose_tracing: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_log_level() -> String {
+    "info".to_string()
+}
+
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct InitializeParams {
     pub protocol_version: String,
     pub client: String,
@@ -27,6 +56,9 @@ pub struct InitializeParams {
     /// Paths on the remote host to load as read-only external connection files.
     #[serde(default)]
     pub external_connection_files: Vec<String>,
+    /// Runtime preferences from the desktop; applied on startup.
+    #[serde(default)]
+    pub agent_settings: AgentSettings,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -39,6 +71,8 @@ pub struct Capabilities {
     pub available_serial_ports: Vec<String>,
     pub docker_available: bool,
     pub available_docker_images: Vec<String>,
+    /// Whether system monitoring is supported on this host.
+    pub monitoring_supported: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -46,6 +80,15 @@ pub struct InitializeResult {
     pub protocol_version: String,
     pub agent_version: String,
     pub capabilities: Capabilities,
+}
+
+// ── agent.settingsUpdate ─────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSettingsUpdateParams {
+    #[serde(flatten)]
+    pub settings: AgentSettings,
 }
 
 // ── connection.types ────────────────────────────────────────────────
@@ -438,9 +481,9 @@ mod tests {
     #[test]
     fn initialize_params_serde() {
         let json = json!({
-            "protocol_version": "0.1.0",
+            "protocolVersion": "0.1.0",
             "client": "termihub-desktop",
-            "client_version": "0.1.0"
+            "clientVersion": "0.1.0"
         });
         let params: InitializeParams = serde_json::from_value(json).unwrap();
         assert_eq!(params.protocol_version, "0.1.0");
@@ -493,6 +536,7 @@ mod tests {
                     },
                 }],
                 max_sessions: 20,
+                monitoring_supported: false,
                 available_shells: vec!["/bin/bash".to_string(), "/bin/zsh".to_string()],
                 available_serial_ports: vec!["/dev/ttyUSB0".to_string()],
                 docker_available: false,

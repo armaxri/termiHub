@@ -404,6 +404,7 @@ pub fn run() {
             commands::agent::disconnect_agent,
             commands::agent::shutdown_agent,
             commands::agent::get_agent_capabilities,
+            commands::agent::apply_agent_settings,
             commands::agent::list_agent_sessions,
             commands::agent::list_agent_definitions,
             commands::agent::list_agent_connections,
@@ -480,6 +481,7 @@ pub fn run() {
             commands::portable::export_config_to_portable,
             commands::portable::import_config_from_portable,
             // Update checker
+            commands::update::get_app_info,
             commands::update::check_for_updates,
             commands::update::skip_update_version,
             commands::update::clear_skipped_version,

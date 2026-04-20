@@ -20,6 +20,7 @@ import {
   ExternalFileError,
   AppSettings,
   AgentCapabilities,
+  AgentSettings,
   RecoveryWarning,
   AppModeInfo,
   ConfigFileStatus,
@@ -151,6 +152,7 @@ export interface SavedRemoteAgent {
   id: string;
   name: string;
   config: RemoteAgentConfig;
+  agentSettings: AgentSettings;
 }
 
 interface ConnectionData {
@@ -510,9 +512,19 @@ interface AgentConnectResult {
 /** Connect to a remote agent via SSH. Returns capabilities. */
 export async function connectAgent(
   agentId: string,
-  config: RemoteAgentConfig
+  config: RemoteAgentConfig,
+  agentSettings?: AgentSettings
 ): Promise<AgentConnectResult> {
-  return await invoke<AgentConnectResult>("connect_agent", { agentId, config });
+  return await invoke<AgentConnectResult>("connect_agent", {
+    agentId,
+    config,
+    agentSettings: agentSettings ?? null,
+  });
+}
+
+/** Push updated AgentSettings to a running agent and persist locally. */
+export async function applyAgentSettings(agentId: string, settings: AgentSettings): Promise<void> {
+  await invoke("apply_agent_settings", { agentId, settings });
 }
 
 /** Disconnect from a remote agent. */
@@ -828,6 +840,22 @@ export async function importConfigFromPortable(
   files: string[]
 ): Promise<ConfigMigrationResult> {
   return await invoke<ConfigMigrationResult>("import_config_from_portable", { srcDir, files });
+}
+
+// ─── App info ──────────────────────────────────────────────────────────────
+
+export interface AppInfo {
+  /** Running version string, including `-dev` suffix for dev builds. */
+  version: string;
+  /** Short git commit hash embedded at build time. */
+  gitHash: string;
+  /** Whether this is a development (non-production) build. */
+  isDev: boolean;
+}
+
+/** Return build-time info: version (with `-dev` suffix in dev builds), git hash, and dev flag. */
+export async function getAppInfo(): Promise<AppInfo> {
+  return await invoke<AppInfo>("get_app_info");
 }
 
 // ─── Update checker ────────────────────────────────────────────────────────

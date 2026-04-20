@@ -26,6 +26,7 @@ import {
   AppSettings,
   RemoteAgentDefinition,
   AgentCapabilities,
+  AgentSettings,
   LayoutConfig,
   DEFAULT_LAYOUT,
   LAYOUT_PRESETS,
@@ -61,6 +62,7 @@ import {
   getDefaultShell,
   connectAgent as apiConnectAgent,
   disconnectAgent as apiDisconnectAgent,
+  applyAgentSettings as apiApplyAgentSettings,
   listAgentSessions,
   listAgentConnections,
   saveAgentDefinition,
@@ -374,6 +376,12 @@ interface AppState {
   tabColors: Record<string, string>;
   setTabColor: (tabId: string, color: string | null) => void;
 
+  // Per-tab terminal spawn errors (runtime-only, cleared on retry or tab close)
+  terminalSpawnErrors: Record<string, string>;
+  terminalRetryCounters: Record<string, number>;
+  setTerminalSpawnError: (tabId: string, error: string | null) => void;
+  retryTerminalSpawn: (tabId: string) => void;
+
   // Remote connection states
   remoteStates: Record<string, string>;
   setRemoteState: (sessionId: string, state: string) => void;
@@ -396,6 +404,7 @@ interface AppState {
   ) => void;
   setAgentCapabilities: (agentId: string, capabilities: AgentCapabilities) => void;
   clearAgentSessions: (agentId: string) => void;
+  updateAgentSettings: (agentId: string, settings: AgentSettings) => Promise<void>;
   refreshAgentSessions: (agentId: string) => Promise<void>;
   saveAgentDef: (agentId: string, definition: Record<string, unknown>) => Promise<void>;
   duplicateAgentDef: (agentId: string, definitionId: string) => Promise<void>;
@@ -405,6 +414,8 @@ interface AppState {
   updateAgentFolder: (agentId: string, params: Record<string, unknown>) => Promise<void>;
   deleteAgentFolder: (agentId: string, folderId: string) => Promise<void>;
   toggleAgentFolder: (agentId: string, folderId: string) => void;
+  /** Convert all agent-error tabs for the given agent into live terminal tabs after reconnect. */
+  resolveAgentErrorTabs: (agentId: string) => void;
 
   // Local file browser state
   localFileEntries: FileEntry[];
@@ -1208,6 +1219,8 @@ export const useAppStore = create<AppState>((set, get) => {
         const { [tabId]: _removedColor, ...remainingColors } = state.tabColors;
         const { [tabId]: _removedOpts, ...remainingOpts } = state.tabTerminalOptions;
         const { [tabId]: _removedSearch, ...remainingSearch } = state.terminalSearchVisible;
+        const { [tabId]: _removedSpawnErr, ...remainingSpawnErrors } = state.terminalSpawnErrors;
+        const { [tabId]: _removedRetry, ...remainingRetryCounters } = state.terminalRetryCounters;
 
         let rootPanel = updateLeaf(state.rootPanel, panelId, (leaf) =>
           removeTabFromLeaf(leaf, tabId)
@@ -1235,6 +1248,8 @@ export const useAppStore = create<AppState>((set, get) => {
             tabColors: remainingColors,
             tabTerminalOptions: remainingOpts,
             terminalSearchVisible: remainingSearch,
+            terminalSpawnErrors: remainingSpawnErrors,
+            terminalRetryCounters: remainingRetryCounters,
           };
         }
 
@@ -1247,6 +1262,8 @@ export const useAppStore = create<AppState>((set, get) => {
           tabColors: remainingColors,
           tabTerminalOptions: remainingOpts,
           terminalSearchVisible: remainingSearch,
+          terminalSpawnErrors: remainingSpawnErrors,
+          terminalRetryCounters: remainingRetryCounters,
         };
       }),
 
@@ -1570,7 +1587,9 @@ export const useAppStore = create<AppState>((set, get) => {
           }
         }
         const layoutConfig = settings.layout ?? DEFAULT_LAYOUT;
-        const sidebarView = (layoutConfig.sidebarView as SidebarView | undefined) ?? "connections";
+        const persistedView =
+          (layoutConfig.sidebarView as SidebarView | undefined) ?? "connections";
+        const sidebarView: SidebarView = persistedView === "files" ? "connections" : persistedView;
         const sidebarCollapsed = layoutConfig.sidebarCollapsed ?? false;
         set({
           connections,
@@ -1941,6 +1960,29 @@ export const useAppStore = create<AppState>((set, get) => {
         return { tabColors: { ...state.tabColors, [tabId]: color } };
       }),
 
+    // Per-tab terminal spawn errors (runtime-only)
+    terminalSpawnErrors: {},
+    terminalRetryCounters: {},
+    setTerminalSpawnError: (tabId, error) =>
+      set((state) => {
+        if (error === null) {
+          const { [tabId]: _removed, ...remaining } = state.terminalSpawnErrors;
+          return { terminalSpawnErrors: remaining };
+        }
+        return { terminalSpawnErrors: { ...state.terminalSpawnErrors, [tabId]: error } };
+      }),
+    retryTerminalSpawn: (tabId) =>
+      set((state) => {
+        const { [tabId]: _removed, ...remaining } = state.terminalSpawnErrors;
+        return {
+          terminalSpawnErrors: remaining,
+          terminalRetryCounters: {
+            ...state.terminalRetryCounters,
+            [tabId]: (state.terminalRetryCounters[tabId] ?? 0) + 1,
+          },
+        };
+      }),
+
     // Remote connection states
     remoteStates: {},
     setRemoteState: (sessionId, state) =>
@@ -1954,18 +1996,24 @@ export const useAppStore = create<AppState>((set, get) => {
 
     addRemoteAgent: (agent) => {
       set((state) => ({ remoteAgents: [...state.remoteAgents, agent] }));
-      persistAgent({ id: agent.id, name: agent.name, config: agent.config }).catch((err) =>
-        console.error("Failed to persist new agent:", err)
-      );
+      persistAgent({
+        id: agent.id,
+        name: agent.name,
+        config: agent.config,
+        agentSettings: agent.agentSettings,
+      }).catch((err) => console.error("Failed to persist new agent:", err));
     },
 
     updateRemoteAgent: (agent) => {
       set((state) => ({
         remoteAgents: state.remoteAgents.map((a) => (a.id === agent.id ? agent : a)),
       }));
-      persistAgent({ id: agent.id, name: agent.name, config: agent.config }).catch((err) =>
-        console.error("Failed to persist agent update:", err)
-      );
+      persistAgent({
+        id: agent.id,
+        name: agent.name,
+        config: agent.config,
+        agentSettings: agent.agentSettings,
+      }).catch((err) => console.error("Failed to persist agent update:", err));
     },
 
     reorderRemoteAgents: (oldIndex, newIndex) => {
@@ -2027,7 +2075,7 @@ export const useAppStore = create<AppState>((set, get) => {
         if (password && config.authMethod === "password") {
           config.password = password;
         }
-        const result = await apiConnectAgent(agentId, config);
+        const result = await apiConnectAgent(agentId, config, agent.agentSettings);
 
         set((s) => ({
           remoteAgents: s.remoteAgents.map((a) =>
@@ -2088,6 +2136,15 @@ export const useAppStore = create<AppState>((set, get) => {
       set((state) => ({
         remoteAgents: state.remoteAgents.map((a) =>
           a.id === agentId ? { ...a, capabilities } : a
+        ),
+      }));
+    },
+
+    updateAgentSettings: async (agentId, settings) => {
+      await apiApplyAgentSettings(agentId, settings);
+      set((state) => ({
+        remoteAgents: state.remoteAgents.map((a) =>
+          a.id === agentId ? { ...a, agentSettings: settings } : a
         ),
       }));
     },
@@ -2238,6 +2295,49 @@ export const useAppStore = create<AppState>((set, get) => {
           () => {}
         );
       }
+    },
+
+    resolveAgentErrorTabs: (agentId) => {
+      const defs = get().agentDefinitions[agentId] ?? [];
+
+      const convertPanel = (panel: PanelNode): PanelNode => {
+        if (panel.type === "split") {
+          return { ...panel, children: panel.children.map(convertPanel) };
+        }
+        const updatedTabs = panel.tabs.map((tab) => {
+          if (tab.contentType !== "agent-error" || tab.agentErrorMeta?.agentId !== agentId) {
+            return tab;
+          }
+          const def = defs.find((d) => d.id === tab.agentErrorMeta!.definitionId);
+          if (!def) return tab; // definition still missing — keep error tab
+          const config: ConnectionConfig = {
+            type: "remote-session",
+            config: {
+              agentId,
+              sessionType: def.sessionType,
+              shell: def.config["shell"] as string | undefined,
+              serialPort: def.config["port"] as string | undefined,
+              persistent: def.persistent,
+              title: def.name,
+            },
+          };
+          return {
+            ...tab,
+            contentType: "terminal" as const,
+            connectionType: "remote-session" as const,
+            config,
+            sessionId: null,
+            agentErrorMeta: undefined,
+            initialCommand: tab.agentErrorMeta!.initialCommand,
+          };
+        });
+        return { ...panel, tabs: updatedTabs };
+      };
+
+      set((s) => ({
+        rootPanel: convertPanel(s.rootPanel),
+        tabGroups: s.tabGroups.map((g) => ({ ...g, rootPanel: convertPanel(g.rootPanel) })),
+      }));
     },
 
     // Local file browser state
@@ -2711,25 +2811,62 @@ export const useAppStore = create<AppState>((set, get) => {
           getWorkspaceLeaves(g.layout).flatMap((leaf) => leaf.tabs)
         );
 
+        // Collect disconnected agents referenced by agentRef tabs that use stored credentials.
+        const referencedAgentIds = new Set(
+          allTabDefs.filter((t) => t.agentRef).map((t) => t.agentRef!.agentId)
+        );
+        const disconnectedAgentsNeedingCreds = state.remoteAgents.filter((agent) => {
+          if (!referencedAgentIds.has(agent.id)) return false;
+          if (agent.connectionState === "connected") return false;
+          return (
+            agent.config.authMethod === "password" ||
+            (agent.config.authMethod === "key" && agent.config.savePassword)
+          );
+        });
+
         // Before opening any tabs, check whether the credential store needs to be
         // unlocked for any connection in this workspace. If so, prompt once upfront
         // so that all tabs can connect immediately after unlock rather than failing
         // and prompting individually.
         const credStatus = state.credentialStoreStatus;
         if (credStatus?.mode === "master_password" && credStatus?.status === "locked") {
-          const needsStoredCredential = allTabDefs.some((tabDef) => {
-            if (!tabDef.connectionRef) return false;
-            const saved = state.connections.find((c) => c.id === tabDef.connectionRef);
-            if (!saved) return false;
-            const cfg = saved.config.config as Record<string, unknown>;
-            const authMethod = cfg.authMethod as string | undefined;
-            const savePassword = cfg.savePassword as boolean | undefined;
-            return authMethod === "password" || (authMethod === "key" && savePassword);
-          });
+          const needsStoredCredential =
+            allTabDefs.some((tabDef) => {
+              if (!tabDef.connectionRef) return false;
+              const saved = state.connections.find((c) => c.id === tabDef.connectionRef);
+              if (!saved) return false;
+              const cfg = saved.config.config as Record<string, unknown>;
+              const authMethod = cfg.authMethod as string | undefined;
+              const savePassword = cfg.savePassword as boolean | undefined;
+              return authMethod === "password" || (authMethod === "key" && savePassword);
+            }) || disconnectedAgentsNeedingCreds.length > 0;
           if (needsStoredCredential) {
             const unlocked = await get().requestUnlock();
             if (!unlocked) return;
           }
+        }
+
+        // Connect any disconnected agents that have stored credentials so that
+        // buildTabGroupsFromWorkspace can resolve their tabs to live terminals.
+        if (disconnectedAgentsNeedingCreds.length > 0) {
+          await Promise.all(
+            disconnectedAgentsNeedingCreds.map(async (agent) => {
+              try {
+                const resolution = await resolveConnectionCredential(
+                  agent.id,
+                  agent.config.authMethod,
+                  agent.config.savePassword
+                );
+                const password =
+                  resolution.usedStoredCredential && resolution.password
+                    ? resolution.password
+                    : undefined;
+                await get().connectRemoteAgent(agent.id, password);
+              } catch {
+                // Connection failure is surfaced as agent-error tabs below
+              }
+            })
+          );
         }
 
         // After the store is unlocked (or was already unlocked), resolve stored
@@ -2758,10 +2895,22 @@ export const useAppStore = create<AppState>((set, get) => {
           })
         );
 
+        // Re-read agent state so newly-connected agents are reflected in tab resolution.
+        const freshState = get();
+        const agentContext = {
+          agents: freshState.remoteAgents.map((a) => ({
+            id: a.id,
+            name: a.name,
+            connected: a.connectionState === "connected",
+          })),
+          definitions: freshState.agentDefinitions,
+        };
+
         const builtGroups = buildTabGroupsFromWorkspace(
           definition.tabGroups,
           resolvedConnections,
-          state.defaultShell
+          state.defaultShell,
+          agentContext
         );
         if (builtGroups.length === 0) return;
         const firstGroup = builtGroups[0];

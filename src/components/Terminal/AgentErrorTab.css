@@ -1,0 +1,124 @@
+.agent-error-tab {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background-color: var(--terminal-bg);
+  color: var(--text-primary);
+  font-family: var(--font-mono, monospace);
+  font-size: var(--font-size-sm);
+  overflow: hidden;
+}
+
+.agent-error-tab--hidden {
+  display: none;
+}
+
+.agent-error-tab__body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: var(--spacing-lg);
+  padding: var(--spacing-xl);
+  text-align: center;
+}
+
+.agent-error-tab__icon {
+  color: var(--color-warning, #e8a838);
+  opacity: 0.85;
+}
+
+.agent-error-tab__heading {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.agent-error-tab__details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  max-width: 480px;
+  width: 100%;
+}
+
+.agent-error-tab__row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-secondary, rgba(255, 255, 255, 0.04));
+}
+
+.agent-error-tab__label {
+  color: var(--text-secondary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.agent-error-tab__value {
+  color: var(--text-primary);
+  text-align: right;
+  word-break: break-all;
+}
+
+.agent-error-tab__value--error {
+  color: var(--color-error, #e05252);
+}
+
+.agent-error-tab__actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-sm);
+  min-height: 48px;
+}
+
+.agent-error-tab__reconnect-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-sm) var(--spacing-lg);
+  background-color: var(--accent-color);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    background-color var(--transition-fast),
+    opacity var(--transition-fast);
+}
+
+.agent-error-tab__reconnect-btn:hover:not(:disabled) {
+  background-color: var(--accent-hover);
+}
+
+.agent-error-tab__reconnect-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.agent-error-tab__reconnect-error {
+  color: var(--color-error, #e05252);
+  font-size: var(--font-size-xs, var(--font-size-sm));
+  max-width: 480px;
+  text-align: center;
+}
+
+@keyframes agent-error-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.agent-error-tab__spin {
+  animation: agent-error-spin 1s linear infinite;
+}

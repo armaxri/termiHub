@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("@/services/storage", () => ({
   loadConnections: vi.fn(() =>
@@ -68,7 +68,125 @@ describe("useFileSystem (SFTP) — navigateUp path logic", () => {
   });
 });
 
+// Pure logic tests for uploadFileFromPath remote path building
+function buildSftpRemotePath(currentPath: string, localPath: string): string {
+  const parts = localPath.replace(/\\/g, "/").split("/");
+  const fileName = parts[parts.length - 1] || "upload";
+  return currentPath === "/" ? `/${fileName}` : `${currentPath}/${fileName}`;
+}
+
+describe("useFileSystem (SFTP) — uploadFileFromPath path logic", () => {
+  it("builds remote path at root", () => {
+    expect(buildSftpRemotePath("/", "/home/user/report.pdf")).toBe("/report.pdf");
+  });
+
+  it("builds remote path in subdirectory", () => {
+    expect(buildSftpRemotePath("/uploads", "/home/user/image.png")).toBe("/uploads/image.png");
+  });
+
+  it("handles Windows-style backslash local paths", () => {
+    expect(buildSftpRemotePath("/remote", "C:\\Users\\Alice\\doc.txt")).toBe("/remote/doc.txt");
+  });
+
+  it("falls back to 'upload' when no filename segment", () => {
+    expect(buildSftpRemotePath("/remote", "")).toBe("/remote/upload");
+  });
+});
+
+import React, { act } from "react";
+import { createRoot } from "react-dom/client";
+import { sftpUpload } from "@/services/api";
+import { useFileSystem } from "./useFileSystem";
 import { useAppStore } from "@/store/appStore";
+
+describe("useFileSystem (SFTP) — uploadFileFromPath API call", () => {
+  let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot>;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState(useAppStore.getInitialState());
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it("calls sftpUpload with the correct remote path", async () => {
+    useAppStore.setState({ sftpSessionId: "sess-1", currentPath: "/uploads" });
+
+    let uploadFn: ((path: string) => Promise<void>) | undefined;
+    function Harness() {
+      const { uploadFileFromPath } = useFileSystem();
+      uploadFn = uploadFileFromPath;
+      return null;
+    }
+
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+
+    await act(async () => {
+      await uploadFn!("/local/image.png");
+    });
+
+    expect(vi.mocked(sftpUpload)).toHaveBeenCalledWith(
+      "sess-1",
+      "/local/image.png",
+      "/uploads/image.png"
+    );
+  });
+
+  it("calls sftpUpload with root-level remote path when currentPath is /", async () => {
+    useAppStore.setState({ sftpSessionId: "sess-1", currentPath: "/" });
+
+    let uploadFn: ((path: string) => Promise<void>) | undefined;
+    function Harness() {
+      const { uploadFileFromPath } = useFileSystem();
+      uploadFn = uploadFileFromPath;
+      return null;
+    }
+
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+
+    await act(async () => {
+      await uploadFn!("/local/report.pdf");
+    });
+
+    expect(vi.mocked(sftpUpload)).toHaveBeenCalledWith(
+      "sess-1",
+      "/local/report.pdf",
+      "/report.pdf"
+    );
+  });
+
+  it("does nothing when sftpSessionId is null", async () => {
+    useAppStore.setState({ sftpSessionId: null, currentPath: "/uploads" });
+
+    let uploadFn: ((path: string) => Promise<void>) | undefined;
+    function Harness() {
+      const { uploadFileFromPath } = useFileSystem();
+      uploadFn = uploadFileFromPath;
+      return null;
+    }
+
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+
+    await act(async () => {
+      await uploadFn!("/local/file.txt");
+    });
+
+    expect(vi.mocked(sftpUpload)).not.toHaveBeenCalled();
+  });
+});
 
 describe("useFileSystem (SFTP) — store integration", () => {
   beforeEach(() => {

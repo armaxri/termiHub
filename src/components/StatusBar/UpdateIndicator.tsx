@@ -1,6 +1,6 @@
-import { getVersion } from "@tauri-apps/api/app";
 import { useEffect, useState } from "react";
 import { useAppStore } from "@/store/appStore";
+import { getAppInfo } from "@/services/api";
 
 /**
  * Version chip in the status bar.  Shows an amber or red dot when an update
@@ -12,8 +12,8 @@ export function UpdateIndicator() {
   const updateCheckState = useAppStore((s) => s.updateCheckState);
 
   useEffect(() => {
-    getVersion()
-      .then(setAppVersion)
+    getAppInfo()
+      .then((info) => setAppVersion(info.version))
       .catch(() => setAppVersion("?"));
   }, []);
 

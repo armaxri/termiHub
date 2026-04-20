@@ -118,6 +118,7 @@ export function Terminal({
   existingSessionId,
   initialCommand,
 }: TerminalProps) {
+  const retryCount = useAppStore((s) => s.terminalRetryCounters[tabId] ?? 0);
   const terminalElRef = useRef<HTMLDivElement | null>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -316,20 +317,7 @@ export function Terminal({
           }
         };
       } catch (err) {
-        const errStr = String(err);
-        if (errStr.includes("Agent auth failed")) {
-          xterm.writeln(`\x1b[31m${errStr}\x1b[0m`);
-          xterm.writeln("");
-          xterm.writeln("\x1b[33mThe SSH agent may not be running.\x1b[0m");
-          xterm.writeln(
-            "\x1b[33mOn Windows, open the connection editor and use the 'Setup SSH Agent' button,\x1b[0m"
-          );
-          xterm.writeln(
-            "\x1b[33mor run: Start-Process powershell -Verb RunAs -ArgumentList 'Set-Service ssh-agent -StartupType Manual; Start-Service ssh-agent'\x1b[0m"
-          );
-        } else {
-          xterm.writeln(`\x1b[31mFailed to create terminal: ${err}\x1b[0m`);
-        }
+        useAppStore.getState().setTerminalSpawnError(tabId, String(err));
       }
     },
     // initialSessionIdRef and initialCommand are intentionally excluded: they are
@@ -574,6 +562,7 @@ export function Terminal({
     pasteToTerminal,
     registerSearchAddon,
     parkingRef,
+    retryCount,
   ]);
 
   // Re-fit and focus when visibility changes

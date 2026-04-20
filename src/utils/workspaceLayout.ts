@@ -9,8 +9,29 @@ import {
   WorkspaceTabDef,
   WorkspaceTabGroupDef,
 } from "@/types/workspace";
-import { PanelNode, ConnectionConfig, TerminalTab, TabGroup } from "@/types/terminal";
+import {
+  PanelNode,
+  ConnectionConfig,
+  TerminalTab,
+  TabGroup,
+  AgentErrorMeta,
+} from "@/types/terminal";
 import { SavedConnection } from "@/types/connection";
+
+/** Minimal agent state passed in during workspace launch to resolve agentRef tabs. */
+export interface AgentContext {
+  agents: Array<{ id: string; name: string; connected: boolean }>;
+  definitions: Record<
+    string,
+    Array<{
+      id: string;
+      name: string;
+      sessionType: string;
+      persistent: boolean;
+      config: Record<string, unknown>;
+    }>
+  >;
+}
 
 /** Get all leaf nodes from a workspace layout tree. */
 export function getWorkspaceLeaves(node: WorkspaceLayoutNode): WorkspaceLeafNode[] {
@@ -388,33 +409,62 @@ function generateTabId(): string {
   return `ws-tab-${tabIdCounter}`;
 }
 
+type ResolvedTab =
+  | {
+      kind: "terminal";
+      config: ConnectionConfig;
+      title: string;
+      connectionType: string;
+      workspaceAgentRef?: { agentId: string; definitionId: string };
+    }
+  | {
+      kind: "agent-error";
+      title: string;
+      agentErrorMeta: AgentErrorMeta;
+      workspaceAgentRef: { agentId: string; definitionId: string };
+    };
+
 /**
  * Build a PanelNode tree from a workspace layout definition.
  * Resolves connection refs to saved connections, falling back to inline configs.
+ * When agentContext is provided, agentRef tabs are resolved to terminal or agent-error tabs.
  */
 export function buildPanelTreeFromWorkspace(
   layout: WorkspaceLayoutNode,
   savedConnections: SavedConnection[],
-  defaultShell: string
+  defaultShell: string,
+  agentContext?: AgentContext
 ): PanelNode {
   if (layout.type === "leaf") {
     const panelId = generatePanelId();
     const tabs: TerminalTab[] = layout.tabs.map((tabDef) => {
       const tabId = generateTabId();
-      const { config, title, connectionType } = resolveTabConfig(
-        tabDef,
-        savedConnections,
-        defaultShell
-      );
+      const resolved = resolveTabConfig(tabDef, savedConnections, defaultShell, agentContext);
+      if (resolved.kind === "agent-error") {
+        return {
+          id: tabId,
+          sessionId: null,
+          title: resolved.title,
+          connectionType: "remote-session",
+          contentType: "agent-error" as const,
+          config: { type: "remote-session", config: {} },
+          panelId,
+          isActive: false,
+          agentErrorMeta: resolved.agentErrorMeta,
+          workspaceAgentRef: resolved.workspaceAgentRef,
+          initialCommand: resolved.agentErrorMeta.initialCommand,
+        };
+      }
       return {
         id: tabId,
         sessionId: null,
-        title,
-        connectionType,
+        title: resolved.title,
+        connectionType: resolved.connectionType,
         contentType: "terminal" as const,
-        config,
+        config: resolved.config,
         panelId,
         isActive: false,
+        workspaceAgentRef: resolved.workspaceAgentRef,
         initialCommand: tabDef.initialCommand,
       };
     });
@@ -437,7 +487,7 @@ export function buildPanelTreeFromWorkspace(
     id: generatePanelId(),
     direction: layout.direction,
     children: layout.children.map((child) =>
-      buildPanelTreeFromWorkspace(child, savedConnections, defaultShell)
+      buildPanelTreeFromWorkspace(child, savedConnections, defaultShell, agentContext)
     ),
     ...(layout.sizes ? { sizes: [...layout.sizes] } : {}),
   };
@@ -446,13 +496,79 @@ export function buildPanelTreeFromWorkspace(
 function resolveTabConfig(
   tabDef: WorkspaceTabDef,
   savedConnections: SavedConnection[],
-  defaultShell: string
-): { config: ConnectionConfig; title: string; connectionType: string } {
+  defaultShell: string,
+  agentContext?: AgentContext
+): ResolvedTab {
+  // Resolve agentRef tabs
+  if (tabDef.agentRef) {
+    const { agentId, definitionId } = tabDef.agentRef;
+    const agent = agentContext?.agents.find((a) => a.id === agentId);
+    const agentName = agent?.name ?? agentId;
+    const workspaceAgentRef = { agentId, definitionId };
+
+    if (agent?.connected) {
+      const defs = agentContext?.definitions[agentId] ?? [];
+      const def = defs.find((d) => d.id === definitionId);
+      if (def) {
+        const config: ConnectionConfig = {
+          type: "remote-session",
+          config: {
+            agentId,
+            sessionType: def.sessionType,
+            shell: def.config["shell"] as string | undefined,
+            serialPort: def.config["port"] as string | undefined,
+            persistent: def.persistent,
+            title: def.name,
+          },
+        };
+        return {
+          kind: "terminal",
+          config,
+          title: tabDef.title ?? def.name,
+          connectionType: "remote-session",
+          workspaceAgentRef,
+        };
+      }
+      // Definition not found on connected agent — show error
+      return {
+        kind: "agent-error",
+        title: tabDef.title ?? definitionId,
+        workspaceAgentRef,
+        agentErrorMeta: {
+          agentId,
+          agentName,
+          definitionId,
+          definitionName: tabDef.title ?? definitionId,
+          error: `Connection definition "${definitionId}" was not found on agent "${agentName}".`,
+          initialCommand: tabDef.initialCommand,
+        },
+      };
+    }
+
+    // Agent not connected or not found
+    return {
+      kind: "agent-error",
+      title: tabDef.title ?? agentName,
+      workspaceAgentRef,
+      agentErrorMeta: {
+        agentId,
+        agentName,
+        definitionId,
+        definitionName: tabDef.title ?? definitionId,
+        error: agent
+          ? `Agent "${agentName}" is not connected.`
+          : `Agent "${agentName}" was not found.`,
+        initialCommand: tabDef.initialCommand,
+      },
+    };
+  }
+
   // Try to resolve by connection ref
   if (tabDef.connectionRef) {
     const saved = savedConnections.find((c) => c.id === tabDef.connectionRef);
     if (saved) {
       return {
+        kind: "terminal",
         config: saved.config,
         title: tabDef.title ?? saved.name,
         connectionType: saved.config.type,
@@ -463,6 +579,7 @@ function resolveTabConfig(
   // Fall back to inline config
   if (tabDef.inlineConfig) {
     return {
+      kind: "terminal",
       config: tabDef.inlineConfig as ConnectionConfig,
       title: tabDef.title ?? "Terminal",
       connectionType: (tabDef.inlineConfig as ConnectionConfig).type ?? "local",
@@ -471,6 +588,7 @@ function resolveTabConfig(
 
   // Default: local shell
   return {
+    kind: "terminal",
     config: { type: "local", config: { shell: defaultShell } },
     title: tabDef.title ?? "Terminal",
     connectionType: "local",
@@ -480,6 +598,7 @@ function resolveTabConfig(
 /**
  * Capture the current live panel tree as a workspace layout definition.
  * Matches tabs to saved connection IDs where possible.
+ * Agent-error tabs are preserved as agentRef entries so they survive workspace save/reload.
  */
 export function captureCurrentLayout(
   rootPanel: PanelNode,
@@ -489,7 +608,7 @@ export function captureCurrentLayout(
     return {
       type: "leaf",
       tabs: rootPanel.tabs
-        .filter((tab) => tab.contentType === "terminal")
+        .filter((tab) => tab.contentType === "terminal" || tab.contentType === "agent-error")
         .map((tab) => captureTab(tab, savedConnections)),
     };
   }
@@ -503,6 +622,15 @@ export function captureCurrentLayout(
 }
 
 function captureTab(tab: TerminalTab, savedConnections: SavedConnection[]): WorkspaceTabDef {
+  // Agent-error tabs and workspace-launched agent terminal tabs capture as agentRef
+  if (tab.workspaceAgentRef) {
+    return {
+      agentRef: tab.workspaceAgentRef,
+      title: tab.title,
+      initialCommand: tab.initialCommand ?? tab.agentErrorMeta?.initialCommand,
+    };
+  }
+
   // Try to match to a saved connection by config type and matching fields
   const matchedConnection = savedConnections.find(
     (c) =>
@@ -535,14 +663,21 @@ function generateWorkspaceGroupId(): string {
 /**
  * Build an array of TabGroup objects from workspace tab group definitions.
  * Each group gets a fresh ID and a newly-built PanelNode tree.
+ * Pass agentContext to resolve agentRef tabs into terminal or agent-error tabs.
  */
 export function buildTabGroupsFromWorkspace(
   tabGroupDefs: WorkspaceTabGroupDef[],
   savedConnections: SavedConnection[],
-  defaultShell: string
+  defaultShell: string,
+  agentContext?: AgentContext
 ): TabGroup[] {
   return tabGroupDefs.map((def) => {
-    const rootPanel = buildPanelTreeFromWorkspace(def.layout, savedConnections, defaultShell);
+    const rootPanel = buildPanelTreeFromWorkspace(
+      def.layout,
+      savedConnections,
+      defaultShell,
+      agentContext
+    );
     const firstLeaf =
       rootPanel.type === "leaf" ? rootPanel : getAllWorkspaceLeafPanels(rootPanel)[0];
     return {

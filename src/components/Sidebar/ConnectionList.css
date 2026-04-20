@@ -15,14 +15,25 @@
   overflow: hidden;
 }
 
+/* Wrapper for the entire Remote Agents section (header + agents) */
+.connection-list__remote-agents {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
 /* Resize handle between sidebar sections */
 .connection-list__resize-handle {
   height: 1px;
   background-color: var(--border-primary);
-  cursor: ns-resize;
   flex-shrink: 0;
   position: relative;
   transition: background-color var(--transition-fast);
+}
+
+.connection-list__resize-handle--resizable {
+  cursor: ns-resize;
 }
 
 .connection-list__resize-handle::before {
@@ -34,7 +45,7 @@
   right: 0;
 }
 
-.connection-list__resize-handle:hover,
+.connection-list__resize-handle--resizable:hover,
 .connection-list__resize-handle--active {
   background-color: var(--resize-handle-hover-color);
 }

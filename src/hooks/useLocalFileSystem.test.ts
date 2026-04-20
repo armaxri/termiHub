@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("@/services/storage", () => ({
   loadConnections: vi.fn(() =>
@@ -157,5 +157,99 @@ describe("useLocalFileSystem — store integration", () => {
     // navigateLocal is async: it calls localListDir then sets the path
     await useAppStore.getState().navigateLocal("/test/path");
     expect(useAppStore.getState().localCurrentPath).toBe("/test/path");
+  });
+});
+
+import React, { act } from "react";
+import { createRoot } from "react-dom/client";
+import { localCopyFile } from "@/services/api";
+import { useLocalFileSystem } from "./useLocalFileSystem";
+
+describe("useLocalFileSystem — uploadFileFromPath API call", () => {
+  let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot>;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState(useAppStore.getInitialState());
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it("calls localCopyFile with the correct destination path", async () => {
+    useAppStore.setState({ localCurrentPath: "/destination/dir" });
+
+    let uploadFn: ((path: string) => Promise<void>) | undefined;
+    function Harness() {
+      const { uploadFileFromPath } = useLocalFileSystem();
+      uploadFn = uploadFileFromPath;
+      return null;
+    }
+
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+
+    await act(async () => {
+      await uploadFn!("/source/photo.jpg");
+    });
+
+    expect(vi.mocked(localCopyFile)).toHaveBeenCalledWith(
+      "/source/photo.jpg",
+      "/destination/dir/photo.jpg",
+      false
+    );
+  });
+
+  it("skips copy when source and destination are the same path", async () => {
+    useAppStore.setState({ localCurrentPath: "/source" });
+
+    let uploadFn: ((path: string) => Promise<void>) | undefined;
+    function Harness() {
+      const { uploadFileFromPath } = useLocalFileSystem();
+      uploadFn = uploadFileFromPath;
+      return null;
+    }
+
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+
+    await act(async () => {
+      await uploadFn!("/source/photo.jpg");
+    });
+
+    expect(vi.mocked(localCopyFile)).not.toHaveBeenCalled();
+  });
+
+  it("handles Windows-style backslash source path", async () => {
+    useAppStore.setState({ localCurrentPath: "/uploads" });
+
+    let uploadFn: ((path: string) => Promise<void>) | undefined;
+    function Harness() {
+      const { uploadFileFromPath } = useLocalFileSystem();
+      uploadFn = uploadFileFromPath;
+      return null;
+    }
+
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+
+    await act(async () => {
+      await uploadFn!("C:\\Users\\Alice\\report.docx");
+    });
+
+    expect(vi.mocked(localCopyFile)).toHaveBeenCalledWith(
+      "C:\\Users\\Alice\\report.docx",
+      "/uploads/report.docx",
+      false
+    );
   });
 });

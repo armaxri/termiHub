@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
-import { PlugZap, TerminalSquare, Palette } from "lucide-react";
+import { PlugZap, TerminalSquare, Palette, Settings } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import {
@@ -12,7 +12,12 @@ import {
 } from "@/types/terminal";
 import { listAvailableShells, resolveCredential } from "@/services/api";
 import type { ConnectionTypeInfo } from "@/services/api";
-import { SavedConnection, RemoteAgentDefinition } from "@/types/connection";
+import {
+  SavedConnection,
+  RemoteAgentDefinition,
+  AgentSettings,
+  DEFAULT_AGENT_SETTINGS,
+} from "@/types/connection";
 import { SettingsNav } from "@/components/Settings";
 import { ConnectionSettingsForm, AGENT_SCHEMA } from "@/components/DynamicForm";
 import {
@@ -25,10 +30,11 @@ import { useAvailableRuntimes } from "@/hooks/useAvailableRuntimes";
 import { ConnectionTerminalSettings } from "./ConnectionTerminalSettings";
 import { ConnectionAppearanceSettings } from "./ConnectionAppearanceSettings";
 import { AgentExternalFilesSettings } from "./AgentExternalFilesSettings";
+import { AgentSettingsForm } from "./AgentSettingsForm";
 import { findLeafByTab } from "@/utils/panelTree";
 import "./ConnectionEditor.css";
 
-type EditorCategory = "connection" | "terminal" | "appearance";
+type EditorCategory = "connection" | "terminal" | "appearance" | "agent";
 
 const EDITOR_CATEGORIES = [
   { id: "connection", label: "Connection" },
@@ -36,8 +42,11 @@ const EDITOR_CATEGORIES = [
   { id: "appearance", label: "Appearance" },
 ];
 
-/** Agent transport mode: only the SSH connection parameters, no terminal settings. */
-const AGENT_TRANSPORT_CATEGORIES = [{ id: "connection", label: "Connection" }];
+/** Agent transport mode: SSH connection params + agent runtime settings. */
+const AGENT_TRANSPORT_CATEGORIES = [
+  { id: "connection", label: "Connection" },
+  { id: "agent", label: "Agent" },
+];
 
 /** Agent definition mode: connection settings + per-session terminal appearance. */
 const AGENT_DEF_CATEGORIES = [
@@ -50,6 +59,7 @@ const EDITOR_ICONS: Record<EditorCategory, LucideIcon> = {
   connection: PlugZap,
   terminal: TerminalSquare,
   appearance: Palette,
+  agent: Settings,
 };
 
 const STORAGE_KEY = "termihub-editor-category";
@@ -57,7 +67,12 @@ const STORAGE_KEY = "termihub-editor-category";
 function loadSavedCategory(): EditorCategory {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved === "connection" || saved === "terminal" || saved === "appearance") {
+    if (
+      saved === "connection" ||
+      saved === "terminal" ||
+      saved === "appearance" ||
+      saved === "agent"
+    ) {
       return saved;
     }
   } catch {
@@ -254,6 +269,10 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   /** Either agent mode (used for shared behavior like hiding Terminal/Appearance). */
   const isAnyAgentMode = isAgentTransportMode || isAgentDefinitionMode;
 
+  const [agentSettings, setAgentSettings] = useState<AgentSettings>(
+    existingAgent?.agentSettings ?? DEFAULT_AGENT_SETTINGS
+  );
+
   const [terminalOptions, setTerminalOptions] = useState<TerminalOptions>(
     existingAgentDef?.terminalOptions ?? existingConnection?.terminalOptions ?? {}
   );
@@ -352,9 +371,9 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     return () => observer.disconnect();
   }, []);
 
-  // In agent transport mode (not definition mode), force category to "connection"
+  // In agent transport mode, only "connection" and "agent" are valid tabs
   useEffect(() => {
-    if (isAgentTransportMode && activeCategory !== "connection") {
+    if (isAgentTransportMode && activeCategory !== "connection" && activeCategory !== "agent") {
       setActiveCategory("connection");
     }
   }, [isAgentTransportMode, activeCategory]);
@@ -444,7 +463,12 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     if (isAgentTransportMode) {
       const agentConfig = connSettings as unknown as RemoteAgentConfig;
       if (existingAgent) {
-        const updated: RemoteAgentDefinition = { ...existingAgent, name, config: agentConfig };
+        const updated: RemoteAgentDefinition = {
+          ...existingAgent,
+          name,
+          config: agentConfig,
+          agentSettings,
+        };
         updateRemoteAgent(updated);
         return updated;
       } else {
@@ -452,6 +476,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           id: `agent-${Date.now()}`,
           name,
           config: agentConfig,
+          agentSettings,
           isExpanded: false,
           connectionState: "disconnected",
         };
@@ -500,6 +525,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     nameError,
     connSettings,
     selectedType,
+    agentSettings,
     terminalOptions,
     icon,
     sourceFile,
@@ -753,6 +779,14 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
             onColorChange={(color) => setTerminalOptions({ ...terminalOptions, color })}
             icon={icon}
             onIconChange={setIcon}
+          />
+        );
+      case "agent":
+        return (
+          <AgentSettingsForm
+            settings={agentSettings}
+            onChange={setAgentSettings}
+            capabilities={existingAgent?.capabilities}
           />
         );
     }
