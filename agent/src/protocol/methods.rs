@@ -494,10 +494,10 @@ mod tests {
     #[test]
     fn initialize_params_with_external_files() {
         let json = json!({
-            "protocol_version": "0.2.0",
+            "protocolVersion": "0.2.0",
             "client": "termihub-desktop",
-            "client_version": "1.0.0",
-            "external_connection_files": [
+            "clientVersion": "1.0.0",
+            "externalConnectionFiles": [
                 "/home/pi/team-connections.json",
                 "/opt/shared-connections.json"
             ]

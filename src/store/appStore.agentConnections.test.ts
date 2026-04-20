@@ -355,7 +355,9 @@ describe("appStore — agent connection management", () => {
           [AGENT_ID]: [
             { sessionId: "s1", title: "shell", type: "shell", status: "running", attached: false },
           ],
-          "other-agent": [{ sessionId: "s2", title: "shell", type: "shell", status: "running" }],
+          "other-agent": [
+            { sessionId: "s2", title: "shell", type: "shell", status: "running", attached: false },
+          ],
         },
       });
 

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { CredentialStoreStatusInfo } from "@/types/credential";
 import type { SavedConnection, RemoteAgentDefinition } from "@/types/connection";
+import { DEFAULT_AGENT_SETTINGS } from "@/types/connection";
 import type { WorkspaceDefinition } from "@/types/workspace";
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -345,6 +346,7 @@ describe("launchWorkspace — agentRef credential store pre-unlock", () => {
       authMethod: "password",
       savePassword: true,
     },
+    agentSettings: DEFAULT_AGENT_SETTINGS,
     isExpanded: false,
     connectionState: "disconnected",
   };
