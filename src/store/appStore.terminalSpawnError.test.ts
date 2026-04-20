@@ -66,10 +66,9 @@ describe("terminal spawn error state", () => {
     // Add a terminal tab via addTab so we have a valid panelId
     const panelId = store.activePanelId!;
     store.addTab("Test", "local");
-    const tab =
-      useAppStore.getState().rootPanel.type === "leaf"
-        ? useAppStore.getState().rootPanel.tabs.at(-1)!
-        : null;
+    const rootPanel = useAppStore.getState().rootPanel;
+    const leafTabs = rootPanel.type === "leaf" ? rootPanel.tabs : [];
+    const tab = leafTabs.length > 0 ? leafTabs[leafTabs.length - 1] : null;
     expect(tab).not.toBeNull();
 
     useAppStore.getState().setTerminalSpawnError(tab!.id, "error");
