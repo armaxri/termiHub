@@ -69,7 +69,7 @@ vi.mock("@/services/api", () => ({
 
 import { useAppStore } from "./appStore";
 import type { AgentDefinitionInfo, AgentFolderInfo } from "@/services/api";
-import type { RemoteAgentDefinition } from "@/types/connection";
+import { DEFAULT_AGENT_SETTINGS, type RemoteAgentDefinition } from "@/types/connection";
 
 function makeDefinition(overrides: Partial<AgentDefinitionInfo> = {}): AgentDefinitionInfo {
   return {
@@ -271,6 +271,7 @@ describe("appStore — agent connection management", () => {
         },
         isExpanded: false,
         connectionState: "disconnected",
+        agentSettings: DEFAULT_AGENT_SETTINGS,
       };
     }
 

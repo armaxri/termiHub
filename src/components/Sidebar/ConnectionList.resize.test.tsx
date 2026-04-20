@@ -12,7 +12,7 @@ import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
-import type { RemoteAgentDefinition } from "@/types/connection";
+import { DEFAULT_AGENT_SETTINGS, type RemoteAgentDefinition } from "@/types/connection";
 
 vi.mock("@/services/api", () => ({
   listAvailableShells: vi.fn(() => Promise.resolve([])),
@@ -55,6 +55,7 @@ function makeAgent(overrides: Partial<RemoteAgentDefinition> = {}): RemoteAgentD
     },
     connectionState: "disconnected",
     isExpanded: false,
+    agentSettings: DEFAULT_AGENT_SETTINGS,
     ...overrides,
   };
 }
