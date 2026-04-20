@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- File browser: toolbar now shows the current directory path on its own line, with action buttons on a second line that wraps when the panel is narrow
+
 ### Added
 
 - Remote Agents: agent runtime settings (feature toggles, session defaults, diagnostics) are now stored per-agent and configured in a dedicated "Agent" tab in the connection editor. Settings include enabling/disabling monitoring, file browser (SFTP), and Docker support; setting a default shell and starting directory; and configuring log level and verbose protocol tracing. Settings are sent to the agent on connect and can be updated live without reconnecting.
