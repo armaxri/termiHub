@@ -1373,9 +1373,9 @@ mod tests {
 
     fn init_params() -> Value {
         json!({
-            "protocol_version": "0.1.0",
+            "protocolVersion": "0.1.0",
             "client": "test",
-            "client_version": "0.1.0"
+            "clientVersion": "0.1.0"
         })
     }
 
@@ -1424,9 +1424,9 @@ mod tests {
         let req = make_request(
             "initialize",
             json!({
-                "protocol_version": "1.0.0",
+                "protocolVersion": "1.0.0",
                 "client": "test",
-                "client_version": "1.0.0"
+                "clientVersion": "1.0.0"
             }),
             1,
         );

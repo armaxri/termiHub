@@ -478,9 +478,9 @@ mod tests {
     #[test]
     fn initialize_params_serde() {
         let json = json!({
-            "protocol_version": "0.1.0",
+            "protocolVersion": "0.1.0",
             "client": "termihub-desktop",
-            "client_version": "0.1.0"
+            "clientVersion": "0.1.0"
         });
         let params: InitializeParams = serde_json::from_value(json).unwrap();
         assert_eq!(params.protocol_version, "0.1.0");
