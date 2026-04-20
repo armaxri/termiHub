@@ -500,6 +500,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::connection::config::AgentSettings;
     use crate::terminal::agent_manager::{
         AgentCapabilities, AgentConnectResult, AgentConnectionsData, AgentDefinitionInfo,
         AgentFolderInfo, AgentRpcClient, AgentSessionInfo,
@@ -534,6 +535,7 @@ mod tests {
             &self,
             _agent_id: &str,
             _config: &RemoteAgentConfig,
+            _agent_settings: Option<&AgentSettings>,
         ) -> Result<AgentConnectResult, TerminalError> {
             Ok(AgentConnectResult {
                 capabilities: AgentCapabilities {
@@ -543,6 +545,8 @@ mod tests {
                     available_serial_ports: vec![],
                     docker_available: false,
                     available_docker_images: vec![],
+                    monitoring_supported: false,
+                    agent_version: "mock".to_string(),
                 },
                 agent_version: "mock".to_string(),
                 protocol_version: "0.2.0".to_string(),
@@ -757,6 +761,14 @@ mod tests {
             _remote_session_id: &str,
             _cols: u16,
             _rows: u16,
+        ) -> Result<(), TerminalError> {
+            Ok(())
+        }
+
+        fn apply_agent_settings(
+            &self,
+            _agent_id: &str,
+            _settings: &AgentSettings,
         ) -> Result<(), TerminalError> {
             Ok(())
         }

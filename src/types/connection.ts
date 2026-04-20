@@ -51,6 +51,27 @@ export interface ConnectionTypeInfo {
   capabilities: Capabilities;
 }
 
+/** Runtime behaviour preferences for a connected remote agent. */
+export interface AgentSettings {
+  enableMonitoring: boolean;
+  enableFileBrowser: boolean;
+  enableDocker: boolean;
+  defaultShell: string | null;
+  startingDirectory: string;
+  logLevel: "error" | "warn" | "info" | "debug" | "trace";
+  verboseTracing: boolean;
+}
+
+export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
+  enableMonitoring: true,
+  enableFileBrowser: true,
+  enableDocker: true,
+  defaultShell: null,
+  startingDirectory: "~",
+  logLevel: "info",
+  verboseTracing: false,
+};
+
 /** Capabilities reported by a connected remote agent. */
 export interface AgentCapabilities {
   connectionTypes: ConnectionTypeInfo[];
@@ -59,6 +80,10 @@ export interface AgentCapabilities {
   availableSerialPorts?: string[];
   dockerAvailable?: boolean;
   availableDockerImages?: string[];
+  /** Whether `/proc`-based (or platform-equivalent) monitoring is available. */
+  monitoringSupported?: boolean;
+  /** Agent binary version string, e.g. "1.4.2". */
+  agentVersion?: string;
 }
 
 /** A remote agent definition stored in the sidebar as a folder-like entry. */
@@ -66,6 +91,7 @@ export interface RemoteAgentDefinition {
   id: string;
   name: string;
   config: RemoteAgentConfig;
+  agentSettings: AgentSettings;
   isExpanded: boolean;
   connectionState: "disconnected" | "connecting" | "connected" | "reconnecting";
   capabilities?: AgentCapabilities;

@@ -19,6 +19,7 @@ use tracing::{error, info, warn};
 
 use termihub_core::monitoring::{MonitoringSender, SystemStats};
 
+use crate::connection::config::AgentSettings;
 use crate::terminal::backend::{OutputSender, RemoteAgentConfig, RemoteStateChangeEvent};
 use crate::terminal::jsonrpc;
 use crate::utils::errors::TerminalError;
@@ -43,6 +44,12 @@ pub struct AgentCapabilities {
     pub docker_available: bool,
     #[serde(default)]
     pub available_docker_images: Vec<String>,
+    /// Whether the remote system supports `/proc`-based monitoring.
+    #[serde(default)]
+    pub monitoring_supported: bool,
+    /// Agent binary version string, e.g. "1.4.2".
+    #[serde(default)]
+    pub agent_version: String,
 }
 
 /// Result of connecting to an agent.
@@ -192,6 +199,7 @@ pub trait AgentRpcClient: Send + Sync + 'static {
         &self,
         agent_id: &str,
         config: &RemoteAgentConfig,
+        agent_settings: Option<&AgentSettings>,
     ) -> Result<AgentConnectResult, TerminalError>;
 
     /// Disconnect an agent.
@@ -322,6 +330,15 @@ pub trait AgentRpcClient: Send + Sync + 'static {
         cols: u16,
         rows: u16,
     ) -> Result<(), TerminalError>;
+
+    /// Push updated AgentSettings to a running agent session (live reload).
+    ///
+    /// Sends `agent.settingsUpdate` over JSON-RPC and returns on success.
+    fn apply_agent_settings(
+        &self,
+        agent_id: &str,
+        settings: &AgentSettings,
+    ) -> Result<(), TerminalError>;
 }
 
 /// Manages connections to remote agents.
@@ -349,6 +366,7 @@ impl AgentConnectionManager {
         &self,
         agent_id: &str,
         config: &RemoteAgentConfig,
+        agent_settings: Option<&AgentSettings>,
     ) -> Result<AgentConnectResult, TerminalError> {
         let mut agents = self
             .agents
@@ -385,20 +403,21 @@ impl AgentConnectionManager {
         // 3. Blocking handshake: initialize
         let mut request_id: u64 = 0;
         request_id += 1;
-        jsonrpc::write_request(
-            &mut channel,
-            request_id,
-            "initialize",
-            serde_json::json!({
-                "protocol_version": "0.2.0",
-                "client": "termihub-desktop",
-                "client_version": "0.1.0"
-            }),
-        )
-        .map_err(|e| {
-            emit_agent_state(&self.app_handle, agent_id, "disconnected");
-            TerminalError::RemoteError(format!("Write initialize failed: {}", e))
-        })?;
+        let default_settings;
+        let settings_ref = match agent_settings {
+            Some(s) => s,
+            None => {
+                default_settings = AgentSettings::default();
+                &default_settings
+            }
+        };
+        let init_params = build_initialize_params(settings_ref);
+        jsonrpc::write_request(&mut channel, request_id, "initialize", init_params).map_err(
+            |e| {
+                emit_agent_state(&self.app_handle, agent_id, "disconnected");
+                TerminalError::RemoteError(format!("Write initialize failed: {}", e))
+            },
+        )?;
 
         let resp_line = jsonrpc::read_line_blocking(&mut channel).map_err(|e| {
             emit_agent_state(&self.app_handle, agent_id, "disconnected");
@@ -415,7 +434,7 @@ impl AgentConnectionManager {
                     emit_agent_state(&self.app_handle, agent_id, "disconnected");
                     TerminalError::RemoteError("Missing capabilities in initialize response".into())
                 })?;
-                let capabilities = serde_json::from_value::<AgentCapabilities>(caps.clone())
+                let mut capabilities = serde_json::from_value::<AgentCapabilities>(caps.clone())
                     .map_err(|e| {
                         emit_agent_state(&self.app_handle, agent_id, "disconnected");
                         TerminalError::RemoteError(format!("Parse capabilities: {}", e))
@@ -430,6 +449,8 @@ impl AgentConnectionManager {
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown")
                     .to_string();
+                // Copy agent_version into capabilities so the UI can read it from there.
+                capabilities.agent_version = agent_version.clone();
                 (capabilities, agent_version, protocol_version)
             }
             jsonrpc::JsonRpcMessage::Error { message, .. } => {
@@ -457,6 +478,7 @@ impl AgentConnectionManager {
         let app_handle_clone = self.app_handle.clone();
         let agent_id_owned = agent_id.to_string();
         let config_clone = config.clone();
+        let settings_clone = settings_ref.clone();
 
         std::thread::spawn(move || {
             agent_io_thread(
@@ -467,6 +489,7 @@ impl AgentConnectionManager {
                 app_handle_clone,
                 agent_id_owned,
                 config_clone,
+                settings_clone,
                 request_id,
             );
         });
@@ -922,8 +945,9 @@ impl AgentRpcClient for AgentConnectionManager {
         &self,
         agent_id: &str,
         config: &RemoteAgentConfig,
+        agent_settings: Option<&AgentSettings>,
     ) -> Result<AgentConnectResult, TerminalError> {
-        AgentConnectionManager::connect_agent(self, agent_id, config)
+        AgentConnectionManager::connect_agent(self, agent_id, config, agent_settings)
     }
 
     fn disconnect_agent(&self, agent_id: &str) -> Result<(), TerminalError> {
@@ -1087,6 +1111,27 @@ impl AgentRpcClient for AgentConnectionManager {
     ) -> Result<(), TerminalError> {
         AgentConnectionManager::resize_session(self, agent_id, remote_session_id, cols, rows)
     }
+
+    fn apply_agent_settings(
+        &self,
+        agent_id: &str,
+        settings: &AgentSettings,
+    ) -> Result<(), TerminalError> {
+        let params = serde_json::to_value(settings)
+            .map_err(|e| TerminalError::RemoteError(format!("Serialize settings: {}", e)))?;
+        self.send_request(agent_id, "agent.settingsUpdate", params)?;
+        Ok(())
+    }
+}
+
+/// Build the `initialize` JSON-RPC params including agent runtime settings.
+fn build_initialize_params(settings: &AgentSettings) -> Value {
+    serde_json::json!({
+        "protocol_version": "0.2.0",
+        "client": "termihub-desktop",
+        "client_version": "0.1.0",
+        "agentSettings": settings
+    })
 }
 
 /// Emit an agent state change event.
@@ -1113,6 +1158,7 @@ fn agent_io_thread(
     app_handle: AppHandle,
     agent_id: String,
     config: RemoteAgentConfig,
+    agent_settings: AgentSettings,
     mut request_id: u64,
 ) {
     let b64 = base64::engine::general_purpose::STANDARD;
@@ -1262,7 +1308,7 @@ fn agent_io_thread(
         emit_agent_state(&app_handle, &agent_id, "reconnecting");
         info!("Agent {}: connection lost, attempting reconnect", agent_id);
 
-        match reconnect_agent(&config, &mut request_id) {
+        match reconnect_agent(&config, &agent_settings, &mut request_id) {
             Ok((new_session, new_channel)) => {
                 // Replace the old channel (session is consumed by io_thread signature)
                 // We need to start a new I/O loop with the new channel
@@ -1340,6 +1386,7 @@ fn handle_notification(
 /// Attempt to reconnect to an agent with exponential backoff.
 fn reconnect_agent(
     config: &RemoteAgentConfig,
+    agent_settings: &AgentSettings,
     request_id: &mut u64,
 ) -> Result<(Session, ssh2::Channel), String> {
     const MAX_RETRIES: u32 = 10;
@@ -1376,16 +1423,9 @@ fn reconnect_agent(
 
         // 3. Initialize
         *request_id += 1;
-        if let Err(e) = jsonrpc::write_request(
-            &mut channel,
-            *request_id,
-            "initialize",
-            serde_json::json!({
-                "protocol_version": "0.2.0",
-                "client": "termihub-desktop",
-                "client_version": "0.1.0"
-            }),
-        ) {
+        let init_params = build_initialize_params(agent_settings);
+        if let Err(e) = jsonrpc::write_request(&mut channel, *request_id, "initialize", init_params)
+        {
             warn!(
                 "Reconnect attempt {} failed (write init): {}",
                 attempt + 1,
@@ -1524,6 +1564,8 @@ mod tests {
                 }
             })],
             max_sessions: 5,
+            monitoring_supported: false,
+            agent_version: String::new(),
             available_shells: vec!["/bin/sh".to_string()],
             available_serial_ports: vec!["/dev/ttyS0".to_string()],
             docker_available: false,

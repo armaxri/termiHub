@@ -26,6 +26,7 @@ import {
   AppSettings,
   RemoteAgentDefinition,
   AgentCapabilities,
+  AgentSettings,
   LayoutConfig,
   DEFAULT_LAYOUT,
   LAYOUT_PRESETS,
@@ -61,6 +62,7 @@ import {
   getDefaultShell,
   connectAgent as apiConnectAgent,
   disconnectAgent as apiDisconnectAgent,
+  applyAgentSettings as apiApplyAgentSettings,
   listAgentSessions,
   listAgentConnections,
   saveAgentDefinition,
@@ -395,6 +397,7 @@ interface AppState {
     state: RemoteAgentDefinition["connectionState"]
   ) => void;
   setAgentCapabilities: (agentId: string, capabilities: AgentCapabilities) => void;
+  updateAgentSettings: (agentId: string, settings: AgentSettings) => Promise<void>;
   refreshAgentSessions: (agentId: string) => Promise<void>;
   saveAgentDef: (agentId: string, definition: Record<string, unknown>) => Promise<void>;
   updateAgentDef: (agentId: string, params: Record<string, unknown>) => Promise<void>;
@@ -1954,18 +1957,24 @@ export const useAppStore = create<AppState>((set, get) => {
 
     addRemoteAgent: (agent) => {
       set((state) => ({ remoteAgents: [...state.remoteAgents, agent] }));
-      persistAgent({ id: agent.id, name: agent.name, config: agent.config }).catch((err) =>
-        console.error("Failed to persist new agent:", err)
-      );
+      persistAgent({
+        id: agent.id,
+        name: agent.name,
+        config: agent.config,
+        agentSettings: agent.agentSettings,
+      }).catch((err) => console.error("Failed to persist new agent:", err));
     },
 
     updateRemoteAgent: (agent) => {
       set((state) => ({
         remoteAgents: state.remoteAgents.map((a) => (a.id === agent.id ? agent : a)),
       }));
-      persistAgent({ id: agent.id, name: agent.name, config: agent.config }).catch((err) =>
-        console.error("Failed to persist agent update:", err)
-      );
+      persistAgent({
+        id: agent.id,
+        name: agent.name,
+        config: agent.config,
+        agentSettings: agent.agentSettings,
+      }).catch((err) => console.error("Failed to persist agent update:", err));
     },
 
     reorderRemoteAgents: (oldIndex, newIndex) => {
@@ -2027,7 +2036,7 @@ export const useAppStore = create<AppState>((set, get) => {
         if (password && config.authMethod === "password") {
           config.password = password;
         }
-        const result = await apiConnectAgent(agentId, config);
+        const result = await apiConnectAgent(agentId, config, agent.agentSettings);
 
         set((s) => ({
           remoteAgents: s.remoteAgents.map((a) =>
@@ -2082,6 +2091,15 @@ export const useAppStore = create<AppState>((set, get) => {
       set((state) => ({
         remoteAgents: state.remoteAgents.map((a) =>
           a.id === agentId ? { ...a, capabilities } : a
+        ),
+      }));
+    },
+
+    updateAgentSettings: async (agentId, settings) => {
+      await apiApplyAgentSettings(agentId, settings);
+      set((state) => ({
+        remoteAgents: state.remoteAgents.map((a) =>
+          a.id === agentId ? { ...a, agentSettings: settings } : a
         ),
       }));
     },

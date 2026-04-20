@@ -4,6 +4,8 @@ use serde_json::Value;
 use tauri::State;
 use tracing::{debug, info};
 
+use crate::connection::config::AgentSettings;
+use crate::connection::manager::ConnectionManager;
 use crate::session::manager::SessionManager;
 use crate::terminal::agent_deploy::{AgentDeployConfig, AgentDeployResult, AgentProbeResult};
 use crate::terminal::agent_manager::{
@@ -22,13 +24,14 @@ use crate::terminal::backend::RemoteAgentConfig;
 pub async fn connect_agent(
     agent_id: String,
     config: RemoteAgentConfig,
+    agent_settings: Option<AgentSettings>,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<AgentConnectResult, String> {
     info!(agent_id, host = %config.host, "Connecting to remote agent");
     let manager = agent_manager.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         manager
-            .connect_agent(&agent_id, &config)
+            .connect_agent(&agent_id, &config, agent_settings.as_ref())
             .map_err(|e| e.to_string())
     })
     .await
@@ -75,6 +78,36 @@ pub fn get_agent_capabilities(
     agent_manager
         .get_capabilities(&agent_id)
         .ok_or_else(|| format!("Agent {} not connected", agent_id))
+}
+
+/// Push updated AgentSettings to a running agent (live reload) and persist locally.
+///
+/// Sends `agent.settingsUpdate` over JSON-RPC, then saves the updated settings
+/// to connections.json so they take effect on the next connect as well.
+#[tauri::command]
+pub async fn apply_agent_settings(
+    agent_id: String,
+    settings: AgentSettings,
+    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
+    conn_manager: State<'_, ConnectionManager>,
+) -> Result<(), String> {
+    info!(agent_id, "Applying agent settings live");
+
+    // Persist to connections.json first (source of truth)
+    conn_manager
+        .update_agent_settings(&agent_id, settings.clone())
+        .map_err(|e| e.to_string())?;
+
+    // Push to running agent if connected
+    let manager = agent_manager.inner().clone();
+    let settings_clone = settings.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        manager
+            .apply_agent_settings(&agent_id, &settings_clone)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .unwrap_or_else(|e| Err(e.to_string()))
 }
 
 /// List sessions on a remote agent.

@@ -14,16 +14,16 @@ use crate::network;
 use crate::protocol::errors;
 use crate::protocol::messages::{JsonRpcErrorResponse, JsonRpcRequest, JsonRpcResponse};
 use crate::protocol::methods::{
-    AgentShutdownParams, AgentShutdownResult, Capabilities, ConnectionCreateParams,
-    ConnectionDeleteParams, ConnectionTypesResult, ConnectionUpdateParams, FilesDeleteParams,
-    FilesListParams, FilesListResult, FilesMkdirParams, FilesReadParams, FilesReadResult,
-    FilesRenameParams, FilesStatParams, FilesWriteParams, FolderCreateParams, FolderDeleteParams,
-    FolderUpdateParams, HealthCheckResult, InitializeParams, InitializeResult,
-    MonitoringSubscribeParams, MonitoringUnsubscribeParams, NetworkDnsLookupParams,
-    NetworkPingParams, NetworkPortScanParams, NetworkTracerouteParams, NetworkWolParams,
-    SessionAttachParams, SessionCloseParams, SessionCreateParams, SessionCreateResult,
-    SessionDetachParams, SessionInputParams, SessionListEntry, SessionListResult,
-    SessionResizeParams,
+    AgentSettings, AgentSettingsUpdateParams, AgentShutdownParams, AgentShutdownResult,
+    Capabilities, ConnectionCreateParams, ConnectionDeleteParams, ConnectionTypesResult,
+    ConnectionUpdateParams, FilesDeleteParams, FilesListParams, FilesListResult, FilesMkdirParams,
+    FilesReadParams, FilesReadResult, FilesRenameParams, FilesStatParams, FilesWriteParams,
+    FolderCreateParams, FolderDeleteParams, FolderUpdateParams, HealthCheckResult,
+    InitializeParams, InitializeResult, MonitoringSubscribeParams, MonitoringUnsubscribeParams,
+    NetworkDnsLookupParams, NetworkPingParams, NetworkPortScanParams, NetworkTracerouteParams,
+    NetworkWolParams, SessionAttachParams, SessionCloseParams, SessionCreateParams,
+    SessionCreateResult, SessionDetachParams, SessionInputParams, SessionListEntry,
+    SessionListResult, SessionResizeParams,
 };
 use crate::session::definitions::{Connection, ConnectionStoreApi, Folder};
 use crate::session::manager::{
@@ -47,6 +47,8 @@ pub struct Dispatcher<M: SessionManagerApi = SessionManager> {
     monitoring_manager: Arc<dyn MonitoringManagerApi>,
     initialized: bool,
     start_time: Instant,
+    /// Runtime settings received from the desktop on initialize or settingsUpdate.
+    agent_settings: AgentSettings,
 }
 
 /// The result of dispatching a request: either a success or error response.
@@ -87,6 +89,7 @@ impl<M: SessionManagerApi> Dispatcher<M> {
             monitoring_manager,
             initialized: false,
             start_time: Instant::now(),
+            agent_settings: AgentSettings::default(),
         }
     }
 
@@ -157,6 +160,7 @@ impl<M: SessionManagerApi> Dispatcher<M> {
             // Utility
             "health.check" => self.handle_health_check(request).await,
             "agent.shutdown" => self.handle_agent_shutdown(request).await,
+            "agent.settingsUpdate" => self.handle_settings_update(request).await,
             _ => {
                 warn!("Unknown method: {}", method);
                 DispatchResult::Error(JsonRpcErrorResponse::new(
@@ -198,6 +202,7 @@ impl<M: SessionManagerApi> Dispatcher<M> {
         }
 
         self.initialized = true;
+        self.agent_settings = params.agent_settings;
 
         let docker_available = detect_docker_available();
         let connection_types = self.session_manager.registry().available_types();
@@ -212,6 +217,7 @@ impl<M: SessionManagerApi> Dispatcher<M> {
                 available_serial_ports: detect_available_serial_ports(),
                 docker_available,
                 available_docker_images: detect_docker_images(),
+                monitoring_supported: detect_monitoring_supported(),
             },
         };
 
@@ -355,6 +361,25 @@ impl<M: SessionManagerApi> Dispatcher<M> {
             request.id,
             serde_json::to_value(result).unwrap(),
         ))
+    }
+
+    async fn handle_settings_update(&mut self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+
+        let params: AgentSettingsUpdateParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid agent.settingsUpdate params: {e}"),
+                ));
+            }
+        };
+
+        self.agent_settings = params.settings;
+
+        DispatchResult::Success(JsonRpcResponse::new(id, json!({"applied": true})))
     }
 
     async fn handle_agent_shutdown(&self, request: JsonRpcRequest) -> DispatchResult {
@@ -1252,6 +1277,20 @@ const SHELL_CANDIDATES: &[&str] = &[
     "/usr/bin/pwsh",
     "/snap/bin/pwsh",
 ];
+
+/// Check whether system monitoring is available on this host.
+fn detect_monitoring_supported() -> bool {
+    // On Linux, monitoring reads from /proc. On other platforms it uses platform APIs.
+    #[cfg(target_os = "linux")]
+    {
+        std::path::Path::new("/proc/stat").exists()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        // macOS and Windows have alternative monitoring backends.
+        true
+    }
+}
 
 /// Detect available shells by checking which candidate paths exist on disk.
 fn detect_available_shells() -> Vec<String> {
