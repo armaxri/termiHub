@@ -333,6 +333,7 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
   const [creatingFolder, setCreatingFolder] = useState(false);
 
   const isConnected = agent.connectionState === "connected";
+  const isReconnecting = agent.connectionState === "reconnecting";
   const Chevron = agent.isExpanded ? ChevronDown : ChevronRight;
 
   // Derived: root-level folders and definitions (no parent/folder)
@@ -587,7 +588,7 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
 
         <ContextMenu.Portal>
           <ContextMenu.Content className="context-menu__content">
-            {!isConnected ? (
+            {!isConnected && !isReconnecting ? (
               <>
                 <ContextMenu.Item
                   className="context-menu__item"
@@ -693,8 +694,19 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
 
       {agent.isExpanded && (
         <div className="connection-list__tree">
-          {isConnected ? (
+          {isConnected || isReconnecting ? (
             <>
+              {/* Reconnecting banner */}
+              {isReconnecting && (
+                <div
+                  className="agent-node__hint agent-node__hint--reconnecting"
+                  style={{ paddingLeft: 24 }}
+                >
+                  <RefreshCw size={12} />
+                  Reconnecting…
+                </div>
+              )}
+
               {/* Active sessions section */}
               {agentSessions.length > 0 && (
                 <>

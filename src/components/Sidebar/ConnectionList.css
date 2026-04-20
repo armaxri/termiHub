@@ -306,6 +306,14 @@
   user-select: none;
 }
 
+.agent-node__hint--reconnecting {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--state-connecting);
+  padding: 4px 0;
+}
+
 .agent-node__section-label {
   display: flex;
   align-items: center;

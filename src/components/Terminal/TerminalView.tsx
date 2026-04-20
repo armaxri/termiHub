@@ -46,9 +46,12 @@ export function TerminalView() {
         session_id,
         state as "disconnected" | "connecting" | "connected" | "reconnecting"
       );
-      // Auto-refresh sessions when agent reconnects
       if (state === "connected") {
         store.refreshAgentSessions(session_id);
+      } else if (state === "disconnected") {
+        // Active sessions are gone; clear them so stale entries don't linger.
+        // Saved connections (definitions/folders) are kept — they live on disk.
+        store.clearAgentSessions(session_id);
       }
     }).then((fn) => {
       unlisten = fn;

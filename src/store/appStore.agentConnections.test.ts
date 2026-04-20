@@ -312,4 +312,56 @@ describe("appStore — agent connection management", () => {
       expect(result.map((a) => a.id)).toEqual(["a1", "a2"]);
     });
   });
+
+  describe("clearAgentSessions", () => {
+    it("empties agentSessions for the given agent", () => {
+      useAppStore.setState({
+        agentSessions: {
+          [AGENT_ID]: [
+            { sessionId: "s1", title: "shell", type: "shell", status: "running", attached: false },
+          ],
+        },
+      });
+
+      useAppStore.getState().clearAgentSessions(AGENT_ID);
+
+      expect(useAppStore.getState().agentSessions[AGENT_ID]).toEqual([]);
+    });
+
+    it("does not clear definitions or folders", () => {
+      const def = makeDefinition({ id: "d1" });
+      const folder = makeFolder({ id: "f1" });
+      useAppStore.setState({
+        agentSessions: {
+          [AGENT_ID]: [
+            { sessionId: "s1", title: "shell", type: "shell", status: "running", attached: false },
+          ],
+        },
+        agentDefinitions: { [AGENT_ID]: [def] },
+        agentFolders: { [AGENT_ID]: [folder] },
+      });
+
+      useAppStore.getState().clearAgentSessions(AGENT_ID);
+
+      expect(useAppStore.getState().agentSessions[AGENT_ID]).toEqual([]);
+      expect(useAppStore.getState().agentDefinitions[AGENT_ID]).toEqual([def]);
+      expect(useAppStore.getState().agentFolders[AGENT_ID]).toEqual([folder]);
+    });
+
+    it("does not affect other agents", () => {
+      useAppStore.setState({
+        agentSessions: {
+          [AGENT_ID]: [
+            { sessionId: "s1", title: "shell", type: "shell", status: "running", attached: false },
+          ],
+          "other-agent": [{ sessionId: "s2", title: "shell", type: "shell", status: "running" }],
+        },
+      });
+
+      useAppStore.getState().clearAgentSessions(AGENT_ID);
+
+      expect(useAppStore.getState().agentSessions[AGENT_ID]).toEqual([]);
+      expect(useAppStore.getState().agentSessions["other-agent"]).toHaveLength(1);
+    });
+  });
 });

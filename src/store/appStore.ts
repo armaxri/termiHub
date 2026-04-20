@@ -395,6 +395,7 @@ interface AppState {
     state: RemoteAgentDefinition["connectionState"]
   ) => void;
   setAgentCapabilities: (agentId: string, capabilities: AgentCapabilities) => void;
+  clearAgentSessions: (agentId: string) => void;
   refreshAgentSessions: (agentId: string) => Promise<void>;
   saveAgentDef: (agentId: string, definition: Record<string, unknown>) => Promise<void>;
   duplicateAgentDef: (agentId: string, definitionId: string) => Promise<void>;
@@ -2074,6 +2075,12 @@ export const useAppStore = create<AppState>((set, get) => {
         remoteAgents: state.remoteAgents.map((a) =>
           a.id === agentId ? { ...a, connectionState } : a
         ),
+      }));
+    },
+
+    clearAgentSessions: (agentId) => {
+      set((s) => ({
+        agentSessions: { ...s.agentSessions, [agentId]: [] },
       }));
     },
 
