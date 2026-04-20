@@ -24,11 +24,11 @@
 
 .file-browser__toolbar {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  align-items: stretch;
   padding: var(--spacing-xs) var(--spacing-sm);
   border-bottom: 1px solid var(--border-secondary);
-  min-height: 30px;
+  gap: 2px;
 }
 
 .file-browser__path {
@@ -37,14 +37,13 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  flex: 1;
-  margin-right: var(--spacing-xs);
+  width: 100%;
 }
 
 .file-browser__actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 2px;
-  flex-shrink: 0;
 }
 
 .file-browser__btn {
