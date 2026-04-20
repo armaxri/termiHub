@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Remote Agents: agent runtime settings (feature toggles, session defaults, diagnostics) are now stored per-agent and configured in a dedicated "Agent" tab in the connection editor. Settings include enabling/disabling monitoring, file browser (SFTP), and Docker support; setting a default shell and starting directory; and configuring log level and verbose protocol tracing. Settings are sent to the agent on connect and can be updated live without reconnecting.
+
 ### Fixed
 
 - Workspace launch: agent connection tabs (agentRef) now trigger the master password prompt upfront when their agents are disconnected and have stored credentials — previously these tabs would open as "Agent not connected" error tabs without ever asking for the password, and clicking Reconnect would immediately fail with an auth error

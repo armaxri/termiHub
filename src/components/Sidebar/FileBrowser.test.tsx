@@ -5,7 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
 import { FileBrowser, FileMenuItems, MultiSelectMenuItems } from "./FileBrowser";
 import type { TerminalTab, LeafPanel } from "@/types/terminal";
-import type { FileEntry } from "@/types/connection";
+import { DEFAULT_AGENT_SETTINGS, type FileEntry } from "@/types/connection";
 
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
@@ -235,6 +235,7 @@ describe("FileBrowser – useFileBrowserSync", () => {
             dockerAvailable: false,
             availableDockerImages: [],
           },
+          agentSettings: DEFAULT_AGENT_SETTINGS,
         },
       ],
     });
@@ -286,6 +287,7 @@ describe("FileBrowser – useFileBrowserSync", () => {
             dockerAvailable: false,
             availableDockerImages: [],
           },
+          agentSettings: DEFAULT_AGENT_SETTINGS,
         },
       ],
     });

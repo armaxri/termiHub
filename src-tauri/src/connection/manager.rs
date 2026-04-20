@@ -5,8 +5,9 @@ use anyhow::{Context, Result};
 use tauri::AppHandle;
 
 use super::config::{
-    ConnectionFolder, ConnectionStore, EncryptedConnectionExport, ExternalConnectionStore,
-    FlatConnectionStore, ImportPreview, ImportResult, SavedConnection, SavedRemoteAgent,
+    AgentSettings, ConnectionFolder, ConnectionStore, EncryptedConnectionExport,
+    ExternalConnectionStore, FlatConnectionStore, ImportPreview, ImportResult, SavedConnection,
+    SavedRemoteAgent,
 };
 use super::recovery::RecoveryWarning;
 use super::settings::{AppSettings, SettingsStorage};
@@ -184,6 +185,19 @@ impl ConnectionManager {
         self.storage
             .save_flat(&store)
             .context("Failed to persist agent reorder")
+    }
+
+    /// Update only the agent runtime settings for an existing agent.
+    pub fn update_agent_settings(&self, agent_id: &str, settings: AgentSettings) -> Result<()> {
+        let mut store = self.store.lock().unwrap();
+        if let Some(agent) = store.agents.iter_mut().find(|a| a.id == agent_id) {
+            agent.agent_settings = settings;
+            self.storage
+                .save_flat(&store)
+                .context("Failed to persist agent settings update")
+        } else {
+            Err(anyhow::anyhow!("Agent {} not found", agent_id))
+        }
     }
 
     /// Delete a remote agent by ID.
@@ -1098,6 +1112,7 @@ mod tests {
                 save_password,
                 agent_path: None,
             },
+            agent_settings: Default::default(),
         }
     }
 

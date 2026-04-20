@@ -3,6 +3,62 @@ use serde::{Deserialize, Serialize};
 use crate::credential::crypto::EncryptedEnvelope;
 use crate::terminal::backend::{ConnectionConfig, RemoteAgentConfig};
 
+fn default_true() -> bool {
+    true
+}
+
+fn default_log_level() -> String {
+    "info".to_string()
+}
+
+fn default_starting_directory() -> String {
+    "~".to_string()
+}
+
+/// Runtime behaviour preferences for a connected remote agent.
+///
+/// Stored locally with the connection profile; sent to the agent on startup
+/// and on live updates via the `agent.settingsUpdate` JSON-RPC method.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSettings {
+    /// Start the system monitoring subsystem on agent startup.
+    #[serde(default = "default_true")]
+    pub enable_monitoring: bool,
+    /// Start the SFTP file-browser subsystem on agent startup.
+    #[serde(default = "default_true")]
+    pub enable_file_browser: bool,
+    /// Enable Docker/Podman session support on agent startup.
+    #[serde(default = "default_true")]
+    pub enable_docker: bool,
+    /// Preferred shell for new sessions. `None` means auto-detect.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_shell: Option<String>,
+    /// Default working directory for new sessions.
+    #[serde(default = "default_starting_directory")]
+    pub starting_directory: String,
+    /// Agent log level: "error", "warn", "info", "debug", "trace".
+    #[serde(default = "default_log_level")]
+    pub log_level: String,
+    /// Enable verbose JSON-RPC protocol tracing in agent logs.
+    #[serde(default)]
+    pub verbose_tracing: bool,
+}
+
+impl Default for AgentSettings {
+    fn default() -> Self {
+        Self {
+            enable_monitoring: true,
+            enable_file_browser: true,
+            enable_docker: true,
+            default_shell: None,
+            starting_directory: "~".to_string(),
+            log_level: "info".to_string(),
+            verbose_tracing: false,
+        }
+    }
+}
+
 /// Per-connection terminal display options.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -60,6 +116,9 @@ pub struct SavedRemoteAgent {
     pub id: String,
     pub name: String,
     pub config: RemoteAgentConfig,
+    /// Runtime preferences sent to the agent on startup and on live updates.
+    #[serde(default)]
+    pub agent_settings: AgentSettings,
 }
 
 /// Top-level schema for the connections JSON file (v2 nested format).
@@ -308,6 +367,7 @@ mod tests {
                 save_password: None,
                 agent_path: None,
             },
+            agent_settings: AgentSettings::default(),
         };
         let json = serde_json::to_string(&agent).unwrap();
         let deserialized: SavedRemoteAgent = serde_json::from_str(&json).unwrap();
@@ -315,6 +375,44 @@ mod tests {
         assert_eq!(deserialized.name, "Pi Agent");
         assert_eq!(deserialized.config.host, "pi.local");
         assert_eq!(deserialized.config.auth_method, "key");
+        assert!(deserialized.agent_settings.enable_monitoring);
+        assert!(deserialized.agent_settings.enable_file_browser);
+        assert_eq!(deserialized.agent_settings.log_level, "info");
+    }
+
+    #[test]
+    fn saved_remote_agent_backward_compat_missing_agent_settings() {
+        // Existing JSON without agentSettings should deserialize with defaults
+        let json = r#"{
+            "id": "agent-1",
+            "name": "Pi Agent",
+            "config": {
+                "host": "pi.local",
+                "port": 22,
+                "username": "pi",
+                "authMethod": "key"
+            }
+        }"#;
+        let agent: SavedRemoteAgent = serde_json::from_str(json).unwrap();
+        assert!(agent.agent_settings.enable_monitoring);
+        assert!(agent.agent_settings.enable_file_browser);
+        assert!(agent.agent_settings.enable_docker);
+        assert!(agent.agent_settings.default_shell.is_none());
+        assert_eq!(agent.agent_settings.starting_directory, "~");
+        assert_eq!(agent.agent_settings.log_level, "info");
+        assert!(!agent.agent_settings.verbose_tracing);
+    }
+
+    #[test]
+    fn agent_settings_default_values() {
+        let settings = AgentSettings::default();
+        assert!(settings.enable_monitoring);
+        assert!(settings.enable_file_browser);
+        assert!(settings.enable_docker);
+        assert!(settings.default_shell.is_none());
+        assert_eq!(settings.starting_directory, "~");
+        assert_eq!(settings.log_level, "info");
+        assert!(!settings.verbose_tracing);
     }
 
     #[test]
