@@ -374,6 +374,12 @@ interface AppState {
   tabColors: Record<string, string>;
   setTabColor: (tabId: string, color: string | null) => void;
 
+  // Per-tab terminal spawn errors (runtime-only, cleared on retry or tab close)
+  terminalSpawnErrors: Record<string, string>;
+  terminalRetryCounters: Record<string, number>;
+  setTerminalSpawnError: (tabId: string, error: string | null) => void;
+  retryTerminalSpawn: (tabId: string) => void;
+
   // Remote connection states
   remoteStates: Record<string, string>;
   setRemoteState: (sessionId: string, state: string) => void;
@@ -1208,6 +1214,8 @@ export const useAppStore = create<AppState>((set, get) => {
         const { [tabId]: _removedColor, ...remainingColors } = state.tabColors;
         const { [tabId]: _removedOpts, ...remainingOpts } = state.tabTerminalOptions;
         const { [tabId]: _removedSearch, ...remainingSearch } = state.terminalSearchVisible;
+        const { [tabId]: _removedSpawnErr, ...remainingSpawnErrors } = state.terminalSpawnErrors;
+        const { [tabId]: _removedRetry, ...remainingRetryCounters } = state.terminalRetryCounters;
 
         let rootPanel = updateLeaf(state.rootPanel, panelId, (leaf) =>
           removeTabFromLeaf(leaf, tabId)
@@ -1235,6 +1243,8 @@ export const useAppStore = create<AppState>((set, get) => {
             tabColors: remainingColors,
             tabTerminalOptions: remainingOpts,
             terminalSearchVisible: remainingSearch,
+            terminalSpawnErrors: remainingSpawnErrors,
+            terminalRetryCounters: remainingRetryCounters,
           };
         }
 
@@ -1247,6 +1257,8 @@ export const useAppStore = create<AppState>((set, get) => {
           tabColors: remainingColors,
           tabTerminalOptions: remainingOpts,
           terminalSearchVisible: remainingSearch,
+          terminalSpawnErrors: remainingSpawnErrors,
+          terminalRetryCounters: remainingRetryCounters,
         };
       }),
 
@@ -1941,6 +1953,29 @@ export const useAppStore = create<AppState>((set, get) => {
           return { tabColors: remaining };
         }
         return { tabColors: { ...state.tabColors, [tabId]: color } };
+      }),
+
+    // Per-tab terminal spawn errors (runtime-only)
+    terminalSpawnErrors: {},
+    terminalRetryCounters: {},
+    setTerminalSpawnError: (tabId, error) =>
+      set((state) => {
+        if (error === null) {
+          const { [tabId]: _removed, ...remaining } = state.terminalSpawnErrors;
+          return { terminalSpawnErrors: remaining };
+        }
+        return { terminalSpawnErrors: { ...state.terminalSpawnErrors, [tabId]: error } };
+      }),
+    retryTerminalSpawn: (tabId) =>
+      set((state) => {
+        const { [tabId]: _removed, ...remaining } = state.terminalSpawnErrors;
+        return {
+          terminalSpawnErrors: remaining,
+          terminalRetryCounters: {
+            ...state.terminalRetryCounters,
+            [tabId]: (state.terminalRetryCounters[tabId] ?? 0) + 1,
+          },
+        };
       }),
 
     // Remote connection states

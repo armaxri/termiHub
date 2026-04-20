@@ -49,6 +49,7 @@ import { WorkspaceEditor } from "@/components/WorkspaceEditor";
 import { NetworkDiagnosticPanel } from "@/components/NetworkTools/NetworkDiagnosticPanel";
 import { TerminalSearchBar } from "@/components/Terminal/TerminalSearchBar";
 import { AgentErrorTab } from "@/components/Terminal/AgentErrorTab";
+import { TerminalSpawnErrorOverlay } from "@/components/Terminal/TerminalSpawnErrorOverlay";
 import { PanelDropZone } from "./PanelDropZone";
 import "./SplitView.css";
 
@@ -65,6 +66,7 @@ export function SplitView() {
   const setDraggingTabId = useAppStore((s) => s.setDraggingTabId);
   const zoomedTabId = useAppStore((s) => s.zoomedTabId);
   const setZoomedTabId = useAppStore((s) => s.setZoomedTabId);
+  const terminalSpawnErrors = useAppStore((s) => s.terminalSpawnErrors);
 
   // Find the zoomed tab's metadata for the overlay header
   const zoomedTab = useMemo(() => {
@@ -276,7 +278,15 @@ export function SplitView() {
               </button>
             </div>
             <div className="zoom-overlay__content">
-              {zoomedTab.contentType === "terminal" ? (
+              {zoomedTab.contentType === "terminal" && terminalSpawnErrors[zoomedTabId] ? (
+                <TerminalSpawnErrorOverlay
+                  key={`zoom-${zoomedTabId}`}
+                  tabId={zoomedTabId}
+                  error={terminalSpawnErrors[zoomedTabId]}
+                  tabTitle={zoomedTab.title}
+                  isVisible={true}
+                />
+              ) : zoomedTab.contentType === "terminal" ? (
                 <>
                   <TerminalSearchBar tabId={zoomedTabId} />
                   {/* key forces a fresh mount on each zoomed-tab change so the
@@ -411,6 +421,7 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
   const setTabHorizontalScrolling = useAppStore((s) => s.setTabHorizontalScrolling);
   const tabColors = useAppStore((s) => s.tabColors);
   const setTabColor = useAppStore((s) => s.setTabColor);
+  const terminalSpawnErrors = useAppStore((s) => s.terminalSpawnErrors);
   const rightClickBehavior = useAppStore((s) => s.settings.rightClickBehavior);
   const useQuickAction =
     rightClickBehavior === "quickAction" || (!rightClickBehavior && isWindows());
@@ -518,6 +529,14 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
               key={tab.id}
               tabId={tab.id}
               meta={tab.agentErrorMeta}
+              isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
+            />
+          ) : tab.contentType === "terminal" && terminalSpawnErrors[tab.id] ? (
+            <TerminalSpawnErrorOverlay
+              key={tab.id}
+              tabId={tab.id}
+              error={terminalSpawnErrors[tab.id]}
+              tabTitle={tab.title}
               isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
             />
           ) : useQuickAction ? (

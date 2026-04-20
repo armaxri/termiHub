@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Terminal: connection failures (e.g. agent timeout, SSH auth errors) now show a proper error panel with the error message and a Retry button instead of raw red text in the terminal canvas.
 - UI: Connections view is now always shown on startup instead of restoring the file browser from the previous session
 - UI: Resize handle between Connections and Remote Agent sections no longer shows a resize cursor when the agent is not expanded (cursor was misleading — dragging appeared broken)
 - UI: Added resize separator above the "Remote Agents" header to resize the Connections section against the entire Remote Agents section; individual agent resize handles now appear only between agents (not before the first one)
