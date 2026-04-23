@@ -10,6 +10,8 @@ use std::net::TcpStream;
 use std::path::Path;
 use std::path::PathBuf;
 
+use socket2::TcpKeepalive;
+
 use crate::config::expand::expand_tilde;
 use crate::config::SshConfig;
 use crate::errors::SessionError;
@@ -40,6 +42,24 @@ pub fn connect_and_authenticate(config: &SshConfig) -> Result<ssh2::Session, Ses
         .map_err(|e| {
             SessionError::SpawnFailed(format!("Failed to set socket write timeout: {e}"))
         })?;
+
+    // Enable TCP keepalives so a silent disconnect (remote host losing power,
+    // no RST/FIN) is detected within ~10 s even without user input.
+    // Probe after 5 s idle, retry every 5 s, give up after 1 failed probe.
+    {
+        let ka = {
+            let base = TcpKeepalive::new()
+                .with_time(std::time::Duration::from_secs(5))
+                .with_interval(std::time::Duration::from_secs(5));
+            #[cfg(not(target_os = "windows"))]
+            let base = base.with_retries(1);
+            base
+        };
+        // SockRef borrows the socket in-place — no ownership transfer needed.
+        if let Err(e) = socket2::SockRef::from(&tcp).set_tcp_keepalive(&ka) {
+            tracing::warn!("TCP keepalive setup failed (dead connections may go undetected): {e}");
+        }
+    }
 
     let mut session = ssh2::Session::new().map_err(|e| SessionError::SpawnFailed(e.to_string()))?;
 
