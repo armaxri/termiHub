@@ -204,6 +204,7 @@ function MonitoringStatus() {
   const activeTabId = useAppStore((s) => getActiveTab(s)?.id ?? null);
   const activeTabConnectionType = useAppStore((s) => getActiveTab(s)?.connectionType ?? null);
   const activeTabConfig = useAppStore((s) => getActiveTab(s)?.config ?? undefined);
+  const activeTabExited = useAppStore((s) => !!(activeTabId && s.terminalExitedTabs[activeTabId]));
 
   const activeTabSupportsMonitoring = typeSupportsMonitoring(
     connectionTypes,
@@ -240,6 +241,14 @@ function MonitoringStatus() {
   // Auto-connect monitoring when active tab supports monitoring
   useEffect(() => {
     if (!monitoringEnabled) return;
+
+    // Don't auto-connect while the terminal session has exited unexpectedly.
+    // Clear the failed-ref so monitoring can reconnect once the user brings
+    // the terminal back via the Reconnect button.
+    if (activeTabExited) {
+      autoConnectFailedRef.current = null;
+      return;
+    }
 
     // Read the active tab from the store (avoids subscribing to the full object)
     const activeTab = getActiveTab(useAppStore.getState());
@@ -299,7 +308,7 @@ function MonitoringStatus() {
     };
 
     doConnect();
-  }, [activeTabId, monitoringSessionId, monitoringHost, monitoringEnabled]);
+  }, [activeTabId, monitoringSessionId, monitoringHost, monitoringEnabled, activeTabExited]);
 
   const handleConnect = useCallback(
     (connection: SavedConnection) => {

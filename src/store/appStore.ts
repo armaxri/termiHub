@@ -1994,10 +1994,16 @@ export const useAppStore = create<AppState>((set, get) => {
 
     // Per-tab terminal session disconnects (runtime-only)
     terminalExitedTabs: {},
-    setTerminalExited: (tabId) =>
+    setTerminalExited: (tabId) => {
       set((state) => ({
         terminalExitedTabs: { ...state.terminalExitedTabs, [tabId]: true },
-      })),
+      }));
+      // Stop monitoring when the terminal session dies — the stats are no
+      // longer being updated and the overlay hides the terminal anyway.
+      if (get().monitoringSessionId) {
+        get().disconnectMonitoring();
+      }
+    },
     dismissTerminalDisconnect: (tabId) =>
       set((state) => {
         const { [tabId]: _removed, ...remaining } = state.terminalExitedTabs;

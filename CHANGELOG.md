@@ -18,6 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- SSH: dead-connection detection time reduced from ~15 s to ~6 s by tightening TCP keepalive probe interval (idle 2 s, interval 2 s, 1 retry), so the disconnect overlay appears much sooner after a remote host loses power
+- SSH: write timeout reduced from 5 s to 2 s, capping the UI freeze when typing into a dead connection; combined with a fast-path that skips the blocking write once the session is already known to be dead, subsequent keystrokes fail instantly
+- Monitoring: fixed UI freeze and delayed disconnect overlay caused by `monitoring_fetch_stats` blocking tokio worker threads for up to 52 s per call when the remote host is dead; the command is now async and dispatches the blocking SSH exec to a dedicated thread pool via `spawn_blocking`, and the legacy SSH connection now has a 15 s read timeout to bound the blocking time
+- Monitoring: `monitoring_open` now also uses `spawn_blocking` so a TCP connect to a dead host (which can take ~75 s for the SYN timeout) no longer blocks a tokio worker thread
+- Monitoring: fixed auto-reconnect loop — when the disconnect overlay is showing, the status bar no longer tries to open a new monitoring session to the dead host; monitoring reconnects automatically once the user brings the terminal back via the Reconnect button
+- Monitoring: CPU/memory stats panel now automatically disconnects when the terminal session exits unexpectedly (instead of persisting stale stats under the disconnect overlay)
+
 - Agent: persisting (daemon-backed) sessions now survive agent reconnects — previously the agent killed daemon subprocesses on exit instead of detaching, causing recovered sessions to appear missing after disconnect/reconnect
 - Workspace launch: agent connection tabs (agentRef) now trigger the master password prompt upfront when their agents are disconnected and have stored credentials — previously these tabs would open as "Agent not connected" error tabs without ever asking for the password, and clicking Reconnect would immediately fail with an auth error
 - Agent error tab: the Reconnect button now unlocks the credential store and resolves the stored password before reconnecting — previously it always connected without a password, causing an immediate authentication failure
