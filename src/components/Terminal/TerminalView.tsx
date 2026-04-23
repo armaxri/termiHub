@@ -12,6 +12,7 @@ import { SplitView } from "@/components/SplitView";
 import { terminalDispatcher } from "@/services/events";
 import { sendInput } from "@/services/api";
 import { useOsFileDrop } from "@/hooks/useOsFileDrop";
+import { frontendLog } from "@/utils/frontendLog";
 import "./TerminalView.css";
 
 /** Shell-safe quoting for a file path dropped onto a terminal. */
@@ -37,7 +38,23 @@ export function TerminalView() {
     let unlisten: (() => void) | null = null;
     listen<{ session_id: string; state: string }>("remote-state-change", (event) => {
       const { session_id, state } = event.payload;
+      frontendLog("disconnect", `remote-state-change session=${session_id} state=${state}`);
       useAppStore.getState().setRemoteState(session_id, state);
+      if (state === "disconnected") {
+        // Find the tab that owns this session and show the disconnect overlay.
+        const store = useAppStore.getState();
+        const allTabs = [
+          ...getAllLeaves(store.rootPanel).flatMap((l) => l.tabs),
+          ...store.tabGroups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((l) => l.tabs)),
+        ];
+        const tab = allTabs.find((t) => t.sessionId === session_id);
+        if (tab) {
+          frontendLog("disconnect", `remote-state-change: marking tab=${tab.id} as exited`);
+          store.setTerminalExited(tab.id);
+        } else {
+          frontendLog("disconnect", `remote-state-change: no tab found for session=${session_id}`);
+        }
+      }
     }).then((fn) => {
       unlisten = fn;
     });
@@ -51,6 +68,7 @@ export function TerminalView() {
     let unlisten: (() => void) | null = null;
     listen<{ session_id: string; state: string }>("agent-state-change", (event) => {
       const { session_id, state } = event.payload;
+      frontendLog("disconnect", `agent-state-change agent=${session_id} state=${state}`);
       const store = useAppStore.getState();
       store.setAgentConnectionState(
         session_id,
@@ -59,6 +77,28 @@ export function TerminalView() {
       if (state === "connected") {
         store.refreshAgentSessions(session_id);
       } else if (state === "disconnected") {
+        // Mark all terminal tabs belonging to this agent as exited so the
+        // disconnect overlay appears. Must happen before clearAgentSessions
+        // which wipes the session list used for cross-referencing.
+        const agentSessionIds = new Set(
+          (store.agentSessions[session_id] ?? []).map((s) => s.sessionId)
+        );
+        frontendLog(
+          "disconnect",
+          `agent disconnected: ${agentSessionIds.size} sessions to mark exited`
+        );
+        if (agentSessionIds.size > 0) {
+          const allTabs = [
+            ...getAllLeaves(store.rootPanel).flatMap((l) => l.tabs),
+            ...store.tabGroups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((l) => l.tabs)),
+          ];
+          for (const tab of allTabs) {
+            if (tab.sessionId && agentSessionIds.has(tab.sessionId)) {
+              frontendLog("disconnect", `agent disconnect: marking tab=${tab.id} as exited`);
+              store.setTerminalExited(tab.id);
+            }
+          }
+        }
         // Active sessions are gone; clear them so stale entries don't linger.
         // Saved connections (definitions/folders) are kept — they live on disk.
         store.clearAgentSessions(session_id);

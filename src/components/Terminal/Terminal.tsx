@@ -254,7 +254,9 @@ export function Terminal({
         });
 
         // Subscribe to exit events via singleton dispatcher
+        frontendLog("disconnect", `subscribed exit for session=${sessionId} tab=${tabId}`);
         const unsubExit = terminalDispatcher.subscribeExit(sessionId, () => {
+          frontendLog("disconnect", `terminal-exit fired session=${sessionId} tab=${tabId}`);
           xterm.writeln("\r\n\x1b[90m[Process exited]\x1b[0m");
           sessionIdRef.current = null;
           unregisterSession(tabId);
