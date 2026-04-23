@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Terminal: when a session exits unexpectedly (e.g. remote host reboots), a semi-transparent overlay appears over the terminal with a "Session disconnected" message, a Reconnect button that starts a fresh session with the same connection config, and a Dismiss button to hide the overlay and scroll the preserved history
 - Remote Agents: agent runtime settings (feature toggles, session defaults, diagnostics) are now stored per-agent and configured in a dedicated "Agent" tab in the connection editor. Settings include enabling/disabling monitoring, file browser (SFTP), and Docker support; setting a default shell and starting directory; and configuring log level and verbose protocol tracing. Settings are sent to the agent on connect and can be updated live without reconnecting.
 
 ### Fixed

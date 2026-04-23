@@ -258,6 +258,7 @@ export function Terminal({
           xterm.writeln("\r\n\x1b[90m[Process exited]\x1b[0m");
           sessionIdRef.current = null;
           unregisterSession(tabId);
+          useAppStore.getState().setTerminalExited(tabId);
         });
 
         // Send user input to backend

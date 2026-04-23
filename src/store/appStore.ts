@@ -382,6 +382,12 @@ interface AppState {
   setTerminalSpawnError: (tabId: string, error: string | null) => void;
   retryTerminalSpawn: (tabId: string) => void;
 
+  // Per-tab terminal session disconnects (runtime-only, cleared on reconnect, dismiss, or tab close)
+  terminalExitedTabs: Record<string, boolean>;
+  setTerminalExited: (tabId: string) => void;
+  dismissTerminalDisconnect: (tabId: string) => void;
+  reconnectTerminal: (tabId: string) => void;
+
   // Remote connection states
   remoteStates: Record<string, string>;
   setRemoteState: (sessionId: string, state: string) => void;
@@ -1221,6 +1227,7 @@ export const useAppStore = create<AppState>((set, get) => {
         const { [tabId]: _removedSearch, ...remainingSearch } = state.terminalSearchVisible;
         const { [tabId]: _removedSpawnErr, ...remainingSpawnErrors } = state.terminalSpawnErrors;
         const { [tabId]: _removedRetry, ...remainingRetryCounters } = state.terminalRetryCounters;
+        const { [tabId]: _removedExited, ...remainingExited } = state.terminalExitedTabs;
 
         let rootPanel = updateLeaf(state.rootPanel, panelId, (leaf) =>
           removeTabFromLeaf(leaf, tabId)
@@ -1250,6 +1257,7 @@ export const useAppStore = create<AppState>((set, get) => {
             terminalSearchVisible: remainingSearch,
             terminalSpawnErrors: remainingSpawnErrors,
             terminalRetryCounters: remainingRetryCounters,
+            terminalExitedTabs: remainingExited,
           };
         }
 
@@ -1264,6 +1272,7 @@ export const useAppStore = create<AppState>((set, get) => {
           terminalSearchVisible: remainingSearch,
           terminalSpawnErrors: remainingSpawnErrors,
           terminalRetryCounters: remainingRetryCounters,
+          terminalExitedTabs: remainingExited,
         };
       }),
 
@@ -1976,6 +1985,29 @@ export const useAppStore = create<AppState>((set, get) => {
         const { [tabId]: _removed, ...remaining } = state.terminalSpawnErrors;
         return {
           terminalSpawnErrors: remaining,
+          terminalRetryCounters: {
+            ...state.terminalRetryCounters,
+            [tabId]: (state.terminalRetryCounters[tabId] ?? 0) + 1,
+          },
+        };
+      }),
+
+    // Per-tab terminal session disconnects (runtime-only)
+    terminalExitedTabs: {},
+    setTerminalExited: (tabId) =>
+      set((state) => ({
+        terminalExitedTabs: { ...state.terminalExitedTabs, [tabId]: true },
+      })),
+    dismissTerminalDisconnect: (tabId) =>
+      set((state) => {
+        const { [tabId]: _removed, ...remaining } = state.terminalExitedTabs;
+        return { terminalExitedTabs: remaining };
+      }),
+    reconnectTerminal: (tabId) =>
+      set((state) => {
+        const { [tabId]: _removed, ...remaining } = state.terminalExitedTabs;
+        return {
+          terminalExitedTabs: remaining,
           terminalRetryCounters: {
             ...state.terminalRetryCounters,
             [tabId]: (state.terminalRetryCounters[tabId] ?? 0) + 1,

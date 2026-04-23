@@ -1,0 +1,91 @@
+.terminal-disconnect-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--terminal-bg, #1e1e1e) 88%, transparent);
+  backdrop-filter: blur(2px);
+  color: var(--text-primary);
+  font-family: var(--font-mono, monospace);
+  font-size: var(--font-size-sm);
+}
+
+.terminal-disconnect-overlay__dismiss {
+  position: absolute;
+  top: var(--spacing-sm);
+  right: var(--spacing-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  opacity: 0.6;
+  transition:
+    opacity var(--transition-fast),
+    background-color var(--transition-fast);
+}
+
+.terminal-disconnect-overlay__dismiss:hover {
+  opacity: 1;
+  background-color: var(--bg-hover, rgba(255, 255, 255, 0.08));
+}
+
+.terminal-disconnect-overlay__body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-md);
+  padding: var(--spacing-xl);
+  text-align: center;
+  max-width: 420px;
+}
+
+.terminal-disconnect-overlay__icon {
+  color: var(--color-warning, #e8a838);
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+
+.terminal-disconnect-overlay__heading {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.terminal-disconnect-overlay__subheading {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  margin: 0;
+  line-height: 1.5;
+}
+
+.terminal-disconnect-overlay__reconnect-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-sm) var(--spacing-lg);
+  background-color: var(--accent-color);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-family: inherit;
+  cursor: pointer;
+  margin-top: var(--spacing-xs);
+  transition:
+    background-color var(--transition-fast),
+    opacity var(--transition-fast);
+}
+
+.terminal-disconnect-overlay__reconnect-btn:hover {
+  background-color: var(--accent-hover);
+}

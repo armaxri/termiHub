@@ -50,6 +50,7 @@ import { NetworkDiagnosticPanel } from "@/components/NetworkTools/NetworkDiagnos
 import { TerminalSearchBar } from "@/components/Terminal/TerminalSearchBar";
 import { AgentErrorTab } from "@/components/Terminal/AgentErrorTab";
 import { TerminalSpawnErrorOverlay } from "@/components/Terminal/TerminalSpawnErrorOverlay";
+import { TerminalDisconnectOverlay } from "@/components/Terminal/TerminalDisconnectOverlay";
 import { PanelDropZone } from "./PanelDropZone";
 import "./SplitView.css";
 
@@ -688,6 +689,7 @@ function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: boolean 
   const slotRef = useRef<HTMLDivElement>(null);
   const { getElement, focusTerminal, fitTerminal, parkingRef } = useTerminalRegistry();
   const tabColor = useAppStore((s) => s.tabColors[tabId]);
+  const isExited = useAppStore((s) => s.terminalExitedTabs[tabId] ?? false);
 
   useEffect(() => {
     const slotEl = slotRef.current;
@@ -737,7 +739,9 @@ function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: boolean 
       ref={slotRef}
       className={`terminal-container ${isVisible ? "" : "terminal-container--hidden"}`}
       style={tabColor ? { border: `2px solid ${tabColor}` } : undefined}
-    />
+    >
+      {isExited && <TerminalDisconnectOverlay tabId={tabId} />}
+    </div>
   );
 }
 
