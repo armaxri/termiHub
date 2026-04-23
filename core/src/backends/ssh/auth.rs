@@ -36,7 +36,7 @@ pub fn connect_and_authenticate(config: &SshConfig) -> Result<ssh2::Session, Ses
     // Limit how long a blocking write can wait on a silently dead connection.
     // Without this, write_all on a dead socket fills the TCP send buffer and
     // blocks the calling thread indefinitely (until OS TCP timeout, minutes away).
-    tcp.set_write_timeout(Some(std::time::Duration::from_secs(30)))
+    tcp.set_write_timeout(Some(std::time::Duration::from_secs(5)))
         .map_err(|e| {
             SessionError::SpawnFailed(format!("Failed to set socket write timeout: {e}"))
         })?;

@@ -225,6 +225,9 @@ impl SshConnector for Ssh2SshConnector {
         Ok(SshShellHandle {
             reader: Box::new(Ssh2SshShellReader::new(channel.clone(), alive)),
             write: Arc::new(move |data: &[u8]| {
+                if !alive_for_write.load(Ordering::SeqCst) {
+                    return Err(SessionError::Io(std::io::Error::other("session dead")));
+                }
                 let mut ch = channel_for_write
                     .lock()
                     .map_err(|e| SessionError::Io(std::io::Error::other(format!("lock: {e}"))))?;
