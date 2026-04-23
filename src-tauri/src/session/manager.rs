@@ -239,6 +239,15 @@ impl SessionManager {
         let entry = sessions
             .get(session_id)
             .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
+        // Fast-path: skip the blocking write entirely for sessions already
+        // known to be dead (alive flag cleared by a previous write failure or
+        // by the reader thread).  This prevents a cascade of IPC calls from
+        // rapid keystrokes all blocking for SO_SNDTIMEO before giving up.
+        if !entry.connection.is_connected() {
+            return Err(TerminalError::WriteFailed(
+                "session disconnected".to_string(),
+            ));
+        }
         let data = data.to_vec();
         // block_in_place lets tokio keep processing other tasks while this
         // thread blocks on the potentially-slow synchronous write (e.g. SSH

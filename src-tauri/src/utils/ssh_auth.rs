@@ -1,6 +1,7 @@
 use std::net::TcpStream;
 #[cfg(not(target_os = "windows"))]
 use std::path::Path;
+use std::time::Duration;
 
 use ssh2::Session;
 
@@ -19,6 +20,13 @@ pub fn connect_and_authenticate(config: &SshConfig) -> Result<Session, TerminalE
     let addr = format!("{}:{}", config.host, config.port);
     let tcp = TcpStream::connect(&addr)
         .map_err(|e| TerminalError::SshError(format!("Connection failed: {}", e)))?;
+
+    // Bound blocking time on dead connections so monitoring execs don't hold
+    // a thread for the full TCP retransmit timeout (~minutes by default).
+    tcp.set_write_timeout(Some(Duration::from_secs(10)))
+        .map_err(|e| TerminalError::SshError(format!("Write timeout setup failed: {e}")))?;
+    tcp.set_read_timeout(Some(Duration::from_secs(15)))
+        .map_err(|e| TerminalError::SshError(format!("Read timeout setup failed: {e}")))?;
 
     let mut session = Session::new().map_err(|e| TerminalError::SshError(e.to_string()))?;
 
