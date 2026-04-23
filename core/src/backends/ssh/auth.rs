@@ -33,6 +33,14 @@ pub fn connect_and_authenticate(config: &SshConfig) -> Result<ssh2::Session, Ses
     let tcp = TcpStream::connect(&addr)
         .map_err(|e| SessionError::SpawnFailed(format!("Connection failed: {e}")))?;
 
+    // Limit how long a blocking write can wait on a silently dead connection.
+    // Without this, write_all on a dead socket fills the TCP send buffer and
+    // blocks the calling thread indefinitely (until OS TCP timeout, minutes away).
+    tcp.set_write_timeout(Some(std::time::Duration::from_secs(30)))
+        .map_err(|e| {
+            SessionError::SpawnFailed(format!("Failed to set socket write timeout: {e}"))
+        })?;
+
     let mut session = ssh2::Session::new().map_err(|e| SessionError::SpawnFailed(e.to_string()))?;
 
     session.set_tcp_stream(tcp);

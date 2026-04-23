@@ -463,6 +463,13 @@ impl ConnectionType for Ssh {
                 }
             }
             alive_clone.store(false, Ordering::SeqCst);
+            // Drop the sender so run_output_reader sees EOF and emits terminal-exit.
+            // Without this the session manager's output receiver would wait forever,
+            // because the Arc<Mutex<Option<Sender>>> in output_tx keeps the sender alive
+            // even after the reader thread exits.  (Mirrors the local_shell.rs pattern.)
+            if let Ok(mut guard) = output_tx_clone.lock() {
+                *guard = None;
+            }
         });
 
         // Create monitoring and file browser providers.

@@ -217,6 +217,10 @@ impl SshConnector for Ssh2SshConnector {
         let channel_for_eof = channel.clone();
         let channel_for_close = channel.clone();
         let session_for_close = session.clone();
+        // Clone alive for the write closure so a write failure (e.g. TCP write
+        // timeout on a dead connection) signals the reader thread to exit, which
+        // then drops the output sender and triggers terminal-exit.
+        let alive_for_write = alive.clone();
 
         Ok(SshShellHandle {
             reader: Box::new(Ssh2SshShellReader::new(channel.clone(), alive)),
@@ -228,6 +232,9 @@ impl SshConnector for Ssh2SshConnector {
                 let result = std::io::Write::write_all(&mut *ch, data);
                 session_for_write.set_blocking(false);
                 drop(ch);
+                if result.is_err() {
+                    alive_for_write.store(false, Ordering::SeqCst);
+                }
                 result.map_err(SessionError::Io)
             }),
             resize: Arc::new(move |cols: u16, rows: u16| {
