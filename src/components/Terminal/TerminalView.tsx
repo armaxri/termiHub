@@ -66,39 +66,94 @@ export function TerminalView() {
   // Update agent connection state in the store (drives sidebar state dots).
   useEffect(() => {
     let unlisten: (() => void) | null = null;
-    listen<{ session_id: string; state: string }>("agent-state-change", (event) => {
-      const { session_id, state } = event.payload;
+    listen<{ session_id: string; state: string; error?: string }>("agent-state-change", (event) => {
+      const { session_id, state, error } = event.payload;
       frontendLog("disconnect", `agent-state-change agent=${session_id} state=${state}`);
       const store = useAppStore.getState();
       store.setAgentConnectionState(
         session_id,
         state as "disconnected" | "connecting" | "connected" | "reconnecting"
       );
+
+      // Build the full tab list once and reuse across all branches.
+      const allTabs = [
+        ...getAllLeaves(store.rootPanel).flatMap((l) => l.tabs),
+        ...store.tabGroups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((l) => l.tabs)),
+      ];
+
+      // Find all terminal tabs that belong to this agent via their connection
+      // config. This is more reliable than cross-referencing through
+      // agentSessions, which is only populated once on initial connect and
+      // therefore empty for sessions opened after the first refresh.
+      const agentTerminalTabs = allTabs.filter((tab) => {
+        if (tab.contentType !== "terminal") return false;
+        const cfg = tab.config.config as { agentId?: string };
+        return cfg.agentId === session_id;
+      });
+
       if (state === "connected") {
-        store.refreshAgentSessions(session_id);
-      } else if (state === "disconnected") {
-        // Mark all terminal tabs belonging to this agent as exited so the
-        // disconnect overlay appears. Must happen before clearAgentSessions
-        // which wipes the session list used for cross-referencing.
-        const agentSessionIds = new Set(
-          (store.agentSessions[session_id] ?? []).map((s) => s.sessionId)
-        );
-        frontendLog(
-          "disconnect",
-          `agent disconnected: ${agentSessionIds.size} sessions to mark exited`
-        );
-        if (agentSessionIds.size > 0) {
-          const allTabs = [
-            ...getAllLeaves(store.rootPanel).flatMap((l) => l.tabs),
-            ...store.tabGroups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((l) => l.tabs)),
-          ];
-          for (const tab of allTabs) {
-            if (tab.sessionId && agentSessionIds.has(tab.sessionId)) {
-              frontendLog("disconnect", `agent disconnect: marking tab=${tab.id} as exited`);
-              store.setTerminalExited(tab.id);
-            }
+        // After a successful auto-reconnect the agent process restarted, so
+        // the remote shell sessions are gone. Transition any tabs that were
+        // showing the "Reconnecting…" spinner to the "Session disconnected"
+        // overlay so the user knows to reconnect each tab manually.
+        let markedExited = 0;
+        for (const tab of agentTerminalTabs) {
+          if (store.terminalReconnectingTabs[tab.id]) {
+            frontendLog(
+              "disconnect",
+              `agent connected after reconnect: marking tab=${tab.id} as exited`
+            );
+            store.setTerminalExited(tab.id);
+            markedExited++;
           }
         }
+        frontendLog(
+          "disconnect",
+          `agent connected: ${markedExited} reconnecting tabs transitioned to exited`
+        );
+
+        // Wake any tabs that were parked waiting for this agent to connect.
+        // retryTerminalSpawn increments the retry counter, causing the Terminal
+        // component's useEffect to re-run and call setupTerminal fresh.
+        let wokeCount = 0;
+        for (const tab of agentTerminalTabs) {
+          if (store.terminalWaitingForAgent[tab.id] === session_id) {
+            frontendLog("disconnect", `agent connected: waking waiting tab=${tab.id}`);
+            store.setTerminalWaitingForAgent(tab.id, null);
+            store.retryTerminalSpawn(tab.id);
+            wokeCount++;
+          }
+        }
+        frontendLog("disconnect", `agent connected: woke ${wokeCount} waiting tabs`);
+
+        store.refreshAgentSessions(session_id);
+      } else if (state === "reconnecting") {
+        // Show the reconnecting spinner overlay on all tabs with an active
+        // session for this agent.
+        let markedCount = 0;
+        for (const tab of agentTerminalTabs) {
+          if (!tab.sessionId) continue;
+          frontendLog("disconnect", `agent reconnecting: marking tab=${tab.id}`);
+          store.setTerminalReconnecting(tab.id, true);
+          markedCount++;
+        }
+        frontendLog("disconnect", `agent reconnecting: ${markedCount} tabs marked`);
+      } else if (state === "disconnected") {
+        // Mark all tabs with an active session for this agent as exited so
+        // the disconnect overlay appears.
+        let markedCount = 0;
+        for (const tab of agentTerminalTabs) {
+          if (!tab.sessionId) continue;
+          frontendLog("disconnect", `agent disconnect: marking tab=${tab.id} as exited`);
+          if (error) {
+            // Auto-reconnect exhausted its retries — surface the reason.
+            store.setTerminalDisconnectWithError(tab.id, error);
+          } else {
+            store.setTerminalExited(tab.id);
+          }
+          markedCount++;
+        }
+        frontendLog("disconnect", `agent disconnected: ${markedCount} tabs marked as exited`);
         // Active sessions are gone; clear them so stale entries don't linger.
         // Saved connections (definitions/folders) are kept — they live on disk.
         store.clearAgentSessions(session_id);

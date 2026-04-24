@@ -7,9 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Terminal: a unified "Connecting…" overlay now appears on every terminal tab while the backend session is being established, for all connection types (SSH, Telnet, serial, agent sessions). The overlay shows a spinner and a Cancel button (which closes the tab). If the initial connection fails, the overlay transitions to an error state with a Retry button and contextual hints for common failure modes (SSH agent not running, timeout, serial port not found, port permission denied, port in use).
+- Terminal: for agent-mediated sessions (sessions running on a remote agent), connection failures trigger automatic background retry instead of showing an error immediately. The overlay shows the current attempt number. The user can cancel at any time by closing the tab.
+- Terminal: tabs that are created while their parent agent is still connecting now show a "Waiting for agent…" spinner overlay and automatically start their session once the agent connects, instead of failing immediately with an error.
+- Serial: error messages for common failure modes (port not found, permission denied, port in use) now include the port name and a plain-English explanation of how to fix the issue.
+
 ### Changed
 
 - File browser: toolbar now shows the current directory path on its own line, with action buttons on a second line that wraps when the panel is narrow
+- Terminal disconnect overlay: the Dismiss button is now labelled "View Scrollback" and keeps the session marked as ended (instead of silently clearing the state). After dismissing, a thin non-blocking banner at the bottom of the terminal indicates the session is dead and offers a Reconnect button, while the full terminal content remains selectable and copyable.
+- Terminal disconnect overlay: pressing Enter while in view mode (scrollback-only) now opens a small reconnect prompt instead of sending the keystroke to the dead session. The prompt offers "Reconnect" and "Stay in View Mode" choices.
+- Terminal disconnect overlay: the overlay now has three distinct variants — a spinner overlay while the agent is auto-reconnecting, an error-state overlay (with error details and a "Try Again" button) when all reconnect attempts have been exhausted, and the standard "Session disconnected" overlay for normal exits.
+- Agent: when the automatic reconnect loop exhausts all retries, the disconnect overlay now shows the reason (e.g. "Failed to reconnect after 10 attempts") so the user knows why the reconnect stopped.
+- Agent: tabs belonging to a reconnecting agent now show a "Reconnecting…" spinner overlay during automatic reconnect attempts, so the terminal no longer appears frozen/dead while recovery is in progress.
 
 ### Added
 
@@ -18,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Agent: the "Reconnecting…" and "Session disconnected" overlays now correctly appear on all agent terminal tabs during and after an auto-reconnect, including sessions opened after the initial agent connect. Previously, the overlay was never shown because the tab-finding logic relied on `agentSessions`, which is populated only once on initial connect (before any sessions exist) and was therefore always empty. The fix looks up tabs directly by their connection config's `agentId` field.
+- Agent: after the agent transport successfully auto-reconnects, affected tabs now transition from the "Reconnecting…" spinner to a "Session disconnected" overlay (with a Reconnect button), correctly reflecting that the remote shell sessions were lost when the agent process restarted.
 - SSH: dead-connection detection time reduced from ~15 s to ~6 s by tightening TCP keepalive probe interval (idle 2 s, interval 2 s, 1 retry), so the disconnect overlay appears much sooner after a remote host loses power
 - SSH: write timeout reduced from 5 s to 2 s, capping the UI freeze when typing into a dead connection; combined with a fast-path that skips the blocking write once the session is already known to be dead, subsequent keystrokes fail instantly
 - Monitoring: fixed UI freeze and delayed disconnect overlay caused by `monitoring_fetch_stats` blocking tokio worker threads for up to 52 s per call when the remote host is dead; the command is now async and dispatches the blocking SSH exec to a dedicated thread pool via `spawn_blocking`, and the legacy SSH connection now has a 15 s read timeout to bound the blocking time

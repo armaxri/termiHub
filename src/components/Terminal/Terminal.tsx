@@ -129,6 +129,8 @@ export function Terminal({
   const lastInputTimeRef = useRef(0);
   const contentDirtyRef = useRef(false);
   const pendingCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Tracks view mode so the key handler (set once in the main effect) can read current state.
+  const isViewModeRef = useRef(false);
   // Capture existingSessionId at mount time only. After the Terminal creates a
   // session, TerminalRegistry.registerSession writes the session ID back to the
   // Zustand store (via setTabSessionId) so the file browser can observe it.
@@ -147,6 +149,18 @@ export function Terminal({
     registerSearchAddon,
     parkingRef,
   } = useTerminalRegistry();
+
+  // Keep the view-mode ref in sync so the key handler (registered once per xterm
+  // instance) can consult current state without being recreated on every render.
+  useEffect(() => {
+    isViewModeRef.current = useAppStore.getState().terminalViewMode[tabId] ?? false;
+    return useAppStore.subscribe(
+      (state) => state.terminalViewMode[tabId] ?? false,
+      (viewMode) => {
+        isViewModeRef.current = viewMode;
+      }
+    );
+  }, [tabId]);
 
   const setupTerminal = useCallback(
     async (xterm: XTerm, fitAddon: FitAddon, isCanceled: () => boolean) => {
@@ -192,17 +206,75 @@ export function Terminal({
               }
             : config;
 
-        const sessionId = initialSessionIdRef.current ?? (await createTerminal(sessionConfig));
+        // Determine connection mode. Remote-session tabs (agent-mediated) use
+        // auto-retry on failure; direct connections use user-driven retry.
+        const isAgentSession = config.type === "remote-session";
+        const agentId = isAgentSession
+          ? (config.config as { agentId?: string }).agentId
+          : undefined;
 
-        // Guard against StrictMode race: if this setup was canceled while
-        // the async createTerminal was in-flight, close the orphaned session
-        // and bail out — the remounted effect will create its own session.
-        if (isCanceled()) {
-          if (!initialSessionIdRef.current) {
-            closeTerminal(sessionId);
+        // ── Connection loop ────────────────────────────────────────────────
+        // For workspace-restore the session already exists — skip the loop.
+        let sessionId: string;
+        if (initialSessionIdRef.current) {
+          sessionId = initialSessionIdRef.current;
+        } else {
+          let attempt = 0;
+          let resolved: string | null = null;
+
+          while (!isCanceled()) {
+            useAppStore.getState().setTerminalConnecting(tabId, true);
+
+            try {
+              resolved = await createTerminal(sessionConfig);
+
+              if (isCanceled()) {
+                closeTerminal(resolved);
+                return;
+              }
+              // Success — clear all pre-connect overlay state.
+              useAppStore.getState().setTerminalConnecting(tabId, false);
+              useAppStore.getState().setTerminalAutoRetrying(tabId, 0);
+              break;
+            } catch (err) {
+              if (isCanceled()) return;
+              useAppStore.getState().setTerminalConnecting(tabId, false);
+
+              if (isAgentSession && agentId) {
+                // Check whether the agent transport itself is still connecting.
+                const agentState = useAppStore
+                  .getState()
+                  .remoteAgents.find((a) => a.id === agentId)?.connectionState;
+
+                if (agentState === "connecting" || agentState === "reconnecting") {
+                  // Park tab; TerminalView wakes it via retryTerminalSpawn
+                  // once the agent emits "connected".
+                  useAppStore.getState().setTerminalWaitingForAgent(tabId, agentId);
+                  return;
+                }
+
+                // Agent is up but the session creation failed — auto-retry.
+                attempt++;
+                useAppStore.getState().setTerminalAutoRetrying(tabId, attempt);
+
+                // 2.5 s cancellable delay (100 ms polling keeps cancel latency low).
+                const deadline = Date.now() + 2500;
+                while (Date.now() < deadline) {
+                  if (isCanceled()) return;
+                  await new Promise<void>((r) => setTimeout(r, 100));
+                }
+              } else {
+                // Direct connection (SSH, Telnet, serial, local) — show error.
+                useAppStore.getState().setTerminalSpawnError(tabId, String(err));
+                return;
+              }
+            }
           }
-          return;
+
+          if (isCanceled() || resolved === null) return;
+          sessionId = resolved;
         }
+        // ── End connection loop ────────────────────────────────────────────
 
         sessionIdRef.current = sessionId;
         registerSession(tabId, sessionId);
@@ -320,7 +392,11 @@ export function Terminal({
           }
         };
       } catch (err) {
-        useAppStore.getState().setTerminalSpawnError(tabId, String(err));
+        // Unexpected error outside the connection loop (e.g. subscription setup).
+        const store = useAppStore.getState();
+        store.setTerminalConnecting(tabId, false);
+        store.setTerminalAutoRetrying(tabId, 0);
+        store.setTerminalSpawnError(tabId, String(err));
       }
     },
     // initialSessionIdRef and initialCommand are intentionally excluded: they are
@@ -377,6 +453,12 @@ export function Terminal({
     // Intercept application shortcuts before xterm processes them
     xterm.attachCustomKeyEventHandler((e: KeyboardEvent) => {
       if (e.type !== "keydown") return true;
+
+      // In view mode the session is dead. Enter shows the reconnect prompt.
+      if (e.key === "Enter" && !sessionIdRef.current && isViewModeRef.current) {
+        useAppStore.getState().showTerminalReconnectPrompt(tabId);
+        return false;
+      }
 
       // If a chord is pending, block the key from xterm
       if (isChordPending()) {

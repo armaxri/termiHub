@@ -1151,15 +1151,26 @@ fn build_initialize_params(settings: &AgentSettings, external_files: &[&str]) ->
     })
 }
 
-/// Emit an agent state change event.
-fn emit_agent_state(app_handle: &AppHandle, agent_id: &str, state: &str) {
+/// Emit an agent state change event with an optional error description.
+fn emit_agent_state_with_error(
+    app_handle: &AppHandle,
+    agent_id: &str,
+    state: &str,
+    error: Option<&str>,
+) {
     let _ = app_handle.emit(
         "agent-state-change",
         RemoteStateChangeEvent {
             session_id: agent_id.to_string(),
             state: state.to_string(),
+            error: error.map(|s| s.to_string()),
         },
     );
+}
+
+/// Emit an agent state change event.
+fn emit_agent_state(app_handle: &AppHandle, agent_id: &str, state: &str) {
+    emit_agent_state_with_error(app_handle, agent_id, state, None);
 }
 
 /// Main I/O thread for an agent connection.
@@ -1342,7 +1353,7 @@ fn agent_io_thread(
             }
             Err(e) => {
                 error!("Agent {}: reconnection failed: {}", agent_id, e);
-                emit_agent_state(&app_handle, &agent_id, "disconnected");
+                emit_agent_state_with_error(&app_handle, &agent_id, "disconnected", Some(&e));
                 alive.store(false, Ordering::SeqCst);
                 // Notify all pending requests
                 for (_, tx) in pending_responses.drain() {
