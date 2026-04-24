@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Terminal: clicking "Reconnect" after a session disconnect now immediately shows the "Connecting…" overlay with no blank gap between the disconnect overlay disappearing and the connection attempt starting. Previously, the overlay was not set until after a React render cycle, leaving a brief window with no visible feedback.
+
 ### Added
 
 - Terminal: a unified "Connecting…" overlay now appears on every terminal tab while the backend session is being established, for all connection types (SSH, Telnet, serial, agent sessions). The overlay shows a spinner and a Cancel button (which closes the tab). If the initial connection fails, the overlay transitions to an error state with a Retry button and contextual hints for common failure modes (SSH agent not running, timeout, serial port not found, port permission denied, port in use).

@@ -2133,6 +2133,7 @@ export const useAppStore = create<AppState>((set, get) => {
         const { [tabId]: _removedReconn, ...remainingReconn } = state.terminalReconnectingTabs;
         const { [tabId]: _removedAutoRetry, ...remainingAutoRetry } = state.terminalAutoRetryCount;
         const { [tabId]: _removedWaiting, ...remainingWaiting } = state.terminalWaitingForAgent;
+        const { [tabId]: _removedSpawnErr, ...remainingSpawnErrors } = state.terminalSpawnErrors;
         return {
           terminalExitedTabs: remainingExited,
           terminalDisconnectErrors: remainingErr,
@@ -2141,6 +2142,11 @@ export const useAppStore = create<AppState>((set, get) => {
           terminalReconnectingTabs: remainingReconn,
           terminalAutoRetryCount: remainingAutoRetry,
           terminalWaitingForAgent: remainingWaiting,
+          terminalSpawnErrors: remainingSpawnErrors,
+          // Set connecting immediately so the "Connecting…" overlay appears at once,
+          // without a gap between the disconnect overlay disappearing and the effect
+          // re-running to call setTerminalConnecting().
+          terminalConnecting: { ...state.terminalConnecting, [tabId]: true },
           terminalRetryCounters: {
             ...state.terminalRetryCounters,
             [tabId]: (state.terminalRetryCounters[tabId] ?? 0) + 1,
