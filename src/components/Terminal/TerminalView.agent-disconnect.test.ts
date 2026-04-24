@@ -311,6 +311,144 @@ describe("agent-state-change tab discovery — regression for empty agentSession
   });
 });
 
+// ── Session recovery: 'connected' after power-cycle ─────────────────────────
+
+/**
+ * REGRESSION: Before this fix, the 'connected' handler always called
+ * setTerminalExited() for every reconnecting tab, even when the agent
+ * successfully recovered the session with the same session ID.
+ * The user reported that "the reconnect never reconnected after the new power
+ * up" — the frontend was forcing the disconnect overlay on every agent restart.
+ *
+ * The fix checks listAgentSessions() and only marks sessions as exited when
+ * they are NOT in the recovered list.
+ */
+describe("agent-state-change 'connected': session recovery after power cycle", () => {
+  beforeEach(() => {
+    useAppStore.setState(useAppStore.getInitialState());
+    vi.clearAllMocks();
+  });
+
+  /** Simulate the fixed 'connected' handler with a given recovered-sessions list. */
+  async function simulateConnectedHandler(agentId: string, recoveredSessionIds: string[]) {
+    const store = useAppStore.getState();
+    const allTabs = [
+      ...getAllLeaves(store.rootPanel).flatMap((l) => l.tabs),
+      ...store.tabGroups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((l) => l.tabs)),
+    ];
+    const agentTerminalTabs = allTabs.filter((tab) => {
+      if (tab.contentType !== "terminal") return false;
+      const cfg = tab.config.config as { agentId?: string };
+      return cfg.agentId === agentId;
+    });
+
+    const recovered = new Set(recoveredSessionIds);
+    for (const tab of agentTerminalTabs) {
+      if (!store.terminalReconnectingTabs[tab.id]) continue;
+      if (tab.sessionId && recovered.has(tab.sessionId)) {
+        useAppStore.getState().setTerminalReconnecting(tab.id, false);
+      } else {
+        useAppStore.getState().setTerminalExited(tab.id);
+      }
+    }
+  }
+
+  it("resumes a tab whose session was recovered by the agent", async () => {
+    const store = useAppStore.getState();
+    store.addTab("Shell", "remote-session", {
+      type: "remote-session",
+      config: { agentId: "agent-1", sessionType: "shell" },
+    });
+    const tab = getAllTerminalTabs()[0];
+    useAppStore.getState().setTabSessionId(tab.id, "session-123");
+    useAppStore.getState().setTerminalReconnecting(tab.id, true);
+
+    await simulateConnectedHandler("agent-1", ["session-123"]);
+
+    const state = useAppStore.getState();
+    // Reconnecting spinner cleared — session resumes automatically.
+    expect(state.terminalReconnectingTabs[tab.id]).toBeUndefined();
+    // Must NOT be marked as exited.
+    expect(state.terminalExitedTabs[tab.id]).toBeUndefined();
+  });
+
+  it("marks a tab as exited when its session was NOT recovered", async () => {
+    const store = useAppStore.getState();
+    store.addTab("Shell", "remote-session", {
+      type: "remote-session",
+      config: { agentId: "agent-1", sessionType: "shell" },
+    });
+    const tab = getAllTerminalTabs()[0];
+    useAppStore.getState().setTabSessionId(tab.id, "session-123");
+    useAppStore.getState().setTerminalReconnecting(tab.id, true);
+
+    await simulateConnectedHandler("agent-1", []); // no sessions recovered
+
+    const state = useAppStore.getState();
+    expect(state.terminalExitedTabs[tab.id]).toBe(true);
+    expect(state.terminalReconnectingTabs[tab.id]).toBeUndefined();
+  });
+
+  it("handles mixed recovery: resumes surviving sessions, exits dead ones", async () => {
+    const store = useAppStore.getState();
+    store.addTab("Shell A", "remote-session", {
+      type: "remote-session",
+      config: { agentId: "agent-1", sessionType: "shell" },
+    });
+    store.addTab("Shell B", "remote-session", {
+      type: "remote-session",
+      config: { agentId: "agent-1", sessionType: "shell" },
+    });
+    const [tabA, tabB] = getAllTerminalTabs();
+    useAppStore.getState().setTabSessionId(tabA.id, "session-aaa");
+    useAppStore.getState().setTabSessionId(tabB.id, "session-bbb");
+    useAppStore.getState().setTerminalReconnecting(tabA.id, true);
+    useAppStore.getState().setTerminalReconnecting(tabB.id, true);
+
+    // Only session-aaa recovered.
+    await simulateConnectedHandler("agent-1", ["session-aaa"]);
+
+    const state = useAppStore.getState();
+    expect(state.terminalReconnectingTabs[tabA.id]).toBeUndefined();
+    expect(state.terminalExitedTabs[tabA.id]).toBeUndefined(); // resumed
+    expect(state.terminalExitedTabs[tabB.id]).toBe(true); // not recovered
+  });
+
+  it("marks all reconnecting tabs as exited when listAgentSessions fails (safe fallback)", async () => {
+    const store = useAppStore.getState();
+    store.addTab("Shell", "remote-session", {
+      type: "remote-session",
+      config: { agentId: "agent-1", sessionType: "shell" },
+    });
+    const tab = getAllTerminalTabs()[0];
+    useAppStore.getState().setTabSessionId(tab.id, "session-123");
+    useAppStore.getState().setTerminalReconnecting(tab.id, true);
+
+    // Simulate catch branch: recoveredSessionIds is empty Set.
+    await simulateConnectedHandler("agent-1", []);
+
+    const state = useAppStore.getState();
+    expect(state.terminalExitedTabs[tab.id]).toBe(true);
+  });
+
+  it("does not affect tabs that are not in reconnecting state", async () => {
+    const store = useAppStore.getState();
+    store.addTab("Shell", "remote-session", {
+      type: "remote-session",
+      config: { agentId: "agent-1", sessionType: "shell" },
+    });
+    const tab = getAllTerminalTabs()[0];
+    useAppStore.getState().setTabSessionId(tab.id, "session-123");
+    // Tab is NOT in reconnecting state (newly opened tab, not affected by the outage).
+
+    await simulateConnectedHandler("agent-1", []);
+
+    const state = useAppStore.getState();
+    expect(state.terminalExitedTabs[tab.id]).toBeUndefined();
+    expect(state.terminalReconnectingTabs[tab.id]).toBeUndefined();
+  });
+});
+
 // ── Utility ─────────────────────────────────────────────────────────────────
 
 /** Inject a tab into a named leaf panel (used only in tests). */

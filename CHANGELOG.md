@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Agent: after an agent reconnects following a power loss, terminals whose sessions were successfully recovered by the agent now resume automatically instead of always showing the "Session disconnected" overlay. Sessions that could not be recovered still show the overlay as before.
 - Terminal: clicking "Reconnect" after a session disconnect now immediately shows the "Connecting…" overlay with no blank gap between the disconnect overlay disappearing and the connection attempt starting. Previously, the overlay was not set until after a React render cycle, leaving a brief window with no visible feedback.
 
 ### Added
