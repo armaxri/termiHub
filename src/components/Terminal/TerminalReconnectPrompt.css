@@ -1,0 +1,85 @@
+.terminal-reconnect-prompt {
+  position: absolute;
+  inset: 0;
+  z-index: 11;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Semi-transparent scrim so scrollback is still faintly visible */
+  background: color-mix(in srgb, var(--terminal-bg, #1e1e1e) 60%, transparent);
+  pointer-events: all;
+}
+
+.terminal-reconnect-prompt__dialog {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-md);
+  padding: var(--spacing-xl) var(--spacing-2xl, 32px);
+  background: var(--bg-secondary, #252526);
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.12));
+  border-radius: var(--radius-lg, 8px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  text-align: center;
+  max-width: 320px;
+  font-family: var(--font-sans, sans-serif);
+}
+
+.terminal-reconnect-prompt__icon {
+  color: var(--color-warning, #e8a838);
+  opacity: 0.9;
+}
+
+.terminal-reconnect-prompt__message {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.terminal-reconnect-prompt__actions {
+  display: flex;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.terminal-reconnect-prompt__reconnect-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-sm) var(--spacing-lg);
+  background-color: var(--accent-color);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-family: inherit;
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
+}
+
+.terminal-reconnect-prompt__reconnect-btn:hover {
+  background-color: var(--accent-hover);
+}
+
+.terminal-reconnect-prompt__stay-btn {
+  display: flex;
+  align-items: center;
+  padding: var(--spacing-sm) var(--spacing-lg);
+  background-color: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.15));
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.terminal-reconnect-prompt__stay-btn:hover {
+  background-color: var(--bg-hover, rgba(255, 255, 255, 0.08));
+  color: var(--text-primary);
+}

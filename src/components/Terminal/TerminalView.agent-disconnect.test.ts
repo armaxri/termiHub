@@ -1,0 +1,334 @@
+/**
+ * Regression tests for agent-state-change tab discovery.
+ *
+ * REGRESSION: Before the fix, the agent-state-change handlers in TerminalView
+ * found affected tabs by cross-referencing agentSessions[agentId]. However,
+ * agentSessions is only populated once on the initial "connected" event, when
+ * no sessions exist yet. Any tabs opened after that refresh were invisible to
+ * the handler, so no reconnect/disconnect overlays ever appeared — the user saw
+ * a blank, empty tab with no feedback.
+ *
+ * The fix replaces the agentSessions lookup with a direct filter on
+ * tab.config.config.agentId, which is always set for remote-session tabs.
+ */
+import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
+import { getAllLeaves } from "@/utils/panelTree";
+import { useAppStore } from "@/store/appStore";
+
+vi.mock("@/services/storage", () => ({
+  loadConnections: vi.fn(() =>
+    Promise.resolve({ connections: [], folders: [], agents: [], externalErrors: [] })
+  ),
+  persistConnection: vi.fn(() => Promise.resolve()),
+  removeConnection: vi.fn(() => Promise.resolve()),
+  persistFolder: vi.fn(() => Promise.resolve()),
+  removeFolder: vi.fn(() => Promise.resolve()),
+  persistAgent: vi.fn(() => Promise.resolve()),
+  removeAgent: vi.fn(() => Promise.resolve()),
+  reorderAgents: vi.fn(() => Promise.resolve()),
+  getSettings: vi.fn(() =>
+    Promise.resolve({
+      version: "1",
+      externalConnectionFiles: [],
+      powerMonitoringEnabled: true,
+      fileBrowserEnabled: true,
+    })
+  ),
+  saveSettings: vi.fn(() => Promise.resolve()),
+  moveConnectionToFile: vi.fn(() => Promise.resolve()),
+  reloadExternalConnections: vi.fn(() => Promise.resolve([])),
+  getRecoveryWarnings: vi.fn(() => Promise.resolve([])),
+}));
+
+vi.mock("@/services/api", () => ({
+  sftpOpen: vi.fn(),
+  sftpClose: vi.fn(),
+  sftpListDir: vi.fn(),
+  localListDir: vi.fn(),
+  vscodeAvailable: vi.fn(() => Promise.resolve(false)),
+  connectAgent: vi.fn(),
+  disconnectAgent: vi.fn(),
+  listAgentSessions: vi.fn(() => Promise.resolve([])),
+  listAgentDefinitions: vi.fn(() => Promise.resolve([])),
+  listAgentConnections: vi.fn(() => Promise.resolve({ connections: [], folders: [] })),
+  saveAgentDefinition: vi.fn(),
+  updateAgentDefinition: vi.fn(),
+  deleteAgentDefinition: vi.fn(),
+  createAgentFolder: vi.fn(),
+  updateAgentFolder: vi.fn(),
+  deleteAgentFolder: vi.fn(),
+  getCredentialStoreStatus: vi.fn(() => Promise.resolve({ mode: "none", status: "unavailable" })),
+}));
+
+vi.mock("@/themes", () => ({
+  applyTheme: vi.fn(),
+  onThemeChange: vi.fn(() => vi.fn()),
+}));
+
+/** Helper: collect all terminal tabs from all panels in the current store state. */
+function getAllTerminalTabs() {
+  const store = useAppStore.getState();
+  return [
+    ...getAllLeaves(store.rootPanel).flatMap((l) => l.tabs),
+    ...store.tabGroups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((l) => l.tabs)),
+  ];
+}
+
+/** Helper: filter tabs that belong to a given agent (same filter as TerminalView). */
+function findAgentTerminalTabs(agentId: string) {
+  return getAllTerminalTabs().filter((tab) => {
+    if (tab.contentType !== "terminal") return false;
+    const cfg = tab.config.config as { agentId?: string };
+    return cfg.agentId === agentId;
+  });
+}
+
+describe("agent-state-change tab discovery — regression for empty agentSessions", () => {
+  beforeEach(() => {
+    useAppStore.setState(useAppStore.getInitialState());
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("finds a remote-session tab by config.agentId even when agentSessions is empty", () => {
+    // Simulate the bug condition: sessions were opened after the initial
+    // refreshAgentSessions call, so agentSessions is empty.
+    const store = useAppStore.getState();
+    store.addTab("Shell", "remote-session", {
+      type: "remote-session",
+      config: { agentId: "agent-1", sessionType: "shell" },
+    });
+
+    // agentSessions["agent-1"] is empty — this was the bug condition.
+    expect(useAppStore.getState().agentSessions["agent-1"] ?? []).toHaveLength(0);
+
+    // The fixed handler finds tabs via config.agentId, not agentSessions.
+    const found = findAgentTerminalTabs("agent-1");
+    expect(found).toHaveLength(1);
+    expect(found[0].connectionType).toBe("remote-session");
+  });
+
+  it("does not include tabs from a different agent", () => {
+    const store = useAppStore.getState();
+    store.addTab("Shell A", "remote-session", {
+      type: "remote-session",
+      config: { agentId: "agent-1", sessionType: "shell" },
+    });
+    store.addTab("Shell B", "remote-session", {
+      type: "remote-session",
+      config: { agentId: "agent-2", sessionType: "shell" },
+    });
+
+    expect(findAgentTerminalTabs("agent-1")).toHaveLength(1);
+    expect(findAgentTerminalTabs("agent-2")).toHaveLength(1);
+  });
+
+  it("does not include non-terminal tabs (settings, log-viewer, etc.)", () => {
+    const store = useAppStore.getState();
+    // Add a terminal remote-session tab.
+    store.addTab("Shell", "remote-session", {
+      type: "remote-session",
+      config: { agentId: "agent-1", sessionType: "shell" },
+    });
+    // Directly inject a non-terminal tab that coincidentally has agentId in meta.
+    // (In practice non-terminal tabs don't have agentId, but guard against it anyway.)
+    const allPanels = useAppStore.getState().getAllPanels();
+    const panel = allPanels[0];
+    useAppStore.setState((s) => ({
+      rootPanel: injectTabIntoPanel(s.rootPanel, panel.id, {
+        id: "non-terminal-tab",
+        title: "Settings",
+        contentType: "settings",
+        connectionType: "local",
+        sessionId: null,
+        panelId: panel.id,
+        isActive: false,
+        config: { type: "settings", config: { agentId: "agent-1" } },
+      }),
+    }));
+
+    // Only the terminal tab should be found.
+    const found = findAgentTerminalTabs("agent-1");
+    expect(found).toHaveLength(1);
+    expect(found[0].contentType).toBe("terminal");
+  });
+
+  // ── State machine: reconnecting ────────────────────────────────────────────
+
+  it("'reconnecting' marks active-session tabs as reconnecting", () => {
+    const store = useAppStore.getState();
+    store.addTab("Shell", "remote-session", {
+      type: "remote-session",
+      config: { agentId: "agent-1", sessionType: "shell" },
+    });
+    const tab = getAllTerminalTabs()[0];
+    // Simulate that the session was established.
+    useAppStore.getState().setTabSessionId(tab.id, "session-123");
+
+    // Simulate fixed "reconnecting" handler:
+    for (const t of findAgentTerminalTabs("agent-1")) {
+      if (!t.sessionId) continue;
+      useAppStore.getState().setTerminalReconnecting(t.id, true);
+    }
+
+    expect(useAppStore.getState().terminalReconnectingTabs[tab.id]).toBe(true);
+  });
+
+  it("'reconnecting' skips tabs without an established session", () => {
+    const store = useAppStore.getState();
+    store.addTab("Shell", "remote-session", {
+      type: "remote-session",
+      config: { agentId: "agent-1", sessionType: "shell" },
+    });
+    const tab = getAllTerminalTabs()[0];
+    // sessionId is still null (session not established yet).
+    expect(tab.sessionId).toBeNull();
+
+    for (const t of findAgentTerminalTabs("agent-1")) {
+      if (!t.sessionId) continue;
+      useAppStore.getState().setTerminalReconnecting(t.id, true);
+    }
+
+    expect(useAppStore.getState().terminalReconnectingTabs[tab.id]).toBeUndefined();
+  });
+
+  // ── State machine: connected (after auto-reconnect) ────────────────────────
+
+  it("'connected' after auto-reconnect transitions reconnecting tabs to exited", () => {
+    const store = useAppStore.getState();
+    store.addTab("Shell", "remote-session", {
+      type: "remote-session",
+      config: { agentId: "agent-1", sessionType: "shell" },
+    });
+    const tab = getAllTerminalTabs()[0];
+    useAppStore.getState().setTabSessionId(tab.id, "session-123");
+    // Simulate prior "reconnecting" state.
+    useAppStore.getState().setTerminalReconnecting(tab.id, true);
+
+    // Simulate fixed "connected" handler — transitions reconnecting → exited.
+    for (const t of findAgentTerminalTabs("agent-1")) {
+      if (useAppStore.getState().terminalReconnectingTabs[t.id]) {
+        useAppStore.getState().setTerminalExited(t.id);
+      }
+    }
+
+    const state = useAppStore.getState();
+    // Overlay should now show "Session disconnected" (not the reconnecting spinner).
+    expect(state.terminalReconnectingTabs[tab.id]).toBeUndefined();
+    expect(state.terminalExitedTabs[tab.id]).toBe(true);
+  });
+
+  it("'connected' on initial connect does not mark tabs as exited", () => {
+    const store = useAppStore.getState();
+    store.addTab("Shell", "remote-session", {
+      type: "remote-session",
+      config: { agentId: "agent-1", sessionType: "shell" },
+    });
+    const tab = getAllTerminalTabs()[0];
+    useAppStore.getState().setTabSessionId(tab.id, "session-123");
+    // Tab is NOT in reconnecting state (first connect, no prior disconnect).
+
+    // Simulate fixed "connected" handler — should be a no-op for this tab.
+    for (const t of findAgentTerminalTabs("agent-1")) {
+      if (useAppStore.getState().terminalReconnectingTabs[t.id]) {
+        useAppStore.getState().setTerminalExited(t.id);
+      }
+    }
+
+    const state = useAppStore.getState();
+    expect(state.terminalExitedTabs[tab.id]).toBeUndefined();
+    expect(state.terminalReconnectingTabs[tab.id]).toBeUndefined();
+  });
+
+  // ── State machine: disconnected ─────────────────────────────────────────────
+
+  it("'disconnected' marks active-session tabs as exited", () => {
+    const store = useAppStore.getState();
+    store.addTab("Shell", "remote-session", {
+      type: "remote-session",
+      config: { agentId: "agent-1", sessionType: "shell" },
+    });
+    const tab = getAllTerminalTabs()[0];
+    useAppStore.getState().setTabSessionId(tab.id, "session-123");
+
+    // Simulate fixed "disconnected" handler:
+    for (const t of findAgentTerminalTabs("agent-1")) {
+      if (!t.sessionId) continue;
+      useAppStore.getState().setTerminalExited(t.id);
+    }
+
+    expect(useAppStore.getState().terminalExitedTabs[tab.id]).toBe(true);
+  });
+
+  it("'disconnected' with error surfaces the error in the overlay", () => {
+    const store = useAppStore.getState();
+    store.addTab("Shell", "remote-session", {
+      type: "remote-session",
+      config: { agentId: "agent-1", sessionType: "shell" },
+    });
+    const tab = getAllTerminalTabs()[0];
+    useAppStore.getState().setTabSessionId(tab.id, "session-123");
+
+    const errorMsg = "Failed to reconnect after 10 attempts";
+
+    // Simulate fixed "disconnected" handler with error:
+    for (const t of findAgentTerminalTabs("agent-1")) {
+      if (!t.sessionId) continue;
+      useAppStore.getState().setTerminalDisconnectWithError(t.id, errorMsg);
+    }
+
+    const state = useAppStore.getState();
+    expect(state.terminalExitedTabs[tab.id]).toBe(true);
+    expect(state.terminalDisconnectErrors[tab.id]).toBe(errorMsg);
+  });
+
+  it("'disconnected' while reconnecting clears the reconnecting spinner", () => {
+    const store = useAppStore.getState();
+    store.addTab("Shell", "remote-session", {
+      type: "remote-session",
+      config: { agentId: "agent-1", sessionType: "shell" },
+    });
+    const tab = getAllTerminalTabs()[0];
+    useAppStore.getState().setTabSessionId(tab.id, "session-123");
+    useAppStore.getState().setTerminalReconnecting(tab.id, true);
+
+    // Simulate "disconnected" with error (all retries exhausted):
+    for (const t of findAgentTerminalTabs("agent-1")) {
+      if (!t.sessionId) continue;
+      useAppStore
+        .getState()
+        .setTerminalDisconnectWithError(t.id, "Failed to reconnect after 10 attempts");
+    }
+
+    const state = useAppStore.getState();
+    // Reconnecting spinner must be cleared before the error overlay is shown.
+    expect(state.terminalReconnectingTabs[tab.id]).toBeUndefined();
+    expect(state.terminalExitedTabs[tab.id]).toBe(true);
+  });
+});
+
+// ── Utility ─────────────────────────────────────────────────────────────────
+
+/** Inject a tab into a named leaf panel (used only in tests). */
+function injectTabIntoPanel(
+  node: ReturnType<typeof useAppStore.getState>["rootPanel"],
+  panelId: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tab: any
+): ReturnType<typeof useAppStore.getState>["rootPanel"] {
+  if (node.type === "leaf") {
+    if (node.id === panelId) {
+      return { ...node, tabs: [...node.tabs, tab] };
+    }
+    return node;
+  }
+  return {
+    ...node,
+    first: injectTabIntoPanel(node.first, panelId, tab),
+    second: injectTabIntoPanel(node.second, panelId, tab),
+  };
+}
