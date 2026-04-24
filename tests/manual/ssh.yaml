@@ -163,3 +163,87 @@ tests:
       - "Yellow at >= 70%, red at >= 90%"
     verification: manual
     tags: [visual]
+
+  # --- Disconnect overlay: view mode + reconnect feedback (feature/terminal-disconnect-overlay) ---
+
+  - id: MT-SSH-24
+    name: "Disconnect overlay view mode: browse scrollback after dismiss"
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Open an SSH session and let some output accumulate"
+      - "Kill the SSH server / disconnect the network to trigger an abrupt disconnect"
+      - "Wait for the disconnect overlay ('Session disconnected') to appear"
+      - "Click 'View Scrollback' (or the × button)"
+    expected:
+      - "Overlay disappears and a thin yellow banner appears at the bottom reading 'Session ended'"
+      - "All previous terminal output is visible and selectable"
+      - "Text can be copied from the terminal normally"
+    verification: manual
+
+  - id: MT-SSH-25
+    name: "View mode: Enter key triggers reconnect prompt"
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Be in view mode (MT-SSH-24 complete — thin banner visible)"
+      - "Click anywhere in the terminal area and press Enter"
+    expected:
+      - "A small dialog appears: 'This session has ended. Would you like to reconnect?'"
+      - "Dialog has 'Reconnect' and 'Stay in View Mode' buttons"
+      - "Clicking 'Stay in View Mode' closes the dialog and returns to view mode"
+      - "Clicking 'Reconnect' starts a new session and opens a fresh terminal"
+    verification: manual
+
+  - id: MT-SSH-26
+    name: "Reconnect failure shows error details"
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Open an SSH tab, then stop the SSH server so it becomes unreachable"
+      - "Wait for the disconnect overlay to appear"
+      - "Click 'Reconnect' (the blue button)"
+    expected:
+      - "The reconnect attempt fails (server is down)"
+      - "The spawn-error overlay appears showing the error reason (e.g. 'Connection refused')"
+      - "A 'Retry' button is present to try again"
+    verification: manual
+
+  # --- Connecting overlay + retry (feature/terminal-connect-overlay) ---
+
+  - id: MT-SSH-36
+    name: "Connecting overlay shown while SSH session is being established"
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Open a new SSH tab pointing to a reachable server"
+      - "Observe the terminal area immediately after opening"
+    expected:
+      - "A 'Connecting…' spinner overlay covers the terminal while the handshake is in progress"
+      - "A 'Cancel' button is visible in the overlay"
+      - "The overlay disappears automatically as soon as the session is established"
+      - "Normal terminal output appears after the overlay closes"
+    verification: manual
+
+  - id: MT-SSH-37
+    name: "Failed SSH connection shows error overlay with Retry"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Create an SSH connection pointing to an unreachable host (e.g. wrong port or host down)"
+      - "Open the tab and wait for the connection attempt to fail"
+    expected:
+      - "The 'Connection failed' overlay appears with the error message"
+      - "Both a 'Retry' button and a 'Cancel' button are present"
+      - "Clicking 'Retry' retries the connection and shows the spinner again"
+      - "Clicking 'Cancel' closes the tab entirely"
+    verification: manual
