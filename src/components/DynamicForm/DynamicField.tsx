@@ -140,7 +140,7 @@ function BooleanField({ field, value, onChange }: FieldProps) {
       <label className="settings-form__field--checkbox" data-testid={`field-${field.key}-wrapper`}>
         <input
           type="checkbox"
-          checked={(value as boolean) ?? false}
+          checked={(value as boolean) ?? (field.default as boolean) ?? false}
           onChange={(e) => onChange(e.target.checked)}
           data-testid={`field-${field.key}`}
         />

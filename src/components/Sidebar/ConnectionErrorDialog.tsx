@@ -56,18 +56,19 @@ export function ConnectionErrorDialog({
             </details>
           )}
           <div className="connection-error-dialog__actions">
-            {error.category === "agent-missing" && onSetupAgent && (
-              <button
-                className="connection-error-dialog__btn connection-error-dialog__btn--primary"
-                onClick={() => {
-                  onOpenChange(false);
-                  onSetupAgent();
-                }}
-                data-testid="connection-error-setup-agent"
-              >
-                Setup Agent
-              </button>
-            )}
+            {(error.category === "agent-missing" || error.category === "agent-outdated") &&
+              onSetupAgent && (
+                <button
+                  className="connection-error-dialog__btn connection-error-dialog__btn--primary"
+                  onClick={() => {
+                    onOpenChange(false);
+                    onSetupAgent();
+                  }}
+                  data-testid="connection-error-setup-agent"
+                >
+                  Setup Agent
+                </button>
+              )}
             <button
               className="connection-error-dialog__btn connection-error-dialog__btn--secondary"
               onClick={() => onOpenChange(false)}

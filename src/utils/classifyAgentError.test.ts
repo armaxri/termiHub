@@ -45,6 +45,21 @@ describe("classifyAgentError", () => {
     expect(result.category).toBe("agent-missing");
   });
 
+  it("classifies initialize rejected as agent-outdated", () => {
+    const result = classifyAgentError(
+      "Remote agent error: Initialize rejected: Invalid initialize params: missing field `protocolVersion`"
+    );
+    expect(result.category).toBe("agent-outdated");
+    expect(result.title).toBe("Agent Version Incompatible");
+  });
+
+  it("classifies unsupported protocol version as agent-outdated", () => {
+    const result = classifyAgentError(
+      "Remote agent error: Initialize rejected: Unsupported protocol version: 1.0.0 (agent supports 0.x)"
+    );
+    expect(result.category).toBe("agent-outdated");
+  });
+
   it("classifies unknown errors with raw message", () => {
     const result = classifyAgentError("Something unexpected");
     expect(result.category).toBe("unknown");

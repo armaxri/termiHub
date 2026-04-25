@@ -781,6 +781,16 @@ The first build compiles all Rust dependencies and can take several minutes. Sub
 CARGO_PROFILE_DEV_CODEGEN_UNITS=16 pnpm tauri dev
 ```
 
+### Process exit codes
+
+| Exit code | Meaning                                                                                                                                                                                          |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `0`       | Normal shutdown                                                                                                                                                                                  |
+| `1`       | Generic error (e.g. failed Tauri plugin initialisation)                                                                                                                                          |
+| `101`     | Rust panic — the backend thread aborted. Run with `RUST_BACKTRACE=1` to get a stack trace. Common causes: re-entrant `RefCell` borrow inside a Tauri event handler, or an unwrap on `None`/`Err` |
+
+The `pnpm tauri dev` harness surfaces the backend exit code as its own exit code, which is why you may see `ELIFECYCLE Command failed with exit code 101` in the terminal when the Rust side panics.
+
 ---
 
 ## Release Process

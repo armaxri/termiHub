@@ -101,7 +101,12 @@ function findSchema(connectionTypes: ConnectionTypeInfo[], typeId: string) {
 /** Build default settings for a type, applying app settings defaults. */
 function buildTypeDefaults(
   typeInfo: ConnectionTypeInfo | undefined,
-  appSettings: { defaultUser?: string; defaultSshKeyPath?: string }
+  appSettings: {
+    defaultUser?: string;
+    defaultSshKeyPath?: string;
+    defaultShellIntegration?: boolean;
+    defaultX11Forwarding?: boolean;
+  }
 ): Record<string, unknown> {
   if (!typeInfo) return {};
   const defaults = buildDefaults(typeInfo.schema);
@@ -125,6 +130,18 @@ function buildTypeDefaults(
         }
         break;
       }
+    }
+  }
+  for (const group of typeInfo.schema.groups) {
+    if (group.fields.some((f) => f.key === "shellIntegration")) {
+      defaults.shellIntegration = appSettings.defaultShellIntegration ?? true;
+      break;
+    }
+  }
+  for (const group of typeInfo.schema.groups) {
+    if (group.fields.some((f) => f.key === "enableX11Forwarding")) {
+      defaults.enableX11Forwarding = appSettings.defaultX11Forwarding ?? true;
+      break;
     }
   }
   return defaults;

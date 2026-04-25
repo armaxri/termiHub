@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Terminal: clicking "Reconnect" after a session disconnect now immediately shows the "Connecting…" overlay with no blank gap between the disconnect overlay disappearing and the connection attempt starting. Previously, the overlay was not set until after a React render cycle, leaving a brief window with no visible feedback.
 - Terminal: agent-session reconnect loop now shows a "Connection failed" state briefly after each failed attempt instead of spinning "Connecting…" indefinitely with no visible feedback. The overlay cycles Connecting → Connection failed → Connecting until the session is established.
 - Terminal: when an agent reconnects while a terminal is in the retry loop (or showing "Connection failed"), the connection attempt is now restarted immediately instead of waiting for the next retry cycle — the terminal connects as soon as the agent is back.
+- Connection editor: boolean fields in existing connections now correctly reflect their schema default when the field was never explicitly saved (previously showed unchecked regardless of the schema default)
 
 ### Added
 
@@ -29,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Terminal disconnect overlay: the overlay now has three distinct variants — a spinner overlay while the agent is auto-reconnecting, an error-state overlay (with error details and a "Try Again" button) when all reconnect attempts have been exhausted, and the standard "Session disconnected" overlay for normal exits.
 - Agent: when the automatic reconnect loop exhausts all retries, the disconnect overlay now shows the reason (e.g. "Failed to reconnect after 10 attempts") so the user knows why the reconnect stopped.
 - Agent: tabs belonging to a reconnecting agent now show a "Reconnecting…" spinner overlay during automatic reconnect attempts, so the terminal no longer appears frozen/dead while recovery is in progress.
+- SSH: Shell Integration and X11 Forwarding now default to enabled for new connections
+- Settings: General settings now include SSH defaults section to control whether Shell Integration and X11 Forwarding are pre-enabled for new SSH connections
 
 ### Added
 
@@ -45,8 +48,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Monitoring: `monitoring_open` now also uses `spawn_blocking` so a TCP connect to a dead host (which can take ~75 s for the SYN timeout) no longer blocks a tokio worker thread
 - Monitoring: fixed auto-reconnect loop — when the disconnect overlay is showing, the status bar no longer tries to open a new monitoring session to the dead host; monitoring reconnects automatically once the user brings the terminal back via the Reconnect button
 - Monitoring: CPU/memory stats panel now automatically disconnects when the terminal session exits unexpectedly (instead of persisting stale stats under the disconnect overlay)
-
+- Agent: fixed connection failure on freshly deployed agents — the desktop was sending `protocol_version`/`client_version` in snake_case JSON but the agent expected camelCase (`protocolVersion`/`clientVersion`), causing every connect attempt to fail with "missing field `protocolVersion`"
+- Agent: "Initialize rejected" errors (protocol version mismatch) now show a clear "Agent Version Incompatible" message with a "Setup Agent" button to re-deploy, instead of a raw internal error string
+- SSH key picker: OS metadata files (`.DS_Store`, `.localized` on macOS; `Thumbs.db`, `desktop.ini` on Windows; `.directory` on Linux/KDE) are now excluded from the key file list
 - Agent: persisting (daemon-backed) sessions now survive agent reconnects — previously the agent killed daemon subprocesses on exit instead of detaching, causing recovered sessions to appear missing after disconnect/reconnect
+- Closing the app no longer exits with code 101 — tunnel and embedded-server shutdown is now deferred off the Tauri event-loop thread, preventing a `RefCell` re-entrant borrow panic inside `tauri-runtime-wry`
 - Workspace launch: agent connection tabs (agentRef) now trigger the master password prompt upfront when their agents are disconnected and have stored credentials — previously these tabs would open as "Agent not connected" error tabs without ever asking for the password, and clicking Reconnect would immediately fail with an auth error
 - Agent error tab: the Reconnect button now unlocks the credential store and resolves the stored password before reconnecting — previously it always connected without a password, causing an immediate authentication failure
 - Terminal: connection failures (e.g. agent timeout, SSH auth errors) now show a proper error panel with the error message and a Retry button instead of raw red text in the terminal canvas.

@@ -1143,11 +1143,11 @@ impl AgentRpcClient for AgentConnectionManager {
 /// Build the `initialize` JSON-RPC params including agent runtime settings and external files.
 fn build_initialize_params(settings: &AgentSettings, external_files: &[&str]) -> Value {
     serde_json::json!({
-        "protocol_version": "0.2.0",
+        "protocolVersion": "0.2.0",
         "client": "termihub-desktop",
-        "client_version": "0.1.0",
+        "clientVersion": "0.1.0",
         "agentSettings": settings,
-        "external_connection_files": external_files
+        "externalConnectionFiles": external_files
     })
 }
 
