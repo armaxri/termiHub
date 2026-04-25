@@ -167,6 +167,31 @@ describe("DynamicField", () => {
       renderField(field, false, vi.fn());
       expect(container.textContent).toContain("Remove on Exit");
     });
+
+    it("falls back to schema default when value is undefined", () => {
+      const field: SettingsField = {
+        key: "shellIntegration",
+        label: "Shell Integration",
+        fieldType: { type: "boolean" },
+        required: false,
+        default: true,
+      };
+      renderField(field, undefined, vi.fn());
+      const input = query("field-shellIntegration") as HTMLInputElement;
+      expect(input.checked).toBe(true);
+    });
+
+    it("falls back to false when value is undefined and no schema default", () => {
+      const field: SettingsField = {
+        key: "flag",
+        label: "Flag",
+        fieldType: { type: "boolean" },
+        required: false,
+      };
+      renderField(field, undefined, vi.fn());
+      const input = query("field-flag") as HTMLInputElement;
+      expect(input.checked).toBe(false);
+    });
   });
 
   describe("select field", () => {
