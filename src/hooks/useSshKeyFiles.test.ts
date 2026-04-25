@@ -23,6 +23,20 @@ describe("useSshKeyFiles", () => {
       expect(isBlockedFile("environment")).toBe(true);
     });
 
+    it("blocks OS metadata files on macOS", () => {
+      expect(isBlockedFile(".DS_Store")).toBe(true);
+      expect(isBlockedFile(".localized")).toBe(true);
+    });
+
+    it("blocks OS metadata files on Windows", () => {
+      expect(isBlockedFile("Thumbs.db")).toBe(true);
+      expect(isBlockedFile("desktop.ini")).toBe(true);
+    });
+
+    it("blocks OS metadata files on Linux/KDE", () => {
+      expect(isBlockedFile(".directory")).toBe(true);
+    });
+
     it("blocks .old, .bak, and .log extensions", () => {
       expect(isBlockedFile("id_rsa.old")).toBe(true);
       expect(isBlockedFile("id_rsa.bak")).toBe(true);

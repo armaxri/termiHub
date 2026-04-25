@@ -17,6 +17,14 @@ const BLOCKLIST = new Set([
   "authorized_keys2",
   "config",
   "environment",
+  // macOS metadata
+  ".DS_Store",
+  ".localized",
+  // Windows metadata
+  "Thumbs.db",
+  "desktop.ini",
+  // KDE/Linux metadata
+  ".directory",
 ]);
 
 /** File extensions that indicate non-key files */
