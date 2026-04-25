@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- SSH key picker: OS metadata files (`.DS_Store`, `.localized` on macOS; `Thumbs.db`, `desktop.ini` on Windows; `.directory` on Linux/KDE) are now excluded from the key file list
 - Agent: persisting (daemon-backed) sessions now survive agent reconnects — previously the agent killed daemon subprocesses on exit instead of detaching, causing recovered sessions to appear missing after disconnect/reconnect
 - Workspace launch: agent connection tabs (agentRef) now trigger the master password prompt upfront when their agents are disconnected and have stored credentials — previously these tabs would open as "Agent not connected" error tabs without ever asking for the password, and clicking Reconnect would immediately fail with an auth error
 - Agent error tab: the Reconnect button now unlocks the credential store and resolves the stored password before reconnecting — previously it always connected without a password, causing an immediate authentication failure
