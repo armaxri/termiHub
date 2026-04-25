@@ -119,6 +119,37 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
           </span>
         </label>
       )}
+      {(show("defaultShellIntegration") || show("defaultX11Forwarding")) && (
+        <h3 className="settings-panel__category-title">SSH Defaults</h3>
+      )}
+      {show("defaultShellIntegration") && (
+        <label className="settings-form__field settings-form__field--checkbox">
+          <input
+            type="checkbox"
+            checked={settings.defaultShellIntegration ?? true}
+            onChange={(e) => onChange({ ...settings, defaultShellIntegration: e.target.checked })}
+            data-testid="settings-default-shell-integration"
+          />
+          <span className="settings-form__label">Shell Integration by Default</span>
+          <span className="settings-form__hint">
+            Pre-enable Shell Integration (OSC 7 CWD tracking) for new SSH connections.
+          </span>
+        </label>
+      )}
+      {show("defaultX11Forwarding") && (
+        <label className="settings-form__field settings-form__field--checkbox">
+          <input
+            type="checkbox"
+            checked={settings.defaultX11Forwarding ?? true}
+            onChange={(e) => onChange({ ...settings, defaultX11Forwarding: e.target.checked })}
+            data-testid="settings-default-x11-forwarding"
+          />
+          <span className="settings-form__label">X11 Forwarding by Default</span>
+          <span className="settings-form__hint">
+            Pre-enable X11 Forwarding for new SSH connections.
+          </span>
+        </label>
+      )}
     </div>
   );
 }

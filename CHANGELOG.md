@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- SSH: Shell Integration and X11 Forwarding now default to enabled for new connections
+- Settings: General settings now include SSH defaults section to control whether Shell Integration and X11 Forwarding are pre-enabled for new SSH connections
+- Connection editor: boolean fields in existing connections now correctly reflect their schema default when the field was never explicitly saved (previously showed unchecked regardless of the schema default)
 - File browser: toolbar now shows the current directory path on its own line, with action buttons on a second line that wraps when the panel is narrow
 
 ### Added

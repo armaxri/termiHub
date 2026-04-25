@@ -115,6 +115,12 @@ pub struct AppSettings {
     pub power_monitoring_enabled: bool,
     #[serde(default = "default_true")]
     pub file_browser_enabled: bool,
+    /// Default value for Shell Integration toggle in new SSH connections.
+    #[serde(default = "default_true")]
+    pub default_shell_integration: bool,
+    /// Default value for X11 Forwarding toggle in new SSH connections.
+    #[serde(default = "default_true")]
+    pub default_x11_forwarding: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub layout: Option<LayoutConfig>,
     /// Credential storage mode: "master_password" or "none".
@@ -163,6 +169,8 @@ impl Default for AppSettings {
             cursor_blink: None,
             power_monitoring_enabled: true,
             file_browser_enabled: true,
+            default_shell_integration: true,
+            default_x11_forwarding: true,
             layout: None,
             credential_storage_mode: None,
             credential_auto_lock_minutes: None,
@@ -366,6 +374,8 @@ mod tests {
         let settings = AppSettings::default();
         assert!(settings.power_monitoring_enabled);
         assert!(settings.file_browser_enabled);
+        assert!(settings.default_shell_integration);
+        assert!(settings.default_x11_forwarding);
     }
 
     #[test]
@@ -374,6 +384,21 @@ mod tests {
         let settings: AppSettings = serde_json::from_str(json).unwrap();
         assert!(settings.power_monitoring_enabled);
         assert!(settings.file_browser_enabled);
+        assert!(settings.default_shell_integration);
+        assert!(settings.default_x11_forwarding);
+    }
+
+    #[test]
+    fn ssh_defaults_round_trip() {
+        let settings = AppSettings {
+            default_shell_integration: false,
+            default_x11_forwarding: false,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
+        assert!(!deserialized.default_shell_integration);
+        assert!(!deserialized.default_x11_forwarding);
     }
 
     #[test]

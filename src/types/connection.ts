@@ -160,6 +160,8 @@ export interface AppSettings {
   cursorBlink?: boolean;
   powerMonitoringEnabled: boolean;
   fileBrowserEnabled: boolean;
+  defaultShellIntegration?: boolean;
+  defaultX11Forwarding?: boolean;
   layout?: LayoutConfig;
   credentialStorageMode?: "master_password" | "none";
   credentialAutoLockMinutes?: number;
