@@ -449,6 +449,140 @@ describe("agent-state-change 'connected': session recovery after power cycle", (
   });
 });
 
+// ── 'connected' while tab is in connection-overlay (auto-retry/failure) ─────
+
+/**
+ * REGRESSION: When the user clicks "Reconnect" after an agent disconnect, the
+ * tab enters the connection-overlay state (auto-retry loop or "Connection
+ * failed").  reconnectTerminal cleared terminalReconnectingTabs, so the
+ * reconnecting/waiting paths in the "connected" handler never fired.  The
+ * auto-retry loop eventually called createTerminal again, but there was no
+ * mechanism to wake it immediately when the agent reconnected.
+ *
+ * Fix: a third loop in the "connected" handler restarts tabs that are in the
+ * connection-overlay state by calling reconnectTerminal.
+ */
+describe("agent-state-change 'connected': restart tabs in auto-retry/failure state", () => {
+  beforeEach(() => {
+    useAppStore.setState(useAppStore.getInitialState());
+    vi.clearAllMocks();
+  });
+
+  /** Simulate the new loop added for auto-retry tab restart. */
+  function simulateRetryRestartLoop(agentId: string) {
+    const store = useAppStore.getState();
+    const allTabs = [
+      ...getAllLeaves(store.rootPanel).flatMap((l) => l.tabs),
+      ...store.tabGroups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((l) => l.tabs)),
+    ];
+    const agentTerminalTabs = allTabs.filter((tab) => {
+      if (tab.contentType !== "terminal") return false;
+      const cfg = tab.config.config as { agentId?: string };
+      return cfg.agentId === agentId;
+    });
+
+    for (const tab of agentTerminalTabs) {
+      const hasSpawnError = !!store.terminalSpawnErrors[tab.id];
+      const isAutoRetrying = (store.terminalAutoRetryCount[tab.id] ?? 0) > 0;
+      const wasWaiting = !!store.terminalWaitingForAgent[tab.id];
+      const isConnecting = store.terminalConnecting[tab.id] ?? false;
+      if ((hasSpawnError || isAutoRetrying) && !wasWaiting && !isConnecting) {
+        store.reconnectTerminal(tab.id);
+      }
+    }
+  }
+
+  it("restarts a tab in auto-retry delay when agent reconnects", () => {
+    const store = useAppStore.getState();
+    store.addTab("Shell", "remote-session", {
+      type: "remote-session",
+      config: { agentId: "agent-1", sessionType: "shell" },
+    });
+    const tab = getAllTerminalTabs()[0];
+    // Simulate: user clicked Reconnect, now in auto-retry loop.
+    store.setTerminalAutoRetrying(tab.id, 2);
+
+    simulateRetryRestartLoop("agent-1");
+
+    const state = useAppStore.getState();
+    // reconnectTerminal should have cleared the retry state and set connecting.
+    expect(state.terminalAutoRetryCount[tab.id]).toBeUndefined();
+    expect(state.terminalConnecting[tab.id]).toBe(true);
+  });
+
+  it("restarts a tab in 'Connection failed' state when agent reconnects", () => {
+    const store = useAppStore.getState();
+    store.addTab("Shell", "remote-session", {
+      type: "remote-session",
+      config: { agentId: "agent-1", sessionType: "shell" },
+    });
+    const tab = getAllTerminalTabs()[0];
+    // Simulate: showing "Connection failed" between retries.
+    store.setTerminalSpawnError(tab.id, "Connection refused");
+
+    simulateRetryRestartLoop("agent-1");
+
+    const state = useAppStore.getState();
+    // reconnectTerminal should have cleared the error and set connecting.
+    expect(state.terminalSpawnErrors[tab.id]).toBeUndefined();
+    expect(state.terminalConnecting[tab.id]).toBe(true);
+  });
+
+  it("does not restart a tab that is actively connecting (createTerminal in-flight)", () => {
+    const store = useAppStore.getState();
+    store.addTab("Shell", "remote-session", {
+      type: "remote-session",
+      config: { agentId: "agent-1", sessionType: "shell" },
+    });
+    const tab = getAllTerminalTabs()[0];
+    // Simulate: createTerminal is in-flight.
+    store.setTerminalAutoRetrying(tab.id, 1);
+    store.setTerminalConnecting(tab.id, true);
+
+    simulateRetryRestartLoop("agent-1");
+
+    const state = useAppStore.getState();
+    // Must NOT call reconnectTerminal — don't interrupt an in-flight attempt.
+    expect(state.terminalAutoRetryCount[tab.id]).toBe(1);
+    expect(state.terminalConnecting[tab.id]).toBe(true);
+  });
+
+  it("does not restart a tab that is waiting for agent (already handled)", () => {
+    const store = useAppStore.getState();
+    store.addTab("Shell", "remote-session", {
+      type: "remote-session",
+      config: { agentId: "agent-1", sessionType: "shell" },
+    });
+    const tab = getAllTerminalTabs()[0];
+    // Simulate: tab is parked via setTerminalWaitingForAgent, but autoRetryCount
+    // was not cleared (setTerminalWaitingForAgent only clears terminalConnecting).
+    store.setTerminalAutoRetrying(tab.id, 1);
+    store.setTerminalWaitingForAgent(tab.id, "agent-1");
+
+    simulateRetryRestartLoop("agent-1");
+
+    const state = useAppStore.getState();
+    // Must NOT double-wake — waiting path handles this tab.
+    expect(state.terminalWaitingForAgent[tab.id]).toBe("agent-1");
+  });
+
+  it("does not affect a tab with no connection-overlay state", () => {
+    const store = useAppStore.getState();
+    store.addTab("Shell", "remote-session", {
+      type: "remote-session",
+      config: { agentId: "agent-1", sessionType: "shell" },
+    });
+    const tab = getAllTerminalTabs()[0];
+    // Tab is connected normally — no overlay state set.
+
+    simulateRetryRestartLoop("agent-1");
+
+    const state = useAppStore.getState();
+    expect(state.terminalConnecting[tab.id]).toBeUndefined();
+    expect(state.terminalAutoRetryCount[tab.id]).toBeUndefined();
+  });
+});
+
 // ── Utility ─────────────────────────────────────────────────────────────────
 
 /** Inject a tab into a named leaf panel (used only in tests). */

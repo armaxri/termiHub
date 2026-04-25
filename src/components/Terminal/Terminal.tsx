@@ -235,6 +235,7 @@ export function Terminal({
               // Success — clear all pre-connect overlay state.
               useAppStore.getState().setTerminalConnecting(tabId, false);
               useAppStore.getState().setTerminalAutoRetrying(tabId, 0);
+              useAppStore.getState().setTerminalSpawnError(tabId, null);
               break;
             } catch (err) {
               if (isCanceled()) return;
@@ -253,11 +254,28 @@ export function Terminal({
                   return;
                 }
 
-                // Agent is up but the session creation failed — auto-retry.
+                // Agent is up but the session creation failed.
+                // Show a brief "Connection failed" state so the user can see
+                // each attempt's outcome, then auto-retry.  Clear the retry
+                // counter first so the failure state is not hidden by the
+                // "Connecting… (attempt N)" overlay (which has higher priority).
+                useAppStore.getState().setTerminalAutoRetrying(tabId, 0);
+                useAppStore.getState().setTerminalSpawnError(tabId, String(err));
+
+                // 3 s visible failure display (cancellable via isCanceled or user retry).
+                const failDeadline = Date.now() + 3000;
+                while (Date.now() < failDeadline) {
+                  if (isCanceled()) return;
+                  await new Promise<void>((r) => setTimeout(r, 100));
+                }
+                if (isCanceled()) return;
+
                 attempt++;
+                // Transition to "Connecting… (attempt N)" for the retry countdown.
+                // setTerminalAutoRetrying also clears terminalConnecting.
                 useAppStore.getState().setTerminalAutoRetrying(tabId, attempt);
 
-                // 2.5 s cancellable delay (100 ms polling keeps cancel latency low).
+                // 2.5 s cancellable delay before the next createTerminal attempt.
                 const deadline = Date.now() + 2500;
                 while (Date.now() < deadline) {
                   if (isCanceled()) return;

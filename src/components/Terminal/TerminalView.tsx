@@ -156,6 +156,29 @@ export function TerminalView() {
           }
           frontendLog("disconnect", `agent connected: woke ${wokeCount} waiting tabs`);
 
+          // Restart tabs that are in the connection-overlay state (auto-retry
+          // delay or "Connection failed") for this agent.  These tabs cannot
+          // be reached via the reconnecting/waiting paths above because
+          // reconnectTerminal cleared terminalReconnectingTabs, and
+          // terminalWaitingForAgent is only set when createTerminal fails while
+          // the agent is transitioning.  Calling reconnectTerminal cancels the
+          // stale retry loop and kicks off a fresh attempt immediately — using
+          // the original store snapshot for condition checks to avoid double-
+          // waking tabs already handled in the loops above.
+          let restartedRetryCount = 0;
+          for (const tab of agentTerminalTabs) {
+            const hasSpawnError = !!store.terminalSpawnErrors[tab.id];
+            const isAutoRetrying = (store.terminalAutoRetryCount[tab.id] ?? 0) > 0;
+            const wasWaiting = !!store.terminalWaitingForAgent[tab.id];
+            const isConnecting = store.terminalConnecting[tab.id] ?? false;
+            if ((hasSpawnError || isAutoRetrying) && !wasWaiting && !isConnecting) {
+              frontendLog("disconnect", `agent connected: restarting retry tab=${tab.id}`);
+              store.reconnectTerminal(tab.id);
+              restartedRetryCount++;
+            }
+          }
+          frontendLog("disconnect", `agent connected: restarted ${restartedRetryCount} retry tabs`);
+
           store.refreshAgentSessions(session_id);
         } else if (state === "reconnecting") {
           // Show the reconnecting spinner overlay on all tabs with an active
