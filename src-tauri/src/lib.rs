@@ -496,16 +496,23 @@ pub fn run() {
                 ..
             } = &event
             {
-                // Gracefully stop all active tunnels on window close
-                if let Some(mgr) = app_handle.try_state::<tunnel::tunnel_manager::TunnelManager>() {
-                    mgr.stop_all();
-                }
-                // Gracefully stop all running embedded servers on window close
-                if let Some(mgr) = app_handle
-                    .try_state::<embedded_servers::server_manager::EmbeddedServerManager>()
-                {
-                    mgr.stop_all();
-                }
+                // Spawn cleanup off the event-loop thread.  Calling emit() directly
+                // inside this handler would re-enter a RefCell that Tauri already
+                // holds mutably, causing a panic.  Running the work on the async
+                // runtime avoids that borrow while still performing the cleanup.
+                let handle = app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Some(mgr) =
+                        handle.try_state::<tunnel::tunnel_manager::TunnelManager>()
+                    {
+                        mgr.stop_all();
+                    }
+                    if let Some(mgr) = handle
+                        .try_state::<embedded_servers::server_manager::EmbeddedServerManager>()
+                    {
+                        mgr.stop_all();
+                    }
+                });
             }
         });
 }
