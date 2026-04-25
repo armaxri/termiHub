@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Agent: fixed connection failure on freshly deployed agents — the desktop was sending `protocol_version`/`client_version` in snake_case JSON but the agent expected camelCase (`protocolVersion`/`clientVersion`), causing every connect attempt to fail with "missing field `protocolVersion`"
+- Agent: "Initialize rejected" errors (protocol version mismatch) now show a clear "Agent Version Incompatible" message with a "Setup Agent" button to re-deploy, instead of a raw internal error string
 - Agent: persisting (daemon-backed) sessions now survive agent reconnects — previously the agent killed daemon subprocesses on exit instead of detaching, causing recovered sessions to appear missing after disconnect/reconnect
 - Workspace launch: agent connection tabs (agentRef) now trigger the master password prompt upfront when their agents are disconnected and have stored credentials — previously these tabs would open as "Agent not connected" error tabs without ever asking for the password, and clicking Reconnect would immediately fail with an auth error
 - Agent error tab: the Reconnect button now unlocks the credential store and resolves the stored password before reconnecting — previously it always connected without a password, causing an immediate authentication failure

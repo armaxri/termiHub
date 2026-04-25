@@ -3,7 +3,12 @@
  */
 
 /** The three specific error categories plus a generic fallback. */
-export type AgentErrorCategory = "unreachable" | "auth-failure" | "agent-missing" | "unknown";
+export type AgentErrorCategory =
+  | "unreachable"
+  | "auth-failure"
+  | "agent-missing"
+  | "agent-outdated"
+  | "unknown";
 
 export interface ClassifiedAgentError {
   category: AgentErrorCategory;
@@ -46,6 +51,16 @@ export function classifyAgentError(error: unknown): ClassifiedAgentError {
       title: "Agent Not Installed",
       message:
         "SSH connected successfully, but the termihub-agent binary could not be started on the remote host.",
+      rawError: raw,
+    };
+  }
+
+  if (raw.includes("Initialize rejected") || raw.includes("Unsupported protocol version")) {
+    return {
+      category: "agent-outdated",
+      title: "Agent Version Incompatible",
+      message:
+        "The remote agent binary is not compatible with this version of termiHub. Please re-deploy the agent to update it.",
       rawError: raw,
     };
   }
