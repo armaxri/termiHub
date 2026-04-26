@@ -43,52 +43,50 @@ export function AgentExternalFilesSettings({ files, onChange }: AgentExternalFil
   );
 
   return (
-    <div className="settings-form__field" data-testid="agent-external-files">
-      <span className="settings-form__label">External Connection Files</span>
+    <div className="settings-panel__category" data-testid="agent-external-files">
+      <h3 className="settings-panel__category-title">External Connection Files</h3>
       <p className="settings-form__hint">
         Load shared connection configs from files on the remote host (e.g. from a git repo). Paths
         are absolute paths on the remote machine. Changes take effect on next reconnect.
       </p>
-      {files.map((file) => (
-        <div
-          key={file.path}
-          className="settings-form__list-row"
-          data-testid="agent-external-file-row"
-        >
-          <label className="settings-form__list-checkbox">
-            <input
-              type="checkbox"
-              checked={file.enabled}
-              onChange={() => handleToggle(file.path)}
-              data-testid={`agent-external-file-toggle`}
-            />
-          </label>
-          <span
-            className="settings-form__list-input"
-            style={{
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              display: "flex",
-              alignItems: "center",
-              fontSize: "var(--font-size-sm)",
-              color: file.enabled ? "var(--text-primary)" : "var(--text-secondary)",
-            }}
-            title={file.path}
-          >
-            {file.path}
-          </span>
-          <button
-            className="settings-form__list-remove"
-            onClick={() => handleRemove(file.path)}
-            title="Remove file"
-            data-testid={`agent-external-file-remove`}
-          >
-            <Trash2 size={14} />
-          </button>
-        </div>
-      ))}
-      <div className="settings-form__list-row">
+
+      {files.length > 0 && (
+        <ul className="settings-panel__file-list">
+          {files.map((file) => (
+            <li
+              key={file.path}
+              className="settings-panel__file-item"
+              data-testid="agent-external-file-row"
+            >
+              <label className="settings-panel__toggle">
+                <input
+                  type="checkbox"
+                  checked={file.enabled}
+                  onChange={() => handleToggle(file.path)}
+                  data-testid="agent-external-file-toggle"
+                />
+                <span className="settings-panel__toggle-slider" />
+              </label>
+              <span
+                className={`settings-panel__file-path settings-panel__file-path--rtl${!file.enabled ? " settings-panel__file-path--disabled" : ""}`}
+                title={file.path}
+              >
+                {file.path}
+              </span>
+              <button
+                className="settings-panel__file-remove"
+                onClick={() => handleRemove(file.path)}
+                title="Remove file"
+                data-testid="agent-external-file-remove"
+              >
+                <Trash2 size={14} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="settings-form__list-row" style={{ marginTop: "var(--spacing-sm)" }}>
         <input
           type="text"
           className="settings-form__list-input"

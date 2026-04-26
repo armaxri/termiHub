@@ -200,42 +200,47 @@ export function ExternalFilesSettings() {
           Default settings for new SSH connections. Individual connections can override these in
           their SSH settings. Disabling a default disconnects active sessions that use the default.
         </p>
-        <ul className="settings-panel__file-list">
-          <li className="settings-panel__file-item">
-            <label className="settings-panel__toggle">
-              <input
-                type="checkbox"
-                checked={settings.powerMonitoringEnabled}
-                onChange={() =>
-                  updateSettings({
-                    ...settings,
-                    powerMonitoringEnabled: !settings.powerMonitoringEnabled,
-                  })
-                }
-                data-testid="toggle-power-monitoring"
-              />
-              <span className="settings-panel__toggle-slider" />
-            </label>
-            <span className="settings-panel__file-path">Power Monitoring</span>
-          </li>
-          <li className="settings-panel__file-item">
-            <label className="settings-panel__toggle">
-              <input
-                type="checkbox"
-                checked={settings.fileBrowserEnabled}
-                onChange={() =>
-                  updateSettings({
-                    ...settings,
-                    fileBrowserEnabled: !settings.fileBrowserEnabled,
-                  })
-                }
-                data-testid="toggle-file-browser"
-              />
-              <span className="settings-panel__toggle-slider" />
-            </label>
-            <span className="settings-panel__file-path">File Browser</span>
-          </li>
-        </ul>
+        <div className="settings-form__field">
+          <span className="settings-form__label">Power Monitoring</span>
+          <label className="settings-panel__toggle">
+            <input
+              type="checkbox"
+              checked={settings.powerMonitoringEnabled}
+              onChange={() =>
+                updateSettings({
+                  ...settings,
+                  powerMonitoringEnabled: !settings.powerMonitoringEnabled,
+                })
+              }
+              data-testid="toggle-power-monitoring"
+            />
+            <span className="settings-panel__toggle-slider" />
+          </label>
+          <span className="settings-form__hint">
+            Monitor CPU, memory, and power events via SSH agent connections.
+          </span>
+        </div>
+
+        <div className="settings-form__field">
+          <span className="settings-form__label">File Browser</span>
+          <label className="settings-panel__toggle">
+            <input
+              type="checkbox"
+              checked={settings.fileBrowserEnabled}
+              onChange={() =>
+                updateSettings({
+                  ...settings,
+                  fileBrowserEnabled: !settings.fileBrowserEnabled,
+                })
+              }
+              data-testid="toggle-file-browser"
+            />
+            <span className="settings-panel__toggle-slider" />
+          </label>
+          <span className="settings-form__hint">
+            Enable the SFTP file browser for SSH agent sessions.
+          </span>
+        </div>
       </div>
     </div>
   );

@@ -27,53 +27,74 @@ export function AgentSettingsForm({ settings, onChange, capabilities }: AgentSet
   };
 
   return (
-    <div className="agent-settings-form">
-      <div className="agent-settings-form__section">
-        <div className="agent-settings-form__section-title">Features</div>
+    <div>
+      <div className="settings-panel__category">
+        <h3 className="settings-panel__category-title">Features</h3>
 
-        <label className="agent-settings-form__checkbox">
-          <input
-            type="checkbox"
-            checked={settings.enableMonitoring}
-            onChange={(e) => update("enableMonitoring", e.target.checked)}
-          />
-          Enable system monitoring
-        </label>
+        <div className="settings-form__field">
+          <span className="settings-form__label">System Monitoring</span>
+          <label className="settings-panel__toggle">
+            <input
+              type="checkbox"
+              checked={settings.enableMonitoring}
+              onChange={(e) => update("enableMonitoring", e.target.checked)}
+            />
+            <span className="settings-panel__toggle-slider" />
+          </label>
+          <span className="settings-form__hint">
+            Collect CPU, memory, and disk usage from the remote host.
+          </span>
+        </div>
 
-        <label className="agent-settings-form__checkbox">
-          <input
-            type="checkbox"
-            checked={settings.enableFileBrowser}
-            onChange={(e) => update("enableFileBrowser", e.target.checked)}
-          />
-          Enable file browser (SFTP)
-        </label>
+        <div className="settings-form__field">
+          <span className="settings-form__label">File Browser (SFTP)</span>
+          <label className="settings-panel__toggle">
+            <input
+              type="checkbox"
+              checked={settings.enableFileBrowser}
+              onChange={(e) => update("enableFileBrowser", e.target.checked)}
+            />
+            <span className="settings-panel__toggle-slider" />
+          </label>
+          <span className="settings-form__hint">
+            Browse and transfer files on the remote host via SFTP.
+          </span>
+        </div>
 
-        <label className="agent-settings-form__checkbox">
-          <input
-            type="checkbox"
-            checked={settings.enableDocker}
-            onChange={(e) => update("enableDocker", e.target.checked)}
-          />
-          Enable Docker session support
-        </label>
+        <div className="settings-form__field">
+          <span className="settings-form__label">Docker Sessions</span>
+          <label className="settings-panel__toggle">
+            <input
+              type="checkbox"
+              checked={settings.enableDocker}
+              onChange={(e) => update("enableDocker", e.target.checked)}
+            />
+            <span className="settings-panel__toggle-slider" />
+          </label>
+          <span className="settings-form__hint">
+            Open terminal sessions directly inside Docker containers on the remote host.
+          </span>
+        </div>
       </div>
 
-      <div className="agent-settings-form__section">
-        <div className="agent-settings-form__section-title">Session Defaults</div>
+      <div className="settings-panel__category">
+        <h3 className="settings-panel__category-title">Session Defaults</h3>
 
-        <label className="agent-settings-form__field">
-          <span className="agent-settings-form__label">
-            Default shell
+        <label className="settings-form__field">
+          <span className="settings-form__label">
+            Default Shell
             {!isConnected && (
-              <span className="agent-settings-form__hint" title="Connect to query available shells">
-                ⚠ Connect to query available shells
+              <span
+                className="settings-form__hint settings-form__hint--warning"
+                style={{ display: "inline", marginLeft: "6px", fontStyle: "normal" }}
+                title="Connect to query available shells"
+              >
+                ⚠ Connect to query shells
               </span>
             )}
           </span>
           {isConnected ? (
             <select
-              className="agent-settings-form__select"
               value={settings.defaultShell ?? ""}
               onChange={(e) => update("defaultShell", e.target.value || null)}
             >
@@ -87,32 +108,36 @@ export function AgentSettingsForm({ settings, onChange, capabilities }: AgentSet
           ) : (
             <input
               type="text"
-              className="agent-settings-form__input"
               placeholder="Auto-detect"
               value={settings.defaultShell ?? ""}
               onChange={(e) => update("defaultShell", e.target.value || null)}
             />
           )}
+          <span className="settings-form__hint">
+            Shell used for new sessions. Leave empty to auto-detect.
+          </span>
         </label>
 
-        <label className="agent-settings-form__field">
-          <span className="agent-settings-form__label">Starting directory</span>
+        <label className="settings-form__field">
+          <span className="settings-form__label">Starting Directory</span>
           <input
             type="text"
-            className="agent-settings-form__input"
             value={settings.startingDirectory}
             onChange={(e) => update("startingDirectory", e.target.value)}
+            placeholder="~"
           />
+          <span className="settings-form__hint">
+            Working directory for new sessions. Leave empty for the shell default.
+          </span>
         </label>
       </div>
 
-      <div className="agent-settings-form__section">
-        <div className="agent-settings-form__section-title">Diagnostics</div>
+      <div className="settings-panel__category">
+        <h3 className="settings-panel__category-title">Diagnostics</h3>
 
-        <label className="agent-settings-form__field">
-          <span className="agent-settings-form__label">Log level</span>
+        <label className="settings-form__field">
+          <span className="settings-form__label">Log Level</span>
           <select
-            className="agent-settings-form__select"
             value={settings.logLevel}
             onChange={(e) => update("logLevel", e.target.value as AgentSettings["logLevel"])}
           >
@@ -122,16 +147,25 @@ export function AgentSettingsForm({ settings, onChange, capabilities }: AgentSet
               </option>
             ))}
           </select>
+          <span className="settings-form__hint">
+            Controls the verbosity of agent-side log output.
+          </span>
         </label>
 
-        <label className="agent-settings-form__checkbox">
-          <input
-            type="checkbox"
-            checked={settings.verboseTracing}
-            onChange={(e) => update("verboseTracing", e.target.checked)}
-          />
-          Enable verbose protocol tracing
-        </label>
+        <div className="settings-form__field">
+          <span className="settings-form__label">Verbose Protocol Tracing</span>
+          <label className="settings-panel__toggle">
+            <input
+              type="checkbox"
+              checked={settings.verboseTracing}
+              onChange={(e) => update("verboseTracing", e.target.checked)}
+            />
+            <span className="settings-panel__toggle-slider" />
+          </label>
+          <span className="settings-form__hint">
+            Log every JSON-RPC message. Useful for debugging connection issues.
+          </span>
+        </div>
       </div>
     </div>
   );

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Settings: all settings panels and connection editor tabs now use a consistent visual design — fields are grouped under titled category sections, boolean options use a pill toggle switch (label on top, toggle below, hint text underneath), and spacing between fields is uniform across the entire UI.
+- Connection editor: the Connection tab is now structured in named sections (General, schema-defined groups, Session, External Files), matching the look and feel of all other tabs.
+
 ### Fixed
 
 - Agent: after an agent reconnects following a power loss, terminals whose sessions were successfully recovered by the agent now resume automatically instead of always showing the "Session disconnected" overlay. Sessions that could not be recovered still show the overlay as before.

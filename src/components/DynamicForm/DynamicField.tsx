@@ -25,6 +25,7 @@ interface DynamicFieldProps {
  *
  * Dispatches to the appropriate input widget (text, password, number,
  * boolean toggle, select, port, file path, key-value list, object list).
+ * Boolean fields use the toggle-row layout; all others use the column layout.
  */
 export function DynamicField({
   field,
@@ -160,14 +161,8 @@ function BooleanField({ field, value, onChange }: FieldProps) {
 
   return (
     <>
-      <label className="settings-form__field--checkbox" data-testid={`field-${field.key}-wrapper`}>
-        <input
-          type="checkbox"
-          checked={(value as boolean) ?? (field.default as boolean) ?? false}
-          onChange={(e) => onChange(e.target.checked)}
-          data-testid={`field-${field.key}`}
-        />
-        <span className="settings-form__label">{field.label}</span>
+      <span className="settings-form__label">
+        {field.label}
         {field.helpText && (
           <button
             type="button"
@@ -182,6 +177,15 @@ function BooleanField({ field, value, onChange }: FieldProps) {
             <HelpCircle size={13} />
           </button>
         )}
+      </span>
+      <label className="settings-panel__toggle">
+        <input
+          type="checkbox"
+          checked={(value as boolean) ?? (field.default as boolean) ?? false}
+          onChange={(e) => onChange(e.target.checked)}
+          data-testid={`field-${field.key}`}
+        />
+        <span className="settings-panel__toggle-slider" />
       </label>
       {dialogOpen && field.helpText && (
         <FieldHelpDialog
@@ -329,7 +333,6 @@ function FilePathField({
   onChange,
   fieldType,
 }: FieldProps & { fieldType: { type: "filePath"; kind: string } }) {
-  // Special case: SSH key path fields use the KeyPathInput combobox
   if (field.key === "keyPath") {
     return (
       <>

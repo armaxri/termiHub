@@ -298,13 +298,9 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
             <div className="settings-panel__section">
               <h3 className="settings-panel__section-title">Master Password Options</h3>
 
-              <div className="settings-panel__field">
-                <label className="settings-panel__description" htmlFor="auto-lock-timeout">
-                  Lock the credential store after a period of inactivity:
-                </label>
+              <label className="settings-form__field">
+                <span className="settings-form__label">Auto-Lock Timeout</span>
                 <select
-                  id="auto-lock-timeout"
-                  className="settings-panel__inline-dialog-input"
                   data-testid="auto-lock-timeout"
                   value={settings.credentialAutoLockMinutes ?? 15}
                   onChange={(e) => handleAutoLockChange(Number(e.target.value))}
@@ -315,7 +311,10 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                     </option>
                   ))}
                 </select>
-              </div>
+                <span className="settings-form__hint">
+                  Lock the credential store after a period of inactivity.
+                </span>
+              </label>
 
               <div className="settings-panel__field">
                 <button

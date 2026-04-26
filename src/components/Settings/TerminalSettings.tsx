@@ -13,7 +13,8 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
     <div className="settings-panel__category">
       <h3 className="settings-panel__category-title">Terminal</h3>
       {show("defaultHorizontalScrolling") && (
-        <div className="settings-form__field settings-form__field--row">
+        <div className="settings-form__field">
+          <span className="settings-form__label">Default Horizontal Scrolling</span>
           <label className="settings-panel__toggle">
             <input
               type="checkbox"
@@ -24,12 +25,9 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
             />
             <span className="settings-panel__toggle-slider" />
           </label>
-          <div>
-            <span className="settings-form__label">Default Horizontal Scrolling</span>
-            <span className="settings-form__hint">
-              Enable horizontal scrolling for new terminals by default.
-            </span>
-          </div>
+          <span className="settings-form__hint">
+            Enable horizontal scrolling for new terminals by default.
+          </span>
         </div>
       )}
       {show("scrollbackBuffer") && (
@@ -70,7 +68,8 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
         </label>
       )}
       {show("cursorBlink") && (
-        <div className="settings-form__field settings-form__field--row">
+        <div className="settings-form__field">
+          <span className="settings-form__label">Cursor Blink</span>
           <label className="settings-panel__toggle">
             <input
               type="checkbox"
@@ -79,10 +78,7 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
             />
             <span className="settings-panel__toggle-slider" />
           </label>
-          <div>
-            <span className="settings-form__label">Cursor Blink</span>
-            <span className="settings-form__hint">Whether the terminal cursor blinks.</span>
-          </div>
+          <span className="settings-form__hint">Whether the terminal cursor blinks.</span>
         </div>
       )}
       {show("rightClickBehavior") && (
