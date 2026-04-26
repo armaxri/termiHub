@@ -1,8 +1,9 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { HelpCircle, X } from "lucide-react";
 import type { SettingsField, FieldType } from "@/types/schema";
 import { KeyPathInput } from "@/components/Settings/KeyPathInput";
+import { listSerialPorts } from "@/services/api";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 
 interface DynamicFieldProps {
@@ -11,6 +12,12 @@ interface DynamicFieldProps {
   onChange: (key: string, value: unknown) => void;
   /** When true, shows a "Password saved in credential store" hint below password fields. */
   credentialSaved?: boolean;
+  /**
+   * Pre-supplied list of serial port names for `serialPort` fields.
+   * When provided, the field shows these instead of querying the local system.
+   * Use this to pass ports from a remote agent's capabilities.
+   */
+  availablePorts?: string[];
 }
 
 /**
@@ -19,12 +26,18 @@ interface DynamicFieldProps {
  * Dispatches to the appropriate input widget (text, password, number,
  * boolean toggle, select, port, file path, key-value list, object list).
  */
-export function DynamicField({ field, value, onChange, credentialSaved }: DynamicFieldProps) {
+export function DynamicField({
+  field,
+  value,
+  onChange,
+  credentialSaved,
+  availablePorts,
+}: DynamicFieldProps) {
   const handleChange = useCallback((v: unknown) => onChange(field.key, v), [field.key, onChange]);
 
   return (
     <div className="settings-form__field" data-testid={`dynamic-field-${field.key}`}>
-      {renderFieldInput(field, field.fieldType, value, handleChange)}
+      {renderFieldInput(field, field.fieldType, value, handleChange, availablePorts)}
       {field.description && <p className="settings-form__hint">{field.description}</p>}
       {credentialSaved && (
         <p
@@ -42,7 +55,8 @@ function renderFieldInput(
   field: SettingsField,
   fieldType: FieldType,
   value: unknown,
-  onChange: (v: unknown) => void
+  onChange: (v: unknown) => void,
+  availablePorts?: string[]
 ): React.ReactNode {
   switch (fieldType.type) {
     case "text":
@@ -57,6 +71,15 @@ function renderFieldInput(
       return <SelectField field={field} value={value} onChange={onChange} fieldType={fieldType} />;
     case "port":
       return <PortField field={field} value={value} onChange={onChange} />;
+    case "serialPort":
+      return (
+        <SerialPortField
+          field={field}
+          value={value}
+          onChange={onChange}
+          availablePorts={availablePorts}
+        />
+      );
     case "filePath":
       return (
         <FilePathField field={field} value={value} onChange={onChange} fieldType={fieldType} />
@@ -245,6 +268,57 @@ function PortField({ field, value, onChange }: FieldProps) {
         placeholder={field.placeholder}
         data-testid={`field-${field.key}`}
       />
+    </>
+  );
+}
+
+function SerialPortField({
+  field,
+  value,
+  onChange,
+  availablePorts: propPorts,
+}: FieldProps & { availablePorts?: string[] }) {
+  const [detectedPorts, setDetectedPorts] = useState<string[]>([]);
+  const currentValue = (value as string) ?? "";
+
+  useEffect(() => {
+    if (propPorts !== undefined) return;
+    listSerialPorts()
+      .then(setDetectedPorts)
+      .catch(() => setDetectedPorts([]));
+  }, [propPorts]);
+
+  const availablePorts = propPorts ?? detectedPorts;
+  const isDisconnected = currentValue !== "" && !availablePorts.includes(currentValue);
+
+  return (
+    <>
+      <span className="settings-form__label">{field.label}</span>
+      <select
+        value={currentValue}
+        onChange={(e) => onChange(e.target.value || undefined)}
+        data-testid={`field-${field.key}`}
+      >
+        {currentValue === "" && (
+          <option value="" disabled>
+            {availablePorts.length === 0 ? "No ports detected" : "Select a port…"}
+          </option>
+        )}
+        {isDisconnected && (
+          <option
+            value={currentValue}
+            style={{ color: "var(--text-disabled)" }}
+            data-testid={`field-${field.key}-disconnected`}
+          >
+            {currentValue} (not connected)
+          </option>
+        )}
+        {availablePorts.map((port) => (
+          <option key={port} value={port}>
+            {port}
+          </option>
+        ))}
+      </select>
     </>
   );
 }

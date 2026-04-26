@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Serial: the port field in the serial connection editor is now a dropdown populated with currently detected serial ports. If the previously configured port is no longer detected (e.g. USB adapter unplugged), it still appears in the list marked as "(not connected)". When editing a serial session on a remote agent, the dropdown shows the ports detected on the remote machine.
 - Terminal: a unified "Connecting…" overlay now appears on every terminal tab while the backend session is being established, for all connection types (SSH, Telnet, serial, agent sessions). The overlay shows a spinner and a Cancel button (which closes the tab). If the initial connection fails, the overlay transitions to an error state with a Retry button and contextual hints for common failure modes (SSH agent not running, timeout, serial port not found, port permission denied, port in use).
 - Terminal: for agent-mediated sessions (sessions running on a remote agent), connection failures trigger automatic background retry instead of showing an error immediately. The overlay shows the current attempt number. The user can cancel at any time by closing the tab.
 - Terminal: tabs that are created while their parent agent is still connecting now show a "Waiting for agent…" spinner overlay and automatically start their session once the agent connects, instead of failing immediately with an error.

@@ -60,6 +60,7 @@ export type FieldType =
   | { type: "boolean" }
   | { type: "select"; options: SelectOption[] }
   | { type: "port" }
+  | { type: "serialPort" }
   | { type: "filePath"; kind: FilePathKind }
   | { type: "keyValueList" }
   | { type: "objectList"; fields: SettingsField[] };

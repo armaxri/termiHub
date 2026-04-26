@@ -107,6 +107,11 @@ pub enum FieldType {
     },
     /// Port number input (constrained to 1..=65535).
     Port,
+    /// Serial device path picker — renders a dropdown populated from `list_serial_ports`.
+    ///
+    /// The value is stored as a plain string so that a previously configured port
+    /// that is currently unplugged can still be preserved in settings.
+    SerialPort,
     /// File or directory path picker.
     FilePath {
         /// Whether to accept files, directories, or both.
@@ -313,6 +318,13 @@ mod tests {
         let ft = FieldType::Port;
         let json = serde_json::to_value(&ft).unwrap();
         assert_eq!(json, serde_json::json!({"type": "port"}));
+    }
+
+    #[test]
+    fn field_type_serial_port_serialization() {
+        let ft = FieldType::SerialPort;
+        let json = serde_json::to_value(&ft).unwrap();
+        assert_eq!(json, serde_json::json!({"type": "serialPort"}));
     }
 
     #[test]

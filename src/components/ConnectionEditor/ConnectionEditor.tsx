@@ -730,6 +730,11 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           settings={connSettings}
           onChange={setConnSettings}
           credentialSavedHint={credentialSavedHint}
+          availablePorts={
+            isAgentDefinitionMode
+              ? (existingAgent?.capabilities?.availableSerialPorts ?? [])
+              : undefined
+          }
         />
       )}
 

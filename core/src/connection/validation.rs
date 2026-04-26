@@ -86,7 +86,7 @@ fn validate_field_type(
     errors: &mut Vec<ValidationError>,
 ) {
     match field_type {
-        FieldType::Text | FieldType::Password => {
+        FieldType::Text | FieldType::Password | FieldType::SerialPort => {
             if !value.is_string() {
                 errors.push(ValidationError {
                     field: key.to_string(),
@@ -952,6 +952,47 @@ mod tests {
         });
         let errors = validate_settings(&schema, &settings);
         assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn serial_port_valid() {
+        let field = SettingsField {
+            key: "port".to_string(),
+            label: "Port".to_string(),
+            description: None,
+            help_text: None,
+            field_type: FieldType::SerialPort,
+            required: true,
+            default: None,
+            placeholder: None,
+            supports_env_expansion: false,
+            supports_tilde_expansion: false,
+            visible_when: None,
+        };
+        let schema = schema_with_fields(vec![field]);
+        let errors = validate_settings(&schema, &serde_json::json!({"port": "/dev/ttyUSB0"}));
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn serial_port_wrong_type() {
+        let field = SettingsField {
+            key: "port".to_string(),
+            label: "Port".to_string(),
+            description: None,
+            help_text: None,
+            field_type: FieldType::SerialPort,
+            required: true,
+            default: None,
+            placeholder: None,
+            supports_env_expansion: false,
+            supports_tilde_expansion: false,
+            visible_when: None,
+        };
+        let schema = schema_with_fields(vec![field]);
+        let errors = validate_settings(&schema, &serde_json::json!({"port": 42}));
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("must be a string"));
     }
 
     #[test]
