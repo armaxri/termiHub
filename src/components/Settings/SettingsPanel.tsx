@@ -44,30 +44,7 @@ const SETTINGS_ICONS: Record<SettingsCategory, LucideIcon> = {
   updates: RefreshCw,
 };
 
-const STORAGE_KEY = "termihub-settings-category";
 const SAVE_DEBOUNCE_MS = 300;
-
-function loadSavedCategory(): SettingsCategory {
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (
-      saved === "general" ||
-      saved === "appearance" ||
-      saved === "terminal" ||
-      saved === "keyboard" ||
-      saved === "security" ||
-      saved === "external-files" ||
-      saved === "editor" ||
-      saved === "portable" ||
-      saved === "updates"
-    ) {
-      return saved;
-    }
-  } catch {
-    // Ignore localStorage errors
-  }
-  return "general";
-}
 
 interface SettingsPanelProps {
   isVisible: boolean;
@@ -80,7 +57,7 @@ export function SettingsPanel({ isVisible }: SettingsPanelProps) {
   const settings = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
 
-  const [activeCategory, setActiveCategory] = useState<SettingsCategory>(loadSavedCategory);
+  const [activeCategory, setActiveCategory] = useState<SettingsCategory>("general");
   const [searchQuery, setSearchQuery] = useState("");
   const [isCompact, setIsCompact] = useState(false);
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
@@ -108,14 +85,8 @@ export function SettingsPanel({ isVisible }: SettingsPanelProps) {
     return () => observer.disconnect();
   }, []);
 
-  // Persist active category to localStorage
   const handleCategoryChange = useCallback((category: SettingsCategory) => {
     setActiveCategory(category);
-    try {
-      localStorage.setItem(STORAGE_KEY, category);
-    } catch {
-      // Ignore localStorage errors
-    }
   }, []);
 
   // Debounced save for General/Appearance/Terminal settings

@@ -62,25 +62,6 @@ const EDITOR_ICONS: Record<EditorCategory, LucideIcon> = {
   agent: Settings,
 };
 
-const STORAGE_KEY = "termihub-editor-category";
-
-function loadSavedCategory(): EditorCategory {
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (
-      saved === "connection" ||
-      saved === "terminal" ||
-      saved === "appearance" ||
-      saved === "agent"
-    ) {
-      return saved;
-    }
-  } catch {
-    // Ignore localStorage errors
-  }
-  return "connection";
-}
-
 /** Check whether any field in TerminalOptions has a non-undefined value. */
 function hasTerminalOptions(opts: TerminalOptions): boolean {
   return Object.values(opts).some((v) => v !== undefined);
@@ -319,7 +300,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   }, [name, connections, remoteAgents, editingConnectionId, folderId]);
 
   // Category navigation
-  const [activeCategory, setActiveCategory] = useState<EditorCategory>(loadSavedCategory);
+  const [activeCategory, setActiveCategory] = useState<EditorCategory>("connection");
   const [isCompact, setIsCompact] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -397,11 +378,6 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
 
   const handleCategoryChange = useCallback((category: EditorCategory) => {
     setActiveCategory(category);
-    try {
-      localStorage.setItem(STORAGE_KEY, category);
-    } catch {
-      // Ignore localStorage errors
-    }
   }, []);
 
   const handleTypeChange = useCallback(

@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Terminal: agent-session reconnect loop now shows a "Connection failed" state briefly after each failed attempt instead of spinning "Connecting…" indefinitely with no visible feedback. The overlay cycles Connecting → Connection failed → Connecting until the session is established.
 - Terminal: when an agent reconnects while a terminal is in the retry loop (or showing "Connection failed"), the connection attempt is now restarted immediately instead of waiting for the next retry cycle — the terminal connects as soon as the agent is back.
 - Connection editor: boolean fields in existing connections now correctly reflect their schema default when the field was never explicitly saved (previously showed unchecked regardless of the schema default)
+- Settings: the Settings panel and Connection Editor no longer remember the last-selected category across opens — they always start on the first category ("General" / "Connection")
 
 ### Added
 
