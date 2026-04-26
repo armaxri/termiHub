@@ -18,7 +18,6 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { Terminal } from "./Terminal";
 import { TerminalPortalProvider } from "./TerminalRegistry";
-import { resizeTerminal } from "@/services/api";
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
