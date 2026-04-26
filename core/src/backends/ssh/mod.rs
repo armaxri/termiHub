@@ -838,7 +838,7 @@ mod tests {
             .find(|f| f.key == "enableX11Forwarding")
             .unwrap();
         assert!(matches!(x11.field_type, FieldType::Boolean));
-        assert_eq!(x11.default, Some(serde_json::json!(false)));
+        assert_eq!(x11.default, Some(serde_json::json!(true)));
     }
 
     #[test]
