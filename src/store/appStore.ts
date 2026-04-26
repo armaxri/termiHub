@@ -259,6 +259,8 @@ interface AppState {
   ) => void;
   editorDirtyTabs: Record<string, boolean>;
   setEditorDirty: (tabId: string, dirty: boolean) => void;
+  pendingCloseRequest: { tabId: string; panelId: string } | null;
+  setPendingCloseRequest: (req: { tabId: string; panelId: string } | null) => void;
   closeTab: (tabId: string, panelId: string) => void;
   setActiveTab: (tabId: string, panelId: string) => void;
   moveTab: (tabId: string, fromPanelId: string, toPanelId: string, newIndex: number) => void;
@@ -1237,6 +1239,9 @@ export const useAppStore = create<AppState>((set, get) => {
     editorDirtyTabs: {},
     setEditorDirty: (tabId, dirty) =>
       set((state) => ({ editorDirtyTabs: { ...state.editorDirtyTabs, [tabId]: dirty } })),
+
+    pendingCloseRequest: null,
+    setPendingCloseRequest: (req) => set({ pendingCloseRequest: req }),
 
     closeTab: (tabId, panelId) =>
       set((state) => {
