@@ -131,19 +131,6 @@
   opacity: 0.6;
 }
 
-/* === Form field rows for toggle + label === */
-.settings-form__field--row {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--spacing-sm);
-}
-
-.settings-form__field--row > div {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
 /* === Section (used by ExternalFilesSettings) === */
 .settings-panel__section {
   margin-bottom: var(--spacing-xl);

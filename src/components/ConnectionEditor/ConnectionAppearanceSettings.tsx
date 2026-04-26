@@ -48,6 +48,9 @@ export function ConnectionAppearanceSettings({
             </button>
           )}
         </div>
+        <span className="settings-form__hint">
+          Accent color shown on the connection tab and sidebar entry.
+        </span>
       </div>
 
       <div className="settings-form__field">
@@ -73,6 +76,9 @@ export function ConnectionAppearanceSettings({
             </button>
           )}
         </div>
+        <span className="settings-form__hint">
+          Icon displayed on the connection tab and in the sidebar.
+        </span>
       </div>
 
       <ColorPickerDialog

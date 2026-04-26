@@ -4,6 +4,7 @@ import { CheckCircle2, XCircle, HardDrive, Info } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { listConfigFiles, exportConfigToPortable, importConfigFromPortable } from "@/services/api";
 import type { ConfigFileStatus } from "@/types/connection";
+import "./PortableModeSettings.css";
 
 const PORTABLE_FILES = [
   "connections.json",
@@ -51,14 +52,15 @@ function MigrationDialog({
   }, []);
 
   return (
-    <div className="settings-section__migration-dialog" data-testid="migration-dialog">
-      <h4 className="settings-section__migration-title">{title}</h4>
-      <p className="settings-section__migration-description">{description}</p>
-      <div className="settings-section__migration-files">
+    <div className="settings-panel__inline-dialog" data-testid="migration-dialog">
+      <h4 className="settings-panel__inline-dialog-title">{title}</h4>
+      <p className="settings-panel__inline-dialog-text">{description}</p>
+
+      <div className="portable-mode__migration-files">
         {sourceFiles.map((f) => (
           <label
             key={f.name}
-            className={`settings-section__migration-file ${!f.present ? "settings-section__migration-file--missing" : ""}`}
+            className={`portable-mode__migration-file${!f.present ? " portable-mode__migration-file--missing" : ""}`}
           >
             <input
               type="checkbox"
@@ -66,18 +68,20 @@ function MigrationDialog({
               disabled={!f.present || isRunning}
               onChange={() => toggle(f.name)}
             />
-            <span className="settings-section__migration-filename">{f.name}</span>
-            {!f.present && <span className="settings-section__migration-absent">not found</span>}
+            <span className="portable-mode__migration-filename">{f.name}</span>
+            {!f.present && <span className="portable-mode__migration-absent">not found</span>}
           </label>
         ))}
       </div>
-      <div className="settings-section__migration-dest">
-        <span className="settings-section__migration-dest-label">{targetDirLabel}:</span>
-        <code className="settings-section__migration-dest-path">{targetDir}</code>
+
+      <div className="portable-mode__migration-dest">
+        <span className="portable-mode__migration-dest-label">{targetDirLabel}:</span>
+        <code className="portable-mode__migration-dest-path">{targetDir}</code>
       </div>
-      <div className="settings-section__migration-actions">
+
+      <div className="settings-panel__inline-dialog-actions">
         <button
-          className="settings-section__btn settings-section__btn--secondary"
+          className="settings-panel__btn"
           onClick={onCancel}
           disabled={isRunning}
           data-testid="migration-cancel"
@@ -85,7 +89,7 @@ function MigrationDialog({
           Cancel
         </button>
         <button
-          className="settings-section__btn settings-section__btn--primary"
+          className="settings-panel__btn settings-panel__btn--primary"
           onClick={() => onConfirm(Array.from(selected))}
           disabled={selected.size === 0 || isRunning}
           data-testid="migration-confirm"
@@ -124,7 +128,6 @@ export function PortableModeSettings() {
   }, [isPortableMode, portableDataDir]);
 
   const handleExport = useCallback(async () => {
-    // Pick the destination portable data directory
     const dir = await open({ directory: true, multiple: false });
     if (!dir) return;
     const destDir = typeof dir === "string" ? dir : dir[0];
@@ -136,7 +139,6 @@ export function PortableModeSettings() {
   }, []);
 
   const handleImport = useCallback(async () => {
-    // Pick the source portable data directory
     const dir = await open({ directory: true, multiple: false });
     if (!dir) return;
     const srcDir = typeof dir === "string" ? dir : dir[0];
@@ -188,13 +190,13 @@ export function PortableModeSettings() {
   );
 
   return (
-    <div className="settings-section" data-testid="portable-mode-settings">
-      <h3 className="settings-section__title">Portable Mode</h3>
+    <div className="settings-panel__category" data-testid="portable-mode-settings">
+      <h3 className="settings-panel__category-title">Portable Mode</h3>
 
-      <div className="settings-section__row">
-        <span className="settings-section__label">Status</span>
+      <div className="portable-mode__kv-row">
+        <span className="portable-mode__kv-label">Status</span>
         <span
-          className={`settings-section__value ${isPortableMode ? "settings-section__value--active" : "settings-section__value--inactive"}`}
+          className={`portable-mode__kv-value ${isPortableMode ? "portable-mode__kv-value--active" : "portable-mode__kv-value--inactive"}`}
           data-testid="portable-mode-status"
         >
           <HardDrive size={14} />
@@ -204,17 +206,17 @@ export function PortableModeSettings() {
 
       {isPortableMode && portableDataDir && (
         <>
-          <div className="settings-section__row">
-            <span className="settings-section__label">Data path</span>
+          <div className="portable-mode__kv-row">
+            <span className="portable-mode__kv-label">Data path</span>
             <code
-              className="settings-section__value settings-section__value--path"
+              className="portable-mode__kv-value portable-mode__kv-value--path"
               data-testid="portable-data-dir"
             >
               {portableDataDir}
             </code>
           </div>
 
-          <div className="settings-section__info-box">
+          <div className="portable-mode__info-box">
             <Info size={14} />
             <span>
               termiHub detected a <code>portable.marker</code> file or <code>data/</code> directory
@@ -223,29 +225,29 @@ export function PortableModeSettings() {
             </span>
           </div>
 
-          <div className="settings-section__subsection">
-            <h4 className="settings-section__subtitle">Config Files</h4>
-            <div className="settings-section__file-list">
+          <div className="settings-panel__section">
+            <h4 className="settings-panel__section-title">Config Files</h4>
+            <ul className="portable-mode__file-list">
               {configFiles.map((f) => (
-                <div key={f.name} className="settings-section__file-item">
+                <li key={f.name} className="portable-mode__file-item">
                   {f.present ? (
-                    <CheckCircle2 size={13} className="settings-section__file-icon--present" />
+                    <CheckCircle2 size={13} className="portable-mode__file-icon--present" />
                   ) : (
-                    <XCircle size={13} className="settings-section__file-icon--absent" />
+                    <XCircle size={13} className="portable-mode__file-icon--absent" />
                   )}
-                  <span className="settings-section__file-name">{f.name}</span>
-                  <span className="settings-section__file-status">
+                  <span className="portable-mode__file-name">{f.name}</span>
+                  <span className="portable-mode__file-status">
                     {f.present ? "present" : "not created yet"}
                   </span>
-                </div>
+                </li>
               ))}
-            </div>
+            </ul>
           </div>
         </>
       )}
 
       {!isPortableMode && (
-        <div className="settings-section__info-box">
+        <div className="portable-mode__info-box">
           <Info size={14} />
           <span>
             termiHub is running in installed mode. To enable portable mode, place a{" "}
@@ -257,7 +259,7 @@ export function PortableModeSettings() {
 
       {migrationResult && (
         <div
-          className={`settings-section__migration-result ${migrationResult.success ? "settings-section__migration-result--success" : "settings-section__migration-result--error"}`}
+          className={`portable-mode__result ${migrationResult.success ? "portable-mode__result--success" : "portable-mode__result--error"}`}
           data-testid="migration-result"
         >
           {migrationResult.success ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
@@ -265,21 +267,28 @@ export function PortableModeSettings() {
         </div>
       )}
 
-      <div className="settings-section__actions">
-        <button
-          className="settings-section__btn settings-section__btn--secondary"
-          onClick={handleExport}
-          data-testid="export-config-btn"
-        >
-          Export Config to Directory
-        </button>
-        <button
-          className="settings-section__btn settings-section__btn--secondary"
-          onClick={handleImport}
-          data-testid="import-config-btn"
-        >
-          Import Config from Directory
-        </button>
+      <div className="settings-panel__section">
+        <h4 className="settings-panel__section-title">Config Migration</h4>
+        <p className="settings-panel__description">
+          Copy configuration between installed and portable mode. Use Export to move your config to
+          a portable drive, or Import to bring it back.
+        </p>
+        <div className="portable-mode__actions">
+          <button
+            className="settings-panel__btn"
+            onClick={handleExport}
+            data-testid="export-config-btn"
+          >
+            Export to Directory
+          </button>
+          <button
+            className="settings-panel__btn"
+            onClick={handleImport}
+            data-testid="import-config-btn"
+          >
+            Import from Directory
+          </button>
+        </div>
       </div>
 
       {exportDialog && (

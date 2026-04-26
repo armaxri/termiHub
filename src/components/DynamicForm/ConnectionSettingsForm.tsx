@@ -19,7 +19,8 @@ interface ConnectionSettingsFormProps {
  * Generic connection settings form renderer.
  *
  * Iterates groups and fields from the schema, evaluates visibility
- * conditions, and delegates each field to DynamicField.
+ * conditions, and delegates each field to DynamicField. Each schema group
+ * is rendered as a visual section with a category title.
  */
 export function ConnectionSettingsForm({
   schema,
@@ -35,12 +36,17 @@ export function ConnectionSettingsForm({
   );
 
   return (
-    <div className="settings-form" data-testid="connection-settings-form">
+    <div data-testid="connection-settings-form">
       {schema.groups.map((group) => {
         const visibleFields = group.fields.filter((f) => isFieldVisible(f, settings));
         if (visibleFields.length === 0) return null;
         return (
-          <div key={group.key} data-testid={`form-group-${group.key}`}>
+          <div
+            className="settings-panel__category"
+            key={group.key}
+            data-testid={`form-group-${group.key}`}
+          >
+            <h3 className="settings-panel__category-title">{group.label}</h3>
             {visibleFields.map((field) => (
               <DynamicField
                 key={field.key}

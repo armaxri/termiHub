@@ -34,9 +34,6 @@
 }
 
 .connection-editor__form {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-sm);
   max-width: 600px;
 }
 
@@ -112,7 +109,8 @@
 .settings-form__field {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
+  margin-bottom: var(--spacing-md);
 }
 
 .settings-form__label {
@@ -143,9 +141,10 @@
 .settings-form__hint {
   font-size: 11px;
   color: var(--text-secondary);
-  margin: 0;
-  padding: var(--spacing-xs) 0;
+  margin: 0 0 var(--spacing-sm);
+  padding: 2px 0;
   font-style: italic;
+  line-height: 1.4;
 }
 
 .settings-form__hint--warning {

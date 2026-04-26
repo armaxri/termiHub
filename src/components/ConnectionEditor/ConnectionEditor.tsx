@@ -685,44 +685,70 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   }, [selectedType, runtimesLoading, currentSchema, connSettings.runtime]);
 
   const renderConnectionContent = () => (
-    <div className="connection-editor__form">
-      <label className="settings-form__field">
-        <span className="settings-form__label">Name</span>
-        <input
-          type="text"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Connection name"
-          autoFocus
-          className={nameError ? "settings-form__input--error" : ""}
-          data-testid="connection-editor-name-input"
-        />
-        {nameError && (
-          <p
-            className="settings-form__hint settings-form__hint--error"
-            data-testid="connection-editor-name-error"
-          >
-            {nameError}
+    <>
+      <div className="settings-panel__category">
+        <h3 className="settings-panel__category-title">General</h3>
+        <label className="settings-form__field">
+          <span className="settings-form__label">Name</span>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Connection name"
+            autoFocus
+            className={nameError ? "settings-form__input--error" : ""}
+            data-testid="connection-editor-name-input"
+          />
+          {nameError && (
+            <p
+              className="settings-form__hint settings-form__hint--error"
+              data-testid="connection-editor-name-error"
+            >
+              {nameError}
+            </p>
+          )}
+        </label>
+        {!isAgentTransportMode && (
+          <label className="settings-form__field">
+            <span className="settings-form__label">Type</span>
+            <select
+              value={selectedType}
+              onChange={(e) => handleTypeChange(e.target.value)}
+              disabled={isAgentDefinitionMode ? !!existingAgentDef : false}
+              data-testid="connection-editor-type-select"
+            >
+              {typeOptions.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {!isAgentTransportMode && (
+          <p className="settings-form__hint">
+            Use {"${env:VAR}"} for environment variables, e.g. {"${env:USER}"}
+            {isAgentDefinitionMode && " (resolved on the remote machine)"}
           </p>
         )}
-      </label>
-      {!isAgentTransportMode && (
-        <label className="settings-form__field">
-          <span className="settings-form__label">Type</span>
-          <select
-            value={selectedType}
-            onChange={(e) => handleTypeChange(e.target.value)}
-            disabled={isAgentDefinitionMode ? !!existingAgentDef : false}
-            data-testid="connection-editor-type-select"
-          >
-            {typeOptions.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
+        {!isAnyAgentMode && enabledExternalFiles.length > 0 && (
+          <label className="settings-form__field">
+            <span className="settings-form__label">Storage File</span>
+            <select
+              value={sourceFile ?? ""}
+              onChange={(e) => setSourceFile(e.target.value || null)}
+              data-testid="connection-editor-source-file"
+            >
+              <option value="">Default (connections.json)</option>
+              {enabledExternalFiles.map((f) => (
+                <option key={f.path} value={f.path}>
+                  {f.path}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+      </div>
 
       {currentSchema && (
         <ConnectionSettingsForm
@@ -734,40 +760,24 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       )}
 
       {isAgentDefinitionMode && (
-        <label className="settings-form__field settings-form__field--checkbox">
-          <input
-            type="checkbox"
-            checked={persistent}
-            onChange={(e) => setPersistent(e.target.checked)}
-            data-testid="connection-editor-persistent"
-          />
-          <span className="settings-form__label">Persistent session</span>
-        </label>
-      )}
-
-      {!isAgentTransportMode && (
-        <p className="settings-form__hint">
-          Use {"${env:VAR}"} for environment variables, e.g. {"${env:USER}"}
-          {isAgentDefinitionMode && " (resolved on the remote machine)"}
-        </p>
-      )}
-
-      {!isAnyAgentMode && enabledExternalFiles.length > 0 && (
-        <label className="settings-form__field">
-          <span className="settings-form__label">Storage File</span>
-          <select
-            value={sourceFile ?? ""}
-            onChange={(e) => setSourceFile(e.target.value || null)}
-            data-testid="connection-editor-source-file"
-          >
-            <option value="">Default (connections.json)</option>
-            {enabledExternalFiles.map((f) => (
-              <option key={f.path} value={f.path}>
-                {f.path}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="settings-panel__category">
+          <h3 className="settings-panel__category-title">Session</h3>
+          <div className="settings-form__field">
+            <span className="settings-form__label">Persistent session</span>
+            <label className="settings-panel__toggle">
+              <input
+                type="checkbox"
+                checked={persistent}
+                onChange={(e) => setPersistent(e.target.checked)}
+                data-testid="connection-editor-persistent"
+              />
+              <span className="settings-panel__toggle-slider" />
+            </label>
+            <span className="settings-form__hint">
+              Keep the session alive when the tab is closed
+            </span>
+          </div>
+        </div>
       )}
 
       {isAgentTransportMode && (
@@ -778,7 +788,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           }
         />
       )}
-    </div>
+    </>
   );
 
   const renderContent = () => {

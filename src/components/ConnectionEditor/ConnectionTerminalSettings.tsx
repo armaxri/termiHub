@@ -87,7 +87,8 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
         </select>
       </label>
 
-      <div className="settings-form__field settings-form__field--row">
+      <div className="settings-form__field">
+        <span className="settings-form__label">Cursor Blink</span>
         <label className="settings-panel__toggle">
           <input
             type="checkbox"
@@ -96,24 +97,22 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
           />
           <span className="settings-panel__toggle-slider" />
         </label>
-        <div>
-          <span className="settings-form__label">Cursor Blink</span>
-          <span className="settings-form__hint">
-            Whether the terminal cursor blinks.
-            {options.cursorBlink != null && (
-              <button
-                type="button"
-                className="settings-form__hint-action"
-                onClick={() => onChange({ ...options, cursorBlink: undefined })}
-              >
-                Reset to global default
-              </button>
-            )}
-          </span>
-        </div>
+        <span className="settings-form__hint">
+          Whether the terminal cursor blinks.
+          {options.cursorBlink != null && (
+            <button
+              type="button"
+              className="settings-form__hint-action"
+              onClick={() => onChange({ ...options, cursorBlink: undefined })}
+            >
+              Reset to global default
+            </button>
+          )}
+        </span>
       </div>
 
-      <div className="settings-form__field settings-form__field--row">
+      <div className="settings-form__field">
+        <span className="settings-form__label">Horizontal Scrolling</span>
         <label className="settings-panel__toggle">
           <input
             type="checkbox"
@@ -122,21 +121,18 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
           />
           <span className="settings-panel__toggle-slider" />
         </label>
-        <div>
-          <span className="settings-form__label">Horizontal Scrolling</span>
-          <span className="settings-form__hint">
-            Enable horizontal scrolling for this connection.
-            {options.horizontalScrolling != null && (
-              <button
-                type="button"
-                className="settings-form__hint-action"
-                onClick={() => onChange({ ...options, horizontalScrolling: undefined })}
-              >
-                Reset to global default
-              </button>
-            )}
-          </span>
-        </div>
+        <span className="settings-form__hint">
+          Enable horizontal scrolling for this connection.
+          {options.horizontalScrolling != null && (
+            <button
+              type="button"
+              className="settings-form__hint-action"
+              onClick={() => onChange({ ...options, horizontalScrolling: undefined })}
+            >
+              Reset to global default
+            </button>
+          )}
+        </span>
       </div>
     </div>
   );
