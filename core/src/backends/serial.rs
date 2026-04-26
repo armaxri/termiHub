@@ -153,10 +153,11 @@ impl ConnectionType for Serial {
                         key: "port".to_string(),
                         label: "Port".to_string(),
                         description: Some(
-                            "Serial port device name (e.g., COM3, /dev/ttyUSB0)".to_string(),
+                            "Select a detected serial port, or type a device path directly."
+                                .to_string(),
                         ),
                         help_text: None,
-                        field_type: FieldType::Text,
+                        field_type: FieldType::SerialPort,
                         required: true,
                         default: None,
                         placeholder: if cfg!(windows) {
@@ -485,7 +486,7 @@ mod tests {
         assert!(port_field.required);
         assert!(port_field.supports_env_expansion);
         assert!(!port_field.supports_tilde_expansion);
-        assert!(matches!(port_field.field_type, FieldType::Text));
+        assert!(matches!(port_field.field_type, FieldType::SerialPort));
     }
 
     #[test]

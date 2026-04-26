@@ -13,6 +13,12 @@ interface ConnectionSettingsFormProps {
    * and will not be overwritten unless the user types a new value).
    */
   credentialSavedHint?: boolean;
+  /**
+   * Pre-supplied serial port names for `serialPort` fields.
+   * Pass the remote agent's `availableSerialPorts` here when editing an
+   * agent definition so the dropdown reflects the remote machine's ports.
+   */
+  availablePorts?: string[];
 }
 
 /**
@@ -26,6 +32,7 @@ export function ConnectionSettingsForm({
   settings,
   onChange,
   credentialSavedHint,
+  availablePorts,
 }: ConnectionSettingsFormProps) {
   const handleFieldChange = useCallback(
     (key: string, value: unknown) => {
@@ -50,6 +57,7 @@ export function ConnectionSettingsForm({
                 credentialSaved={
                   credentialSavedHint && field.fieldType.type === "password" && !settings[field.key]
                 }
+                availablePorts={availablePorts}
               />
             ))}
           </div>
