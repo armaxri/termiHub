@@ -1,0 +1,158 @@
+.terminal-disconnect-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--terminal-bg, #1e1e1e) 88%, transparent);
+  backdrop-filter: blur(2px);
+  color: var(--text-primary);
+  font-family: var(--font-mono, monospace);
+  font-size: var(--font-size-sm);
+}
+
+.terminal-disconnect-overlay__dismiss {
+  position: absolute;
+  top: var(--spacing-sm);
+  right: var(--spacing-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  opacity: 0.6;
+  transition:
+    opacity var(--transition-fast),
+    background-color var(--transition-fast);
+}
+
+.terminal-disconnect-overlay__dismiss:hover {
+  opacity: 1;
+  background-color: var(--bg-hover, rgba(255, 255, 255, 0.08));
+}
+
+.terminal-disconnect-overlay__body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-md);
+  padding: var(--spacing-xl);
+  text-align: center;
+  max-width: 420px;
+}
+
+.terminal-disconnect-overlay__icon {
+  color: var(--color-warning, #e8a838);
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+
+.terminal-disconnect-overlay__icon--error {
+  color: var(--color-error, #e05252);
+}
+
+.terminal-disconnect-overlay__icon--spin {
+  color: var(--accent-color, #4d9cf5);
+  animation: terminal-disconnect-spin 1s linear infinite;
+}
+
+@keyframes terminal-disconnect-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.terminal-disconnect-overlay__heading {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.terminal-disconnect-overlay__subheading {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  margin: 0;
+  line-height: 1.5;
+}
+
+.terminal-disconnect-overlay__error-box {
+  width: 100%;
+  max-height: 120px;
+  overflow-y: auto;
+  background: color-mix(in srgb, var(--color-error, #e05252) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-error, #e05252) 40%, transparent);
+  border-radius: var(--radius-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  text-align: left;
+}
+
+.terminal-disconnect-overlay__error-text {
+  font-size: var(--font-size-xs, 11px);
+  color: var(--color-error, #e05252);
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.terminal-disconnect-overlay__actions {
+  display: flex;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-top: var(--spacing-xs);
+}
+
+.terminal-disconnect-overlay__reconnect-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-sm) var(--spacing-lg);
+  background-color: var(--accent-color);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    background-color var(--transition-fast),
+    opacity var(--transition-fast);
+}
+
+.terminal-disconnect-overlay__reconnect-btn:hover {
+  background-color: var(--accent-hover);
+}
+
+.terminal-disconnect-overlay__view-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-sm) var(--spacing-lg);
+  background-color: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.15));
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.terminal-disconnect-overlay__view-btn:hover {
+  background-color: var(--bg-hover, rgba(255, 255, 255, 0.08));
+  color: var(--text-primary);
+  border-color: var(--border-color-hover, rgba(255, 255, 255, 0.25));
+}

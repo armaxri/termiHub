@@ -49,7 +49,10 @@ import { WorkspaceEditor } from "@/components/WorkspaceEditor";
 import { NetworkDiagnosticPanel } from "@/components/NetworkTools/NetworkDiagnosticPanel";
 import { TerminalSearchBar } from "@/components/Terminal/TerminalSearchBar";
 import { AgentErrorTab } from "@/components/Terminal/AgentErrorTab";
-import { TerminalSpawnErrorOverlay } from "@/components/Terminal/TerminalSpawnErrorOverlay";
+import { TerminalConnectionOverlay } from "@/components/Terminal/TerminalConnectionOverlay";
+import { TerminalDisconnectOverlay } from "@/components/Terminal/TerminalDisconnectOverlay";
+import { TerminalViewModeBanner } from "@/components/Terminal/TerminalViewModeBanner";
+import { TerminalReconnectPrompt } from "@/components/Terminal/TerminalReconnectPrompt";
 import { PanelDropZone } from "./PanelDropZone";
 import "./SplitView.css";
 
@@ -67,6 +70,9 @@ export function SplitView() {
   const zoomedTabId = useAppStore((s) => s.zoomedTabId);
   const setZoomedTabId = useAppStore((s) => s.setZoomedTabId);
   const terminalSpawnErrors = useAppStore((s) => s.terminalSpawnErrors);
+  const terminalConnecting = useAppStore((s) => s.terminalConnecting);
+  const terminalAutoRetryCountZoom = useAppStore((s) => s.terminalAutoRetryCount);
+  const terminalWaitingForAgentZoom = useAppStore((s) => s.terminalWaitingForAgent);
 
   // Find the zoomed tab's metadata for the overlay header
   const zoomedTab = useMemo(() => {
@@ -278,13 +284,22 @@ export function SplitView() {
               </button>
             </div>
             <div className="zoom-overlay__content">
-              {zoomedTab.contentType === "terminal" && terminalSpawnErrors[zoomedTabId] ? (
-                <TerminalSpawnErrorOverlay
+              {zoomedTab.contentType === "terminal" &&
+              (terminalSpawnErrors[zoomedTabId] ||
+                terminalConnecting[zoomedTabId] ||
+                (terminalAutoRetryCountZoom[zoomedTabId] ?? 0) > 0 ||
+                !!terminalWaitingForAgentZoom[zoomedTabId]) ? (
+                <TerminalConnectionOverlay
                   key={`zoom-${zoomedTabId}`}
                   tabId={zoomedTabId}
-                  error={terminalSpawnErrors[zoomedTabId]}
+                  panelId={zoomedTab.panelId}
                   tabTitle={zoomedTab.title}
                   isVisible={true}
+                  sessionType={
+                    zoomedTab.config.type === "remote-session"
+                      ? ((zoomedTab.config.config as { sessionType?: string }).sessionType ?? "")
+                      : zoomedTab.config.type
+                  }
                 />
               ) : zoomedTab.contentType === "terminal" ? (
                 <>
@@ -422,6 +437,9 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
   const tabColors = useAppStore((s) => s.tabColors);
   const setTabColor = useAppStore((s) => s.setTabColor);
   const terminalSpawnErrors = useAppStore((s) => s.terminalSpawnErrors);
+  const terminalConnecting = useAppStore((s) => s.terminalConnecting);
+  const terminalAutoRetryCount = useAppStore((s) => s.terminalAutoRetryCount);
+  const terminalWaitingForAgent = useAppStore((s) => s.terminalWaitingForAgent);
   const rightClickBehavior = useAppStore((s) => s.settings.rightClickBehavior);
   const useQuickAction =
     rightClickBehavior === "quickAction" || (!rightClickBehavior && isWindows());
@@ -531,13 +549,22 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
               meta={tab.agentErrorMeta}
               isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
             />
-          ) : tab.contentType === "terminal" && terminalSpawnErrors[tab.id] ? (
-            <TerminalSpawnErrorOverlay
+          ) : tab.contentType === "terminal" &&
+            (terminalSpawnErrors[tab.id] ||
+              terminalConnecting[tab.id] ||
+              (terminalAutoRetryCount[tab.id] ?? 0) > 0 ||
+              !!terminalWaitingForAgent[tab.id]) ? (
+            <TerminalConnectionOverlay
               key={tab.id}
               tabId={tab.id}
-              error={terminalSpawnErrors[tab.id]}
+              panelId={panel.id}
               tabTitle={tab.title}
               isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
+              sessionType={
+                tab.config.type === "remote-session"
+                  ? ((tab.config.config as { sessionType?: string }).sessionType ?? "")
+                  : tab.config.type
+              }
             />
           ) : useQuickAction ? (
             <div
@@ -688,6 +715,10 @@ function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: boolean 
   const slotRef = useRef<HTMLDivElement>(null);
   const { getElement, focusTerminal, fitTerminal, parkingRef } = useTerminalRegistry();
   const tabColor = useAppStore((s) => s.tabColors[tabId]);
+  const isExited = useAppStore((s) => s.terminalExitedTabs[tabId] ?? false);
+  const isViewMode = useAppStore((s) => s.terminalViewMode[tabId] ?? false);
+  const isReconnecting = useAppStore((s) => s.terminalReconnectingTabs[tabId] ?? false);
+  const isReconnectPromptVisible = useAppStore((s) => s.terminalReconnectPrompt[tabId] ?? false);
 
   useEffect(() => {
     const slotEl = slotRef.current;
@@ -737,7 +768,15 @@ function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: boolean 
       ref={slotRef}
       className={`terminal-container ${isVisible ? "" : "terminal-container--hidden"}`}
       style={tabColor ? { border: `2px solid ${tabColor}` } : undefined}
-    />
+    >
+      {(isReconnecting || (isExited && !isViewMode)) && <TerminalDisconnectOverlay tabId={tabId} />}
+      {isExited && isViewMode && (
+        <>
+          <TerminalViewModeBanner tabId={tabId} />
+          {isReconnectPromptVisible && <TerminalReconnectPrompt tabId={tabId} />}
+        </>
+      )}
+    </div>
   );
 }
 

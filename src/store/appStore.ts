@@ -379,8 +379,36 @@ interface AppState {
   // Per-tab terminal spawn errors (runtime-only, cleared on retry or tab close)
   terminalSpawnErrors: Record<string, string>;
   terminalRetryCounters: Record<string, number>;
+  /** True while a createTerminal call is in-flight — drives the "Connecting…" overlay. */
+  terminalConnecting: Record<string, boolean>;
   setTerminalSpawnError: (tabId: string, error: string | null) => void;
   retryTerminalSpawn: (tabId: string) => void;
+  setTerminalConnecting: (tabId: string, connecting: boolean) => void;
+  /** Auto-retry attempt count for agent sessions (> 0 = actively auto-retrying). */
+  terminalAutoRetryCount: Record<string, number>;
+  /** Tab is parked waiting for its parent agent to connect; value = agentId. */
+  terminalWaitingForAgent: Record<string, string>;
+  setTerminalAutoRetrying: (tabId: string, count: number) => void;
+  setTerminalWaitingForAgent: (tabId: string, agentId: string | null) => void;
+
+  // Per-tab terminal session disconnects (runtime-only, cleared on reconnect, dismiss, or tab close)
+  terminalExitedTabs: Record<string, boolean>;
+  /** Error message from a failed reconnect attempt (agent auto-reconnect exhausted). */
+  terminalDisconnectErrors: Record<string, string>;
+  /** True when the disconnect overlay was dismissed — session is dead but user is browsing scrollback. */
+  terminalViewMode: Record<string, boolean>;
+  /** True while the agent is actively trying to reconnect (shows spinner overlay). */
+  terminalReconnectingTabs: Record<string, boolean>;
+  /** True when the "reconnect?" prompt should appear (triggered by Enter in view mode). */
+  terminalReconnectPrompt: Record<string, boolean>;
+  setTerminalExited: (tabId: string) => void;
+  setTerminalDisconnectWithError: (tabId: string, error: string) => void;
+  setTerminalReconnecting: (tabId: string, reconnecting: boolean) => void;
+  /** Dismiss the disconnect overlay into "view mode": scrollback is preserved, a thin banner shows. */
+  dismissTerminalDisconnect: (tabId: string) => void;
+  reconnectTerminal: (tabId: string) => void;
+  showTerminalReconnectPrompt: (tabId: string) => void;
+  dismissTerminalReconnectPrompt: (tabId: string) => void;
 
   // Remote connection states
   remoteStates: Record<string, string>;
@@ -1221,6 +1249,14 @@ export const useAppStore = create<AppState>((set, get) => {
         const { [tabId]: _removedSearch, ...remainingSearch } = state.terminalSearchVisible;
         const { [tabId]: _removedSpawnErr, ...remainingSpawnErrors } = state.terminalSpawnErrors;
         const { [tabId]: _removedRetry, ...remainingRetryCounters } = state.terminalRetryCounters;
+        const { [tabId]: _removedConn, ...remainingConnecting } = state.terminalConnecting;
+        const { [tabId]: _removedExited, ...remainingExited } = state.terminalExitedTabs;
+        const { [tabId]: _removedErr, ...remainingDiscErr } = state.terminalDisconnectErrors;
+        const { [tabId]: _removedView, ...remainingView } = state.terminalViewMode;
+        const { [tabId]: _removedReconn, ...remainingReconn } = state.terminalReconnectingTabs;
+        const { [tabId]: _removedPrompt, ...remainingPrompt } = state.terminalReconnectPrompt;
+        const { [tabId]: _removedAutoRetry, ...remainingAutoRetry } = state.terminalAutoRetryCount;
+        const { [tabId]: _removedWaiting, ...remainingWaiting } = state.terminalWaitingForAgent;
 
         let rootPanel = updateLeaf(state.rootPanel, panelId, (leaf) =>
           removeTabFromLeaf(leaf, tabId)
@@ -1250,6 +1286,14 @@ export const useAppStore = create<AppState>((set, get) => {
             terminalSearchVisible: remainingSearch,
             terminalSpawnErrors: remainingSpawnErrors,
             terminalRetryCounters: remainingRetryCounters,
+            terminalConnecting: remainingConnecting,
+            terminalExitedTabs: remainingExited,
+            terminalDisconnectErrors: remainingDiscErr,
+            terminalViewMode: remainingView,
+            terminalReconnectingTabs: remainingReconn,
+            terminalReconnectPrompt: remainingPrompt,
+            terminalAutoRetryCount: remainingAutoRetry,
+            terminalWaitingForAgent: remainingWaiting,
           };
         }
 
@@ -1264,6 +1308,14 @@ export const useAppStore = create<AppState>((set, get) => {
           terminalSearchVisible: remainingSearch,
           terminalSpawnErrors: remainingSpawnErrors,
           terminalRetryCounters: remainingRetryCounters,
+          terminalConnecting: remainingConnecting,
+          terminalExitedTabs: remainingExited,
+          terminalDisconnectErrors: remainingDiscErr,
+          terminalViewMode: remainingView,
+          terminalReconnectingTabs: remainingReconn,
+          terminalReconnectPrompt: remainingPrompt,
+          terminalAutoRetryCount: remainingAutoRetry,
+          terminalWaitingForAgent: remainingWaiting,
         };
       }),
 
@@ -1963,6 +2015,9 @@ export const useAppStore = create<AppState>((set, get) => {
     // Per-tab terminal spawn errors (runtime-only)
     terminalSpawnErrors: {},
     terminalRetryCounters: {},
+    terminalConnecting: {},
+    terminalAutoRetryCount: {},
+    terminalWaitingForAgent: {},
     setTerminalSpawnError: (tabId, error) =>
       set((state) => {
         if (error === null) {
@@ -1974,13 +2029,138 @@ export const useAppStore = create<AppState>((set, get) => {
     retryTerminalSpawn: (tabId) =>
       set((state) => {
         const { [tabId]: _removed, ...remaining } = state.terminalSpawnErrors;
+        const { [tabId]: _removedAutoRetry, ...remainingAutoRetry } = state.terminalAutoRetryCount;
+        const { [tabId]: _removedWaiting, ...remainingWaiting } = state.terminalWaitingForAgent;
         return {
           terminalSpawnErrors: remaining,
+          terminalAutoRetryCount: remainingAutoRetry,
+          terminalWaitingForAgent: remainingWaiting,
           terminalRetryCounters: {
             ...state.terminalRetryCounters,
             [tabId]: (state.terminalRetryCounters[tabId] ?? 0) + 1,
           },
         };
+      }),
+    setTerminalConnecting: (tabId, connecting) =>
+      set((state) => {
+        if (connecting) {
+          return { terminalConnecting: { ...state.terminalConnecting, [tabId]: true } };
+        }
+        const { [tabId]: _removed, ...remaining } = state.terminalConnecting;
+        return { terminalConnecting: remaining };
+      }),
+    setTerminalAutoRetrying: (tabId, count) =>
+      set((state) => {
+        const { [tabId]: _removedConn, ...remainingConn } = state.terminalConnecting;
+        if (count === 0) {
+          const { [tabId]: _removed, ...remaining } = state.terminalAutoRetryCount;
+          return { terminalAutoRetryCount: remaining, terminalConnecting: remainingConn };
+        }
+        return {
+          terminalAutoRetryCount: { ...state.terminalAutoRetryCount, [tabId]: count },
+          terminalConnecting: remainingConn,
+        };
+      }),
+    setTerminalWaitingForAgent: (tabId, agentId) =>
+      set((state) => {
+        const { [tabId]: _removedConn, ...remainingConn } = state.terminalConnecting;
+        if (agentId === null) {
+          const { [tabId]: _removed, ...remaining } = state.terminalWaitingForAgent;
+          return { terminalWaitingForAgent: remaining, terminalConnecting: remainingConn };
+        }
+        return {
+          terminalWaitingForAgent: { ...state.terminalWaitingForAgent, [tabId]: agentId },
+          terminalConnecting: remainingConn,
+        };
+      }),
+
+    // Per-tab terminal session disconnects (runtime-only)
+    terminalExitedTabs: {},
+    terminalDisconnectErrors: {},
+    terminalViewMode: {},
+    terminalReconnectingTabs: {},
+    terminalReconnectPrompt: {},
+    setTerminalExited: (tabId) => {
+      set((state) => ({
+        terminalExitedTabs: { ...state.terminalExitedTabs, [tabId]: true },
+        // Clear any stale reconnecting flag — session is definitively dead now
+        terminalReconnectingTabs: (() => {
+          const { [tabId]: _removed, ...remaining } = state.terminalReconnectingTabs;
+          return remaining;
+        })(),
+      }));
+      // Stop monitoring when the terminal session dies — the stats are no
+      // longer being updated and the overlay hides the terminal anyway.
+      if (get().monitoringSessionId) {
+        get().disconnectMonitoring();
+      }
+    },
+    setTerminalDisconnectWithError: (tabId, error) => {
+      set((state) => ({
+        terminalExitedTabs: { ...state.terminalExitedTabs, [tabId]: true },
+        terminalDisconnectErrors: { ...state.terminalDisconnectErrors, [tabId]: error },
+        terminalReconnectingTabs: (() => {
+          const { [tabId]: _removed, ...remaining } = state.terminalReconnectingTabs;
+          return remaining;
+        })(),
+      }));
+      if (get().monitoringSessionId) {
+        get().disconnectMonitoring();
+      }
+    },
+    setTerminalReconnecting: (tabId, reconnecting) =>
+      set((state) => {
+        if (reconnecting) {
+          return {
+            terminalReconnectingTabs: { ...state.terminalReconnectingTabs, [tabId]: true },
+          };
+        }
+        const { [tabId]: _removed, ...remaining } = state.terminalReconnectingTabs;
+        return { terminalReconnectingTabs: remaining };
+      }),
+    dismissTerminalDisconnect: (tabId) =>
+      set((state) => ({
+        // Keep terminalExitedTabs[tabId] = true so the banner can detect the dead session;
+        // only flip the overlay off by entering view mode.
+        terminalViewMode: { ...state.terminalViewMode, [tabId]: true },
+      })),
+    reconnectTerminal: (tabId) =>
+      set((state) => {
+        const { [tabId]: _removedExited, ...remainingExited } = state.terminalExitedTabs;
+        const { [tabId]: _removedErr, ...remainingErr } = state.terminalDisconnectErrors;
+        const { [tabId]: _removedView, ...remainingView } = state.terminalViewMode;
+        const { [tabId]: _removedPrompt, ...remainingPrompt } = state.terminalReconnectPrompt;
+        const { [tabId]: _removedReconn, ...remainingReconn } = state.terminalReconnectingTabs;
+        const { [tabId]: _removedAutoRetry, ...remainingAutoRetry } = state.terminalAutoRetryCount;
+        const { [tabId]: _removedWaiting, ...remainingWaiting } = state.terminalWaitingForAgent;
+        const { [tabId]: _removedSpawnErr, ...remainingSpawnErrors } = state.terminalSpawnErrors;
+        return {
+          terminalExitedTabs: remainingExited,
+          terminalDisconnectErrors: remainingErr,
+          terminalViewMode: remainingView,
+          terminalReconnectPrompt: remainingPrompt,
+          terminalReconnectingTabs: remainingReconn,
+          terminalAutoRetryCount: remainingAutoRetry,
+          terminalWaitingForAgent: remainingWaiting,
+          terminalSpawnErrors: remainingSpawnErrors,
+          // Set connecting immediately so the "Connecting…" overlay appears at once,
+          // without a gap between the disconnect overlay disappearing and the effect
+          // re-running to call setTerminalConnecting().
+          terminalConnecting: { ...state.terminalConnecting, [tabId]: true },
+          terminalRetryCounters: {
+            ...state.terminalRetryCounters,
+            [tabId]: (state.terminalRetryCounters[tabId] ?? 0) + 1,
+          },
+        };
+      }),
+    showTerminalReconnectPrompt: (tabId) =>
+      set((state) => ({
+        terminalReconnectPrompt: { ...state.terminalReconnectPrompt, [tabId]: true },
+      })),
+    dismissTerminalReconnectPrompt: (tabId) =>
+      set((state) => {
+        const { [tabId]: _removed, ...remaining } = state.terminalReconnectPrompt;
+        return { terminalReconnectPrompt: remaining };
       }),
 
     // Remote connection states

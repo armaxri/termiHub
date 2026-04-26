@@ -61,6 +61,42 @@ describe("terminal spawn error state", () => {
     expect(useAppStore.getState().terminalRetryCounters["tab-1"]).toBe(2);
   });
 
+  // ── reconnectTerminal ────────────────────────────────────────────────────────
+
+  it("reconnectTerminal immediately sets terminalConnecting so the overlay appears without a gap", () => {
+    useAppStore.getState().setTerminalExited("tab-1");
+    useAppStore.getState().reconnectTerminal("tab-1");
+    expect(useAppStore.getState().terminalConnecting["tab-1"]).toBe(true);
+  });
+
+  it("reconnectTerminal clears terminalExitedTabs", () => {
+    useAppStore.getState().setTerminalExited("tab-1");
+    useAppStore.getState().reconnectTerminal("tab-1");
+    expect(useAppStore.getState().terminalExitedTabs["tab-1"]).toBeUndefined();
+  });
+
+  it("reconnectTerminal clears terminalSpawnErrors so stale errors do not surface", () => {
+    useAppStore.getState().setTerminalExited("tab-1");
+    useAppStore.getState().setTerminalSpawnError("tab-1", "stale error");
+    useAppStore.getState().reconnectTerminal("tab-1");
+    expect(useAppStore.getState().terminalSpawnErrors["tab-1"]).toBeUndefined();
+  });
+
+  it("reconnectTerminal clears terminalDisconnectErrors", () => {
+    useAppStore.getState().setTerminalDisconnectWithError("tab-1", "disconnect error");
+    useAppStore.getState().reconnectTerminal("tab-1");
+    expect(useAppStore.getState().terminalDisconnectErrors["tab-1"]).toBeUndefined();
+  });
+
+  it("reconnectTerminal increments terminalRetryCounters to trigger Terminal effect re-run", () => {
+    useAppStore.getState().setTerminalExited("tab-1");
+    useAppStore.getState().reconnectTerminal("tab-1");
+    expect(useAppStore.getState().terminalRetryCounters["tab-1"]).toBe(1);
+    useAppStore.getState().setTerminalExited("tab-1");
+    useAppStore.getState().reconnectTerminal("tab-1");
+    expect(useAppStore.getState().terminalRetryCounters["tab-1"]).toBe(2);
+  });
+
   it("closeTab removes spawn error and retry counter", () => {
     const store = useAppStore.getState();
     // Add a terminal tab via addTab so we have a valid panelId

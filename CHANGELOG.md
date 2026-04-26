@@ -7,19 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
+### Fixed
 
-- SSH: Shell Integration and X11 Forwarding now default to enabled for new connections
-- Settings: General settings now include SSH defaults section to control whether Shell Integration and X11 Forwarding are pre-enabled for new SSH connections
+- Agent: after an agent reconnects following a power loss, terminals whose sessions were successfully recovered by the agent now resume automatically instead of always showing the "Session disconnected" overlay. Sessions that could not be recovered still show the overlay as before.
+- Terminal: clicking "Reconnect" after a session disconnect now immediately shows the "Connecting…" overlay with no blank gap between the disconnect overlay disappearing and the connection attempt starting. Previously, the overlay was not set until after a React render cycle, leaving a brief window with no visible feedback.
+- Terminal: agent-session reconnect loop now shows a "Connection failed" state briefly after each failed attempt instead of spinning "Connecting…" indefinitely with no visible feedback. The overlay cycles Connecting → Connection failed → Connecting until the session is established.
+- Terminal: when an agent reconnects while a terminal is in the retry loop (or showing "Connection failed"), the connection attempt is now restarted immediately instead of waiting for the next retry cycle — the terminal connects as soon as the agent is back.
 - Connection editor: boolean fields in existing connections now correctly reflect their schema default when the field was never explicitly saved (previously showed unchecked regardless of the schema default)
-- File browser: toolbar now shows the current directory path on its own line, with action buttons on a second line that wraps when the panel is narrow
 
 ### Added
 
+- Terminal: a unified "Connecting…" overlay now appears on every terminal tab while the backend session is being established, for all connection types (SSH, Telnet, serial, agent sessions). The overlay shows a spinner and a Cancel button (which closes the tab). If the initial connection fails, the overlay transitions to an error state with a Retry button and contextual hints for common failure modes (SSH agent not running, timeout, serial port not found, port permission denied, port in use).
+- Terminal: for agent-mediated sessions (sessions running on a remote agent), connection failures trigger automatic background retry instead of showing an error immediately. The overlay shows the current attempt number. The user can cancel at any time by closing the tab.
+- Terminal: tabs that are created while their parent agent is still connecting now show a "Waiting for agent…" spinner overlay and automatically start their session once the agent connects, instead of failing immediately with an error.
+- Serial: error messages for common failure modes (port not found, permission denied, port in use) now include the port name and a plain-English explanation of how to fix the issue.
+
+### Changed
+
+- File browser: toolbar now shows the current directory path on its own line, with action buttons on a second line that wraps when the panel is narrow
+- Terminal disconnect overlay: the Dismiss button is now labelled "View Scrollback" and keeps the session marked as ended (instead of silently clearing the state). After dismissing, a thin non-blocking banner at the bottom of the terminal indicates the session is dead and offers a Reconnect button, while the full terminal content remains selectable and copyable.
+- Terminal disconnect overlay: pressing Enter while in view mode (scrollback-only) now opens a small reconnect prompt instead of sending the keystroke to the dead session. The prompt offers "Reconnect" and "Stay in View Mode" choices.
+- Terminal disconnect overlay: the overlay now has three distinct variants — a spinner overlay while the agent is auto-reconnecting, an error-state overlay (with error details and a "Try Again" button) when all reconnect attempts have been exhausted, and the standard "Session disconnected" overlay for normal exits.
+- Agent: when the automatic reconnect loop exhausts all retries, the disconnect overlay now shows the reason (e.g. "Failed to reconnect after 10 attempts") so the user knows why the reconnect stopped.
+- Agent: tabs belonging to a reconnecting agent now show a "Reconnecting…" spinner overlay during automatic reconnect attempts, so the terminal no longer appears frozen/dead while recovery is in progress.
+- SSH: Shell Integration and X11 Forwarding now default to enabled for new connections
+- Settings: General settings now include SSH defaults section to control whether Shell Integration and X11 Forwarding are pre-enabled for new SSH connections
+
+### Added
+
+- Terminal: when a session exits unexpectedly (e.g. remote host reboots), a semi-transparent overlay appears over the terminal with a "Session disconnected" message, a Reconnect button that starts a fresh session with the same connection config, and a Dismiss button to hide the overlay and scroll the preserved history
 - Remote Agents: agent runtime settings (feature toggles, session defaults, diagnostics) are now stored per-agent and configured in a dedicated "Agent" tab in the connection editor. Settings include enabling/disabling monitoring, file browser (SFTP), and Docker support; setting a default shell and starting directory; and configuring log level and verbose protocol tracing. Settings are sent to the agent on connect and can be updated live without reconnecting.
 
 ### Fixed
 
+- Agent: the "Reconnecting…" and "Session disconnected" overlays now correctly appear on all agent terminal tabs during and after an auto-reconnect, including sessions opened after the initial agent connect. Previously, the overlay was never shown because the tab-finding logic relied on `agentSessions`, which is populated only once on initial connect (before any sessions exist) and was therefore always empty. The fix looks up tabs directly by their connection config's `agentId` field.
+- Agent: after the agent transport successfully auto-reconnects, affected tabs now transition from the "Reconnecting…" spinner to a "Session disconnected" overlay (with a Reconnect button), correctly reflecting that the remote shell sessions were lost when the agent process restarted.
+- SSH: dead-connection detection time reduced from ~15 s to ~6 s by tightening TCP keepalive probe interval (idle 2 s, interval 2 s, 1 retry), so the disconnect overlay appears much sooner after a remote host loses power
+- SSH: write timeout reduced from 5 s to 2 s, capping the UI freeze when typing into a dead connection; combined with a fast-path that skips the blocking write once the session is already known to be dead, subsequent keystrokes fail instantly
+- Monitoring: fixed UI freeze and delayed disconnect overlay caused by `monitoring_fetch_stats` blocking tokio worker threads for up to 52 s per call when the remote host is dead; the command is now async and dispatches the blocking SSH exec to a dedicated thread pool via `spawn_blocking`, and the legacy SSH connection now has a 15 s read timeout to bound the blocking time
+- Monitoring: `monitoring_open` now also uses `spawn_blocking` so a TCP connect to a dead host (which can take ~75 s for the SYN timeout) no longer blocks a tokio worker thread
+- Monitoring: fixed auto-reconnect loop — when the disconnect overlay is showing, the status bar no longer tries to open a new monitoring session to the dead host; monitoring reconnects automatically once the user brings the terminal back via the Reconnect button
+- Monitoring: CPU/memory stats panel now automatically disconnects when the terminal session exits unexpectedly (instead of persisting stale stats under the disconnect overlay)
 - Agent: fixed connection failure on freshly deployed agents — the desktop was sending `protocol_version`/`client_version` in snake_case JSON but the agent expected camelCase (`protocolVersion`/`clientVersion`), causing every connect attempt to fail with "missing field `protocolVersion`"
 - Agent: "Initialize rejected" errors (protocol version mismatch) now show a clear "Agent Version Incompatible" message with a "Setup Agent" button to re-deploy, instead of a raw internal error string
 - SSH key picker: OS metadata files (`.DS_Store`, `.localized` on macOS; `Thumbs.db`, `desktop.ini` on Windows; `.directory` on Linux/KDE) are now excluded from the key file list

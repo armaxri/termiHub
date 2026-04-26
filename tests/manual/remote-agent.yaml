@@ -31,3 +31,72 @@ tests:
     expected:
       - "Agent connects successfully"
     verification: manual
+
+  # --- Agent disconnect overlay: reconnecting spinner + error feedback (feature/terminal-disconnect-overlay) ---
+
+  - id: MT-AGENT-08
+    name: "Agent reconnect: spinner overlay shown while auto-reconnecting"
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Open one or more sessions via a remote agent"
+      - "Simulate a temporary network disruption (e.g. pause the Docker container briefly)"
+      - "Observe the terminal tabs while the agent is reconnecting"
+    expected:
+      - "Each affected tab shows a 'Reconnecting…' spinner overlay (blurred background, animated icon)"
+      - "No user action is needed — the overlay disappears automatically when the agent reconnects"
+      - "After reconnect, terminal output resumes in the same tab (scrollback preserved)"
+    verification: manual
+
+  - id: MT-AGENT-09
+    name: "Agent reconnect failure: error message in overlay"
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Open one or more sessions via a remote agent"
+      - "Permanently disconnect the agent (stop the SSH server) so reconnect retries all fail"
+      - "Wait for the auto-reconnect loop to exhaust all 10 attempts (may take a few minutes)"
+    expected:
+      - "The 'Reconnect failed' overlay appears on each affected tab"
+      - "The overlay shows a red 'Reconnect failed' heading and an error box with the reason"
+      - "A 'Try Again' button is present (triggers a new manual reconnect attempt)"
+      - "A 'View Scrollback' button is present (enters view mode so history can be read)"
+    verification: manual
+
+  # --- Agent-session connecting overlay: auto-retry + waiting-for-agent (feature/terminal-connect-overlay) ---
+
+  - id: MT-AGENT-10
+    name: "Agent session auto-retries with spinner while agent is unavailable"
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Stop a remote agent (or make it unreachable)"
+      - "Open a new session tab that routes through that agent"
+      - "Observe the overlay while the session fails to connect"
+    expected:
+      - "The overlay cycles through 'Connecting…' → short delay → 'Connecting… (attempt N)' indefinitely"
+      - "No error overlay or Retry button appears — the loop is fully automatic"
+      - "A 'Cancel' button is always visible to abort"
+    verification: manual
+
+  - id: MT-AGENT-11
+    name: "Waiting-for-agent state: session auto-starts when agent connects"
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Ensure the agent is in 'connecting' or 'reconnecting' state (start app before agent is up)"
+      - "Open a session tab that routes through that agent"
+      - "Observe the overlay, then bring the agent online"
+    expected:
+      - "Overlay shows 'Waiting for agent…' with a spinner and no Retry button"
+      - "As soon as the agent transitions to 'connected', the session starts automatically"
+      - "The overlay disappears and normal terminal output appears without any user action"
+    verification: manual

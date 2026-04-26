@@ -139,6 +139,10 @@ pub struct ConnectionConfig {
 pub struct RemoteStateChangeEvent {
     pub session_id: String,
     pub state: String,
+    /// Human-readable error description when state is "disconnected" after a
+    /// failed reconnect, or when the initial connection cannot be established.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// Bounded channel capacity for output data from backends.

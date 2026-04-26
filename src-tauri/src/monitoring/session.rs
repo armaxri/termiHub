@@ -93,14 +93,18 @@ impl StatsCollector for MonitoringSession {
 }
 
 /// Manages multiple monitoring sessions keyed by UUID.
+///
+/// The inner sessions map is shared behind an `Arc` so the manager can be
+/// cheaply cloned and moved into `spawn_blocking` closures.
+#[derive(Clone)]
 pub struct MonitoringManager {
-    sessions: Mutex<HashMap<String, Arc<Mutex<MonitoringSession>>>>,
+    sessions: Arc<Mutex<HashMap<String, Arc<Mutex<MonitoringSession>>>>>,
 }
 
 impl MonitoringManager {
     pub fn new() -> Self {
         Self {
-            sessions: Mutex::new(HashMap::new()),
+            sessions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 

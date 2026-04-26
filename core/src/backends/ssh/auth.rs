@@ -10,6 +10,8 @@ use std::net::TcpStream;
 use std::path::Path;
 use std::path::PathBuf;
 
+use socket2::TcpKeepalive;
+
 use crate::config::expand::expand_tilde;
 use crate::config::SshConfig;
 use crate::errors::SessionError;
@@ -32,6 +34,34 @@ pub fn connect_and_authenticate(config: &SshConfig) -> Result<ssh2::Session, Ses
     let addr = format!("{}:{}", config.host, config.port);
     let tcp = TcpStream::connect(&addr)
         .map_err(|e| SessionError::SpawnFailed(format!("Connection failed: {e}")))?;
+
+    // Limit how long a blocking write can wait on a silently dead connection.
+    // Without this, write_all on a dead socket fills the TCP send buffer and
+    // blocks the calling thread indefinitely (until OS TCP timeout, minutes away).
+    // 2 s is short enough to unblock the UI promptly on dead connections while
+    // still tolerating momentary congestion on high-latency links.
+    tcp.set_write_timeout(Some(std::time::Duration::from_secs(2)))
+        .map_err(|e| {
+            SessionError::SpawnFailed(format!("Failed to set socket write timeout: {e}"))
+        })?;
+
+    // Enable TCP keepalives so a silent disconnect (remote host losing power,
+    // no RST/FIN) is detected within ~6 s even without user input.
+    // Probe after 2 s idle, retry every 2 s, give up after 1 failed probe.
+    {
+        let ka = {
+            let base = TcpKeepalive::new()
+                .with_time(std::time::Duration::from_secs(2))
+                .with_interval(std::time::Duration::from_secs(2));
+            #[cfg(not(target_os = "windows"))]
+            let base = base.with_retries(1);
+            base
+        };
+        // SockRef borrows the socket in-place — no ownership transfer needed.
+        if let Err(e) = socket2::SockRef::from(&tcp).set_tcp_keepalive(&ka) {
+            tracing::warn!("TCP keepalive setup failed (dead connections may go undetected): {e}");
+        }
+    }
 
     let mut session = ssh2::Session::new().map_err(|e| SessionError::SpawnFailed(e.to_string()))?;
 

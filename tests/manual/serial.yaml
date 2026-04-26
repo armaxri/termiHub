@@ -32,3 +32,47 @@ tests:
       - "Bundled Nerd Font renders glyphs correctly"
     verification: manual
     tags: [visual]
+
+  # --- Serial connection error overlay (feature/terminal-connect-overlay) ---
+
+  - id: MT-SER-03
+    name: "Serial port not found shows descriptive error overlay"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Create a serial connection pointing to a port that does not exist (e.g. /dev/ttyUSB99)"
+      - "Open the tab"
+    expected:
+      - "The 'Connection failed' overlay appears"
+      - "Error message contains 'Serial port not found' and the port path"
+      - "A 'Retry' button and a 'Cancel' button are shown"
+    verification: manual
+
+  - id: MT-SER-04
+    name: "Serial port permission denied shows dialout hint"
+    platforms: [linux]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Create a serial connection to a port the current user lacks permission to open"
+      - "Open the tab (do not add the user to the dialout group beforehand)"
+    expected:
+      - "The 'Connection failed' overlay appears"
+      - "Error message contains 'Permission denied' and mentions the 'dialout' group"
+      - "A 'Retry' button and a 'Cancel' button are shown"
+    verification: manual
+
+  - id: MT-SER-05
+    name: "Serial port busy shows 'already in use' hint"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open a serial port with another application (e.g. screen, minicom, or another termiHub tab)"
+      - "Try to open a second termiHub tab to the same port"
+    expected:
+      - "The 'Connection failed' overlay appears on the second tab"
+      - "Error message contains 'already in use'"
+      - "A 'Retry' button and a 'Cancel' button are shown"
+    verification: manual

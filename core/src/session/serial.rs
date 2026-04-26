@@ -97,7 +97,35 @@ pub fn open_serial_port(
         .flow_control(config.flow_control)
         .timeout(Duration::from_millis(100))
         .open()
-        .map_err(|e| SessionError::SpawnFailed(format!("Failed to open serial port: {}", e)))
+        .map_err(|e| {
+            let msg = match e.kind() {
+                serialport::ErrorKind::Io(std::io::ErrorKind::NotFound) => format!(
+                    "Serial port '{}' not found — check that the device is connected and the port name is correct",
+                    config.port
+                ),
+                serialport::ErrorKind::Io(std::io::ErrorKind::PermissionDenied) => format!(
+                    "Permission denied on '{}' — on Linux, add your user to the dialout group: sudo usermod -aG dialout $USER",
+                    config.port
+                ),
+                _ => {
+                    let desc = e.to_string();
+                    if desc.contains("busy") || desc.contains("in use") || desc.contains("Access is denied") {
+                        format!(
+                            "Serial port '{}' is already in use by another application",
+                            config.port
+                        )
+                    } else if desc.contains("not found") || desc.contains("cannot find") || desc.contains("No such file") {
+                        format!(
+                            "Serial port '{}' not found — check that the device is connected and the port name is correct",
+                            config.port
+                        )
+                    } else {
+                        format!("Failed to open serial port '{}': {}", config.port, e)
+                    }
+                }
+            };
+            SessionError::SpawnFailed(msg)
+        })
 }
 
 /// List available serial port names on the system.
