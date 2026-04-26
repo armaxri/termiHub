@@ -129,7 +129,6 @@ export function Terminal({
   const lastInputTimeRef = useRef(0);
   const contentDirtyRef = useRef(false);
   const pendingCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Tracks view mode so the key handler (set once in the main effect) can read current state.
   const isViewModeRef = useRef(false);
   // Capture existingSessionId at mount time only. After the Terminal creates a
   // session, TerminalRegistry.registerSession writes the session ID back to the

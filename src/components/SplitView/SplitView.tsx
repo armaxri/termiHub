@@ -769,13 +769,12 @@ function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: boolean 
       className={`terminal-container ${isVisible ? "" : "terminal-container--hidden"}`}
       style={tabColor ? { border: `2px solid ${tabColor}` } : undefined}
     >
-      {/* Full overlay: shown while reconnecting OR when exited and not in view mode */}
       {(isReconnecting || (isExited && !isViewMode)) && <TerminalDisconnectOverlay tabId={tabId} />}
-      {/* Thin banner: shown when exited and the overlay was dismissed (view mode) */}
-      {isExited && isViewMode && <TerminalViewModeBanner tabId={tabId} />}
-      {/* Reconnect prompt: shown when user presses Enter in view mode */}
-      {isExited && isViewMode && isReconnectPromptVisible && (
-        <TerminalReconnectPrompt tabId={tabId} />
+      {isExited && isViewMode && (
+        <>
+          <TerminalViewModeBanner tabId={tabId} />
+          {isReconnectPromptVisible && <TerminalReconnectPrompt tabId={tabId} />}
+        </>
       )}
     </div>
   );
