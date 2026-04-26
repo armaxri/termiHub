@@ -600,7 +600,6 @@ function injectTabIntoPanel(
   }
   return {
     ...node,
-    first: injectTabIntoPanel(node.first, panelId, tab),
-    second: injectTabIntoPanel(node.second, panelId, tab),
+    children: node.children.map((child) => injectTabIntoPanel(child, panelId, tab)),
   };
 }

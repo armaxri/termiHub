@@ -153,12 +153,9 @@ export function Terminal({
   // instance) can consult current state without being recreated on every render.
   useEffect(() => {
     isViewModeRef.current = useAppStore.getState().terminalViewMode[tabId] ?? false;
-    return useAppStore.subscribe(
-      (state) => state.terminalViewMode[tabId] ?? false,
-      (viewMode) => {
-        isViewModeRef.current = viewMode;
-      }
-    );
+    return useAppStore.subscribe((state) => {
+      isViewModeRef.current = state.terminalViewMode[tabId] ?? false;
+    });
   }, [tabId]);
 
   const setupTerminal = useCallback(
