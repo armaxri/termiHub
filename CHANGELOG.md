@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Files: remote zsh sessions now receive shell integration (OSC 7 CWD tracking) so the file browser follows the terminal's current directory. Previously, zsh was excluded from integration injection under the incorrect assumption that it emits OSC 7 natively; the injected hook correctly detects bash vs. zsh at runtime (#630)
+- Files: the session-mode file browser now opens in the user's home directory (`~`) instead of the filesystem root (`/`) when no CWD has been received yet (#630)
 - Serial: on Linux/Raspberry Pi, UART devices such as `ttyAMA*`, `ttyS*`, and `uart_up*` are now listed in the serial port selector (previously these were omitted because the `serialport` crate does not enumerate them on some embedded Linux configurations) (#628)
 - Agent: opening a saved agent connection definition now correctly forwards all configured settings (shell integration, initial command, serial port parameters, and any other schema fields) to the backend. Previously only the shell path was forwarded, causing shell integration to always run regardless of the setting, initial commands to be silently ignored, and serial port details to be lost. Tab color from terminal options is also now applied when using "Save and Connect" from the connection editor.
 - Terminal: "Copy tab content" no longer pads lines with trailing spaces or wraps long lines at the visible terminal width — content is now copied as logical lines, matching what horizontal scrolling would show (#636)
