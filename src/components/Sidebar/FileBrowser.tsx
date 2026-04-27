@@ -556,7 +556,8 @@ function useFileBrowserSync() {
     if (fileBrowserMode !== "session" || !sessionFileBrowserId) return;
     const { sessionFileEntries } = useAppStore.getState();
     if (sessionFileEntries.length > 0) return; // Already loaded
-    navigateSession(sessionFileBrowserId, cwd ?? "/");
+    // Fall back to "~" so the agent resolves the home directory instead of "/".
+    navigateSession(sessionFileBrowserId, cwd ?? "~");
   }, [fileBrowserMode, sessionFileBrowserId, navigateSession, cwd]);
 
   // Auto-connect SFTP for tabs with file browser capability
