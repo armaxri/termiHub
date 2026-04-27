@@ -211,9 +211,15 @@ export function Terminal({
 
         // ── Connection loop ────────────────────────────────────────────────
         // For workspace-restore the session already exists — skip the loop.
+        // ptyCols/ptyRows capture the dimensions passed to createTerminal so
+        // we can initialize the resize-deduplication tracking below.
+        let ptyCols = 0;
+        let ptyRows = 0;
         let sessionId: string;
         if (initialSessionIdRef.current) {
           sessionId = initialSessionIdRef.current;
+          // Workspace-restore: PTY dims unknown — leave ptyCols/ptyRows at 0
+          // so the post-setup resize always fires to re-sync xterm with the PTY.
         } else {
           let attempt = 0;
           let resolved: string | null = null;
@@ -222,6 +228,11 @@ export function Terminal({
             useAppStore.getState().setTerminalConnecting(tabId, true);
 
             try {
+              // Capture dims immediately before creating the PTY so we know
+              // what size it was created with (xterm.cols may change while
+              // createTerminal is awaiting if a container resize fires).
+              ptyCols = xterm.cols;
+              ptyRows = xterm.rows;
               resolved = await createTerminal(sessionConfig);
 
               if (isCanceled()) {
@@ -293,6 +304,17 @@ export function Terminal({
         sessionIdRef.current = sessionId;
         registerSession(tabId, sessionId);
 
+        // Resize-deduplication: track the last (cols, rows) sent to the PTY
+        // to avoid spurious SIGWINCH signals.  Multiple rapid fit() calls
+        // (slot adoption sync+RAF, ResizeObserver, visibility effect) all
+        // fire xterm.onResize, but only a genuine dimension change should
+        // trigger a PTY resize.  Initialized to the dims used to create the
+        // PTY (ptyCols/ptyRows) so the post-setup explicit resize is skipped
+        // when nothing changed; stays at 0 for workspace-restore so the
+        // first resize always fires to re-sync with the existing PTY.
+        let lastSentCols = ptyCols;
+        let lastSentRows = ptyRows;
+
         // Output batching: buffer chunks and flush in a single RAF callback
         const outputBuffer: Uint8Array[] = [];
         let rafId: number | null = null;
@@ -357,9 +379,15 @@ export function Terminal({
           }
         });
 
-        // Send resize events after fit
+        // Send resize events after fit — deduplicated to avoid SIGWINCH storms.
+        // Multiple fit() calls from TerminalSlot (sync+RAF), ResizeObserver,
+        // and the visibility effect can fire in rapid succession; only emit
+        // resizeTerminal when the dimensions actually changed.
         const onResizeDisposable = xterm.onResize(({ cols, rows }) => {
-          if (sessionIdRef.current) {
+          if (sessionIdRef.current && (cols !== lastSentCols || rows !== lastSentRows)) {
+            lastSentCols = cols;
+            lastSentRows = rows;
+            frontendLog("terminal", `resize → PTY ${cols}×${rows} tab=${tabId}`);
             resizeTerminal(sessionIdRef.current, cols, rows);
           }
         });
@@ -368,14 +396,23 @@ export function Terminal({
         // already fitted xterm to the correct dimensions while the async
         // createTerminal() was in-flight — but at that point sessionIdRef
         // was still null, so the resize was never sent to the backend PTY.
-        // Always send the current dimensions explicitly to ensure the PTY
-        // matches the visible viewport.
+        // Send explicitly only when the current dims differ from what the
+        // PTY was created with (or for workspace-restore where we don't
+        // know the PTY's current state and must always sync).
         try {
           fitAddon.fit();
         } catch {
           // Container might not have dimensions yet
         }
-        resizeTerminal(sessionId, xterm.cols, xterm.rows);
+        if (xterm.cols !== lastSentCols || xterm.rows !== lastSentRows) {
+          lastSentCols = xterm.cols;
+          lastSentRows = xterm.rows;
+          frontendLog(
+            "terminal",
+            `resize (post-setup) → PTY ${xterm.cols}×${xterm.rows} tab=${tabId}`
+          );
+          resizeTerminal(sessionId, xterm.cols, xterm.rows);
+        }
 
         // Send initial command after session connects (used by workspace launch)
         if (initialCommand && !initialSessionIdRef.current) {

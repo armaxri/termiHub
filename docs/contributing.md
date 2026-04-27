@@ -392,6 +392,29 @@ Update the connection type dropdown in `src/components/Sidebar/ConnectionEditor.
 
 For the full testing strategy — including unit, integration, E2E, visual regression testing, and manual test procedures — see [Testing](testing.md).
 
+### Preferred Workflow: Test-Driven Development (TDD)
+
+The preferred approach for all bug fixes and feature work is **test-driven development**:
+
+1. **Write the test first** — design and implement a test that checks the correct behavior before touching production code.
+2. **Verify the test fails** — confirm the test fails without the fix or feature in place (red phase).
+3. **Implement the fix or feature** — make the test pass (green phase).
+4. **Commit in order** — the test commit must come **before** the implementation commit so reviewers can see the intended behavior independently of the solution.
+
+**Example commit sequence for a bug fix:**
+
+```
+test(scope): add regression test for <bug description>
+fix(scope): fix <bug description> (Closes #N)
+```
+
+**Example commit sequence for a new feature:**
+
+```
+test(scope): add tests for <feature name>
+feat(scope): implement <feature name> (Closes #N)
+```
+
 ### Running Tests
 
 The quickest way to run all tests is via the helper scripts:

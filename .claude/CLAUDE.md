@@ -131,6 +131,31 @@ examples/                     # Quick-start dev environment (SSH, Telnet, virtua
 
 ### Testing
 
+#### Preferred Workflow: Test-Driven Development (TDD)
+
+The preferred approach for all bug fixes and feature work is **test-driven development**:
+
+1. **Write the test first** — design and implement a test that checks the correct behavior before touching production code.
+2. **Verify the test fails** — confirm the test fails without the fix or feature in place (red phase).
+3. **Implement the fix or feature** — make the test pass (green phase).
+4. **Commit in order** — the test commit must come **before** the implementation commit so reviewers can see the intended behavior independently of the solution.
+
+Expected commit sequence for a bug fix:
+
+```
+test(scope): add regression test for <bug description>
+fix(scope): fix <bug description> (Closes #N)
+```
+
+Expected commit sequence for a new feature:
+
+```
+test(scope): add tests for <feature name>
+feat(scope): implement <feature name> (Closes #N)
+```
+
+#### General Rules
+
 - **Automatically add tests** after every bug fix or feature implementation — do not wait for the user to ask. Tests are a mandatory part of completing any task, not an optional follow-up.
 - Test type priority (use the highest feasible option):
   1. **Unit tests** (preferred) — fast, isolated, verify specific behavior

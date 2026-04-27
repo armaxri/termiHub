@@ -485,8 +485,7 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
           config: {
             agentId: agent.id,
             sessionType: def.sessionType as "shell" | "serial",
-            shell: (def.config as Record<string, unknown>).shell as string | undefined,
-            serialPort: (def.config as Record<string, unknown>).port as string | undefined,
+            ...(def.config as Record<string, unknown>),
             persistent: def.persistent,
             title: def.name,
           },
