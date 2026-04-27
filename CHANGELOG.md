@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Serial: pressing "Clear" on a serial (or any) terminal tab now fully resets the cursor to the home position and erases any visible rendering artifacts — previously the cursor stayed at its old position and partial text fragments could remain on screen (#634).
 - Agent/Serial: the auto-reconnect overlay now shows a "Stop" button so users can cancel reconnection at any time and return to the disconnect overlay (#627).
 - Agent/Serial: the error that triggered the auto-reconnect is now displayed inside the reconnecting spinner overlay so users can see what went wrong while retrying (#627).
 - Agent: the backend reconnect loop now checks the disconnect flag every 100 ms during its backoff sleep, so calling "Disconnect" from the UI stops the reconnection immediately instead of waiting up to 30 s per attempt (#627).
