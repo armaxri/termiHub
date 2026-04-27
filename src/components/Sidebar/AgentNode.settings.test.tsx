@@ -71,9 +71,11 @@ function makeAgent(overrides: Partial<RemoteAgentDefinition> = {}): RemoteAgentD
     isExpanded: true,
     agentSettings: DEFAULT_AGENT_SETTINGS,
     capabilities: {
+      connectionTypes: [],
+      maxSessions: 10,
       availableShells: ["bash"],
       availableSerialPorts: [],
-      availableDockerContainers: [],
+      availableDockerImages: [],
     },
     ...overrides,
   };
