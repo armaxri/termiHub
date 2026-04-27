@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
+import React from "react";
 import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
@@ -148,5 +149,187 @@ describe("ConnectionEditor — credential hint", () => {
 
     const hint = container.querySelector('[data-testid="field-password-credential-saved"]');
     expect(hint).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Minimal connection type used for dirty-state tests (no auth, no credentials)
+// ---------------------------------------------------------------------------
+
+const LOCAL_TYPE: ConnectionTypeInfo = {
+  typeId: "local",
+  displayName: "Local Shell",
+  icon: "local",
+  schema: {
+    groups: [
+      {
+        key: "general",
+        label: "General",
+        fields: [
+          {
+            key: "shell",
+            label: "Shell",
+            fieldType: { type: "text" },
+            required: false,
+            default: "bash",
+          },
+        ],
+      },
+    ],
+  },
+  capabilities: { monitoring: false, fileBrowser: false, resize: true, persistent: false },
+};
+
+const DIRTY_CONN: SavedConnection = {
+  id: "conn-dirty-test",
+  name: "Test Server",
+  config: { type: "local", config: { shell: "bash" } },
+  folderId: null,
+};
+
+describe("ConnectionEditor — unsaved-changes dirty state", () => {
+  const TAB_ID = "tab-dirty-1";
+
+  function renderEditor(connectionId: string, strictMode = false) {
+    const editor = (
+      <ConnectionEditor tabId={TAB_ID} meta={{ connectionId, folderId: null }} isVisible={true} />
+    );
+    act(() => {
+      root.render(strictMode ? <React.StrictMode>{editor}</React.StrictMode> : editor);
+    });
+  }
+
+  async function flushEffects() {
+    await act(async () => {
+      await Promise.resolve();
+    });
+  }
+
+  /** Simulate a controlled text-input change the way React handles it. */
+  function changeInput(input: HTMLInputElement, value: string): void {
+    const nativeValueSetter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value"
+    )!.set!;
+    nativeValueSetter.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    resetRuntimeCache();
+
+    mockedInvoke.mockImplementation((cmd) => {
+      if (cmd === "check_docker_available") return Promise.resolve(false);
+      if (cmd === "check_podman_available") return Promise.resolve(false);
+      if (cmd === "resolve_credential") return Promise.resolve(null);
+      return Promise.resolve(undefined);
+    });
+  });
+
+  afterEach(() => {
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+    vi.clearAllMocks();
+  });
+
+  it("does not mark tab dirty when opening an existing connection without changes", async () => {
+    useAppStore.setState({
+      ...useAppStore.getInitialState(),
+      connections: [DIRTY_CONN],
+      connectionTypes: [LOCAL_TYPE],
+    });
+    renderEditor(DIRTY_CONN.id);
+    await flushEffects();
+
+    expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBeFalsy();
+  });
+
+  it("does not mark tab dirty in StrictMode when opening an existing connection without changes", async () => {
+    useAppStore.setState({
+      ...useAppStore.getInitialState(),
+      connections: [DIRTY_CONN],
+      connectionTypes: [LOCAL_TYPE],
+    });
+    renderEditor(DIRTY_CONN.id, true);
+    await flushEffects();
+
+    expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBeFalsy();
+  });
+
+  it("does not mark tab dirty when opening a new connection with default values without changes", async () => {
+    useAppStore.setState({
+      ...useAppStore.getInitialState(),
+      connections: [],
+      connectionTypes: [LOCAL_TYPE],
+    });
+    renderEditor("new");
+    await flushEffects();
+
+    expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBeFalsy();
+  });
+
+  it("does not mark tab dirty in StrictMode when opening a new connection with default values", async () => {
+    useAppStore.setState({
+      ...useAppStore.getInitialState(),
+      connections: [],
+      connectionTypes: [LOCAL_TYPE],
+    });
+    renderEditor("new", true);
+    await flushEffects();
+
+    expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBeFalsy();
+  });
+
+  it("marks tab dirty when user changes the connection name", async () => {
+    useAppStore.setState({
+      ...useAppStore.getInitialState(),
+      connections: [DIRTY_CONN],
+      connectionTypes: [LOCAL_TYPE],
+    });
+    renderEditor(DIRTY_CONN.id);
+    await flushEffects();
+
+    const nameInput = container.querySelector(
+      '[data-testid="connection-editor-name-input"]'
+    ) as HTMLInputElement;
+    expect(nameInput).not.toBeNull();
+
+    await act(async () => {
+      changeInput(nameInput, "Modified Name");
+    });
+
+    expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(true);
+  });
+
+  it("clears dirty flag when name is changed back to its original value", async () => {
+    useAppStore.setState({
+      ...useAppStore.getInitialState(),
+      connections: [DIRTY_CONN],
+      connectionTypes: [LOCAL_TYPE],
+    });
+    renderEditor(DIRTY_CONN.id);
+    await flushEffects();
+
+    const nameInput = container.querySelector(
+      '[data-testid="connection-editor-name-input"]'
+    ) as HTMLInputElement;
+    expect(nameInput).not.toBeNull();
+
+    // Change name → dirty
+    await act(async () => {
+      changeInput(nameInput, "Modified Name");
+    });
+    expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(true);
+
+    // Revert to original name → clean
+    await act(async () => {
+      changeInput(nameInput, DIRTY_CONN.name);
+    });
+    expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(false);
   });
 });
