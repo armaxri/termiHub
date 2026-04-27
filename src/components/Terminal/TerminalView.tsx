@@ -188,6 +188,9 @@ export function TerminalView() {
             if (!tab.sessionId) continue;
             frontendLog("disconnect", `agent reconnecting: marking tab=${tab.id}`);
             store.setTerminalReconnecting(tab.id, true);
+            if (error) {
+              store.setTerminalReconnectTriggerError(tab.id, error);
+            }
             markedCount++;
           }
           frontendLog("disconnect", `agent reconnecting: ${markedCount} tabs marked`);

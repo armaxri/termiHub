@@ -401,9 +401,12 @@ interface AppState {
   terminalReconnectingTabs: Record<string, boolean>;
   /** True when the "reconnect?" prompt should appear (triggered by Enter in view mode). */
   terminalReconnectPrompt: Record<string, boolean>;
+  /** Error message that triggered the auto-reconnect, shown during the spinner overlay. */
+  terminalReconnectTriggerErrors: Record<string, string>;
   setTerminalExited: (tabId: string) => void;
   setTerminalDisconnectWithError: (tabId: string, error: string) => void;
   setTerminalReconnecting: (tabId: string, reconnecting: boolean) => void;
+  setTerminalReconnectTriggerError: (tabId: string, error: string | null) => void;
   /** Dismiss the disconnect overlay into "view mode": scrollback is preserved, a thin banner shows. */
   dismissTerminalDisconnect: (tabId: string) => void;
   reconnectTerminal: (tabId: string) => void;
@@ -2080,15 +2083,19 @@ export const useAppStore = create<AppState>((set, get) => {
     terminalViewMode: {},
     terminalReconnectingTabs: {},
     terminalReconnectPrompt: {},
+    terminalReconnectTriggerErrors: {},
     setTerminalExited: (tabId) => {
-      set((state) => ({
-        terminalExitedTabs: { ...state.terminalExitedTabs, [tabId]: true },
-        // Clear any stale reconnecting flag — session is definitively dead now
-        terminalReconnectingTabs: (() => {
-          const { [tabId]: _removed, ...remaining } = state.terminalReconnectingTabs;
-          return remaining;
-        })(),
-      }));
+      set((state) => {
+        const { [tabId]: _removedReconn, ...remainingReconn } = state.terminalReconnectingTabs;
+        const { [tabId]: _removedTrigger, ...remainingTrigger } =
+          state.terminalReconnectTriggerErrors;
+        return {
+          terminalExitedTabs: { ...state.terminalExitedTabs, [tabId]: true },
+          // Clear any stale reconnecting flag — session is definitively dead now
+          terminalReconnectingTabs: remainingReconn,
+          terminalReconnectTriggerErrors: remainingTrigger,
+        };
+      });
       // Stop monitoring when the terminal session dies — the stats are no
       // longer being updated and the overlay hides the terminal anyway.
       if (get().monitoringSessionId) {
@@ -2116,7 +2123,25 @@ export const useAppStore = create<AppState>((set, get) => {
           };
         }
         const { [tabId]: _removed, ...remaining } = state.terminalReconnectingTabs;
-        return { terminalReconnectingTabs: remaining };
+        const { [tabId]: _removedTrigger, ...remainingTrigger } =
+          state.terminalReconnectTriggerErrors;
+        return {
+          terminalReconnectingTabs: remaining,
+          terminalReconnectTriggerErrors: remainingTrigger,
+        };
+      }),
+    setTerminalReconnectTriggerError: (tabId, error) =>
+      set((state) => {
+        if (error === null) {
+          const { [tabId]: _removed, ...remaining } = state.terminalReconnectTriggerErrors;
+          return { terminalReconnectTriggerErrors: remaining };
+        }
+        return {
+          terminalReconnectTriggerErrors: {
+            ...state.terminalReconnectTriggerErrors,
+            [tabId]: error,
+          },
+        };
       }),
     dismissTerminalDisconnect: (tabId) =>
       set((state) => ({
@@ -2134,6 +2159,8 @@ export const useAppStore = create<AppState>((set, get) => {
         const { [tabId]: _removedAutoRetry, ...remainingAutoRetry } = state.terminalAutoRetryCount;
         const { [tabId]: _removedWaiting, ...remainingWaiting } = state.terminalWaitingForAgent;
         const { [tabId]: _removedSpawnErr, ...remainingSpawnErrors } = state.terminalSpawnErrors;
+        const { [tabId]: _removedTrigger, ...remainingTrigger } =
+          state.terminalReconnectTriggerErrors;
         return {
           terminalExitedTabs: remainingExited,
           terminalDisconnectErrors: remainingErr,
@@ -2143,6 +2170,7 @@ export const useAppStore = create<AppState>((set, get) => {
           terminalAutoRetryCount: remainingAutoRetry,
           terminalWaitingForAgent: remainingWaiting,
           terminalSpawnErrors: remainingSpawnErrors,
+          terminalReconnectTriggerErrors: remainingTrigger,
           // Set connecting immediately so the "Connecting…" overlay appears at once,
           // without a gap between the disconnect overlay disappearing and the effect
           // re-running to call setTerminalConnecting().

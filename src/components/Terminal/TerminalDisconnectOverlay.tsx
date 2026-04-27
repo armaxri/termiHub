@@ -12,7 +12,7 @@ interface TerminalDisconnectOverlayProps {
  * exits unexpectedly or while the agent is auto-reconnecting.
  *
  * Three variants (determined from store state):
- *   - "reconnecting"  — spinner, "Reconnecting…" message, no user action needed
+ *   - "reconnecting"  — spinner, optional trigger error, Stop button
  *   - "error"         — error box, "Reconnect failed" heading, retry + view-scrollback buttons
  *   - "disconnected"  — standard disconnect, reconnect + view-scrollback buttons
  *
@@ -21,8 +21,10 @@ interface TerminalDisconnectOverlayProps {
 export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayProps) {
   const reconnectTerminal = useAppStore((s) => s.reconnectTerminal);
   const dismissTerminalDisconnect = useAppStore((s) => s.dismissTerminalDisconnect);
+  const setTerminalExited = useAppStore((s) => s.setTerminalExited);
   const disconnectError = useAppStore((s) => s.terminalDisconnectErrors[tabId]);
   const isReconnecting = useAppStore((s) => s.terminalReconnectingTabs[tabId] ?? false);
+  const reconnectTriggerError = useAppStore((s) => s.terminalReconnectTriggerErrors[tabId]);
 
   const handleReconnect = useCallback(() => {
     reconnectTerminal(tabId);
@@ -31,6 +33,10 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
   const handleDismiss = useCallback(() => {
     dismissTerminalDisconnect(tabId);
   }, [tabId, dismissTerminalDisconnect]);
+
+  const handleStop = useCallback(() => {
+    setTerminalExited(tabId);
+  }, [tabId, setTerminalExited]);
 
   if (isReconnecting) {
     return (
@@ -47,6 +53,25 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
           <p className="terminal-disconnect-overlay__subheading">
             Connection lost. Attempting to reconnect automatically.
           </p>
+          {reconnectTriggerError && (
+            <div
+              className="terminal-disconnect-overlay__error-box"
+              data-testid="terminal-disconnect-trigger-error-box"
+            >
+              <span className="terminal-disconnect-overlay__error-text">
+                {reconnectTriggerError}
+              </span>
+            </div>
+          )}
+          <div className="terminal-disconnect-overlay__actions">
+            <button
+              className="terminal-disconnect-overlay__view-btn"
+              onClick={handleStop}
+              data-testid="terminal-disconnect-stop-btn"
+            >
+              Stop
+            </button>
+          </div>
         </div>
       </div>
     );
