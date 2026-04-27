@@ -322,4 +322,35 @@ mod tests {
         let result = backend.stat("/nonexistent/path").await;
         assert!(matches!(result, Err(FileError::NotFound(_))));
     }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn list_tilde_expands_to_home_dir() {
+        let home = std::env::var("HOME").expect("HOME must be set");
+        let backend = LocalFileBackend::new();
+        // "~" must resolve to $HOME and list without error
+        let result = backend.list("~").await;
+        assert!(result.is_ok(), "listing '~' failed: {:?}", result);
+        // All returned entry paths must start with the actual home dir
+        for entry in result.unwrap() {
+            assert!(
+                entry.path.starts_with(&home),
+                "entry path '{}' does not start with HOME '{}'",
+                entry.path,
+                home
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn stat_tilde_expands_to_home_dir() {
+        let home = std::env::var("HOME").expect("HOME must be set");
+        let backend = LocalFileBackend::new();
+        let result = backend.stat("~").await;
+        assert!(result.is_ok(), "stat of '~' failed: {:?}", result);
+        let entry = result.unwrap();
+        assert_eq!(entry.path, home, "stat path should be expanded home dir");
+        assert!(entry.is_directory);
+    }
 }
