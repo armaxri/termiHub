@@ -15,11 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-<<<<<<< bugfix/clear-terminal-cursor-reset
 - Terminal: pressing "Clear" now fully resets the terminal — the cursor is moved to position (0,0) after the buffer is wiped, preventing rendering artifacts and misaligned input that occurred when a subsequent program output was placed at the old cursor position (#634)
-=======
 - Serial: on Linux/Raspberry Pi, UART devices such as `ttyAMA*`, `ttyS*`, and `uart_up*` are now listed in the serial port selector (previously these were omitted because the `serialport` crate does not enumerate them on some embedded Linux configurations) (#628)
->>>>>>> main
 - Agent: opening a saved agent connection definition now correctly forwards all configured settings (shell integration, initial command, serial port parameters, and any other schema fields) to the backend. Previously only the shell path was forwarded, causing shell integration to always run regardless of the setting, initial commands to be silently ignored, and serial port details to be lost. Tab color from terminal options is also now applied when using "Save and Connect" from the connection editor.
 - Terminal: "Copy tab content" no longer pads lines with trailing spaces or wraps long lines at the visible terminal width — content is now copied as logical lines, matching what horizontal scrolling would show (#636)
 - Agent: after an agent reconnects following a power loss, terminals whose sessions were successfully recovered by the agent now resume automatically instead of always showing the "Session disconnected" overlay. Sessions that could not be recovered still show the overlay as before.
