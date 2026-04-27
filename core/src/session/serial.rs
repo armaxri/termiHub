@@ -574,6 +574,94 @@ mod tests {
         assert!(ports.len() < 10_000, "sanity check on port count");
     }
 
+    // --- scan_extra_linux_serial_ports / list_serial_ports_with_dev (Linux) -
+
+    #[cfg(target_os = "linux")]
+    mod linux_extra_scan {
+        use super::*;
+        use std::fs;
+        use tempfile::TempDir;
+
+        fn make_dev_entries(dir: &std::path::Path, names: &[&str]) {
+            for name in names {
+                fs::write(dir.join(name), b"").unwrap();
+            }
+        }
+
+        #[test]
+        fn scan_finds_ttyama_devices() {
+            let dir = TempDir::new().unwrap();
+            make_dev_entries(dir.path(), &["ttyAMA1", "ttyAMA2", "tty", "random"]);
+            let mut found = scan_extra_linux_serial_ports(dir.path());
+            found.sort();
+            assert!(found.iter().any(|p| p.ends_with("ttyAMA1")));
+            assert!(found.iter().any(|p| p.ends_with("ttyAMA2")));
+            assert!(!found.iter().any(|p| p.ends_with("/tty")));
+        }
+
+        #[test]
+        fn scan_finds_ttys_devices() {
+            let dir = TempDir::new().unwrap();
+            make_dev_entries(dir.path(), &["ttyS0", "ttyS1"]);
+            let found = scan_extra_linux_serial_ports(dir.path());
+            assert!(found.iter().any(|p| p.ends_with("ttyS0")));
+            assert!(found.iter().any(|p| p.ends_with("ttyS1")));
+        }
+
+        #[test]
+        fn scan_finds_uart_up_devices() {
+            let dir = TempDir::new().unwrap();
+            make_dev_entries(dir.path(), &["uart_up1", "uart_up2"]);
+            let found = scan_extra_linux_serial_ports(dir.path());
+            assert!(found.iter().any(|p| p.ends_with("uart_up1")));
+            assert!(found.iter().any(|p| p.ends_with("uart_up2")));
+        }
+
+        #[test]
+        fn scan_does_not_include_unrelated_devices() {
+            let dir = TempDir::new().unwrap();
+            make_dev_entries(dir.path(), &["ttyUSB0", "ttyACM0", "tty", "null", "zero"]);
+            let found = scan_extra_linux_serial_ports(dir.path());
+            assert!(found.is_empty());
+        }
+
+        #[test]
+        fn scan_handles_missing_directory_gracefully() {
+            let path = std::path::Path::new("/nonexistent/dev/termiHub_test");
+            let found = scan_extra_linux_serial_ports(path);
+            assert!(found.is_empty());
+        }
+
+        #[test]
+        fn list_serial_ports_with_dev_includes_extra_linux_ports() {
+            let dir = TempDir::new().unwrap();
+            make_dev_entries(dir.path(), &["ttyAMA1", "ttyS0", "uart_up1"]);
+            let ports = list_serial_ports_with_dev(dir.path());
+            assert!(ports.iter().any(|p| p.ends_with("ttyAMA1")));
+            assert!(ports.iter().any(|p| p.ends_with("ttyS0")));
+            assert!(ports.iter().any(|p| p.ends_with("uart_up1")));
+        }
+
+        #[test]
+        fn list_serial_ports_with_dev_deduplicates_ports() {
+            let dir = TempDir::new().unwrap();
+            make_dev_entries(dir.path(), &["ttyAMA1"]);
+            let ports = list_serial_ports_with_dev(dir.path());
+            let count = ports.iter().filter(|p| p.ends_with("ttyAMA1")).count();
+            assert_eq!(count, 1, "ttyAMA1 must not appear twice");
+        }
+
+        #[test]
+        fn list_serial_ports_with_dev_output_is_sorted() {
+            let dir = TempDir::new().unwrap();
+            make_dev_entries(dir.path(), &["ttyS2", "ttyAMA1", "uart_up1", "ttyS0"]);
+            let ports = list_serial_ports_with_dev(dir.path());
+            let mut sorted = ports.clone();
+            sorted.sort();
+            assert_eq!(ports, sorted, "ports should be sorted alphabetically");
+        }
+    }
+
     // --- open_serial_port tests ------------------------------------------
 
     #[test]
