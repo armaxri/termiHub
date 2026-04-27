@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Terminal: pressing "Clear" now fully resets the terminal — the cursor is moved to position (0,0) after the buffer is wiped, preventing rendering artifacts and misaligned input that occurred when a subsequent program output was placed at the old cursor position (#634)
 - Files: remote zsh sessions now receive shell integration (OSC 7 CWD tracking) so the file browser follows the terminal's current directory. Previously, zsh was excluded from integration injection under the incorrect assumption that it emits OSC 7 natively; the injected hook correctly detects bash vs. zsh at runtime (#630)
 - Files: the session-mode file browser now opens in the user's home directory (`~`) instead of the filesystem root (`/`) when no CWD has been received yet (#630)
 - Agent/Serial: the auto-reconnect overlay now shows a "Stop" button so users can cancel reconnection at any time and return to the disconnect overlay (#627).
