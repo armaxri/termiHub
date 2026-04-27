@@ -22,7 +22,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   const tabColors = useAppStore((s) => s.tabColors);
   const setTabColor = useAppStore((s) => s.setTabColor);
   const renameTab = useAppStore((s) => s.renameTab);
-  const editorDirtyTabs = useAppStore((s) => s.editorDirtyTabs);
+  const setPendingCloseRequest = useAppStore((s) => s.setPendingCloseRequest);
   const remoteStates = useAppStore((s) => s.remoteStates);
   const { clearTerminal, saveTerminalToFile, copyTerminalToClipboard } = useTerminalRegistry();
 
@@ -30,7 +30,16 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   const [renameTabId, setRenameTabId] = useState<string | null>(null);
 
   const handleCloseTab = (tabId: string) => {
-    if (editorDirtyTabs[tabId]) {
+    // Read fresh state directly from the store to avoid stale closure values:
+    // the render-time editorDirtyTabs snapshot may lag behind a setEditorDirty
+    // call that hasn't caused a re-render yet (e.g. the user reverted changes).
+    const isDirty = useAppStore.getState().editorDirtyTabs[tabId];
+    if (isDirty) {
+      const tab = tabs.find((t) => t.id === tabId);
+      if (tab?.contentType === "connection-editor" || tab?.contentType === "settings") {
+        setPendingCloseRequest({ tabId, panelId });
+        return;
+      }
       if (!window.confirm("This file has unsaved changes. Close anyway?")) return;
     }
     closeTab(tabId, panelId);
@@ -55,7 +64,6 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
               onToggleHorizontalScrolling={() =>
                 setTabHorizontalScrolling(tab.id, !(tabHorizontalScrolling[tab.id] ?? false))
               }
-              isDirty={editorDirtyTabs[tab.id] ?? false}
               tabColor={tabColors[tab.id]}
               onRename={() => setRenameTabId(tab.id)}
               onSetColor={() => setColorPickerTabId(tab.id)}

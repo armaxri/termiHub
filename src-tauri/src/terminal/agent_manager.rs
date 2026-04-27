@@ -1196,6 +1196,8 @@ fn agent_io_thread(
     let mut monitoring_outputs: HashMap<String, MonitoringSender> = HashMap::new();
     let mut pending_responses: HashMap<u64, mpsc::Sender<Result<Value, String>>> = HashMap::new();
 
+    let mut connection_error: Option<String> = None;
+
     'outer: loop {
         // Inner read loop
         let connection_broken = loop {
@@ -1322,7 +1324,9 @@ fn agent_io_thread(
                     std::thread::sleep(std::time::Duration::from_millis(10));
                 }
                 Err(e) => {
-                    error!("Agent {}: read error: {}", agent_id, e);
+                    let err_msg = e.to_string();
+                    error!("Agent {}: read error: {}", agent_id, err_msg);
+                    connection_error = Some(err_msg);
                     break true;
                 }
             }
@@ -1333,16 +1337,22 @@ fn agent_io_thread(
         }
 
         // Connection lost — try to reconnect
-        emit_agent_state(&app_handle, &agent_id, "reconnecting");
+        emit_agent_state_with_error(
+            &app_handle,
+            &agent_id,
+            "reconnecting",
+            connection_error.as_deref(),
+        );
         info!("Agent {}: connection lost, attempting reconnect", agent_id);
 
-        match reconnect_agent(&config, &agent_settings, &mut request_id) {
+        match reconnect_agent(&config, &agent_settings, &mut request_id, &alive) {
             Ok((new_session, new_channel)) => {
                 // Replace the old channel (session is consumed by io_thread signature)
                 // We need to start a new I/O loop with the new channel
                 let _ = new_session; // session set_blocking(false) already called in reconnect
                 channel = new_channel;
                 line_buf.clear();
+                connection_error = None;
                 emit_agent_state(&app_handle, &agent_id, "connected");
                 info!("Agent {}: reconnected successfully", agent_id);
                 // Clear pending responses with errors
@@ -1412,17 +1422,31 @@ fn handle_notification(
 }
 
 /// Attempt to reconnect to an agent with exponential backoff.
+///
+/// Respects the `alive` flag — if it becomes `false` during the inter-attempt
+/// sleep the function returns immediately so the caller can exit cleanly.
 fn reconnect_agent(
     config: &RemoteAgentConfig,
     agent_settings: &AgentSettings,
     request_id: &mut u64,
+    alive: &Arc<AtomicBool>,
 ) -> Result<(Session, ssh2::Channel), String> {
     const MAX_RETRIES: u32 = 10;
     const MAX_BACKOFF_SECS: u64 = 30;
+    const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 
     for attempt in 0..MAX_RETRIES {
-        let backoff = std::cmp::min(2u64.pow(attempt), MAX_BACKOFF_SECS);
-        std::thread::sleep(std::time::Duration::from_secs(backoff));
+        let backoff_secs = std::cmp::min(2u64.pow(attempt), MAX_BACKOFF_SECS);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(backoff_secs);
+        while std::time::Instant::now() < deadline {
+            if !alive.load(Ordering::SeqCst) {
+                return Err("Reconnect stopped by user".to_string());
+            }
+            std::thread::sleep(POLL_INTERVAL);
+        }
+        if !alive.load(Ordering::SeqCst) {
+            return Err("Reconnect stopped by user".to_string());
+        }
 
         let ssh_config = config.to_ssh_config();
 
@@ -1878,6 +1902,36 @@ mod tests {
             &session_outputs,
             &monitoring_outputs,
             &b64,
+        );
+    }
+
+    /// Regression test for #627: reconnect_agent must stop when `alive` is set
+    /// to false by the caller (e.g. disconnect_agent). Without the alive check
+    /// the reconnect loop sleeps up to 3 minutes before giving up.
+    #[test]
+    fn reconnect_agent_stops_when_alive_is_false() {
+        let config = RemoteAgentConfig {
+            host: "unreachable.example.com".to_string(),
+            port: 22,
+            username: "user".to_string(),
+            auth_method: "password".to_string(),
+            password: None,
+            key_path: None,
+            save_password: None,
+            agent_path: None,
+            external_connection_files: vec![],
+        };
+        let settings = AgentSettings::default();
+        let mut request_id = 0u64;
+        let alive = Arc::new(AtomicBool::new(false));
+
+        let result = reconnect_agent(&config, &settings, &mut request_id, &alive);
+
+        assert!(result.is_err());
+        let err = result.err().unwrap();
+        assert!(
+            err.contains("stopped") || err.contains("cancelled"),
+            "expected stop-related error, got: {err}"
         );
     }
 }

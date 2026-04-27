@@ -259,6 +259,8 @@ interface AppState {
   ) => void;
   editorDirtyTabs: Record<string, boolean>;
   setEditorDirty: (tabId: string, dirty: boolean) => void;
+  pendingCloseRequest: { tabId: string; panelId: string } | null;
+  setPendingCloseRequest: (req: { tabId: string; panelId: string } | null) => void;
   closeTab: (tabId: string, panelId: string) => void;
   setActiveTab: (tabId: string, panelId: string) => void;
   moveTab: (tabId: string, fromPanelId: string, toPanelId: string, newIndex: number) => void;
@@ -280,6 +282,8 @@ interface AppState {
   folders: ConnectionFolder[];
   connections: SavedConnection[];
   settings: AppSettings;
+  /** Last settings object that was successfully persisted to disk (or loaded from disk). */
+  savedSettings: AppSettings;
 
   // Layout
   layoutConfig: LayoutConfig;
@@ -401,9 +405,12 @@ interface AppState {
   terminalReconnectingTabs: Record<string, boolean>;
   /** True when the "reconnect?" prompt should appear (triggered by Enter in view mode). */
   terminalReconnectPrompt: Record<string, boolean>;
+  /** Error message that triggered the auto-reconnect, shown during the spinner overlay. */
+  terminalReconnectTriggerErrors: Record<string, string>;
   setTerminalExited: (tabId: string) => void;
   setTerminalDisconnectWithError: (tabId: string, error: string) => void;
   setTerminalReconnecting: (tabId: string, reconnecting: boolean) => void;
+  setTerminalReconnectTriggerError: (tabId: string, error: string | null) => void;
   /** Dismiss the disconnect overlay into "view mode": scrollback is preserved, a thin banner shows. */
   dismissTerminalDisconnect: (tabId: string) => void;
   reconnectTerminal: (tabId: string) => void;
@@ -1238,6 +1245,9 @@ export const useAppStore = create<AppState>((set, get) => {
     setEditorDirty: (tabId, dirty) =>
       set((state) => ({ editorDirtyTabs: { ...state.editorDirtyTabs, [tabId]: dirty } })),
 
+    pendingCloseRequest: null,
+    setPendingCloseRequest: (req) => set({ pendingCloseRequest: req }),
+
     closeTab: (tabId, panelId) =>
       set((state) => {
         // Clean up per-tab state for the closed tab
@@ -1506,6 +1516,12 @@ export const useAppStore = create<AppState>((set, get) => {
       powerMonitoringEnabled: true,
       fileBrowserEnabled: true,
     },
+    savedSettings: {
+      version: "1",
+      externalConnectionFiles: [],
+      powerMonitoringEnabled: true,
+      fileBrowserEnabled: true,
+    },
 
     // Layout
     layoutConfig: DEFAULT_LAYOUT,
@@ -1647,6 +1663,7 @@ export const useAppStore = create<AppState>((set, get) => {
           connections,
           folders,
           settings,
+          savedSettings: settings,
           remoteAgents,
           layoutConfig,
           sidebarView,
@@ -1720,7 +1737,7 @@ export const useAppStore = create<AppState>((set, get) => {
       try {
         const oldSettings = get().settings;
         await persistSettings(newSettings);
-        set({ settings: newSettings });
+        set({ settings: newSettings, savedSettings: newSettings });
 
         if (oldSettings.theme !== newSettings.theme) {
           applyTheme(newSettings.theme);
@@ -2080,15 +2097,19 @@ export const useAppStore = create<AppState>((set, get) => {
     terminalViewMode: {},
     terminalReconnectingTabs: {},
     terminalReconnectPrompt: {},
+    terminalReconnectTriggerErrors: {},
     setTerminalExited: (tabId) => {
-      set((state) => ({
-        terminalExitedTabs: { ...state.terminalExitedTabs, [tabId]: true },
-        // Clear any stale reconnecting flag — session is definitively dead now
-        terminalReconnectingTabs: (() => {
-          const { [tabId]: _removed, ...remaining } = state.terminalReconnectingTabs;
-          return remaining;
-        })(),
-      }));
+      set((state) => {
+        const { [tabId]: _removedReconn, ...remainingReconn } = state.terminalReconnectingTabs;
+        const { [tabId]: _removedTrigger, ...remainingTrigger } =
+          state.terminalReconnectTriggerErrors;
+        return {
+          terminalExitedTabs: { ...state.terminalExitedTabs, [tabId]: true },
+          // Clear any stale reconnecting flag — session is definitively dead now
+          terminalReconnectingTabs: remainingReconn,
+          terminalReconnectTriggerErrors: remainingTrigger,
+        };
+      });
       // Stop monitoring when the terminal session dies — the stats are no
       // longer being updated and the overlay hides the terminal anyway.
       if (get().monitoringSessionId) {
@@ -2116,7 +2137,25 @@ export const useAppStore = create<AppState>((set, get) => {
           };
         }
         const { [tabId]: _removed, ...remaining } = state.terminalReconnectingTabs;
-        return { terminalReconnectingTabs: remaining };
+        const { [tabId]: _removedTrigger, ...remainingTrigger } =
+          state.terminalReconnectTriggerErrors;
+        return {
+          terminalReconnectingTabs: remaining,
+          terminalReconnectTriggerErrors: remainingTrigger,
+        };
+      }),
+    setTerminalReconnectTriggerError: (tabId, error) =>
+      set((state) => {
+        if (error === null) {
+          const { [tabId]: _removed, ...remaining } = state.terminalReconnectTriggerErrors;
+          return { terminalReconnectTriggerErrors: remaining };
+        }
+        return {
+          terminalReconnectTriggerErrors: {
+            ...state.terminalReconnectTriggerErrors,
+            [tabId]: error,
+          },
+        };
       }),
     dismissTerminalDisconnect: (tabId) =>
       set((state) => ({
@@ -2134,6 +2173,8 @@ export const useAppStore = create<AppState>((set, get) => {
         const { [tabId]: _removedAutoRetry, ...remainingAutoRetry } = state.terminalAutoRetryCount;
         const { [tabId]: _removedWaiting, ...remainingWaiting } = state.terminalWaitingForAgent;
         const { [tabId]: _removedSpawnErr, ...remainingSpawnErrors } = state.terminalSpawnErrors;
+        const { [tabId]: _removedTrigger, ...remainingTrigger } =
+          state.terminalReconnectTriggerErrors;
         return {
           terminalExitedTabs: remainingExited,
           terminalDisconnectErrors: remainingErr,
@@ -2143,6 +2184,7 @@ export const useAppStore = create<AppState>((set, get) => {
           terminalAutoRetryCount: remainingAutoRetry,
           terminalWaitingForAgent: remainingWaiting,
           terminalSpawnErrors: remainingSpawnErrors,
+          terminalReconnectTriggerErrors: remainingTrigger,
           // Set connecting immediately so the "Connecting…" overlay appears at once,
           // without a gap between the disconnect overlay disappearing and the effect
           // re-running to call setTerminalConnecting().
@@ -3223,7 +3265,11 @@ export const useAppStore = create<AppState>((set, get) => {
         await apiSkipUpdateVersion(updateInfo.latestVersion);
         // Refresh the settings in the store so skippedVersion is current.
         const updatedSettings = await import("@/services/storage").then((m) => m.getSettings());
-        set({ settings: updatedSettings, updateNotificationDismissed: true });
+        set({
+          settings: updatedSettings,
+          savedSettings: updatedSettings,
+          updateNotificationDismissed: true,
+        });
       } catch (err) {
         frontendLog("update", `Failed to skip version: ${err}`);
       }
@@ -3232,7 +3278,7 @@ export const useAppStore = create<AppState>((set, get) => {
       try {
         await apiClearSkippedVersion();
         const updatedSettings = await import("@/services/storage").then((m) => m.getSettings());
-        set({ settings: updatedSettings });
+        set({ settings: updatedSettings, savedSettings: updatedSettings });
       } catch (err) {
         frontendLog("update", `Failed to clear skipped version: ${err}`);
       }
