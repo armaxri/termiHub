@@ -182,17 +182,18 @@ pub fn build_shell_command(config: &ShellConfig) -> ShellCommand {
 ///   paths; injected visibly via the WSL temp-file source mechanism.
 /// - `"ssh"` — OSC 7, SSH variant: no `/mnt/` guard; injected visibly via
 ///   stdin.
-/// - `"bash"` / `"gitbash"` — OSC 7, local bash; injected visibly via
-///   stdin.
+/// - `"bash"` / `"gitbash"` / `"zsh"` — OSC 7; the hook detects zsh via
+///   `$ZSH_VERSION` and uses `precmd_functions`, falls back to bash's
+///   `PROMPT_COMMAND`; injected visibly via stdin.
 /// - `"powershell"` — OSC 9;9: overrides the `prompt` function; injected via
 ///   `-NoExit -Command` startup args (not stdin) to avoid echo.
 /// - `"cmd"` — OSC 9;9: sets the `PROMPT` variable via `/K` startup arg
 ///   (not stdin) to avoid echo.
-/// - Anything else (`"zsh"`, etc.) — `None` (zsh emits OSC 7 natively).
+/// - Anything else (`"sh"`, etc.) — `None`.
 pub fn osc7_setup_command(shell_type: &str) -> Option<&'static str> {
     if shell_type.starts_with("wsl:") {
         Some(wsl_osc7_command())
-    } else if matches!(shell_type, "ssh" | "bash" | "gitbash") {
+    } else if matches!(shell_type, "ssh" | "bash" | "gitbash" | "zsh") {
         Some(bash_osc7_command())
     } else if shell_type == "powershell" {
         Some(powershell_osc9_command())
