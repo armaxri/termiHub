@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { frontendLog } from "@/utils/frontendLog";
 import {
   Settings2,
   Palette,
@@ -30,6 +31,7 @@ import { CustomGrammarsSettings } from "./CustomGrammarsSettings";
 import { PortableModeSettings } from "./PortableModeSettings";
 import { UpdateSettings } from "./UpdateSettings";
 import { getAppInfo, type AppInfo } from "@/services/api";
+import { UnsavedChangesDialog } from "@/components/ConnectionEditor/UnsavedChangesDialog";
 import "./SettingsPanel.css";
 
 const SETTINGS_ICONS: Record<SettingsCategory, LucideIcon> = {
@@ -47,15 +49,20 @@ const SETTINGS_ICONS: Record<SettingsCategory, LucideIcon> = {
 const SAVE_DEBOUNCE_MS = 300;
 
 interface SettingsPanelProps {
+  tabId: string;
   isVisible: boolean;
 }
 
 /**
  * Two-panel settings layout with categorized navigation, search, and version footer.
  */
-export function SettingsPanel({ isVisible }: SettingsPanelProps) {
+export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
   const settings = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
+  const setEditorDirty = useAppStore((s) => s.setEditorDirty);
+  const pendingCloseRequest = useAppStore((s) => s.pendingCloseRequest);
+  const setPendingCloseRequest = useAppStore((s) => s.setPendingCloseRequest);
+  const closeTab = useAppStore((s) => s.closeTab);
 
   const [activeCategory, setActiveCategory] = useState<SettingsCategory>("general");
   const [searchQuery, setSearchQuery] = useState("");
@@ -92,7 +99,6 @@ export function SettingsPanel({ isVisible }: SettingsPanelProps) {
   // Debounced save for General/Appearance/Terminal settings
   const handleSettingsChange = useCallback(
     (newSettings: AppSettings) => {
-      pendingSettingsRef.current = newSettings;
       // Apply theme immediately so the user sees the change without waiting
       // for the debounced save (which would compare against already-updated state).
       if (newSettings.theme !== settings.theme) {
@@ -103,17 +109,61 @@ export function SettingsPanel({ isVisible }: SettingsPanelProps) {
 
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
       }
-      saveTimerRef.current = setTimeout(() => {
-        const toSave = pendingSettingsRef.current;
-        if (toSave) {
-          pendingSettingsRef.current = null;
-          updateSettings(toSave);
-        }
-      }, SAVE_DEBOUNCE_MS);
+
+      // Only dirty if the new value actually differs from the last persisted state
+      const isDirty =
+        JSON.stringify(newSettings) !== JSON.stringify(useAppStore.getState().savedSettings);
+
+      if (isDirty) {
+        pendingSettingsRef.current = newSettings;
+        setEditorDirty(tabId, true);
+        saveTimerRef.current = setTimeout(() => {
+          saveTimerRef.current = null;
+          const toSave = pendingSettingsRef.current;
+          if (toSave) {
+            pendingSettingsRef.current = null;
+            useAppStore.setState({ savedSettings: toSave });
+            updateSettings(toSave);
+            setEditorDirty(tabId, false);
+          }
+        }, SAVE_DEBOUNCE_MS);
+      } else {
+        pendingSettingsRef.current = null;
+        setEditorDirty(tabId, false);
+      }
     },
-    [updateSettings, settings.theme]
+    [updateSettings, settings.theme, tabId, setEditorDirty]
   );
+
+  // Before showing the unsaved-changes dialog, do a real-time equality check.
+  // The dirty flag may be stale (e.g. the user reverted all changes back to the
+  // saved state). If nothing actually changed, skip the dialog and close directly.
+  useEffect(() => {
+    frontendLog(
+      "settings_panel",
+      `pendingCloseRequest=${JSON.stringify(pendingCloseRequest)} tabId=${tabId}`
+    );
+    if (pendingCloseRequest?.tabId !== tabId) return;
+
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+
+    const { settings: currentSettings, savedSettings } = useAppStore.getState();
+    const currentJson = JSON.stringify(currentSettings);
+    const savedJson = JSON.stringify(savedSettings);
+    frontendLog("settings_panel", `close check — equal=${currentJson === savedJson}`);
+    if (currentJson === savedJson) {
+      pendingSettingsRef.current = null;
+      setEditorDirty(tabId, false);
+      const req = pendingCloseRequest;
+      setPendingCloseRequest(null);
+      closeTab(req.tabId, req.panelId);
+    }
+  }, [pendingCloseRequest, tabId, setEditorDirty, setPendingCloseRequest, closeTab]);
 
   // Cleanup debounce timer on unmount
   useEffect(() => {
@@ -124,11 +174,56 @@ export function SettingsPanel({ isVisible }: SettingsPanelProps) {
         const toSave = pendingSettingsRef.current;
         if (toSave) {
           pendingSettingsRef.current = null;
+          useAppStore.setState({ savedSettings: toSave });
           updateSettings(toSave);
         }
       }
     };
   }, [updateSettings]);
+
+  const flushAndClose = useCallback(() => {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    const toSave = pendingSettingsRef.current;
+    if (toSave) {
+      pendingSettingsRef.current = null;
+      useAppStore.setState({ savedSettings: toSave });
+      updateSettings(toSave);
+    }
+    setEditorDirty(tabId, false);
+    const req = pendingCloseRequest;
+    setPendingCloseRequest(null);
+    if (req) closeTab(req.tabId, req.panelId);
+  }, [
+    updateSettings,
+    tabId,
+    setEditorDirty,
+    pendingCloseRequest,
+    setPendingCloseRequest,
+    closeTab,
+  ]);
+
+  const discardAndClose = useCallback(() => {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    pendingSettingsRef.current = null;
+    // Revert in-memory store to last persisted state
+    const revertTo = useAppStore.getState().savedSettings;
+    useAppStore.setState({ settings: revertTo });
+    applyTheme(revertTo.theme);
+    setEditorDirty(tabId, false);
+    const req = pendingCloseRequest;
+    setPendingCloseRequest(null);
+    if (req) closeTab(req.tabId, req.panelId);
+  }, [tabId, setEditorDirty, pendingCloseRequest, setPendingCloseRequest, closeTab]);
+
+  const cancelClose = useCallback(() => {
+    setPendingCloseRequest(null);
+  }, [setPendingCloseRequest]);
 
   // Search filtering
   const isSearchActive = searchQuery.trim().length > 0;
@@ -249,13 +344,19 @@ export function SettingsPanel({ isVisible }: SettingsPanelProps) {
         <div className="settings-panel__content">{renderContent()}</div>
       </div>
       <div className="settings-panel__footer">
-        termiHub {appInfo ? `v${appInfo.version}` : ""}
+        termiHub {appInfo ? `v${appInfo.version}` : ""} [DEV]
         {appInfo && (
           <span className="settings-panel__footer-hash" title="Git commit hash">
             {appInfo.gitHash}
           </span>
         )}
       </div>
+      <UnsavedChangesDialog
+        open={pendingCloseRequest?.tabId === tabId}
+        onCancel={cancelClose}
+        onJustClose={discardAndClose}
+        onSaveAndClose={flushAndClose}
+      />
     </div>
   );
 }

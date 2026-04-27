@@ -313,7 +313,7 @@ export function SplitView() {
                   />
                 </>
               ) : zoomedTab.contentType === "settings" ? (
-                <SettingsPanel isVisible={true} />
+                <SettingsPanel tabId={zoomedTabId} isVisible={true} />
               ) : zoomedTab.contentType === "log-viewer" ? (
                 <LogViewer isVisible={true} />
               ) : zoomedTab.contentType === "editor" && zoomedTab.editorMeta ? (
@@ -501,6 +501,7 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
           tab.contentType === "settings" ? (
             <SettingsPanel
               key={tab.id}
+              tabId={tab.id}
               isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
             />
           ) : tab.contentType === "log-viewer" ? (

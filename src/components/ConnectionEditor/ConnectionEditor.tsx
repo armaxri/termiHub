@@ -31,6 +31,7 @@ import { ConnectionTerminalSettings } from "./ConnectionTerminalSettings";
 import { ConnectionAppearanceSettings } from "./ConnectionAppearanceSettings";
 import { AgentExternalFilesSettings } from "./AgentExternalFilesSettings";
 import { AgentSettingsForm } from "./AgentSettingsForm";
+import { UnsavedChangesDialog } from "./UnsavedChangesDialog";
 import { findLeafByTab } from "@/utils/panelTree";
 import "./ConnectionEditor.css";
 
@@ -152,6 +153,9 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const updateAgentDef = useAppStore((s) => s.updateAgentDef);
   const settings = useAppStore((s) => s.settings);
   const credentialStoreStatus = useAppStore((s) => s.credentialStoreStatus);
+  const setEditorDirty = useAppStore((s) => s.setEditorDirty);
+  const pendingCloseRequest = useAppStore((s) => s.pendingCloseRequest);
+  const setPendingCloseRequest = useAppStore((s) => s.setPendingCloseRequest);
 
   const editingConnectionId = meta.connectionId;
   const editingConnectionFolderId = meta.folderId;
@@ -280,6 +284,64 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const [sourceFile, setSourceFile] = useState<string | null>(
     existingConnection?.sourceFile ?? null
   );
+
+  // Snapshot initial field values so we can compare against them to detect changes.
+  // Using refs (not state) means the snapshot never triggers a re-render.
+  // This approach is robust against React StrictMode's double-effect invocation: the
+  // comparison is idempotent, so calling the effect twice with unchanged values still
+  // yields isDirty=false.  It also enables "revert to original → clean" behaviour.
+  //
+  // connSettings normalization: the stored config may omit fields that have schema
+  // defaults (e.g. shellIntegration).  The form writes them explicitly on the first
+  // change, so a toggle-and-revert cycle would otherwise compare {} vs {field: true}.
+  // We pre-merge schema defaults into both the baseline snapshot and each comparison
+  // to make the check semantically correct ("same effective value" rather than "same
+  // stored bytes").
+  const connSettingsSchemaDefaultsRef = useRef<Record<string, unknown> | null>(null);
+  if (connSettingsSchemaDefaultsRef.current === null) {
+    const schema = isAgentTransportMode
+      ? AGENT_SCHEMA
+      : effectiveRegistry.find((ct) => ct.typeId === selectedType)?.schema;
+    connSettingsSchemaDefaultsRef.current = schema ? buildDefaults(schema) : {};
+  }
+  const connSettingsSchemaDefaults = connSettingsSchemaDefaultsRef.current!;
+
+  const initialName = useRef(name);
+  const initialSelectedType = useRef(selectedType);
+  const initialConnSettings = useRef({ ...connSettingsSchemaDefaults, ...connSettings });
+  const initialTerminalOptions = useRef(terminalOptions);
+  const initialIcon = useRef(icon);
+  const initialPersistent = useRef(persistent);
+  const initialAgentSettings = useRef(agentSettings);
+  const initialSourceFile = useRef(sourceFile);
+
+  useEffect(() => {
+    const normalizedConnSettings = {
+      ...(connSettingsSchemaDefaultsRef.current ?? {}),
+      ...connSettings,
+    };
+    const isDirty =
+      name !== initialName.current ||
+      selectedType !== initialSelectedType.current ||
+      JSON.stringify(normalizedConnSettings) !== JSON.stringify(initialConnSettings.current) ||
+      JSON.stringify(terminalOptions) !== JSON.stringify(initialTerminalOptions.current) ||
+      icon !== initialIcon.current ||
+      persistent !== initialPersistent.current ||
+      JSON.stringify(agentSettings) !== JSON.stringify(initialAgentSettings.current) ||
+      sourceFile !== initialSourceFile.current;
+    setEditorDirty(tabId, isDirty);
+  }, [
+    name,
+    selectedType,
+    connSettings,
+    terminalOptions,
+    icon,
+    persistent,
+    agentSettings,
+    sourceFile,
+    tabId,
+    setEditorDirty,
+  ]);
 
   /** Check if the trimmed name collides with any connection in the same folder or any agent. */
   const nameError = useMemo((): string | null => {
@@ -546,17 +608,35 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     });
   }, [addTab]);
 
-  const handleSave = useCallback(async () => {
+  /** Save without closing. Returns true on success. */
+  const handleSaveOnly = useCallback(async (): Promise<boolean> => {
     if (isAgentDefinitionMode) {
-      if (await saveAgentDefinition()) {
-        closeThisTab();
-      }
-      return;
+      return saveAgentDefinition();
     }
-    if (saveConnection()) {
+    return saveConnection() !== null;
+  }, [isAgentDefinitionMode, saveAgentDefinition, saveConnection]);
+
+  const handleSave = useCallback(async () => {
+    if (await handleSaveOnly()) {
       closeThisTab();
     }
-  }, [isAgentDefinitionMode, saveAgentDefinition, saveConnection, closeThisTab]);
+  }, [handleSaveOnly, closeThisTab]);
+
+  const handleDialogCancel = useCallback(() => {
+    setPendingCloseRequest(null);
+  }, [setPendingCloseRequest]);
+
+  const handleDialogJustClose = useCallback(() => {
+    setPendingCloseRequest(null);
+    closeThisTab();
+  }, [setPendingCloseRequest, closeThisTab]);
+
+  const handleDialogSaveAndClose = useCallback(async () => {
+    if (await handleSaveOnly()) {
+      setPendingCloseRequest(null);
+      closeThisTab();
+    }
+  }, [handleSaveOnly, setPendingCloseRequest, closeThisTab]);
 
   const handleSaveAndConnect = useCallback(async () => {
     if (isAgentDefinitionMode && existingAgent) {
@@ -869,6 +949,12 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           Save
         </button>
       </div>
+      <UnsavedChangesDialog
+        open={pendingCloseRequest?.tabId === tabId}
+        onCancel={handleDialogCancel}
+        onJustClose={handleDialogJustClose}
+        onSaveAndClose={handleDialogSaveAndClose}
+      />
     </div>
   );
 }

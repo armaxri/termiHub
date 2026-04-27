@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Terminal: when an agent reconnects while a terminal is in the retry loop (or showing "Connection failed"), the connection attempt is now restarted immediately instead of waiting for the next retry cycle — the terminal connects as soon as the agent is back.
 - Connection editor: boolean fields in existing connections now correctly reflect their schema default when the field was never explicitly saved (previously showed unchecked regardless of the schema default)
 - Settings: the Settings panel and Connection Editor no longer remember the last-selected category across opens — they always start on the first category ("General" / "Connection")
+- Settings: reverting a setting back to its last-saved value no longer shows a false "unsaved changes" dialog when closing the tab. Previously, if the Zustand settings were updated externally (e.g., on initial load) after the panel mounted, the dirty-state baseline became stale and a revert was incorrectly treated as a new change.
+- Connection editor: opening an existing connection no longer immediately shows an "unsaved changes" dialog on close without the user having made any changes. The previous implementation used a first-render guard that React StrictMode's intentional double-effect invocation would bypass, marking every freshly-opened editor as dirty.
+- Connection editor: reverting a field back to its original value (or to its schema default for fields not stored in the config) now correctly clears the unsaved-changes indicator. Previously, any change at all permanently marked the tab as dirty for the session.
 
 ### Added
 
