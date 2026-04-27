@@ -131,6 +131,9 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     const xterm = xtermRegistryRef.current.get(tabId);
     if (xterm) {
       xterm.clear();
+      // Reset cursor to home (0,0) and erase visible screen to eliminate rendering artifacts
+      xterm.write("\x1b[2J\x1b[H");
+      requestAnimationFrame(() => xterm.scrollToBottom());
     }
   }, []);
 
