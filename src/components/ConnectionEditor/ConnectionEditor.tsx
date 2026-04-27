@@ -285,14 +285,31 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     existingConnection?.sourceFile ?? null
   );
 
-  // Mark the tab dirty whenever the user changes any form field (skip the initial mount render).
-  const isFirstRender = useRef(true);
+  // Snapshot initial field values so we can compare against them to detect changes.
+  // Using refs (not state) means the snapshot never triggers a re-render.
+  // This approach is robust against React StrictMode's double-effect invocation: the
+  // comparison is idempotent, so calling the effect twice with unchanged values still
+  // yields isDirty=false.  It also enables "revert to original → clean" behaviour.
+  const initialName = useRef(name);
+  const initialSelectedType = useRef(selectedType);
+  const initialConnSettings = useRef(connSettings);
+  const initialTerminalOptions = useRef(terminalOptions);
+  const initialIcon = useRef(icon);
+  const initialPersistent = useRef(persistent);
+  const initialAgentSettings = useRef(agentSettings);
+  const initialSourceFile = useRef(sourceFile);
+
   useEffect(() => {
-    if (isFirstRender.current) {
-      isFirstRender.current = false;
-      return;
-    }
-    setEditorDirty(tabId, true);
+    const isDirty =
+      name !== initialName.current ||
+      selectedType !== initialSelectedType.current ||
+      JSON.stringify(connSettings) !== JSON.stringify(initialConnSettings.current) ||
+      JSON.stringify(terminalOptions) !== JSON.stringify(initialTerminalOptions.current) ||
+      icon !== initialIcon.current ||
+      persistent !== initialPersistent.current ||
+      JSON.stringify(agentSettings) !== JSON.stringify(initialAgentSettings.current) ||
+      sourceFile !== initialSourceFile.current;
+    setEditorDirty(tabId, isDirty);
   }, [
     name,
     selectedType,
