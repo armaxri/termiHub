@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Agent/Serial: the auto-reconnect overlay now shows a "Stop" button so users can cancel reconnection at any time and return to the disconnect overlay (#627).
+- Agent/Serial: the error that triggered the auto-reconnect is now displayed inside the reconnecting spinner overlay so users can see what went wrong while retrying (#627).
+- Agent: the backend reconnect loop now checks the disconnect flag every 100 ms during its backoff sleep, so calling "Disconnect" from the UI stops the reconnection immediately instead of waiting up to 30 s per attempt (#627).
 - Serial: on Linux/Raspberry Pi, UART devices such as `ttyAMA*`, `ttyS*`, and `uart_up*` are now listed in the serial port selector (previously these were omitted because the `serialport` crate does not enumerate them on some embedded Linux configurations) (#628)
 - Agent: opening a saved agent connection definition now correctly forwards all configured settings (shell integration, initial command, serial port parameters, and any other schema fields) to the backend. Previously only the shell path was forwarded, causing shell integration to always run regardless of the setting, initial commands to be silently ignored, and serial port details to be lost. Tab color from terminal options is also now applied when using "Save and Connect" from the connection editor.
 - Terminal: "Copy tab content" no longer pads lines with trailing spaces or wraps long lines at the visible terminal width — content is now copied as logical lines, matching what horizontal scrolling would show (#636)
