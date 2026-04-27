@@ -11,6 +11,29 @@ use termihub_core::files::utils::chrono_from_epoch;
 #[cfg(unix)]
 use termihub_core::files::utils::format_permissions;
 
+/// Expand a leading `~` to the user's home directory.
+///
+/// Supports `"~"` (bare tilde) and `"~/..."` (tilde-slash prefix). If the
+/// home directory cannot be determined the path is returned unchanged.
+fn expand_tilde(path: &str) -> String {
+    if path == "~" || path.starts_with("~/") {
+        #[cfg(unix)]
+        let home = std::env::var("HOME").ok();
+        #[cfg(windows)]
+        let home = std::env::var("USERPROFILE").ok();
+        #[cfg(not(any(unix, windows)))]
+        let home: Option<String> = None;
+
+        if let Some(home) = home {
+            if path == "~" {
+                return home;
+            }
+            return format!("{}{}", home, &path[1..]);
+        }
+    }
+    path.to_string()
+}
+
 /// File backend that reads the agent host's local filesystem.
 pub struct LocalFileBackend;
 
@@ -23,14 +46,14 @@ impl LocalFileBackend {
 #[async_trait::async_trait]
 impl FileBackend for LocalFileBackend {
     async fn list(&self, path: &str) -> Result<Vec<FileEntry>, FileError> {
-        let path = path.to_string();
+        let path = expand_tilde(path);
         tokio::task::spawn_blocking(move || list_dir_sync(&path))
             .await
             .map_err(|e| FileError::OperationFailed(e.to_string()))?
     }
 
     async fn read(&self, path: &str) -> Result<Vec<u8>, FileError> {
-        let path = path.to_string();
+        let path = expand_tilde(path);
         tokio::task::spawn_blocking(move || {
             std::fs::read(&path).map_err(|e| map_io_error(e, &path))
         })
@@ -39,7 +62,7 @@ impl FileBackend for LocalFileBackend {
     }
 
     async fn write(&self, path: &str, data: &[u8]) -> Result<(), FileError> {
-        let path = path.to_string();
+        let path = expand_tilde(path);
         let data = data.to_vec();
         tokio::task::spawn_blocking(move || {
             std::fs::write(&path, &data).map_err(|e| map_io_error(e, &path))
@@ -49,7 +72,7 @@ impl FileBackend for LocalFileBackend {
     }
 
     async fn delete(&self, path: &str, is_directory: bool) -> Result<(), FileError> {
-        let path = path.to_string();
+        let path = expand_tilde(path);
         tokio::task::spawn_blocking(move || {
             if is_directory {
                 std::fs::remove_dir_all(&path).map_err(|e| map_io_error(e, &path))
@@ -62,8 +85,8 @@ impl FileBackend for LocalFileBackend {
     }
 
     async fn rename(&self, old_path: &str, new_path: &str) -> Result<(), FileError> {
-        let old = old_path.to_string();
-        let new = new_path.to_string();
+        let old = expand_tilde(old_path);
+        let new = expand_tilde(new_path);
         tokio::task::spawn_blocking(move || {
             std::fs::rename(&old, &new).map_err(|e| map_io_error(e, &old))
         })
@@ -72,14 +95,14 @@ impl FileBackend for LocalFileBackend {
     }
 
     async fn stat(&self, path: &str) -> Result<FileEntry, FileError> {
-        let path = path.to_string();
+        let path = expand_tilde(path);
         tokio::task::spawn_blocking(move || stat_sync(&path))
             .await
             .map_err(|e| FileError::OperationFailed(e.to_string()))?
     }
 
     async fn mkdir(&self, path: &str) -> Result<(), FileError> {
-        let path = path.to_string();
+        let path = expand_tilde(path);
         tokio::task::spawn_blocking(move || {
             std::fs::create_dir_all(&path).map_err(|e| map_io_error(e, &path))
         })
@@ -321,5 +344,36 @@ mod tests {
         let backend = LocalFileBackend::new();
         let result = backend.stat("/nonexistent/path").await;
         assert!(matches!(result, Err(FileError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn list_tilde_expands_to_home_dir() {
+        let home = std::env::var("HOME").expect("HOME must be set");
+        let backend = LocalFileBackend::new();
+        // "~" must resolve to $HOME and list without error
+        let result = backend.list("~").await;
+        assert!(result.is_ok(), "listing '~' failed: {:?}", result);
+        // All returned entry paths must start with the actual home dir
+        for entry in result.unwrap() {
+            assert!(
+                entry.path.starts_with(&home),
+                "entry path '{}' does not start with HOME '{}'",
+                entry.path,
+                home
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn stat_tilde_expands_to_home_dir() {
+        let home = std::env::var("HOME").expect("HOME must be set");
+        let backend = LocalFileBackend::new();
+        let result = backend.stat("~").await;
+        assert!(result.is_ok(), "stat of '~' failed: {:?}", result);
+        let entry = result.unwrap();
+        assert_eq!(entry.path, home, "stat path should be expanded home dir");
+        assert!(entry.is_directory);
     }
 }
