@@ -332,4 +332,69 @@ describe("ConnectionEditor — unsaved-changes dirty state", () => {
     });
     expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(false);
   });
+
+  // A connection type where shellIntegration defaults to true but is NOT present in
+  // the stored config — exactly the situation for connections created with an older
+  // app version or where the default was never explicitly persisted.
+  const LOCAL_TYPE_WITH_DEFAULTS: ConnectionTypeInfo = {
+    typeId: "local",
+    displayName: "Local Shell",
+    icon: "local",
+    schema: {
+      groups: [
+        {
+          key: "general",
+          label: "General",
+          fields: [
+            {
+              key: "shellIntegration",
+              label: "Shell Integration",
+              fieldType: { type: "boolean" },
+              required: false,
+              default: true,
+            },
+          ],
+        },
+      ],
+    },
+    capabilities: { monitoring: false, fileBrowser: false, resize: true, persistent: false },
+  };
+
+  // Config deliberately omits shellIntegration — the schema default (true) is used
+  // for display, but the key is absent from the stored object.
+  const CONN_WITHOUT_EXPLICIT_DEFAULTS: SavedConnection = {
+    id: "conn-default-test",
+    name: "My Local Shell",
+    config: { type: "local", config: {} },
+    folderId: null,
+  };
+
+  it("clears dirty when a schema-defaulted boolean is toggled off then back to its default", async () => {
+    useAppStore.setState({
+      ...useAppStore.getInitialState(),
+      connections: [CONN_WITHOUT_EXPLICIT_DEFAULTS],
+      connectionTypes: [LOCAL_TYPE_WITH_DEFAULTS],
+    });
+    renderEditor(CONN_WITHOUT_EXPLICIT_DEFAULTS.id);
+    await flushEffects();
+
+    // Checkbox shows as checked because the schema default is true
+    const checkbox = container.querySelector(
+      '[data-testid="field-shellIntegration"]'
+    ) as HTMLInputElement;
+    expect(checkbox).not.toBeNull();
+    expect(checkbox.checked).toBe(true);
+
+    // Uncheck → dirty
+    await act(async () => {
+      checkbox.click();
+    });
+    expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(true);
+
+    // Re-check (back to schema default) → clean
+    await act(async () => {
+      checkbox.click();
+    });
+    expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(false);
+  });
 });
