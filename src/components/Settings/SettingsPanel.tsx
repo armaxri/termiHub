@@ -73,6 +73,15 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
   const pendingSettingsRef = useRef<AppSettings | null>(null);
   const lastSavedSettingsRef = useRef<AppSettings>(settings);
 
+  // Keep lastSavedSettingsRef in sync when settings change externally (e.g. loadFromBackend,
+  // skipUpdate). Only update while there are no pending unsaved edits so we don't clobber the
+  // baseline against which dirty detection compares.
+  useEffect(() => {
+    if (!pendingSettingsRef.current && !saveTimerRef.current) {
+      lastSavedSettingsRef.current = settings;
+    }
+  }, [settings]);
+
   useEffect(() => {
     getAppInfo()
       .then(setAppInfo)
