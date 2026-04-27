@@ -130,12 +130,16 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
   const clearTerminal = useCallback((tabId: string) => {
     const xterm = xtermRegistryRef.current.get(tabId);
     if (xterm) {
-      xterm.clear();
-      // Reset cursor to (0,0) after clearing — xterm.clear() wipes the buffer
-      // but leaves the cursor at its previous position, which causes rendering
-      // artifacts and misaligned input on the next output from the shell.
-      xterm.write("\x1b[H");
-      requestAnimationFrame(() => xterm.scrollToBottom());
+      // \x1b[2J erases the entire viewport including the current line.  Without
+      // this, xterm.js v6's clear() preserves the cursor line as the "new first
+      // line", leaving the shell prompt visible as a ghost element.
+      // \x1b[H moves the cursor to (0,0) so subsequent output starts at the top.
+      // xterm.clear() is called in the write callback so the VT erase is fully
+      // processed before the scrollback is purged.
+      xterm.write("\x1b[2J\x1b[H", () => {
+        xterm.clear();
+        requestAnimationFrame(() => xterm.scrollToBottom());
+      });
     }
   }, []);
 

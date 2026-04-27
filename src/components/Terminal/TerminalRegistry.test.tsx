@@ -26,7 +26,9 @@ function createMockXterm(selection?: string): XTerm {
   return {
     hasSelection: vi.fn(() => selection !== undefined),
     getSelection: vi.fn(() => selection ?? ""),
-    write: vi.fn(),
+    // Immediately invoke the optional write callback so downstream logic (e.g.
+    // clearTerminal) that chains work in the callback can be tested synchronously.
+    write: vi.fn((_data: unknown, cb?: () => void) => cb?.()),
     clear: vi.fn(),
     scrollToBottom: vi.fn(),
     buffer: {
@@ -228,7 +230,7 @@ describe("clearTerminal", () => {
     });
   });
 
-  it("calls xterm.clear() to wipe the scrollback buffer", () => {
+  it("erases the entire display and resets cursor to (0,0) via VT sequence", () => {
     const xterm = createMockXterm();
     const el = document.createElement("div");
 
@@ -240,24 +242,29 @@ describe("clearTerminal", () => {
       registryActions.clearTerminal("tab-clear");
     });
 
-    expect(xterm.clear).toHaveBeenCalled();
+    // \x1b[2J erases the entire viewport (including the prompt line that
+    // xterm.clear() would otherwise preserve as the "new first line").
+    // \x1b[H then moves the cursor to (0,0) so subsequent output starts at the
+    // top rather than at the old cursor position.
+    expect(xterm.write).toHaveBeenCalledWith("\x1b[2J\x1b[H", expect.any(Function));
   });
 
-  it("writes cursor-home sequence after clearing to reset cursor to position (0,0)", () => {
+  it("clears the scrollback buffer after the VT erase is processed", () => {
     const xterm = createMockXterm();
     const el = document.createElement("div");
 
     act(() => {
-      registryActions.register("tab-cursor", el, xterm, createMockFitAddon());
+      registryActions.register("tab-scrollback", el, xterm, createMockFitAddon());
     });
 
     act(() => {
-      registryActions.clearTerminal("tab-cursor");
+      registryActions.clearTerminal("tab-scrollback");
     });
 
-    // \x1b[H moves the cursor to row 0, col 0 — prevents rendering artifacts
-    // caused by subsequent output being placed at the old cursor position
-    expect(xterm.write).toHaveBeenCalledWith("\x1b[H");
+    // xterm.clear() must run inside the write callback so it executes after the
+    // VT erase sequence is applied — if called before, it would preserve the old
+    // prompt line as the first line (xterm.js v6 "prompt line" semantics).
+    expect(xterm.clear).toHaveBeenCalled();
   });
 });
 
