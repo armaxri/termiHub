@@ -26,6 +26,9 @@ function createMockXterm(selection?: string): XTerm {
   return {
     hasSelection: vi.fn(() => selection !== undefined),
     getSelection: vi.fn(() => selection ?? ""),
+    clear: vi.fn(),
+    write: vi.fn(),
+    scrollToBottom: vi.fn(),
     buffer: {
       active: {
         length: 1,
@@ -283,5 +286,45 @@ describe("pasteToTerminal", () => {
 
     expect(sendInput).toHaveBeenCalledTimes(1);
     expect(sendInput).toHaveBeenCalledWith("session-dup", "hello");
+  });
+});
+
+describe("clearTerminal", () => {
+  it("does nothing when no terminal is registered for the tabId", () => {
+    // Should not throw
+    act(() => {
+      registryActions.clearTerminal("nonexistent");
+    });
+  });
+
+  it("calls xterm.clear() to wipe the buffer", () => {
+    const xterm = createMockXterm();
+    const el = document.createElement("div");
+
+    act(() => {
+      registryActions.register("tab-clear", el, xterm, createMockFitAddon());
+    });
+
+    act(() => {
+      registryActions.clearTerminal("tab-clear");
+    });
+
+    expect(xterm.clear).toHaveBeenCalledOnce();
+  });
+
+  it("resets cursor to home position after clearing to eliminate rendering artifacts", () => {
+    const xterm = createMockXterm();
+    const el = document.createElement("div");
+
+    act(() => {
+      registryActions.register("tab-clear", el, xterm, createMockFitAddon());
+    });
+
+    act(() => {
+      registryActions.clearTerminal("tab-clear");
+    });
+
+    // \x1b[2J clears the visible screen, \x1b[H moves cursor to (0,0)
+    expect(xterm.write).toHaveBeenCalledWith("\x1b[2J\x1b[H");
   });
 });
