@@ -835,8 +835,24 @@ mod tests {
 
     #[test]
     fn osc7_non_bash_returns_none() {
-        assert!(osc7_setup_command("zsh").is_none());
         assert!(osc7_setup_command("sh").is_none());
+    }
+
+    #[test]
+    fn osc7_zsh_contains_expected_parts() {
+        let setup = osc7_setup_command("zsh").expect("expected Some for zsh");
+        assert!(
+            setup.contains(r"\e]7;"),
+            "expected OSC 7 escape marker, got: {setup}"
+        );
+        assert!(
+            setup.contains("ZSH_VERSION"),
+            "expected zsh detection via ZSH_VERSION, got: {setup}"
+        );
+        assert!(
+            setup.contains("precmd_functions"),
+            "expected zsh precmd_functions hook, got: {setup}"
+        );
     }
 
     #[test]
