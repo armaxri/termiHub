@@ -138,6 +138,85 @@ describe("copySelectionToClipboard", () => {
   });
 });
 
+describe("copyTerminalToClipboard", () => {
+  it("trims trailing spaces from each line", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+
+    const xterm = {
+      buffer: {
+        active: {
+          length: 2,
+          getLine: vi.fn((i: number) => {
+            if (i === 0)
+              return {
+                isWrapped: false,
+                translateToString: (trimRight?: boolean) => (trimRight ? "hello" : "hello     "),
+              };
+            if (i === 1)
+              return {
+                isWrapped: false,
+                translateToString: (trimRight?: boolean) => (trimRight ? "world" : "world     "),
+              };
+            return null;
+          }),
+        },
+      },
+    } as unknown as XTerm;
+
+    const el = document.createElement("div");
+    act(() => {
+      registryActions.register("tab-trim", el, xterm, createMockFitAddon());
+    });
+
+    await act(async () => {
+      await registryActions.copyTerminalToClipboard("tab-trim");
+    });
+
+    expect(writeText).toHaveBeenCalledWith("hello\nworld\n");
+  });
+
+  it("joins wrapped continuation rows into a single logical line", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+
+    // Simulates "Hello World" in a 10-column terminal:
+    // row 0: "Hello Worl" fills the terminal width (isWrapped=false)
+    // row 1: "d         " is the continuation (isWrapped=true)
+    const xterm = {
+      buffer: {
+        active: {
+          length: 2,
+          getLine: vi.fn((i: number) => {
+            if (i === 0)
+              return {
+                isWrapped: false,
+                translateToString: (_trimRight?: boolean) => "Hello Worl",
+              };
+            if (i === 1)
+              return {
+                isWrapped: true,
+                translateToString: (trimRight?: boolean) => (trimRight ? "d" : "d         "),
+              };
+            return null;
+          }),
+        },
+      },
+    } as unknown as XTerm;
+
+    const el = document.createElement("div");
+    act(() => {
+      registryActions.register("tab-wrap", el, xterm, createMockFitAddon());
+    });
+
+    await act(async () => {
+      await registryActions.copyTerminalToClipboard("tab-wrap");
+    });
+
+    expect(writeText).toHaveBeenCalledWith("Hello World\n");
+  });
+});
+
 describe("pasteToTerminal", () => {
   it("reads clipboard and sends text as input via registered session", async () => {
     mockReadClipboard.mockResolvedValue("pasted text");
