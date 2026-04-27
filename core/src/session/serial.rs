@@ -157,7 +157,7 @@ pub(crate) fn list_serial_ports_with_dev(dev_dir: &std::path::Path) -> Vec<Strin
             }
         }
         ports.sort();
-        return ports;
+        ports
     }
 
     #[cfg(not(target_os = "linux"))]
