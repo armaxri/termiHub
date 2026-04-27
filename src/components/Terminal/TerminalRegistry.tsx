@@ -142,7 +142,12 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     const lines: string[] = [];
     for (let i = 0; i < buffer.length; i++) {
       const line = buffer.getLine(i);
-      lines.push(line ? line.translateToString() : "");
+      const text = line ? line.translateToString(true) : "";
+      if (line?.isWrapped && lines.length > 0) {
+        lines[lines.length - 1] += text;
+      } else {
+        lines.push(text);
+      }
     }
 
     // Trim trailing empty lines
