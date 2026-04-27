@@ -561,17 +561,23 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const handleSaveAndConnect = useCallback(async () => {
     if (isAgentDefinitionMode && existingAgent) {
       if (!(await saveAgentDefinition())) return;
-      addTab(name.trim(), "remote-session", {
-        type: "remote-session",
-        config: {
-          agentId: existingAgent.id,
-          sessionType: selectedType,
-          shell: (connSettings.shell as string) ?? undefined,
-          serialPort: (connSettings.port as string) ?? undefined,
-          persistent,
-          title: name.trim(),
+      addTab(
+        name.trim(),
+        "remote-session",
+        {
+          type: "remote-session",
+          config: {
+            agentId: existingAgent.id,
+            sessionType: selectedType,
+            ...connSettings,
+            persistent,
+            title: name.trim(),
+          },
         },
-      });
+        undefined,
+        undefined,
+        terminalOptions
+      );
       closeThisTab();
       return;
     }
@@ -613,6 +619,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     name,
     selectedType,
     persistent,
+    terminalOptions,
   ]);
 
   const handleCancel = useCallback(() => {
