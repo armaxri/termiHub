@@ -131,13 +131,64 @@ pub fn open_serial_port(
 /// List available serial port names on the system.
 ///
 /// Returns an empty vector if enumeration fails (e.g. on platforms
-/// where no serial driver is loaded).
+/// where no serial driver is loaded). On Linux, the result is
+/// supplemented with a direct `/dev` scan for UART device patterns
+/// that the `serialport` crate may not enumerate (e.g. `ttyAMA*`,
+/// `ttyS*`, `uart_up*` on Raspberry Pi).
 pub fn list_serial_ports() -> Vec<String> {
-    serialport::available_ports()
+    list_serial_ports_with_dev(std::path::Path::new("/dev"))
+}
+
+/// Inner implementation that accepts the device directory path so
+/// tests can inject a temporary directory without real devices.
+pub(crate) fn list_serial_ports_with_dev(dev_dir: &std::path::Path) -> Vec<String> {
+    let crate_ports: Vec<String> = serialport::available_ports()
         .unwrap_or_default()
         .into_iter()
         .map(|p| p.port_name)
-        .collect()
+        .collect();
+
+    #[cfg(target_os = "linux")]
+    {
+        let mut ports = crate_ports;
+        for extra in scan_extra_linux_serial_ports(dev_dir) {
+            if !ports.contains(&extra) {
+                ports.push(extra);
+            }
+        }
+        ports.sort();
+        return ports;
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = dev_dir;
+        crate_ports
+    }
+}
+
+/// Scan `dev_dir` for Linux UART devices not always enumerated by the
+/// `serialport` crate (e.g. PL011 UARTs on Raspberry Pi).
+///
+/// Matches entries whose names start with `ttyAMA`, `ttyS`, or `uart_up`.
+#[cfg(target_os = "linux")]
+fn scan_extra_linux_serial_ports(dev_dir: &std::path::Path) -> Vec<String> {
+    const EXTRA_PREFIXES: &[&str] = &["ttyAMA", "ttyS", "uart_up"];
+
+    let mut found = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dev_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if EXTRA_PREFIXES
+                .iter()
+                .any(|prefix| name_str.starts_with(prefix))
+            {
+                found.push(entry.path().to_string_lossy().into_owned());
+            }
+        }
+    }
+    found
 }
 
 /// Status of a serial port connection.

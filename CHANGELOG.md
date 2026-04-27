@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Serial: on Linux/Raspberry Pi, UART devices such as `ttyAMA*`, `ttyS*`, and `uart_up*` are now listed in the serial port selector (previously these were omitted because the `serialport` crate does not enumerate them on some embedded Linux configurations) (#628)
 - Terminal: "Copy tab content" no longer pads lines with trailing spaces or wraps long lines at the visible terminal width — content is now copied as logical lines, matching what horizontal scrolling would show (#636)
 - Agent: after an agent reconnects following a power loss, terminals whose sessions were successfully recovered by the agent now resume automatically instead of always showing the "Session disconnected" overlay. Sessions that could not be recovered still show the overlay as before.
 - Terminal: clicking "Reconnect" after a session disconnect now immediately shows the "Connecting…" overlay with no blank gap between the disconnect overlay disappearing and the connection attempt starting. Previously, the overlay was not set until after a React render cycle, leaving a brief window with no visible feedback.
