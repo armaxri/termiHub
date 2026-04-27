@@ -1880,4 +1880,34 @@ mod tests {
             &b64,
         );
     }
+
+    /// Regression test for #627: reconnect_agent must stop when `alive` is set
+    /// to false by the caller (e.g. disconnect_agent). Without the alive check
+    /// the reconnect loop sleeps up to 3 minutes before giving up.
+    #[test]
+    fn reconnect_agent_stops_when_alive_is_false() {
+        let config = RemoteAgentConfig {
+            host: "unreachable.example.com".to_string(),
+            port: 22,
+            username: "user".to_string(),
+            auth_method: "password".to_string(),
+            password: None,
+            key_path: None,
+            save_password: None,
+            agent_path: None,
+            external_connection_files: vec![],
+        };
+        let settings = AgentSettings::default();
+        let mut request_id = 0u64;
+        let alive = Arc::new(AtomicBool::new(false));
+
+        let result = reconnect_agent(&config, &settings, &mut request_id, &alive);
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("stopped") || err.contains("cancelled"),
+            "expected stop-related error, got: {err}"
+        );
+    }
 }
