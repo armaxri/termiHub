@@ -282,6 +282,8 @@ interface AppState {
   folders: ConnectionFolder[];
   connections: SavedConnection[];
   settings: AppSettings;
+  /** Last settings object that was successfully persisted to disk (or loaded from disk). */
+  savedSettings: AppSettings;
 
   // Layout
   layoutConfig: LayoutConfig;
@@ -1511,6 +1513,12 @@ export const useAppStore = create<AppState>((set, get) => {
       powerMonitoringEnabled: true,
       fileBrowserEnabled: true,
     },
+    savedSettings: {
+      version: "1",
+      externalConnectionFiles: [],
+      powerMonitoringEnabled: true,
+      fileBrowserEnabled: true,
+    },
 
     // Layout
     layoutConfig: DEFAULT_LAYOUT,
@@ -1652,6 +1660,7 @@ export const useAppStore = create<AppState>((set, get) => {
           connections,
           folders,
           settings,
+          savedSettings: settings,
           remoteAgents,
           layoutConfig,
           sidebarView,
@@ -1725,7 +1734,7 @@ export const useAppStore = create<AppState>((set, get) => {
       try {
         const oldSettings = get().settings;
         await persistSettings(newSettings);
-        set({ settings: newSettings });
+        set({ settings: newSettings, savedSettings: newSettings });
 
         if (oldSettings.theme !== newSettings.theme) {
           applyTheme(newSettings.theme);
@@ -3228,7 +3237,11 @@ export const useAppStore = create<AppState>((set, get) => {
         await apiSkipUpdateVersion(updateInfo.latestVersion);
         // Refresh the settings in the store so skippedVersion is current.
         const updatedSettings = await import("@/services/storage").then((m) => m.getSettings());
-        set({ settings: updatedSettings, updateNotificationDismissed: true });
+        set({
+          settings: updatedSettings,
+          savedSettings: updatedSettings,
+          updateNotificationDismissed: true,
+        });
       } catch (err) {
         frontendLog("update", `Failed to skip version: ${err}`);
       }
@@ -3237,7 +3250,7 @@ export const useAppStore = create<AppState>((set, get) => {
       try {
         await apiClearSkippedVersion();
         const updatedSettings = await import("@/services/storage").then((m) => m.getSettings());
-        set({ settings: updatedSettings });
+        set({ settings: updatedSettings, savedSettings: updatedSettings });
       } catch (err) {
         frontendLog("update", `Failed to clear skipped version: ${err}`);
       }

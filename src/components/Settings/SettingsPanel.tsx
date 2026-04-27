@@ -71,16 +71,6 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingSettingsRef = useRef<AppSettings | null>(null);
-  const lastSavedSettingsRef = useRef<AppSettings>(settings);
-
-  // Keep lastSavedSettingsRef in sync when settings change externally (e.g. loadFromBackend,
-  // skipUpdate). Only update while there are no pending unsaved edits so we don't clobber the
-  // baseline against which dirty detection compares.
-  useEffect(() => {
-    if (!pendingSettingsRef.current && !saveTimerRef.current) {
-      lastSavedSettingsRef.current = settings;
-    }
-  }, [settings]);
 
   useEffect(() => {
     getAppInfo()
@@ -116,10 +106,6 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
       }
       // Update local state immediately via store for responsive UI
       useAppStore.setState({ settings: newSettings });
-      frontendLog(
-        "settings_panel",
-        `handleSettingsChange called, lastSaved keys=${Object.keys(lastSavedSettingsRef.current).join(",")}`
-      );
 
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
@@ -127,16 +113,18 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
       }
 
       // Only dirty if the new value actually differs from the last persisted state
-      const isDirty = JSON.stringify(newSettings) !== JSON.stringify(lastSavedSettingsRef.current);
+      const isDirty =
+        JSON.stringify(newSettings) !== JSON.stringify(useAppStore.getState().savedSettings);
 
       if (isDirty) {
         pendingSettingsRef.current = newSettings;
         setEditorDirty(tabId, true);
         saveTimerRef.current = setTimeout(() => {
+          saveTimerRef.current = null;
           const toSave = pendingSettingsRef.current;
           if (toSave) {
             pendingSettingsRef.current = null;
-            lastSavedSettingsRef.current = toSave;
+            useAppStore.setState({ savedSettings: toSave });
             updateSettings(toSave);
             setEditorDirty(tabId, false);
           }
@@ -164,12 +152,10 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
       saveTimerRef.current = null;
     }
 
-    const currentSettings = useAppStore.getState().settings;
+    const { settings: currentSettings, savedSettings } = useAppStore.getState();
     const currentJson = JSON.stringify(currentSettings);
-    const savedJson = JSON.stringify(lastSavedSettingsRef.current);
+    const savedJson = JSON.stringify(savedSettings);
     frontendLog("settings_panel", `close check — equal=${currentJson === savedJson}`);
-    frontendLog("settings_panel", `current: ${currentJson}`);
-    frontendLog("settings_panel", `saved:   ${savedJson}`);
     if (currentJson === savedJson) {
       pendingSettingsRef.current = null;
       setEditorDirty(tabId, false);
@@ -188,7 +174,7 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
         const toSave = pendingSettingsRef.current;
         if (toSave) {
           pendingSettingsRef.current = null;
-          lastSavedSettingsRef.current = toSave;
+          useAppStore.setState({ savedSettings: toSave });
           updateSettings(toSave);
         }
       }
@@ -203,7 +189,7 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
     const toSave = pendingSettingsRef.current;
     if (toSave) {
       pendingSettingsRef.current = null;
-      lastSavedSettingsRef.current = toSave;
+      useAppStore.setState({ savedSettings: toSave });
       updateSettings(toSave);
     }
     setEditorDirty(tabId, false);
@@ -226,8 +212,9 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
     }
     pendingSettingsRef.current = null;
     // Revert in-memory store to last persisted state
-    useAppStore.setState({ settings: lastSavedSettingsRef.current });
-    applyTheme(lastSavedSettingsRef.current.theme);
+    const revertTo = useAppStore.getState().savedSettings;
+    useAppStore.setState({ settings: revertTo });
+    applyTheme(revertTo.theme);
     setEditorDirty(tabId, false);
     const req = pendingCloseRequest;
     setPendingCloseRequest(null);

@@ -62,11 +62,11 @@ async function clickCheckbox(checkbox: HTMLInputElement) {
 
 describe("SettingsPanel — dirty state on revert to default", () => {
   beforeEach(() => {
-    global.ResizeObserver = class {
+    globalThis.ResizeObserver = class {
       observe() {}
       unobserve() {}
       disconnect() {}
-    };
+    } as unknown as typeof ResizeObserver;
 
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -92,7 +92,7 @@ describe("SettingsPanel — dirty state on revert to default", () => {
   });
 
   it("clears dirty flag when setting is reverted to its last-saved value", async () => {
-    useAppStore.setState({ settings: FULL_SETTINGS });
+    useAppStore.setState({ settings: FULL_SETTINGS, savedSettings: FULL_SETTINGS });
     render();
 
     const checkbox = findShellIntegrationCheckbox();
@@ -117,7 +117,7 @@ describe("SettingsPanel — dirty state on revert to default", () => {
 
     // Simulate loadFromBackend: settings now include defaultShellIntegration
     await act(async () => {
-      useAppStore.setState({ settings: FULL_SETTINGS });
+      useAppStore.setState({ settings: FULL_SETTINGS, savedSettings: FULL_SETTINGS });
     });
 
     const checkbox = findShellIntegrationCheckbox();
@@ -138,7 +138,7 @@ describe("SettingsPanel — dirty state on revert to default", () => {
   });
 
   it("does not reset dirty baseline while user has pending unsaved changes", async () => {
-    useAppStore.setState({ settings: FULL_SETTINGS });
+    useAppStore.setState({ settings: FULL_SETTINGS, savedSettings: FULL_SETTINGS });
     render();
 
     const checkbox = findShellIntegrationCheckbox();
@@ -152,6 +152,7 @@ describe("SettingsPanel — dirty state on revert to default", () => {
     await act(async () => {
       useAppStore.setState({
         settings: { ...FULL_SETTINGS, defaultX11Forwarding: false },
+        savedSettings: { ...FULL_SETTINGS, defaultX11Forwarding: false },
       });
     });
 
