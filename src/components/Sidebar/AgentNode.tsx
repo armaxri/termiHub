@@ -208,9 +208,9 @@ function AgentFolderNode({
             style={{ paddingLeft: `${depth * 16 + 8}px` }}
             onClick={() => toggleAgentFolder(agentId, folder.id)}
           >
-            <Chevron size={16} className="connection-tree__chevron" />
             <Folder size={16} />
             <span className="connection-tree__label">{folder.name}</span>
+            <Chevron size={16} className="connection-tree__chevron" />
           </button>
         </ContextMenu.Trigger>
         <ContextMenu.Portal>
