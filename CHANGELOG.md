@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Connection sidebar: the expand/collapse chevron for folders is now displayed on the right side of the folder row. This aligns folder icons and connection icons in the same column at each indent level, making the tree hierarchy unambiguous at a glance (#640).
 - Settings: all settings panels and connection editor tabs now use a consistent visual design — fields are grouped under titled category sections, boolean options use a pill toggle switch (label on top, toggle below, hint text underneath), and spacing between fields is uniform across the entire UI.
 - Connection editor: the Connection tab is now structured in named sections (General, schema-defined groups, Session, External Files), matching the look and feel of all other tabs.
 
