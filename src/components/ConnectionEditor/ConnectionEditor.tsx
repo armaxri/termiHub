@@ -290,9 +290,25 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   // This approach is robust against React StrictMode's double-effect invocation: the
   // comparison is idempotent, so calling the effect twice with unchanged values still
   // yields isDirty=false.  It also enables "revert to original → clean" behaviour.
+  //
+  // connSettings normalization: the stored config may omit fields that have schema
+  // defaults (e.g. shellIntegration).  The form writes them explicitly on the first
+  // change, so a toggle-and-revert cycle would otherwise compare {} vs {field: true}.
+  // We pre-merge schema defaults into both the baseline snapshot and each comparison
+  // to make the check semantically correct ("same effective value" rather than "same
+  // stored bytes").
+  const connSettingsSchemaDefaultsRef = useRef<Record<string, unknown> | null>(null);
+  if (connSettingsSchemaDefaultsRef.current === null) {
+    const schema = isAgentTransportMode
+      ? AGENT_SCHEMA
+      : effectiveRegistry.find((ct) => ct.typeId === selectedType)?.schema;
+    connSettingsSchemaDefaultsRef.current = schema ? buildDefaults(schema) : {};
+  }
+  const connSettingsSchemaDefaults = connSettingsSchemaDefaultsRef.current!;
+
   const initialName = useRef(name);
   const initialSelectedType = useRef(selectedType);
-  const initialConnSettings = useRef(connSettings);
+  const initialConnSettings = useRef({ ...connSettingsSchemaDefaults, ...connSettings });
   const initialTerminalOptions = useRef(terminalOptions);
   const initialIcon = useRef(icon);
   const initialPersistent = useRef(persistent);
@@ -300,10 +316,14 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const initialSourceFile = useRef(sourceFile);
 
   useEffect(() => {
+    const normalizedConnSettings = {
+      ...(connSettingsSchemaDefaultsRef.current ?? {}),
+      ...connSettings,
+    };
     const isDirty =
       name !== initialName.current ||
       selectedType !== initialSelectedType.current ||
-      JSON.stringify(connSettings) !== JSON.stringify(initialConnSettings.current) ||
+      JSON.stringify(normalizedConnSettings) !== JSON.stringify(initialConnSettings.current) ||
       JSON.stringify(terminalOptions) !== JSON.stringify(initialTerminalOptions.current) ||
       icon !== initialIcon.current ||
       persistent !== initialPersistent.current ||
