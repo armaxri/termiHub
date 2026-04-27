@@ -26,6 +26,9 @@ function createMockXterm(selection?: string): XTerm {
   return {
     hasSelection: vi.fn(() => selection !== undefined),
     getSelection: vi.fn(() => selection ?? ""),
+    write: vi.fn(),
+    clear: vi.fn(),
+    scrollToBottom: vi.fn(),
     buffer: {
       active: {
         length: 1,
@@ -214,6 +217,47 @@ describe("copyTerminalToClipboard", () => {
     });
 
     expect(writeText).toHaveBeenCalledWith("Hello World\n");
+  });
+});
+
+describe("clearTerminal", () => {
+  it("does nothing when no terminal is registered for the tabId", () => {
+    // Should not throw
+    act(() => {
+      registryActions.clearTerminal("nonexistent");
+    });
+  });
+
+  it("calls xterm.clear() to wipe the scrollback buffer", () => {
+    const xterm = createMockXterm();
+    const el = document.createElement("div");
+
+    act(() => {
+      registryActions.register("tab-clear", el, xterm, createMockFitAddon());
+    });
+
+    act(() => {
+      registryActions.clearTerminal("tab-clear");
+    });
+
+    expect(xterm.clear).toHaveBeenCalled();
+  });
+
+  it("writes cursor-home sequence after clearing to reset cursor to position (0,0)", () => {
+    const xterm = createMockXterm();
+    const el = document.createElement("div");
+
+    act(() => {
+      registryActions.register("tab-cursor", el, xterm, createMockFitAddon());
+    });
+
+    act(() => {
+      registryActions.clearTerminal("tab-cursor");
+    });
+
+    // \x1b[H moves the cursor to row 0, col 0 — prevents rendering artifacts
+    // caused by subsequent output being placed at the old cursor position
+    expect(xterm.write).toHaveBeenCalledWith("\x1b[H");
   });
 });
 
