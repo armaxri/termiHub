@@ -131,6 +131,11 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     const xterm = xtermRegistryRef.current.get(tabId);
     if (xterm) {
       xterm.clear();
+      // Reset cursor to (0,0) after clearing — xterm.clear() wipes the buffer
+      // but leaves the cursor at its previous position, which causes rendering
+      // artifacts and misaligned input on the next output from the shell.
+      xterm.write("\x1b[H");
+      requestAnimationFrame(() => xterm.scrollToBottom());
     }
   }, []);
 
