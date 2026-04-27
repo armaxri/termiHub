@@ -1160,6 +1160,46 @@ describe("FileBrowser – Windows navigate-up (#555)", () => {
   });
 });
 
+describe("FileBrowser – session mode initial path (#630)", () => {
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState(useAppStore.getInitialState());
+
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "session_list_files") return Promise.resolve([]);
+      return Promise.resolve(undefined);
+    });
+  });
+
+  afterEach(() => {
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+    vi.clearAllMocks();
+  });
+
+  it("navigates to ~ when entering session mode with no CWD", async () => {
+    useAppStore.setState({
+      fileBrowserMode: "session",
+      sessionFileBrowserId: "sess-remote",
+      sessionFileEntries: [],
+    });
+
+    await act(async () => {
+      root.render(<FileBrowser />);
+    });
+    await flushAsync();
+
+    const calls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === "session_list_files");
+    expect(calls.length).toBeGreaterThan(0);
+    const [, args] = calls[0] as [string, { sessionId: string; path: string }];
+    expect(args.path).toBe("~");
+  });
+});
+
 describe("FileBrowser – Go to Terminal CWD button", () => {
   beforeEach(() => {
     container = document.createElement("div");
