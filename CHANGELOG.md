@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Agent: connections inside a remote agent's sidebar now support the full interaction set available for local connections — Ctrl/Cmd+Click toggles individual selection, Shift+Click range-selects across the visible tree, dragging a selected group moves all selected items at once, Escape clears selection, and clicking empty space in the agent tree deselects. Previously, agent connections had no drag-and-drop or multi-select support and could only be reorganised via the connection editor (#639).
 - CI: agent binaries in the `dev-latest` GitHub release are now named `termihub-agent-linux-{arch}` (without the `-dev-` infix) so the desktop's download URL matches the uploaded artifact name and setup no longer returns HTTP 404.
 - UI: closing a file editor tab with unsaved changes now shows a "Save / Discard / Cancel" dialog before the tab is closed, matching the behavior of the settings and connection editors. Previously, a simple browser confirm appeared after the tab was already closed, making it impossible to cancel (#632).
 - UI: restored the dirty-state dot indicator in editor tab titles (settings, connection editor, file editor) — a small filled circle now appears before the tab name when there are unsaved changes.

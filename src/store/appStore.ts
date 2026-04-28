@@ -449,6 +449,12 @@ interface AppState {
   saveAgentDef: (agentId: string, definition: Record<string, unknown>) => Promise<void>;
   duplicateAgentDef: (agentId: string, definitionId: string) => Promise<void>;
   updateAgentDef: (agentId: string, params: Record<string, unknown>) => Promise<void>;
+  moveAgentDefToFolder: (agentId: string, defId: string, folderId: string | null) => Promise<void>;
+  bulkMoveAgentDefsToFolder: (
+    agentId: string,
+    defIds: string[],
+    folderId: string | null
+  ) => Promise<void>;
   deleteAgentDef: (agentId: string, definitionId: string) => Promise<void>;
   createAgentFolder: (agentId: string, name: string, parentId?: string | null) => Promise<void>;
   updateAgentFolder: (agentId: string, params: Record<string, unknown>) => Promise<void>;
@@ -2490,6 +2496,16 @@ export const useAppStore = create<AppState>((set, get) => {
       } catch (err) {
         console.error(`Failed to update agent definition on ${agentId}:`, err);
       }
+    },
+
+    moveAgentDefToFolder: async (agentId, defId, folderId) => {
+      await get().updateAgentDef(agentId, { id: defId, folder_id: folderId });
+    },
+
+    bulkMoveAgentDefsToFolder: async (agentId, defIds, folderId) => {
+      await Promise.all(
+        defIds.map((defId) => get().moveAgentDefToFolder(agentId, defId, folderId))
+      );
     },
 
     createAgentFolder: async (agentId, name, parentId) => {
