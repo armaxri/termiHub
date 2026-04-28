@@ -58,6 +58,9 @@ vi.mock("@/services/api", () => ({
   updateAgentFolder: vi.fn(),
   deleteAgentFolder: vi.fn(),
   getCredentialStoreStatus: vi.fn(() => Promise.resolve({ mode: "none", status: "unavailable" })),
+  sessionGetCapabilities: vi.fn(() => Promise.resolve({ monitoring: false, fileBrowser: false })),
+  sessionMonitoringOpen: vi.fn(() => Promise.resolve()),
+  sessionMonitoringClose: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock("@/themes", () => ({
