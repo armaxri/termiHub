@@ -120,11 +120,18 @@ impl ConnectionType for RemoteProxy {
         }
 
         // Extract the remote connection type and config from settings.
-        let session_type = settings
+        // Normalise frontend aliases: "shell" is the user-facing name but the
+        // agent registry uses "local".  Apply the same mapping here so that
+        // capability lookups and the monitoring-host check ("local" → "self")
+        // work correctly when the frontend sends type = "shell".
+        let raw_type = settings
             .get("type")
             .and_then(|v| v.as_str())
-            .unwrap_or("local")
-            .to_string();
+            .unwrap_or("local");
+        let session_type = match raw_type {
+            "shell" => "local".to_string(),
+            other => other.to_string(),
+        };
 
         let config = settings
             .get("config")
