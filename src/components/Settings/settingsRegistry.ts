@@ -7,7 +7,8 @@ export type SettingsCategory =
   | "external-files"
   | "editor"
   | "portable"
-  | "updates";
+  | "updates"
+  | "about";
 
 export interface CategoryDefinition {
   id: SettingsCategory;
@@ -32,6 +33,7 @@ export const CATEGORIES: CategoryDefinition[] = [
   { id: "editor", label: "Editor" },
   { id: "portable", label: "Portable Mode" },
   { id: "updates", label: "Updates" },
+  { id: "about", label: "About" },
 ];
 
 export const SETTINGS_REGISTRY: SettingDefinition[] = [
@@ -221,6 +223,13 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     description: "Automatically check for new releases on startup",
     category: "updates",
     keywords: ["update", "auto", "automatic", "startup", "check", "notify"],
+  },
+  {
+    id: "aboutInfo",
+    label: "About termiHub",
+    description: "Version number, GitHub repository link, license, and project information",
+    category: "about",
+    keywords: ["about", "version", "license", "mit", "github", "repository", "credits", "info"],
   },
 ];
 
