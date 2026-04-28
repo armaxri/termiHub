@@ -2,13 +2,15 @@
 ///
 /// Orchestrates the setup flow:
 /// 1. Create a visible SSH terminal session for the user to observe.
-/// 2. Open a separate blocking SSH connection for SFTP upload + arch detection.
-/// 3. Upload a self-contained POSIX setup script and execute it in the terminal.
+/// 2. Open a separate blocking SSH connection for SFTP upload.
+/// 3. Resolve the binary (GitHub download or local file).
+/// 4. Upload a self-contained POSIX setup script and execute it in the terminal.
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 use tracing::{error, info};
 
 use crate::session::manager::SessionManager;
+use crate::terminal::agent_binary;
 use crate::terminal::backend::RemoteAgentConfig;
 use crate::utils::errors::TerminalError;
 use crate::utils::remote_exec::{
@@ -32,16 +34,69 @@ const TEMP_SCRIPT_PATH: &str = "/tmp/termihub-agent-setup.sh";
 /// Delay (ms) before injecting commands to let the shell initialize.
 const SHELL_INIT_DELAY_MS: u64 = 2000;
 
+/// Source for the agent binary during setup.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "type")]
+pub enum AgentBinarySource {
+    /// Download from GitHub (dev-latest for dev builds, v{version} for releases).
+    GithubDownload,
+    /// Use a pre-built binary from a local file path.
+    LocalFile { path: String },
+}
+
 /// Configuration for agent setup provided by the frontend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSetupConfig {
-    /// Local path to the pre-built agent binary.
-    pub binary_path: String,
+    /// How to obtain the agent binary.
+    pub binary_source: AgentBinarySource,
+    /// Remote architecture string from `uname -m` (e.g. `"aarch64"`).
+    /// Detected before the dialog opens; used to select the correct binary.
+    pub remote_arch: String,
     /// Remote install path (defaults to ~/.local/bin/termihub-agent).
     pub remote_path: Option<String>,
     /// Whether to install a systemd service.
     pub install_service: bool,
+}
+
+/// Information about the remote host's architecture, returned before the setup dialog opens.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteArchInfo {
+    /// Raw `uname -m` output (e.g. `"aarch64"`).
+    pub arch: String,
+    /// Raw `uname -s` output (e.g. `"Linux"`).
+    pub os: String,
+    /// Artifact suffix used in binary filenames (e.g. `"linux-arm64"`), or `None` if unsupported.
+    pub arch_suffix: Option<String>,
+    /// Base download URL without the arch suffix (e.g. `"https://.../dev-latest/termihub-agent-"`).
+    /// Append any supported arch suffix to build the full URL.
+    pub download_base_url: String,
+    /// Pre-computed GitHub download URL for the detected arch, or `None` if arch is unsupported.
+    pub download_url: Option<String>,
+}
+
+/// Detect the remote host's architecture via a temporary SSH connection.
+///
+/// Called before the setup dialog opens so the dialog can show the detected
+/// architecture and pre-select the correct download URL.
+pub fn detect_agent_arch_info(config: &RemoteAgentConfig) -> Result<RemoteArchInfo, TerminalError> {
+    let ssh_config = config.to_ssh_config();
+    let session = connect_and_authenticate(&ssh_config)?;
+    let (os, arch) = detect_remote_info(&session)?;
+    let arch_suffix = agent_binary::artifact_name_for_arch(&arch).map(str::to_string);
+    let version = env!("CARGO_PKG_VERSION");
+    let download_base_url = agent_binary::compute_download_base_url(version);
+    let download_url = arch_suffix
+        .as_deref()
+        .map(|s| format!("{download_base_url}{s}"));
+    Ok(RemoteArchInfo {
+        arch,
+        os,
+        arch_suffix,
+        download_base_url,
+        download_url,
+    })
 }
 
 /// Progress event emitted during agent setup.
@@ -71,13 +126,14 @@ pub fn setup_remote_agent(
     app_handle: &AppHandle,
     session_manager: &SessionManager,
 ) -> Result<AgentSetupResult, TerminalError> {
-    // Validate that the local binary exists
-    let binary_path = &setup_config.binary_path;
-    if !std::path::Path::new(binary_path).is_file() {
-        return Err(TerminalError::SpawnFailed(format!(
-            "Agent binary not found: {}",
-            binary_path
-        )));
+    // Validate local file exists upfront (before spawning the terminal session)
+    if let AgentBinarySource::LocalFile { path } = &setup_config.binary_source {
+        if !std::path::Path::new(path).is_file() {
+            return Err(TerminalError::SpawnFailed(format!(
+                "Agent binary not found: {}",
+                path
+            )));
+        }
     }
 
     // Create the visible SSH terminal session via the new SessionManager.
@@ -126,7 +182,7 @@ pub fn setup_remote_agent(
     Ok(AgentSetupResult { session_id })
 }
 
-/// Background thread: detect arch, upload binary + script, execute script.
+/// Background thread: resolve binary, upload it + script, execute script.
 fn run_setup_background(
     agent_id: &str,
     session_id: &str,
@@ -136,10 +192,8 @@ fn run_setup_background(
     session_manager: &SessionManager,
     rt_handle: &tokio::runtime::Handle,
 ) {
-    // Wait for the shell to initialize
     std::thread::sleep(std::time::Duration::from_millis(SHELL_INIT_DELAY_MS));
 
-    // Show immediate feedback so the terminal isn't blank while SFTP upload runs
     inject_commands(
         session_manager,
         session_id,
@@ -154,7 +208,6 @@ fn run_setup_background(
         "Opening SFTP connection...",
     );
 
-    // Open a separate blocking SSH connection for SFTP
     let sftp_session = match connect_and_authenticate(ssh_config) {
         Ok(s) => {
             s.set_blocking(true);
@@ -178,79 +231,23 @@ fn run_setup_background(
         }
     };
 
-    // Detect remote OS and architecture
-    emit_progress(
+    // Resolve binary path (download from GitHub or validate local file)
+    let binary_path = match resolve_binary(
+        setup_config,
         app_handle,
         agent_id,
-        "detect",
-        "Detecting remote architecture...",
-    );
-    match detect_remote_info(&sftp_session) {
-        Ok((os, arch)) => {
-            info!("Agent setup: remote system: {} {}", os, arch);
-            emit_progress(
-                app_handle,
-                agent_id,
-                "detect",
-                &format!("Detected: {} {}", os, arch),
-            );
-
-            // Validate the local binary matches the remote architecture
-            match detect_binary_arch(&setup_config.binary_path) {
-                Ok(binary_arch) => {
-                    if let Some(expected) = expected_arch_for_uname(&arch) {
-                        if binary_arch != expected {
-                            let msg = format!(
-                                "Architecture mismatch: binary is {} but remote host is {} ({}).\n\
-                                 Please select the correct binary for the target platform.",
-                                binary_arch, expected, arch
-                            );
-                            error!("Agent setup: {}", msg);
-                            emit_progress(app_handle, agent_id, "error", &msg);
-                            inject_error_script(
-                                &sftp_session,
-                                session_manager,
-                                session_id,
-                                &msg,
-                                rt_handle,
-                            );
-                            return;
-                        }
-                        info!("Agent setup: binary arch {} matches remote", binary_arch);
-                    }
-                }
-                Err(e) => {
-                    let msg = match &e {
-                        TerminalError::SpawnFailed(inner) => inner.clone(),
-                        other => format!("{}", other),
-                    };
-                    error!("Agent setup: {}", msg);
-                    emit_progress(app_handle, agent_id, "error", &msg);
-                    inject_error_script(
-                        &sftp_session,
-                        session_manager,
-                        session_id,
-                        &msg,
-                        rt_handle,
-                    );
-                    return;
-                }
-            }
-        }
-        Err(e) => {
-            error!("Agent setup: arch detection failed: {}", e);
-            emit_progress(
-                app_handle,
-                agent_id,
-                "detect",
-                &format!("Architecture detection failed (continuing): {}", e),
-            );
-        }
-    }
+        &sftp_session,
+        session_manager,
+        session_id,
+        rt_handle,
+    ) {
+        Some(p) => p,
+        None => return,
+    };
 
     // Upload binary via SFTP
     emit_progress(app_handle, agent_id, "upload", "Uploading agent binary...");
-    match upload_via_sftp(&sftp_session, &setup_config.binary_path, TEMP_UPLOAD_PATH) {
+    match upload_via_sftp(&sftp_session, &binary_path, TEMP_UPLOAD_PATH) {
         Ok(bytes) => {
             info!("Agent setup: uploaded {} bytes", bytes);
             emit_progress(
@@ -310,7 +307,6 @@ fn run_setup_background(
         }
     }
 
-    // Execute the setup script in the visible terminal
     emit_progress(app_handle, agent_id, "install", "Running setup script...");
     let exec_command = format!("sh {}; rm -f {}\n", TEMP_SCRIPT_PATH, TEMP_SCRIPT_PATH);
     inject_commands(session_manager, session_id, &exec_command, rt_handle);
@@ -322,6 +318,102 @@ fn run_setup_background(
         "Setup script started in terminal",
     );
     info!("Agent setup: script started for agent {}", agent_id);
+}
+
+/// Resolve the agent binary to a local path, downloading or validating as needed.
+///
+/// Returns `Some(path)` on success. On error, emits progress events and injects
+/// an error into the terminal, then returns `None`.
+fn resolve_binary(
+    setup_config: &AgentSetupConfig,
+    app_handle: &AppHandle,
+    agent_id: &str,
+    sftp_session: &ssh2::Session,
+    session_manager: &SessionManager,
+    session_id: &str,
+    rt_handle: &tokio::runtime::Handle,
+) -> Option<String> {
+    match &setup_config.binary_source {
+        AgentBinarySource::GithubDownload => {
+            let version = env!("CARGO_PKG_VERSION");
+            let arch_suffix = match agent_binary::artifact_name_for_arch(&setup_config.remote_arch)
+            {
+                Some(s) => s,
+                None => {
+                    let msg = format!(
+                        "Unsupported remote architecture: {}",
+                        setup_config.remote_arch
+                    );
+                    error!("Agent setup: {}", msg);
+                    emit_progress(app_handle, agent_id, "error", &msg);
+                    inject_error_script(sftp_session, session_manager, session_id, &msg, rt_handle);
+                    return None;
+                }
+            };
+
+            emit_progress(
+                app_handle,
+                agent_id,
+                "download",
+                "Downloading agent binary from GitHub...",
+            );
+
+            match agent_binary::resolve_agent_binary(app_handle, version, arch_suffix, |_, _| {}) {
+                Ok(path) => {
+                    info!("Agent setup: resolved binary at {}", path.display());
+                    emit_progress(
+                        app_handle,
+                        agent_id,
+                        "download",
+                        &format!("Binary ready ({})", arch_suffix),
+                    );
+                    Some(path.to_string_lossy().to_string())
+                }
+                Err(e) => {
+                    let msg = format!("Failed to obtain agent binary: {}", e);
+                    error!("Agent setup: {}", msg);
+                    emit_progress(app_handle, agent_id, "error", &msg);
+                    inject_error_script(sftp_session, session_manager, session_id, &msg, rt_handle);
+                    None
+                }
+            }
+        }
+        AgentBinarySource::LocalFile { path } => match detect_binary_arch(path) {
+            Ok(binary_arch) => {
+                if let Some(expected) = expected_arch_for_uname(&setup_config.remote_arch) {
+                    if binary_arch != expected {
+                        let msg = format!(
+                            "Architecture mismatch: binary is {} but remote host is {} ({}).\n\
+                                 Please select the correct binary for the target platform.",
+                            binary_arch, expected, setup_config.remote_arch
+                        );
+                        error!("Agent setup: {}", msg);
+                        emit_progress(app_handle, agent_id, "error", &msg);
+                        inject_error_script(
+                            sftp_session,
+                            session_manager,
+                            session_id,
+                            &msg,
+                            rt_handle,
+                        );
+                        return None;
+                    }
+                    info!("Agent setup: binary arch {} matches remote", binary_arch);
+                }
+                Some(path.clone())
+            }
+            Err(e) => {
+                let msg = match &e {
+                    TerminalError::SpawnFailed(inner) => inner.clone(),
+                    other => format!("{}", other),
+                };
+                error!("Agent setup: {}", msg);
+                emit_progress(app_handle, agent_id, "error", &msg);
+                inject_error_script(sftp_session, session_manager, session_id, &msg, rt_handle);
+                None
+            }
+        },
+    }
 }
 
 /// Generate a self-contained POSIX shell script for agent installation.
@@ -590,26 +682,109 @@ mod tests {
     }
 
     #[test]
-    fn agent_setup_config_serde_round_trip() {
+    fn agent_binary_source_github_serde() {
+        let src = AgentBinarySource::GithubDownload;
+        let json = serde_json::to_string(&src).unwrap();
+        assert!(json.contains("\"type\":\"githubDownload\""), "got: {json}");
+        let back: AgentBinarySource = serde_json::from_str(&json).unwrap();
+        assert!(matches!(back, AgentBinarySource::GithubDownload));
+    }
+
+    #[test]
+    fn agent_binary_source_local_file_serde() {
+        let src = AgentBinarySource::LocalFile {
+            path: "/tmp/agent".to_string(),
+        };
+        let json = serde_json::to_string(&src).unwrap();
+        assert!(json.contains("\"type\":\"localFile\""), "got: {json}");
+        assert!(json.contains("/tmp/agent"));
+        let back: AgentBinarySource = serde_json::from_str(&json).unwrap();
+        match back {
+            AgentBinarySource::LocalFile { path } => assert_eq!(path, "/tmp/agent"),
+            _ => panic!("expected LocalFile"),
+        }
+    }
+
+    #[test]
+    fn agent_setup_config_github_serde_round_trip() {
         let config = AgentSetupConfig {
-            binary_path: "/home/user/termihub-agent".to_string(),
+            binary_source: AgentBinarySource::GithubDownload,
+            remote_arch: "aarch64".to_string(),
             remote_path: Some("/opt/agent".to_string()),
             install_service: true,
         };
         let json = serde_json::to_string(&config).unwrap();
-        let deserialized: AgentSetupConfig = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.binary_path, "/home/user/termihub-agent");
-        assert_eq!(deserialized.remote_path, Some("/opt/agent".to_string()));
-        assert!(deserialized.install_service);
+        let back: AgentSetupConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.remote_arch, "aarch64");
+        assert_eq!(back.remote_path, Some("/opt/agent".to_string()));
+        assert!(back.install_service);
+        assert!(matches!(
+            back.binary_source,
+            AgentBinarySource::GithubDownload
+        ));
     }
 
     #[test]
-    fn agent_setup_config_serde_defaults() {
-        let json = r#"{"binaryPath": "/tmp/agent", "installService": false}"#;
-        let config: AgentSetupConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.binary_path, "/tmp/agent");
-        assert!(config.remote_path.is_none());
-        assert!(!config.install_service);
+    fn agent_setup_config_local_file_serde_round_trip() {
+        let config = AgentSetupConfig {
+            binary_source: AgentBinarySource::LocalFile {
+                path: "/home/user/termihub-agent".to_string(),
+            },
+            remote_arch: "x86_64".to_string(),
+            remote_path: None,
+            install_service: false,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let back: AgentSetupConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.remote_arch, "x86_64");
+        assert!(back.remote_path.is_none());
+        match back.binary_source {
+            AgentBinarySource::LocalFile { path } => {
+                assert_eq!(path, "/home/user/termihub-agent")
+            }
+            _ => panic!("expected LocalFile"),
+        }
+    }
+
+    #[test]
+    fn remote_arch_info_serde() {
+        let base =
+            "https://github.com/armaxri/termiHub/releases/download/dev-latest/termihub-agent-";
+        let info = RemoteArchInfo {
+            arch: "aarch64".to_string(),
+            os: "Linux".to_string(),
+            arch_suffix: Some("linux-arm64".to_string()),
+            download_base_url: base.to_string(),
+            download_url: Some(format!("{base}linux-arm64")),
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("archSuffix"));
+        assert!(json.contains("downloadUrl"));
+        assert!(json.contains("downloadBaseUrl"));
+        assert!(json.contains("linux-arm64"));
+        let back: RemoteArchInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.arch, "aarch64");
+        assert_eq!(back.arch_suffix, Some("linux-arm64".to_string()));
+        assert!(back.download_base_url.ends_with("termihub-agent-"));
+    }
+
+    #[test]
+    fn remote_arch_info_unsupported_arch_serde() {
+        let info = RemoteArchInfo {
+            arch: "mips".to_string(),
+            os: "Linux".to_string(),
+            arch_suffix: None,
+            download_base_url:
+                "https://github.com/armaxri/termiHub/releases/download/dev-latest/termihub-agent-"
+                    .to_string(),
+            download_url: None,
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        let back: RemoteArchInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.arch, "mips");
+        assert!(back.arch_suffix.is_none());
+        assert!(back.download_url.is_none());
+        assert!(!back.download_base_url.is_empty());
     }
 
     #[test]

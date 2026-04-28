@@ -1,18 +1,18 @@
 /**
  * Dialog for setting up a remote agent on a host.
  *
- * Lets the user select a pre-built agent binary, configure the remote
- * install path, and optionally install a systemd service. On submit,
- * it uploads the binary and opens a visible SSH terminal with setup
- * commands.
+ * Opens in a "detecting" phase: immediately connects via SSH and detects the
+ * remote architecture. Once detected, the form appears with the detected arch
+ * pre-selected in a dropdown (overridable). GitHub download is the default
+ * binary source; a local file picker is available as fallback.
  */
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { open } from "@tauri-apps/plugin-dialog";
 import { RemoteAgentDefinition } from "@/types/connection";
 import { RemoteAgentConfig } from "@/types/terminal";
-import { setupRemoteAgent } from "@/services/api";
+import { detectAgentArch, setupRemoteAgent, RemoteArchInfo } from "@/services/api";
 import { useAppStore } from "@/store/appStore";
 import "./AgentSetupDialog.css";
 
@@ -22,38 +22,41 @@ interface AgentSetupDialogProps {
   agent: RemoteAgentDefinition;
 }
 
+type DialogPhase =
+  | { kind: "detecting" }
+  | { kind: "error"; message: string }
+  | { kind: "ready"; archInfo: RemoteArchInfo };
+
+/** Supported target architectures for GitHub downloads. */
+const ARCH_OPTIONS = [
+  { suffix: "linux-x64", uname: "x86_64", label: "linux-x64 (x86_64)" },
+  { suffix: "linux-arm64", uname: "aarch64", label: "linux-arm64 (aarch64)" },
+  { suffix: "linux-armv7", uname: "armv7l", label: "linux-armv7 (armv7l)" },
+] as const;
+
+type ArchSuffix = (typeof ARCH_OPTIONS)[number]["suffix"];
+
+function isKnownSuffix(s: string | null): s is ArchSuffix {
+  return ARCH_OPTIONS.some((o) => o.suffix === s);
+}
+
 export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSetupDialogProps) {
-  const [binaryPath, setBinaryPath] = useState("");
+  const [phase, setPhase] = useState<DialogPhase>({ kind: "detecting" });
+  const [selectedArch, setSelectedArch] = useState<ArchSuffix>("linux-x64");
   const [remotePath, setRemotePath] = useState("~/.local/bin/termihub-agent");
   const [installService, setInstallService] = useState(false);
+  const [binarySource, setBinarySource] = useState<"github" | "local">("github");
+  const [localBinaryPath, setLocalBinaryPath] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
+  const configRef = useRef<RemoteAgentConfig | null>(null);
   const addTab = useAppStore((s) => s.addTab);
   const requestPassword = useAppStore((s) => s.requestPassword);
 
-  useEffect(() => {
-    if (isOpen) {
-      setBinaryPath("");
-      setError(null);
-      setLoading(false);
-    }
-  }, [isOpen]);
-
-  const handleBrowse = useCallback(async () => {
-    const selected = await open({
-      multiple: false,
-      title: "Select termihub-agent binary",
-    });
-    if (selected) {
-      setBinaryPath(selected as string);
-    }
-  }, []);
-
-  const handleSetup = useCallback(async () => {
-    if (!binaryPath) return;
-    setLoading(true);
-    setError(null);
+  const runDetection = useCallback(async () => {
+    setPhase({ kind: "detecting" });
+    setSubmitError(null);
 
     try {
       const config: RemoteAgentConfig = { ...agent.config };
@@ -61,32 +64,83 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
       if (config.authMethod === "password" && !config.password) {
         const pw = await requestPassword(config.host, config.username);
         if (!pw) {
-          setLoading(false);
+          onOpenChange(false);
           return;
         }
         config.password = pw;
       }
 
-      const result = await setupRemoteAgent(agent.id, config, {
-        binaryPath,
+      configRef.current = config;
+      const archInfo = await detectAgentArch(config);
+      setPhase({ kind: "ready", archInfo });
+      setSelectedArch(isKnownSuffix(archInfo.archSuffix) ? archInfo.archSuffix : "linux-x64");
+    } catch (err) {
+      setPhase({
+        kind: "error",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }, [agent, requestPassword, onOpenChange]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setRemotePath("~/.local/bin/termihub-agent");
+    setInstallService(false);
+    setBinarySource("github");
+    setLocalBinaryPath("");
+    setLoading(false);
+    setSubmitError(null);
+    configRef.current = null;
+    runDetection();
+  }, [isOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleBrowse = useCallback(async () => {
+    const selected = await open({
+      multiple: false,
+      title: "Select termihub-agent binary",
+    });
+    if (selected) {
+      setLocalBinaryPath(selected as string);
+    }
+  }, []);
+
+  const handleSetup = useCallback(async () => {
+    if (!configRef.current || phase.kind !== "ready") return;
+    if (binarySource === "local" && !localBinaryPath) return;
+
+    setLoading(true);
+    setSubmitError(null);
+
+    const archOption = ARCH_OPTIONS.find((o) => o.suffix === selectedArch);
+    const remoteArch = archOption?.uname ?? phase.archInfo.arch;
+
+    try {
+      const result = await setupRemoteAgent(agent.id, configRef.current, {
+        binarySource:
+          binarySource === "github"
+            ? { type: "githubDownload" }
+            : { type: "localFile", path: localBinaryPath },
+        remoteArch,
         remotePath,
         installService,
       });
 
-      // Open a terminal tab with the pre-existing SSH session
-      const sshConfig = {
-        host: config.host,
-        port: config.port,
-        username: config.username,
-        authMethod: config.authMethod,
-        password: config.password,
-        keyPath: config.keyPath,
-        enableX11Forwarding: false,
-      };
+      const cfg = configRef.current;
       addTab(
         `Setup: ${agent.name}`,
         "ssh",
-        { type: "ssh", config: sshConfig },
+        {
+          type: "ssh",
+          config: {
+            host: cfg.host,
+            port: cfg.port,
+            username: cfg.username,
+            authMethod: cfg.authMethod,
+            password: cfg.password,
+            keyPath: cfg.keyPath,
+            enableX11Forwarding: false,
+          },
+        },
         undefined,
         "terminal",
         undefined,
@@ -95,11 +149,27 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
 
       onOpenChange(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setSubmitError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
-  }, [binaryPath, remotePath, installService, agent, requestPassword, addTab, onOpenChange]);
+  }, [
+    phase,
+    selectedArch,
+    binarySource,
+    localBinaryPath,
+    remotePath,
+    installService,
+    agent,
+    addTab,
+    onOpenChange,
+  ]);
+
+  const effectiveDownloadUrl =
+    phase.kind === "ready" ? `${phase.archInfo.downloadBaseUrl}${selectedArch}` : null;
+
+  const isSubmitDisabled =
+    loading || phase.kind !== "ready" || (binarySource === "local" && !localBinaryPath);
 
   return (
     <Dialog.Root open={isOpen} onOpenChange={onOpenChange}>
@@ -114,53 +184,145 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
             will be visible in an SSH terminal.
           </Dialog.Description>
 
-          <div className="agent-setup-dialog__field">
-            <label className="agent-setup-dialog__label">Agent Binary</label>
-            <div className="agent-setup-dialog__file-row">
-              <input
-                className="agent-setup-dialog__input"
-                type="text"
-                value={binaryPath}
-                onChange={(e) => setBinaryPath(e.target.value)}
-                placeholder="Path to termihub-agent binary"
-                data-testid="agent-setup-binary-path"
-              />
+          {phase.kind === "detecting" && (
+            <div className="agent-setup-dialog__detecting">
+              <div className="agent-setup-dialog__spinner" />
+              <span className="agent-setup-dialog__detecting-label">
+                Connecting and detecting architecture…
+              </span>
+            </div>
+          )}
+
+          {phase.kind === "error" && (
+            <div className="agent-setup-dialog__detection-error">
+              <p className="agent-setup-dialog__error">{phase.message}</p>
               <button
-                className="agent-setup-dialog__browse-btn"
-                onClick={handleBrowse}
+                className="agent-setup-dialog__btn agent-setup-dialog__btn--secondary"
+                onClick={runDetection}
                 type="button"
-                data-testid="agent-setup-browse"
               >
-                Browse
+                Retry
               </button>
             </div>
-          </div>
+          )}
 
-          <div className="agent-setup-dialog__field">
-            <label className="agent-setup-dialog__label">Remote Install Path</label>
-            <input
-              className="agent-setup-dialog__input"
-              type="text"
-              value={remotePath}
-              onChange={(e) => setRemotePath(e.target.value)}
-              data-testid="agent-setup-remote-path"
-            />
-          </div>
+          {phase.kind === "ready" && (
+            <>
+              <div className="agent-setup-dialog__field">
+                <label className="agent-setup-dialog__label" htmlFor="arch-select">
+                  Target Architecture
+                </label>
+                <select
+                  id="arch-select"
+                  className="agent-setup-dialog__input agent-setup-dialog__select"
+                  value={selectedArch}
+                  onChange={(e) => setSelectedArch(e.target.value as ArchSuffix)}
+                  data-testid="agent-setup-arch-select"
+                >
+                  {ARCH_OPTIONS.map((o) => (
+                    <option key={o.suffix} value={o.suffix}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+                <span className="agent-setup-dialog__arch-hint">
+                  Detected: {phase.archInfo.os} / {phase.archInfo.arch}
+                  {!isKnownSuffix(phase.archInfo.archSuffix) && (
+                    <span className="agent-setup-dialog__unsupported">
+                      {" "}
+                      (unsupported — please verify the selection above)
+                    </span>
+                  )}
+                </span>
+              </div>
 
-          <div className="agent-setup-dialog__checkbox-row">
-            <input
-              type="checkbox"
-              id="install-service"
-              checked={installService}
-              onChange={(e) => setInstallService(e.target.checked)}
-              data-testid="agent-setup-install-service"
-            />
-            <label htmlFor="install-service">Install systemd service</label>
-          </div>
+              <div className="agent-setup-dialog__field">
+                <label className="agent-setup-dialog__label">Binary Source</label>
+                <div className="agent-setup-dialog__source-selector">
+                  <label
+                    className={`agent-setup-dialog__source-option${binarySource === "github" ? " agent-setup-dialog__source-option--selected" : ""}`}
+                  >
+                    <div className="agent-setup-dialog__source-option-header">
+                      <input
+                        type="radio"
+                        name="binarySource"
+                        value="github"
+                        checked={binarySource === "github"}
+                        onChange={() => setBinarySource("github")}
+                        data-testid="agent-setup-source-github"
+                      />
+                      <span>Download from GitHub</span>
+                    </div>
+                    {effectiveDownloadUrl && (
+                      <div className="agent-setup-dialog__url">{effectiveDownloadUrl}</div>
+                    )}
+                  </label>
 
-          {error && (
+                  <label
+                    className={`agent-setup-dialog__source-option${binarySource === "local" ? " agent-setup-dialog__source-option--selected" : ""}`}
+                  >
+                    <div className="agent-setup-dialog__source-option-header">
+                      <input
+                        type="radio"
+                        name="binarySource"
+                        value="local"
+                        checked={binarySource === "local"}
+                        onChange={() => setBinarySource("local")}
+                        data-testid="agent-setup-source-local"
+                      />
+                      <span>Use local file</span>
+                    </div>
+                    {binarySource === "local" && (
+                      <div className="agent-setup-dialog__file-row">
+                        <input
+                          className="agent-setup-dialog__input"
+                          type="text"
+                          value={localBinaryPath}
+                          onChange={(e) => setLocalBinaryPath(e.target.value)}
+                          placeholder="Path to termihub-agent binary"
+                          data-testid="agent-setup-binary-path"
+                        />
+                        <button
+                          className="agent-setup-dialog__browse-btn"
+                          onClick={handleBrowse}
+                          type="button"
+                          data-testid="agent-setup-browse"
+                        >
+                          Browse
+                        </button>
+                      </div>
+                    )}
+                  </label>
+                </div>
+              </div>
+
+              <div className="agent-setup-dialog__field">
+                <label className="agent-setup-dialog__label">Remote Install Path</label>
+                <input
+                  className="agent-setup-dialog__input"
+                  type="text"
+                  value={remotePath}
+                  onChange={(e) => setRemotePath(e.target.value)}
+                  data-testid="agent-setup-remote-path"
+                />
+              </div>
+
+              <div className="agent-setup-dialog__checkbox-row">
+                <input
+                  type="checkbox"
+                  id="install-service"
+                  checked={installService}
+                  onChange={(e) => setInstallService(e.target.checked)}
+                  data-testid="agent-setup-install-service"
+                />
+                <label htmlFor="install-service">Install systemd service</label>
+              </div>
+            </>
+          )}
+
+          {submitError && (
             <p className="agent-setup-dialog__error" data-testid="agent-setup-error">
-              {error}
+              {submitError}
             </p>
           )}
 
@@ -175,10 +337,10 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
             <button
               className="agent-setup-dialog__btn agent-setup-dialog__btn--primary"
               onClick={handleSetup}
-              disabled={!binaryPath || loading}
+              disabled={isSubmitDisabled}
               data-testid="agent-setup-submit"
             >
-              {loading ? "Setting up..." : "Start Setup"}
+              {loading ? "Setting up…" : "Start Setup"}
             </button>
           </div>
         </Dialog.Content>

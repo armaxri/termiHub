@@ -418,6 +418,7 @@ pub fn run() {
             commands::agent::create_agent_folder,
             commands::agent::update_agent_folder,
             commands::agent::delete_agent_folder,
+            commands::agent::detect_agent_arch,
             commands::agent::setup_remote_agent,
             commands::agent::probe_remote_agent,
             commands::agent::deploy_agent,

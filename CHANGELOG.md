@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Connection sidebar: connections now support multi-select — Ctrl/Cmd+Click toggles individual selection, Shift+Click range-selects, and dragging a selected group moves all selected connections into the target folder at once. Escape or clicking empty space clears the selection (#638).
+- Agent setup: the setup dialog now detects the remote host's architecture automatically before opening, and defaults to downloading the agent binary from GitHub (using `dev-latest` for dev builds or `v{version}` for releases). A local file picker remains available as a fallback. The detected architecture and download URL are shown in the dialog.
 
 ### Changed
 
@@ -19,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- CI: agent binaries in the `dev-latest` GitHub release are now named `termihub-agent-linux-{arch}` (without the `-dev-` infix) so the desktop's download URL matches the uploaded artifact name and setup no longer returns HTTP 404.
 - UI: closing a file editor tab with unsaved changes now shows a "Save / Discard / Cancel" dialog before the tab is closed, matching the behavior of the settings and connection editors. Previously, a simple browser confirm appeared after the tab was already closed, making it impossible to cancel (#632).
 - UI: restored the dirty-state dot indicator in editor tab titles (settings, connection editor, file editor) — a small filled circle now appears before the tab name when there are unsaved changes.
 - Monitoring: system stats (CPU, memory, disk) are now displayed for remote shell sessions on agents that support monitoring. Previously, the monitoring panel showed nothing for remote-session tabs because the agent reported local sessions as not supporting monitoring, the desktop proxy sent the wrong host identifier, and the frontend never checked per-session capabilities (#629)
