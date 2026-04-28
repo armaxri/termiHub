@@ -356,6 +356,8 @@ export function ConnectionList() {
   const bulkMoveConnectionsToFolder = useAppStore((s) => s.bulkMoveConnectionsToFolder);
   const reorderRemoteAgents = useAppStore((s) => s.reorderRemoteAgents);
   const moveAgentDefToFolder = useAppStore((s) => s.moveAgentDefToFolder);
+  const bulkMoveAgentDefsToFolder = useAppStore((s) => s.bulkMoveAgentDefsToFolder);
+  const agentDefinitions = useAppStore((s) => s.agentDefinitions);
 
   const pointerSensor = useSensor(PointerSensor, {
     activationConstraint: { distance: 8 },
@@ -608,8 +610,14 @@ export function ConnectionList() {
       } else if (data?.type === "agent-connection") {
         setDraggingConnection(null);
         setDraggingAgentName(null);
-        setDraggingSelectionCount(0);
-        setDraggingAgentDef(data.definition as AgentDefinitionInfo);
+        const selectionCount = (data.selectionCount as number) ?? 1;
+        if (selectionCount > 1) {
+          setDraggingAgentDef(null);
+          setDraggingSelectionCount(selectionCount);
+        } else {
+          setDraggingAgentDef(data.definition as AgentDefinitionInfo);
+          setDraggingSelectionCount(1);
+        }
       } else {
         setDraggingAgentName(null);
         setDraggingAgentDef(null);
@@ -645,6 +653,9 @@ export function ConnectionList() {
       if (active.data.current?.type === "agent-connection") {
         const definition = active.data.current.definition as AgentDefinitionInfo;
         const defAgentId = active.data.current.agentId as string;
+        const draggedSelectedIds = (active.data.current.selectedDefIds as string[]) ?? [
+          definition.id,
+        ];
         const overId = over.id as string;
 
         let targetFolderId: string | null | undefined;
@@ -659,9 +670,18 @@ export function ConnectionList() {
         }
 
         if (targetFolderId === undefined) return;
-        if (definition.folderId === targetFolderId) return;
 
-        moveAgentDefToFolder(defAgentId, definition.id, targetFolderId);
+        const agentDefs = agentDefinitions[defAgentId] ?? [];
+        const idsToMove = draggedSelectedIds.filter((id) => {
+          const def = agentDefs.find((d) => d.id === id);
+          return def?.folderId !== targetFolderId;
+        });
+
+        if (idsToMove.length === 1) {
+          moveAgentDefToFolder(defAgentId, idsToMove[0], targetFolderId);
+        } else if (idsToMove.length > 1) {
+          bulkMoveAgentDefsToFolder(defAgentId, idsToMove, targetFolderId);
+        }
         return;
       }
 
@@ -719,6 +739,8 @@ export function ConnectionList() {
       moveConnectionToFolder,
       bulkMoveConnectionsToFolder,
       moveAgentDefToFolder,
+      bulkMoveAgentDefsToFolder,
+      agentDefinitions,
       remoteAgents,
       reorderRemoteAgents,
       selectedConnectionIds,

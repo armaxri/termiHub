@@ -6,9 +6,9 @@
  * local connections experience).
  */
 
-import { useState, useCallback, useMemo, type ReactNode } from "react";
+import { useState, useCallback, useMemo, useEffect, type ReactNode } from "react";
 import { useSortable } from "@dnd-kit/sortable";
-import { useDraggable, useDroppable, useDndContext } from "@dnd-kit/core";
+import { useDraggable, useDroppable, useDndContext, useDndMonitor } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import {
@@ -77,26 +77,52 @@ function SessionTypeIcon({ type, size = 14 }: { type: string; size?: number }) {
   }
 }
 
+function computeFlatVisibleAgentDefIds(
+  rootFolders: AgentFolderInfo[],
+  rootDefinitions: AgentDefinitionInfo[],
+  allFolders: AgentFolderInfo[],
+  allDefinitions: AgentDefinitionInfo[]
+): string[] {
+  const ids: string[] = [];
+  function traverseFolder(folder: AgentFolderInfo) {
+    if (!folder.isExpanded) return;
+    allFolders.filter((f) => f.parentId === folder.id).forEach(traverseFolder);
+    allDefinitions.filter((d) => d.folderId === folder.id).forEach((d) => ids.push(d.id));
+  }
+  rootFolders.forEach(traverseFolder);
+  rootDefinitions.forEach((d) => ids.push(d.id));
+  return ids;
+}
+
 // ── Agent connection item ────────────────────────────────────────────
 
 interface AgentConnectionItemProps {
   agentId: string;
   definition: AgentDefinitionInfo;
   depth: number;
+  isSelected: boolean;
+  selectedDefIds: string[];
   onOpen: (def: AgentDefinitionInfo) => void;
   onEdit: (def: AgentDefinitionInfo) => void;
   onDuplicate: (def: AgentDefinitionInfo) => void;
+  onConnectionClick: (defId: string, event: React.MouseEvent) => void;
 }
 
 function AgentConnectionItem({
   agentId,
   definition,
   depth,
+  isSelected,
+  selectedDefIds,
   onOpen,
   onEdit,
   onDuplicate,
+  onConnectionClick,
 }: AgentConnectionItemProps) {
   const deleteAgentDef = useAppStore((s) => s.deleteAgentDef);
+
+  const effectiveSelectedIds =
+    isSelected && selectedDefIds.length > 1 ? selectedDefIds : [definition.id];
 
   const {
     attributes,
@@ -105,16 +131,27 @@ function AgentConnectionItem({
     isDragging,
   } = useDraggable({
     id: `agent-def:${agentId}:${definition.id}`,
-    data: { type: "agent-connection", definition, agentId },
+    data: {
+      type: "agent-connection",
+      definition,
+      agentId,
+      selectedDefIds: effectiveSelectedIds,
+      selectionCount: effectiveSelectedIds.length,
+    },
   });
+
+  let className = "connection-tree__item";
+  if (isDragging) className += " connection-tree__item--dragging";
+  if (isSelected) className += " connection-tree__item--selected";
 
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger asChild>
         <button
           ref={setDragRef}
-          className={`connection-tree__item${isDragging ? " connection-tree__item--dragging" : ""}`}
+          className={className}
           style={{ paddingLeft: `${depth * 16 + 8}px` }}
+          onClick={(e) => onConnectionClick(definition.id, e)}
           onDoubleClick={() => onOpen(definition)}
           title={`${definition.name} (${definition.sessionType}${definition.persistent ? ", persistent" : ""})`}
           {...attributes}
@@ -179,10 +216,13 @@ interface AgentFolderNodeProps {
   allFolders: AgentFolderInfo[];
   allDefinitions: AgentDefinitionInfo[];
   depth: number;
+  selectedDefIds: Set<string>;
+  allSelectedDefIds: string[];
   onOpenDefinition: (def: AgentDefinitionInfo) => void;
   onNewConnection: (folderId: string | null) => void;
   onEditDefinition: (def: AgentDefinitionInfo) => void;
   onDuplicateDefinition: (def: AgentDefinitionInfo) => void;
+  onDefinitionClick: (defId: string, event: React.MouseEvent) => void;
 }
 
 function AgentFolderNode({
@@ -191,10 +231,13 @@ function AgentFolderNode({
   allFolders,
   allDefinitions,
   depth,
+  selectedDefIds,
+  allSelectedDefIds,
   onOpenDefinition,
   onNewConnection,
   onEditDefinition,
   onDuplicateDefinition,
+  onDefinitionClick,
 }: AgentFolderNodeProps) {
   const toggleAgentFolder = useAppStore((s) => s.toggleAgentFolder);
   const createAgentFolder = useAppStore((s) => s.createAgentFolder);
@@ -286,10 +329,13 @@ function AgentFolderNode({
               allFolders={allFolders}
               allDefinitions={allDefinitions}
               depth={depth + 1}
+              selectedDefIds={selectedDefIds}
+              allSelectedDefIds={allSelectedDefIds}
               onOpenDefinition={onOpenDefinition}
               onNewConnection={onNewConnection}
               onEditDefinition={onEditDefinition}
               onDuplicateDefinition={onDuplicateDefinition}
+              onDefinitionClick={onDefinitionClick}
             />
           ))}
           {childDefinitions.map((def) => (
@@ -298,9 +344,12 @@ function AgentFolderNode({
               agentId={agentId}
               definition={def}
               depth={depth + 1}
+              isSelected={selectedDefIds.has(def.id)}
+              selectedDefIds={allSelectedDefIds}
               onOpen={onOpenDefinition}
               onEdit={onEditDefinition}
               onDuplicate={onDuplicateDefinition}
+              onConnectionClick={onDefinitionClick}
             />
           ))}
         </div>
@@ -314,9 +363,10 @@ function AgentFolderNode({
 interface AgentRootDropZoneProps {
   agentId: string;
   children: ReactNode;
+  onAreaClick?: (event: React.MouseEvent) => void;
 }
 
-function AgentRootDropZone({ agentId, children }: AgentRootDropZoneProps) {
+function AgentRootDropZone({ agentId, children, onAreaClick }: AgentRootDropZoneProps) {
   const { setNodeRef, isOver } = useDroppable({
     id: `agent-root:${agentId}`,
     data: { type: "agent-root", agentId },
@@ -331,6 +381,7 @@ function AgentRootDropZone({ agentId, children }: AgentRootDropZoneProps) {
     <div
       ref={setNodeRef}
       className={`connection-list__tree${isAgentConnectionOver ? " connection-tree__root-drop--over" : ""}`}
+      onClick={onAreaClick}
     >
       {children}
     </div>
@@ -384,6 +435,8 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
   const [connectionError, setConnectionError] = useState<ClassifiedAgentError | null>(null);
   const [errorDialogOpen, setErrorDialogOpen] = useState(false);
   const [creatingFolder, setCreatingFolder] = useState(false);
+  const [selectedDefIds, setSelectedDefIds] = useState<Set<string>>(new Set());
+  const [lastSelectedDefId, setLastSelectedDefId] = useState<string | null>(null);
 
   const isConnected = agent.connectionState === "connected";
   const isReconnecting = agent.connectionState === "reconnecting";
@@ -398,6 +451,71 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
     () => agentDefinitions.filter((d) => d.folderId === null || d.folderId === undefined),
     [agentDefinitions]
   );
+
+  const flatVisibleDefIds = useMemo(
+    () =>
+      computeFlatVisibleAgentDefIds(rootFolders, rootDefinitions, agentFolders, agentDefinitions),
+    [rootFolders, rootDefinitions, agentFolders, agentDefinitions]
+  );
+
+  const allSelectedDefIds = useMemo(() => [...selectedDefIds], [selectedDefIds]);
+
+  const handleDefClick = useCallback(
+    (defId: string, event: React.MouseEvent) => {
+      if (event.ctrlKey || event.metaKey) {
+        setSelectedDefIds((prev) => {
+          const next = new Set(prev);
+          if (next.has(defId)) next.delete(defId);
+          else next.add(defId);
+          return next;
+        });
+        setLastSelectedDefId(defId);
+      } else if (event.shiftKey && lastSelectedDefId) {
+        const anchorIdx = flatVisibleDefIds.indexOf(lastSelectedDefId);
+        const targetIdx = flatVisibleDefIds.indexOf(defId);
+        if (anchorIdx >= 0 && targetIdx >= 0) {
+          const [start, end] =
+            anchorIdx < targetIdx ? [anchorIdx, targetIdx] : [targetIdx, anchorIdx];
+          setSelectedDefIds(new Set(flatVisibleDefIds.slice(start, end + 1)));
+        }
+      } else {
+        setSelectedDefIds(new Set([defId]));
+        setLastSelectedDefId(defId);
+      }
+    },
+    [flatVisibleDefIds, lastSelectedDefId]
+  );
+
+  const handleTreeAreaClick = useCallback((e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if (!target.closest(".connection-tree__item")) {
+      setSelectedDefIds(new Set());
+      setLastSelectedDefId(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setSelectedDefIds(new Set());
+        setLastSelectedDefId(null);
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  useDndMonitor({
+    onDragEnd(event) {
+      if (
+        event.active.data.current?.type === "agent-connection" &&
+        event.active.data.current?.agentId === agent.id
+      ) {
+        setSelectedDefIds(new Set());
+        setLastSelectedDefId(null);
+      }
+    },
+  });
 
   const handleConnect = useCallback(async () => {
     if (connecting) return;
@@ -745,7 +863,7 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
       />
 
       {agent.isExpanded && (
-        <AgentRootDropZone agentId={agent.id}>
+        <AgentRootDropZone agentId={agent.id} onAreaClick={handleTreeAreaClick}>
           {isConnected || isReconnecting ? (
             <>
               {/* Reconnecting banner */}
@@ -811,10 +929,13 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
                   allFolders={agentFolders}
                   allDefinitions={agentDefinitions}
                   depth={1}
+                  selectedDefIds={selectedDefIds}
+                  allSelectedDefIds={allSelectedDefIds}
                   onOpenDefinition={handleOpenDefinition}
                   onNewConnection={handleNewConnection}
                   onEditDefinition={handleEditDefinition}
                   onDuplicateDefinition={handleDuplicateDefinition}
+                  onDefinitionClick={handleDefClick}
                 />
               ))}
 
@@ -825,9 +946,12 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
                   agentId={agent.id}
                   definition={def}
                   depth={1}
+                  isSelected={selectedDefIds.has(def.id)}
+                  selectedDefIds={allSelectedDefIds}
                   onOpen={handleOpenDefinition}
                   onEdit={handleEditDefinition}
                   onDuplicate={handleDuplicateDefinition}
+                  onConnectionClick={handleDefClick}
                 />
               ))}
 
