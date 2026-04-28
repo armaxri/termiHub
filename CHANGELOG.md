@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- CI: agent binaries in the `dev-latest` GitHub release are now named `termihub-agent-linux-{arch}` (without the `-dev-` infix) so the desktop's download URL matches the uploaded artifact name and setup no longer returns HTTP 404.
 - Monitoring: system stats (CPU, memory, disk) are now displayed for remote shell sessions on agents that support monitoring. Previously, the monitoring panel showed nothing for remote-session tabs because the agent reported local sessions as not supporting monitoring, the desktop proxy sent the wrong host identifier, and the frontend never checked per-session capabilities (#629)
 - UI: right-clicking the header bar of the panel zoom overlay (Cmd+Shift+Enter) now opens a context menu with Rename, Save to File, Copy to Clipboard, Clear Terminal, Horizontal Scrolling, and Set Color options. Previously the zoom overlay header had no context menu at all (#635).
 - Terminal: pressing "Clear" now fully resets the terminal — the cursor is moved to position (0,0) after the buffer is wiped, preventing rendering artifacts and misaligned input that occurred when a subsequent program output was placed at the old cursor position (#634)
