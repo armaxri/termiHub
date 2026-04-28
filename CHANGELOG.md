@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Connection sidebar: connections now support multi-select — Ctrl/Cmd+Click toggles individual selection, Shift+Click range-selects, and dragging a selected group moves all selected connections into the target folder at once. Escape or clicking empty space clears the selection (#638).
+
 ### Changed
 
 - Connection sidebar: the expand/collapse chevron for folders is now displayed on the right side of the folder row. This aligns folder icons and connection icons in the same column at each indent level, making the tree hierarchy unambiguous at a glance (#640).
