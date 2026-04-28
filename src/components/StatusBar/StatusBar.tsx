@@ -365,8 +365,13 @@ function MonitoringStatus() {
   // Hide monitoring UI when disabled or when active tab doesn't support monitoring
   if (!monitoringEnabled) return null;
 
+  // While reconnecting we already have cached stats — skip the "Connecting" block
+  // so the last-known data is shown immediately instead of a blank loading state.
+  const isReconnectingWithCache =
+    !monitoringSessionId && monitoringLoading && monitoringStats !== null;
+
   // Not connected: show connect button (or loading/error state)
-  if (!monitoringSessionId) {
+  if (!monitoringSessionId && !isReconnectingWithCache) {
     // Remote-session tabs auto-connect; show loading indicator while connecting.
     if (isRemoteSession) {
       if (!monitoringLoading && !monitoringError) return null;
@@ -436,7 +441,7 @@ function MonitoringStatus() {
     );
   }
 
-  // Connected: show compact stats
+  // Connected (or reconnecting with cached stats): show compact stats
   return (
     <>
       <MonitoringDetailDropdown
@@ -496,10 +501,14 @@ function MonitoringDetailDropdown({
       <DropdownMenu.Trigger asChild>
         <button
           className="status-bar__item status-bar__item--interactive monitoring-status__host"
-          title={host ?? "Monitoring"}
+          title={loading ? `Reconnecting to ${host ?? "monitor"}…` : (host ?? "Monitoring")}
           data-testid="monitoring-host"
         >
-          <Activity size={12} />
+          {loading ? (
+            <Loader2 size={12} className="monitoring-status__spinner" />
+          ) : (
+            <Activity size={12} />
+          )}
           {host}
         </button>
       </DropdownMenu.Trigger>
