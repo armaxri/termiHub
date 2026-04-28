@@ -952,4 +952,38 @@ mod tests {
         let outputs = emitter.outputs.lock().unwrap();
         assert!(outputs.is_empty());
     }
+
+    /// Tauri events are consumed by the TypeScript frontend which uses snake_case
+    /// property names in the payload interface.  Verify that `SessionMonitoringStatsEvent`
+    /// serialises `session_id` as `session_id` (not `sessionId`) so the frontend's
+    /// `event.payload.session_id` receives the value.
+    #[test]
+    fn session_monitoring_stats_event_serialises_session_id_as_snake_case() {
+        use termihub_core::monitoring::SystemStats;
+        let event = SessionMonitoringStatsEvent {
+            session_id: "test-session-123".to_string(),
+            stats: SystemStats {
+                hostname: "host".to_string(),
+                uptime_seconds: 0.0,
+                load_average: [0.0; 3],
+                cpu_usage_percent: 0.0,
+                memory_total_kb: 0,
+                memory_available_kb: 0,
+                memory_used_percent: 0.0,
+                disk_total_kb: 0,
+                disk_used_kb: 0,
+                disk_used_percent: 0.0,
+                os_info: String::new(),
+            },
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(
+            json.contains("\"session_id\""),
+            "expected snake_case key; got: {json}"
+        );
+        assert!(
+            !json.contains("\"sessionId\""),
+            "camelCase key must not appear; got: {json}"
+        );
+    }
 }
