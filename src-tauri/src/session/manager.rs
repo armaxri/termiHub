@@ -13,11 +13,14 @@ use tokio::sync::Mutex;
 
 use serde::Serialize;
 use tauri::Emitter;
-use termihub_core::connection::{ConnectionType, ConnectionTypeInfo, ConnectionTypeRegistry};
+use termihub_core::connection::{
+    Capabilities, ConnectionType, ConnectionTypeInfo, ConnectionTypeRegistry,
+};
 use termihub_core::files::FileEntry;
+use termihub_core::monitoring::SystemStats;
 use termihub_core::output::coalescer::OutputCoalescer;
 use termihub_core::output::screen_clear::contains_screen_clear;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::terminal::agent_manager::AgentRpcClient;
 use crate::utils::errors::TerminalError;
@@ -98,6 +101,14 @@ struct SessionEntry {
     info: SessionInfo,
 }
 
+/// Push event emitted via Tauri when session-based monitoring delivers stats.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionMonitoringStatsEvent {
+    pub session_id: String,
+    pub stats: SystemStats,
+}
+
 /// Manages all active connection sessions.
 ///
 /// Holds a [`ConnectionTypeRegistry`] for creating local connections and
@@ -108,6 +119,8 @@ pub struct SessionManager {
     sessions: Arc<Mutex<HashMap<String, SessionEntry>>>,
     registry: Arc<ConnectionTypeRegistry>,
     agent_manager: Arc<dyn AgentRpcClient>,
+    /// Abort handles for active session-monitoring push tasks, keyed by session ID.
+    monitoring_tasks: Arc<Mutex<HashMap<String, tokio::task::AbortHandle>>>,
 }
 
 impl SessionManager {
@@ -117,6 +130,7 @@ impl SessionManager {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             registry: Arc::new(registry),
             agent_manager,
+            monitoring_tasks: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -410,6 +424,78 @@ impl SessionManager {
     /// Get the list of available connection types from the registry.
     pub fn available_types(&self) -> Vec<ConnectionTypeInfo> {
         self.registry.available_types()
+    }
+
+    /// Return the capabilities of an active session.
+    pub async fn session_capabilities(&self, session_id: &str) -> Option<Capabilities> {
+        let sessions = self.sessions.lock().await;
+        sessions
+            .get(session_id)
+            .map(|e| e.connection.capabilities())
+    }
+
+    /// Subscribe to a session's monitoring provider and forward stats as Tauri events.
+    ///
+    /// Spawns a background task that reads from the `MonitoringReceiver` and emits
+    /// `session-monitoring-stats` events to the frontend.  Call
+    /// [`stop_session_monitoring`] to cancel the task and unsubscribe.
+    pub async fn start_session_monitoring<R: tauri::Runtime>(
+        &self,
+        session_id: &str,
+        app_handle: tauri::AppHandle<R>,
+    ) -> Result<(), TerminalError> {
+        let rx = {
+            let sessions = self.sessions.lock().await;
+            let entry = sessions
+                .get(session_id)
+                .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
+            let provider = entry.connection.monitoring().ok_or_else(|| {
+                TerminalError::RemoteError("No monitoring capability".to_string())
+            })?;
+            provider
+                .subscribe()
+                .await
+                .map_err(|e| TerminalError::RemoteError(e.to_string()))?
+        };
+
+        let sid = session_id.to_string();
+        let join_handle = tokio::spawn(async move {
+            let mut rx = rx;
+            while let Some(stats) = rx.recv().await {
+                let event = SessionMonitoringStatsEvent {
+                    session_id: sid.clone(),
+                    stats,
+                };
+                if app_handle.emit("session-monitoring-stats", &event).is_err() {
+                    break;
+                }
+            }
+            info!(session_id = %sid, "Session monitoring push task ended");
+        });
+
+        let abort_handle = join_handle.abort_handle();
+        self.monitoring_tasks
+            .lock()
+            .await
+            .insert(session_id.to_string(), abort_handle);
+        Ok(())
+    }
+
+    /// Stop session-based monitoring: abort the push task and unsubscribe.
+    pub async fn stop_session_monitoring(&self, session_id: &str) -> Result<(), TerminalError> {
+        if let Some(handle) = self.monitoring_tasks.lock().await.remove(session_id) {
+            handle.abort();
+        }
+
+        let sessions = self.sessions.lock().await;
+        if let Some(entry) = sessions.get(session_id) {
+            if let Some(provider) = entry.connection.monitoring() {
+                if let Err(e) = provider.unsubscribe().await {
+                    warn!(session_id, error = %e, "Session monitoring unsubscribe error");
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Build a human-readable title from type and settings.

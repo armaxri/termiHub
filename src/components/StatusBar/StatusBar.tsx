@@ -39,8 +39,20 @@ function extractMonitoringConfig(config: ConnectionConfig): Record<string, unkno
   return null;
 }
 
-/** Check if a connection type supports monitoring using the registry. */
-function typeSupportsMonitoring(connectionTypes: ConnectionTypeInfo[], typeId: string): boolean {
+/** Check if a connection type supports monitoring.
+ *
+ * For "remote-session" tabs the desktop registry has no entry, so we check
+ * the per-session capabilities fetched after the session was established.
+ */
+function typeSupportsMonitoring(
+  connectionTypes: ConnectionTypeInfo[],
+  typeId: string,
+  sessionCapabilities: Record<string, { monitoring: boolean }>,
+  sessionId: string | null
+): boolean {
+  if (typeId === "remote-session") {
+    return sessionId != null && (sessionCapabilities[sessionId]?.monitoring ?? false);
+  }
   const typeInfo = connectionTypes.find((ct) => ct.typeId === typeId);
   return typeInfo?.capabilities.monitoring ?? false;
 }
@@ -198,34 +210,42 @@ function MonitoringStatus() {
   const connectMonitoring = useAppStore((s) => s.connectMonitoring);
   const disconnectMonitoring = useAppStore((s) => s.disconnectMonitoring);
   const refreshMonitoring = useAppStore((s) => s.refreshMonitoring);
+  const sessionCapabilities = useAppStore((s) => s.sessionCapabilities);
 
   const connections = useAppStore((s) => s.connections);
   const connectionTypes = useAppStore((s) => s.connectionTypes);
   const activeTabId = useAppStore((s) => getActiveTab(s)?.id ?? null);
+  const activeTabSessionId = useAppStore((s) => getActiveTab(s)?.sessionId ?? null);
   const activeTabConnectionType = useAppStore((s) => getActiveTab(s)?.connectionType ?? null);
   const activeTabConfig = useAppStore((s) => getActiveTab(s)?.config ?? undefined);
   const activeTabExited = useAppStore((s) => !!(activeTabId && s.terminalExitedTabs[activeTabId]));
 
   const activeTabSupportsMonitoring = typeSupportsMonitoring(
     connectionTypes,
-    activeTabConnectionType ?? ""
+    activeTabConnectionType ?? "",
+    sessionCapabilities,
+    activeTabSessionId
   );
   const monitoringEnabled = activeTabSupportsMonitoring
     ? resolveFeatureEnabled(activeTabConfig, "enableMonitoring", globalMonitoringEnabled)
     : false;
 
+  const isRemoteSession = activeTabConnectionType === "remote-session";
+
   /** Tracks which host key already failed auto-connect to prevent retry loops. */
   const autoConnectFailedRef = useRef<string | null>(null);
 
   const monitorableConnections = useMemo(() => {
-    return connections.filter((c) => typeSupportsMonitoring(connectionTypes, c.config.type));
-  }, [connections, connectionTypes]);
+    return connections.filter((c) =>
+      typeSupportsMonitoring(connectionTypes, c.config.type, sessionCapabilities, null)
+    );
+  }, [connections, connectionTypes, sessionCapabilities]);
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Auto-refresh polling
+  // Auto-refresh polling (SSH-based monitoring only; session-based is push).
   useEffect(() => {
-    if (monitoringSessionId) {
+    if (monitoringSessionId && !isRemoteSession) {
       intervalRef.current = setInterval(() => {
         refreshMonitoring();
       }, REFRESH_INTERVAL_MS);
@@ -236,25 +256,49 @@ function MonitoringStatus() {
         intervalRef.current = null;
       }
     };
-  }, [monitoringSessionId, refreshMonitoring]);
+  }, [monitoringSessionId, isRemoteSession, refreshMonitoring]);
 
   // Auto-connect monitoring when active tab supports monitoring
   useEffect(() => {
     if (!monitoringEnabled) return;
 
     // Don't auto-connect while the terminal session has exited unexpectedly.
-    // Clear the failed-ref so monitoring can reconnect once the user brings
-    // the terminal back via the Reconnect button.
     if (activeTabExited) {
       autoConnectFailedRef.current = null;
       return;
     }
 
-    // Read the active tab from the store (avoids subscribing to the full object)
     const activeTab = getActiveTab(useAppStore.getState());
     if (!activeTab) return;
-    const { connectionTypes: types } = useAppStore.getState();
-    if (!typeSupportsMonitoring(types, activeTab.config.type)) return;
+
+    // ── Remote-session: use session-based (push) monitoring ───────────
+    if (activeTab.connectionType === "remote-session") {
+      const sessionId = activeTab.sessionId;
+      if (!sessionId) return;
+
+      // Already monitoring this session
+      if (monitoringSessionId === sessionId) return;
+      if (autoConnectFailedRef.current === sessionId) return;
+      autoConnectFailedRef.current = sessionId;
+
+      const doConnect = async () => {
+        const { disconnectMonitoring: disconnect, connectMonitoring: connect } =
+          useAppStore.getState();
+        if (monitoringSessionId && monitoringSessionId !== sessionId) {
+          await disconnect();
+        }
+        await connect({ _sessionBased: true, _sessionId: sessionId });
+        if (useAppStore.getState().monitoringSessionId) {
+          autoConnectFailedRef.current = null;
+        }
+      };
+      doConnect();
+      return;
+    }
+
+    // ── Standard SSH-based monitoring ────────────────────────────────
+    const { sessionCapabilities: caps, connectionTypes: types } = useAppStore.getState();
+    if (!typeSupportsMonitoring(types, activeTab.config.type, caps, activeTab.sessionId)) return;
 
     const cfg = activeTab.config.config;
     const host = (cfg.host as string) ?? "";
@@ -262,14 +306,8 @@ function MonitoringStatus() {
     const username = (cfg.username as string) ?? "";
     const hostKey = `${username}@${host}:${port}`;
 
-    // Already monitoring the right host
     if (monitoringSessionId && monitoringHost === hostKey) return;
-
-    // Don't retry a host that already failed auto-connect
     if (autoConnectFailedRef.current === hostKey) return;
-
-    // Mark as attempted synchronously BEFORE the async call to prevent
-    // re-entry when connectMonitoring toggles monitoringLoading.
     autoConnectFailedRef.current = hostKey;
 
     const doConnect = async () => {
@@ -280,12 +318,10 @@ function MonitoringStatus() {
         requestPassword,
       } = useAppStore.getState();
 
-      // Disconnect from previous host if needed
       if (monitoringSessionId && monitoringHost !== hostKey) {
         await disconnect();
       }
 
-      // Handle password-based auth: prompt if password is missing
       let configToUse = cfg;
       const authMethod = cfg.authMethod as string | undefined;
       if (authMethod === "password" && !cfg.password) {
@@ -301,14 +337,20 @@ function MonitoringStatus() {
 
       await connect(configToUse);
 
-      // On success, clear the guard so switching away and back works
       if (useAppStore.getState().monitoringSessionId) {
         autoConnectFailedRef.current = null;
       }
     };
 
     doConnect();
-  }, [activeTabId, monitoringSessionId, monitoringHost, monitoringEnabled, activeTabExited]);
+  }, [
+    activeTabId,
+    activeTabSessionId,
+    monitoringSessionId,
+    monitoringHost,
+    monitoringEnabled,
+    activeTabExited,
+  ]);
 
   const handleConnect = useCallback(
     (connection: SavedConnection) => {
@@ -322,12 +364,15 @@ function MonitoringStatus() {
 
   // Hide monitoring UI when disabled or when active tab doesn't support monitoring
   if (!monitoringEnabled) return null;
-  if (!activeTabConnectionType || !typeSupportsMonitoring(connectionTypes, activeTabConnectionType))
-    return null;
 
   // Not connected: show connect button (or loading/error state)
   if (!monitoringSessionId) {
-    if (monitorableConnections.length === 0) return null;
+    // Remote-session tabs auto-connect; show loading indicator while connecting.
+    if (isRemoteSession) {
+      if (!monitoringLoading && !monitoringError) return null;
+    } else if (monitorableConnections.length === 0) {
+      return null;
+    }
 
     return (
       <>

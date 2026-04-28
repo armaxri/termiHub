@@ -716,6 +716,27 @@ export async function monitoringFetchStats(sessionId: string): Promise<SystemSta
   return await invoke<SystemStats>("monitoring_fetch_stats", { sessionId });
 }
 
+// --- Session-based monitoring commands ---
+
+/** Return the capabilities of an active session. */
+export async function sessionGetCapabilities(
+  sessionId: string
+): Promise<{ monitoring: boolean; fileBrowser: boolean }> {
+  return await invoke<{ monitoring: boolean; fileBrowser: boolean }>("session_get_capabilities", {
+    sessionId,
+  });
+}
+
+/** Start session-based monitoring; stats arrive as `session-monitoring-stats` Tauri events. */
+export async function sessionMonitoringOpen(sessionId: string): Promise<void> {
+  await invoke("session_monitoring_open", { sessionId });
+}
+
+/** Stop session-based monitoring. */
+export async function sessionMonitoringClose(sessionId: string): Promise<void> {
+  await invoke("session_monitoring_close", { sessionId });
+}
+
 // --- Log commands ---
 
 /** Retrieve the most recent log entries from the backend ring buffer. */

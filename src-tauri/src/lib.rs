@@ -345,13 +345,17 @@ pub fn run() {
             commands::session::check_podman_available,
             commands::session::list_podman_images,
             commands::session::validate_ssh_key,
-            // Session-based file browsing (stubs for now)
+            // Session-based file browsing
             commands::session::session_list_files,
             commands::session::session_read_file,
             commands::session::session_write_file,
             commands::session::session_delete_file,
             commands::session::session_rename_file,
             commands::session::session_mkdir,
+            // Session-based monitoring
+            commands::session::session_get_capabilities,
+            commands::session::session_monitoring_open,
+            commands::session::session_monitoring_close,
             // Connection management
             commands::connection::load_connections_and_folders,
             commands::connection::save_connection,
