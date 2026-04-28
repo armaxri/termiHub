@@ -9,6 +9,7 @@ import {
   FileJson,
   FileCode2,
   HardDrive,
+  Info,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { RefreshCw } from "lucide-react";
@@ -30,6 +31,7 @@ import { LanguagePackagesSettings } from "./LanguagePackagesSettings";
 import { CustomGrammarsSettings } from "./CustomGrammarsSettings";
 import { PortableModeSettings } from "./PortableModeSettings";
 import { UpdateSettings } from "./UpdateSettings";
+import { AboutSettings } from "./AboutSettings";
 import { getAppInfo, type AppInfo } from "@/services/api";
 import { UnsavedChangesDialog } from "@/components/ConnectionEditor/UnsavedChangesDialog";
 import "./SettingsPanel.css";
@@ -44,6 +46,7 @@ const SETTINGS_ICONS: Record<SettingsCategory, LucideIcon> = {
   editor: FileCode2,
   portable: HardDrive,
   updates: RefreshCw,
+  about: Info,
 };
 
 const SAVE_DEBOUNCE_MS = 300;
@@ -292,6 +295,9 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
       if (highlightedCategories?.has("updates")) {
         sections.push(<UpdateSettings key="updates" visibleFields={visibleFields} />);
       }
+      if (highlightedCategories?.has("about")) {
+        sections.push(<AboutSettings key="about" />);
+      }
       if (sections.length === 0) {
         return <div className="settings-panel__no-results">No settings match your search.</div>;
       }
@@ -323,6 +329,8 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
         return <PortableModeSettings />;
       case "updates":
         return <UpdateSettings />;
+      case "about":
+        return <AboutSettings />;
     }
   };
 
