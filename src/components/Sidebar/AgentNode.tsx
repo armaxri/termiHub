@@ -6,8 +6,9 @@
  * local connections experience).
  */
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, type ReactNode } from "react";
 import { useSortable } from "@dnd-kit/sortable";
+import { useDraggable, useDroppable, useDndContext } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import {
@@ -97,14 +98,27 @@ function AgentConnectionItem({
 }: AgentConnectionItemProps) {
   const deleteAgentDef = useAppStore((s) => s.deleteAgentDef);
 
+  const {
+    attributes,
+    listeners,
+    setNodeRef: setDragRef,
+    isDragging,
+  } = useDraggable({
+    id: `agent-def:${agentId}:${definition.id}`,
+    data: { type: "agent-connection", definition, agentId },
+  });
+
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger asChild>
         <button
-          className="connection-tree__item"
+          ref={setDragRef}
+          className={`connection-tree__item${isDragging ? " connection-tree__item--dragging" : ""}`}
           style={{ paddingLeft: `${depth * 16 + 8}px` }}
           onDoubleClick={() => onOpen(definition)}
           title={`${definition.name} (${definition.sessionType}${definition.persistent ? ", persistent" : ""})`}
+          {...attributes}
+          {...listeners}
         >
           <ConnectionIcon
             config={{
@@ -199,12 +213,23 @@ function AgentFolderNode({
     [allDefinitions, folder.id]
   );
 
+  const { setNodeRef: setDropRef, isOver } = useDroppable({
+    id: `agent-folder:${agentId}:${folder.id}`,
+    data: { type: "agent-folder", agentId, folderId: folder.id },
+  });
+  const { active } = useDndContext();
+  const isAgentConnectionOver =
+    isOver &&
+    active?.data.current?.type === "agent-connection" &&
+    active?.data.current?.agentId === agentId;
+
   return (
     <div>
       <ContextMenu.Root>
         <ContextMenu.Trigger asChild>
           <button
-            className="connection-tree__folder"
+            ref={setDropRef}
+            className={`connection-tree__folder${isAgentConnectionOver ? " connection-tree__folder--drop-over" : ""}`}
             style={{ paddingLeft: `${depth * 16 + 8}px` }}
             onClick={() => toggleAgentFolder(agentId, folder.id)}
           >
@@ -280,6 +305,34 @@ function AgentFolderNode({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Agent root drop zone ────────────────────────────────────────────
+
+interface AgentRootDropZoneProps {
+  agentId: string;
+  children: ReactNode;
+}
+
+function AgentRootDropZone({ agentId, children }: AgentRootDropZoneProps) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: `agent-root:${agentId}`,
+    data: { type: "agent-root", agentId },
+  });
+  const { active } = useDndContext();
+  const isAgentConnectionOver =
+    isOver &&
+    active?.data.current?.type === "agent-connection" &&
+    active?.data.current?.agentId === agentId;
+
+  return (
+    <div
+      ref={setNodeRef}
+      className={`connection-list__tree${isAgentConnectionOver ? " connection-tree__root-drop--over" : ""}`}
+    >
+      {children}
     </div>
   );
 }
@@ -692,7 +745,7 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
       />
 
       {agent.isExpanded && (
-        <div className="connection-list__tree">
+        <AgentRootDropZone agentId={agent.id}>
           {isConnected || isReconnecting ? (
             <>
               {/* Reconnecting banner */}
@@ -790,7 +843,7 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
               Connect to view sessions
             </div>
           )}
-        </div>
+        </AgentRootDropZone>
       )}
     </div>
   );

@@ -35,6 +35,7 @@ import {
   createTerminal,
   removeCredential,
   storeCredential,
+  type AgentDefinitionInfo,
 } from "@/services/api";
 import { frontendLog } from "@/utils/frontendLog";
 import { ConnectionIcon } from "@/utils/connectionIcons";
@@ -92,7 +93,10 @@ function TreeNode({
     data: { type: "folder" },
   });
   const { active } = useDndContext();
-  const isConnectionOver = isOver && active?.data.current?.type !== "agent";
+  const isConnectionOver =
+    isOver &&
+    active?.data.current?.type !== "agent" &&
+    active?.data.current?.type !== "agent-connection";
 
   return (
     <div className="connection-tree__node">
@@ -332,6 +336,7 @@ export function ConnectionList() {
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [draggingConnection, setDraggingConnection] = useState<SavedConnection | null>(null);
   const [draggingAgentName, setDraggingAgentName] = useState<string | null>(null);
+  const [draggingAgentDef, setDraggingAgentDef] = useState<AgentDefinitionInfo | null>(null);
   const [draggingSelectionCount, setDraggingSelectionCount] = useState(0);
   const [selectedConnectionIds, setSelectedConnectionIds] = useState<Set<string>>(new Set());
   const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
@@ -350,6 +355,7 @@ export function ConnectionList() {
   const moveConnectionToFolder = useAppStore((s) => s.moveConnectionToFolder);
   const bulkMoveConnectionsToFolder = useAppStore((s) => s.bulkMoveConnectionsToFolder);
   const reorderRemoteAgents = useAppStore((s) => s.reorderRemoteAgents);
+  const moveAgentDefToFolder = useAppStore((s) => s.moveAgentDefToFolder);
 
   const pointerSensor = useSensor(PointerSensor, {
     activationConstraint: { distance: 8 },
@@ -595,11 +601,18 @@ export function ConnectionList() {
       const data = event.active.data.current;
       if (data?.type === "agent") {
         setDraggingConnection(null);
+        setDraggingAgentDef(null);
         setDraggingSelectionCount(0);
         const agent = remoteAgents.find((a) => a.id === event.active.id);
         setDraggingAgentName(agent?.name ?? null);
+      } else if (data?.type === "agent-connection") {
+        setDraggingConnection(null);
+        setDraggingAgentName(null);
+        setDraggingSelectionCount(0);
+        setDraggingAgentDef(data.definition as AgentDefinitionInfo);
       } else {
         setDraggingAgentName(null);
+        setDraggingAgentDef(null);
         const conn = data?.connection as SavedConnection | undefined;
         if (!conn) return;
 
@@ -623,9 +636,34 @@ export function ConnectionList() {
     (event: DragEndEvent) => {
       setDraggingConnection(null);
       setDraggingAgentName(null);
+      setDraggingAgentDef(null);
       setDraggingSelectionCount(0);
       const { active, over } = event;
       if (!over) return;
+
+      // Handle agent-connection drag to an agent folder or agent root
+      if (active.data.current?.type === "agent-connection") {
+        const definition = active.data.current.definition as AgentDefinitionInfo;
+        const defAgentId = active.data.current.agentId as string;
+        const overId = over.id as string;
+
+        let targetFolderId: string | null | undefined;
+
+        if (overId === `agent-root:${defAgentId}`) {
+          targetFolderId = null;
+        } else if (
+          over.data.current?.type === "agent-folder" &&
+          (over.data.current?.agentId as string) === defAgentId
+        ) {
+          targetFolderId = over.data.current.folderId as string;
+        }
+
+        if (targetFolderId === undefined) return;
+        if (definition.folderId === targetFolderId) return;
+
+        moveAgentDefToFolder(defAgentId, definition.id, targetFolderId);
+        return;
+      }
 
       // Handle agent reorder
       if (active.data.current?.type === "agent" && over.data.current?.type === "agent") {
@@ -680,6 +718,7 @@ export function ConnectionList() {
     [
       moveConnectionToFolder,
       bulkMoveConnectionsToFolder,
+      moveAgentDefToFolder,
       remoteAgents,
       reorderRemoteAgents,
       selectedConnectionIds,
@@ -901,6 +940,18 @@ export function ConnectionList() {
               />
               <span>{draggingConnection.name}</span>
             </div>
+          ) : draggingAgentDef ? (
+            <div className="connection-tree__drag-overlay">
+              <ConnectionIcon
+                config={{
+                  type: "remote-session",
+                  config: { sessionType: draggingAgentDef.sessionType },
+                }}
+                customIcon={draggingAgentDef.icon}
+                size={16}
+              />
+              <span>{draggingAgentDef.name}</span>
+            </div>
           ) : draggingAgentName ? (
             <div className="connection-tree__drag-overlay">
               <Server size={14} />
@@ -965,7 +1016,10 @@ function RootDropZone({
     data: { type: "root" },
   });
   const { active } = useDndContext();
-  const isConnectionOver = isOver && active?.data.current?.type !== "agent";
+  const isConnectionOver =
+    isOver &&
+    active?.data.current?.type !== "agent" &&
+    active?.data.current?.type !== "agent-connection";
 
   return (
     <ContextMenu.Root>
