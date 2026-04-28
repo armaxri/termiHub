@@ -6,7 +6,7 @@
  * local connections experience).
  */
 
-import { useState, useCallback, useMemo, useEffect, type ReactNode } from "react";
+import { useState, useCallback, useMemo, type ReactNode } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { useDraggable, useDroppable, useDndContext, useDndMonitor } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
@@ -45,6 +45,8 @@ import {
 } from "@/services/api";
 import { classifyAgentError, ClassifiedAgentError } from "@/utils/classifyAgentError";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
+import { useTreeSelection } from "@/hooks/useTreeSelection";
+import { computeFlatVisibleIds } from "@/utils/computeFlatVisibleIds";
 import { AgentSetupDialog } from "./AgentSetupDialog";
 import { ConnectionErrorDialog } from "./ConnectionErrorDialog";
 import { InlineFolderInput } from "./InlineFolderInput";
@@ -75,23 +77,6 @@ function SessionTypeIcon({ type, size = 14 }: { type: string; size?: number }) {
     default:
       return <Terminal size={size} />;
   }
-}
-
-function computeFlatVisibleAgentDefIds(
-  rootFolders: AgentFolderInfo[],
-  rootDefinitions: AgentDefinitionInfo[],
-  allFolders: AgentFolderInfo[],
-  allDefinitions: AgentDefinitionInfo[]
-): string[] {
-  const ids: string[] = [];
-  function traverseFolder(folder: AgentFolderInfo) {
-    if (!folder.isExpanded) return;
-    allFolders.filter((f) => f.parentId === folder.id).forEach(traverseFolder);
-    allDefinitions.filter((d) => d.folderId === folder.id).forEach((d) => ids.push(d.id));
-  }
-  rootFolders.forEach(traverseFolder);
-  rootDefinitions.forEach((d) => ids.push(d.id));
-  return ids;
 }
 
 // ── Agent connection item ────────────────────────────────────────────
@@ -435,9 +420,6 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
   const [connectionError, setConnectionError] = useState<ClassifiedAgentError | null>(null);
   const [errorDialogOpen, setErrorDialogOpen] = useState(false);
   const [creatingFolder, setCreatingFolder] = useState(false);
-  const [selectedDefIds, setSelectedDefIds] = useState<Set<string>>(new Set());
-  const [lastSelectedDefId, setLastSelectedDefId] = useState<string | null>(null);
-
   const isConnected = agent.connectionState === "connected";
   const isReconnecting = agent.connectionState === "reconnecting";
   const Chevron = agent.isExpanded ? ChevronDown : ChevronRight;
@@ -453,57 +435,18 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
   );
 
   const flatVisibleDefIds = useMemo(
-    () =>
-      computeFlatVisibleAgentDefIds(rootFolders, rootDefinitions, agentFolders, agentDefinitions),
+    () => computeFlatVisibleIds(rootFolders, rootDefinitions, agentFolders, agentDefinitions),
     [rootFolders, rootDefinitions, agentFolders, agentDefinitions]
   );
 
+  const {
+    selectedIds: selectedDefIds,
+    handleItemClick: handleDefClick,
+    handleAreaClick: handleTreeAreaClick,
+    clearSelection: clearDefSelection,
+  } = useTreeSelection(flatVisibleDefIds);
+
   const allSelectedDefIds = useMemo(() => [...selectedDefIds], [selectedDefIds]);
-
-  const handleDefClick = useCallback(
-    (defId: string, event: React.MouseEvent) => {
-      if (event.ctrlKey || event.metaKey) {
-        setSelectedDefIds((prev) => {
-          const next = new Set(prev);
-          if (next.has(defId)) next.delete(defId);
-          else next.add(defId);
-          return next;
-        });
-        setLastSelectedDefId(defId);
-      } else if (event.shiftKey && lastSelectedDefId) {
-        const anchorIdx = flatVisibleDefIds.indexOf(lastSelectedDefId);
-        const targetIdx = flatVisibleDefIds.indexOf(defId);
-        if (anchorIdx >= 0 && targetIdx >= 0) {
-          const [start, end] =
-            anchorIdx < targetIdx ? [anchorIdx, targetIdx] : [targetIdx, anchorIdx];
-          setSelectedDefIds(new Set(flatVisibleDefIds.slice(start, end + 1)));
-        }
-      } else {
-        setSelectedDefIds(new Set([defId]));
-        setLastSelectedDefId(defId);
-      }
-    },
-    [flatVisibleDefIds, lastSelectedDefId]
-  );
-
-  const handleTreeAreaClick = useCallback((e: React.MouseEvent) => {
-    const target = e.target as HTMLElement;
-    if (!target.closest(".connection-tree__item")) {
-      setSelectedDefIds(new Set());
-      setLastSelectedDefId(null);
-    }
-  }, []);
-
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setSelectedDefIds(new Set());
-        setLastSelectedDefId(null);
-      }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, []);
 
   useDndMonitor({
     onDragEnd(event) {
@@ -511,8 +454,7 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
         event.active.data.current?.type === "agent-connection" &&
         event.active.data.current?.agentId === agent.id
       ) {
-        setSelectedDefIds(new Set());
-        setLastSelectedDefId(null);
+        clearDefSelection();
       }
     },
   });

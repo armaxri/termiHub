@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, Fragment, useMemo } from "react";
+import { useState, useCallback, Fragment, useMemo } from "react";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import {
   DndContext,
@@ -41,6 +41,8 @@ import { frontendLog } from "@/utils/frontendLog";
 import { ConnectionIcon } from "@/utils/connectionIcons";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { useSectionResize } from "@/hooks/useSectionResize";
+import { useTreeSelection } from "@/hooks/useTreeSelection";
+import { computeFlatVisibleIds } from "@/utils/computeFlatVisibleIds";
 import { AgentNode } from "./AgentNode";
 import { InlineFolderInput } from "./InlineFolderInput";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
@@ -306,41 +308,12 @@ function buildExpandedIndexMap(sectionsExpanded: boolean[]): { map: number[]; co
   return { map, count };
 }
 
-/**
- * Returns connection IDs in their visual tree order (depth-first, folders before sibling
- * connections), considering only expanded folders. Used for Shift+Click range selection.
- */
-function computeFlatVisibleConnectionIds(
-  rootFolders: ConnectionFolder[],
-  rootConnections: SavedConnection[],
-  allFolders: ConnectionFolder[],
-  allConnections: SavedConnection[]
-): string[] {
-  const ids: string[] = [];
-
-  function traverseFolder(folder: ConnectionFolder) {
-    if (!folder.isExpanded) return;
-    const childFolders = allFolders.filter((f) => f.parentId === folder.id);
-    const folderConnections = allConnections.filter((c) => c.folderId === folder.id);
-    childFolders.forEach(traverseFolder);
-    folderConnections.forEach((c) => ids.push(c.id));
-  }
-
-  rootFolders.forEach(traverseFolder);
-  rootConnections.forEach((c) => ids.push(c.id));
-
-  return ids;
-}
-
 export function ConnectionList() {
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [draggingConnection, setDraggingConnection] = useState<SavedConnection | null>(null);
   const [draggingAgentName, setDraggingAgentName] = useState<string | null>(null);
   const [draggingAgentDef, setDraggingAgentDef] = useState<AgentDefinitionInfo | null>(null);
   const [draggingSelectionCount, setDraggingSelectionCount] = useState(0);
-  const [selectedConnectionIds, setSelectedConnectionIds] = useState<Set<string>>(new Set());
-  const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
-
   const folders = useAppStore((s) => s.folders);
   const connections = useAppStore((s) => s.connections);
   const remoteAgents = useAppStore((s) => s.remoteAgents);
@@ -373,59 +346,17 @@ export function ConnectionList() {
   );
 
   const flatVisibleConnectionIds = useMemo(
-    () => computeFlatVisibleConnectionIds(rootFolders, rootConnections, folders, connections),
+    () => computeFlatVisibleIds(rootFolders, rootConnections, folders, connections),
     [rootFolders, rootConnections, folders, connections]
   );
 
-  // Clear selection on Escape
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setSelectedConnectionIds(new Set());
-        setLastSelectedId(null);
-      }
-    };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, []);
-
-  const handleConnectionClick = useCallback(
-    (connectionId: string, event: React.MouseEvent) => {
-      if (event.ctrlKey || event.metaKey) {
-        setSelectedConnectionIds((prev) => {
-          const next = new Set(prev);
-          if (next.has(connectionId)) {
-            next.delete(connectionId);
-          } else {
-            next.add(connectionId);
-          }
-          return next;
-        });
-        setLastSelectedId(connectionId);
-      } else if (event.shiftKey && lastSelectedId) {
-        const anchorIdx = flatVisibleConnectionIds.indexOf(lastSelectedId);
-        const targetIdx = flatVisibleConnectionIds.indexOf(connectionId);
-        if (anchorIdx >= 0 && targetIdx >= 0) {
-          const [start, end] =
-            anchorIdx < targetIdx ? [anchorIdx, targetIdx] : [targetIdx, anchorIdx];
-          setSelectedConnectionIds(new Set(flatVisibleConnectionIds.slice(start, end + 1)));
-        }
-      } else {
-        setSelectedConnectionIds(new Set([connectionId]));
-        setLastSelectedId(connectionId);
-      }
-    },
-    [flatVisibleConnectionIds, lastSelectedId]
-  );
-
-  // Clear selection when clicking on empty tree space (not on a connection item)
-  const handleTreeAreaClick = useCallback((e: React.MouseEvent) => {
-    const target = e.target as HTMLElement;
-    if (!target.closest(".connection-tree__item")) {
-      setSelectedConnectionIds(new Set());
-      setLastSelectedId(null);
-    }
-  }, []);
+  const {
+    selectedIds: selectedConnectionIds,
+    handleItemClick: handleConnectionClick,
+    handleAreaClick: handleTreeAreaClick,
+    clearSelection: clearConnectionSelection,
+    selectSingle: selectConnectionSingle,
+  } = useTreeSelection(flatVisibleConnectionIds);
 
   const handleConnect = useCallback(
     async (connection: SavedConnection) => {
@@ -630,14 +561,13 @@ export function ConnectionList() {
           setDraggingSelectionCount(selectedConnectionIds.size);
         } else {
           // Not part of current selection — switch to single-item drag
-          setSelectedConnectionIds(new Set([conn.id]));
-          setLastSelectedId(conn.id);
+          selectConnectionSingle(conn.id);
           setDraggingConnection(conn);
           setDraggingSelectionCount(1);
         }
       }
     },
-    [remoteAgents, selectedConnectionIds]
+    [remoteAgents, selectedConnectionIds, selectConnectionSingle]
   );
 
   const handleDragEnd = useCallback(
@@ -732,8 +662,7 @@ export function ConnectionList() {
         bulkMoveConnectionsToFolder(idsToActuallyMove, targetFolderId);
       }
 
-      setSelectedConnectionIds(new Set());
-      setLastSelectedId(null);
+      clearConnectionSelection();
     },
     [
       moveConnectionToFolder,
@@ -745,6 +674,7 @@ export function ConnectionList() {
       reorderRemoteAgents,
       selectedConnectionIds,
       connections,
+      clearConnectionSelection,
     ]
   );
 
