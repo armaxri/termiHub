@@ -1,16 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-
-const mockSetZoom = vi.fn(() => Promise.resolve());
-
-vi.mock("@tauri-apps/api/webview", () => ({
-  getCurrentWebview: () => ({
-    setZoom: mockSetZoom,
-  }),
-}));
-
-vi.mock("@/utils/frontendLog", () => ({
-  frontendLog: vi.fn(),
-}));
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { act, createElement } from "react";
+import { createRoot, Root } from "react-dom/client";
 
 vi.mock("@/services/storage", () => ({
   loadConnections: vi.fn(() =>
@@ -43,40 +33,85 @@ vi.mock("@/services/api", () => ({
 }));
 
 import { useAppStore } from "@/store/appStore";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { useWebviewZoom } from "./useWebviewZoom";
+
+function ZoomHarness() {
+  useWebviewZoom();
+  return null;
+}
 
 describe("useWebviewZoom", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
   beforeEach(() => {
-    mockSetZoom.mockClear();
+    container = document.createElement("div");
+    document.body.appendChild(container);
     useAppStore.setState(useAppStore.getInitialState());
+    document.documentElement.style.zoom = "";
   });
 
-  it("calls setZoom with the correct zoom level", async () => {
-    const zoomLevel = useAppStore.getState().zoomLevel;
-    await getCurrentWebview().setZoom(zoomLevel);
-    expect(mockSetZoom).toHaveBeenCalledWith(1.0);
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    document.documentElement.style.zoom = "";
   });
 
-  it("calls setZoom with updated level after zoomIn", async () => {
-    useAppStore.getState().zoomIn();
-    const zoomLevel = useAppStore.getState().zoomLevel;
-    await getCurrentWebview().setZoom(zoomLevel);
-    expect(mockSetZoom).toHaveBeenCalledWith(1.1);
+  it("does not set CSS zoom at default zoom level (1.0)", () => {
+    act(() => {
+      root = createRoot(container);
+      root.render(createElement(ZoomHarness));
+    });
+    expect(document.documentElement.style.zoom).toBe("");
   });
 
-  it("calls setZoom with updated level after zoomOut", async () => {
-    useAppStore.getState().zoomOut();
-    const zoomLevel = useAppStore.getState().zoomLevel;
-    await getCurrentWebview().setZoom(zoomLevel);
-    expect(mockSetZoom).toHaveBeenCalledWith(0.91);
+  it("sets CSS zoom after zoomIn", () => {
+    act(() => {
+      root = createRoot(container);
+      root.render(createElement(ZoomHarness));
+    });
+    act(() => {
+      useAppStore.getState().zoomIn();
+    });
+    expect(document.documentElement.style.zoom).toBe("1.1");
   });
 
-  it("calls setZoom with 1.0 after zoomReset", async () => {
-    useAppStore.getState().zoomIn();
-    useAppStore.getState().zoomIn();
-    useAppStore.getState().zoomReset();
-    const zoomLevel = useAppStore.getState().zoomLevel;
-    await getCurrentWebview().setZoom(zoomLevel);
-    expect(mockSetZoom).toHaveBeenCalledWith(1.0);
+  it("sets CSS zoom after zoomOut", () => {
+    act(() => {
+      root = createRoot(container);
+      root.render(createElement(ZoomHarness));
+    });
+    act(() => {
+      useAppStore.getState().zoomOut();
+    });
+    expect(document.documentElement.style.zoom).toBe("0.91");
+  });
+
+  it("clears CSS zoom after zoomReset", () => {
+    act(() => {
+      root = createRoot(container);
+      root.render(createElement(ZoomHarness));
+    });
+    act(() => {
+      useAppStore.getState().zoomIn();
+      useAppStore.getState().zoomIn();
+    });
+    act(() => {
+      useAppStore.getState().zoomReset();
+    });
+    expect(document.documentElement.style.zoom).toBe("");
+  });
+
+  it("clears CSS zoom on unmount", () => {
+    act(() => {
+      root = createRoot(container);
+      root.render(createElement(ZoomHarness));
+    });
+    act(() => {
+      useAppStore.getState().zoomIn();
+    });
+    expect(document.documentElement.style.zoom).toBe("1.1");
+    act(() => root.unmount());
+    expect(document.documentElement.style.zoom).toBe("");
   });
 });

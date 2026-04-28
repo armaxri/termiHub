@@ -350,6 +350,7 @@ interface AppState {
   deleteFolder: (folderId: string) => void;
   duplicateConnection: (connectionId: string) => void;
   moveConnectionToFolder: (connectionId: string, folderId: string | null) => void;
+  bulkMoveConnectionsToFolder: (connectionIds: string[], folderId: string | null) => void;
   moveConnectionToFile: (connectionId: string, targetSource: string | null) => Promise<void>;
 
   // File browser / SFTP
@@ -1926,6 +1927,22 @@ export const useAppStore = create<AppState>((set, get) => {
           .then(({ connections, folders }) => set({ connections, folders }))
           .catch((err) => console.error("Failed to persist connection move:", err));
       }
+    },
+
+    bulkMoveConnectionsToFolder: (connectionIds, folderId) => {
+      const idSet = new Set(connectionIds);
+
+      // Optimistic update for instant visual feedback
+      set((state) => ({
+        connections: state.connections.map((c) => (idSet.has(c.id) ? { ...c, folderId } : c)),
+      }));
+
+      // Persist all connections in parallel, then reload once
+      const moved = get().connections.filter((c) => idSet.has(c.id));
+      Promise.all(moved.map((conn) => persistConnection(stripPassword(conn))))
+        .then(() => loadConnections())
+        .then(({ connections, folders }) => set({ connections, folders }))
+        .catch((err) => console.error("Failed to persist bulk connection move:", err));
     },
 
     // File browser / SFTP

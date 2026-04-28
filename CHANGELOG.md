@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Connection sidebar: connections now support multi-select — Ctrl/Cmd+Click toggles individual selection, Shift+Click range-selects, and dragging a selected group moves all selected connections into the target folder at once. Escape or clicking empty space clears the selection (#638).
+
 ### Changed
 
 - Connection sidebar: the expand/collapse chevron for folders is now displayed on the right side of the folder row. This aligns folder icons and connection icons in the same column at each indent level, making the tree hierarchy unambiguous at a glance (#640).
@@ -16,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Monitoring: system stats (CPU, memory, disk) are now displayed for remote shell sessions on agents that support monitoring. Previously, the monitoring panel showed nothing for remote-session tabs because the agent reported local sessions as not supporting monitoring, the desktop proxy sent the wrong host identifier, and the frontend never checked per-session capabilities (#629)
-
+- UI: right-clicking the header bar of the panel zoom overlay (Cmd+Shift+Enter) now opens a context menu with Rename, Save to File, Copy to Clipboard, Clear Terminal, Horizontal Scrolling, and Set Color options. Previously the zoom overlay header had no context menu at all (#635).
 - Terminal: pressing "Clear" now fully resets the terminal — the cursor is moved to position (0,0) after the buffer is wiped, preventing rendering artifacts and misaligned input that occurred when a subsequent program output was placed at the old cursor position (#634)
 - Files: remote zsh sessions now receive shell integration (OSC 7 CWD tracking) so the file browser follows the terminal's current directory. Previously, zsh was excluded from integration injection under the incorrect assumption that it emits OSC 7 natively; the injected hook correctly detects bash vs. zsh at runtime (#630)
 - Files: the session-mode file browser now opens in the user's home directory (`~`) instead of the filesystem root (`/`) when no CWD has been received yet (#630)
