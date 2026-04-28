@@ -730,12 +730,14 @@ describe("api service", () => {
 
   describe("agent setup commands", () => {
     it("detectAgentArch invokes with correct parameters", async () => {
+      const base =
+        "https://github.com/armaxri/termiHub/releases/download/dev-latest/termihub-agent-";
       const archInfo = {
         arch: "aarch64",
         os: "Linux",
         archSuffix: "linux-arm64",
-        downloadUrl:
-          "https://github.com/armaxri/termiHub/releases/download/dev-latest/termihub-agent-linux-arm64",
+        downloadBaseUrl: base,
+        downloadUrl: `${base}linux-arm64`,
       };
       mockedInvoke.mockResolvedValue(archInfo);
       const config = {
@@ -759,6 +761,8 @@ describe("api service", () => {
         arch: "mips",
         os: "Linux",
         archSuffix: null,
+        downloadBaseUrl:
+          "https://github.com/armaxri/termiHub/releases/download/dev-latest/termihub-agent-",
         downloadUrl: null,
       });
 

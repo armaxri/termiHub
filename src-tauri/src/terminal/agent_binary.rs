@@ -86,26 +86,49 @@ pub fn find_bundled_binary(app_handle: &tauri::AppHandle, arch_suffix: &str) -> 
     }
 }
 
-/// Build the GitHub Releases download URL for a given version and arch suffix.
+/// Return the base download URL (without arch suffix) for the current build.
 ///
 /// Debug builds and versions ending with `-dev` use the `dev-latest` tag.
 /// Release builds use `v{version}`.
-pub fn compute_download_url(version: &str, arch_suffix: &str) -> String {
-    compute_download_url_impl(version, arch_suffix, cfg!(debug_assertions))
+///
+/// Append an arch suffix (e.g. `"linux-arm64"`) to obtain the full URL.
+pub fn compute_download_base_url(version: &str) -> String {
+    let tag = if cfg!(debug_assertions) || version.ends_with("-dev") {
+        "dev-latest".to_string()
+    } else {
+        format!("v{version}")
+    };
+    format!("https://github.com/{GITHUB_REPO}/releases/download/{tag}/termihub-agent-")
 }
 
-/// Testable implementation — callers pass the dev-build flag explicitly.
-pub(crate) fn compute_download_url_impl(
-    version: &str,
-    arch_suffix: &str,
-    is_debug_build: bool,
-) -> String {
+/// Build the full GitHub Releases download URL for a given version and arch suffix.
+pub fn compute_download_url(version: &str, arch_suffix: &str) -> String {
+    format!("{}{}", compute_download_base_url(version), arch_suffix)
+}
+
+// Test helpers with an explicit dev-build flag so tests are not affected by
+// whether the test runner itself is a debug or release build.
+#[cfg(test)]
+pub(crate) fn compute_download_base_url_impl(version: &str, is_debug_build: bool) -> String {
     let tag = if is_debug_build || version.ends_with("-dev") {
         "dev-latest".to_string()
     } else {
         format!("v{version}")
     };
-    format!("https://github.com/{GITHUB_REPO}/releases/download/{tag}/termihub-agent-{arch_suffix}")
+    format!("https://github.com/{GITHUB_REPO}/releases/download/{tag}/termihub-agent-")
+}
+
+#[cfg(test)]
+pub(crate) fn compute_download_url_impl(
+    version: &str,
+    arch_suffix: &str,
+    is_debug_build: bool,
+) -> String {
+    format!(
+        "{}{}",
+        compute_download_base_url_impl(version, is_debug_build),
+        arch_suffix
+    )
 }
 
 /// Download the agent binary from GitHub Releases and cache it locally.

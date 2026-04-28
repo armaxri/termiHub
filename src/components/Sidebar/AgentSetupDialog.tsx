@@ -2,9 +2,9 @@
  * Dialog for setting up a remote agent on a host.
  *
  * Opens in a "detecting" phase: immediately connects via SSH and detects the
- * remote architecture. Once detected, the form appears pre-configured with a
- * GitHub download as the default binary source. A local file picker is
- * available as a fallback.
+ * remote architecture. Once detected, the form appears with the detected arch
+ * pre-selected in a dropdown (overridable). GitHub download is the default
+ * binary source; a local file picker is available as fallback.
  */
 
 import { useState, useCallback, useEffect, useRef } from "react";
@@ -27,8 +27,22 @@ type DialogPhase =
   | { kind: "error"; message: string }
   | { kind: "ready"; archInfo: RemoteArchInfo };
 
+/** Supported target architectures for GitHub downloads. */
+const ARCH_OPTIONS = [
+  { suffix: "linux-x64", uname: "x86_64", label: "linux-x64 (x86_64)" },
+  { suffix: "linux-arm64", uname: "aarch64", label: "linux-arm64 (aarch64)" },
+  { suffix: "linux-armv7", uname: "armv7l", label: "linux-armv7 (armv7l)" },
+] as const;
+
+type ArchSuffix = (typeof ARCH_OPTIONS)[number]["suffix"];
+
+function isKnownSuffix(s: string | null): s is ArchSuffix {
+  return ARCH_OPTIONS.some((o) => o.suffix === s);
+}
+
 export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSetupDialogProps) {
   const [phase, setPhase] = useState<DialogPhase>({ kind: "detecting" });
+  const [selectedArch, setSelectedArch] = useState<ArchSuffix>("linux-x64");
   const [remotePath, setRemotePath] = useState("~/.local/bin/termihub-agent");
   const [installService, setInstallService] = useState(false);
   const [binarySource, setBinarySource] = useState<"github" | "local">("github");
@@ -59,11 +73,7 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
       configRef.current = config;
       const archInfo = await detectAgentArch(config);
       setPhase({ kind: "ready", archInfo });
-
-      // If arch is unsupported for download, fall back to local file
-      if (!archInfo.archSuffix) {
-        setBinarySource("local");
-      }
+      setSelectedArch(isKnownSuffix(archInfo.archSuffix) ? archInfo.archSuffix : "linux-x64");
     } catch (err) {
       setPhase({
         kind: "error",
@@ -101,13 +111,16 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
     setLoading(true);
     setSubmitError(null);
 
+    const archOption = ARCH_OPTIONS.find((o) => o.suffix === selectedArch);
+    const remoteArch = archOption?.uname ?? phase.archInfo.arch;
+
     try {
       const result = await setupRemoteAgent(agent.id, configRef.current, {
         binarySource:
           binarySource === "github"
             ? { type: "githubDownload" }
             : { type: "localFile", path: localBinaryPath },
-        remoteArch: phase.archInfo.arch,
+        remoteArch,
         remotePath,
         installService,
       });
@@ -142,6 +155,7 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
     }
   }, [
     phase,
+    selectedArch,
     binarySource,
     localBinaryPath,
     remotePath,
@@ -150,6 +164,9 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
     addTab,
     onOpenChange,
   ]);
+
+  const effectiveDownloadUrl =
+    phase.kind === "ready" ? `${phase.archInfo.downloadBaseUrl}${selectedArch}` : null;
 
   const isSubmitDisabled =
     loading || phase.kind !== "ready" || (binarySource === "local" && !localBinaryPath);
@@ -192,13 +209,31 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
           {phase.kind === "ready" && (
             <>
               <div className="agent-setup-dialog__field">
-                <label className="agent-setup-dialog__label">Detected Architecture</label>
-                <div className="agent-setup-dialog__arch-badge">
-                  {phase.archInfo.archSuffix ?? phase.archInfo.arch}
-                  <span className="agent-setup-dialog__arch-raw">
-                    ({phase.archInfo.os} / {phase.archInfo.arch})
-                  </span>
-                </div>
+                <label className="agent-setup-dialog__label" htmlFor="arch-select">
+                  Target Architecture
+                </label>
+                <select
+                  id="arch-select"
+                  className="agent-setup-dialog__input agent-setup-dialog__select"
+                  value={selectedArch}
+                  onChange={(e) => setSelectedArch(e.target.value as ArchSuffix)}
+                  data-testid="agent-setup-arch-select"
+                >
+                  {ARCH_OPTIONS.map((o) => (
+                    <option key={o.suffix} value={o.suffix}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+                <span className="agent-setup-dialog__arch-hint">
+                  Detected: {phase.archInfo.os} / {phase.archInfo.arch}
+                  {!isKnownSuffix(phase.archInfo.archSuffix) && (
+                    <span className="agent-setup-dialog__unsupported">
+                      {" "}
+                      (unsupported — please verify the selection above)
+                    </span>
+                  )}
+                </span>
               </div>
 
               <div className="agent-setup-dialog__field">
@@ -214,16 +249,12 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
                         value="github"
                         checked={binarySource === "github"}
                         onChange={() => setBinarySource("github")}
-                        disabled={!phase.archInfo.archSuffix}
                         data-testid="agent-setup-source-github"
                       />
                       <span>Download from GitHub</span>
-                      {!phase.archInfo.archSuffix && (
-                        <span className="agent-setup-dialog__unsupported">(unsupported arch)</span>
-                      )}
                     </div>
-                    {phase.archInfo.downloadUrl && (
-                      <div className="agent-setup-dialog__url">{phase.archInfo.downloadUrl}</div>
+                    {effectiveDownloadUrl && (
+                      <div className="agent-setup-dialog__url">{effectiveDownloadUrl}</div>
                     )}
                   </label>
 

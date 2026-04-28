@@ -69,7 +69,10 @@ pub struct RemoteArchInfo {
     pub os: String,
     /// Artifact suffix used in binary filenames (e.g. `"linux-arm64"`), or `None` if unsupported.
     pub arch_suffix: Option<String>,
-    /// Pre-computed GitHub download URL for this arch and the running version, or `None` if unsupported.
+    /// Base download URL without the arch suffix (e.g. `"https://.../dev-latest/termihub-agent-"`).
+    /// Append any supported arch suffix to build the full URL.
+    pub download_base_url: String,
+    /// Pre-computed GitHub download URL for the detected arch, or `None` if arch is unsupported.
     pub download_url: Option<String>,
 }
 
@@ -83,13 +86,15 @@ pub fn detect_agent_arch_info(config: &RemoteAgentConfig) -> Result<RemoteArchIn
     let (os, arch) = detect_remote_info(&session)?;
     let arch_suffix = agent_binary::artifact_name_for_arch(&arch).map(str::to_string);
     let version = env!("CARGO_PKG_VERSION");
+    let download_base_url = agent_binary::compute_download_base_url(version);
     let download_url = arch_suffix
         .as_deref()
-        .map(|s| agent_binary::compute_download_url(version, s));
+        .map(|s| format!("{download_base_url}{s}"));
     Ok(RemoteArchInfo {
         arch,
         os,
         arch_suffix,
+        download_base_url,
         download_url,
     })
 }
@@ -743,21 +748,24 @@ mod tests {
 
     #[test]
     fn remote_arch_info_serde() {
+        let base =
+            "https://github.com/armaxri/termiHub/releases/download/dev-latest/termihub-agent-";
         let info = RemoteArchInfo {
             arch: "aarch64".to_string(),
             os: "Linux".to_string(),
             arch_suffix: Some("linux-arm64".to_string()),
-            download_url: Some(
-                "https://github.com/armaxri/termiHub/releases/download/dev-latest/termihub-agent-linux-arm64".to_string(),
-            ),
+            download_base_url: base.to_string(),
+            download_url: Some(format!("{base}linux-arm64")),
         };
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains("archSuffix"));
         assert!(json.contains("downloadUrl"));
+        assert!(json.contains("downloadBaseUrl"));
         assert!(json.contains("linux-arm64"));
         let back: RemoteArchInfo = serde_json::from_str(&json).unwrap();
         assert_eq!(back.arch, "aarch64");
         assert_eq!(back.arch_suffix, Some("linux-arm64".to_string()));
+        assert!(back.download_base_url.ends_with("termihub-agent-"));
     }
 
     #[test]
@@ -766,6 +774,9 @@ mod tests {
             arch: "mips".to_string(),
             os: "Linux".to_string(),
             arch_suffix: None,
+            download_base_url:
+                "https://github.com/armaxri/termiHub/releases/download/dev-latest/termihub-agent-"
+                    .to_string(),
             download_url: None,
         };
         let json = serde_json::to_string(&info).unwrap();
@@ -773,6 +784,7 @@ mod tests {
         assert_eq!(back.arch, "mips");
         assert!(back.arch_suffix.is_none());
         assert!(back.download_url.is_none());
+        assert!(!back.download_base_url.is_empty());
     }
 
     #[test]

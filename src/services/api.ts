@@ -626,7 +626,10 @@ export interface RemoteArchInfo {
   os: string;
   /** Artifact suffix for binary filenames, e.g. `"linux-arm64"`. Null if unsupported. */
   archSuffix: string | null;
-  /** Pre-computed GitHub download URL. Null if arch is unsupported. */
+  /** Base download URL without the arch suffix (ends with `"termihub-agent-"`).
+   *  Append any supported arch suffix to build the full URL for that arch. */
+  downloadBaseUrl: string;
+  /** Pre-computed GitHub download URL for the detected arch. Null if arch is unsupported. */
   downloadUrl: string | null;
 }
 

@@ -209,24 +209,16 @@
   gap: var(--spacing-sm);
 }
 
-/* Arch badge */
-.agent-setup-dialog__arch-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-  padding: var(--spacing-xs) var(--spacing-sm);
-  background: var(--bg-hover);
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  font-family: var(--font-mono, monospace);
-  color: var(--text-primary);
-  font-weight: 500;
+/* Arch select */
+.agent-setup-dialog__select {
+  cursor: pointer;
+  appearance: auto;
 }
 
-.agent-setup-dialog__arch-raw {
-  font-weight: 400;
+.agent-setup-dialog__arch-hint {
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
+  margin-top: var(--spacing-xs);
 }
 
 /* Binary source selector */
