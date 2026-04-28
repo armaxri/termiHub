@@ -14,6 +14,7 @@ import {
   sftpReadFileContent,
   sftpWriteFileContent,
 } from "@/services/api";
+import { UnsavedChangesDialog } from "@/components/ConnectionEditor/UnsavedChangesDialog";
 import "./FileEditor.css";
 
 // Use local monaco-editor package instead of CDN (important for Tauri/offline)
@@ -55,6 +56,9 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
   const setEditorStatus = useAppStore((s) => s.setEditorStatus);
   const setEditorActions = useAppStore((s) => s.setEditorActions);
   const fileLanguageMappings = useAppStore((s) => s.settings.fileLanguageMappings);
+  const pendingCloseRequest = useAppStore((s) => s.pendingCloseRequest);
+  const setPendingCloseRequest = useAppStore((s) => s.setPendingCloseRequest);
+  const closeTab = useAppStore((s) => s.closeTab);
   // Subscribe to the theme setting so we re-derive the Monaco theme when the
   // user explicitly switches between dark / light / system in the settings.
   const themeSetting = useAppStore((s) => s.settings.theme);
@@ -146,6 +150,23 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
 
   // Keep saveRef up to date for Monaco keybinding
   saveRef.current = handleSave;
+
+  const handleDialogCancel = useCallback(() => {
+    setPendingCloseRequest(null);
+  }, [setPendingCloseRequest]);
+
+  const handleDialogJustClose = useCallback(() => {
+    const req = pendingCloseRequest;
+    setPendingCloseRequest(null);
+    if (req) closeTab(req.tabId, req.panelId);
+  }, [pendingCloseRequest, setPendingCloseRequest, closeTab]);
+
+  const handleDialogSaveAndClose = useCallback(async () => {
+    const req = pendingCloseRequest;
+    setPendingCloseRequest(null);
+    await handleSave();
+    if (req) closeTab(req.tabId, req.panelId);
+  }, [pendingCloseRequest, setPendingCloseRequest, handleSave, closeTab]);
 
   const handleEditorMount = useCallback(
     (editor: monaco.editor.IStandaloneCodeEditor) => {
@@ -267,6 +288,12 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
 
   return (
     <div className={`file-editor ${!isVisible ? "file-editor--hidden" : ""}`}>
+      <UnsavedChangesDialog
+        open={pendingCloseRequest?.tabId === tabId}
+        onCancel={handleDialogCancel}
+        onJustClose={handleDialogJustClose}
+        onSaveAndClose={handleDialogSaveAndClose}
+      />
       <div className="file-editor__toolbar">
         <div className="file-editor__path">
           {meta.isRemote && (

@@ -91,6 +91,17 @@
   color: var(--text-primary);
 }
 
+.tab__dirty-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: var(--text-secondary);
+  margin-right: 4px;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+
 .tab__state-dot {
   display: inline-block;
   width: 7px;
