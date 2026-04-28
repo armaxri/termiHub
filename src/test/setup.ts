@@ -87,3 +87,7 @@ vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({
   readText: vi.fn().mockResolvedValue(""),
   writeText: vi.fn().mockResolvedValue(undefined),
 }));
+
+vi.mock("@tauri-apps/plugin-opener", () => ({
+  openUrl: vi.fn().mockResolvedValue(undefined),
+}));
