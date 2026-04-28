@@ -111,7 +111,7 @@ describe("TabBar — close file editor tab with unsaved changes", () => {
     useAppStore.setState({ editorDirtyTabs: { [TAB_ID]: true } });
 
     // Record panels before close attempt
-    const panelsBefore = useAppStore.getState().panels;
+    const panelsBefore = useAppStore.getState().rootPanel;
 
     const closeBtn = container.querySelector(
       `[data-testid="tab-close-${TAB_ID}"]`
@@ -122,7 +122,7 @@ describe("TabBar — close file editor tab with unsaved changes", () => {
     });
 
     // Tab should still be present (panel tree unchanged)
-    expect(useAppStore.getState().panels).toEqual(panelsBefore);
+    expect(useAppStore.getState().rootPanel).toEqual(panelsBefore);
   });
 
   it("closes a clean editor tab directly without dialog", () => {
