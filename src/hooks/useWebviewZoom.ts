@@ -1,29 +1,20 @@
 import { useEffect } from "react";
 import { useAppStore } from "@/store/appStore";
-import { frontendLog } from "@/utils/frontendLog";
 
 /**
- * Applies the store's zoomLevel to the Tauri webview.
- * Falls back gracefully when not running inside Tauri.
+ * Applies the store's zoomLevel as CSS zoom on the root element.
+ *
+ * CSS zoom keeps all DOM coordinate APIs (event.clientX/Y, getBoundingClientRect)
+ * in a consistent space, which is required for Radix UI context menus and
+ * dnd-kit drag detection to work correctly at all zoom levels.
  */
 export function useWebviewZoom() {
   const zoomLevel = useAppStore((s) => s.zoomLevel);
 
   useEffect(() => {
-    let canceled = false;
-
-    (async () => {
-      try {
-        const { getCurrentWebview } = await import("@tauri-apps/api/webview");
-        if (canceled) return;
-        await getCurrentWebview().setZoom(zoomLevel);
-      } catch (err) {
-        frontendLog("zoom", `Failed to set webview zoom: ${err}`);
-      }
-    })();
-
+    document.documentElement.style.zoom = zoomLevel === 1 ? "" : String(zoomLevel);
     return () => {
-      canceled = true;
+      document.documentElement.style.zoom = "";
     };
   }, [zoomLevel]);
 }
