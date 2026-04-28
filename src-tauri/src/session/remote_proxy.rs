@@ -1048,4 +1048,38 @@ mod tests {
 
         proxy.disconnect().await.ok();
     }
+
+    /// The frontend sends `type: "shell"` but the agent normalises it to `"local"`.
+    /// The desktop must map "shell" → "local" when looking up capabilities so that
+    /// monitoring is enabled and the host is set to "self".
+    #[tokio::test]
+    async fn monitoring_proxy_uses_self_for_shell_alias() {
+        let mock = make_mock_with_local_monitoring();
+        let mut proxy = RemoteProxy::new("agent-1".to_string(), mock.clone());
+
+        // Frontend passes "shell" as the type (the common alias).
+        proxy
+            .connect(json!({ "type": "shell", "config": {} }))
+            .await
+            .expect("connect should succeed");
+
+        assert!(
+            proxy.monitoring().is_some(),
+            "monitoring() should return Some when type is 'shell' (alias for 'local')"
+        );
+
+        let _rx = proxy
+            .monitoring()
+            .unwrap()
+            .subscribe()
+            .await
+            .expect("subscribe should succeed");
+
+        let registered = mock.registered_monitoring_hosts.lock().unwrap();
+        assert_eq!(
+            registered.as_slice(),
+            ["self"],
+            "'shell' session monitoring should register under 'self' (same as 'local')"
+        );
+    }
 }
