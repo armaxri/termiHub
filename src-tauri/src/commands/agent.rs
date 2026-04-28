@@ -12,7 +12,7 @@ use crate::terminal::agent_manager::{
     AgentCapabilities, AgentConnectResult, AgentConnectionsData, AgentDefinitionInfo,
     AgentFolderInfo, AgentRpcClient, AgentSessionInfo,
 };
-use crate::terminal::agent_setup::{AgentSetupConfig, AgentSetupResult};
+use crate::terminal::agent_setup::{AgentSetupConfig, AgentSetupResult, RemoteArchInfo};
 use crate::terminal::backend::RemoteAgentConfig;
 
 /// Connect to a remote agent via SSH.
@@ -281,6 +281,20 @@ pub async fn delete_agent_folder(
         manager
             .delete_folder(&agent_id, &folder_id)
             .map_err(|e| e.to_string())
+    })
+    .await
+    .unwrap_or_else(|e| Err(e.to_string()))
+}
+
+/// Detect the remote host's architecture before the setup dialog opens.
+///
+/// Establishes a temporary SSH connection, runs `uname -m` and `uname -s`,
+/// and returns the architecture information including the pre-computed
+/// GitHub download URL for the running termiHub version.
+#[tauri::command]
+pub async fn detect_agent_arch(config: RemoteAgentConfig) -> Result<RemoteArchInfo, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::terminal::agent_setup::detect_agent_arch_info(&config).map_err(|e| e.to_string())
     })
     .await
     .unwrap_or_else(|e| Err(e.to_string()))
