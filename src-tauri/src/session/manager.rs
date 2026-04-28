@@ -103,7 +103,6 @@ struct SessionEntry {
 
 /// Push event emitted via Tauri when session-based monitoring delivers stats.
 #[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct SessionMonitoringStatsEvent {
     pub session_id: String,
     pub stats: SystemStats,
