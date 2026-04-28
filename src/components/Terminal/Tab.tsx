@@ -28,6 +28,7 @@ interface TabProps {
   onCopyToClipboard?: () => void;
   horizontalScrolling?: boolean;
   onToggleHorizontalScrolling?: () => void;
+  isDirty?: boolean;
   tabColor?: string;
   onRename?: () => void;
   onSetColor?: () => void;
@@ -43,6 +44,7 @@ export function Tab({
   onCopyToClipboard,
   horizontalScrolling,
   onToggleHorizontalScrolling,
+  isDirty,
   tabColor,
   onRename,
   onSetColor,
@@ -93,7 +95,10 @@ export function Tab({
       {remoteState && (
         <span className={`tab__state-dot tab__state-dot--${remoteState}`} title={remoteState} />
       )}
-      <span className="tab__title">{tab.title}</span>
+      <span className="tab__title">
+        {isDirty && <span className="tab__dirty-dot" />}
+        {tab.title}
+      </span>
       <button
         className="tab__close"
         onClick={(e) => {

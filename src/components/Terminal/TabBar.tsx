@@ -22,6 +22,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   const tabColors = useAppStore((s) => s.tabColors);
   const setTabColor = useAppStore((s) => s.setTabColor);
   const renameTab = useAppStore((s) => s.renameTab);
+  const editorDirtyTabs = useAppStore((s) => s.editorDirtyTabs);
   const setPendingCloseRequest = useAppStore((s) => s.setPendingCloseRequest);
   const remoteStates = useAppStore((s) => s.remoteStates);
   const { clearTerminal, saveTerminalToFile, copyTerminalToClipboard } = useTerminalRegistry();
@@ -68,6 +69,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
               onToggleHorizontalScrolling={() =>
                 setTabHorizontalScrolling(tab.id, !(tabHorizontalScrolling[tab.id] ?? false))
               }
+              isDirty={editorDirtyTabs[tab.id] ?? false}
               tabColor={tabColors[tab.id]}
               onRename={() => setRenameTabId(tab.id)}
               onSetColor={() => setColorPickerTabId(tab.id)}
