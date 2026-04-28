@@ -519,6 +519,10 @@ mod tests {
     struct MockAgentRpcClient {
         created_sessions: Mutex<Vec<(String, String, serde_json::Value)>>,
         send_request_result: Option<serde_json::Value>,
+        /// Records (method, params) for every send_request call.
+        sent_requests: Mutex<Vec<(String, serde_json::Value)>>,
+        /// Records remote_session_id for every register_monitoring_output call.
+        registered_monitoring_hosts: Mutex<Vec<String>>,
     }
 
     impl MockAgentRpcClient {
@@ -526,6 +530,17 @@ mod tests {
             Self {
                 created_sessions: Mutex::new(Vec::new()),
                 send_request_result: None,
+                sent_requests: Mutex::new(Vec::new()),
+                registered_monitoring_hosts: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn with_capabilities(capabilities_result: serde_json::Value) -> Self {
+            Self {
+                created_sessions: Mutex::new(Vec::new()),
+                send_request_result: Some(capabilities_result),
+                sent_requests: Mutex::new(Vec::new()),
+                registered_monitoring_hosts: Mutex::new(Vec::new()),
             }
         }
     }
@@ -576,9 +591,13 @@ mod tests {
         fn send_request(
             &self,
             _agent_id: &str,
-            _method: &str,
-            _params: serde_json::Value,
+            method: &str,
+            params: serde_json::Value,
         ) -> Result<serde_json::Value, TerminalError> {
+            self.sent_requests
+                .lock()
+                .unwrap()
+                .push((method.to_string(), params));
             Ok(self
                 .send_request_result
                 .clone()
@@ -734,9 +753,13 @@ mod tests {
         fn register_monitoring_output(
             &self,
             _agent_id: &str,
-            _remote_session_id: &str,
+            remote_session_id: &str,
             _monitoring_tx: MonitoringSender,
         ) -> Result<(), TerminalError> {
+            self.registered_monitoring_hosts
+                .lock()
+                .unwrap()
+                .push(remote_session_id.to_string());
             Ok(())
         }
 
@@ -894,5 +917,120 @@ mod tests {
     fn resize_before_connect_returns_error() {
         let proxy = make_proxy();
         assert!(proxy.resize(80, 24).is_err());
+    }
+
+    /// Build a mock client that responds to `connection.types` with monitoring=true for "local".
+    fn make_mock_with_local_monitoring() -> Arc<MockAgentRpcClient> {
+        Arc::new(MockAgentRpcClient::with_capabilities(json!({
+            "types": [
+                {
+                    "typeId": "local",
+                    "displayName": "Local Shell",
+                    "icon": "terminal",
+                    "schema": {"groups": []},
+                    "capabilities": {
+                        "monitoring": true,
+                        "fileBrowser": false,
+                        "resize": true,
+                        "persistent": false
+                    }
+                }
+            ]
+        })))
+    }
+
+    #[tokio::test]
+    async fn monitoring_proxy_uses_self_for_local_session() {
+        let mock = make_mock_with_local_monitoring();
+        let mut proxy = RemoteProxy::new("agent-1".to_string(), mock.clone());
+
+        proxy
+            .connect(json!({ "type": "local", "config": {} }))
+            .await
+            .expect("connect should succeed");
+
+        // Monitoring should be available.
+        assert!(
+            proxy.monitoring().is_some(),
+            "monitoring() should return Some for local session with monitoring capability"
+        );
+
+        // Subscribe — this sends monitoring subscribe to agent.
+        let _rx = proxy
+            .monitoring()
+            .unwrap()
+            .subscribe()
+            .await
+            .expect("subscribe should succeed");
+
+        // The host registered and sent to the agent must be "self".
+        let registered = mock.registered_monitoring_hosts.lock().unwrap();
+        assert_eq!(
+            registered.as_slice(),
+            ["self"],
+            "local session monitoring should register under 'self'"
+        );
+
+        let sent = mock.sent_requests.lock().unwrap();
+        let subscribe_req = sent
+            .iter()
+            .find(|(m, _)| m == "connection.monitoring.subscribe")
+            .expect("subscribe request should have been sent");
+        assert_eq!(
+            subscribe_req.1["host"].as_str(),
+            Some("self"),
+            "subscribe request host must be 'self' for local session"
+        );
+
+        proxy.disconnect().await.ok();
+    }
+
+    #[tokio::test]
+    async fn monitoring_proxy_uses_session_id_for_ssh_session() {
+        let mock = Arc::new(MockAgentRpcClient::with_capabilities(json!({
+            "types": [
+                {
+                    "typeId": "ssh",
+                    "displayName": "SSH",
+                    "icon": "ssh",
+                    "schema": {"groups": []},
+                    "capabilities": {
+                        "monitoring": true,
+                        "fileBrowser": false,
+                        "resize": true,
+                        "persistent": true
+                    }
+                }
+            ]
+        })));
+        let mut proxy = RemoteProxy::new("agent-1".to_string(), mock.clone());
+
+        proxy
+            .connect(json!({ "type": "ssh", "config": {"host": "server", "port": 22} }))
+            .await
+            .expect("connect should succeed");
+
+        assert!(proxy.monitoring().is_some());
+
+        let _rx = proxy
+            .monitoring()
+            .unwrap()
+            .subscribe()
+            .await
+            .expect("subscribe should succeed");
+
+        // For non-local sessions, host should be the remote session ID.
+        let registered = mock.registered_monitoring_hosts.lock().unwrap();
+        assert_eq!(registered.len(), 1);
+        assert_ne!(
+            registered[0], "self",
+            "ssh session monitoring should NOT register under 'self'"
+        );
+        assert_eq!(
+            registered[0], "mock-session-1",
+            "ssh session should use the remote session ID"
+        );
+
+        proxy.disconnect().await.ok();
     }
 }

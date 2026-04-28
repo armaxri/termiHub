@@ -2348,6 +2348,110 @@ mod tests {
         assert_eq!(result["error"]["code"], errors::MONITORING_ERROR);
     }
 
+    #[tokio::test]
+    async fn connection_types_local_has_monitoring_matching_platform() {
+        let mut d = make_dispatcher();
+        init_dispatcher(&mut d).await;
+
+        let req = make_request("connection.types", json!({}), 2);
+        let result = d.dispatch(req).await.to_json();
+
+        let types = result["result"]["types"]
+            .as_array()
+            .expect("types should be an array");
+        let local_type = types
+            .iter()
+            .find(|t| t["typeId"].as_str() == Some("local"))
+            .expect("local type should be present");
+
+        let monitoring_cap = local_type["capabilities"]["monitoring"]
+            .as_bool()
+            .expect("monitoring should be a bool");
+        assert_eq!(
+            monitoring_cap,
+            detect_monitoring_supported(),
+            "local type should report monitoring capability matching platform support"
+        );
+    }
+
+    #[tokio::test]
+    async fn monitoring_subscribe_local_session_resolves_to_self() {
+        let store = Arc::new(MockConnectionStore::new());
+        let monitor = Arc::new(MockMonitoringManager::new());
+        let subscribed = monitor.subscribed.clone();
+        let mut d = make_mock_dispatcher_with_stores(
+            store as Arc<dyn ConnectionStoreApi>,
+            monitor as Arc<dyn MonitoringManagerApi>,
+        );
+        init_mock(&mut d).await;
+
+        // Create a "local" session.
+        let create_req = make_request(
+            "connection.create",
+            json!({"type": "local", "title": "Shell", "config": {}}),
+            2,
+        );
+        let create_result = d.dispatch(create_req).await.to_json();
+        let session_id = create_result["result"]["session_id"]
+            .as_str()
+            .expect("session_id should be present")
+            .to_string();
+
+        // Subscribe using the session ID as host — should resolve to "self".
+        let sub_req = make_request(
+            "connection.monitoring.subscribe",
+            json!({"host": session_id, "interval_ms": 2000}),
+            3,
+        );
+        let result = d.dispatch(sub_req).await.to_json();
+        assert!(
+            result.get("result").is_some(),
+            "subscribe with local session id should succeed: {result}"
+        );
+        assert_eq!(
+            subscribed.lock().await.as_slice(),
+            ["self"],
+            "local session should resolve to 'self' monitoring host"
+        );
+    }
+
+    #[tokio::test]
+    async fn monitoring_unsubscribe_local_session_resolves_to_self() {
+        let store = Arc::new(MockConnectionStore::new());
+        let monitor = Arc::new(MockMonitoringManager::new());
+        let unsubscribed = monitor.unsubscribed.clone();
+        let mut d = make_mock_dispatcher_with_stores(
+            store as Arc<dyn ConnectionStoreApi>,
+            monitor as Arc<dyn MonitoringManagerApi>,
+        );
+        init_mock(&mut d).await;
+
+        // Create a "local" session.
+        let create_req = make_request(
+            "connection.create",
+            json!({"type": "local", "title": "Shell", "config": {}}),
+            2,
+        );
+        let create_result = d.dispatch(create_req).await.to_json();
+        let session_id = create_result["result"]["session_id"]
+            .as_str()
+            .expect("session_id should be present")
+            .to_string();
+
+        // Unsubscribe using the session ID — should resolve to "self".
+        let unsub_req = make_request(
+            "connection.monitoring.unsubscribe",
+            json!({"host": session_id}),
+            3,
+        );
+        d.dispatch(unsub_req).await;
+        assert_eq!(
+            unsubscribed.lock().await.as_slice(),
+            ["self"],
+            "local session unsubscribe should resolve to 'self'"
+        );
+    }
+
     // ── agent.shutdown tests ─────────────────────────────────────────
 
     #[tokio::test]
