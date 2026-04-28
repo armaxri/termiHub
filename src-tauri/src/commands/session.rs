@@ -4,6 +4,7 @@
 //! entry point and uniform I/O commands. File browsing and monitoring are
 //! accessed through the session's connection capabilities.
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::State;
 use tracing::{debug, info};
@@ -209,4 +210,53 @@ pub async fn session_mkdir(
 ) -> Result<(), TerminalError> {
     debug!(session_id, path, "Session mkdir");
     manager.mkdir_file(&session_id, &path).await
+}
+
+// --- Session-based monitoring commands ---
+
+/// Capabilities of an active session exposed to the frontend.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionCapabilities {
+    pub monitoring: bool,
+    pub file_browser: bool,
+}
+
+/// Return the capabilities of an active session.
+#[tauri::command]
+pub async fn session_get_capabilities(
+    session_id: String,
+    manager: State<'_, SessionManager>,
+) -> Result<SessionCapabilities, TerminalError> {
+    let caps = manager
+        .session_capabilities(&session_id)
+        .await
+        .ok_or_else(|| TerminalError::SessionNotFound(session_id.clone()))?;
+    Ok(SessionCapabilities {
+        monitoring: caps.monitoring,
+        file_browser: caps.file_browser,
+    })
+}
+
+/// Start session-based monitoring, pushing stats as `session-monitoring-stats` events.
+#[tauri::command]
+pub async fn session_monitoring_open(
+    session_id: String,
+    app_handle: tauri::AppHandle,
+    manager: State<'_, SessionManager>,
+) -> Result<(), TerminalError> {
+    info!(session_id, "Starting session monitoring");
+    manager
+        .start_session_monitoring(&session_id, app_handle)
+        .await
+}
+
+/// Stop session-based monitoring.
+#[tauri::command]
+pub async fn session_monitoring_close(
+    session_id: String,
+    manager: State<'_, SessionManager>,
+) -> Result<(), TerminalError> {
+    info!(session_id, "Stopping session monitoring");
+    manager.stop_session_monitoring(&session_id).await
 }
