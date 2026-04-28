@@ -261,6 +261,17 @@
   opacity: 0.4;
 }
 
+.connection-tree__item--selected {
+  background-color: var(--bg-selected, color-mix(in srgb, var(--accent-color) 18%, transparent));
+}
+
+.connection-tree__item--selected:hover {
+  background-color: var(
+    --bg-selected-hover,
+    color-mix(in srgb, var(--accent-color) 28%, transparent)
+  );
+}
+
 .connection-tree__folder--drop-over {
   background-color: var(--bg-hover);
   outline: 1px dashed var(--accent-color);
