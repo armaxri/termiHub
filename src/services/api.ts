@@ -606,16 +606,41 @@ export async function deleteAgentFolder(agentId: string, folderId: string): Prom
 
 // --- Agent setup commands ---
 
+/** Source for the agent binary during setup. */
+export type AgentBinarySource = { type: "githubDownload" } | { type: "localFile"; path: string };
+
 /** Configuration for setting up a remote agent. */
 export interface AgentSetupConfig {
-  binaryPath: string;
+  binarySource: AgentBinarySource;
+  /** Raw `uname -m` output detected before the dialog opened. */
+  remoteArch: string;
   remotePath?: string;
   installService: boolean;
+}
+
+/** Remote host architecture info, returned before the setup dialog opens. */
+export interface RemoteArchInfo {
+  /** Raw `uname -m` output, e.g. `"aarch64"`. */
+  arch: string;
+  /** Raw `uname -s` output, e.g. `"Linux"`. */
+  os: string;
+  /** Artifact suffix for binary filenames, e.g. `"linux-arm64"`. Null if unsupported. */
+  archSuffix: string | null;
+  /** Pre-computed GitHub download URL. Null if arch is unsupported. */
+  downloadUrl: string | null;
 }
 
 /** Result of initiating the agent setup flow. */
 export interface AgentSetupResult {
   sessionId: string;
+}
+
+/**
+ * Detect the remote host's architecture before opening the setup dialog.
+ * Establishes a temporary SSH connection and runs `uname -m` / `uname -s`.
+ */
+export async function detectAgentArch(config: RemoteAgentConfig): Promise<RemoteArchInfo> {
+  return await invoke<RemoteArchInfo>("detect_agent_arch", { config });
 }
 
 /** Upload and install the remote agent binary on a host. */
