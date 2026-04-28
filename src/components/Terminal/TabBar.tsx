@@ -36,7 +36,11 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
     const isDirty = useAppStore.getState().editorDirtyTabs[tabId];
     if (isDirty) {
       const tab = tabs.find((t) => t.id === tabId);
-      if (tab?.contentType === "connection-editor" || tab?.contentType === "settings") {
+      if (
+        tab?.contentType === "connection-editor" ||
+        tab?.contentType === "settings" ||
+        tab?.contentType === "editor"
+      ) {
         setPendingCloseRequest({ tabId, panelId });
         return;
       }
