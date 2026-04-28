@@ -58,6 +58,9 @@ import {
   monitoringOpen,
   monitoringClose,
   monitoringFetchStats,
+  sessionGetCapabilities,
+  sessionMonitoringOpen,
+  sessionMonitoringClose,
   listAvailableShells,
   getDefaultShell,
   connectAgent as apiConnectAgent,
@@ -118,6 +121,7 @@ import {
 } from "@/utils/workspaceLayout";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { SystemStats } from "@/types/monitoring";
+import { onSessionMonitoringStats } from "@/services/events";
 import { applyTheme, onThemeChange } from "@/themes";
 import { setOverrides as setKeybindingOverrides } from "@/services/keybindings";
 import {
@@ -498,6 +502,12 @@ interface AppState {
   connectMonitoring: (config: Record<string, unknown>) => Promise<void>;
   disconnectMonitoring: () => Promise<void>;
   refreshMonitoring: () => Promise<void>;
+  /** Per-session capabilities fetched after session creation (keyed by sessionId). */
+  sessionCapabilities: Record<string, { monitoring: boolean; fileBrowser: boolean }>;
+  setSessionCapabilities: (
+    sessionId: string,
+    caps: { monitoring: boolean; fileBrowser: boolean }
+  ) => void;
 
   // SSH Tunnels
   tunnels: TunnelConfig[];
@@ -575,6 +585,8 @@ interface AppState {
 
 let tabCounter = 0;
 let layoutPersistTimer: ReturnType<typeof setTimeout> | null = null;
+/** Unlisten function for the active session-based monitoring event subscription. */
+let _monitoringUnlisten: (() => void) | null = null;
 
 function createTab(
   title: string,
@@ -937,7 +949,19 @@ export const useAppStore = create<AppState>((set, get) => {
 
     getAllPanels: () => getAllLeaves(get().rootPanel),
 
-    setTabSessionId: (tabId, sessionId) =>
+    setTabSessionId: (tabId, sessionId) => {
+      // For remote-session tabs gaining a session ID, fetch capabilities so
+      // monitoring knows whether this session supports stats collection.
+      if (sessionId) {
+        const tab = getAllLeaves(get().rootPanel)
+          .flatMap((l) => l.tabs)
+          .find((t) => t.id === tabId);
+        if (tab?.connectionType === "remote-session") {
+          sessionGetCapabilities(sessionId)
+            .then((caps) => get().setSessionCapabilities(sessionId, caps))
+            .catch(() => {});
+        }
+      }
       set((state) => {
         const leaf = findLeafByTab(state.rootPanel, tabId);
         if (!leaf) return state;
@@ -947,7 +971,8 @@ export const useAppStore = create<AppState>((set, get) => {
             tabs: l.tabs.map((t) => (t.id === tabId ? { ...t, sessionId } : t)),
           })),
         };
-      }),
+      });
+    },
 
     addTab: (title, connectionType, config, panelId, contentType, terminalOptions, sessionId) =>
       set((state) => {
@@ -2678,10 +2703,38 @@ export const useAppStore = create<AppState>((set, get) => {
     monitoringStats: null,
     monitoringLoading: false,
     monitoringError: null,
+    sessionCapabilities: {},
+
+    setSessionCapabilities: (sessionId, caps) =>
+      set((state) => ({
+        sessionCapabilities: { ...state.sessionCapabilities, [sessionId]: caps },
+      })),
 
     connectMonitoring: async (config: Record<string, unknown>) => {
       set({ monitoringLoading: true, monitoringError: null });
       try {
+        // Session-based monitoring: config carries sessionId for "remote-session" tabs.
+        // The agent pushes stats via "session-monitoring-stats" Tauri events.
+        if (config._sessionBased) {
+          const sessionId = config._sessionId as string;
+          const unlisten = await onSessionMonitoringStats((sid, stats) => {
+            if (sid === sessionId) {
+              useAppStore.setState({ monitoringStats: stats, monitoringError: null });
+            }
+          });
+          // Store unlisten in a module-level variable so disconnectMonitoring can call it.
+          _monitoringUnlisten = unlisten;
+
+          await sessionMonitoringOpen(sessionId);
+          set({
+            monitoringSessionId: sessionId,
+            monitoringHost: sessionId,
+            monitoringLoading: false,
+          });
+          return;
+        }
+
+        // Standard SSH-based monitoring (direct connection from desktop).
         const sessionId = await monitoringOpen(config);
         const stats = await monitoringFetchStats(sessionId);
         set({
@@ -2699,13 +2752,22 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     disconnectMonitoring: async () => {
-      const sessionId = useAppStore.getState().monitoringSessionId;
-      if (sessionId) {
+      const { monitoringSessionId, sessionCapabilities } = useAppStore.getState();
+      if (monitoringSessionId) {
         try {
-          await monitoringClose(sessionId);
+          // If this was a session-based monitoring, stop it; otherwise close SSH session.
+          if (sessionCapabilities[monitoringSessionId] !== undefined) {
+            await sessionMonitoringClose(monitoringSessionId);
+          } else {
+            await monitoringClose(monitoringSessionId);
+          }
         } catch {
           // Ignore close errors
         }
+      }
+      if (_monitoringUnlisten) {
+        _monitoringUnlisten();
+        _monitoringUnlisten = null;
       }
       set({
         monitoringSessionId: null,
@@ -2716,8 +2778,10 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     refreshMonitoring: async () => {
-      const { monitoringSessionId } = useAppStore.getState();
+      const { monitoringSessionId, sessionCapabilities } = useAppStore.getState();
       if (!monitoringSessionId) return;
+      // Session-based monitoring is push-based; no explicit refresh needed.
+      if (sessionCapabilities[monitoringSessionId] !== undefined) return;
       try {
         const stats = await monitoringFetchStats(monitoringSessionId);
         set({ monitoringStats: stats, monitoringError: null });
