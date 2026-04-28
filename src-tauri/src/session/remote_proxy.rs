@@ -196,9 +196,16 @@ impl ConnectionType for RemoteProxy {
                                 }
                                 // Set up monitoring proxy if supported.
                                 if parsed.monitoring {
+                                    // Local sessions are monitored on the agent host itself
+                                    // via the "self" sentinel; SSH sessions use the session ID.
+                                    let monitoring_host = if session_type == "local" {
+                                        "self".to_string()
+                                    } else {
+                                        remote_sid.clone()
+                                    };
                                     self.monitoring_proxy = Some(RemoteMonitoringProxy {
                                         agent_id: self.agent_id.clone(),
-                                        remote_session_id: remote_sid.clone(),
+                                        monitoring_host,
                                         agent_manager: self.agent_manager.clone(),
                                     });
                                 }
@@ -437,7 +444,9 @@ impl FileBrowser for RemoteFileBrowserProxy {
 /// Monitoring proxy that forwards operations to a remote agent.
 pub struct RemoteMonitoringProxy {
     agent_id: String,
-    remote_session_id: String,
+    /// The host key used for subscribe/unsubscribe requests and output routing.
+    /// "self" for local sessions; the remote session ID for SSH sessions.
+    monitoring_host: String,
     agent_manager: Arc<dyn AgentRpcClient>,
 }
 
@@ -448,7 +457,7 @@ impl MonitoringProvider for RemoteMonitoringProxy {
 
         // Register monitoring channel so agent_manager routes notifications to it.
         self.agent_manager
-            .register_monitoring_output(&self.agent_id, &self.remote_session_id, tx)
+            .register_monitoring_output(&self.agent_id, &self.monitoring_host, tx)
             .map_err(|e| CoreError::Other(e.to_string()))?;
 
         // Send subscribe request to agent.
@@ -457,7 +466,7 @@ impl MonitoringProvider for RemoteMonitoringProxy {
                 &self.agent_id,
                 "connection.monitoring.subscribe",
                 serde_json::json!({
-                    "host": self.remote_session_id,
+                    "host": self.monitoring_host,
                     "interval_ms": 2000,
                 }),
             )
@@ -470,14 +479,14 @@ impl MonitoringProvider for RemoteMonitoringProxy {
         // Unregister monitoring channel before telling the agent to stop.
         let _ = self
             .agent_manager
-            .unregister_monitoring_output(&self.agent_id, &self.remote_session_id);
+            .unregister_monitoring_output(&self.agent_id, &self.monitoring_host);
 
         self.agent_manager
             .send_request(
                 &self.agent_id,
                 "connection.monitoring.unsubscribe",
                 serde_json::json!({
-                    "host": self.remote_session_id,
+                    "host": self.monitoring_host,
                 }),
             )
             .map_err(|e| CoreError::Other(e.to_string()))?;
