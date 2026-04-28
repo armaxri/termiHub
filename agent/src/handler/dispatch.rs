@@ -533,7 +533,23 @@ impl<M: SessionManagerApi> Dispatcher<M> {
     }
 
     async fn handle_connection_types(&self, request: JsonRpcRequest) -> DispatchResult {
-        let types = self.session_manager.registry().available_types();
+        let monitoring_ok = detect_monitoring_supported();
+        // The "local" shell backend declares monitoring: false because the
+        // desktop handles local monitoring differently (direct SSH session).
+        // In the agent context, "local" sessions run on this machine and
+        // monitoring via "self" is available, so we override here.
+        let types = self
+            .session_manager
+            .registry()
+            .available_types()
+            .into_iter()
+            .map(|mut info| {
+                if info.type_id == "local" {
+                    info.capabilities.monitoring = monitoring_ok;
+                }
+                info
+            })
+            .collect();
         let result = ConnectionTypesResult { types };
         DispatchResult::Success(JsonRpcResponse::new(
             request.id,
@@ -975,6 +991,20 @@ impl<M: SessionManagerApi> Dispatcher<M> {
 
     // ── monitoring.* handlers ─────────────────────────────────────────
 
+    /// Resolve the monitoring host for a given host identifier.
+    ///
+    /// If `host` is a session ID whose type is "local", returns `"self"` so
+    /// the `MonitoringManager` subscribes to the local machine stats.
+    /// For SSH session IDs and bare hostnames/IPs the value passes through unchanged.
+    async fn resolve_monitoring_host(&self, host: &str) -> String {
+        if let Some(type_id) = self.session_manager.get_session_type_id(host).await {
+            if type_id == "local" {
+                return "self".to_string();
+            }
+        }
+        host.to_string()
+    }
+
     async fn handle_monitoring_subscribe(&self, request: JsonRpcRequest) -> DispatchResult {
         let id = request.id.clone();
 
@@ -989,9 +1019,10 @@ impl<M: SessionManagerApi> Dispatcher<M> {
             }
         };
 
+        let host = self.resolve_monitoring_host(&params.host).await;
         match self
             .monitoring_manager
-            .subscribe(&params.host, params.interval_ms)
+            .subscribe(&host, params.interval_ms)
             .await
         {
             Ok(()) => DispatchResult::Success(JsonRpcResponse::new(id, json!({}))),
@@ -1017,7 +1048,8 @@ impl<M: SessionManagerApi> Dispatcher<M> {
             }
         };
 
-        self.monitoring_manager.unsubscribe(&params.host).await;
+        let host = self.resolve_monitoring_host(&params.host).await;
+        self.monitoring_manager.unsubscribe(&host).await;
         DispatchResult::Success(JsonRpcResponse::new(id, json!({})))
     }
 
