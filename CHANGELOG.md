@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- UI: closing a file editor tab with unsaved changes now shows a "Save / Discard / Cancel" dialog before the tab is closed, matching the behavior of the settings and connection editors. Previously, a simple browser confirm appeared after the tab was already closed, making it impossible to cancel (#632).
+- UI: restored the dirty-state dot indicator in editor tab titles (settings, connection editor, file editor) — a small filled circle now appears before the tab name when there are unsaved changes.
 - Monitoring: system stats (CPU, memory, disk) are now displayed for remote shell sessions on agents that support monitoring. Previously, the monitoring panel showed nothing for remote-session tabs because the agent reported local sessions as not supporting monitoring, the desktop proxy sent the wrong host identifier, and the frontend never checked per-session capabilities (#629)
 - UI: right-clicking the header bar of the panel zoom overlay (Cmd+Shift+Enter) now opens a context menu with Rename, Save to File, Copy to Clipboard, Clear Terminal, Horizontal Scrolling, and Set Color options. Previously the zoom overlay header had no context menu at all (#635).
 - Terminal: pressing "Clear" now fully resets the terminal — the cursor is moved to position (0,0) after the buffer is wiped, preventing rendering artifacts and misaligned input that occurred when a subsequent program output was placed at the old cursor position (#634)
