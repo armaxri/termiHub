@@ -73,6 +73,16 @@ export function SplitView() {
   const terminalConnecting = useAppStore((s) => s.terminalConnecting);
   const terminalAutoRetryCountZoom = useAppStore((s) => s.terminalAutoRetryCount);
   const terminalWaitingForAgentZoom = useAppStore((s) => s.terminalWaitingForAgent);
+  const tabHorizontalScrollingZoom = useAppStore((s) => s.tabHorizontalScrolling);
+  const setTabHorizontalScrollingZoom = useAppStore((s) => s.setTabHorizontalScrolling);
+  const tabColorsZoom = useAppStore((s) => s.tabColors);
+  const setTabColorZoom = useAppStore((s) => s.setTabColor);
+  const renameTabZoom = useAppStore((s) => s.renameTab);
+
+  const { clearTerminal, saveTerminalToFile, copyTerminalToClipboard } = useTerminalRegistry();
+
+  const [zoomColorPickerOpen, setZoomColorPickerOpen] = useState(false);
+  const [zoomRenameOpen, setZoomRenameOpen] = useState(false);
 
   // Find the zoomed tab's metadata for the overlay header
   const zoomedTab = useMemo(() => {
@@ -247,42 +257,108 @@ export function SplitView() {
       {zoomedTabId && zoomedTab && (
         <div className="zoom-overlay" onClick={dismissZoom}>
           <div className="zoom-overlay__panel" onClick={(e) => e.stopPropagation()}>
-            <div className="zoom-overlay__header">
-              {zoomedTab.contentType === "settings" ? (
-                <SettingsIcon size={14} className="zoom-overlay__icon" />
-              ) : zoomedTab.contentType === "log-viewer" ? (
-                <ScrollText size={14} className="zoom-overlay__icon" />
-              ) : zoomedTab.contentType === "editor" ? (
-                <FileEdit size={14} className="zoom-overlay__icon" />
-              ) : zoomedTab.contentType === "connection-editor" ? (
-                <SquarePen size={14} className="zoom-overlay__icon" />
-              ) : zoomedTab.contentType === "tunnel-editor" ? (
-                <ArrowLeftRight size={14} className="zoom-overlay__icon" />
-              ) : zoomedTab.contentType === "workspace-editor" ? (
-                <LayoutGrid size={14} className="zoom-overlay__icon" />
-              ) : zoomedTab.contentType === "network-diagnostic" ? (
-                <Stethoscope size={14} className="zoom-overlay__icon" />
-              ) : zoomedTab.contentType === "agent-error" ? (
-                <WifiOff size={14} className="zoom-overlay__icon" />
-              ) : (
-                <ConnectionIcon
-                  config={zoomedTab.config}
-                  size={14}
-                  className="zoom-overlay__icon"
-                />
-              )}
-              <span className="zoom-overlay__title">{zoomedTab.title}</span>
-              <span className="zoom-overlay__hint">
-                {isMac() ? "⌘⇧↵" : "Ctrl+Shift+Enter"} · Esc to close
-              </span>
-              <button
-                className="zoom-overlay__close"
-                onClick={dismissZoom}
-                aria-label="Close zoom overlay"
-              >
-                <X size={16} />
-              </button>
-            </div>
+            <ContextMenu.Root>
+              <ContextMenu.Trigger asChild>
+                <div className="zoom-overlay__header">
+                  {zoomedTab.contentType === "settings" ? (
+                    <SettingsIcon size={14} className="zoom-overlay__icon" />
+                  ) : zoomedTab.contentType === "log-viewer" ? (
+                    <ScrollText size={14} className="zoom-overlay__icon" />
+                  ) : zoomedTab.contentType === "editor" ? (
+                    <FileEdit size={14} className="zoom-overlay__icon" />
+                  ) : zoomedTab.contentType === "connection-editor" ? (
+                    <SquarePen size={14} className="zoom-overlay__icon" />
+                  ) : zoomedTab.contentType === "tunnel-editor" ? (
+                    <ArrowLeftRight size={14} className="zoom-overlay__icon" />
+                  ) : zoomedTab.contentType === "workspace-editor" ? (
+                    <LayoutGrid size={14} className="zoom-overlay__icon" />
+                  ) : zoomedTab.contentType === "network-diagnostic" ? (
+                    <Stethoscope size={14} className="zoom-overlay__icon" />
+                  ) : zoomedTab.contentType === "agent-error" ? (
+                    <WifiOff size={14} className="zoom-overlay__icon" />
+                  ) : (
+                    <ConnectionIcon
+                      config={zoomedTab.config}
+                      size={14}
+                      className="zoom-overlay__icon"
+                    />
+                  )}
+                  <span className="zoom-overlay__title">{zoomedTab.title}</span>
+                  <span className="zoom-overlay__hint">
+                    {isMac() ? "⌘⇧↵" : "Ctrl+Shift+Enter"} · Esc to close
+                  </span>
+                  <button
+                    className="zoom-overlay__close"
+                    onClick={dismissZoom}
+                    aria-label="Close zoom overlay"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              </ContextMenu.Trigger>
+              <ContextMenu.Portal>
+                <ContextMenu.Content className="context-menu__content">
+                  {zoomedTab.contentType === "terminal" && (
+                    <>
+                      <ContextMenu.Item
+                        className="context-menu__item"
+                        onSelect={() => setZoomRenameOpen(true)}
+                        data-testid="zoom-context-rename"
+                      >
+                        <Pencil size={14} /> Rename
+                      </ContextMenu.Item>
+                      <ContextMenu.Separator className="context-menu__separator" />
+                      <ContextMenu.Item
+                        className="context-menu__item"
+                        onSelect={() => saveTerminalToFile(zoomedTabId)}
+                        data-testid="zoom-context-save"
+                      >
+                        <FileDown size={14} /> Save to File
+                      </ContextMenu.Item>
+                      <ContextMenu.Item
+                        className="context-menu__item"
+                        onSelect={() => copyTerminalToClipboard(zoomedTabId)}
+                        data-testid="zoom-context-copy"
+                      >
+                        <ClipboardCopy size={14} /> Copy to Clipboard
+                      </ContextMenu.Item>
+                      <ContextMenu.Item
+                        className="context-menu__item"
+                        onSelect={() => clearTerminal(zoomedTabId)}
+                        data-testid="zoom-context-clear"
+                      >
+                        <Eraser size={14} /> Clear Terminal
+                      </ContextMenu.Item>
+                      <ContextMenu.Separator className="context-menu__separator" />
+                      <ContextMenu.CheckboxItem
+                        className="context-menu__item"
+                        checked={tabHorizontalScrollingZoom[zoomedTabId] ?? false}
+                        onSelect={() =>
+                          setTabHorizontalScrollingZoom(
+                            zoomedTabId,
+                            !(tabHorizontalScrollingZoom[zoomedTabId] ?? false)
+                          )
+                        }
+                        data-testid="zoom-context-horizontal-scroll"
+                      >
+                        <ContextMenu.ItemIndicator className="context-menu__indicator">
+                          <Check size={14} />
+                        </ContextMenu.ItemIndicator>
+                        <ArrowRightLeft size={14} /> Horizontal Scrolling
+                      </ContextMenu.CheckboxItem>
+                      <ContextMenu.Separator className="context-menu__separator" />
+                    </>
+                  )}
+                  <ContextMenu.Item
+                    className="context-menu__item"
+                    onSelect={() => setZoomColorPickerOpen(true)}
+                    data-testid="zoom-context-set-color"
+                  >
+                    <Palette size={14} /> Set Color...
+                  </ContextMenu.Item>
+                </ContextMenu.Content>
+              </ContextMenu.Portal>
+            </ContextMenu.Root>
             <div className="zoom-overlay__content">
               {zoomedTab.contentType === "terminal" &&
               (terminalSpawnErrors[zoomedTabId] ||
@@ -364,6 +440,29 @@ export function SplitView() {
             </div>
           </div>
         </div>
+      )}
+      {zoomedTabId && (
+        <>
+          <ColorPickerDialog
+            open={zoomColorPickerOpen}
+            onOpenChange={(open) => {
+              if (!open) setZoomColorPickerOpen(false);
+            }}
+            currentColor={tabColorsZoom[zoomedTabId]}
+            onColorChange={(color) => setTabColorZoom(zoomedTabId, color)}
+          />
+          <RenameDialog
+            open={zoomRenameOpen}
+            onOpenChange={(open) => {
+              if (!open) setZoomRenameOpen(false);
+            }}
+            currentTitle={zoomedTab?.title ?? ""}
+            onRename={(newTitle) => {
+              renameTabZoom(zoomedTabId, newTitle);
+              setZoomRenameOpen(false);
+            }}
+          />
+        </>
       )}
     </div>
   );
