@@ -973,23 +973,27 @@ mod tests {
             .expect("subscribe should succeed");
 
         // The host registered and sent to the agent must be "self".
-        let registered = mock.registered_monitoring_hosts.lock().unwrap();
-        assert_eq!(
-            registered.as_slice(),
-            ["self"],
-            "local session monitoring should register under 'self'"
-        );
+        {
+            let registered = mock.registered_monitoring_hosts.lock().unwrap();
+            assert_eq!(
+                registered.as_slice(),
+                ["self"],
+                "local session monitoring should register under 'self'"
+            );
+        }
 
-        let sent = mock.sent_requests.lock().unwrap();
-        let subscribe_req = sent
-            .iter()
-            .find(|(m, _)| m == "connection.monitoring.subscribe")
-            .expect("subscribe request should have been sent");
-        assert_eq!(
-            subscribe_req.1["host"].as_str(),
-            Some("self"),
-            "subscribe request host must be 'self' for local session"
-        );
+        {
+            let sent = mock.sent_requests.lock().unwrap();
+            let subscribe_req = sent
+                .iter()
+                .find(|(m, _)| m == "connection.monitoring.subscribe")
+                .expect("subscribe request should have been sent");
+            assert_eq!(
+                subscribe_req.1["host"].as_str(),
+                Some("self"),
+                "subscribe request host must be 'self' for local session"
+            );
+        }
 
         proxy.disconnect().await.ok();
     }
@@ -1029,16 +1033,18 @@ mod tests {
             .expect("subscribe should succeed");
 
         // For non-local sessions, host should be the remote session ID.
-        let registered = mock.registered_monitoring_hosts.lock().unwrap();
-        assert_eq!(registered.len(), 1);
-        assert_ne!(
-            registered[0], "self",
-            "ssh session monitoring should NOT register under 'self'"
-        );
-        assert_eq!(
-            registered[0], "mock-session-1",
-            "ssh session should use the remote session ID"
-        );
+        {
+            let registered = mock.registered_monitoring_hosts.lock().unwrap();
+            assert_eq!(registered.len(), 1);
+            assert_ne!(
+                registered[0], "self",
+                "ssh session monitoring should NOT register under 'self'"
+            );
+            assert_eq!(
+                registered[0], "mock-session-1",
+                "ssh session should use the remote session ID"
+            );
+        }
 
         proxy.disconnect().await.ok();
     }
