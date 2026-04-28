@@ -15,7 +15,7 @@ use anyhow::{bail, Context, Result};
 use tracing::{debug, info, warn};
 
 /// GitHub repository for release downloads.
-const GITHUB_REPO: &str = "ArneBK/termiHub";
+const GITHUB_REPO: &str = "armaxri/termiHub";
 
 /// Map a `uname -m` architecture string to the artifact suffix we use.
 ///
@@ -87,10 +87,16 @@ pub fn find_bundled_binary(app_handle: &tauri::AppHandle, arch_suffix: &str) -> 
 }
 
 /// Build the GitHub Releases download URL for a given version and arch suffix.
-pub fn release_download_url(version: &str, arch_suffix: &str) -> String {
-    format!(
-        "https://github.com/{GITHUB_REPO}/releases/download/v{version}/termihub-agent-{arch_suffix}"
-    )
+///
+/// Dev versions (ending with `-dev`) use the `dev-latest` tag.
+/// Release versions use `v{version}`.
+pub fn compute_download_url(version: &str, arch_suffix: &str) -> String {
+    let tag = if version.ends_with("-dev") {
+        "dev-latest".to_string()
+    } else {
+        format!("v{version}")
+    };
+    format!("https://github.com/{GITHUB_REPO}/releases/download/{tag}/termihub-agent-{arch_suffix}")
 }
 
 /// Download the agent binary from GitHub Releases and cache it locally.
@@ -101,7 +107,7 @@ pub fn download_agent_binary<F>(version: &str, arch_suffix: &str, progress_cb: F
 where
     F: Fn(u64, u64),
 {
-    let url = release_download_url(version, arch_suffix);
+    let url = compute_download_url(version, arch_suffix);
     info!("Downloading agent binary from {}", url);
 
     let response = reqwest::blocking::Client::new()
@@ -247,18 +253,35 @@ mod tests {
     }
 
     #[test]
-    fn release_download_url_format() {
-        let url = release_download_url("0.1.0", "linux-x64");
+    fn compute_download_url_release_version() {
+        let url = compute_download_url("1.2.3", "linux-x64");
         assert_eq!(
             url,
-            "https://github.com/ArneBK/termiHub/releases/download/v0.1.0/termihub-agent-linux-x64"
+            "https://github.com/armaxri/termiHub/releases/download/v1.2.3/termihub-agent-linux-x64"
         );
     }
 
     #[test]
-    fn release_download_url_arm64() {
-        let url = release_download_url("1.2.3", "linux-arm64");
-        assert!(url.contains("v1.2.3"));
-        assert!(url.contains("linux-arm64"));
+    fn compute_download_url_dev_version_uses_dev_latest() {
+        let url = compute_download_url("0.1.0-dev", "linux-arm64");
+        assert_eq!(
+            url,
+            "https://github.com/armaxri/termiHub/releases/download/dev-latest/termihub-agent-linux-arm64"
+        );
+    }
+
+    #[test]
+    fn compute_download_url_dev_version_armv7() {
+        let url = compute_download_url("2.0.0-dev", "linux-armv7");
+        assert!(url.contains("dev-latest"));
+        assert!(url.contains("linux-armv7"));
+        assert!(!url.contains("v2.0.0"));
+    }
+
+    #[test]
+    fn compute_download_url_release_does_not_use_dev_latest() {
+        let url = compute_download_url("1.0.0", "linux-x64");
+        assert!(!url.contains("dev-latest"));
+        assert!(url.contains("v1.0.0"));
     }
 }
