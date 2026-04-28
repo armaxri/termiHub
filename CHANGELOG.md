@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Concept document for modern, transparency-aware application icons (`docs/concepts/app-icons.md`): covers app icon design (deep navy gradient, accent-blue prompt glyph, hub connector lines), UI icon family conventions, per-platform size requirements, style guidelines, icon state machine, AI generation prompts, and export pipeline (#641).
 - Connection sidebar: connections now support multi-select — Ctrl/Cmd+Click toggles individual selection, Shift+Click range-selects, and dragging a selected group moves all selected connections into the target folder at once. Escape or clicking empty space clears the selection (#638).
 - Agent setup: the setup dialog now detects the remote host's architecture automatically before opening, and defaults to downloading the agent binary from GitHub (using `dev-latest` for dev builds or `v{version}` for releases). A local file picker remains available as a fallback. The detected architecture and download URL are shown in the dialog.
 
