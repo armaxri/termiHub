@@ -53,7 +53,7 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
         <input
           type="number"
           min={100}
-          max={100000}
+          max={1000000}
           value={options.scrollbackBuffer ?? ""}
           onChange={(e) => {
             const val = parseInt(e.target.value);
@@ -65,7 +65,7 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
           placeholder={`Use global default (${globalScrollback})`}
         />
         <span className="settings-form__hint">
-          Number of lines kept in scrollback (100–100,000). Leave empty for global default. Larger
+          Number of lines kept in scrollback (100–1 000 000). Leave empty for global default. Larger
           values consume more memory — roughly 1–2 MB per 10 000 lines of typical output.
         </span>
       </label>

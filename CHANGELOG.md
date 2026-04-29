@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Terminal: the scrollback buffer default is now 10 000 lines (previously 5 000). The global and per-connection scrollback settings now show a memory trade-off hint — roughly 1–2 MB per 10 000 lines of typical output. The configurable range remains 100–100 000 lines (#665).
+- Terminal: the scrollback buffer default is now 10 000 lines (previously 5 000) and the maximum is now 1 000 000 lines (previously 100 000). The global and per-connection scrollback settings now show a memory trade-off hint — roughly 1–2 MB per 10 000 lines of typical output (#665).
 - Concept document for modern, transparency-aware application icons (`docs/concepts/app-icons.md`): covers app icon design (deep navy gradient, accent-blue prompt glyph, hub connector lines), UI icon family conventions, per-platform size requirements, style guidelines, icon state machine, AI generation prompts, and export pipeline (#641).
 - Settings: added an "About" page (accessible from the Settings panel) showing the app name, current version, git hash, project tagline, GitHub repository link, and MIT license details (#631).
 - Connection sidebar: connections now support multi-select — Ctrl/Cmd+Click toggles individual selection, Shift+Click range-selects, and dragging a selected group moves all selected connections into the target folder at once. Escape or clicking empty space clears the selection (#638).
