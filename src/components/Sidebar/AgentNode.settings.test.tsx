@@ -25,6 +25,13 @@ vi.mock("@dnd-kit/sortable", () => ({
   }),
 }));
 
+vi.mock("@dnd-kit/core", () => ({
+  useDraggable: () => ({ attributes: {}, listeners: {}, setNodeRef: vi.fn(), isDragging: false }),
+  useDroppable: () => ({ setNodeRef: vi.fn(), isOver: false }),
+  useDndContext: () => ({ active: null }),
+  useDndMonitor: () => {},
+}));
+
 vi.mock("@dnd-kit/utilities", () => ({
   CSS: { Transform: { toString: () => "" } },
 }));

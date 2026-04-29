@@ -210,6 +210,77 @@ describe("appStore — agent connection management", () => {
     });
   });
 
+  describe("bulkMoveAgentDefsToFolder", () => {
+    it("moves multiple definitions to a folder in parallel", async () => {
+      const def1 = makeDefinition({ id: "c1", folderId: null });
+      const def2 = makeDefinition({ id: "c2", folderId: null });
+      mockUpdateAgentDefinition
+        .mockResolvedValueOnce({ ...def1, folderId: "folder-1" })
+        .mockResolvedValueOnce({ ...def2, folderId: "folder-1" });
+
+      useAppStore.setState({ agentDefinitions: { [AGENT_ID]: [def1, def2] } });
+
+      await useAppStore.getState().bulkMoveAgentDefsToFolder(AGENT_ID, ["c1", "c2"], "folder-1");
+
+      expect(mockUpdateAgentDefinition).toHaveBeenCalledTimes(2);
+      const defs = useAppStore.getState().agentDefinitions[AGENT_ID];
+      expect(defs.find((d) => d.id === "c1")?.folderId).toBe("folder-1");
+      expect(defs.find((d) => d.id === "c2")?.folderId).toBe("folder-1");
+    });
+
+    it("moves multiple definitions to root", async () => {
+      const def1 = makeDefinition({ id: "c1", folderId: "folder-1" });
+      const def2 = makeDefinition({ id: "c2", folderId: "folder-1" });
+      mockUpdateAgentDefinition
+        .mockResolvedValueOnce({ ...def1, folderId: null })
+        .mockResolvedValueOnce({ ...def2, folderId: null });
+
+      useAppStore.setState({ agentDefinitions: { [AGENT_ID]: [def1, def2] } });
+
+      await useAppStore.getState().bulkMoveAgentDefsToFolder(AGENT_ID, ["c1", "c2"], null);
+
+      const defs = useAppStore.getState().agentDefinitions[AGENT_ID];
+      expect(defs.find((d) => d.id === "c1")?.folderId).toBeNull();
+      expect(defs.find((d) => d.id === "c2")?.folderId).toBeNull();
+    });
+  });
+
+  describe("moveAgentDefToFolder", () => {
+    it("moves a definition into a folder", async () => {
+      const def = makeDefinition({ id: "conn-move", folderId: null });
+      const updated = { ...def, folderId: "folder-1" };
+      mockUpdateAgentDefinition.mockResolvedValue(updated);
+
+      useAppStore.setState({ agentDefinitions: { [AGENT_ID]: [def] } });
+
+      await useAppStore.getState().moveAgentDefToFolder(AGENT_ID, "conn-move", "folder-1");
+
+      expect(mockUpdateAgentDefinition).toHaveBeenCalledWith(AGENT_ID, {
+        id: "conn-move",
+        folder_id: "folder-1",
+      });
+      const defs = useAppStore.getState().agentDefinitions[AGENT_ID];
+      expect(defs.find((d) => d.id === "conn-move")?.folderId).toBe("folder-1");
+    });
+
+    it("moves a definition to root when folderId is null", async () => {
+      const def = makeDefinition({ id: "conn-root", folderId: "folder-1" });
+      const updated = { ...def, folderId: null };
+      mockUpdateAgentDefinition.mockResolvedValue(updated);
+
+      useAppStore.setState({ agentDefinitions: { [AGENT_ID]: [def] } });
+
+      await useAppStore.getState().moveAgentDefToFolder(AGENT_ID, "conn-root", null);
+
+      expect(mockUpdateAgentDefinition).toHaveBeenCalledWith(AGENT_ID, {
+        id: "conn-root",
+        folder_id: null,
+      });
+      const defs = useAppStore.getState().agentDefinitions[AGENT_ID];
+      expect(defs.find((d) => d.id === "conn-root")?.folderId).toBeNull();
+    });
+  });
+
   describe("openAgentDefinitionEditorTab", () => {
     it("creates a connection-editor tab with agent definition meta", () => {
       useAppStore.getState().openAgentDefinitionEditorTab(AGENT_ID, "new", "folder-1");

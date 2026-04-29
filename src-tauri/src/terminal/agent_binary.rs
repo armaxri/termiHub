@@ -15,7 +15,7 @@ use anyhow::{bail, Context, Result};
 use tracing::{debug, info, warn};
 
 /// GitHub repository for release downloads.
-const GITHUB_REPO: &str = "ArneBK/termiHub";
+const GITHUB_REPO: &str = "armaxri/termiHub";
 
 /// Map a `uname -m` architecture string to the artifact suffix we use.
 ///
@@ -86,10 +86,48 @@ pub fn find_bundled_binary(app_handle: &tauri::AppHandle, arch_suffix: &str) -> 
     }
 }
 
-/// Build the GitHub Releases download URL for a given version and arch suffix.
-pub fn release_download_url(version: &str, arch_suffix: &str) -> String {
+/// Return the base download URL (without arch suffix) for the current build.
+///
+/// Debug builds and versions ending with `-dev` use the `dev-latest` tag.
+/// Release builds use `v{version}`.
+///
+/// Append an arch suffix (e.g. `"linux-arm64"`) to obtain the full URL.
+pub fn compute_download_base_url(version: &str) -> String {
+    let tag = if cfg!(debug_assertions) || version.ends_with("-dev") {
+        "dev-latest".to_string()
+    } else {
+        format!("v{version}")
+    };
+    format!("https://github.com/{GITHUB_REPO}/releases/download/{tag}/termihub-agent-")
+}
+
+/// Build the full GitHub Releases download URL for a given version and arch suffix.
+pub fn compute_download_url(version: &str, arch_suffix: &str) -> String {
+    format!("{}{}", compute_download_base_url(version), arch_suffix)
+}
+
+// Test helpers with an explicit dev-build flag so tests are not affected by
+// whether the test runner itself is a debug or release build.
+#[cfg(test)]
+pub(crate) fn compute_download_base_url_impl(version: &str, is_debug_build: bool) -> String {
+    let tag = if is_debug_build || version.ends_with("-dev") {
+        "dev-latest".to_string()
+    } else {
+        format!("v{version}")
+    };
+    format!("https://github.com/{GITHUB_REPO}/releases/download/{tag}/termihub-agent-")
+}
+
+#[cfg(test)]
+pub(crate) fn compute_download_url_impl(
+    version: &str,
+    arch_suffix: &str,
+    is_debug_build: bool,
+) -> String {
     format!(
-        "https://github.com/{GITHUB_REPO}/releases/download/v{version}/termihub-agent-{arch_suffix}"
+        "{}{}",
+        compute_download_base_url_impl(version, is_debug_build),
+        arch_suffix
     )
 }
 
@@ -101,7 +139,7 @@ pub fn download_agent_binary<F>(version: &str, arch_suffix: &str, progress_cb: F
 where
     F: Fn(u64, u64),
 {
-    let url = release_download_url(version, arch_suffix);
+    let url = compute_download_url(version, arch_suffix);
     info!("Downloading agent binary from {}", url);
 
     let response = reqwest::blocking::Client::new()
@@ -246,19 +284,48 @@ mod tests {
         assert!(expected.to_string_lossy().contains("0.1.0"));
     }
 
+    // Tests use compute_download_url_impl with explicit flags so they are not
+    // affected by whether the test suite itself runs as a debug or release build.
+
     #[test]
-    fn release_download_url_format() {
-        let url = release_download_url("0.1.0", "linux-x64");
+    fn compute_download_url_release_build_uses_version_tag() {
+        let url = compute_download_url_impl("1.2.3", "linux-x64", false);
         assert_eq!(
             url,
-            "https://github.com/ArneBK/termiHub/releases/download/v0.1.0/termihub-agent-linux-x64"
+            "https://github.com/armaxri/termiHub/releases/download/v1.2.3/termihub-agent-linux-x64"
         );
     }
 
     #[test]
-    fn release_download_url_arm64() {
-        let url = release_download_url("1.2.3", "linux-arm64");
-        assert!(url.contains("v1.2.3"));
-        assert!(url.contains("linux-arm64"));
+    fn compute_download_url_debug_build_uses_dev_latest() {
+        let url = compute_download_url_impl("1.2.3", "linux-x64", true);
+        assert_eq!(
+            url,
+            "https://github.com/armaxri/termiHub/releases/download/dev-latest/termihub-agent-linux-x64"
+        );
+    }
+
+    #[test]
+    fn compute_download_url_dev_version_suffix_uses_dev_latest() {
+        let url = compute_download_url_impl("0.1.0-dev", "linux-arm64", false);
+        assert_eq!(
+            url,
+            "https://github.com/armaxri/termiHub/releases/download/dev-latest/termihub-agent-linux-arm64"
+        );
+    }
+
+    #[test]
+    fn compute_download_url_dev_version_armv7() {
+        let url = compute_download_url_impl("2.0.0-dev", "linux-armv7", false);
+        assert!(url.contains("dev-latest"));
+        assert!(url.contains("linux-armv7"));
+        assert!(!url.contains("v2.0.0"));
+    }
+
+    #[test]
+    fn compute_download_url_release_build_does_not_use_dev_latest() {
+        let url = compute_download_url_impl("1.0.0", "linux-x64", false);
+        assert!(!url.contains("dev-latest"));
+        assert!(url.contains("v1.0.0"));
     }
 }

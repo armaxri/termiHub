@@ -55,6 +55,7 @@ import {
   listDockerImages,
   checkPodmanAvailable,
   listPodmanImages,
+  detectAgentArch,
   setupRemoteAgent,
   getLogs,
   clearLogs,
@@ -728,7 +729,55 @@ describe("api service", () => {
   });
 
   describe("agent setup commands", () => {
-    it("setupRemoteAgent invokes with correct parameters", async () => {
+    it("detectAgentArch invokes with correct parameters", async () => {
+      const base =
+        "https://github.com/armaxri/termiHub/releases/download/dev-latest/termihub-agent-";
+      const archInfo = {
+        arch: "aarch64",
+        os: "Linux",
+        archSuffix: "linux-arm64",
+        downloadBaseUrl: base,
+        downloadUrl: `${base}linux-arm64`,
+      };
+      mockedInvoke.mockResolvedValue(archInfo);
+      const config = {
+        host: "pi.local",
+        port: 22,
+        username: "pi",
+        authMethod: "key" as const,
+      };
+
+      const result = await detectAgentArch(config);
+
+      expect(mockedInvoke).toHaveBeenCalledWith("detect_agent_arch", {
+        config,
+      });
+      expect(result.arch).toBe("aarch64");
+      expect(result.archSuffix).toBe("linux-arm64");
+    });
+
+    it("detectAgentArch returns null fields for unsupported arch", async () => {
+      mockedInvoke.mockResolvedValue({
+        arch: "mips",
+        os: "Linux",
+        archSuffix: null,
+        downloadBaseUrl:
+          "https://github.com/armaxri/termiHub/releases/download/dev-latest/termihub-agent-",
+        downloadUrl: null,
+      });
+
+      const result = await detectAgentArch({
+        host: "host",
+        port: 22,
+        username: "user",
+        authMethod: "key",
+      });
+
+      expect(result.archSuffix).toBeNull();
+      expect(result.downloadUrl).toBeNull();
+    });
+
+    it("setupRemoteAgent invokes with github download source", async () => {
       mockedInvoke.mockResolvedValue({ sessionId: "setup-123" });
       const config = {
         host: "pi.local",
@@ -737,7 +786,8 @@ describe("api service", () => {
         authMethod: "key" as const,
       };
       const setupConfig = {
-        binaryPath: "/path/to/agent",
+        binarySource: { type: "githubDownload" as const },
+        remoteArch: "aarch64",
         remotePath: "/usr/local/bin/termihub-agent",
         installService: false,
       };
@@ -752,14 +802,42 @@ describe("api service", () => {
       expect(result.sessionId).toBe("setup-123");
     });
 
+    it("setupRemoteAgent invokes with local file source", async () => {
+      mockedInvoke.mockResolvedValue({ sessionId: "setup-456" });
+      const config = {
+        host: "pi.local",
+        port: 22,
+        username: "pi",
+        authMethod: "key" as const,
+      };
+      const setupConfig = {
+        binarySource: { type: "localFile" as const, path: "/tmp/agent" },
+        remoteArch: "x86_64",
+        installService: false,
+      };
+
+      const result = await setupRemoteAgent("agent-1", config, setupConfig);
+
+      expect(result.sessionId).toBe("setup-456");
+    });
+
     it("setupRemoteAgent propagates errors", async () => {
       mockedInvoke.mockRejectedValue("Binary not found");
 
       await expect(
         setupRemoteAgent(
           "agent-1",
-          { host: "pi.local", port: 22, username: "pi", authMethod: "password" },
-          { binaryPath: "/nonexistent", installService: false }
+          {
+            host: "pi.local",
+            port: 22,
+            username: "pi",
+            authMethod: "password",
+          },
+          {
+            binarySource: { type: "githubDownload" },
+            remoteArch: "x86_64",
+            installService: false,
+          }
         )
       ).rejects.toEqual("Binary not found");
     });

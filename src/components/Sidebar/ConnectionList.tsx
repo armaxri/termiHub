@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, Fragment, useMemo } from "react";
+import { useState, useCallback, Fragment, useMemo } from "react";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import {
   DndContext,
@@ -35,11 +35,14 @@ import {
   createTerminal,
   removeCredential,
   storeCredential,
+  type AgentDefinitionInfo,
 } from "@/services/api";
 import { frontendLog } from "@/utils/frontendLog";
 import { ConnectionIcon } from "@/utils/connectionIcons";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { useSectionResize } from "@/hooks/useSectionResize";
+import { useTreeSelection } from "@/hooks/useTreeSelection";
+import { computeFlatVisibleIds } from "@/utils/computeFlatVisibleIds";
 import { AgentNode } from "./AgentNode";
 import { InlineFolderInput } from "./InlineFolderInput";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
@@ -92,7 +95,10 @@ function TreeNode({
     data: { type: "folder" },
   });
   const { active } = useDndContext();
-  const isConnectionOver = isOver && active?.data.current?.type !== "agent";
+  const isConnectionOver =
+    isOver &&
+    active?.data.current?.type !== "agent" &&
+    active?.data.current?.type !== "agent-connection";
 
   return (
     <div className="connection-tree__node">
@@ -302,40 +308,12 @@ function buildExpandedIndexMap(sectionsExpanded: boolean[]): { map: number[]; co
   return { map, count };
 }
 
-/**
- * Returns connection IDs in their visual tree order (depth-first, folders before sibling
- * connections), considering only expanded folders. Used for Shift+Click range selection.
- */
-function computeFlatVisibleConnectionIds(
-  rootFolders: ConnectionFolder[],
-  rootConnections: SavedConnection[],
-  allFolders: ConnectionFolder[],
-  allConnections: SavedConnection[]
-): string[] {
-  const ids: string[] = [];
-
-  function traverseFolder(folder: ConnectionFolder) {
-    if (!folder.isExpanded) return;
-    const childFolders = allFolders.filter((f) => f.parentId === folder.id);
-    const folderConnections = allConnections.filter((c) => c.folderId === folder.id);
-    childFolders.forEach(traverseFolder);
-    folderConnections.forEach((c) => ids.push(c.id));
-  }
-
-  rootFolders.forEach(traverseFolder);
-  rootConnections.forEach((c) => ids.push(c.id));
-
-  return ids;
-}
-
 export function ConnectionList() {
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [draggingConnection, setDraggingConnection] = useState<SavedConnection | null>(null);
   const [draggingAgentName, setDraggingAgentName] = useState<string | null>(null);
+  const [draggingAgentDef, setDraggingAgentDef] = useState<AgentDefinitionInfo | null>(null);
   const [draggingSelectionCount, setDraggingSelectionCount] = useState(0);
-  const [selectedConnectionIds, setSelectedConnectionIds] = useState<Set<string>>(new Set());
-  const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
-
   const folders = useAppStore((s) => s.folders);
   const connections = useAppStore((s) => s.connections);
   const remoteAgents = useAppStore((s) => s.remoteAgents);
@@ -350,6 +328,9 @@ export function ConnectionList() {
   const moveConnectionToFolder = useAppStore((s) => s.moveConnectionToFolder);
   const bulkMoveConnectionsToFolder = useAppStore((s) => s.bulkMoveConnectionsToFolder);
   const reorderRemoteAgents = useAppStore((s) => s.reorderRemoteAgents);
+  const moveAgentDefToFolder = useAppStore((s) => s.moveAgentDefToFolder);
+  const bulkMoveAgentDefsToFolder = useAppStore((s) => s.bulkMoveAgentDefsToFolder);
+  const agentDefinitions = useAppStore((s) => s.agentDefinitions);
 
   const pointerSensor = useSensor(PointerSensor, {
     activationConstraint: { distance: 8 },
@@ -365,59 +346,17 @@ export function ConnectionList() {
   );
 
   const flatVisibleConnectionIds = useMemo(
-    () => computeFlatVisibleConnectionIds(rootFolders, rootConnections, folders, connections),
+    () => computeFlatVisibleIds(rootFolders, rootConnections, folders, connections),
     [rootFolders, rootConnections, folders, connections]
   );
 
-  // Clear selection on Escape
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setSelectedConnectionIds(new Set());
-        setLastSelectedId(null);
-      }
-    };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, []);
-
-  const handleConnectionClick = useCallback(
-    (connectionId: string, event: React.MouseEvent) => {
-      if (event.ctrlKey || event.metaKey) {
-        setSelectedConnectionIds((prev) => {
-          const next = new Set(prev);
-          if (next.has(connectionId)) {
-            next.delete(connectionId);
-          } else {
-            next.add(connectionId);
-          }
-          return next;
-        });
-        setLastSelectedId(connectionId);
-      } else if (event.shiftKey && lastSelectedId) {
-        const anchorIdx = flatVisibleConnectionIds.indexOf(lastSelectedId);
-        const targetIdx = flatVisibleConnectionIds.indexOf(connectionId);
-        if (anchorIdx >= 0 && targetIdx >= 0) {
-          const [start, end] =
-            anchorIdx < targetIdx ? [anchorIdx, targetIdx] : [targetIdx, anchorIdx];
-          setSelectedConnectionIds(new Set(flatVisibleConnectionIds.slice(start, end + 1)));
-        }
-      } else {
-        setSelectedConnectionIds(new Set([connectionId]));
-        setLastSelectedId(connectionId);
-      }
-    },
-    [flatVisibleConnectionIds, lastSelectedId]
-  );
-
-  // Clear selection when clicking on empty tree space (not on a connection item)
-  const handleTreeAreaClick = useCallback((e: React.MouseEvent) => {
-    const target = e.target as HTMLElement;
-    if (!target.closest(".connection-tree__item")) {
-      setSelectedConnectionIds(new Set());
-      setLastSelectedId(null);
-    }
-  }, []);
+  const {
+    selectedIds: selectedConnectionIds,
+    handleItemClick: handleConnectionClick,
+    handleAreaClick: handleTreeAreaClick,
+    clearSelection: clearConnectionSelection,
+    selectSingle: selectConnectionSingle,
+  } = useTreeSelection(flatVisibleConnectionIds);
 
   const handleConnect = useCallback(
     async (connection: SavedConnection) => {
@@ -595,11 +534,24 @@ export function ConnectionList() {
       const data = event.active.data.current;
       if (data?.type === "agent") {
         setDraggingConnection(null);
+        setDraggingAgentDef(null);
         setDraggingSelectionCount(0);
         const agent = remoteAgents.find((a) => a.id === event.active.id);
         setDraggingAgentName(agent?.name ?? null);
+      } else if (data?.type === "agent-connection") {
+        setDraggingConnection(null);
+        setDraggingAgentName(null);
+        const selectionCount = (data.selectionCount as number) ?? 1;
+        if (selectionCount > 1) {
+          setDraggingAgentDef(null);
+          setDraggingSelectionCount(selectionCount);
+        } else {
+          setDraggingAgentDef(data.definition as AgentDefinitionInfo);
+          setDraggingSelectionCount(1);
+        }
       } else {
         setDraggingAgentName(null);
+        setDraggingAgentDef(null);
         const conn = data?.connection as SavedConnection | undefined;
         if (!conn) return;
 
@@ -609,23 +561,59 @@ export function ConnectionList() {
           setDraggingSelectionCount(selectedConnectionIds.size);
         } else {
           // Not part of current selection — switch to single-item drag
-          setSelectedConnectionIds(new Set([conn.id]));
-          setLastSelectedId(conn.id);
+          selectConnectionSingle(conn.id);
           setDraggingConnection(conn);
           setDraggingSelectionCount(1);
         }
       }
     },
-    [remoteAgents, selectedConnectionIds]
+    [remoteAgents, selectedConnectionIds, selectConnectionSingle]
   );
 
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
       setDraggingConnection(null);
       setDraggingAgentName(null);
+      setDraggingAgentDef(null);
       setDraggingSelectionCount(0);
       const { active, over } = event;
       if (!over) return;
+
+      // Handle agent-connection drag to an agent folder or agent root
+      if (active.data.current?.type === "agent-connection") {
+        const definition = active.data.current.definition as AgentDefinitionInfo;
+        const defAgentId = active.data.current.agentId as string;
+        const draggedSelectedIds = (active.data.current.selectedDefIds as string[]) ?? [
+          definition.id,
+        ];
+        const overId = over.id as string;
+
+        let targetFolderId: string | null | undefined;
+
+        if (overId === `agent-root:${defAgentId}`) {
+          targetFolderId = null;
+        } else if (
+          over.data.current?.type === "agent-folder" &&
+          (over.data.current?.agentId as string) === defAgentId
+        ) {
+          targetFolderId = over.data.current.folderId as string;
+        }
+
+        if (targetFolderId === undefined) return;
+
+        const agentDefs = agentDefinitions[defAgentId] ?? [];
+        const idsToMove = draggedSelectedIds.filter((id) => {
+          const def = agentDefs.find((d) => d.id === id);
+          return def?.folderId !== targetFolderId;
+        });
+
+        if (idsToMove.length === 1) {
+          moveAgentDefToFolder(defAgentId, idsToMove[0], targetFolderId);
+        } else if (idsToMove.length > 1) {
+          bulkMoveAgentDefsToFolder(defAgentId, idsToMove, targetFolderId);
+        }
+        return;
+      }
 
       // Handle agent reorder
       if (active.data.current?.type === "agent" && over.data.current?.type === "agent") {
@@ -674,16 +662,19 @@ export function ConnectionList() {
         bulkMoveConnectionsToFolder(idsToActuallyMove, targetFolderId);
       }
 
-      setSelectedConnectionIds(new Set());
-      setLastSelectedId(null);
+      clearConnectionSelection();
     },
     [
       moveConnectionToFolder,
       bulkMoveConnectionsToFolder,
+      moveAgentDefToFolder,
+      bulkMoveAgentDefsToFolder,
+      agentDefinitions,
       remoteAgents,
       reorderRemoteAgents,
       selectedConnectionIds,
       connections,
+      clearConnectionSelection,
     ]
   );
 
@@ -901,6 +892,18 @@ export function ConnectionList() {
               />
               <span>{draggingConnection.name}</span>
             </div>
+          ) : draggingAgentDef ? (
+            <div className="connection-tree__drag-overlay">
+              <ConnectionIcon
+                config={{
+                  type: "remote-session",
+                  config: { sessionType: draggingAgentDef.sessionType },
+                }}
+                customIcon={draggingAgentDef.icon}
+                size={16}
+              />
+              <span>{draggingAgentDef.name}</span>
+            </div>
           ) : draggingAgentName ? (
             <div className="connection-tree__drag-overlay">
               <Server size={14} />
@@ -965,7 +968,10 @@ function RootDropZone({
     data: { type: "root" },
   });
   const { active } = useDndContext();
-  const isConnectionOver = isOver && active?.data.current?.type !== "agent";
+  const isConnectionOver =
+    isOver &&
+    active?.data.current?.type !== "agent" &&
+    active?.data.current?.type !== "agent-connection";
 
   return (
     <ContextMenu.Root>

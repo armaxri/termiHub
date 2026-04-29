@@ -66,9 +66,9 @@ jobs:
             echo "### Agent Binaries (Static musl)"
             echo "| Target | Artifact |"
             echo "|--------|---------|"
-            echo "| Linux x64 | \`termihub-agent-dev-linux-x64\` |"
-            echo "| Linux ARM64 | \`termihub-agent-dev-linux-arm64\` |"
-            echo "| Linux ARMv7 | \`termihub-agent-dev-linux-armv7\` |"
+            echo "| Linux x64 | \`termihub-agent-linux-x64\` |"
+            echo "| Linux ARM64 | \`termihub-agent-linux-arm64\` |"
+            echo "| Linux ARMv7 | \`termihub-agent-linux-armv7\` |"
           } > release_notes.md
 
       - name: Create dev release
@@ -233,11 +233,11 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-musl
-            artifact_name: termihub-agent-dev-linux-x64
+            artifact_name: termihub-agent-linux-x64
           - target: aarch64-unknown-linux-musl
-            artifact_name: termihub-agent-dev-linux-arm64
+            artifact_name: termihub-agent-linux-arm64
           - target: armv7-unknown-linux-musleabihf
-            artifact_name: termihub-agent-dev-linux-armv7
+            artifact_name: termihub-agent-linux-armv7
 
     steps:
       - name: Checkout code
