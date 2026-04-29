@@ -23,12 +23,19 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
             onChange={(e) =>
               onChange({
                 ...settings,
-                theme: e.target.value as "dark" | "light" | "system",
+                theme: e.target.value as
+                  | "dark"
+                  | "light"
+                  | "solarized-dark"
+                  | "solarized-light"
+                  | "system",
               })
             }
           >
             <option value="dark">Dark</option>
             <option value="light">Light</option>
+            <option value="solarized-dark">Solarized Dark</option>
+            <option value="solarized-light">Solarized Light</option>
             <option value="system">System</option>
           </select>
           <span className="settings-form__hint">Application color theme.</span>
