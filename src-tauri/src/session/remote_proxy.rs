@@ -120,11 +120,18 @@ impl ConnectionType for RemoteProxy {
         }
 
         // Extract the remote connection type and config from settings.
-        let session_type = settings
+        // Normalise frontend aliases: "shell" is the user-facing name but the
+        // agent registry uses "local".  Apply the same mapping here so that
+        // capability lookups and the monitoring-host check ("local" → "self")
+        // work correctly when the frontend sends type = "shell".
+        let raw_type = settings
             .get("type")
             .and_then(|v| v.as_str())
-            .unwrap_or("local")
-            .to_string();
+            .unwrap_or("local");
+        let session_type = match raw_type {
+            "shell" => "local".to_string(),
+            other => other.to_string(),
+        };
 
         let config = settings
             .get("config")
@@ -1047,5 +1054,39 @@ mod tests {
         }
 
         proxy.disconnect().await.ok();
+    }
+
+    /// The frontend sends `type: "shell"` but the agent normalises it to `"local"`.
+    /// The desktop must map "shell" → "local" when looking up capabilities so that
+    /// monitoring is enabled and the host is set to "self".
+    #[tokio::test]
+    async fn monitoring_proxy_uses_self_for_shell_alias() {
+        let mock = make_mock_with_local_monitoring();
+        let mut proxy = RemoteProxy::new("agent-1".to_string(), mock.clone());
+
+        // Frontend passes "shell" as the type (the common alias).
+        proxy
+            .connect(json!({ "type": "shell", "config": {} }))
+            .await
+            .expect("connect should succeed");
+
+        assert!(
+            proxy.monitoring().is_some(),
+            "monitoring() should return Some when type is 'shell' (alias for 'local')"
+        );
+
+        let _rx = proxy
+            .monitoring()
+            .unwrap()
+            .subscribe()
+            .await
+            .expect("subscribe should succeed");
+
+        let registered = mock.registered_monitoring_hosts.lock().unwrap();
+        assert_eq!(
+            registered.as_slice(),
+            ["self"],
+            "'shell' session monitoring should register under 'self' (same as 'local')"
+        );
     }
 }
