@@ -506,6 +506,8 @@ interface AppState {
   monitoringStats: SystemStats | null;
   monitoringLoading: boolean;
   monitoringError: string | null;
+  /** Last-known stats per host key, persisted across tab switches for instant display on reconnect. */
+  monitoringStatsCache: Record<string, SystemStats>;
   connectMonitoring: (config: Record<string, unknown>) => Promise<void>;
   disconnectMonitoring: () => Promise<void>;
   refreshMonitoring: () => Promise<void>;
@@ -2736,6 +2738,7 @@ export const useAppStore = create<AppState>((set, get) => {
     monitoringStats: null,
     monitoringLoading: false,
     monitoringError: null,
+    monitoringStatsCache: {},
     sessionCapabilities: {},
 
     setSessionCapabilities: (sessionId, caps) =>
@@ -2744,15 +2747,27 @@ export const useAppStore = create<AppState>((set, get) => {
       })),
 
     connectMonitoring: async (config: Record<string, unknown>) => {
-      set({ monitoringLoading: true, monitoringError: null });
+      const { monitoringStatsCache } = useAppStore.getState();
       try {
         // Session-based monitoring: config carries sessionId for "remote-session" tabs.
         // The agent pushes stats via "session-monitoring-stats" Tauri events.
         if (config._sessionBased) {
           const sessionId = config._sessionId as string;
+          const cachedStats = monitoringStatsCache[sessionId] ?? null;
+          set({
+            monitoringLoading: true,
+            monitoringError: null,
+            monitoringStats: cachedStats,
+            monitoringHost: cachedStats ? sessionId : null,
+          });
+
           const unlisten = await onSessionMonitoringStats((sid, stats) => {
             if (sid === sessionId) {
-              useAppStore.setState({ monitoringStats: stats, monitoringError: null });
+              useAppStore.setState((state) => ({
+                monitoringStats: stats,
+                monitoringError: null,
+                monitoringStatsCache: { ...state.monitoringStatsCache, [sessionId]: stats },
+              }));
             }
           });
           // Store unlisten in a module-level variable so disconnectMonitoring can call it.
@@ -2768,14 +2783,24 @@ export const useAppStore = create<AppState>((set, get) => {
         }
 
         // Standard SSH-based monitoring (direct connection from desktop).
+        const hostKey = `${config.username as string}@${config.host as string}:${config.port as number}`;
+        const cachedStats = monitoringStatsCache[hostKey] ?? null;
+        set({
+          monitoringLoading: true,
+          monitoringError: null,
+          monitoringStats: cachedStats,
+          monitoringHost: cachedStats ? hostKey : null,
+        });
+
         const sessionId = await monitoringOpen(config);
         const stats = await monitoringFetchStats(sessionId);
-        set({
+        set((state) => ({
           monitoringSessionId: sessionId,
-          monitoringHost: `${config.username as string}@${config.host as string}:${config.port as number}`,
+          monitoringHost: hostKey,
           monitoringStats: stats,
           monitoringLoading: false,
-        });
+          monitoringStatsCache: { ...state.monitoringStatsCache, [hostKey]: stats },
+        }));
       } catch (err) {
         set({
           monitoringLoading: false,
@@ -2785,7 +2810,8 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     disconnectMonitoring: async () => {
-      const { monitoringSessionId, sessionCapabilities } = useAppStore.getState();
+      const { monitoringSessionId, monitoringHost, monitoringStats, sessionCapabilities } =
+        useAppStore.getState();
       if (monitoringSessionId) {
         try {
           // If this was a session-based monitoring, stop it; otherwise close SSH session.
@@ -2802,22 +2828,33 @@ export const useAppStore = create<AppState>((set, get) => {
         _monitoringUnlisten();
         _monitoringUnlisten = null;
       }
-      set({
+      set((state) => ({
         monitoringSessionId: null,
         monitoringHost: null,
         monitoringStats: null,
         monitoringError: null,
-      });
+        // Preserve last-known stats so the UI can show them instantly on reconnect.
+        monitoringStatsCache:
+          monitoringHost && monitoringStats
+            ? { ...state.monitoringStatsCache, [monitoringHost]: monitoringStats }
+            : state.monitoringStatsCache,
+      }));
     },
 
     refreshMonitoring: async () => {
-      const { monitoringSessionId, sessionCapabilities } = useAppStore.getState();
+      const { monitoringSessionId, monitoringHost, sessionCapabilities } = useAppStore.getState();
       if (!monitoringSessionId) return;
       // Session-based monitoring is push-based; no explicit refresh needed.
       if (sessionCapabilities[monitoringSessionId] !== undefined) return;
       try {
         const stats = await monitoringFetchStats(monitoringSessionId);
-        set({ monitoringStats: stats, monitoringError: null });
+        set((state) => ({
+          monitoringStats: stats,
+          monitoringError: null,
+          monitoringStatsCache: monitoringHost
+            ? { ...state.monitoringStatsCache, [monitoringHost]: stats }
+            : state.monitoringStatsCache,
+        }));
       } catch (err) {
         set({
           monitoringError: err instanceof Error ? err.message : String(err),

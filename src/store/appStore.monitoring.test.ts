@@ -222,5 +222,102 @@ describe("appStore — monitoring", () => {
       await useAppStore.getState().refreshMonitoring();
       expect(mockMonitoringFetchStats).not.toHaveBeenCalled();
     });
+
+    it("updates the stats cache with fresh stats", async () => {
+      const updatedStats = { ...TEST_STATS, cpuUsagePercent: 80.0 };
+      mockMonitoringFetchStats.mockResolvedValue(updatedStats);
+
+      useAppStore.setState({
+        monitoringSessionId: "session-123",
+        monitoringHost: "pi@pi.local:22",
+        monitoringStats: TEST_STATS,
+      });
+
+      await useAppStore.getState().refreshMonitoring();
+
+      expect(useAppStore.getState().monitoringStatsCache["pi@pi.local:22"]).toEqual(updatedStats);
+    });
+  });
+
+  describe("stats cache", () => {
+    it("disconnectMonitoring saves stats to cache keyed by host", async () => {
+      mockMonitoringClose.mockResolvedValue(undefined);
+
+      useAppStore.setState({
+        monitoringSessionId: "session-123",
+        monitoringHost: "pi@pi.local:22",
+        monitoringStats: TEST_STATS,
+      });
+
+      await useAppStore.getState().disconnectMonitoring();
+
+      expect(useAppStore.getState().monitoringStatsCache["pi@pi.local:22"]).toEqual(TEST_STATS);
+    });
+
+    it("disconnectMonitoring does not update cache when there are no stats", async () => {
+      mockMonitoringClose.mockResolvedValue(undefined);
+
+      useAppStore.setState({
+        monitoringSessionId: "session-123",
+        monitoringHost: "pi@pi.local:22",
+        monitoringStats: null,
+        monitoringStatsCache: {},
+      });
+
+      await useAppStore.getState().disconnectMonitoring();
+
+      expect(useAppStore.getState().monitoringStatsCache).toEqual({});
+    });
+
+    it("connectMonitoring pre-populates stats from cache on reconnect", async () => {
+      mockMonitoringOpen.mockResolvedValue("session-456");
+      mockMonitoringFetchStats.mockResolvedValue(TEST_STATS);
+
+      useAppStore.setState({
+        monitoringStatsCache: { "pi@pi.local:22": TEST_STATS },
+      });
+
+      let capturedStats: SystemStats | null = null;
+      let capturedHost: string | null = null;
+      const unsub = useAppStore.subscribe((state) => {
+        if (state.monitoringLoading && state.monitoringStats !== null) {
+          capturedStats = state.monitoringStats;
+          capturedHost = state.monitoringHost;
+        }
+      });
+
+      await useAppStore.getState().connectMonitoring(TEST_SSH_CONFIG);
+      unsub();
+
+      // Stats and host should have been set from cache while loading
+      expect(capturedStats).toEqual(TEST_STATS);
+      expect(capturedHost).toBe("pi@pi.local:22");
+    });
+
+    it("connectMonitoring starts with null stats when no cache entry exists", async () => {
+      mockMonitoringOpen.mockResolvedValue("session-789");
+      mockMonitoringFetchStats.mockResolvedValue(TEST_STATS);
+
+      let statsWhileLoading: SystemStats | null | undefined = undefined;
+      const unsub = useAppStore.subscribe((state) => {
+        if (state.monitoringLoading && statsWhileLoading === undefined) {
+          statsWhileLoading = state.monitoringStats;
+        }
+      });
+
+      await useAppStore.getState().connectMonitoring(TEST_SSH_CONFIG);
+      unsub();
+
+      expect(statsWhileLoading).toBeNull();
+    });
+
+    it("connectMonitoring updates cache after successful connect", async () => {
+      mockMonitoringOpen.mockResolvedValue("session-123");
+      mockMonitoringFetchStats.mockResolvedValue(TEST_STATS);
+
+      await useAppStore.getState().connectMonitoring(TEST_SSH_CONFIG);
+
+      expect(useAppStore.getState().monitoringStatsCache["pi@pi.local:22"]).toEqual(TEST_STATS);
+    });
   });
 });
