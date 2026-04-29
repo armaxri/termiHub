@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Themes: added Solarized Dark and Solarized Light as built-in themes, selectable from Appearance Settings. Both themes use the canonical Ethan Schoonover palette with full ANSI 16-color and UI chrome support (#578).
+- Terminal: the scrollback buffer default is now 10 000 lines (previously 5 000) and the maximum is now 1 000 000 lines (previously 100 000). The global and per-connection scrollback settings now show a memory trade-off hint — roughly 1–2 MB per 10 000 lines of typical output (#665).
 - Concept document for modern, transparency-aware application icons (`docs/concepts/app-icons.md`): covers app icon design (deep navy gradient, accent-blue prompt glyph, hub connector lines), UI icon family conventions, per-platform size requirements, style guidelines, icon state machine, AI generation prompts, and export pipeline (#641).
 - Settings: added an "About" page (accessible from the Settings panel) showing the app name, current version, git hash, project tagline, GitHub repository link, and MIT license details (#631).
 - Connection sidebar: connections now support multi-select — Ctrl/Cmd+Click toggles individual selection, Shift+Click range-selects, and dragging a selected group moves all selected connections into the target folder at once. Escape or clicking empty space clears the selection (#638).
@@ -17,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- CI: main-branch builds are now marked as dev builds — the app version shown in the UI includes a `-dev` suffix and the `isDev` flag is set to `true` for all CI builds triggered from `main` (not just local `tauri dev` sessions). Release-tag builds are unaffected (#663).
 - CI: Windows NSIS setup installer (`termiHub-dev-windows-x64-setup.exe`) was not being uploaded to the `dev-latest` release — it is now uploaded alongside the existing MSI artifact (#664).
 - CI: `dev-latest` release is now created as a draft and published atomically once all platform builds and agent binaries finish uploading, preventing the partial-artifact state visible during builds (#664).
 
