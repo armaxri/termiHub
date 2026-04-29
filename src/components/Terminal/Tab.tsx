@@ -98,7 +98,7 @@ export function Tab({
       <span className="tab__title">
         {isDirty && <span className="tab__dirty-dot" />}
         {tab.title}
-        {tab.persistentConnectionId && <sup className="tab__persistent-badge">∞</sup>}
+        {tab.persistentConnectionId && <span className="tab__persistent-badge">∞</span>}
       </span>
       <button
         className="tab__close"

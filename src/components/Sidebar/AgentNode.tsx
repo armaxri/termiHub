@@ -187,7 +187,7 @@ function AgentConnectionItem({
           )}
           <span className="connection-tree__label">
             {definition.name}
-            {definition.persistent && <sup className="connection-tree__persistent-badge">∞</sup>}
+            {definition.persistent && <span className="connection-tree__persistent-badge">∞</span>}
           </span>
           {definition.persistent ? (
             <span className="connection-tree__persistent-actions">
