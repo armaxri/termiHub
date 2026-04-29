@@ -22,7 +22,6 @@ All features in this folder are live in the codebase.
 | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | [agent.md](implemented/agent.md)                                           | Remote agent JSON-RPC protocol, daemon, shell/Docker/SSH/serial backends, file browsing, monitoring, state persistence |
 | [agent-settings-separation.md](implemented/agent-settings-separation.md)   | Connection editor "Agent" tab separating transport from runtime settings (`AgentSettingsForm`)                         |
-| [app-icons.md](implemented/app-icons.md)                                   | Application icon set — macOS `.icns`, Windows `.ico`, Linux PNGs, Windows Store tiles                                  |
 | [customize-layout.md](implemented/customize-layout.md)                     | "Customize Layout…" dialog with presets and live preview                                                               |
 | [embedded-network-daemons.md](implemented/embedded-network-daemons.md)     | Embedded HTTP, FTP, and TFTP servers with lifecycle management                                                         |
 | [guided-manual-testing.md](implemented/guided-manual-testing.md)           | YAML test definitions in `tests/manual/` + interactive Python runner `scripts/test-manual.py`                          |
@@ -63,17 +62,18 @@ These features have something built, but there are meaningful gaps. See the
 
 Not started yet — realistic and planned for the near to medium term.
 
-| Document                                                                                               | Summary                                                          |
-| ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------- |
-| [broadcast-input.md](backlog/broadcast-input.md)                                                       | Synchronised input across multiple terminals simultaneously      |
-| [cross-platform-testing.md](backlog/cross-platform-testing.md)                                         | Platform-divergent test modules and `XPLAT-*` identifiers for CI |
-| [embedded-unix-windows.md](backlog/embedded-unix-windows.md)                                           | Bundle BusyBox-w32 + Unix tools with the Windows build           |
-| [ftp-client.md](backlog/ftp-client.md)                                                                 | FTP client sessions (distinct from the embedded FTP server)      |
-| [macro-recording.md](backlog/macro-recording.md)                                                       | Record and replay terminal input sequences                       |
-| [release-planning-and-dependency-management.md](backlog/release-planning-and-dependency-management.md) | Structured release cadence, Dependabot, hotfix branching         |
-| [remote-agent-update-strategy.md](backlog/remote-agent-update-strategy.md)                             | Deliver updated agent binaries to remote hosts                   |
-| [shell-context-menu-integration.md](backlog/shell-context-menu-integration.md)                         | OS "Open in termiHub" context menu + `termiHub spawn` CLI        |
-| [ssh-jump-host.md](backlog/ssh-jump-host.md)                                                           | First-class ProxyJump / gateway chains in the connection editor  |
+| Document                                                                                               | Summary                                                                                      |
+| ------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
+| [app-icons.md](backlog/app-icons.md)                                                                   | Custom application icon design — placeholder Tauri icons are in place, not the designed ones |
+| [broadcast-input.md](backlog/broadcast-input.md)                                                       | Synchronised input across multiple terminals simultaneously                                  |
+| [cross-platform-testing.md](backlog/cross-platform-testing.md)                                         | Platform-divergent test modules and `XPLAT-*` identifiers for CI                             |
+| [embedded-unix-windows.md](backlog/embedded-unix-windows.md)                                           | Bundle BusyBox-w32 + Unix tools with the Windows build                                       |
+| [ftp-client.md](backlog/ftp-client.md)                                                                 | FTP client sessions (distinct from the embedded FTP server)                                  |
+| [macro-recording.md](backlog/macro-recording.md)                                                       | Record and replay terminal input sequences                                                   |
+| [release-planning-and-dependency-management.md](backlog/release-planning-and-dependency-management.md) | Structured release cadence, Dependabot, hotfix branching                                     |
+| [remote-agent-update-strategy.md](backlog/remote-agent-update-strategy.md)                             | Deliver updated agent binaries to remote hosts                                               |
+| [shell-context-menu-integration.md](backlog/shell-context-menu-integration.md)                         | OS "Open in termiHub" context menu + `termiHub spawn` CLI                                    |
+| [ssh-jump-host.md](backlog/ssh-jump-host.md)                                                           | First-class ProxyJump / gateway chains in the connection editor                              |
 
 ---
 
