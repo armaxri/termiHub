@@ -265,6 +265,14 @@ interface AppState {
   setPersistentSessionEntry: (connectionId: string, patch: Partial<PersistentSessionEntry>) => void;
   /** Transition a persistent session to the error state (called when process dies unexpectedly). */
   setPersistentSessionError: (connectionId: string, errorMessage: string) => void;
+  /** Start a persistent background session for an agent-hosted connection definition. */
+  startAgentPersistentSession: (agentId: string, def: AgentDefinitionInfo) => Promise<void>;
+  /** Attach a new terminal tab to a running agent-hosted persistent session. */
+  attachAgentPersistentSession: (
+    agentId: string,
+    def: AgentDefinitionInfo,
+    panelId?: string
+  ) => Promise<void>;
   openSettingsTab: () => void;
   openLogViewerTab: () => void;
   openNetworkDiagnosticTab: (
@@ -1088,6 +1096,87 @@ export const useAppStore = create<AppState>((set, get) => {
           },
         };
       }),
+
+    startAgentPersistentSession: async (agentId, def) => {
+      const connectionId = `${agentId}:${def.id}`;
+      set((state) => ({
+        persistentSessions: {
+          ...state.persistentSessions,
+          [connectionId]: {
+            connectionId,
+            sessionId: null,
+            state: "starting",
+            attachedTabIds: [],
+          },
+        },
+      }));
+      try {
+        await apiStartPersistentSession(connectionId, "remote-session", {
+          agentId,
+          sessionType: def.sessionType,
+          ...def.config,
+          persistent: true,
+          title: def.name,
+        });
+      } catch (err) {
+        set((state) => ({
+          persistentSessions: {
+            ...state.persistentSessions,
+            [connectionId]: {
+              ...state.persistentSessions[connectionId],
+              state: "error",
+              errorMessage: err instanceof Error ? err.message : String(err),
+            },
+          },
+        }));
+      }
+    },
+
+    attachAgentPersistentSession: async (agentId, def, panelId) => {
+      const connectionId = `${agentId}:${def.id}`;
+      const entry = get().persistentSessions[connectionId];
+      if (!entry?.sessionId) return;
+      const tabId = get().addTab(
+        def.name,
+        "remote-session",
+        {
+          type: "remote-session",
+          config: {
+            agentId,
+            sessionType: def.sessionType,
+            ...def.config,
+            persistent: true,
+            title: def.name,
+          },
+        },
+        panelId,
+        "terminal",
+        def.terminalOptions,
+        entry.sessionId,
+        connectionId
+      );
+      try {
+        await apiAttachPersistentTab(connectionId, tabId);
+        set((state) => {
+          const existing = state.persistentSessions[connectionId];
+          if (!existing) return state;
+          return {
+            persistentSessions: {
+              ...state.persistentSessions,
+              [connectionId]: {
+                ...existing,
+                attachedTabIds: [...existing.attachedTabIds, tabId],
+              },
+            },
+          };
+        });
+      } catch (err) {
+        frontendLog(
+          "app_store",
+          `attach_persistent_tab failed for ${connectionId}: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    },
 
     // Panels & Tabs
     rootPanel: initialPanel,

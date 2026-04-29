@@ -21,8 +21,6 @@ import {
   FolderPlus,
   Plus,
   Play,
-  Square,
-  Link,
   Pencil,
   Trash2,
   Copy,
@@ -31,7 +29,7 @@ import {
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { ShellType } from "@/types/terminal";
-import { SavedConnection, ConnectionFolder, PersistentRunState } from "@/types/connection";
+import { SavedConnection, ConnectionFolder } from "@/types/connection";
 import {
   listAvailableShells,
   createTerminal,
@@ -56,7 +54,6 @@ interface TreeNodeProps {
   childFolders: ConnectionFolder[];
   allFolders: ConnectionFolder[];
   allConnections: SavedConnection[];
-  persistentConnectionIds: Set<string>;
   onToggle: (folderId: string) => void;
   onConnect: (connection: SavedConnection) => void;
   onEdit: (connectionId: string) => void;
@@ -68,9 +65,6 @@ interface TreeNodeProps {
   onNewConnectionInFolder: (folderId: string) => void;
   selectedConnectionIds: Set<string>;
   onConnectionClick: (connectionId: string, event: React.MouseEvent) => void;
-  onStartPersistent: (connectionId: string) => void;
-  onAttachPersistent: (connectionId: string) => void;
-  onStopPersistent: (connectionId: string) => void;
   depth: number;
 }
 
@@ -80,7 +74,6 @@ function TreeNode({
   childFolders,
   allFolders,
   allConnections,
-  persistentConnectionIds,
   onToggle,
   onConnect,
   onEdit,
@@ -92,9 +85,6 @@ function TreeNode({
   onNewConnectionInFolder,
   selectedConnectionIds,
   onConnectionClick,
-  onStartPersistent,
-  onAttachPersistent,
-  onStopPersistent,
   depth,
 }: TreeNodeProps) {
   const [creatingSubfolder, setCreatingSubfolder] = useState(false);
@@ -173,7 +163,6 @@ function TreeNode({
               childFolders={allFolders.filter((f) => f.parentId === child.id)}
               allFolders={allFolders}
               allConnections={allConnections}
-              persistentConnectionIds={persistentConnectionIds}
               onToggle={onToggle}
               onConnect={onConnect}
               onEdit={onEdit}
@@ -185,9 +174,6 @@ function TreeNode({
               onNewConnectionInFolder={onNewConnectionInFolder}
               selectedConnectionIds={selectedConnectionIds}
               onConnectionClick={onConnectionClick}
-              onStartPersistent={onStartPersistent}
-              onAttachPersistent={onAttachPersistent}
-              onStopPersistent={onStopPersistent}
               depth={depth + 1}
             />
           ))}
@@ -197,16 +183,12 @@ function TreeNode({
               connection={conn}
               depth={depth + 1}
               isSelected={selectedConnectionIds.has(conn.id)}
-              isPersistent={persistentConnectionIds.has(conn.id)}
               onConnect={onConnect}
               onEdit={onEdit}
               onDelete={onDelete}
               onDuplicate={onDuplicate}
               onPingHost={onPingHost}
               onConnectionClick={onConnectionClick}
-              onStartPersistent={onStartPersistent}
-              onAttachPersistent={onAttachPersistent}
-              onStopPersistent={onStopPersistent}
             />
           ))}
         </div>
@@ -219,36 +201,25 @@ interface ConnectionItemProps {
   connection: SavedConnection;
   depth: number;
   isSelected: boolean;
-  isPersistent: boolean;
   onConnect: (connection: SavedConnection) => void;
   onEdit: (connectionId: string) => void;
   onDelete: (connectionId: string) => void;
   onDuplicate: (connectionId: string) => void;
   onPingHost: (connection: SavedConnection) => void;
   onConnectionClick: (connectionId: string, event: React.MouseEvent) => void;
-  onStartPersistent: (connectionId: string) => void;
-  onAttachPersistent: (connectionId: string) => void;
-  onStopPersistent: (connectionId: string) => void;
 }
 
 function ConnectionItem({
   connection,
   depth,
   isSelected,
-  isPersistent,
   onConnect,
   onEdit,
   onDelete,
   onDuplicate,
   onPingHost,
   onConnectionClick,
-  onStartPersistent,
-  onAttachPersistent,
-  onStopPersistent,
 }: ConnectionItemProps) {
-  const persistentEntry = useAppStore((s) => s.persistentSessions[connection.id]);
-  const runState: PersistentRunState | null = persistentEntry?.state ?? null;
-
   const {
     attributes,
     listeners,
@@ -262,19 +233,6 @@ function ConnectionItem({
   let className = "connection-tree__item";
   if (isDragging) className += " connection-tree__item--dragging";
   if (isSelected) className += " connection-tree__item--selected";
-  if (isPersistent) className += " connection-tree__item--persistent";
-
-  const isRunning = runState === "running" || runState === "attached";
-  const isTransitioning = runState === "starting" || runState === "stopping";
-  const hasError = runState === "error";
-
-  const stateDotClass = isRunning
-    ? "connection-tree__state-dot--running"
-    : isTransitioning
-      ? "connection-tree__state-dot--transitioning"
-      : hasError
-        ? "connection-tree__state-dot--error"
-        : "connection-tree__state-dot--stopped";
 
   return (
     <ContextMenu.Root>
@@ -284,119 +242,26 @@ function ConnectionItem({
           className={className}
           style={{ paddingLeft: `${depth * 16 + 8}px` }}
           onClick={(e) => onConnectionClick(connection.id, e)}
-          onDoubleClick={() =>
-            isPersistent && isRunning ? onAttachPersistent(connection.id) : onConnect(connection)
-          }
-          title={
-            isPersistent && isRunning
-              ? `Double-click to attach: ${connection.name}`
-              : `Double-click to connect: ${connection.name}`
-          }
+          onDoubleClick={() => onConnect(connection)}
+          title={`Double-click to connect: ${connection.name}`}
           data-testid={`connection-item-${connection.id}`}
           {...attributes}
           {...listeners}
         >
           <ConnectionIcon config={connection.config} customIcon={connection.icon} size={16} />
-          {isPersistent && (
-            <span
-              className={`connection-tree__state-dot ${stateDotClass}`}
-              title={runState ?? "stopped"}
-            />
-          )}
-          <span className="connection-tree__label">
-            {connection.name}
-            {isPersistent && <sup className="connection-tree__persistent-badge">∞</sup>}
-          </span>
-          {isPersistent && (
-            <span className="connection-tree__persistent-actions">
-              {!runState || runState === "stopped" || runState === "error" ? (
-                <span
-                  className="connection-tree__action-btn"
-                  role="button"
-                  title="Start session"
-                  data-testid={`persistent-start-${connection.id}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onStartPersistent(connection.id);
-                  }}
-                >
-                  <Play size={12} />
-                </span>
-              ) : isRunning ? (
-                <>
-                  <span
-                    className="connection-tree__action-btn"
-                    role="button"
-                    title="Attach new tab"
-                    data-testid={`persistent-attach-${connection.id}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onAttachPersistent(connection.id);
-                    }}
-                  >
-                    <Link size={12} />
-                  </span>
-                  <span
-                    className="connection-tree__action-btn connection-tree__action-btn--danger"
-                    role="button"
-                    title="Stop session"
-                    data-testid={`persistent-stop-${connection.id}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onStopPersistent(connection.id);
-                    }}
-                  >
-                    <Square size={12} />
-                  </span>
-                </>
-              ) : null}
-            </span>
-          )}
-          {!isPersistent && <span className="connection-tree__type">{connection.config.type}</span>}
+          <span className="connection-tree__label">{connection.name}</span>
+          <span className="connection-tree__type">{connection.config.type}</span>
         </button>
       </ContextMenu.Trigger>
       <ContextMenu.Portal>
         <ContextMenu.Content className="context-menu__content">
-          {isPersistent && (!runState || runState === "stopped" || runState === "error") && (
-            <>
-              <ContextMenu.Item
-                className="context-menu__item"
-                onSelect={() => onStartPersistent(connection.id)}
-                data-testid="context-connection-start-persistent"
-              >
-                <Play size={14} /> Start Session
-              </ContextMenu.Item>
-              <ContextMenu.Separator className="context-menu__separator" />
-            </>
-          )}
-          {isPersistent && isRunning && (
-            <>
-              <ContextMenu.Item
-                className="context-menu__item"
-                onSelect={() => onAttachPersistent(connection.id)}
-                data-testid="context-connection-attach-persistent"
-              >
-                <Link size={14} /> Attach New Tab
-              </ContextMenu.Item>
-              <ContextMenu.Item
-                className="context-menu__item context-menu__item--danger"
-                onSelect={() => onStopPersistent(connection.id)}
-                data-testid="context-connection-stop-persistent"
-              >
-                <Square size={14} /> Stop Session
-              </ContextMenu.Item>
-              <ContextMenu.Separator className="context-menu__separator" />
-            </>
-          )}
-          {!isPersistent && (
-            <ContextMenu.Item
-              className="context-menu__item"
-              onSelect={() => onConnect(connection)}
-              data-testid="context-connection-connect"
-            >
-              <Play size={14} /> Connect
-            </ContextMenu.Item>
-          )}
+          <ContextMenu.Item
+            className="context-menu__item"
+            onSelect={() => onConnect(connection)}
+            data-testid="context-connection-connect"
+          >
+            <Play size={14} /> Connect
+          </ContextMenu.Item>
           {!!(connection.config.config as unknown as Record<string, unknown>).host && (
             <ContextMenu.Item
               className="context-menu__item"
@@ -466,10 +331,6 @@ export function ConnectionList() {
   const moveAgentDefToFolder = useAppStore((s) => s.moveAgentDefToFolder);
   const bulkMoveAgentDefsToFolder = useAppStore((s) => s.bulkMoveAgentDefsToFolder);
   const agentDefinitions = useAppStore((s) => s.agentDefinitions);
-  const connectionTypes = useAppStore((s) => s.connectionTypes);
-  const startPersistentSession = useAppStore((s) => s.startPersistentSession);
-  const attachPersistentSession = useAppStore((s) => s.attachPersistentSession);
-  const stopPersistentSession = useAppStore((s) => s.stopPersistentSession);
 
   const pointerSensor = useSensor(PointerSensor, {
     activationConstraint: { distance: 8 },
@@ -487,36 +348,6 @@ export function ConnectionList() {
   const flatVisibleConnectionIds = useMemo(
     () => computeFlatVisibleIds(rootFolders, rootConnections, folders, connections),
     [rootFolders, rootConnections, folders, connections]
-  );
-
-  const persistentConnectionIds = useMemo(() => {
-    const persistentTypeIds = new Set(
-      connectionTypes.filter((t) => t.capabilities.persistent).map((t) => t.typeId)
-    );
-    return new Set(
-      connections.filter((c) => persistentTypeIds.has(c.config.type)).map((c) => c.id)
-    );
-  }, [connections, connectionTypes]);
-
-  const handleStartPersistent = useCallback(
-    (connectionId: string) => {
-      void startPersistentSession(connectionId);
-    },
-    [startPersistentSession]
-  );
-
-  const handleAttachPersistent = useCallback(
-    (connectionId: string) => {
-      void attachPersistentSession(connectionId);
-    },
-    [attachPersistentSession]
-  );
-
-  const handleStopPersistent = useCallback(
-    (connectionId: string) => {
-      void stopPersistentSession(connectionId);
-    },
-    [stopPersistentSession]
   );
 
   const {
@@ -962,7 +793,6 @@ export function ConnectionList() {
               rootConnections={rootConnections}
               folders={folders}
               connections={connections}
-              persistentConnectionIds={persistentConnectionIds}
               onToggle={toggleFolder}
               onConnect={handleConnect}
               onEdit={handleEdit}
@@ -975,9 +805,6 @@ export function ConnectionList() {
               selectedConnectionIds={selectedConnectionIds}
               onConnectionClick={handleConnectionClick}
               onTreeAreaClick={handleTreeAreaClick}
-              onStartPersistent={handleStartPersistent}
-              onAttachPersistent={handleAttachPersistent}
-              onStopPersistent={handleStopPersistent}
             />
           )}
         </div>
@@ -1099,7 +926,6 @@ interface RootDropZoneProps {
   rootConnections: SavedConnection[];
   folders: ConnectionFolder[];
   connections: SavedConnection[];
-  persistentConnectionIds: Set<string>;
   onToggle: (folderId: string) => void;
   onConnect: (connection: SavedConnection) => void;
   onEdit: (connectionId: string) => void;
@@ -1112,9 +938,6 @@ interface RootDropZoneProps {
   selectedConnectionIds: Set<string>;
   onConnectionClick: (connectionId: string, event: React.MouseEvent) => void;
   onTreeAreaClick: (event: React.MouseEvent) => void;
-  onStartPersistent: (connectionId: string) => void;
-  onAttachPersistent: (connectionId: string) => void;
-  onStopPersistent: (connectionId: string) => void;
 }
 
 function RootDropZone({
@@ -1127,7 +950,6 @@ function RootDropZone({
   rootConnections,
   folders,
   connections,
-  persistentConnectionIds,
   onToggle,
   onConnect,
   onEdit,
@@ -1140,9 +962,6 @@ function RootDropZone({
   selectedConnectionIds,
   onConnectionClick,
   onTreeAreaClick,
-  onStartPersistent,
-  onAttachPersistent,
-  onStopPersistent,
 }: RootDropZoneProps) {
   const { setNodeRef, isOver } = useDroppable({
     id: "root",
@@ -1177,7 +996,6 @@ function RootDropZone({
               childFolders={folders.filter((f) => f.parentId === folder.id)}
               allFolders={folders}
               allConnections={connections}
-              persistentConnectionIds={persistentConnectionIds}
               onToggle={onToggle}
               onConnect={onConnect}
               onEdit={onEdit}
@@ -1189,9 +1007,6 @@ function RootDropZone({
               onNewConnectionInFolder={onNewConnectionInFolder}
               selectedConnectionIds={selectedConnectionIds}
               onConnectionClick={onConnectionClick}
-              onStartPersistent={onStartPersistent}
-              onAttachPersistent={onAttachPersistent}
-              onStopPersistent={onStopPersistent}
               depth={0}
             />
           ))}
@@ -1201,16 +1016,12 @@ function RootDropZone({
               connection={conn}
               depth={0}
               isSelected={selectedConnectionIds.has(conn.id)}
-              isPersistent={persistentConnectionIds.has(conn.id)}
               onConnect={onConnect}
               onEdit={onEdit}
               onDelete={onDelete}
               onDuplicate={onDuplicate}
               onPingHost={onPingHost}
               onConnectionClick={onConnectionClick}
-              onStartPersistent={onStartPersistent}
-              onAttachPersistent={onAttachPersistent}
-              onStopPersistent={onStopPersistent}
             />
           ))}
         </div>

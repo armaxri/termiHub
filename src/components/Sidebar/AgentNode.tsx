@@ -31,6 +31,7 @@ import {
   FolderPlus,
   Zap,
   Copy,
+  Link,
 } from "lucide-react";
 import { ConnectionIcon } from "@/utils/connectionIcons";
 import { useAppStore } from "@/store/appStore";
@@ -91,6 +92,9 @@ interface AgentConnectionItemProps {
   onEdit: (def: AgentDefinitionInfo) => void;
   onDuplicate: (def: AgentDefinitionInfo) => void;
   onConnectionClick: (defId: string, event: React.MouseEvent) => void;
+  onStartPersistent: (agentId: string, def: AgentDefinitionInfo) => void;
+  onAttachPersistent: (agentId: string, def: AgentDefinitionInfo) => void;
+  onStopPersistent: (agentId: string, def: AgentDefinitionInfo) => void;
 }
 
 function AgentConnectionItem({
@@ -103,8 +107,13 @@ function AgentConnectionItem({
   onEdit,
   onDuplicate,
   onConnectionClick,
+  onStartPersistent,
+  onAttachPersistent,
+  onStopPersistent,
 }: AgentConnectionItemProps) {
   const deleteAgentDef = useAppStore((s) => s.deleteAgentDef);
+  const persistentEntry = useAppStore((s) => s.persistentSessions[`${agentId}:${definition.id}`]);
+  const runState = persistentEntry?.state ?? null;
 
   const effectiveSelectedIds =
     isSelected && selectedDefIds.length > 1 ? selectedDefIds : [definition.id];
@@ -128,6 +137,19 @@ function AgentConnectionItem({
   let className = "connection-tree__item";
   if (isDragging) className += " connection-tree__item--dragging";
   if (isSelected) className += " connection-tree__item--selected";
+  if (definition.persistent) className += " connection-tree__item--persistent";
+
+  const isRunning = runState === "running" || runState === "attached";
+  const isTransitioning = runState === "starting" || runState === "stopping";
+  const hasError = runState === "error";
+
+  const stateDotClass = isRunning
+    ? "connection-tree__state-dot--running"
+    : isTransitioning
+      ? "connection-tree__state-dot--transitioning"
+      : hasError
+        ? "connection-tree__state-dot--error"
+        : "connection-tree__state-dot--stopped";
 
   return (
     <ContextMenu.Root>
@@ -137,7 +159,11 @@ function AgentConnectionItem({
           className={className}
           style={{ paddingLeft: `${depth * 16 + 8}px` }}
           onClick={(e) => onConnectionClick(definition.id, e)}
-          onDoubleClick={() => onOpen(definition)}
+          onDoubleClick={() =>
+            definition.persistent && isRunning
+              ? onAttachPersistent(agentId, definition)
+              : onOpen(definition)
+          }
           title={`${definition.name} (${definition.sessionType}${definition.persistent ? ", persistent" : ""})`}
           {...attributes}
           {...listeners}
@@ -153,16 +179,108 @@ function AgentConnectionItem({
             customIcon={definition.icon}
             size={14}
           />
-          <span className="connection-tree__label">{definition.name}</span>
-          <span className="connection-tree__type">{definition.sessionType}</span>
+          {definition.persistent && (
+            <span
+              className={`connection-tree__state-dot ${stateDotClass}`}
+              title={runState ?? "stopped"}
+            />
+          )}
+          <span className="connection-tree__label">
+            {definition.name}
+            {definition.persistent && <sup className="connection-tree__persistent-badge">∞</sup>}
+          </span>
+          {definition.persistent ? (
+            <span className="connection-tree__persistent-actions">
+              {!runState || runState === "stopped" || runState === "error" ? (
+                <span
+                  className="connection-tree__action-btn"
+                  role="button"
+                  title="Start session"
+                  data-testid={`persistent-start-${definition.id}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onStartPersistent(agentId, definition);
+                  }}
+                >
+                  <Play size={12} />
+                </span>
+              ) : isRunning ? (
+                <>
+                  <span
+                    className="connection-tree__action-btn"
+                    role="button"
+                    title="Attach new tab"
+                    data-testid={`persistent-attach-${definition.id}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onAttachPersistent(agentId, definition);
+                    }}
+                  >
+                    <Link size={12} />
+                  </span>
+                  <span
+                    className="connection-tree__action-btn connection-tree__action-btn--danger"
+                    role="button"
+                    title="Stop session"
+                    data-testid={`persistent-stop-${definition.id}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onStopPersistent(agentId, definition);
+                    }}
+                  >
+                    <Square size={12} />
+                  </span>
+                </>
+              ) : null}
+            </span>
+          ) : (
+            <span className="connection-tree__type">{definition.sessionType}</span>
+          )}
         </button>
       </ContextMenu.Trigger>
       <ContextMenu.Portal>
         <ContextMenu.Content className="context-menu__content">
-          <ContextMenu.Item className="context-menu__item" onSelect={() => onOpen(definition)}>
-            <Play size={14} />
-            Connect
-          </ContextMenu.Item>
+          {definition.persistent &&
+            (!runState || runState === "stopped" || runState === "error") && (
+              <>
+                <ContextMenu.Item
+                  className="context-menu__item"
+                  onSelect={() => onStartPersistent(agentId, definition)}
+                  data-testid="context-agent-def-start-persistent"
+                >
+                  <Play size={14} />
+                  Start Session
+                </ContextMenu.Item>
+                <ContextMenu.Separator className="context-menu__separator" />
+              </>
+            )}
+          {definition.persistent && isRunning && (
+            <>
+              <ContextMenu.Item
+                className="context-menu__item"
+                onSelect={() => onAttachPersistent(agentId, definition)}
+                data-testid="context-agent-def-attach-persistent"
+              >
+                <Link size={14} />
+                Attach New Tab
+              </ContextMenu.Item>
+              <ContextMenu.Item
+                className="context-menu__item context-menu__item--danger"
+                onSelect={() => onStopPersistent(agentId, definition)}
+                data-testid="context-agent-def-stop-persistent"
+              >
+                <Square size={14} />
+                Stop Session
+              </ContextMenu.Item>
+              <ContextMenu.Separator className="context-menu__separator" />
+            </>
+          )}
+          {!definition.persistent && (
+            <ContextMenu.Item className="context-menu__item" onSelect={() => onOpen(definition)}>
+              <Play size={14} />
+              Connect
+            </ContextMenu.Item>
+          )}
           <ContextMenu.Item
             className="context-menu__item"
             onSelect={() => onEdit(definition)}
@@ -208,6 +326,9 @@ interface AgentFolderNodeProps {
   onEditDefinition: (def: AgentDefinitionInfo) => void;
   onDuplicateDefinition: (def: AgentDefinitionInfo) => void;
   onDefinitionClick: (defId: string, event: React.MouseEvent) => void;
+  onStartPersistent: (agentId: string, def: AgentDefinitionInfo) => void;
+  onAttachPersistent: (agentId: string, def: AgentDefinitionInfo) => void;
+  onStopPersistent: (agentId: string, def: AgentDefinitionInfo) => void;
 }
 
 function AgentFolderNode({
@@ -223,6 +344,9 @@ function AgentFolderNode({
   onEditDefinition,
   onDuplicateDefinition,
   onDefinitionClick,
+  onStartPersistent,
+  onAttachPersistent,
+  onStopPersistent,
 }: AgentFolderNodeProps) {
   const toggleAgentFolder = useAppStore((s) => s.toggleAgentFolder);
   const createAgentFolder = useAppStore((s) => s.createAgentFolder);
@@ -321,6 +445,9 @@ function AgentFolderNode({
               onEditDefinition={onEditDefinition}
               onDuplicateDefinition={onDuplicateDefinition}
               onDefinitionClick={onDefinitionClick}
+              onStartPersistent={onStartPersistent}
+              onAttachPersistent={onAttachPersistent}
+              onStopPersistent={onStopPersistent}
             />
           ))}
           {childDefinitions.map((def) => (
@@ -335,6 +462,9 @@ function AgentFolderNode({
               onEdit={onEditDefinition}
               onDuplicate={onDuplicateDefinition}
               onConnectionClick={onDefinitionClick}
+              onStartPersistent={onStartPersistent}
+              onAttachPersistent={onAttachPersistent}
+              onStopPersistent={onStopPersistent}
             />
           ))}
         </div>
@@ -637,6 +767,31 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
     [agent.id, duplicateAgentDef]
   );
 
+  const startAgentPersistentSession = useAppStore((s) => s.startAgentPersistentSession);
+  const attachAgentPersistentSession = useAppStore((s) => s.attachAgentPersistentSession);
+  const stopPersistentSession = useAppStore((s) => s.stopPersistentSession);
+
+  const handleStartPersistent = useCallback(
+    (_agentId: string, def: AgentDefinitionInfo) => {
+      startAgentPersistentSession(agent.id, def);
+    },
+    [agent.id, startAgentPersistentSession]
+  );
+
+  const handleAttachPersistent = useCallback(
+    (_agentId: string, def: AgentDefinitionInfo) => {
+      attachAgentPersistentSession(agent.id, def);
+    },
+    [agent.id, attachAgentPersistentSession]
+  );
+
+  const handleStopPersistent = useCallback(
+    (_agentId: string, def: AgentDefinitionInfo) => {
+      stopPersistentSession(`${agent.id}:${def.id}`);
+    },
+    [agent.id, stopPersistentSession]
+  );
+
   const hasContent =
     agentSessions.length > 0 || agentDefinitions.length > 0 || agentFolders.length > 0;
 
@@ -878,6 +1033,9 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
                   onEditDefinition={handleEditDefinition}
                   onDuplicateDefinition={handleDuplicateDefinition}
                   onDefinitionClick={handleDefClick}
+                  onStartPersistent={handleStartPersistent}
+                  onAttachPersistent={handleAttachPersistent}
+                  onStopPersistent={handleStopPersistent}
                 />
               ))}
 
@@ -894,6 +1052,9 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
                   onEdit={handleEditDefinition}
                   onDuplicate={handleDuplicateDefinition}
                   onConnectionClick={handleDefClick}
+                  onStartPersistent={handleStartPersistent}
+                  onAttachPersistent={handleAttachPersistent}
+                  onStopPersistent={handleStopPersistent}
                 />
               ))}
 
