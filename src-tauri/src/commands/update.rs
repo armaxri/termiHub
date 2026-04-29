@@ -13,6 +13,13 @@ const GITHUB_API_URL: &str = "https://api.github.com/repos/armaxri/termiHub/rele
 /// Minimum interval between automatic update checks (1 hour).
 const MIN_CHECK_INTERVAL_SECS: i64 = 3600;
 
+/// Returns `true` when either Tauri is in dev mode or the CI dev-build flag is set.
+///
+/// Accepts both flags as parameters so the logic is testable without a Tauri runtime.
+fn resolve_is_dev(tauri_is_dev: bool, ci_is_dev: bool) -> bool {
+    tauri_is_dev || ci_is_dev
+}
+
 /// Build-time information exposed to the frontend.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -263,6 +270,30 @@ pub fn get_update_settings(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── resolve_is_dev ────────────────────────────────────────────────────────
+
+    #[test]
+    fn resolve_is_dev_tauri_dev_mode() {
+        assert!(resolve_is_dev(true, false));
+    }
+
+    #[test]
+    fn resolve_is_dev_ci_build_flag() {
+        // CI dev builds set TERMIHUB_DEV_BUILD=true at compile time; simulate that here.
+        assert!(resolve_is_dev(false, true));
+    }
+
+    #[test]
+    fn resolve_is_dev_both_flags_set() {
+        assert!(resolve_is_dev(true, true));
+    }
+
+    #[test]
+    fn resolve_is_dev_release_build() {
+        // Neither tauri dev mode nor CI dev flag → this is a release build.
+        assert!(!resolve_is_dev(false, false));
+    }
 
     // ── parse_tag ─────────────────────────────────────────────────────────────
 
