@@ -357,6 +357,8 @@
   margin-left: 3px;
   opacity: 1;
   font-style: normal;
+  position: relative;
+  top: -3px;
 }
 
 .connection-tree__state-dot {
@@ -367,6 +369,8 @@
   flex-shrink: 0;
   align-self: center;
   background-color: var(--text-secondary);
+  position: relative;
+  top: -2px;
 }
 
 .connection-tree__state-dot--running {
