@@ -1442,3 +1442,34 @@ Choose the hybrid registry approach if:
 - **macOS native WebDriver**: If [danielraffel/tauri-webdriver](https://github.com/danielraffel/tauri-webdriver) matures, guided tests could run natively on macOS without Docker
 - **Video recording**: Capture video of guided test sessions for async review (WebdriverIO supports video recording via plugins)
 - **Parallel guided sessions**: Run guided tests for different categories in parallel browser windows (one window per describe block)
+
+---
+
+## Implementation Status
+
+**Status: Not implemented.** No GitHub issue was assigned to this concept.
+
+### What exists
+
+- WebdriverIO E2E tests in `tests/e2e/` continue to run as fully automated tests via
+  `tauri-driver` on Linux/Windows inside Docker.
+- The separate YAML-based guided test runner (`scripts/test-manual.py` +
+  `tests/manual/*.yaml`) was built per the [guided-manual-testing](guided-manual-testing.md)
+  concept — this is the alternative path, not the WebdriverIO-unified path.
+
+### What is missing
+
+- `@automated` / `@guided` / `@visual` / `@platform()` tags on WebdriverIO specs — no tagging
+  system exists.
+- `runGuided()` / `promptHuman()` / `waitForHumanInput()` WebdriverIO helpers — not present.
+- A unified `wdio.guided.conf.ts` configuration with pause-on-human-prompt support.
+- A single WebdriverIO spec runner that handles both automated and guided modes.
+
+### To consider
+
+- The [unified-test-system](unified-test-system.md) concept concluded that a full collapse
+  into WebdriverIO has a higher migration cost than the hybrid YAML approach.
+- The YAML + Python runner (already built) is a reasonable stopping point unless the
+  dual-maintenance burden becomes a real pain point again.
+- If this is revisited, start with just the `@guided` tag support in a new `wdio.guided.conf.ts`
+  without migrating any existing YAML tests.

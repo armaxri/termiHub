@@ -877,3 +877,41 @@ $COMPOSE_CMD -f tests/docker/docker-compose.yml up -d
 ```
 
 Port bindings on `127.0.0.1` inside WSL are accessible from the Windows host, allowing the Windows-native termiHub app to connect to Docker containers running in WSL.
+
+---
+
+## Implementation Status
+
+**Status: Partially implemented.** The concept issue (#377) is closed.
+
+### What is implemented
+
+- **Docker Compose infrastructure** (`tests/docker/docker-compose.yml`) with 13 containers is
+  fully present: `ssh-password`, `ssh-legacy`, `ssh-keys`, `ssh-jumphost-bastion`,
+  `ssh-jumphost-target`, `ssh-restricted`, `ssh-banner`, `ssh-tunnel-target`, `telnet`,
+  `sftp-basic`, `sftp-stress`, `network-fault`, and `x11-desktop`.
+- **Pre-generated SSH test keys** in `tests/fixtures/ssh-keys/` covering RSA 2048/4096,
+  Ed25519, and ECDSA 256/384/521, with and without passphrases.
+- **`scripts/test-system.sh`** — cross-platform dispatcher that starts Docker infra and runs
+  E2E system tests.
+
+### What is missing
+
+- **Per-machine orchestration scripts** (`scripts/test-system-mac.sh`,
+  `scripts/test-system-linux.sh`, `scripts/test-system-windows.cmd`) — only the top-level
+  dispatcher exists; the machine-specific scripts with capability detection are not present.
+- **Network fault injection tests** — the `network-fault` container exists but no automated
+  test suite exercises latency / packet-loss / bandwidth-throttle scenarios.
+- **SFTP stress tests** — `sftp-stress` container is present but dedicated test cases for
+  large files (100 MB), deep trees (50 levels), and special filenames are not written.
+- **SSH jump-host chain tests** — the jump-host containers exist but no automated test
+  exercises multi-hop ProxyJump chains end-to-end.
+- **X11 forwarding tests** — the `x11-desktop` container is included but X11 forwarding is
+  not tested.
+
+### To consider
+
+- The `test-system.sh` dispatcher already handles Docker Compose startup and teardown; the
+  main gap is the actual test cases that use the containers.
+- Machine-specific scripts are only needed if per-machine capability detection (serial port,
+  WSL, ARM) becomes important — otherwise the global dispatcher is sufficient for CI.
