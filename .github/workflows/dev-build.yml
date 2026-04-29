@@ -59,7 +59,7 @@ jobs:
             echo "|----------|---------|"
             echo "| macOS Intel | \`termiHub-dev-macos-x64.dmg\` |"
             echo "| macOS Apple Silicon | \`termiHub-dev-macos-arm64.dmg\` |"
-            echo "| Windows x64 | \`termiHub-dev-windows-x64.msi\` |"
+            echo "| Windows x64 | \`termiHub-dev-windows-x64.msi\`, \`termiHub-dev-windows-x64-setup.exe\` |"
             echo "| Linux x64 | \`termiHub-dev-linux-x64.AppImage\`, \`termiHub-dev-linux-x64.deb\` |"
             echo "| Linux ARM64 | \`termiHub-dev-linux-arm64.deb\`, \`termiHub-dev-linux-arm64.rpm\` |"
             echo ""
@@ -71,12 +71,13 @@ jobs:
             echo "| Linux ARMv7 | \`termihub-agent-linux-armv7\` |"
           } > release_notes.md
 
-      - name: Create dev release
+      - name: Create dev release (draft)
         run: |
           BRANCH="${{ steps.vars.outputs.branch }}"
           SHORT_SHA="${GITHUB_SHA::7}"
           gh release create "${{ steps.vars.outputs.tag }}" \
             --prerelease \
+            --draft \
             --title "Dev Build — not for production use (${BRANCH} @ ${SHORT_SHA})" \
             --notes-file release_notes.md
         env:
@@ -196,6 +197,19 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Upload NSIS setup.exe to dev release (Windows only)
+        if: matrix.platform == 'windows-x64'
+        shell: bash
+        run: |
+          NSIS=$(find "target/${{ matrix.rust_target }}/release/bundle/nsis" -name "*-setup.exe" | head -n 1)
+          if [ -n "$NSIS" ]; then
+            DEST="termiHub-dev-${{ matrix.platform }}-setup.exe"
+            cp "$NSIS" "$DEST"
+            gh release upload "${{ needs.prepare-release.outputs.tag }}" "$DEST" --clobber
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Upload .deb to dev release (Linux x64 only)
         if: matrix.platform == 'linux-x64'
         shell: bash
@@ -280,3 +294,18 @@ jobs:
           gh release upload "${{ needs.prepare-release.outputs.tag }}" "${{ matrix.artifact_name }}" --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── 4. Publish draft once all artifacts are uploaded ──────────────────────
+  publish-release:
+    name: Publish Dev Release
+    needs: [prepare-release, build-app, build-agents]
+    runs-on: ubuntu-latest
+    # Run even if some build jobs failed so the draft is always published
+    if: ${{ !cancelled() && needs.prepare-release.result == 'success' }}
+
+    steps:
+      - name: Publish draft release
+        run: gh release edit "${{ needs.prepare-release.outputs.tag }}" --draft=false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
