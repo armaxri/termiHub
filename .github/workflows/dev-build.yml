@@ -59,7 +59,7 @@ jobs:
             echo "|----------|---------|"
             echo "| macOS Intel | \`termiHub-dev-macos-x64.dmg\` |"
             echo "| macOS Apple Silicon | \`termiHub-dev-macos-arm64.dmg\` |"
-            echo "| Windows x64 | \`termiHub-dev-windows-x64.msi\` |"
+            echo "| Windows x64 | \`termiHub-dev-windows-x64.msi\`, \`termiHub-dev-windows-x64-setup.exe\` |"
             echo "| Linux x64 | \`termiHub-dev-linux-x64.AppImage\`, \`termiHub-dev-linux-x64.deb\` |"
             echo "| Linux ARM64 | \`termiHub-dev-linux-arm64.deb\`, \`termiHub-dev-linux-arm64.rpm\` |"
             echo ""
@@ -193,6 +193,19 @@ jobs:
           DEST="termiHub-dev-${{ matrix.platform }}${{ matrix.file_ext }}"
           cp "$ARTIFACT" "$DEST"
           gh release upload "${{ needs.prepare-release.outputs.tag }}" "$DEST" --clobber
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload NSIS setup.exe to dev release (Windows only)
+        if: matrix.platform == 'windows-x64'
+        shell: bash
+        run: |
+          NSIS=$(find "target/${{ matrix.rust_target }}/release/bundle/nsis" -name "*-setup.exe" | head -n 1)
+          if [ -n "$NSIS" ]; then
+            DEST="termiHub-dev-${{ matrix.platform }}-setup.exe"
+            cp "$NSIS" "$DEST"
+            gh release upload "${{ needs.prepare-release.outputs.tag }}" "$DEST" --clobber
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

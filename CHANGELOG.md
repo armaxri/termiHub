@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Connection sidebar: connections now support multi-select — Ctrl/Cmd+Click toggles individual selection, Shift+Click range-selects, and dragging a selected group moves all selected connections into the target folder at once. Escape or clicking empty space clears the selection (#638).
 - Agent setup: the setup dialog now detects the remote host's architecture automatically before opening, and defaults to downloading the agent binary from GitHub (using `dev-latest` for dev builds or `v{version}` for releases). A local file picker remains available as a fallback. The detected architecture and download URL are shown in the dialog.
 
+### Fixed
+
+- CI: Windows NSIS setup installer (`termiHub-dev-windows-x64-setup.exe`) was not being uploaded to the `dev-latest` release — it is now uploaded alongside the existing MSI artifact (#664).
+
 ### Changed
 
 - Connection sidebar: the expand/collapse chevron for folders is now displayed on the right side of the folder row. This aligns folder icons and connection icons in the same column at each indent level, making the tree hierarchy unambiguous at a glance (#640).
