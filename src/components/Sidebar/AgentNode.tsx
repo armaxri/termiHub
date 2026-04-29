@@ -185,10 +185,8 @@ function AgentConnectionItem({
               title={runState ?? "stopped"}
             />
           )}
-          <span className="connection-tree__label">
-            {definition.name}
-            {definition.persistent && <span className="connection-tree__persistent-badge">∞</span>}
-          </span>
+          <span className="connection-tree__label">{definition.name}</span>
+          {definition.persistent && <span className="connection-tree__persistent-badge">∞</span>}
           {definition.persistent ? (
             <span className="connection-tree__persistent-actions">
               {!runState || runState === "stopped" || runState === "error" ? (

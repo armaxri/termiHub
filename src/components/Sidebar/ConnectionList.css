@@ -352,8 +352,8 @@
 
 .connection-tree__persistent-badge {
   font-size: 20px;
-  line-height: 0;
-  vertical-align: middle;
+  line-height: 1;
+  flex-shrink: 0;
   margin-left: 3px;
   opacity: 1;
   font-style: normal;
@@ -365,6 +365,7 @@
   height: 7px;
   border-radius: 50%;
   flex-shrink: 0;
+  align-self: center;
   background-color: var(--text-secondary);
 }
 
