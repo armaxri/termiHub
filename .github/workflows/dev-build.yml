@@ -71,12 +71,13 @@ jobs:
             echo "| Linux ARMv7 | \`termihub-agent-linux-armv7\` |"
           } > release_notes.md
 
-      - name: Create dev release
+      - name: Create dev release (draft)
         run: |
           BRANCH="${{ steps.vars.outputs.branch }}"
           SHORT_SHA="${GITHUB_SHA::7}"
           gh release create "${{ steps.vars.outputs.tag }}" \
             --prerelease \
+            --draft \
             --title "Dev Build — not for production use (${BRANCH} @ ${SHORT_SHA})" \
             --notes-file release_notes.md
         env:
@@ -293,3 +294,18 @@ jobs:
           gh release upload "${{ needs.prepare-release.outputs.tag }}" "${{ matrix.artifact_name }}" --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── 4. Publish draft once all artifacts are uploaded ──────────────────────
+  publish-release:
+    name: Publish Dev Release
+    needs: [prepare-release, build-app, build-agents]
+    runs-on: ubuntu-latest
+    # Run even if some build jobs failed so the draft is always published
+    if: ${{ !cancelled() && needs.prepare-release.result == 'success' }}
+
+    steps:
+      - name: Publish draft release
+        run: gh release edit "${{ needs.prepare-release.outputs.tag }}" --draft=false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}

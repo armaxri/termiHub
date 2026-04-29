@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - CI: Windows NSIS setup installer (`termiHub-dev-windows-x64-setup.exe`) was not being uploaded to the `dev-latest` release — it is now uploaded alongside the existing MSI artifact (#664).
+- CI: `dev-latest` release is now created as a draft and published atomically once all platform builds and agent binaries finish uploading, preventing the partial-artifact state visible during builds (#664).
 
 ### Changed
 
