@@ -150,7 +150,7 @@ export interface AppSettings {
   defaultUser?: string;
   defaultSshKeyPath?: string;
   defaultShell?: string;
-  theme?: "dark" | "light" | "system";
+  theme?: "dark" | "light" | "solarized-dark" | "solarized-light" | "system";
   fontFamily?: string;
   fontSize?: number;
   lineHeight?: number;

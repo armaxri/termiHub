@@ -1,6 +1,8 @@
 import { ThemeColors, ThemeDefinition } from "./types";
 import { darkTheme } from "./dark";
 import { lightTheme } from "./light";
+import { solarizedDarkTheme } from "./solarized-dark";
+import { solarizedLightTheme } from "./solarized-light";
 
 /**
  * Maps camelCase ThemeColors keys to their corresponding CSS custom
@@ -85,6 +87,8 @@ const changeCallbacks = new Set<ThemeChangeCallback>();
 /** Resolve the theme setting string to an actual ThemeDefinition. */
 function resolveTheme(setting: string | undefined): ThemeDefinition {
   if (setting === "light") return lightTheme;
+  if (setting === "solarized-dark") return solarizedDarkTheme;
+  if (setting === "solarized-light") return solarizedLightTheme;
   if (setting === "system") {
     const prefersDark =
       typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches;
