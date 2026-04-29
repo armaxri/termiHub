@@ -144,6 +144,73 @@ A "Don't show again" checkbox suppresses future confirmations (stored as a user 
 No changes. `local` and `telnet` connections retain their current behaviour: opening always
 creates a new session, closing the tab always terminates it.
 
+### Agent-Hosted Sessions: Desktop Disconnect and Reconnect
+
+For connections that run through a **remote agent** (SSH, Docker, WSL, Serial sessions launched
+from an agent node), persistence is backed by the agent's **daemon subprocess model**, not by
+the desktop app. This gives a much stronger guarantee: sessions stay alive even when the desktop
+is closed entirely and reconnected the next day.
+
+#### How the daemon model works
+
+When the desktop creates a persistent session via a connected agent, the agent spawns a
+separate `termihub-agent --daemon <session-id>` child process on the remote host (Unix only).
+That daemon holds the actual connection — the shell PTY, the Docker exec, the SSH session. Its
+Unix socket path is written to `~/.config/termihub-agent/state.json`.
+
+```mermaid
+flowchart LR
+    subgraph Desktop
+        A[termiHub app]
+    end
+    subgraph Remote host
+        B[termihub-agent\n--listen] -->|controls| C[termihub-agent\n--daemon sess-1]
+        B -->|controls| D[termihub-agent\n--daemon sess-2]
+        C --- E[(SSH\nprocess)]
+        D --- F[(Shell\nPTY)]
+    end
+    A -->|TCP / SSH tunnel| B
+```
+
+#### Desktop disconnect
+
+When the desktop drops its TCP connection to the agent (app closed, network lost, sleep), the
+agent calls `detach_all()`. Sessions are **detached, not killed**. The daemon subprocesses keep
+running on the remote host, accumulating output in their ring buffers.
+
+#### Agent restart (optional, transparent)
+
+If the agent process itself restarts (intentional upgrade, crash), it calls `recover_sessions()`
+on startup. This reads `state.json` and reconnects to surviving daemon Unix sockets. Sessions
+whose sockets no longer exist are pruned. The recovered sessions are immediately queryable — the
+desktop does not need to know a restart occurred.
+
+#### Desktop reconnect (next day)
+
+1. Desktop calls `connectRemoteAgent()` → establishes SSH tunnel → TCP to agent.
+2. Desktop calls `refreshAgentSessions()` → `list_sessions` RPC.
+3. Agent returns all running sessions with `attached: false`.
+4. The sidebar shows these sessions under their parent agent node with state `running`.
+5. User clicks **Attach** → new tab → session is live again.
+
+#### Platform scope
+
+| Platform             | Session survives desktop disconnect | Session survives agent restart        |
+| -------------------- | ----------------------------------- | ------------------------------------- |
+| Unix (Linux / macOS) | ✓ daemon subprocess                 | ✓ `recover_sessions()` via socket     |
+| Windows              | ✓ (in-process, agent keeps running) | ✗ in-process sessions lost on restart |
+
+#### Desktop-local persistent sessions (non-agent)
+
+Sessions started directly from the desktop (e.g., SSH launched from the desktop's own Tauri
+process, not via a remote agent) run inside the Tauri backend process. They persist across
+**tab closes within the same app session** (the new behaviour added by this concept) but are
+**lost when the desktop app exits**. There is no daemon subprocess layer on the desktop side.
+
+The sidebar must make this distinction clear: desktop-local persistent sessions show the `∞`
+badge but the tooltip clarifies "Runs while the app is open. Use an agent for across-session
+persistence."
+
 ---
 
 ## States & Sequences
@@ -232,6 +299,48 @@ sequenceDiagram
     Tabs-->>Store: Mark tabs as disconnected
     Tauri-->>Store: PersistentSessionStopped { connectionId }
     Store-->>Sidebar: state = stopped
+```
+
+### Sequence: Agent disconnect and reconnect next day (agent-hosted sessions)
+
+This sequence shows what happens to an agent-hosted persistent session when the desktop app is
+closed and reopened the following day. No user action is required for the session to survive.
+
+```mermaid
+sequenceDiagram
+    participant Desktop as Desktop App
+    participant Agent as termihub-agent\n(remote host)
+    participant Daemon as termihub-agent --daemon\n(remote host, sess-1)
+    participant State as state.json\n(remote host)
+
+    Note over Desktop,Daemon: Day 1 — session is running, tab attached
+
+    Desktop->>Agent: TCP disconnect (app closed / network lost)
+    Agent->>Agent: detach_all()
+    Note over Agent: sessions detached, not killed
+    Agent--xDaemon: socket still open, daemon runs on
+    Daemon->>Daemon: continues accumulating output
+
+    Note over Desktop,Daemon: (Optional) Agent process restarts
+
+    Agent->>State: read state.json
+    Agent->>Daemon: DaemonClient::connect(socket)
+    Daemon-->>Agent: reconnected
+    Note over Agent: session recovered, status=Running, attached=false
+
+    Note over Desktop,Daemon: Day 2 — user opens termiHub
+
+    Desktop->>Agent: connectRemoteAgent() → TCP connect
+    Desktop->>Agent: list_sessions RPC
+    Agent-->>Desktop: [{ sessionId, status:"running", attached:false }]
+    Desktop->>Desktop: refreshAgentSessions() → sidebar shows state=running
+    Note over Desktop: ∞ badge + green dot visible on connection item
+
+    Desktop->>Agent: attach RPC (sessionId)
+    Agent->>Daemon: attach()
+    Daemon-->>Agent: buffered output replay
+    Agent-->>Desktop: output stream resumed
+    Note over Desktop: Tab shows session output from while disconnected
 ```
 
 ---
@@ -341,6 +450,43 @@ The frontend listens for this event (in `src/services/events.ts`) and updates
 ### Relationship to Agent Definitions
 
 Remote agent definitions already have a `persistent: bool` field and a `handleAttachSession`
-callback in `AgentNode.tsx`. This feature is the **desktop-side analogue** of that pattern. The
-two should remain separate at the implementation level (local sessions vs. remote agent sessions)
-but should feel visually consistent — use the same state-dot CSS classes and badge style.
+callback in `AgentNode.tsx`. The changes needed here differ by connection scope:
+
+#### Agent-hosted persistent connections
+
+The backend infrastructure already exists. The agent's `SessionManager` already implements:
+
+- `detach_all()` — called on TCP disconnect; leaves daemon subprocesses alive
+  (`agent/src/io/tcp.rs:85`)
+- `recover_sessions()` — called on agent startup; reconnects to surviving daemon Unix sockets
+  (`agent/src/session/manager.rs:468`)
+- `AgentState` / `state.json` — persists daemon socket paths across agent restarts
+  (`agent/src/state/persistence.rs`)
+- `attach()` / `detach()` — fine-grained per-session control (`agent/src/session/manager.rs`)
+
+What is missing is **frontend wiring**: `AgentNode.tsx` shows active sessions and saved
+definitions as two separate lists with no link between them. The implementation needs to:
+
+1. Cross-reference each `AgentDefinitionInfo` (saved definition) against the live
+   `AgentSessionInfo` list to determine whether a running session for that definition exists.
+2. Render the state dot and `∞` badge on the definition row in `AgentNode.tsx` (not the
+   session row — the session row is the "legacy" view that may be collapsed once definitions
+   show state directly).
+3. Wire **Start** (create session from definition), **Attach** (attach to running session),
+   and **Stop** (stop the running session) into the context menu and inline buttons of
+   `AgentNode.tsx`.
+
+The `persistent-session-state-changed` event on the agent side can be emitted via the
+existing notification channel (`NotificationSender`) whenever a session is created, detached,
+or terminated.
+
+#### Desktop-local persistent connections
+
+This is the new work. No daemon subprocess layer currently exists on the desktop. The
+`src-tauri/src/session/manager.rs` needs the detachable session registry described above.
+On app exit, the Tauri backend should call a new `shutdown_persistent_sessions()` that
+detaches all sessions cleanly (the processes will still be killed when the app process exits,
+but this allows graceful cleanup and correct state dot display before the window closes).
+
+Both scopes should use the same CSS classes, badge, and tooltip conventions so the UX is
+uniform regardless of whether a connection runs locally or through an agent.
