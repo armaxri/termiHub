@@ -13,6 +13,22 @@ const GITHUB_API_URL: &str = "https://api.github.com/repos/armaxri/termiHub/rele
 /// Minimum interval between automatic update checks (1 hour).
 const MIN_CHECK_INTERVAL_SECS: i64 = 3600;
 
+/// Returns `true` when either Tauri is in dev mode or the CI dev-build flag is set.
+///
+/// Accepts both flags as parameters so the logic is testable without a Tauri runtime.
+fn resolve_is_dev(tauri_is_dev: bool, ci_is_dev: bool) -> bool {
+    tauri_is_dev || ci_is_dev
+}
+
+/// Returns `true` when this binary was compiled as a CI dev build.
+///
+/// Set by `TERMIHUB_DEV_BUILD=true` in the CI `dev-build.yml` workflow; `build.rs`
+/// translates that into the `TERMIHUB_IS_DEV_BUILD` compile-time env var.
+#[inline]
+fn is_ci_dev_build() -> bool {
+    env!("TERMIHUB_IS_DEV_BUILD") == "1"
+}
+
 /// Build-time information exposed to the frontend.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -29,7 +45,7 @@ pub struct AppInfo {
 #[tauri::command]
 pub fn get_app_info(app_handle: AppHandle) -> AppInfo {
     let base = app_handle.package_info().version.to_string();
-    let is_dev = tauri::is_dev();
+    let is_dev = resolve_is_dev(tauri::is_dev(), is_ci_dev_build());
     let version = if is_dev { format!("{base}-dev") } else { base };
     AppInfo {
         version,
@@ -163,7 +179,8 @@ pub async fn check_for_updates(
     manager: State<'_, ConnectionManager>,
 ) -> Result<UpdateInfo, String> {
     let base_version = app_handle.package_info().version.to_string();
-    let running_version = if tauri::is_dev() {
+    let is_dev = resolve_is_dev(tauri::is_dev(), is_ci_dev_build());
+    let running_version = if is_dev {
         format!("{base_version}-dev")
     } else {
         base_version
@@ -263,6 +280,30 @@ pub fn get_update_settings(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── resolve_is_dev ────────────────────────────────────────────────────────
+
+    #[test]
+    fn resolve_is_dev_tauri_dev_mode() {
+        assert!(resolve_is_dev(true, false));
+    }
+
+    #[test]
+    fn resolve_is_dev_ci_build_flag() {
+        // CI dev builds set TERMIHUB_DEV_BUILD=true at compile time; simulate that here.
+        assert!(resolve_is_dev(false, true));
+    }
+
+    #[test]
+    fn resolve_is_dev_both_flags_set() {
+        assert!(resolve_is_dev(true, true));
+    }
+
+    #[test]
+    fn resolve_is_dev_release_build() {
+        // Neither tauri dev mode nor CI dev flag → this is a release build.
+        assert!(!resolve_is_dev(false, false));
+    }
 
     // ── parse_tag ─────────────────────────────────────────────────────────────
 
