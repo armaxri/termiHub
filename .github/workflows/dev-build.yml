@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 jobs:
-  # ── 1. Create a fresh rolling dev release ──────────────────────────────────
+  # ── 1. Determine release tag ────────────────────────────────────────────────
   prepare-release:
     name: Prepare Dev Release
     runs-on: ubuntu-latest
@@ -19,9 +19,6 @@ jobs:
       branch: ${{ steps.vars.outputs.branch }}
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
       - name: Set release variables
         id: vars
         run: |
@@ -34,56 +31,7 @@ jobs:
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "branch=$BRANCH" >> $GITHUB_OUTPUT
 
-      - name: Delete existing dev release (if any)
-        run: gh release delete "${{ steps.vars.outputs.tag }}" --yes --cleanup-tag 2>/dev/null || true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Write release notes
-        run: |
-          BRANCH="${{ steps.vars.outputs.branch }}"
-          SHORT_SHA="${GITHUB_SHA::7}"
-          DATE=$(date -u +"%Y-%m-%d %H:%M UTC")
-          {
-            echo "## ⚠️ Dev Build — Not for Production Use"
-            echo ""
-            echo "This is an automated development build from the \`${BRANCH}\` branch."
-            echo ""
-            echo "**Commit**: [\`${SHORT_SHA}\`](https://github.com/${{ github.repository }}/commit/${{ github.sha }})"
-            echo "**Built**: ${DATE}"
-            echo ""
-            echo "These artifacts are rebuilt automatically on every push to \`${BRANCH}\` and overwrite the previous build. They may be unstable or contain incomplete features. **Do not use in production.**"
-            echo ""
-            echo "### Desktop Installers"
-            echo "| Platform | Artifact |"
-            echo "|----------|---------|"
-            echo "| macOS Intel | \`termiHub-dev-macos-x64.dmg\` |"
-            echo "| macOS Apple Silicon | \`termiHub-dev-macos-arm64.dmg\` |"
-            echo "| Windows x64 | \`termiHub-dev-windows-x64.msi\`, \`termiHub-dev-windows-x64-setup.exe\` |"
-            echo "| Linux x64 | \`termiHub-dev-linux-x64.AppImage\`, \`termiHub-dev-linux-x64.deb\` |"
-            echo "| Linux ARM64 | \`termiHub-dev-linux-arm64.deb\`, \`termiHub-dev-linux-arm64.rpm\` |"
-            echo ""
-            echo "### Agent Binaries (Static musl)"
-            echo "| Target | Artifact |"
-            echo "|--------|---------|"
-            echo "| Linux x64 | \`termihub-agent-linux-x64\` |"
-            echo "| Linux ARM64 | \`termihub-agent-linux-arm64\` |"
-            echo "| Linux ARMv7 | \`termihub-agent-linux-armv7\` |"
-          } > release_notes.md
-
-      - name: Create dev release (draft)
-        run: |
-          BRANCH="${{ steps.vars.outputs.branch }}"
-          SHORT_SHA="${GITHUB_SHA::7}"
-          gh release create "${{ steps.vars.outputs.tag }}" \
-            --prerelease \
-            --draft \
-            --title "Dev Build — not for production use (${BRANCH} @ ${SHORT_SHA})" \
-            --notes-file release_notes.md
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  # ── 2. Build and upload desktop app artifacts ──────────────────────────────
+  # ── 2. Build and stage desktop app artifacts ───────────────────────────────
   build-app:
     name: Build App - ${{ matrix.platform }}
     needs: prepare-release
@@ -184,7 +132,7 @@ jobs:
           prerelease: false
           args: --target ${{ matrix.rust_target }} ${{ matrix.extra_args }}
 
-      - name: Upload primary artifact to dev release
+      - name: Collect primary artifact
         shell: bash
         run: |
           ARTIFACT=$(find "target/${{ matrix.rust_target }}/release/bundle/${{ matrix.bundle_path }}" -name "*${{ matrix.file_ext }}" | head -n 1)
@@ -192,52 +140,43 @@ jobs:
             echo "Error: No artifact found matching *${{ matrix.file_ext }} in bundle/${{ matrix.bundle_path }}"
             exit 1
           fi
-          DEST="termiHub-dev-${{ matrix.platform }}${{ matrix.file_ext }}"
-          cp "$ARTIFACT" "$DEST"
-          gh release upload "${{ needs.prepare-release.outputs.tag }}" "$DEST" --clobber
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          cp "$ARTIFACT" "termiHub-dev-${{ matrix.platform }}${{ matrix.file_ext }}"
 
-      - name: Upload NSIS setup.exe to dev release (Windows only)
+      - name: Collect NSIS setup.exe (Windows only)
         if: matrix.platform == 'windows-x64'
         shell: bash
         run: |
           NSIS=$(find "target/${{ matrix.rust_target }}/release/bundle/nsis" -name "*-setup.exe" | head -n 1)
           if [ -n "$NSIS" ]; then
-            DEST="termiHub-dev-${{ matrix.platform }}-setup.exe"
-            cp "$NSIS" "$DEST"
-            gh release upload "${{ needs.prepare-release.outputs.tag }}" "$DEST" --clobber
+            cp "$NSIS" "termiHub-dev-${{ matrix.platform }}-setup.exe"
           fi
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload .deb to dev release (Linux x64 only)
+      - name: Collect .deb (Linux x64 only)
         if: matrix.platform == 'linux-x64'
         shell: bash
         run: |
           DEB=$(find "target/${{ matrix.rust_target }}/release/bundle/deb" -name "*.deb" | head -n 1)
           if [ -n "$DEB" ]; then
-            DEST="termiHub-dev-${{ matrix.platform }}.deb"
-            cp "$DEB" "$DEST"
-            gh release upload "${{ needs.prepare-release.outputs.tag }}" "$DEST" --clobber
+            cp "$DEB" "termiHub-dev-${{ matrix.platform }}.deb"
           fi
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload .rpm to dev release (Linux ARM64 only)
+      - name: Collect .rpm (Linux arm64 only)
         if: matrix.platform == 'linux-arm64'
         shell: bash
         run: |
           RPM=$(find "target/${{ matrix.rust_target }}/release/bundle/rpm" -name "*.rpm" | head -n 1)
           if [ -n "$RPM" ]; then
-            DEST="termiHub-dev-${{ matrix.platform }}.rpm"
-            cp "$RPM" "$DEST"
-            gh release upload "${{ needs.prepare-release.outputs.tag }}" "$DEST" --clobber
+            cp "$RPM" "termiHub-dev-${{ matrix.platform }}.rpm"
           fi
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # ── 3. Build and upload agent binaries ────────────────────────────────────
+      - name: Upload app artifacts to staging
+        uses: actions/upload-artifact@v7
+        with:
+          name: app-${{ matrix.platform }}
+          path: termiHub-dev-${{ matrix.platform }}*
+          if-no-files-found: error
+
+  # ── 3. Build and stage agent binaries ─────────────────────────────────────
   build-agents:
     name: Agent Binary (${{ matrix.target }})
     needs: prepare-release
@@ -289,24 +228,82 @@ jobs:
       - name: Build agent
         run: CROSS_CONFIG=agent/Cross.toml cross build --release --target ${{ matrix.target }} -p termihub-agent
 
-      - name: Upload agent binary to dev release
-        run: |
-          cp "target/${{ matrix.target }}/release/termihub-agent" "${{ matrix.artifact_name }}"
-          gh release upload "${{ needs.prepare-release.outputs.tag }}" "${{ matrix.artifact_name }}" --clobber
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Rename agent binary
+        run: cp "target/${{ matrix.target }}/release/termihub-agent" "${{ matrix.artifact_name }}"
 
-  # ── 4. Publish draft once all artifacts are uploaded ──────────────────────
+      - name: Upload agent binary to staging
+        uses: actions/upload-artifact@v7
+        with:
+          name: agent-${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_name }}
+          if-no-files-found: error
+
+  # ── 4. Atomically publish release once all artifacts are staged ────────────
   publish-release:
     name: Publish Dev Release
     needs: [prepare-release, build-app, build-agents]
     runs-on: ubuntu-latest
-    # Run even if some build jobs failed so the draft is always published
+    # Run even if some build jobs failed so the release is always updated
     if: ${{ !cancelled() && needs.prepare-release.result == 'success' }}
 
     steps:
-      - name: Publish draft release
-        run: gh release edit "${{ needs.prepare-release.outputs.tag }}" --draft=false
+      - name: Download all staged artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts/
+          merge-multiple: true
+
+      - name: Delete existing dev release (if any)
+        run: gh release delete "${{ needs.prepare-release.outputs.tag }}" --yes --cleanup-tag 2>/dev/null || true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+
+      - name: Write release notes
+        run: |
+          BRANCH="${{ needs.prepare-release.outputs.branch }}"
+          SHORT_SHA="${GITHUB_SHA::7}"
+          DATE=$(date -u +"%Y-%m-%d %H:%M UTC")
+          {
+            echo "## ⚠️ Dev Build — Not for Production Use"
+            echo ""
+            echo "This is an automated development build from the \`${BRANCH}\` branch."
+            echo ""
+            echo "**Commit**: [\`${SHORT_SHA}\`](https://github.com/${{ github.repository }}/commit/${{ github.sha }})"
+            echo "**Built**: ${DATE}"
+            echo ""
+            echo "These artifacts are rebuilt automatically on every push to \`${BRANCH}\` and overwrite the previous build. They may be unstable or contain incomplete features. **Do not use in production.**"
+            echo ""
+            echo "### Desktop Installers"
+            echo "| Platform | Artifact |"
+            echo "|----------|---------|"
+            echo "| macOS Intel | \`termiHub-dev-macos-x64.dmg\` |"
+            echo "| macOS Apple Silicon | \`termiHub-dev-macos-arm64.dmg\` |"
+            echo "| Windows x64 | \`termiHub-dev-windows-x64.msi\`, \`termiHub-dev-windows-x64-setup.exe\` |"
+            echo "| Linux x64 | \`termiHub-dev-linux-x64.AppImage\`, \`termiHub-dev-linux-x64.deb\` |"
+            echo "| Linux ARM64 | \`termiHub-dev-linux-arm64.deb\`, \`termiHub-dev-linux-arm64.rpm\` |"
+            echo ""
+            echo "### Agent Binaries (Static musl)"
+            echo "| Target | Artifact |"
+            echo "|--------|---------|"
+            echo "| Linux x64 | \`termihub-agent-linux-x64\` |"
+            echo "| Linux ARM64 | \`termihub-agent-linux-arm64\` |"
+            echo "| Linux ARMv7 | \`termihub-agent-linux-armv7\` |"
+          } > release_notes.md
+
+      - name: Create and publish dev release
+        run: |
+          BRANCH="${{ needs.prepare-release.outputs.branch }}"
+          SHORT_SHA="${GITHUB_SHA::7}"
+          ARTIFACT_ARGS=()
+          while IFS= read -r -d '' f; do
+            ARTIFACT_ARGS+=("$f")
+          done < <(find artifacts/ -maxdepth 1 -type f -print0 2>/dev/null)
+          gh release create "${{ needs.prepare-release.outputs.tag }}" \
+            "${ARTIFACT_ARGS[@]}" \
+            --prerelease \
+            --title "Dev Build — not for production use (${BRANCH} @ ${SHORT_SHA})" \
+            --notes-file release_notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
