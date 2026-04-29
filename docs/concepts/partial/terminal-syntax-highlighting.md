@@ -748,3 +748,35 @@ flowchart LR
 - **Integration tests**: Engine lifecycle (enable → write → scan → decorate → disable → verify cleanup)
 - **Performance tests**: Benchmark scanning throughput with large output volumes (>10,000 lines), verify no frame drops during `cat /dev/urandom | hexdump` style output
 - **Manual tests**: Visual verification of highlighting with real terminal sessions, theme switching, per-connection overrides
+
+---
+
+## Implementation Status
+
+**Status: Not implemented** (xterm.js terminal output highlighting). The concept issue is closed.
+
+### What exists (not this concept)
+
+- **Monaco file editor** uses Shiki TextMate grammars for syntax highlighting of file content
+  opened in the file editor — this is unrelated to terminal output highlighting.
+- Language pack settings (`src/components/Settings/LanguagePackagesSettings.tsx`) and custom
+  grammar settings (`src/components/Settings/CustomGrammarsSettings.tsx`) exist for the file
+  editor only.
+
+### What is missing
+
+- `SyntaxHighlightEngine` class (regex matching against xterm.js output) — does not exist.
+- ANSI decoration injection into the xterm.js buffer — not implemented.
+- Highlight rules registry (built-in patterns for errors, paths, IPs, URLs, etc.) — not present.
+- Settings panel entry under Terminal → Syntax Highlighting — not present.
+- Per-connection override for enable/disable — not present.
+
+### To consider before implementing
+
+- xterm.js's decoration API (introduced in xterm.js v5) is the correct hook; verify the
+  bundled xterm.js version supports `IDecoration` before starting.
+- Performance is the critical risk: scanning every output chunk with 10+ regexes must stay
+  below one frame (16 ms) even for high-throughput sessions.
+- ANSI-conflict detection (don't overwrite colors the server already set) requires parsing
+  the raw byte stream before xterm.js processes it — more complex than post-render decoration.
+- Implementation issue: none open yet — create one referencing this concept when ready to start.

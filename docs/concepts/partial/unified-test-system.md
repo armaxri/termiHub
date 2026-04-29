@@ -1020,3 +1020,32 @@ The existing `tests/manual/*.yaml` files are migrated to `tests/registry/` by:
 - **Test coverage gap analysis**: The registry enables automated detection of features without any test coverage (no YAML entry references them).
 - **Release readiness dashboard**: A web view that shows the combined pass/fail status from the latest automated CI run + the latest manual test session.
 - **Semi-automated visual tests**: Screenshot comparison during semi-automated tests (capture after Selenium setup, diff against baseline).
+
+---
+
+## Implementation Status
+
+**Status: Analysis/concept only — the recommended hybrid approach was not implemented.**
+The concept issue (#390) is closed.
+
+### What was built (from this analysis)
+
+The concept evaluated unifying WebdriverIO E2E tests with a YAML-based guided manual test
+runner. Its final recommendation was a **hybrid approach** (YAML as registry, dual execution
+backends). This led to the [guided-manual-testing](guided-manual-testing.md) concept and
+ultimately to the YAML test files in `tests/manual/` and `scripts/test-manual.py`.
+
+### What was not built
+
+- The **WebdriverIO ↔ YAML registry bridge** — WebdriverIO E2E tests and YAML manual tests
+  remain in two separate systems with no shared test inventory or cross-references.
+- **Selenium automation mode** for the Python runner — the runner is interactive-only.
+- **Single source of truth** test inventory covering both automated and manual items.
+- **Test coverage gap analysis** (which features have no YAML or E2E entry).
+
+### Current state
+
+Two independent test systems coexist, as before this concept. The
+[webdriverio-unified-testing](webdriverio-unified-testing.md) concept explored collapsing
+everything into WebdriverIO; that was also not implemented.
+The dual-maintenance burden described in this document still applies.

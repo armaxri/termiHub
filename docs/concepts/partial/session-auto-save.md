@@ -695,3 +695,38 @@ function computeDedupKey(type: string, config: Record<string, unknown>): string 
 ### Shutdown Hook
 
 Use Tauri's `on_window_event` with `WindowEvent::CloseRequested` to trigger session snapshot saving. The frontend listens for a `before-close` event, serializes the current panel tree and open tabs, and sends the snapshot to the backend for persistence before allowing the window to close.
+
+---
+
+## Implementation Status
+
+**Status: Not implemented.** The concept issue (#527) is closed. A related implementation issue
+is open: [#586 — persist open tabs and restore last session on startup](https://github.com/armaxri/termiHub/issues/586).
+
+### What exists
+
+- The workspace system (`src-tauri/src/workspace/`) can save and restore named panel layouts
+  with connection definitions — but this requires explicit user action (save workspace) and does
+  not automatically capture the last session state.
+- `src/components/Terminal/Terminal.tsx` and `appStore.ts` have session-stability logic that
+  keeps a terminal alive through tab switches — this is intra-session stability, not persistence
+  across restarts.
+
+### What is missing
+
+- **Automatic snapshot on close** — no `before-close` Tauri event handler serializes the panel
+  tree to disk.
+- **Auto-restore on startup** — the app always opens to an empty state; it never reads a
+  previous session snapshot.
+- **Session history sidebar section** — no "Recent Sessions" section exists in the sidebar.
+- **Quick-connect bar** — no `user@host` fast-entry widget exists.
+- **History deduplication** — no history store or deduplication logic.
+
+### To consider
+
+- Issue #586 covers only "persist open tabs" (restore last layout on startup), which is a
+  subset of this full concept. Start with #586 before tackling session history / quick-connect.
+- The workspace system is the correct foundation — a "last session" snapshot is essentially an
+  auto-saved, unnamed workspace. Reuse `WorkspaceDefinition` rather than a new schema.
+- Passwords must never be stored in history; the existing credential store should handle any
+  saved credentials.

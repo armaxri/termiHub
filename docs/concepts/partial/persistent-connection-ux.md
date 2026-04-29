@@ -490,3 +490,37 @@ but this allows graceful cleanup and correct state dot display before the window
 
 Both scopes should use the same CSS classes, badge, and tooltip conventions so the UX is
 uniform regardless of whether a connection runs locally or through an agent.
+
+---
+
+## Implementation Status
+
+**Status: Not implemented.** The concept issue is closed; no implementation issues have been created yet.
+
+### What exists
+
+- The `persistent: boolean` field is present in the `SavedRemoteAgent` connection definition
+  (`src/types/terminal.ts`, `src/components/ConnectionEditor/ConnectionEditor.tsx`).
+- The `persistent` capability flag is propagated through workspace layouts
+  (`src/utils/workspaceLayout.ts`).
+- A tooltip on `AgentNode` shows `"persistent"` in the connection title when the flag is set.
+
+### What is missing
+
+- **Persistence badge** in the sidebar (∞ pill / icon) — not rendered anywhere.
+- **Start / Attach / Stop** lifecycle for persistent connections — the only action today is
+  "open tab" which always starts a new session. There is no way to start without attaching,
+  attach to an already-running session, or stop a session without closing the tab.
+- **Connection state tracking** (stopped / starting / running / attached) in the Zustand store.
+- **Sidebar status dot** showing running-in-background vs. attached vs. stopped.
+- **Status bar integration** showing the count of background-running persistent sessions.
+- The concept's `connection.start()`, `connection.attach(sessionId)`, and `connection.stop()`
+  IPC commands do not exist.
+
+### To consider before implementing
+
+- The remote agent already has a well-established connect/disconnect/reconnect lifecycle;
+  reuse those patterns rather than designing a separate system.
+- The `persistent` flag currently only appears on remote agent sub-connections, not on
+  local SSH, Docker, WSL, or Serial connections — the concept covers all of these.
+- Implementation issue: none open yet — create one referencing this concept when ready to start.
