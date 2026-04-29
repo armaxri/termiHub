@@ -175,6 +175,7 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TERMIHUB_DEV_BUILD: 'true'
         with:
           tagName: ''
           releaseName: ''
