@@ -134,4 +134,61 @@ describe("TerminalSettings", () => {
     const rightClickLabel = labels.find((el) => el.textContent === "Right-Click Behavior");
     expect(rightClickLabel).toBeUndefined();
   });
+
+  it("renders the scrollback buffer input", () => {
+    renderWith(defaultSettings);
+    const labels = Array.from(container.querySelectorAll(".settings-form__label"));
+    const label = labels.find((el) => el.textContent === "Scrollback Buffer");
+    expect(label).toBeDefined();
+
+    const field = label?.closest(".settings-form__field");
+    const input = field?.querySelector("input[type='number']") as HTMLInputElement | null;
+    expect(input).not.toBeNull();
+  });
+
+  it("shows 10000 as default when scrollbackBuffer is undefined", () => {
+    renderWith(defaultSettings);
+    const labels = Array.from(container.querySelectorAll(".settings-form__label"));
+    const field = labels
+      .find((el) => el.textContent === "Scrollback Buffer")
+      ?.closest(".settings-form__field");
+    const input = field?.querySelector("input[type='number']") as HTMLInputElement;
+    expect(input.value).toBe("10000");
+  });
+
+  it("reflects a custom scrollbackBuffer value", () => {
+    renderWith({ ...defaultSettings, scrollbackBuffer: 25000 });
+    const labels = Array.from(container.querySelectorAll(".settings-form__label"));
+    const field = labels
+      .find((el) => el.textContent === "Scrollback Buffer")
+      ?.closest(".settings-form__field");
+    const input = field?.querySelector("input[type='number']") as HTMLInputElement;
+    expect(input.value).toBe("25000");
+  });
+
+  it("hint text mentions memory", () => {
+    renderWith(defaultSettings);
+    const labels = Array.from(container.querySelectorAll(".settings-form__label"));
+    const field = labels
+      .find((el) => el.textContent === "Scrollback Buffer")
+      ?.closest(".settings-form__field");
+    const hint = field?.querySelector(".settings-form__hint");
+    expect(hint?.textContent?.toLowerCase()).toContain("memory");
+  });
+
+  it("hides scrollback buffer when visibleFields excludes it", () => {
+    act(() => {
+      root.render(
+        <TerminalSettings
+          settings={defaultSettings}
+          onChange={vi.fn()}
+          visibleFields={new Set(["cursorStyle"])}
+        />
+      );
+    });
+
+    const labels = Array.from(container.querySelectorAll(".settings-form__label"));
+    const label = labels.find((el) => el.textContent === "Scrollback Buffer");
+    expect(label).toBeUndefined();
+  });
 });

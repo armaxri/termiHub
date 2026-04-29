@@ -21,7 +21,7 @@ const DEFAULT_FONT_FAMILY =
 const DEFAULT_FONT_SIZE = 14;
 /** Line height of 1.0 ensures box-drawing characters connect without gaps. */
 export const DEFAULT_LINE_HEIGHT = 1.0;
-const DEFAULT_SCROLLBACK = 5000;
+const DEFAULT_SCROLLBACK = 10000;
 const DEFAULT_CURSOR_STYLE = "block" as const;
 const DEFAULT_CURSOR_BLINK = true;
 
