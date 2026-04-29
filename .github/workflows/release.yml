@@ -5,12 +5,14 @@ on:
     tags:
       - 'v*.*.*'  # Triggers on version tags like v0.1.0, v1.2.3, etc.
 
+permissions:
+  contents: write
+
 jobs:
   create-release:
     name: Create Release
     runs-on: ubuntu-latest
     outputs:
-      upload_url: ${{ steps.create_release.outputs.upload_url }}
       version: ${{ steps.get_version.outputs.version }}
 
     steps:
@@ -42,16 +44,12 @@ jobs:
           echo "$CHANGELOG" > release_notes.md
 
       - name: Create GitHub Release
-        id: create_release
-        uses: actions/create-release@v1
+        run: |
+          gh release create "v${{ steps.get_version.outputs.version }}" \
+            --title "termiHub v${{ steps.get_version.outputs.version }}" \
+            --notes-file release_notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: v${{ steps.get_version.outputs.version }}
-          release_name: termiHub v${{ steps.get_version.outputs.version }}
-          body_path: release_notes.md
-          draft: false
-          prerelease: false
 
   build-and-upload:
     name: Build and Upload - ${{ matrix.platform }}
@@ -148,7 +146,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          releaseId: ${{ needs.create-release.outputs.release_id }}
           tagName: v${{ needs.create-release.outputs.version }}
           args: --target ${{ matrix.rust_target }} ${{ matrix.extra_args }}
 
@@ -172,14 +169,9 @@ jobs:
           echo "artifact_name=$FILENAME" >> $GITHUB_OUTPUT
 
       - name: Upload release asset
-        uses: actions/upload-release-asset@v1
+        run: gh release upload "v${{ needs.create-release.outputs.version }}" "${{ steps.find_artifact.outputs.artifact_path }}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ${{ steps.find_artifact.outputs.artifact_path }}
-          asset_name: ${{ steps.find_artifact.outputs.artifact_name }}
-          asset_content_type: application/octet-stream
 
       # Also upload .deb for Linux (skip ARM64 where .deb is already the primary artifact)
       - name: Upload .deb (Linux only)
