@@ -97,6 +97,29 @@ export interface RemoteAgentDefinition {
   capabilities?: AgentCapabilities;
 }
 
+// ── Persistent connection session state ──────────────────────────────────
+
+/** Live run-state of a persistent connection's background process. */
+export type PersistentRunState =
+  | "stopped"
+  | "starting"
+  | "running"
+  | "attached"
+  | "stopping"
+  | "error";
+
+/** Frontend state entry for one persistent connection. */
+export interface PersistentSessionEntry {
+  connectionId: string;
+  sessionId: string | null;
+  state: PersistentRunState;
+  /** IDs of tabs currently attached to this session. */
+  attachedTabIds: string[];
+  errorMessage?: string;
+}
+
+// ── Layout / activity bar ─────────────────────────────────────────────────
+
 export type ActivityBarPosition = "left" | "right" | "top" | "hidden";
 export type SidebarPosition = "left" | "right";
 

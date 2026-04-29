@@ -5,7 +5,7 @@
 //! connections. Local connections use the core backend implementations;
 //! remote connections use [`RemoteProxy`](super::remote_proxy::RemoteProxy).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -51,6 +51,32 @@ pub struct TerminalExitEvent {
     pub exit_code: Option<i32>,
 }
 
+/// State change event emitted when a persistent session transitions state.
+#[derive(Debug, Clone, Serialize)]
+pub struct PersistentSessionStateEvent {
+    pub connection_id: String,
+    pub session_id: Option<String>,
+    pub state: String,
+    pub attached_tab_count: u32,
+    pub error_message: Option<String>,
+}
+
+/// Public summary of a persistent session, returned by `list_persistent_sessions`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistentSessionSummary {
+    pub connection_id: String,
+    pub session_id: String,
+    pub attached_tab_count: u32,
+}
+
+/// Internal record for a persistent session.
+struct PersistentRecord {
+    connection_id: String,
+    session_id: String,
+    attached_tabs: HashSet<String>,
+}
+
 /// Error event emitted when a session-level error occurs.
 #[derive(Debug, Clone, Serialize)]
 #[allow(dead_code)]
@@ -73,6 +99,9 @@ pub trait EventEmitter: Clone + Send + Sync + 'static {
 
     /// Emit a session exit notification.
     fn emit_exit(&self, event: &TerminalExitEvent);
+
+    /// Emit a persistent session state change. Default no-op for test implementations.
+    fn emit_persistent_state(&self, _event: &PersistentSessionStateEvent) {}
 }
 
 impl<R: tauri::Runtime> EventEmitter for tauri::AppHandle<R> {
@@ -82,6 +111,10 @@ impl<R: tauri::Runtime> EventEmitter for tauri::AppHandle<R> {
 
     fn emit_exit(&self, event: &TerminalExitEvent) {
         let _ = self.emit("terminal-exit", event);
+    }
+
+    fn emit_persistent_state(&self, event: &PersistentSessionStateEvent) {
+        let _ = self.emit("persistent-session-state-changed", event);
     }
 }
 
@@ -120,6 +153,8 @@ pub struct SessionManager {
     agent_manager: Arc<dyn AgentRpcClient>,
     /// Abort handles for active session-monitoring push tasks, keyed by session ID.
     monitoring_tasks: Arc<Mutex<HashMap<String, tokio::task::AbortHandle>>>,
+    /// Registry for persistent sessions, keyed by connection ID.
+    persistent_sessions: Arc<Mutex<HashMap<String, PersistentRecord>>>,
 }
 
 impl SessionManager {
@@ -130,6 +165,7 @@ impl SessionManager {
             registry: Arc::new(registry),
             agent_manager,
             monitoring_tasks: Arc::new(Mutex::new(HashMap::new())),
+            persistent_sessions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -496,6 +532,195 @@ impl SessionManager {
         }
         Ok(())
     }
+
+    // ── Persistent session management ──────────────────────────────────
+
+    /// Start a persistent session for `connection_id`.
+    ///
+    /// Creates a backend session and registers it in the persistent registry.
+    /// Returns the new session ID. If a session for this connection already exists,
+    /// returns `Ok(existing_session_id)` without creating a duplicate.
+    pub async fn start_persistent_session<E: EventEmitter>(
+        &self,
+        connection_id: &str,
+        type_id: &str,
+        settings: serde_json::Value,
+        emitter: E,
+    ) -> Result<String, TerminalError> {
+        // Idempotency: if already running return the existing session ID.
+        {
+            let ps = self.persistent_sessions.lock().await;
+            if let Some(record) = ps.get(connection_id) {
+                let sessions = self.sessions.lock().await;
+                if sessions.contains_key(&record.session_id) {
+                    return Ok(record.session_id.clone());
+                }
+                // Session is registered but backend entry is gone (crashed) — fall through.
+            }
+        }
+
+        let session_id = self
+            .create_connection(type_id, settings, None, emitter.clone())
+            .await?;
+
+        {
+            let mut ps = self.persistent_sessions.lock().await;
+            ps.insert(
+                connection_id.to_string(),
+                PersistentRecord {
+                    connection_id: connection_id.to_string(),
+                    session_id: session_id.clone(),
+                    attached_tabs: HashSet::new(),
+                },
+            );
+        }
+
+        emitter.emit_persistent_state(&PersistentSessionStateEvent {
+            connection_id: connection_id.to_string(),
+            session_id: Some(session_id.clone()),
+            state: "running".to_string(),
+            attached_tab_count: 0,
+            error_message: None,
+        });
+
+        info!(connection_id, session_id, "Persistent session started");
+        Ok(session_id)
+    }
+
+    /// Stop a persistent session for `connection_id`.
+    ///
+    /// Closes the backend session and removes the persistent registry entry.
+    /// No-op if the session is not registered as persistent.
+    pub async fn stop_persistent_session<E: EventEmitter>(
+        &self,
+        connection_id: &str,
+        emitter: E,
+    ) -> Result<(), TerminalError> {
+        let record = {
+            let mut ps = self.persistent_sessions.lock().await;
+            ps.remove(connection_id)
+        };
+
+        let Some(record) = record else {
+            return Ok(());
+        };
+
+        self.close_session(&record.session_id).await?;
+
+        emitter.emit_persistent_state(&PersistentSessionStateEvent {
+            connection_id: connection_id.to_string(),
+            session_id: Some(record.session_id.clone()),
+            state: "stopped".to_string(),
+            attached_tab_count: 0,
+            error_message: None,
+        });
+
+        info!(connection_id, session_id = %record.session_id, "Persistent session stopped");
+        Ok(())
+    }
+
+    /// Register `tab_id` as attached to the persistent session for `connection_id`.
+    ///
+    /// Returns the new attached-tab count. Returns an error if the session is not
+    /// registered or the backend session is no longer alive.
+    pub async fn attach_persistent_tab<E: EventEmitter>(
+        &self,
+        connection_id: &str,
+        tab_id: &str,
+        emitter: E,
+    ) -> Result<u32, TerminalError> {
+        let count = {
+            let mut ps = self.persistent_sessions.lock().await;
+            let record = ps.get_mut(connection_id).ok_or_else(|| {
+                TerminalError::SessionNotFound(format!(
+                    "No persistent session for connection {connection_id}"
+                ))
+            })?;
+            // Verify backend session is still alive.
+            {
+                let sessions = self.sessions.lock().await;
+                if !sessions.contains_key(&record.session_id) {
+                    return Err(TerminalError::SessionNotFound(format!(
+                        "Persistent session {} for connection {} is no longer alive",
+                        record.session_id, connection_id
+                    )));
+                }
+            }
+            record.attached_tabs.insert(tab_id.to_string());
+            record.attached_tabs.len() as u32
+        };
+
+        let (sid, state) = {
+            let ps = self.persistent_sessions.lock().await;
+            let record = ps.get(connection_id).unwrap();
+            (
+                record.session_id.clone(),
+                if count > 0 { "attached" } else { "running" }.to_string(),
+            )
+        };
+
+        emitter.emit_persistent_state(&PersistentSessionStateEvent {
+            connection_id: connection_id.to_string(),
+            session_id: Some(sid),
+            state,
+            attached_tab_count: count,
+            error_message: None,
+        });
+
+        Ok(count)
+    }
+
+    /// Unregister `tab_id` from the persistent session identified by `session_id`.
+    ///
+    /// Keeps the backend session alive. Returns the new attached-tab count.
+    /// No-op (returns 0) if the session is not in the persistent registry.
+    pub async fn detach_persistent_tab<E: EventEmitter>(
+        &self,
+        session_id: &str,
+        tab_id: &str,
+        emitter: E,
+    ) -> Result<u32, TerminalError> {
+        let (connection_id, count) = {
+            let mut ps = self.persistent_sessions.lock().await;
+            let Some(record) = ps.values_mut().find(|r| r.session_id == session_id) else {
+                return Ok(0);
+            };
+            record.attached_tabs.remove(tab_id);
+            let count = record.attached_tabs.len() as u32;
+            (record.connection_id.clone(), count)
+        };
+
+        let state = if count > 0 { "attached" } else { "running" }.to_string();
+        emitter.emit_persistent_state(&PersistentSessionStateEvent {
+            connection_id: connection_id.clone(),
+            session_id: Some(session_id.to_string()),
+            state,
+            attached_tab_count: count,
+            error_message: None,
+        });
+
+        info!(
+            session_id,
+            tab_id,
+            remaining = count,
+            "Tab detached from persistent session"
+        );
+        Ok(count)
+    }
+
+    /// List all registered persistent sessions and their current state.
+    pub async fn list_persistent_sessions(&self) -> Vec<PersistentSessionSummary> {
+        let ps = self.persistent_sessions.lock().await;
+        ps.values()
+            .map(|r| PersistentSessionSummary {
+                connection_id: r.connection_id.clone(),
+                session_id: r.session_id.clone(),
+                attached_tab_count: r.attached_tabs.len() as u32,
+            })
+            .collect()
+    }
+
+    // ── End persistent session management ──────────────────────────────
 
     /// Build a human-readable title from type and settings.
     fn build_title(type_id: &str, settings: &serde_json::Value, agent_id: Option<&str>) -> String {

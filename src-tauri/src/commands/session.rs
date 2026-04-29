@@ -12,7 +12,7 @@ use tracing::{debug, info};
 use termihub_core::connection::ConnectionTypeInfo;
 use termihub_core::files::FileEntry;
 
-use crate::session::manager::SessionManager;
+use crate::session::manager::{PersistentSessionSummary, SessionManager};
 use crate::utils::errors::TerminalError;
 use crate::utils::shell_detect;
 
@@ -259,4 +259,84 @@ pub async fn session_monitoring_close(
 ) -> Result<(), TerminalError> {
     info!(session_id, "Stopping session monitoring");
     manager.stop_session_monitoring(&session_id).await
+}
+
+// --- Persistent session commands ---
+
+/// Start a persistent session for a saved connection.
+///
+/// Creates the backend process and registers it in the persistent session
+/// registry. Returns the new session ID. Idempotent: if the connection is
+/// already running, the existing session ID is returned.
+#[tauri::command]
+pub async fn start_persistent_session(
+    connection_id: String,
+    type_id: String,
+    settings: Value,
+    app_handle: tauri::AppHandle,
+    manager: State<'_, SessionManager>,
+) -> Result<String, TerminalError> {
+    info!(connection_id, type_id, "Starting persistent session");
+    manager
+        .start_persistent_session(&connection_id, &type_id, settings, app_handle)
+        .await
+}
+
+/// Stop a persistent session for a saved connection.
+///
+/// Closes the backend process and removes the persistent registry entry.
+/// All attached tabs receive the `terminal-exit` event and transition to
+/// the disconnected state. No-op if the session is not registered.
+#[tauri::command]
+pub async fn stop_persistent_session(
+    connection_id: String,
+    app_handle: tauri::AppHandle,
+    manager: State<'_, SessionManager>,
+) -> Result<(), TerminalError> {
+    info!(connection_id, "Stopping persistent session");
+    manager
+        .stop_persistent_session(&connection_id, app_handle)
+        .await
+}
+
+/// Register `tab_id` as attached to the persistent session for `connection_id`.
+///
+/// Returns an error if the session is no longer alive (the frontend should
+/// transition the connection state to `error` and let the user restart).
+#[tauri::command]
+pub async fn attach_persistent_tab(
+    connection_id: String,
+    tab_id: String,
+    app_handle: tauri::AppHandle,
+    manager: State<'_, SessionManager>,
+) -> Result<u32, TerminalError> {
+    debug!(connection_id, tab_id, "Attaching tab to persistent session");
+    manager
+        .attach_persistent_tab(&connection_id, &tab_id, app_handle)
+        .await
+}
+
+/// Unregister `tab_id` from its persistent session, keeping the backend process alive.
+///
+/// The caller must pass `session_id` (not `connection_id`) so the backend can
+/// locate the record without requiring a full connection lookup.
+#[tauri::command]
+pub async fn detach_persistent_tab(
+    session_id: String,
+    tab_id: String,
+    app_handle: tauri::AppHandle,
+    manager: State<'_, SessionManager>,
+) -> Result<u32, TerminalError> {
+    debug!(session_id, tab_id, "Detaching tab from persistent session");
+    manager
+        .detach_persistent_tab(&session_id, &tab_id, app_handle)
+        .await
+}
+
+/// Return a snapshot of all registered persistent sessions.
+#[tauri::command]
+pub async fn list_persistent_sessions(
+    manager: State<'_, SessionManager>,
+) -> Result<Vec<PersistentSessionSummary>, TerminalError> {
+    Ok(manager.list_persistent_sessions().await)
 }

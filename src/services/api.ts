@@ -88,6 +88,57 @@ export async function closeTerminal(sessionId: SessionId): Promise<void> {
   await invoke("close_terminal", { sessionId });
 }
 
+// --- Persistent session commands ---
+
+/** Summary of a persistent session returned by the backend. */
+export interface PersistentSessionSummary {
+  connectionId: string;
+  sessionId: string;
+  attachedTabCount: number;
+}
+
+/**
+ * Start a persistent background session for a saved connection.
+ * Returns the backend session ID. Idempotent: if the session is already
+ * running the existing session ID is returned.
+ */
+export async function startPersistentSession(
+  connectionId: string,
+  typeId: string,
+  settings: Record<string, unknown>
+): Promise<SessionId> {
+  return await invoke<string>("start_persistent_session", { connectionId, typeId, settings });
+}
+
+/**
+ * Stop a persistent session, terminating the background process.
+ * All attached tabs will receive a terminal-exit event.
+ */
+export async function stopPersistentSession(connectionId: string): Promise<void> {
+  await invoke("stop_persistent_session", { connectionId });
+}
+
+/**
+ * Register `tabId` as attached to the persistent session for `connectionId`.
+ * Returns the new attached-tab count.
+ */
+export async function attachPersistentTab(connectionId: string, tabId: string): Promise<number> {
+  return await invoke<number>("attach_persistent_tab", { connectionId, tabId });
+}
+
+/**
+ * Unregister `tabId` from its persistent session, keeping the process alive.
+ * Returns the new attached-tab count.
+ */
+export async function detachPersistentTab(sessionId: SessionId, tabId: string): Promise<number> {
+  return await invoke<number>("detach_persistent_tab", { sessionId, tabId });
+}
+
+/** Return all currently registered persistent sessions. */
+export async function listPersistentSessions(): Promise<PersistentSessionSummary[]> {
+  return await invoke<PersistentSessionSummary[]>("list_persistent_sessions");
+}
+
 /** List available serial ports */
 export async function listSerialPorts(): Promise<string[]> {
   return await invoke<string[]>("list_serial_ports");
