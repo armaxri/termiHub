@@ -4,6 +4,10 @@ All completed concept documents have been moved to [`handled/`](handled/) — th
 
 ## Open Concepts
 
+### app-icons.md (Issue #641)
+
+Concept for a modern, transparency-aware icon set for termiHub. Covers the application icon (deep navy radial gradient with an accent-blue `> _` prompt glyph and hub connector lines), UI icon family conventions (Lucide-compatible 24×24 SVG, `currentColor` stroke icons), per-platform size requirements (macOS `.icns`, Windows `.ico`, Linux PNG set, Windows Store tiles), style guidelines (palette drawn from CSS variables, line weights, transparency rules, WCAG contrast targets), icon state machine (inactive/hover/active/focused/disabled), connection-type badge states, AI-assisted generation prompts for both the app icon and UI icons, and a four-phase export pipeline.
+
 ### remote-client-mode.md (Issue #TBD)
 
 Concept for accessing termiHub as a web application (browser) and as an iPad app. Defines a
