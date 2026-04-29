@@ -545,6 +545,7 @@ impl SessionManager {
         connection_id: &str,
         type_id: &str,
         settings: serde_json::Value,
+        agent_id: Option<&str>,
         emitter: E,
     ) -> Result<String, TerminalError> {
         // Idempotency: if already running return the existing session ID.
@@ -560,7 +561,7 @@ impl SessionManager {
         }
 
         let session_id = self
-            .create_connection(type_id, settings, None, emitter.clone())
+            .create_connection(type_id, settings, agent_id, emitter.clone())
             .await?;
 
         {
@@ -1175,6 +1176,403 @@ mod tests {
         // No outputs recorded (emitter failed)
         let outputs = emitter.outputs.lock().unwrap();
         assert!(outputs.is_empty());
+    }
+
+    // ── MockAgentRpcClient for persistent-session tests ──────────────
+
+    use crate::connection::config::AgentSettings;
+    use crate::terminal::agent_manager::{
+        AgentCapabilities, AgentConnectResult, AgentConnectionsData, AgentDefinitionInfo,
+        AgentFolderInfo, AgentSessionInfo,
+    };
+    use crate::terminal::backend::{OutputSender, RemoteAgentConfig};
+    use termihub_core::monitoring::MonitoringSender;
+
+    /// Minimal no-op implementation — all agent methods are unreachable in
+    /// persistent-session tests because `agent_id` is always `None`.
+    struct MockAgentRpcClientForPersistentTests;
+
+    impl crate::terminal::agent_manager::AgentRpcClient for MockAgentRpcClientForPersistentTests {
+        fn connect_agent(
+            &self,
+            _: &str,
+            _: &RemoteAgentConfig,
+            _: Option<&AgentSettings>,
+        ) -> Result<AgentConnectResult, TerminalError> {
+            unreachable!()
+        }
+        fn disconnect_agent(&self, _: &str) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn is_connected(&self, _: &str) -> bool {
+            false
+        }
+        fn get_capabilities(&self, _: &str) -> Option<AgentCapabilities> {
+            None
+        }
+        fn shutdown_agent(&self, _: &str, _: Option<&str>) -> Result<u32, TerminalError> {
+            Ok(0)
+        }
+        fn send_request(
+            &self,
+            _: &str,
+            _: &str,
+            _: serde_json::Value,
+        ) -> Result<serde_json::Value, TerminalError> {
+            unreachable!()
+        }
+        fn create_session(
+            &self,
+            _: &str,
+            _: &str,
+            _: serde_json::Value,
+            _: Option<&str>,
+        ) -> Result<AgentSessionInfo, TerminalError> {
+            unreachable!()
+        }
+        fn attach_session(&self, _: &str, _: &str) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn close_session(&self, _: &str, _: &str) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn list_sessions(&self, _: &str) -> Result<Vec<AgentSessionInfo>, TerminalError> {
+            Ok(vec![])
+        }
+        fn list_connections_and_folders(
+            &self,
+            _: &str,
+        ) -> Result<AgentConnectionsData, TerminalError> {
+            unreachable!()
+        }
+        fn list_definitions(&self, _: &str) -> Result<Vec<AgentDefinitionInfo>, TerminalError> {
+            Ok(vec![])
+        }
+        fn save_definition(
+            &self,
+            _: &str,
+            _: serde_json::Value,
+        ) -> Result<AgentDefinitionInfo, TerminalError> {
+            unreachable!()
+        }
+        fn update_definition(
+            &self,
+            _: &str,
+            _: serde_json::Value,
+        ) -> Result<AgentDefinitionInfo, TerminalError> {
+            unreachable!()
+        }
+        fn delete_definition(&self, _: &str, _: &str) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn create_folder(
+            &self,
+            _: &str,
+            _: &str,
+            _: Option<&str>,
+        ) -> Result<AgentFolderInfo, TerminalError> {
+            unreachable!()
+        }
+        fn update_folder(
+            &self,
+            _: &str,
+            _: serde_json::Value,
+        ) -> Result<AgentFolderInfo, TerminalError> {
+            unreachable!()
+        }
+        fn delete_folder(&self, _: &str, _: &str) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn register_session_output(
+            &self,
+            _: &str,
+            _: &str,
+            _: OutputSender,
+        ) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn unregister_session_output(&self, _: &str, _: &str) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn register_monitoring_output(
+            &self,
+            _: &str,
+            _: &str,
+            _: MonitoringSender,
+        ) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn unregister_monitoring_output(&self, _: &str, _: &str) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn send_session_input(&self, _: &str, _: &str, _: &[u8]) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn resize_session(&self, _: &str, _: &str, _: u16, _: u16) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn apply_agent_settings(&self, _: &str, _: &AgentSettings) -> Result<(), TerminalError> {
+            Ok(())
+        }
+    }
+
+    // ── MockPersistentEmitter ─────────────────────────────────────────
+
+    #[derive(Clone, Default)]
+    struct MockPersistentEmitter {
+        persistent_events: std::sync::Arc<std::sync::Mutex<Vec<PersistentSessionStateEvent>>>,
+    }
+
+    impl MockPersistentEmitter {
+        fn new() -> Self {
+            Self::default()
+        }
+
+        fn events(&self) -> Vec<PersistentSessionStateEvent> {
+            self.persistent_events.lock().unwrap().clone()
+        }
+    }
+
+    impl EventEmitter for MockPersistentEmitter {
+        fn emit_output(&self, _event: &TerminalOutputEvent) -> bool {
+            true
+        }
+        fn emit_exit(&self, _event: &TerminalExitEvent) {}
+        fn emit_persistent_state(&self, event: &PersistentSessionStateEvent) {
+            self.persistent_events.lock().unwrap().push(event.clone());
+        }
+    }
+
+    /// Build a `SessionManager` wired with a "mock" connection type for tests.
+    fn make_test_manager() -> SessionManager {
+        let mut registry = termihub_core::connection::ConnectionTypeRegistry::new();
+        registry.register(
+            "mock",
+            "Mock",
+            "mock",
+            Box::new(|| Box::new(MockConnection)),
+        );
+        let agent_manager = Arc::new(MockAgentRpcClientForPersistentTests);
+        SessionManager::new(registry, agent_manager)
+    }
+
+    // ── Persistent session tests ──────────────────────────────────────
+
+    #[tokio::test]
+    async fn start_persistent_session_creates_record_and_emits_running() {
+        let manager = make_test_manager();
+        let emitter = MockPersistentEmitter::new();
+
+        let session_id = manager
+            .start_persistent_session(
+                "conn-p1",
+                "mock",
+                serde_json::json!({}),
+                None,
+                emitter.clone(),
+            )
+            .await
+            .expect("start should succeed");
+
+        assert!(!session_id.is_empty());
+
+        let ps = manager.persistent_sessions.lock().await;
+        assert!(ps.contains_key("conn-p1"), "record must be inserted");
+        assert_eq!(ps["conn-p1"].session_id, session_id);
+        drop(ps);
+
+        let events = emitter.events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].state, "running");
+        assert_eq!(events[0].connection_id, "conn-p1");
+        assert_eq!(events[0].session_id.as_deref(), Some(session_id.as_str()));
+        assert_eq!(events[0].attached_tab_count, 0);
+    }
+
+    #[tokio::test]
+    async fn start_persistent_session_is_idempotent() {
+        let manager = make_test_manager();
+        let emitter = MockPersistentEmitter::new();
+
+        let first = manager
+            .start_persistent_session(
+                "conn-p1",
+                "mock",
+                serde_json::json!({}),
+                None,
+                emitter.clone(),
+            )
+            .await
+            .unwrap();
+        let second = manager
+            .start_persistent_session(
+                "conn-p1",
+                "mock",
+                serde_json::json!({}),
+                None,
+                emitter.clone(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(first, second, "idempotent call must return same session ID");
+        assert_eq!(
+            emitter.events().len(),
+            1,
+            "only the first start should emit an event"
+        );
+    }
+
+    #[tokio::test]
+    async fn stop_persistent_session_removes_record_and_emits_stopped() {
+        let manager = make_test_manager();
+        let emitter = MockPersistentEmitter::new();
+
+        manager
+            .start_persistent_session(
+                "conn-p1",
+                "mock",
+                serde_json::json!({}),
+                None,
+                emitter.clone(),
+            )
+            .await
+            .unwrap();
+
+        manager
+            .stop_persistent_session("conn-p1", emitter.clone())
+            .await
+            .unwrap();
+
+        let ps = manager.persistent_sessions.lock().await;
+        assert!(
+            !ps.contains_key("conn-p1"),
+            "record must be removed on stop"
+        );
+        drop(ps);
+
+        let events = emitter.events();
+        let last = events.last().expect("at least one event");
+        assert_eq!(last.state, "stopped");
+    }
+
+    #[tokio::test]
+    async fn attach_persistent_tab_emits_attached_with_tab_count() {
+        let manager = make_test_manager();
+        let emitter = MockPersistentEmitter::new();
+
+        manager
+            .start_persistent_session(
+                "conn-p1",
+                "mock",
+                serde_json::json!({}),
+                None,
+                emitter.clone(),
+            )
+            .await
+            .unwrap();
+
+        let count = manager
+            .attach_persistent_tab("conn-p1", "tab-1", emitter.clone())
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
+
+        let events = emitter.events();
+        let last = events.last().unwrap();
+        assert_eq!(last.state, "attached");
+        assert_eq!(last.attached_tab_count, 1);
+    }
+
+    #[tokio::test]
+    async fn detach_persistent_tab_emits_running_when_no_tabs_remain() {
+        let manager = make_test_manager();
+        let emitter = MockPersistentEmitter::new();
+
+        manager
+            .start_persistent_session(
+                "conn-p1",
+                "mock",
+                serde_json::json!({}),
+                None,
+                emitter.clone(),
+            )
+            .await
+            .unwrap();
+
+        manager
+            .attach_persistent_tab("conn-p1", "tab-1", emitter.clone())
+            .await
+            .unwrap();
+
+        let session_id = {
+            let ps = manager.persistent_sessions.lock().await;
+            ps["conn-p1"].session_id.clone()
+        };
+
+        let count = manager
+            .detach_persistent_tab(&session_id, "tab-1", emitter.clone())
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+
+        let events = emitter.events();
+        let last = events.last().unwrap();
+        assert_eq!(last.state, "running");
+        assert_eq!(last.attached_tab_count, 0);
+    }
+
+    #[tokio::test]
+    async fn list_persistent_sessions_returns_registered_sessions() {
+        let manager = make_test_manager();
+        let emitter = MockPersistentEmitter::new();
+
+        let session_id = manager
+            .start_persistent_session(
+                "conn-p1",
+                "mock",
+                serde_json::json!({}),
+                None,
+                emitter.clone(),
+            )
+            .await
+            .unwrap();
+
+        let list = manager.list_persistent_sessions().await;
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].connection_id, "conn-p1");
+        assert_eq!(list[0].session_id, session_id);
+        assert_eq!(list[0].attached_tab_count, 0);
+    }
+
+    /// Verify `PersistentSessionStateEvent` serialises with snake_case field names
+    /// so the TypeScript frontend's `event.payload.connection_id` etc. resolve correctly.
+    #[test]
+    fn persistent_session_state_event_serialises_snake_case() {
+        let event = PersistentSessionStateEvent {
+            connection_id: "agent-1:def-1".to_string(),
+            session_id: Some("sess-abc".to_string()),
+            state: "running".to_string(),
+            attached_tab_count: 2,
+            error_message: None,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(
+            json.contains("\"connection_id\""),
+            "must use snake_case; got: {json}"
+        );
+        assert!(
+            json.contains("\"session_id\""),
+            "must use snake_case; got: {json}"
+        );
+        assert!(
+            json.contains("\"attached_tab_count\""),
+            "must use snake_case; got: {json}"
+        );
+        assert!(
+            !json.contains("\"connectionId\"") && !json.contains("\"sessionId\""),
+            "camelCase must not appear; got: {json}"
+        );
     }
 
     /// Tauri events are consumed by the TypeScript frontend which uses snake_case

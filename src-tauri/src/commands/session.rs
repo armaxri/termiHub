@@ -273,12 +273,19 @@ pub async fn start_persistent_session(
     connection_id: String,
     type_id: String,
     settings: Value,
+    agent_id: Option<String>,
     app_handle: tauri::AppHandle,
     manager: State<'_, SessionManager>,
 ) -> Result<String, TerminalError> {
-    info!(connection_id, type_id, "Starting persistent session");
+    info!(connection_id, type_id, agent_id = ?agent_id, "Starting persistent session");
     manager
-        .start_persistent_session(&connection_id, &type_id, settings, app_handle)
+        .start_persistent_session(
+            &connection_id,
+            &type_id,
+            settings,
+            agent_id.as_deref(),
+            app_handle,
+        )
         .await
 }
 

@@ -105,9 +105,15 @@ export interface PersistentSessionSummary {
 export async function startPersistentSession(
   connectionId: string,
   typeId: string,
-  settings: Record<string, unknown>
+  settings: Record<string, unknown>,
+  agentId?: string
 ): Promise<SessionId> {
-  return await invoke<string>("start_persistent_session", { connectionId, typeId, settings });
+  return await invoke<string>("start_persistent_session", {
+    connectionId,
+    typeId,
+    settings,
+    agentId,
+  });
 }
 
 /**
