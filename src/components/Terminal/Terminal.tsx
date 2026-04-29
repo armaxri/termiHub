@@ -6,7 +6,13 @@ import { SearchAddon } from "@xterm/addon-search";
 import "@xterm/xterm/css/xterm.css";
 import "./Terminal.css";
 import { ConnectionConfig } from "@/types/terminal";
-import { createTerminal, sendInput, resizeTerminal, closeTerminal } from "@/services/api";
+import {
+  createTerminal,
+  sendInput,
+  resizeTerminal,
+  closeTerminal,
+  detachPersistentTab,
+} from "@/services/api";
 import { terminalDispatcher } from "@/services/events";
 import { useTerminalRegistry } from "./TerminalRegistry";
 import { useAppStore } from "@/store/appStore";
@@ -104,6 +110,8 @@ interface TerminalProps {
   existingSessionId?: string | null;
   /** Optional command to send after the session connects. */
   initialCommand?: string;
+  /** When set, closing this tab detaches from the persistent session instead of killing it. */
+  persistentConnectionId?: string;
 }
 
 /**
@@ -117,6 +125,7 @@ export function Terminal({
   isVisible,
   existingSessionId,
   initialCommand,
+  persistentConnectionId,
 }: TerminalProps) {
   const retryCount = useAppStore((s) => s.terminalRetryCounters[tabId] ?? 0);
   const terminalElRef = useRef<HTMLDivElement | null>(null);
@@ -437,9 +446,16 @@ export function Terminal({
             // can cancel it before the backend session is destroyed.
             const sid = sessionIdRef.current;
             sessionIdRef.current = null;
-            pendingCloseTimerRef.current = setTimeout(() => {
-              closeTerminal(sid);
-            }, 50);
+            if (persistentConnectionId) {
+              // Detach from persistent session — backend process keeps running.
+              pendingCloseTimerRef.current = setTimeout(() => {
+                detachPersistentTab(sid, tabId).catch(() => {});
+              }, 50);
+            } else {
+              pendingCloseTimerRef.current = setTimeout(() => {
+                closeTerminal(sid);
+              }, 50);
+            }
           }
         };
       } catch (err) {

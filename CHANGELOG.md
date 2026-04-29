@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Persistent connections: SSH, serial, Docker, and WSL connections can now be started as persistent background sessions that keep the process running after the tab is closed. A `∞` badge and a colour-coded state dot appear on each persistent connection in the sidebar. Inline hover buttons and a state-aware context menu let you Start, Attach a new tab, or Stop the session. Multiple tabs can attach to the same running backend session simultaneously; closing a tab detaches without killing the process. A new `persistent-session-state-changed` Tauri event drives real-time state updates in the sidebar and store (#666).
 - Themes: added Solarized Dark and Solarized Light as built-in themes, selectable from Appearance Settings. Both themes use the canonical Ethan Schoonover palette with full ANSI 16-color and UI chrome support (#578).
 - Terminal: the scrollback buffer default is now 10 000 lines (previously 5 000) and the maximum is now 1 000 000 lines (previously 100 000). The global and per-connection scrollback settings now show a memory trade-off hint — roughly 1–2 MB per 10 000 lines of typical output (#665).
 - Concept document for modern, transparency-aware application icons (`docs/concepts/app-icons.md`): covers app icon design (deep navy gradient, accent-blue prompt glyph, hub connector lines), UI icon family conventions, per-platform size requirements, style guidelines, icon state machine, AI generation prompts, and export pipeline (#641).
