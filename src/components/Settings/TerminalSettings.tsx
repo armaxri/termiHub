@@ -37,14 +37,15 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
             type="number"
             min={100}
             max={100000}
-            value={settings.scrollbackBuffer ?? 5000}
+            value={settings.scrollbackBuffer ?? 10000}
             onChange={(e) => {
               const val = parseInt(e.target.value);
               onChange({ ...settings, scrollbackBuffer: isNaN(val) ? undefined : val });
             }}
           />
           <span className="settings-form__hint">
-            Number of lines kept in the terminal scrollback (100–100,000).
+            Number of lines kept in the terminal scrollback (100–100,000). Larger values consume
+            more memory — roughly 1–2 MB per 10 000 lines of typical output.
           </span>
         </label>
       )}

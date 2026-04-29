@@ -12,7 +12,7 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
   const globalFontFamily =
     globalSettings.fontFamily || "MesloLGS Nerd Font Mono, Cascadia Code, ...";
   const globalFontSize = globalSettings.fontSize ?? 14;
-  const globalScrollback = globalSettings.scrollbackBuffer ?? 5000;
+  const globalScrollback = globalSettings.scrollbackBuffer ?? 10000;
   const globalCursorStyle = globalSettings.cursorStyle ?? "block";
   const globalCursorBlink = globalSettings.cursorBlink ?? true;
   const globalHorizontalScrolling = globalSettings.defaultHorizontalScrolling ?? false;
@@ -65,7 +65,8 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
           placeholder={`Use global default (${globalScrollback})`}
         />
         <span className="settings-form__hint">
-          Number of lines kept in scrollback (100-100,000). Leave empty for global default.
+          Number of lines kept in scrollback (100–100,000). Leave empty for global default. Larger
+          values consume more memory — roughly 1–2 MB per 10 000 lines of typical output.
         </span>
       </label>
 
