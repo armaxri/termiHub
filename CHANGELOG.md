@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Persistent connections: SSH, serial, Docker, and WSL connections can now be started as persistent background sessions that keep the process running after the tab is closed. A `∞` badge and a colour-coded state dot appear on each persistent connection in the sidebar. Inline hover buttons and a state-aware context menu let you Start, Attach a new tab, or Stop the session. Multiple tabs can attach to the same running backend session simultaneously; closing a tab detaches without killing the process. A new `persistent-session-state-changed` Tauri event drives real-time state updates in the sidebar and store (#666).
+- Open Connections panel: a new "Open Connections" option in the settings wheel menu lists all active connections across every subsystem — local terminal sessions, connected agents, sessions running on agents, SSH tunnels, SFTP, and monitoring. Each row has a Kill button; each section has a Kill All button for bulk teardown. This is the primary place to inspect and free connection resources.
+- Serial port cleanup: closing a serial session now explicitly calls `disconnect()` on the backend before dropping it, ensuring the reader thread stops and the serial port is released immediately.
 - Themes: added Solarized Dark and Solarized Light as built-in themes, selectable from Appearance Settings. Both themes use the canonical Ethan Schoonover palette with full ANSI 16-color and UI chrome support (#578).
 - Terminal: the scrollback buffer default is now 10 000 lines (previously 5 000) and the maximum is now 1 000 000 lines (previously 100 000). The global and per-connection scrollback settings now show a memory trade-off hint — roughly 1–2 MB per 10 000 lines of typical output (#665).
 - Concept document for modern, transparency-aware application icons (`docs/concepts/app-icons.md`): covers app icon design (deep navy gradient, accent-blue prompt glyph, hub connector lines), UI icon family conventions, per-platform size requirements, style guidelines, icon state machine, AI generation prompts, and export pipeline (#641).
@@ -22,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI: main-branch builds are now marked as dev builds — the app version shown in the UI includes a `-dev` suffix and the `isDev` flag is set to `true` for all CI builds triggered from `main` (not just local `tauri dev` sessions). Release-tag builds are unaffected (#663).
 - CI: Windows NSIS setup installer (`termiHub-dev-windows-x64-setup.exe`) was not being uploaded to the `dev-latest` release — it is now uploaded alongside the existing MSI artifact (#664).
 - CI: `dev-latest` release is now created as a draft and published atomically once all platform builds and agent binaries finish uploading, preventing the partial-artifact state visible during builds (#664).
+- CI: `dev-latest` release now stays visible throughout the build process — artifacts are staged in GitHub Actions artifact storage during builds, and the release is deleted and recreated with the full artifact set only at the very end, eliminating the 10–20 minute window where no release was visible.
 
 ### Changed
 

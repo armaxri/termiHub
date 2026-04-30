@@ -2,6 +2,8 @@
 
 termiHub is a cross-platform terminal hub built with Tauri 2 (Rust backend) + React 18 (TypeScript frontend). It supports local shells, SSH, serial, and telnet connections with VS Code-inspired UI, split views, drag-and-drop tabs, and SFTP file browsing. See [docs/architecture.md](../docs/architecture.md) for the full architecture documentation.
 
+> **Connection monitoring**: The **Open Connections panel** (`src/components/OpenConnections/OpenConnectionsModal.tsx`) is the primary place to inspect and kill all open connections across every subsystem. It is accessible from the Settings wheel menu in the Activity Bar and covers local sessions, agent connections, sessions on agents, SSH tunnels, SFTP, and monitoring. When investigating connection leaks or resource cleanup issues, start here.
+
 ---
 
 ## Task Management

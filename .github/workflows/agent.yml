@@ -14,9 +14,6 @@ on:
       - 'core/**'
       - 'Cargo.toml'
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
   build:
     name: Build (${{ matrix.target }})
@@ -35,7 +32,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -69,7 +66,7 @@ jobs:
         run: CROSS_CONFIG=agent/Cross.toml cross build --release --target ${{ matrix.target }} -p termihub-agent
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact_name }}
           path: target/${{ matrix.target }}/release/termihub-agent
