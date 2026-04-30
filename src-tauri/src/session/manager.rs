@@ -6,10 +6,11 @@
 //! remote connections use [`RemoteProxy`](super::remote_proxy::RemoteProxy).
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 
 use tokio::sync::Mutex;
+use termihub_core::buffer::RingBuffer;
 
 use serde::Serialize;
 use tauri::Emitter;
@@ -29,6 +30,9 @@ use super::remote_proxy::RemoteProxy;
 
 /// Maximum number of concurrent sessions.
 const MAX_SESSIONS: usize = 50;
+
+/// Ring buffer size for persistent session output replay (1 MiB).
+const PERSISTENT_BUFFER_SIZE: usize = 1_048_576;
 
 /// Maximum coalesced output size per emit (32 KB).
 const MAX_COALESCE_BYTES: usize = 32 * 1024;
@@ -75,6 +79,8 @@ struct PersistentRecord {
     connection_id: String,
     session_id: String,
     attached_tabs: HashSet<String>,
+    /// Circular output buffer — captures output even when no tab is attached.
+    output_buffer: Arc<StdMutex<RingBuffer>>,
 }
 
 /// Error event emitted when a session-level error occurs.
@@ -182,6 +188,7 @@ impl SessionManager {
         settings: serde_json::Value,
         agent_id: Option<&str>,
         emitter: E,
+        output_buffer: Option<Arc<StdMutex<RingBuffer>>>,
     ) -> Result<String, TerminalError> {
         // Enforce session limit.
         {
@@ -255,8 +262,15 @@ impl SessionManager {
         let sessions_clone = self.sessions.clone();
         let sid = session_id.clone();
         tokio::spawn(async move {
-            Self::run_output_reader(sid, output_rx, emitter, sessions_clone, has_initial_command)
-                .await;
+            Self::run_output_reader(
+                sid,
+                output_rx,
+                emitter,
+                sessions_clone,
+                has_initial_command,
+                output_buffer,
+            )
+            .await;
         });
 
         // Send initial command after a short delay.
@@ -560,8 +574,15 @@ impl SessionManager {
             }
         }
 
+        let ring_buffer = Arc::new(StdMutex::new(RingBuffer::new(PERSISTENT_BUFFER_SIZE)));
         let session_id = self
-            .create_connection(type_id, settings, agent_id, emitter.clone())
+            .create_connection(
+                type_id,
+                settings,
+                agent_id,
+                emitter.clone(),
+                Some(ring_buffer.clone()),
+            )
             .await?;
 
         {
@@ -572,6 +593,7 @@ impl SessionManager {
                     connection_id: connection_id.to_string(),
                     session_id: session_id.clone(),
                     attached_tabs: HashSet::new(),
+                    output_buffer: ring_buffer,
                 },
             );
         }
@@ -721,6 +743,19 @@ impl SessionManager {
             .collect()
     }
 
+    /// Return all output buffered so far for a persistent session.
+    ///
+    /// Returns an empty `Vec` if the connection ID is unknown.
+    /// The buffer is NOT cleared — the same bytes will be returned on the
+    /// next call (only the most-recent 1 MiB is retained due to ring-buffer
+    /// wrapping).
+    pub async fn get_persistent_session_buffer(&self, connection_id: &str) -> Vec<u8> {
+        let ps = self.persistent_sessions.lock().await;
+        ps.get(connection_id)
+            .and_then(|r| r.output_buffer.lock().ok().map(|rb| rb.read_all()))
+            .unwrap_or_default()
+    }
+
     // ── End persistent session management ──────────────────────────────
 
     /// Build a human-readable title from type and settings.
@@ -796,6 +831,7 @@ impl SessionManager {
         emitter: E,
         sessions: Arc<Mutex<HashMap<String, SessionEntry>>>,
         wait_for_clear: bool,
+        output_buffer: Option<Arc<StdMutex<RingBuffer>>>,
     ) {
         // Phase 1: optionally buffer until the screen-clear sequence.
         if wait_for_clear {
@@ -810,6 +846,11 @@ impl SessionManager {
                 }
                 match tokio::time::timeout(remaining, output_rx.recv()).await {
                     Ok(Some(chunk)) => {
+                        if let Some(ref buf) = output_buffer {
+                            if let Ok(mut rb) = buf.lock() {
+                                rb.write(&chunk);
+                            }
+                        }
                         buffer.extend_from_slice(&chunk);
                         if contains_screen_clear(&buffer) {
                             break;
@@ -839,12 +880,24 @@ impl SessionManager {
         // Phase 2: normal streaming with coalescing.
         let mut coalescer = OutputCoalescer::new(MAX_COALESCE_BYTES);
         while let Some(first_chunk) = output_rx.recv().await {
+            if let Some(ref buf) = output_buffer {
+                if let Ok(mut rb) = buf.lock() {
+                    rb.write(&first_chunk);
+                }
+            }
             coalescer.push(&first_chunk);
 
             // Drain any immediately available chunks.
             while coalescer.pending_len() < MAX_COALESCE_BYTES {
                 match output_rx.try_recv() {
-                    Ok(chunk) => coalescer.push(&chunk),
+                    Ok(chunk) => {
+                        if let Some(ref buf) = output_buffer {
+                            if let Ok(mut rb) = buf.lock() {
+                                rb.write(&chunk);
+                            }
+                        }
+                        coalescer.push(&chunk);
+                    }
                     Err(_) => break,
                 }
             }
@@ -1135,6 +1188,7 @@ mod tests {
             emitter.clone(),
             sessions.clone(),
             false,
+            None,
         )
         .await;
 
@@ -1170,6 +1224,7 @@ mod tests {
             emitter.clone(),
             sessions,
             false,
+            None,
         )
         .await;
 

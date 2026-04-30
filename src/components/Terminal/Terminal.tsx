@@ -12,6 +12,7 @@ import {
   resizeTerminal,
   closeTerminal,
   detachPersistentTab,
+  getPersistentSessionBuffer,
 } from "@/services/api";
 import { terminalDispatcher } from "@/services/events";
 import { useTerminalRegistry } from "./TerminalRegistry";
@@ -227,8 +228,18 @@ export function Terminal({
         let sessionId: string;
         if (initialSessionIdRef.current) {
           sessionId = initialSessionIdRef.current;
-          // Workspace-restore: PTY dims unknown — leave ptyCols/ptyRows at 0
-          // so the post-setup resize always fires to re-sync xterm with the PTY.
+          // For persistent re-attach, replay buffered output before subscribing
+          // to live events so the scrollback is visible from the start.
+          if (persistentConnectionId) {
+            try {
+              const buf = await getPersistentSessionBuffer(persistentConnectionId);
+              if (buf.length > 0) {
+                xterm.write(buf);
+              }
+            } catch {
+              // Non-fatal: continue without replay if fetch fails.
+            }
+          }
         } else {
           let attempt = 0;
           let resolved: string | null = null;

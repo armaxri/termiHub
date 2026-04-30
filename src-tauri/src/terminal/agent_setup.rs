@@ -148,6 +148,7 @@ pub fn setup_remote_agent(
         settings,
         None,
         app_handle.clone(),
+        None,
     ))?;
 
     info!(

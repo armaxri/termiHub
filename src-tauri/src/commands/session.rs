@@ -31,7 +31,7 @@ pub async fn create_connection(
 ) -> Result<String, TerminalError> {
     info!(type_id, agent_id = ?agent_id, "Creating connection");
     manager
-        .create_connection(&type_id, settings, agent_id.as_deref(), app_handle)
+        .create_connection(&type_id, settings, agent_id.as_deref(), app_handle, None)
         .await
 }
 
@@ -346,4 +346,16 @@ pub async fn list_persistent_sessions(
     manager: State<'_, SessionManager>,
 ) -> Result<Vec<PersistentSessionSummary>, TerminalError> {
     Ok(manager.list_persistent_sessions().await)
+}
+
+/// Return the scrollback buffer for a persistent session.
+///
+/// The buffer contains up to the last 1 MiB of output and can be written
+/// directly to an xterm instance when re-attaching a tab.
+#[tauri::command]
+pub async fn get_persistent_session_buffer(
+    connection_id: String,
+    manager: State<'_, SessionManager>,
+) -> Result<Vec<u8>, TerminalError> {
+    Ok(manager.get_persistent_session_buffer(&connection_id).await)
 }

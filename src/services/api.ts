@@ -145,6 +145,12 @@ export async function listPersistentSessions(): Promise<PersistentSessionSummary
   return await invoke<PersistentSessionSummary[]>("list_persistent_sessions");
 }
 
+/** Fetch the scrollback buffer for a persistent session (up to 1 MiB). */
+export async function getPersistentSessionBuffer(connectionId: string): Promise<Uint8Array> {
+  const bytes = await invoke<number[]>("get_persistent_session_buffer", { connectionId });
+  return new Uint8Array(bytes);
+}
+
 /** List available serial ports */
 export async function listSerialPorts(): Promise<string[]> {
   return await invoke<string[]>("list_serial_ports");

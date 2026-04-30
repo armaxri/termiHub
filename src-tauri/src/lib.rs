@@ -362,6 +362,7 @@ pub fn run() {
             commands::session::attach_persistent_tab,
             commands::session::detach_persistent_tab,
             commands::session::list_persistent_sessions,
+            commands::session::get_persistent_session_buffer,
             // Connection management
             commands::connection::load_connections_and_folders,
             commands::connection::save_connection,
