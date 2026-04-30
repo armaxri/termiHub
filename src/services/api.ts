@@ -88,6 +88,20 @@ export async function closeTerminal(sessionId: SessionId): Promise<void> {
   await invoke("close_terminal", { sessionId });
 }
 
+/** Info about a local session managed by the desktop. */
+export interface LocalSessionInfo {
+  id: string;
+  title: string;
+  connectionType: string;
+  alive: boolean;
+  agentId?: string;
+}
+
+/** List all active local sessions (includes remote proxy sessions). */
+export async function listLocalSessions(): Promise<LocalSessionInfo[]> {
+  return await invoke<LocalSessionInfo[]>("list_local_sessions");
+}
+
 /** List available serial ports */
 export async function listSerialPorts(): Promise<string[]> {
   return await invoke<string[]>("list_serial_ports");
@@ -545,6 +559,11 @@ export async function getAgentCapabilities(agentId: string): Promise<AgentCapabi
 /** List active sessions on an agent. */
 export async function listAgentSessions(agentId: string): Promise<AgentSessionInfo[]> {
   return await invoke<AgentSessionInfo[]>("list_agent_sessions", { agentId });
+}
+
+/** Close a specific session on a remote agent (frees serial port, SSH channel, etc.). */
+export async function closeAgentSession(agentId: string, sessionId: string): Promise<void> {
+  await invoke("close_agent_session", { agentId, sessionId });
 }
 
 /** List saved session definitions on an agent. */

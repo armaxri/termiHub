@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import {
   Network,
   FolderOpen,
@@ -11,6 +11,7 @@ import {
   ScrollText,
   LayoutDashboard,
   Stethoscope,
+  Activity,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as ContextMenu from "@radix-ui/react-context-menu";
@@ -18,6 +19,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { readTextFile } from "@tauri-apps/plugin-fs";
 import { useAppStore, SidebarView } from "@/store/appStore";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
+import { OpenConnectionsModal } from "@/components/OpenConnections/OpenConnectionsModal";
 import { ActivityBarItem } from "./ActivityBarItem";
 import "./ActivityBar.css";
 
@@ -47,6 +49,7 @@ interface ActivityBarProps {
 }
 
 export function ActivityBar({ horizontal }: ActivityBarProps) {
+  const [connectionsModalOpen, setConnectionsModalOpen] = useState(false);
   const sidebarView = useAppStore((s) => s.sidebarView);
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
   const setSidebarView = useAppStore((s) => s.setSidebarView);
@@ -148,6 +151,14 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
                     <LayoutDashboard size={14} />
                     Customize Layout...
                   </DropdownMenu.Item>
+                  <DropdownMenu.Item
+                    className="settings-menu__item"
+                    onSelect={() => setConnectionsModalOpen(true)}
+                    data-testid="settings-menu-open-connections"
+                  >
+                    <Activity size={14} />
+                    Open Connections
+                  </DropdownMenu.Item>
                   <DropdownMenu.Separator className="settings-menu__separator" />
                   <DropdownMenu.Item
                     className="settings-menu__item"
@@ -209,6 +220,7 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
           })}
         </ContextMenu.Content>
       </ContextMenu.Portal>
+      <OpenConnectionsModal open={connectionsModalOpen} onOpenChange={setConnectionsModalOpen} />
     </ContextMenu.Root>
   );
 }

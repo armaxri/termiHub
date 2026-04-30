@@ -93,6 +93,9 @@ pub struct SessionInfo {
     pub title: String,
     pub connection_type: String,
     pub alive: bool,
+    /// Set when the session is a remote proxy; identifies the agent it runs on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
 }
 
 /// Internal session entry held by the manager.
@@ -195,6 +198,7 @@ impl SessionManager {
             title,
             connection_type: type_id.to_string(),
             alive: true,
+            agent_id: agent_id.map(|s| s.to_string()),
         };
 
         // Store session.
@@ -285,19 +289,21 @@ impl SessionManager {
     }
 
     /// Close a session.
+    ///
+    /// Explicitly calls [`ConnectionType::disconnect`] before dropping the entry
+    /// so that backends that release resources in `disconnect()` (not just `Drop`)
+    /// — notably Serial, which clears `output_tx` to stop its reader thread —
+    /// are cleaned up immediately.
     pub async fn close_session(&self, session_id: &str) -> Result<(), TerminalError> {
         let mut sessions = self.sessions.lock().await;
-        if let Some(_entry) = sessions.remove(session_id) {
-            // Connection will be dropped, triggering cleanup.
-            // For async disconnect, we'd need to spawn a task, but drop
-            // should handle cleanup for well-behaved backends.
+        if let Some(mut entry) = sessions.remove(session_id) {
+            entry.connection.disconnect().await.ok();
             info!(session_id, "Closed session");
         }
         Ok(())
     }
 
     /// List all active sessions.
-    #[allow(dead_code)]
     pub async fn list_sessions(&self) -> Vec<SessionInfo> {
         let sessions = self.sessions.lock().await;
         sessions
@@ -560,6 +566,25 @@ impl SessionManager {
         }
     }
 
+    /// Insert a raw session entry for testing.
+    #[cfg(test)]
+    pub async fn insert_test_session(&self, session_id: &str, connection: Box<dyn ConnectionType>) {
+        let mut sessions = self.sessions.lock().await;
+        sessions.insert(
+            session_id.to_string(),
+            SessionEntry {
+                connection,
+                info: SessionInfo {
+                    id: session_id.to_string(),
+                    title: "test".to_string(),
+                    connection_type: "mock".to_string(),
+                    alive: true,
+                    agent_id: None,
+                },
+            },
+        );
+    }
+
     /// Read output from a connection and emit Tauri events.
     ///
     /// Coalesces pending output chunks into a single event (up to
@@ -672,10 +697,22 @@ impl SessionManager {
 mod tests {
     use super::*;
 
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use serde_json::Value;
     use termihub_core::connection::{Capabilities, OutputReceiver, SettingsSchema};
     use termihub_core::errors::SessionError;
     use termihub_core::files::FileBrowser;
     use termihub_core::monitoring::MonitoringProvider;
+
+    use termihub_core::monitoring::MonitoringSender;
+
+    use crate::connection::config::AgentSettings;
+    use crate::terminal::agent_manager::{
+        AgentCapabilities, AgentConnectResult, AgentConnectionsData, AgentDefinitionInfo,
+        AgentFolderInfo, AgentRpcClient, AgentSessionInfo,
+    };
+    use crate::terminal::backend::{OutputSender, RemoteAgentConfig};
 
     /// A minimal mock connection without file browser capability.
     struct MockConnection;
@@ -739,6 +776,7 @@ mod tests {
                     title: "Mock".to_string(),
                     connection_type: "mock".to_string(),
                     alive: true,
+                    agent_id: None,
                 },
             },
         );
@@ -950,6 +988,207 @@ mod tests {
         // No outputs recorded (emitter failed)
         let outputs = emitter.outputs.lock().unwrap();
         assert!(outputs.is_empty());
+    }
+
+    // ── DisconnectSpy ─────────────────────────────────────────────────
+
+    /// A connection that records whether `disconnect()` was called.
+    struct DisconnectSpy {
+        disconnected: Arc<AtomicBool>,
+    }
+
+    impl DisconnectSpy {
+        fn new(flag: Arc<AtomicBool>) -> Self {
+            Self { disconnected: flag }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ConnectionType for DisconnectSpy {
+        fn type_id(&self) -> &str {
+            "spy"
+        }
+        fn display_name(&self) -> &str {
+            "Spy"
+        }
+        fn settings_schema(&self) -> SettingsSchema {
+            SettingsSchema { groups: vec![] }
+        }
+        fn capabilities(&self) -> Capabilities {
+            Capabilities {
+                monitoring: false,
+                file_browser: false,
+                resize: false,
+                persistent: false,
+            }
+        }
+        async fn connect(&mut self, _: serde_json::Value) -> Result<(), SessionError> {
+            Ok(())
+        }
+        async fn disconnect(&mut self) -> Result<(), SessionError> {
+            self.disconnected.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+        fn is_connected(&self) -> bool {
+            true
+        }
+        fn write(&self, _: &[u8]) -> Result<(), SessionError> {
+            Ok(())
+        }
+        fn resize(&self, _: u16, _: u16) -> Result<(), SessionError> {
+            Ok(())
+        }
+        fn subscribe_output(&self) -> OutputReceiver {
+            let (_tx, rx) = tokio::sync::mpsc::channel(1);
+            rx
+        }
+        fn monitoring(&self) -> Option<&dyn MonitoringProvider> {
+            None
+        }
+        fn file_browser(&self) -> Option<&dyn FileBrowser> {
+            None
+        }
+    }
+
+    // ── NullAgent ────────────────────────────────────────────────────
+
+    /// A no-op `AgentRpcClient` for tests that construct a full `SessionManager`.
+    struct NullAgent;
+
+    impl AgentRpcClient for NullAgent {
+        fn connect_agent(
+            &self,
+            _: &str,
+            _: &RemoteAgentConfig,
+            _: Option<&AgentSettings>,
+        ) -> Result<AgentConnectResult, TerminalError> {
+            unimplemented!()
+        }
+        fn disconnect_agent(&self, _: &str) -> Result<(), TerminalError> {
+            unimplemented!()
+        }
+        fn is_connected(&self, _: &str) -> bool {
+            false
+        }
+        fn get_capabilities(&self, _: &str) -> Option<AgentCapabilities> {
+            None
+        }
+        fn shutdown_agent(&self, _: &str, _: Option<&str>) -> Result<u32, TerminalError> {
+            unimplemented!()
+        }
+        fn send_request(&self, _: &str, _: &str, _: Value) -> Result<Value, TerminalError> {
+            unimplemented!()
+        }
+        fn create_session(
+            &self,
+            _: &str,
+            _: &str,
+            _: Value,
+            _: Option<&str>,
+        ) -> Result<AgentSessionInfo, TerminalError> {
+            unimplemented!()
+        }
+        fn attach_session(&self, _: &str, _: &str) -> Result<(), TerminalError> {
+            unimplemented!()
+        }
+        fn close_session(&self, _: &str, _: &str) -> Result<(), TerminalError> {
+            unimplemented!()
+        }
+        fn list_sessions(&self, _: &str) -> Result<Vec<AgentSessionInfo>, TerminalError> {
+            unimplemented!()
+        }
+        fn list_connections_and_folders(
+            &self,
+            _: &str,
+        ) -> Result<AgentConnectionsData, TerminalError> {
+            unimplemented!()
+        }
+        fn list_definitions(&self, _: &str) -> Result<Vec<AgentDefinitionInfo>, TerminalError> {
+            unimplemented!()
+        }
+        fn save_definition(&self, _: &str, _: Value) -> Result<AgentDefinitionInfo, TerminalError> {
+            unimplemented!()
+        }
+        fn update_definition(
+            &self,
+            _: &str,
+            _: Value,
+        ) -> Result<AgentDefinitionInfo, TerminalError> {
+            unimplemented!()
+        }
+        fn delete_definition(&self, _: &str, _: &str) -> Result<(), TerminalError> {
+            unimplemented!()
+        }
+        fn create_folder(
+            &self,
+            _: &str,
+            _: &str,
+            _: Option<&str>,
+        ) -> Result<AgentFolderInfo, TerminalError> {
+            unimplemented!()
+        }
+        fn update_folder(&self, _: &str, _: Value) -> Result<AgentFolderInfo, TerminalError> {
+            unimplemented!()
+        }
+        fn delete_folder(&self, _: &str, _: &str) -> Result<(), TerminalError> {
+            unimplemented!()
+        }
+        fn register_session_output(
+            &self,
+            _: &str,
+            _: &str,
+            _: OutputSender,
+        ) -> Result<(), TerminalError> {
+            unimplemented!()
+        }
+        fn unregister_session_output(&self, _: &str, _: &str) -> Result<(), TerminalError> {
+            unimplemented!()
+        }
+        fn register_monitoring_output(
+            &self,
+            _: &str,
+            _: &str,
+            _: MonitoringSender,
+        ) -> Result<(), TerminalError> {
+            unimplemented!()
+        }
+        fn unregister_monitoring_output(&self, _: &str, _: &str) -> Result<(), TerminalError> {
+            unimplemented!()
+        }
+        fn send_session_input(&self, _: &str, _: &str, _: &[u8]) -> Result<(), TerminalError> {
+            unimplemented!()
+        }
+        fn resize_session(&self, _: &str, _: &str, _: u16, _: u16) -> Result<(), TerminalError> {
+            unimplemented!()
+        }
+        fn apply_agent_settings(&self, _: &str, _: &AgentSettings) -> Result<(), TerminalError> {
+            unimplemented!()
+        }
+    }
+
+    // ── Regression test: close_session must call disconnect() ─────────
+
+    /// Regression test for the serial port cleanup bug.
+    ///
+    /// Before the fix, `close_session()` removed the entry without calling
+    /// `disconnect()`. Serial's reader thread only stops when `disconnect()`
+    /// clears `output_tx`. This test verifies that `disconnect()` is called.
+    #[tokio::test]
+    async fn close_session_calls_disconnect_on_connection() {
+        let registry = ConnectionTypeRegistry::new();
+        let manager = SessionManager::new(registry, Arc::new(NullAgent));
+
+        let disconnected = Arc::new(AtomicBool::new(false));
+        let spy = DisconnectSpy::new(disconnected.clone());
+
+        manager.insert_test_session("spy-1", Box::new(spy)).await;
+
+        manager.close_session("spy-1").await.unwrap();
+
+        assert!(
+            disconnected.load(Ordering::SeqCst),
+            "disconnect() must be called when a session is closed"
+        );
     }
 
     /// Tauri events are consumed by the TypeScript frontend which uses snake_case
