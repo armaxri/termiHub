@@ -29,6 +29,7 @@ import { SecuritySettings } from "./SecuritySettings";
 import { FileTypeSettings } from "./FileTypeSettings";
 import { LanguagePackagesSettings } from "./LanguagePackagesSettings";
 import { CustomGrammarsSettings } from "./CustomGrammarsSettings";
+import { SerialPortSettings } from "./SerialPortSettings";
 import { PortableModeSettings } from "./PortableModeSettings";
 import { UpdateSettings } from "./UpdateSettings";
 import { AboutSettings } from "./AboutSettings";
@@ -253,6 +254,7 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
             visibleFields={visibleFields}
           />
         );
+        sections.push(<SerialPortSettings key="serial-ports" visibleFields={visibleFields} />);
       }
       if (highlightedCategories?.has("appearance")) {
         sections.push(
@@ -306,7 +308,12 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
 
     switch (activeCategory) {
       case "general":
-        return <GeneralSettings settings={settings} onChange={handleSettingsChange} />;
+        return (
+          <>
+            <GeneralSettings settings={settings} onChange={handleSettingsChange} />
+            <SerialPortSettings />
+          </>
+        );
       case "appearance":
         return <AppearanceSettings settings={settings} onChange={handleSettingsChange} />;
       case "terminal":

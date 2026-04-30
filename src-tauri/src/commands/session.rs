@@ -12,6 +12,7 @@ use tracing::{debug, info};
 use termihub_core::connection::ConnectionTypeInfo;
 use termihub_core::files::FileEntry;
 
+use crate::connection::manager::ConnectionManager;
 use crate::session::manager::{SessionInfo, SessionManager};
 use crate::utils::errors::TerminalError;
 use crate::utils::shell_detect;
@@ -94,10 +95,23 @@ pub fn get_default_shell() -> Option<String> {
     shell_detect::detect_default_shell()
 }
 
-/// List available serial ports.
+/// List available serial ports, respecting the user-configured prefix set.
+///
+/// When no prefix list has been saved, all built-in prefixes are used.
 #[tauri::command]
-pub fn list_serial_ports() -> Vec<String> {
-    termihub_core::session::serial::list_serial_ports()
+pub fn list_serial_ports(conn_manager: State<'_, ConnectionManager>) -> Vec<String> {
+    let settings = conn_manager.get_settings();
+    match &settings.serial_port_scan_prefixes {
+        Some(prefixes) => {
+            let enabled: Vec<&str> = prefixes
+                .iter()
+                .filter(|p| p.enabled)
+                .map(|p| p.prefix.as_str())
+                .collect();
+            termihub_core::session::serial::list_serial_ports_with_enabled_prefixes(&enabled)
+        }
+        None => termihub_core::session::serial::list_serial_ports(),
+    }
 }
 
 /// Check if a local X server is available for X11 forwarding.

@@ -144,6 +144,14 @@ export const LAYOUT_PRESETS: Record<string, LayoutConfig> = {
   },
 };
 
+/** A Linux `/dev` prefix entry for the serial port scanner. */
+export interface SerialPortScanPrefix {
+  prefix: string;
+  enabled: boolean;
+  /** `true` = shipped with termiHub; `false` = user-added. */
+  builtIn: boolean;
+}
+
 export interface AppSettings {
   version: string;
   externalConnectionFiles: ExternalFileConfig[];
@@ -188,6 +196,8 @@ export interface AppSettings {
   customLanguageGrammars?: CustomLanguageGrammar[];
   experimentalFeaturesEnabled?: boolean;
   updates?: UpdateSettings;
+  /** Linux `/dev` prefixes used when scanning for serial ports. Always present after `get_settings` (expanded from built-in defaults if never saved). */
+  serialPortScanPrefixes?: SerialPortScanPrefix[];
 }
 
 /**
