@@ -347,3 +347,83 @@
   padding: 6px 0 2px;
   user-select: none;
 }
+
+/* ── Persistent connection session styles ─────────────────────────────────── */
+
+.connection-tree__persistent-badge {
+  font-size: 20px;
+  line-height: 1;
+  flex-shrink: 0;
+  margin-left: 3px;
+  opacity: 1;
+  font-style: normal;
+  position: relative;
+  top: -3px;
+}
+
+.connection-tree__state-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  align-self: center;
+  background-color: var(--text-secondary);
+  position: relative;
+  top: 0;
+}
+
+.connection-tree__state-dot--running {
+  background-color: var(--state-connected);
+}
+
+.connection-tree__state-dot--transitioning {
+  background-color: var(--state-connecting);
+  animation: pulse-dot 1.2s ease-in-out infinite;
+}
+
+.connection-tree__state-dot--stopped {
+  background-color: var(--text-secondary);
+  opacity: 0.4;
+}
+
+.connection-tree__state-dot--error {
+  background-color: var(--color-error);
+}
+
+/* Hover-action buttons (Start / Attach / Stop) */
+.connection-tree__persistent-actions {
+  display: none;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.connection-tree__item--persistent:hover .connection-tree__persistent-actions {
+  display: flex;
+}
+
+.connection-tree__action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.connection-tree__action-btn:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.connection-tree__action-btn--danger:hover {
+  background-color: color-mix(in srgb, var(--color-error) 15%, transparent);
+  color: var(--color-error);
+}

@@ -60,6 +60,8 @@ export interface AgentSettings {
   startingDirectory: string;
   logLevel: "error" | "warn" | "info" | "debug" | "trace";
   verboseTracing: boolean;
+  /** Ring-buffer size for persistent sessions in MiB (1–64). */
+  persistentScrollbackBufferSizeMb: number;
 }
 
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
@@ -70,6 +72,7 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   startingDirectory: "~",
   logLevel: "info",
   verboseTracing: false,
+  persistentScrollbackBufferSizeMb: 1,
 };
 
 /** Capabilities reported by a connected remote agent. */
@@ -96,6 +99,29 @@ export interface RemoteAgentDefinition {
   connectionState: "disconnected" | "connecting" | "connected" | "reconnecting";
   capabilities?: AgentCapabilities;
 }
+
+// ── Persistent connection session state ──────────────────────────────────
+
+/** Live run-state of a persistent connection's background process. */
+export type PersistentRunState =
+  | "stopped"
+  | "starting"
+  | "running"
+  | "attached"
+  | "stopping"
+  | "error";
+
+/** Frontend state entry for one persistent connection. */
+export interface PersistentSessionEntry {
+  connectionId: string;
+  sessionId: string | null;
+  state: PersistentRunState;
+  /** IDs of tabs currently attached to this session. */
+  attachedTabIds: string[];
+  errorMessage?: string;
+}
+
+// ── Layout / activity bar ─────────────────────────────────────────────────
 
 export type ActivityBarPosition = "left" | "right" | "top" | "hidden";
 export type SidebarPosition = "left" | "right";
@@ -144,6 +170,14 @@ export const LAYOUT_PRESETS: Record<string, LayoutConfig> = {
   },
 };
 
+/** A Linux `/dev` prefix entry for the serial port scanner. */
+export interface SerialPortScanPrefix {
+  prefix: string;
+  enabled: boolean;
+  /** `true` = shipped with termiHub; `false` = user-added. */
+  builtIn: boolean;
+}
+
 export interface AppSettings {
   version: string;
   externalConnectionFiles: ExternalFileConfig[];
@@ -188,6 +222,8 @@ export interface AppSettings {
   customLanguageGrammars?: CustomLanguageGrammar[];
   experimentalFeaturesEnabled?: boolean;
   updates?: UpdateSettings;
+  /** Linux `/dev` prefixes used when scanning for serial ports. Always present after `get_settings` (expanded from built-in defaults if never saved). */
+  serialPortScanPrefixes?: SerialPortScanPrefix[];
 }
 
 /**

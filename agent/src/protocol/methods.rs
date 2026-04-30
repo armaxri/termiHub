@@ -37,6 +37,9 @@ pub struct AgentSettings {
     pub log_level: String,
     #[serde(default)]
     pub verbose_tracing: bool,
+    /// Ring-buffer size for persistent sessions in MiB (default: 1).
+    #[serde(default = "default_persistent_buffer_mb")]
+    pub persistent_scrollback_buffer_size_mb: u32,
 }
 
 fn default_true() -> bool {
@@ -45,6 +48,10 @@ fn default_true() -> bool {
 
 fn default_log_level() -> String {
     "info".to_string()
+}
+
+fn default_persistent_buffer_mb() -> u32 {
+    1
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -176,6 +183,20 @@ pub struct SessionResizeParams {
     pub session_id: String,
     pub cols: u16,
     pub rows: u16,
+}
+
+// ── session.getBuffer ───────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SessionGetBufferParams {
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionGetBufferResult {
+    pub session_id: String,
+    /// Base64-encoded ring buffer contents.
+    pub data: String,
 }
 
 // ── health.check ────────────────────────────────────────────────────

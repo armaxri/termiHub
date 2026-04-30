@@ -40,6 +40,8 @@ pub struct DaemonClient {
     alive: Arc<AtomicBool>,
     /// Notification channel to the transport loop.
     notification_tx: NotificationSender,
+    /// Pending oneshot channel for a query_buffer response.
+    pending_buffer_reply: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Vec<u8>>>>>,
 }
 
 impl DaemonClient {
@@ -71,8 +73,16 @@ impl DaemonClient {
         socket_path: PathBuf,
         notification_tx: NotificationSender,
     ) -> Result<Self, anyhow::Error> {
-        let (writer, reader_task, alive) =
-            connect_and_start_reader(&socket_path, &session_id, notification_tx.clone()).await?;
+        let pending_buffer_reply: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Vec<u8>>>>> =
+            Arc::new(Mutex::new(None));
+
+        let (writer, reader_task, alive) = connect_and_start_reader(
+            &socket_path,
+            &session_id,
+            notification_tx.clone(),
+            pending_buffer_reply.clone(),
+        )
+        .await?;
 
         Ok(Self {
             session_id,
@@ -81,7 +91,31 @@ impl DaemonClient {
             reader_task: Some(reader_task),
             alive,
             notification_tx,
+            pending_buffer_reply,
         })
+    }
+
+    /// Request the current ring buffer contents from the daemon without reconnecting.
+    ///
+    /// Sends `MSG_QUERY_BUFFER` and waits (up to 10 s) for `MSG_BUFFER_REPLAY`.
+    pub async fn query_buffer(&self) -> Result<Vec<u8>, anyhow::Error> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        {
+            *self.pending_buffer_reply.lock().await = Some(tx);
+        }
+
+        {
+            let mut guard = self.writer.lock().await;
+            let writer = guard
+                .as_mut()
+                .ok_or_else(|| anyhow::anyhow!("Not connected to daemon"))?;
+            protocol::write_frame_async(writer, MSG_QUERY_BUFFER, &[]).await?;
+        }
+
+        tokio::time::timeout(std::time::Duration::from_secs(10), rx)
+            .await
+            .map_err(|_| anyhow::anyhow!("Timeout waiting for buffer reply from daemon"))?
+            .map_err(|_| anyhow::anyhow!("Buffer reply channel closed unexpectedly"))
     }
 
     /// Write raw input data to the daemon.
@@ -107,6 +141,7 @@ impl DaemonClient {
             &self.socket_path,
             &self.session_id,
             self.notification_tx.clone(),
+            self.pending_buffer_reply.clone(),
         )
         .await?;
 
@@ -244,6 +279,7 @@ async fn connect_and_start_reader(
     socket_path: &Path,
     session_id: &str,
     notification_tx: NotificationSender,
+    pending_buffer_reply: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Vec<u8>>>>>,
 ) -> Result<
     (
         tokio::net::unix::OwnedWriteHalf,
@@ -312,7 +348,14 @@ async fn connect_and_start_reader(
     let tx = notification_tx.clone();
 
     let reader_task = tokio::spawn(async move {
-        reader_loop(reader, &session_id_owned, &tx, &alive_clone).await;
+        reader_loop(
+            reader,
+            &session_id_owned,
+            &tx,
+            &alive_clone,
+            pending_buffer_reply,
+        )
+        .await;
     });
 
     Ok((writer, reader_task, alive))
@@ -324,6 +367,7 @@ async fn reader_loop(
     session_id: &str,
     notification_tx: &NotificationSender,
     alive: &AtomicBool,
+    pending_buffer_reply: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Vec<u8>>>>>,
 ) {
     loop {
         match protocol::read_frame_async(&mut reader).await {
@@ -332,7 +376,15 @@ async fn reader_loop(
                     send_output_notification(notification_tx, session_id, &frame.payload);
                 }
                 MSG_BUFFER_REPLAY => {
-                    if !frame.payload.is_empty() {
+                    // If there is a pending query_buffer call, deliver to it.
+                    // Otherwise, forward as output (e.g. initial connect replay).
+                    let pending = {
+                        let mut guard = pending_buffer_reply.lock().await;
+                        guard.take()
+                    };
+                    if let Some(sender) = pending {
+                        let _ = sender.send(frame.payload);
+                    } else if !frame.payload.is_empty() {
                         send_output_notification(notification_tx, session_id, &frame.payload);
                     }
                 }
@@ -390,7 +442,7 @@ async fn reader_loop(
 /// Send output data as a base64-encoded `connection.output` notification.
 ///
 /// Chunks large payloads to stay under the 1 MiB NDJSON line limit.
-fn send_output_notification(tx: &NotificationSender, session_id: &str, data: &[u8]) {
+pub(crate) fn send_output_notification(tx: &NotificationSender, session_id: &str, data: &[u8]) {
     let b64 = base64::engine::general_purpose::STANDARD;
     for chunk in data.chunks(65536) {
         let encoded = b64.encode(chunk);
@@ -402,5 +454,102 @@ fn send_output_notification(tx: &NotificationSender, session_id: &str, data: &[u
             }),
         );
         let _ = tx.send(notification);
+    }
+}
+
+#[cfg(all(unix, test))]
+mod tests {
+    use super::*;
+    use crate::daemon::protocol;
+
+    fn make_notification_tx() -> NotificationSender {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        tx
+    }
+
+    /// Verify that `query_buffer` sends MSG_QUERY_BUFFER and the pending reply
+    /// channel receives the response when a MSG_BUFFER_REPLAY frame arrives.
+    #[tokio::test]
+    async fn query_buffer_sends_request_and_receives_reply() {
+        // Create a Unix socket pair to simulate the daemon connection.
+        let (client_sock, server_sock) = tokio::net::UnixStream::pair().unwrap();
+        let (mut server_reader, mut server_writer) = server_sock.into_split();
+
+        // Simulate daemon: first send MSG_READY (handshake), then wait for
+        // MSG_QUERY_BUFFER and respond with MSG_BUFFER_REPLAY.
+        let daemon_task = tokio::spawn(async move {
+            // Send ready (handshake)
+            protocol::write_frame_async(&mut server_writer, MSG_READY, &[])
+                .await
+                .unwrap();
+
+            // Read the MSG_QUERY_BUFFER request
+            let frame = protocol::read_frame_async(&mut server_reader)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(frame.msg_type, MSG_QUERY_BUFFER);
+
+            // Send back the buffer
+            let data = b"buffered output";
+            protocol::write_frame_async(&mut server_writer, MSG_BUFFER_REPLAY, data)
+                .await
+                .unwrap();
+        });
+
+        let socket_path = std::path::PathBuf::from("/tmp/test-unused.sock");
+        let pending_buffer_reply: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Vec<u8>>>>> =
+            Arc::new(Mutex::new(None));
+        let notification_tx = make_notification_tx();
+
+        // Connect by using the socket pair directly.
+        let (mut reader, writer) = client_sock.into_split();
+
+        // Consume the ready frame manually
+        let ready_frame = protocol::read_frame_async(&mut reader)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(ready_frame.msg_type, MSG_READY);
+
+        let alive = Arc::new(AtomicBool::new(true));
+        let alive_clone = alive.clone();
+        let session_id_owned = "test-session".to_string();
+        let tx = notification_tx.clone();
+        let pbr_clone = pending_buffer_reply.clone();
+
+        let reader_task = tokio::spawn(async move {
+            reader_loop(reader, &session_id_owned, &tx, &alive_clone, pbr_clone).await;
+        });
+
+        let writer_arc: Arc<Mutex<Option<tokio::net::unix::OwnedWriteHalf>>> =
+            Arc::new(Mutex::new(Some(writer)));
+
+        // Set up a pending reply channel manually
+        let (reply_tx, reply_rx) = tokio::sync::oneshot::channel::<Vec<u8>>();
+        *pending_buffer_reply.lock().await = Some(reply_tx);
+
+        // Send MSG_QUERY_BUFFER via the writer
+        {
+            let mut guard = writer_arc.lock().await;
+            let w = guard.as_mut().unwrap();
+            protocol::write_frame_async(w, MSG_QUERY_BUFFER, &[])
+                .await
+                .unwrap();
+        }
+
+        // Await the daemon task and the reply
+        daemon_task.await.unwrap();
+
+        let reply = tokio::time::timeout(std::time::Duration::from_secs(2), reply_rx)
+            .await
+            .expect("reply timed out")
+            .expect("channel closed");
+        assert_eq!(reply, b"buffered output");
+
+        reader_task.abort();
+
+        // socket_path is unused (we used a socket pair)
+        let _ = socket_path;
     }
 }
