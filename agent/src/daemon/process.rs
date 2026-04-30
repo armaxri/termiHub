@@ -154,6 +154,8 @@ enum AgentCommand {
     Detach,
     /// Agent requested kill.
     Kill,
+    /// Agent requested current buffer contents without reconnecting.
+    QueryBuffer,
     /// Agent disconnected (EOF or error).
     Disconnected,
 }
@@ -280,6 +282,19 @@ async fn daemon_loop(
                         send_exited_async(&mut agent_writer, 0).await;
                         return Ok(());
                     }
+                    Some(AgentCommand::QueryBuffer) => {
+                        if let Some(ref mut writer) = agent_writer {
+                            let buffered = ring_buffer.read_all();
+                            if protocol::write_frame_async(writer, MSG_BUFFER_REPLAY, &buffered)
+                                .await
+                                .is_err()
+                            {
+                                debug!("Failed to send buffer reply to agent");
+                                agent_writer = None;
+                                abort_reader(&mut reader_task);
+                            }
+                        }
+                    }
                     Some(AgentCommand::Disconnected) => {
                         info!("Agent disconnected");
                         agent_writer = None;
@@ -313,6 +328,7 @@ async fn agent_reader_loop(mut reader: OwnedReadHalf, tx: mpsc::Sender<AgentComm
                     }
                     MSG_DETACH => AgentCommand::Detach,
                     MSG_KILL => AgentCommand::Kill,
+                    MSG_QUERY_BUFFER => AgentCommand::QueryBuffer,
                     other => {
                         debug!("Unknown frame type from agent: 0x{other:02x}");
                         continue;

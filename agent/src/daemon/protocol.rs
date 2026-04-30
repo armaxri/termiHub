@@ -25,6 +25,8 @@ pub const MSG_RESIZE: u8 = 0x02;
 pub const MSG_DETACH: u8 = 0x03;
 /// Agent → Daemon: kill shell and exit (empty payload).
 pub const MSG_KILL: u8 = 0x04;
+/// Agent → Daemon: request the current ring buffer contents without reconnecting.
+pub const MSG_QUERY_BUFFER: u8 = 0x05;
 
 /// Daemon → Agent: output bytes from the PTY.
 pub const MSG_OUTPUT: u8 = 0x81;
@@ -324,6 +326,18 @@ mod tests {
         assert_eq!(frame.msg_type, MSG_BUFFER_REPLAY);
         assert_eq!(frame.payload.len(), 100_000);
         assert!(frame.payload.iter().all(|&b| b == 0xAB));
+    }
+
+    #[test]
+    fn round_trip_query_buffer() {
+        // MSG_QUERY_BUFFER is an Agent→Daemon message with an empty payload.
+        let mut buf = Vec::new();
+        write_frame(&mut buf, MSG_QUERY_BUFFER, &[]).unwrap();
+
+        let mut cursor = Cursor::new(&buf);
+        let frame = read_frame(&mut cursor).unwrap().unwrap();
+        assert_eq!(frame.msg_type, MSG_QUERY_BUFFER);
+        assert!(frame.payload.is_empty());
     }
 
     #[test]
