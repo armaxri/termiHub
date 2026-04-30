@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Serial port scan prefixes: the full list of Linux `/dev` prefixes scanned to discover serial ports (e.g. `ttyAMA*` on Raspberry Pi, `ttyTHS*` on Jetson, `ttymxc*` on i.MX, and 39 more) is now configurable via Settings → General. Built-in prefixes can be toggled on or off; custom prefixes can be added or removed. Changes take effect immediately when opening the serial port dropdown in a connection editor.
 - Open Connections panel: a new "Open Connections" option in the settings wheel menu lists all active connections across every subsystem — local terminal sessions, connected agents, sessions running on agents, SSH tunnels, SFTP, and monitoring. Each row has a Kill button; each section has a Kill All button for bulk teardown. This is the primary place to inspect and free connection resources.
 - Serial port cleanup: closing a serial session now explicitly calls `disconnect()` on the backend before dropping it, ensuring the reader thread stops and the serial port is released immediately.
 - Themes: added Solarized Dark and Solarized Light as built-in themes, selectable from Appearance Settings. Both themes use the canonical Ethan Schoonover palette with full ANSI 16-color and UI chrome support (#578).

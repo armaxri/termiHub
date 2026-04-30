@@ -742,7 +742,7 @@ See [scripts/README.md](../scripts/README.md) for all options. Reports are saved
 | --------------------- | -------------------------------------------------------------------------- | ---------- | ------- |
 | Local Shell           | [`local-shell.yaml`](../tests/manual/local-shell.yaml)                     | `MT-LOCAL` | 3       |
 | SSH                   | [`ssh.yaml`](../tests/manual/ssh.yaml)                                     | `MT-SSH`   | 15      |
-| Serial                | [`serial.yaml`](../tests/manual/serial.yaml)                               | `MT-SER`   | 5       |
+| Serial                | [`serial.yaml`](../tests/manual/serial.yaml)                               | `MT-SER`   | 8       |
 | Tab Management        | [`tab-management.yaml`](../tests/manual/tab-management.yaml)               | `MT-TAB`   | 7       |
 | Connection Management | [`connection-management.yaml`](../tests/manual/connection-management.yaml) | `MT-CONN`  | 10      |
 | File Browser + Editor | [`file-browser.yaml`](../tests/manual/file-browser.yaml)                   | `MT-FB`    | 10      |
@@ -754,7 +754,7 @@ See [scripts/README.md](../scripts/README.md) for all options. Reports are saved
 | Portable Mode         | [`portable-mode.yaml`](../tests/manual/portable-mode.yaml)                 | `MT-PORT`  | 4       |
 | Embedded Services     | [`embedded-services.yaml`](../tests/manual/embedded-services.yaml)         | `MT-SVC`   | 3       |
 | Network Tools         | [`network-tools.yaml`](../tests/manual/network-tools.yaml)                 | `MT-NET`   | 10      |
-| **Total**             |                                                                            |            | **106** |
+| **Total**             |                                                                            |            | **109** |
 
 When adding new manual tests, add the YAML definition to the appropriate file in `tests/manual/` — the YAML files are the **source of truth** for guided testing.
 
