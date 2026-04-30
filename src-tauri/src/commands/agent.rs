@@ -110,6 +110,27 @@ pub async fn apply_agent_settings(
     .unwrap_or_else(|e| Err(e.to_string()))
 }
 
+/// Close a session on a remote agent.
+///
+/// Sends `connection.close` over JSON-RPC to the agent, then the agent
+/// tears down the backend and frees its resources (serial port, SSH channel, etc.).
+#[tauri::command]
+pub async fn close_agent_session(
+    agent_id: String,
+    session_id: String,
+    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
+) -> Result<(), String> {
+    info!(agent_id, session_id, "Closing session on remote agent");
+    let manager = agent_manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        manager
+            .close_session(&agent_id, &session_id)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .unwrap_or_else(|e| Err(e.to_string()))
+}
+
 /// List sessions on a remote agent.
 ///
 /// Async because it sends a JSON-RPC request over SSH.

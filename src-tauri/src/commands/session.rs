@@ -12,7 +12,7 @@ use tracing::{debug, info};
 use termihub_core::connection::ConnectionTypeInfo;
 use termihub_core::files::FileEntry;
 
-use crate::session::manager::SessionManager;
+use crate::session::manager::{SessionInfo, SessionManager};
 use crate::utils::errors::TerminalError;
 use crate::utils::shell_detect;
 
@@ -72,6 +72,14 @@ pub async fn close_terminal(
 ) -> Result<(), TerminalError> {
     info!(session_id, "Closing session");
     manager.close_session(&session_id).await
+}
+
+/// List all active local sessions.
+#[tauri::command]
+pub async fn list_local_sessions(
+    manager: State<'_, SessionManager>,
+) -> Result<Vec<SessionInfo>, String> {
+    Ok(manager.list_sessions().await)
 }
 
 /// List available shells on this platform.
