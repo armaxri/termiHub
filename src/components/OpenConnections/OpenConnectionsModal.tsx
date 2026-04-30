@@ -30,6 +30,10 @@ interface AgentSessionsState {
   [agentId: string]: AgentSessionInfo[];
 }
 
+interface ProxySessionsState {
+  [agentId: string]: LocalSessionInfo[];
+}
+
 /**
  * Modal that lists every open connection across all subsystems and lets the
  * user kill individual connections or entire sections at once.
@@ -45,6 +49,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const disconnectMonitoring = useAppStore((s) => s.disconnectMonitoring);
 
   const [localSessions, setLocalSessions] = useState<LocalSessionInfo[]>([]);
+  const [proxySessions, setProxySessions] = useState<ProxySessionsState>({});
   const [agentSessions, setAgentSessions] = useState<AgentSessionsState>({});
   const [tunnelStates, setTunnelStates] = useState<TunnelState[]>([]);
   const [loading, setLoading] = useState(false);
@@ -60,6 +65,14 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
       ]);
 
       setLocalSessions(locals.filter((s) => !s.agentId));
+
+      const byProxy: ProxySessionsState = {};
+      for (const s of locals) {
+        if (s.agentId) {
+          (byProxy[s.agentId] ??= []).push(s);
+        }
+      }
+      setProxySessions(byProxy);
 
       const byAgent: AgentSessionsState = {};
       connectedAgents.forEach((a, i) => {
@@ -91,6 +104,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const totalCount =
     localSessions.length +
     connectedAgents.length +
+    Object.values(proxySessions).reduce((s, arr) => s + arr.length, 0) +
     Object.values(agentSessions).reduce((s, arr) => s + arr.length, 0) +
     activeTunnels.length +
     (sftpConnectedHost ? 1 : 0) +
@@ -117,6 +131,21 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
 
   const handleKillAllAgents = async () => {
     await Promise.all(connectedAgents.map((a) => disconnectRemoteAgent(a.id)));
+  };
+
+  const handleKillProxy = async (agentId: string, id: string) => {
+    await closeTerminal(id).catch(() => {});
+    setProxySessions((prev) => ({
+      ...prev,
+      [agentId]: (prev[agentId] ?? []).filter((s) => s.id !== id),
+    }));
+  };
+
+  const handleKillAllProxy = async (agentId: string) => {
+    await Promise.all(
+      (proxySessions[agentId] ?? []).map((s) => closeTerminal(s.id).catch(() => {}))
+    );
+    setProxySessions((prev) => ({ ...prev, [agentId]: [] }));
   };
 
   const handleKillAgentSession = async (agentId: string, sessionId: string) => {
@@ -210,7 +239,34 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
               </Section>
             )}
 
-            {/* Sessions per Agent */}
+            {/* Connections via each agent (proxy sessions opened from the desktop) */}
+            {connectedAgents.map((a) => {
+              const sessions = proxySessions[a.id] ?? [];
+              if (sessions.length === 0) return null;
+              return (
+                <Section
+                  key={`proxy-sessions-${a.id}`}
+                  title={`Connections via ${a.name}`}
+                  icon={<Server size={14} />}
+                  count={sessions.length}
+                  onKillAll={() => handleKillAllProxy(a.id)}
+                >
+                  {sessions.map((s) => (
+                    <ConnectionRow
+                      key={s.id}
+                      icon={
+                        s.connectionType === "ssh" ? <Server size={14} /> : <Terminal size={14} />
+                      }
+                      title={s.title}
+                      badge={s.alive ? "alive" : "dead"}
+                      onKill={() => handleKillProxy(a.id, s.id)}
+                    />
+                  ))}
+                </Section>
+              );
+            })}
+
+            {/* Native sessions on each agent (reported by the agent itself) */}
             {connectedAgents.map((a) => {
               const sessions = agentSessions[a.id] ?? [];
               if (sessions.length === 0) return null;
