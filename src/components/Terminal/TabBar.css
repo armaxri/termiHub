@@ -91,6 +91,17 @@
   color: var(--text-primary);
 }
 
+.tab__persistent-badge {
+  font-size: 20px;
+  line-height: 1;
+  flex-shrink: 0;
+  margin-left: 3px;
+  opacity: 1;
+  font-style: normal;
+  position: relative;
+  top: -3px;
+}
+
 .tab__dirty-dot {
   display: inline-block;
   width: 8px;

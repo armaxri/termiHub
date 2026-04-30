@@ -17,6 +17,7 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+const BRANCH: &str = env!("TERMIHUB_BUILD_BRANCH");
 const DEFAULT_LISTEN_ADDR: &str = "127.0.0.1:7685";
 
 fn print_usage() {
@@ -43,7 +44,11 @@ async fn main() -> anyhow::Result<()> {
 
     match args[1].as_str() {
         "--version" => {
-            println!("termihub-agent {}", VERSION);
+            if BRANCH == "unknown" || BRANCH.is_empty() {
+                println!("termihub-agent {VERSION}");
+            } else {
+                println!("termihub-agent {VERSION} (branch: {BRANCH})");
+            }
             Ok(())
         }
         "--help" => {

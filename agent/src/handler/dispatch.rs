@@ -22,8 +22,8 @@ use crate::protocol::methods::{
     InitializeParams, InitializeResult, MonitoringSubscribeParams, MonitoringUnsubscribeParams,
     NetworkDnsLookupParams, NetworkPingParams, NetworkPortScanParams, NetworkTracerouteParams,
     NetworkWolParams, SessionAttachParams, SessionCloseParams, SessionCreateParams,
-    SessionCreateResult, SessionDetachParams, SessionInputParams, SessionListEntry,
-    SessionListResult, SessionResizeParams,
+    SessionCreateResult, SessionDetachParams, SessionGetBufferParams, SessionGetBufferResult,
+    SessionInputParams, SessionListEntry, SessionListResult, SessionResizeParams,
 };
 use crate::session::definitions::{Connection, ConnectionStoreApi, Folder};
 use crate::session::manager::{
@@ -124,6 +124,7 @@ impl<M: SessionManagerApi> Dispatcher<M> {
             "connection.write" => self.handle_session_input(request).await,
             "connection.resize" => self.handle_session_resize(request).await,
             "connection.types" => self.handle_connection_types(request).await,
+            "session.getBuffer" => self.handle_session_get_buffer(request).await,
 
             // connections.* — saved connection presets
             "connections.list" => self.handle_connections_list(request).await,
@@ -202,7 +203,16 @@ impl<M: SessionManagerApi> Dispatcher<M> {
         }
 
         self.initialized = true;
-        self.agent_settings = params.agent_settings;
+        self.agent_settings = params.agent_settings.clone();
+
+        // Apply buffer size from agent settings
+        let buffer_size_bytes = (params.agent_settings.persistent_scrollback_buffer_size_mb
+            as usize)
+            .saturating_mul(1_048_576)
+            .max(65_536); // minimum 64 KiB
+        self.session_manager
+            .set_persistent_buffer_size_bytes(buffer_size_bytes)
+            .await;
 
         if !params.external_connection_files.is_empty() {
             self.connection_store
@@ -383,7 +393,15 @@ impl<M: SessionManagerApi> Dispatcher<M> {
             }
         };
 
-        self.agent_settings = params.settings;
+        self.agent_settings = params.settings.clone();
+
+        // Apply buffer size from updated settings
+        let buffer_size_bytes = (params.settings.persistent_scrollback_buffer_size_mb as usize)
+            .saturating_mul(1_048_576)
+            .max(65_536); // minimum 64 KiB
+        self.session_manager
+            .set_persistent_buffer_size_bytes(buffer_size_bytes)
+            .await;
 
         DispatchResult::Success(JsonRpcResponse::new(id, json!({"applied": true})))
     }
@@ -529,6 +547,38 @@ impl<M: SessionManagerApi> Dispatcher<M> {
                 JsonRpcErrorResponse::new(id, errors::SESSION_NOT_FOUND, msg)
                     .with_data(json!({"session_id": params.session_id})),
             ),
+        }
+    }
+
+    async fn handle_session_get_buffer(&self, request: JsonRpcRequest) -> DispatchResult {
+        let id = request.id.clone();
+
+        let params: SessionGetBufferParams = match serde_json::from_value(request.params) {
+            Ok(p) => p,
+            Err(e) => {
+                return DispatchResult::Error(JsonRpcErrorResponse::new(
+                    id,
+                    errors::INVALID_PARAMS,
+                    format!("Invalid session.getBuffer params: {e}"),
+                ));
+            }
+        };
+
+        match self.session_manager.get_buffer(&params.session_id).await {
+            Ok(data) => {
+                let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
+                DispatchResult::Success(JsonRpcResponse::new(
+                    id,
+                    serde_json::to_value(SessionGetBufferResult {
+                        session_id: params.session_id,
+                        data: encoded,
+                    })
+                    .unwrap(),
+                ))
+            }
+            Err(e) => {
+                DispatchResult::Error(JsonRpcErrorResponse::new(id, errors::SESSION_NOT_FOUND, e))
+            }
         }
     }
 
@@ -2775,6 +2825,19 @@ mod tests {
             } else {
                 Err("Session not found".to_string())
             }
+        }
+
+        async fn get_buffer(&self, session_id: &str) -> Result<Vec<u8>, String> {
+            let sessions = self.sessions.lock().await;
+            if sessions.iter().any(|s| s.id == session_id) {
+                Ok(Vec::new())
+            } else {
+                Err("Session not found".to_string())
+            }
+        }
+
+        async fn set_persistent_buffer_size_bytes(&self, _bytes: usize) {
+            // no-op in mock
         }
     }
 

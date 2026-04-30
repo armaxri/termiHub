@@ -40,6 +40,8 @@ const SHELL_INIT_DELAY_MS: u64 = 2000;
 pub enum AgentBinarySource {
     /// Download from GitHub (dev-latest for dev builds, v{version} for releases).
     GithubDownload,
+    /// Download a branch-specific build from GitHub (tag: agent-branch-{sanitized}).
+    BranchBuild { branch: String },
     /// Use a pre-built binary from a local file path.
     LocalFile { path: String },
 }
@@ -74,6 +76,9 @@ pub struct RemoteArchInfo {
     pub download_base_url: String,
     /// Pre-computed GitHub download URL for the detected arch, or `None` if arch is unsupported.
     pub download_url: Option<String>,
+    /// The git branch this desktop app was built from, if it is a feature-branch build.
+    /// `None` for main/develop/release builds. Used to pre-fill the branch build option in the UI.
+    pub build_branch: Option<String>,
 }
 
 /// Detect the remote host's architecture via a temporary SSH connection.
@@ -90,12 +95,19 @@ pub fn detect_agent_arch_info(config: &RemoteAgentConfig) -> Result<RemoteArchIn
     let download_url = arch_suffix
         .as_deref()
         .map(|s| format!("{download_base_url}{s}"));
+    // Expose the build branch only for feature branches so the UI can offer a
+    // pre-filled branch-build option. main/develop/unknown are excluded because
+    // those builds are already served by the dev-latest or versioned release.
+    let build_branch = option_env!("TERMIHUB_BUILD_BRANCH")
+        .filter(|b| !b.is_empty() && *b != "unknown" && *b != "main" && *b != "develop")
+        .map(str::to_string);
     Ok(RemoteArchInfo {
         arch,
         os,
         arch_suffix,
         download_base_url,
         download_url,
+        build_branch,
     })
 }
 
@@ -371,6 +383,49 @@ fn resolve_binary(
                 }
                 Err(e) => {
                     let msg = format!("Failed to obtain agent binary: {}", e);
+                    error!("Agent setup: {}", msg);
+                    emit_progress(app_handle, agent_id, "error", &msg);
+                    inject_error_script(sftp_session, session_manager, session_id, &msg, rt_handle);
+                    None
+                }
+            }
+        }
+        AgentBinarySource::BranchBuild { branch } => {
+            let arch_suffix = match agent_binary::artifact_name_for_arch(&setup_config.remote_arch)
+            {
+                Some(s) => s,
+                None => {
+                    let msg = format!(
+                        "Unsupported remote architecture: {}",
+                        setup_config.remote_arch
+                    );
+                    error!("Agent setup: {}", msg);
+                    emit_progress(app_handle, agent_id, "error", &msg);
+                    inject_error_script(sftp_session, session_manager, session_id, &msg, rt_handle);
+                    return None;
+                }
+            };
+
+            emit_progress(
+                app_handle,
+                agent_id,
+                "download",
+                &format!("Downloading branch build ({branch}) from GitHub…"),
+            );
+
+            match agent_binary::resolve_branch_build_binary(branch, arch_suffix, |_, _| {}) {
+                Ok(path) => {
+                    info!("Agent setup: resolved branch binary at {}", path.display());
+                    emit_progress(
+                        app_handle,
+                        agent_id,
+                        "download",
+                        &format!("Branch binary ready ({arch_suffix})"),
+                    );
+                    Some(path.to_string_lossy().to_string())
+                }
+                Err(e) => {
+                    let msg = format!("Failed to obtain branch build binary: {}", e);
                     error!("Agent setup: {}", msg);
                     emit_progress(app_handle, agent_id, "error", &msg);
                     inject_error_script(sftp_session, session_manager, session_id, &msg, rt_handle);
@@ -756,6 +811,7 @@ mod tests {
             arch_suffix: Some("linux-arm64".to_string()),
             download_base_url: base.to_string(),
             download_url: Some(format!("{base}linux-arm64")),
+            build_branch: None,
         };
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains("archSuffix"));
@@ -778,6 +834,7 @@ mod tests {
                 "https://github.com/armaxri/termiHub/releases/download/dev-latest/termihub-agent-"
                     .to_string(),
             download_url: None,
+            build_branch: None,
         };
         let json = serde_json::to_string(&info).unwrap();
         let back: RemoteArchInfo = serde_json::from_str(&json).unwrap();
@@ -785,6 +842,43 @@ mod tests {
         assert!(back.arch_suffix.is_none());
         assert!(back.download_url.is_none());
         assert!(!back.download_base_url.is_empty());
+        assert!(back.build_branch.is_none());
+    }
+
+    #[test]
+    fn remote_arch_info_with_build_branch_serde() {
+        let base =
+            "https://github.com/armaxri/termiHub/releases/download/dev-latest/termihub-agent-";
+        let info = RemoteArchInfo {
+            arch: "x86_64".to_string(),
+            os: "Linux".to_string(),
+            arch_suffix: Some("linux-x64".to_string()),
+            download_base_url: base.to_string(),
+            download_url: Some(format!("{base}linux-x64")),
+            build_branch: Some("feature/666-my-branch".to_string()),
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("buildBranch"));
+        assert!(json.contains("feature/666-my-branch"));
+        let back: RemoteArchInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.build_branch.as_deref(), Some("feature/666-my-branch"));
+    }
+
+    #[test]
+    fn agent_binary_source_branch_build_serde() {
+        let src = AgentBinarySource::BranchBuild {
+            branch: "feature/666-my-branch".to_string(),
+        };
+        let json = serde_json::to_string(&src).unwrap();
+        assert!(json.contains("\"type\":\"branchBuild\""), "got: {json}");
+        assert!(json.contains("feature/666-my-branch"));
+        let back: AgentBinarySource = serde_json::from_str(&json).unwrap();
+        match back {
+            AgentBinarySource::BranchBuild { branch } => {
+                assert_eq!(branch, "feature/666-my-branch")
+            }
+            _ => panic!("expected BranchBuild"),
+        }
     }
 
     #[test]
