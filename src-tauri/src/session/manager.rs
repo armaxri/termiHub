@@ -6,11 +6,10 @@
 //! remote connections use [`RemoteProxy`](super::remote_proxy::RemoteProxy).
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tokio::sync::Mutex;
-use termihub_core::buffer::RingBuffer;
 
 use serde::Serialize;
 use tauri::Emitter;
@@ -30,9 +29,6 @@ use super::remote_proxy::RemoteProxy;
 
 /// Maximum number of concurrent sessions.
 const MAX_SESSIONS: usize = 50;
-
-/// Ring buffer size for persistent session output replay (1 MiB).
-const PERSISTENT_BUFFER_SIZE: usize = 1_048_576;
 
 /// Maximum coalesced output size per emit (32 KB).
 const MAX_COALESCE_BYTES: usize = 32 * 1024;
@@ -79,8 +75,6 @@ struct PersistentRecord {
     connection_id: String,
     session_id: String,
     attached_tabs: HashSet<String>,
-    /// Circular output buffer — captures output even when no tab is attached.
-    output_buffer: Arc<StdMutex<RingBuffer>>,
 }
 
 /// Error event emitted when a session-level error occurs.
@@ -141,6 +135,8 @@ pub struct SessionInfo {
 struct SessionEntry {
     connection: Box<dyn ConnectionType>,
     info: SessionInfo,
+    /// Remote session ID assigned by the agent (set for remote proxy sessions).
+    remote_session_id: Option<String>,
 }
 
 /// Push event emitted via Tauri when session-based monitoring delivers stats.
@@ -191,7 +187,6 @@ impl SessionManager {
         settings: serde_json::Value,
         agent_id: Option<&str>,
         emitter: E,
-        output_buffer: Option<Arc<StdMutex<RingBuffer>>>,
     ) -> Result<String, TerminalError> {
         // Enforce session limit.
         {
@@ -205,30 +200,32 @@ impl SessionManager {
 
         let session_id = uuid::Uuid::new_v4().to_string();
 
-        let connection: Box<dyn ConnectionType> = if let Some(aid) = agent_id {
-            // Remote: create proxy to agent.
-            let mut proxy = RemoteProxy::new(aid.to_string(), self.agent_manager.clone());
-            // Wrap settings with the type information for the remote side.
-            let remote_settings = serde_json::json!({
-                "type": type_id,
-                "config": settings,
-            });
-            proxy
-                .connect(remote_settings)
-                .await
-                .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?;
-            Box::new(proxy)
-        } else {
-            // Local: instantiate from registry.
-            let mut conn = self
-                .registry
-                .create(type_id)
-                .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?;
-            conn.connect(settings.clone())
-                .await
-                .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?;
-            conn
-        };
+        let (connection, remote_session_id): (Box<dyn ConnectionType>, Option<String>) =
+            if let Some(aid) = agent_id {
+                // Remote: create proxy to agent.
+                let mut proxy = RemoteProxy::new(aid.to_string(), self.agent_manager.clone());
+                // Wrap settings with the type information for the remote side.
+                let remote_settings = serde_json::json!({
+                    "type": type_id,
+                    "config": settings,
+                });
+                proxy
+                    .connect(remote_settings)
+                    .await
+                    .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?;
+                let remote_sid = proxy.remote_session_id();
+                (Box::new(proxy), remote_sid)
+            } else {
+                // Local: instantiate from registry.
+                let mut conn = self
+                    .registry
+                    .create(type_id)
+                    .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?;
+                conn.connect(settings.clone())
+                    .await
+                    .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?;
+                (conn, None)
+            };
 
         // Build a human-readable title.
         let title = Self::build_title(type_id, &settings, agent_id);
@@ -252,6 +249,7 @@ impl SessionManager {
                 SessionEntry {
                     connection,
                     info: info.clone(),
+                    remote_session_id,
                 },
             );
         }
@@ -266,15 +264,8 @@ impl SessionManager {
         let sessions_clone = self.sessions.clone();
         let sid = session_id.clone();
         tokio::spawn(async move {
-            Self::run_output_reader(
-                sid,
-                output_rx,
-                emitter,
-                sessions_clone,
-                has_initial_command,
-                output_buffer,
-            )
-            .await;
+            Self::run_output_reader(sid, output_rx, emitter, sessions_clone, has_initial_command)
+                .await;
         });
 
         // Send initial command after a short delay.
@@ -580,15 +571,8 @@ impl SessionManager {
             }
         }
 
-        let ring_buffer = Arc::new(StdMutex::new(RingBuffer::new(PERSISTENT_BUFFER_SIZE)));
         let session_id = self
-            .create_connection(
-                type_id,
-                settings,
-                agent_id,
-                emitter.clone(),
-                Some(ring_buffer.clone()),
-            )
+            .create_connection(type_id, settings, agent_id, emitter.clone())
             .await?;
 
         {
@@ -599,7 +583,6 @@ impl SessionManager {
                     connection_id: connection_id.to_string(),
                     session_id: session_id.clone(),
                     attached_tabs: HashSet::new(),
-                    output_buffer: ring_buffer,
                 },
             );
         }
@@ -749,17 +732,48 @@ impl SessionManager {
             .collect()
     }
 
-    /// Return all output buffered so far for a persistent session.
+    /// Fetch the scrollback buffer from the agent for a persistent session.
     ///
-    /// Returns an empty `Vec` if the connection ID is unknown.
-    /// The buffer is NOT cleared — the same bytes will be returned on the
-    /// next call (only the most-recent 1 MiB is retained due to ring-buffer
-    /// wrapping).
-    pub async fn get_persistent_session_buffer(&self, connection_id: &str) -> Vec<u8> {
-        let ps = self.persistent_sessions.lock().await;
-        ps.get(connection_id)
-            .and_then(|r| r.output_buffer.lock().ok().map(|rb| rb.read_all()))
-            .unwrap_or_default()
+    /// Sends `session.getBuffer` over JSON-RPC to the agent, which queries
+    /// the daemon's ring buffer non-destructively and returns a base64-encoded
+    /// snapshot.
+    pub async fn get_remote_session_buffer(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<u8>, TerminalError> {
+        let (agent_id, remote_sid) = {
+            let sessions = self.sessions.lock().await;
+            let entry = sessions
+                .get(session_id)
+                .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
+            let agent_id =
+                entry.info.agent_id.clone().ok_or_else(|| {
+                    TerminalError::RemoteError("not a remote session".to_string())
+                })?;
+            let remote_sid = entry.remote_session_id.clone().ok_or_else(|| {
+                TerminalError::RemoteError("remote session ID unavailable".to_string())
+            })?;
+            (agent_id, remote_sid)
+        };
+
+        let result = self
+            .agent_manager
+            .send_request(
+                &agent_id,
+                "session.getBuffer",
+                serde_json::json!({ "session_id": remote_sid }),
+            )
+            .map_err(|e| TerminalError::RemoteError(e.to_string()))?;
+
+        let b64 = result.get("data").and_then(|v| v.as_str()).unwrap_or("");
+        if b64.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD
+            .decode(b64)
+            .map_err(|e| TerminalError::RemoteError(format!("base64 decode error: {e}")))
     }
 
     // ── End persistent session management ──────────────────────────────
@@ -842,6 +856,7 @@ impl SessionManager {
                     alive: true,
                     agent_id: None,
                 },
+                remote_session_id: None,
             },
         );
     }
@@ -856,7 +871,6 @@ impl SessionManager {
         emitter: E,
         sessions: Arc<Mutex<HashMap<String, SessionEntry>>>,
         wait_for_clear: bool,
-        output_buffer: Option<Arc<StdMutex<RingBuffer>>>,
     ) {
         // Phase 1: optionally buffer until the screen-clear sequence.
         if wait_for_clear {
@@ -871,11 +885,6 @@ impl SessionManager {
                 }
                 match tokio::time::timeout(remaining, output_rx.recv()).await {
                     Ok(Some(chunk)) => {
-                        if let Some(ref buf) = output_buffer {
-                            if let Ok(mut rb) = buf.lock() {
-                                rb.write(&chunk);
-                            }
-                        }
                         buffer.extend_from_slice(&chunk);
                         if contains_screen_clear(&buffer) {
                             break;
@@ -905,22 +914,12 @@ impl SessionManager {
         // Phase 2: normal streaming with coalescing.
         let mut coalescer = OutputCoalescer::new(MAX_COALESCE_BYTES);
         while let Some(first_chunk) = output_rx.recv().await {
-            if let Some(ref buf) = output_buffer {
-                if let Ok(mut rb) = buf.lock() {
-                    rb.write(&first_chunk);
-                }
-            }
             coalescer.push(&first_chunk);
 
             // Drain any immediately available chunks.
             while coalescer.pending_len() < MAX_COALESCE_BYTES {
                 match output_rx.try_recv() {
                     Ok(chunk) => {
-                        if let Some(ref buf) = output_buffer {
-                            if let Ok(mut rb) = buf.lock() {
-                                rb.write(&chunk);
-                            }
-                        }
                         coalescer.push(&chunk);
                     }
                     Err(_) => break,
@@ -1057,6 +1056,7 @@ mod tests {
                     alive: true,
                     agent_id: None,
                 },
+                remote_session_id: None,
             },
         );
         drop(map);
@@ -1226,7 +1226,6 @@ mod tests {
             emitter.clone(),
             sessions.clone(),
             false,
-            None,
         )
         .await;
 
@@ -1262,7 +1261,6 @@ mod tests {
             emitter.clone(),
             sessions,
             false,
-            None,
         )
         .await;
 
@@ -1445,6 +1443,33 @@ mod tests {
         fn apply_agent_settings(&self, _: &str, _: &AgentSettings) -> Result<(), TerminalError> {
             unimplemented!()
         }
+    }
+
+    // ── get_remote_session_buffer tests ──────────────────────────────
+
+    #[tokio::test]
+    async fn get_remote_session_buffer_returns_error_for_nonexistent_session() {
+        let registry = ConnectionTypeRegistry::new();
+        let manager = SessionManager::new(registry, Arc::new(NullAgent));
+        let result = manager.get_remote_session_buffer("no-such-session").await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            TerminalError::SessionNotFound(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn get_remote_session_buffer_returns_remote_error_for_local_session() {
+        let registry = ConnectionTypeRegistry::new();
+        let manager = SessionManager::new(registry, Arc::new(NullAgent));
+        manager
+            .insert_test_session("local-sess", Box::new(MockConnection))
+            .await;
+        let result = manager.get_remote_session_buffer("local-sess").await;
+        assert!(result.is_err());
+        // Local sessions have no agent_id → RemoteError("not a remote session")
+        assert!(matches!(result.unwrap_err(), TerminalError::RemoteError(_)));
     }
 
     // ── Regression test: close_session must call disconnect() ─────────
