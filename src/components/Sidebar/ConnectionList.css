@@ -370,7 +370,7 @@
   align-self: center;
   background-color: var(--text-secondary);
   position: relative;
-  top: -2px;
+  top: 0;
 }
 
 .connection-tree__state-dot--running {
