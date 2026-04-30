@@ -9,7 +9,7 @@ use crate::connection::config::{
 };
 use crate::connection::manager::{self, ConnectionManager};
 use crate::connection::recovery::RecoveryWarning;
-use crate::connection::settings::AppSettings;
+use crate::connection::settings::{default_serial_port_scan_prefixes, AppSettings};
 use crate::credential::CredentialManager;
 
 /// Response containing all connections (unified), folders, and agents.
@@ -137,9 +137,17 @@ pub fn import_connections(
 }
 
 /// Get the current application settings.
+///
+/// If `serial_port_scan_prefixes` has never been saved the field is `None` in
+/// storage. We expand it to the full built-in default list before returning so
+/// the frontend always receives a concrete, editable list.
 #[tauri::command]
 pub fn get_settings(manager: State<'_, ConnectionManager>) -> Result<AppSettings, String> {
-    Ok(manager.get_settings())
+    let mut settings = manager.get_settings();
+    if settings.serial_port_scan_prefixes.is_none() {
+        settings.serial_port_scan_prefixes = Some(default_serial_port_scan_prefixes());
+    }
+    Ok(settings)
 }
 
 /// Update and persist application settings.

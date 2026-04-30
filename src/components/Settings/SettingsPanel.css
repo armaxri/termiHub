@@ -570,6 +570,38 @@
   color: var(--color-warning, #d4a843);
 }
 
+/* === Serial port scan prefix section === */
+
+.settings-panel__section-badge {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.settings-panel__subsection-title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-secondary);
+  margin: var(--spacing-md) 0 var(--spacing-xs);
+}
+
+.settings-panel__add-row {
+  display: flex;
+  gap: var(--spacing-xs);
+  margin-top: var(--spacing-sm);
+}
+
+.settings-panel__add-row .settings-panel__create-input {
+  flex: 1;
+  margin: 0;
+}
+
+.settings-panel__error {
+  font-size: var(--font-size-xs);
+  color: var(--color-error, #e05555);
+  margin: var(--spacing-xs) 0 0;
+}
+
 /* === Field spacing (Security settings) === */
 .settings-panel__field {
   margin-bottom: var(--spacing-md);

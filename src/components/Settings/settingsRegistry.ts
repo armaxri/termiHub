@@ -181,6 +181,28 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     ],
   },
   {
+    id: "serialPortScanPrefixes",
+    label: "Serial Port Scan Prefixes",
+    description:
+      "Linux /dev prefixes scanned to discover serial ports that the system library may not enumerate (e.g. ttyAMA* on Raspberry Pi)",
+    category: "general",
+    keywords: [
+      "serial",
+      "port",
+      "tty",
+      "uart",
+      "linux",
+      "raspberry pi",
+      "embedded",
+      "device",
+      "prefix",
+      "scan",
+      "ttyAMA",
+      "ttyS",
+      "ttyUSB",
+    ],
+  },
+  {
     id: "experimentalFeaturesEnabled",
     label: "Allow Experimental Features",
     description:

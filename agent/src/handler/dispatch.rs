@@ -230,7 +230,7 @@ impl<M: SessionManagerApi> Dispatcher<M> {
                 connection_types,
                 max_sessions: MAX_SESSIONS,
                 available_shells: detect_available_shells(),
-                available_serial_ports: detect_available_serial_ports(),
+                available_serial_ports: termihub_core::session::serial::list_serial_ports(),
                 docker_available,
                 available_docker_images: detect_docker_images(),
                 monitoring_supported: detect_monitoring_supported(),
@@ -1389,15 +1389,6 @@ fn detect_available_shells() -> Vec<String> {
         .collect()
 }
 
-/// Detect available serial ports using the `serialport` crate.
-fn detect_available_serial_ports() -> Vec<String> {
-    serialport::available_ports()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|p| p.port_name)
-        .collect()
-}
-
 /// Check if Docker is available and running.
 fn detect_docker_available() -> bool {
     std::process::Command::new("docker")
@@ -1871,7 +1862,7 @@ mod tests {
 
     #[test]
     fn detect_serial_ports_returns_vec() {
-        let ports = detect_available_serial_ports();
+        let ports = termihub_core::session::serial::list_serial_ports();
         assert!(ports.len() < 1000, "Unreasonably many ports detected");
     }
 

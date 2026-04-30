@@ -16,6 +16,31 @@ pub struct ExternalFileConfig {
     pub enabled: bool,
 }
 
+/// A Linux `/dev` prefix entry for the serial port scanner.
+///
+/// Built-in entries (`built_in: true`) can be toggled but not deleted.
+/// User-added entries (`built_in: false`) can also be deleted.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SerialPortScanPrefix {
+    pub prefix: String,
+    pub enabled: bool,
+    pub built_in: bool,
+}
+
+/// Returns the full default list of built-in serial port scan prefixes,
+/// all enabled, derived from [`termihub_core::session::serial::DEFAULT_EXTRA_LINUX_PREFIXES`].
+pub fn default_serial_port_scan_prefixes() -> Vec<SerialPortScanPrefix> {
+    termihub_core::session::serial::DEFAULT_EXTRA_LINUX_PREFIXES
+        .iter()
+        .map(|&prefix| SerialPortScanPrefix {
+            prefix: prefix.to_string(),
+            enabled: true,
+            built_in: true,
+        })
+        .collect()
+}
+
 /// A user-customized keybinding override entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeybindingOverrideEntry {
@@ -150,6 +175,10 @@ pub struct AppSettings {
     /// Update checker configuration and state.
     #[serde(default)]
     pub updates: UpdateSettings,
+    /// Linux `/dev` prefixes scanned to discover serial ports not found by the
+    /// `serialport` crate. `None` means use all built-in defaults (all enabled).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub serial_port_scan_prefixes: Option<Vec<SerialPortScanPrefix>>,
 }
 
 impl Default for AppSettings {
@@ -181,6 +210,7 @@ impl Default for AppSettings {
             custom_language_grammars: None,
             experimental_features_enabled: None,
             updates: UpdateSettings::default(),
+            serial_port_scan_prefixes: None,
         }
     }
 }
