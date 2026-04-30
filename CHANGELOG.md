@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Open Connections panel: a new "Open Connections" option in the settings wheel menu lists all active connections across every subsystem — local terminal sessions, connected agents, sessions running on agents, SSH tunnels, SFTP, and monitoring. Each row has a Kill button; each section has a Kill All button for bulk teardown. This is the primary place to inspect and free connection resources.
+- Serial port cleanup: closing a serial session now explicitly calls `disconnect()` on the backend before dropping it, ensuring the reader thread stops and the serial port is released immediately.
 - Themes: added Solarized Dark and Solarized Light as built-in themes, selectable from Appearance Settings. Both themes use the canonical Ethan Schoonover palette with full ANSI 16-color and UI chrome support (#578).
 - Terminal: the scrollback buffer default is now 10 000 lines (previously 5 000) and the maximum is now 1 000 000 lines (previously 100 000). The global and per-connection scrollback settings now show a memory trade-off hint — roughly 1–2 MB per 10 000 lines of typical output (#665).
 - Concept document for modern, transparency-aware application icons (`docs/concepts/app-icons.md`): covers app icon design (deep navy gradient, accent-blue prompt glyph, hub connector lines), UI icon family conventions, per-platform size requirements, style guidelines, icon state machine, AI generation prompts, and export pipeline (#641).
