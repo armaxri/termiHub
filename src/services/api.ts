@@ -689,7 +689,10 @@ export async function deleteAgentFolder(agentId: string, folderId: string): Prom
 // --- Agent setup commands ---
 
 /** Source for the agent binary during setup. */
-export type AgentBinarySource = { type: "githubDownload" } | { type: "localFile"; path: string };
+export type AgentBinarySource =
+  | { type: "githubDownload" }
+  | { type: "branchBuild"; branch: string }
+  | { type: "localFile"; path: string };
 
 /** Configuration for setting up a remote agent. */
 export interface AgentSetupConfig {
@@ -713,6 +716,9 @@ export interface RemoteArchInfo {
   downloadBaseUrl: string;
   /** Pre-computed GitHub download URL for the detected arch. Null if arch is unsupported. */
   downloadUrl: string | null;
+  /** The git branch this desktop app was built from, if it is a feature-branch build.
+   *  Null for main/develop/release builds. Used to pre-fill the branch build option. */
+  buildBranch: string | null;
 }
 
 /** Result of initiating the agent setup flow. */
