@@ -45,7 +45,8 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
   const [selectedArch, setSelectedArch] = useState<ArchSuffix>("linux-x64");
   const [remotePath, setRemotePath] = useState("~/.local/bin/termihub-agent");
   const [installService, setInstallService] = useState(false);
-  const [binarySource, setBinarySource] = useState<"github" | "local">("github");
+  const [binarySource, setBinarySource] = useState<"github" | "branch" | "local">("github");
+  const [branchName, setBranchName] = useState("");
   const [localBinaryPath, setLocalBinaryPath] = useState("");
   const [loading, setLoading] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -74,6 +75,10 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
       const archInfo = await detectAgentArch(config);
       setPhase({ kind: "ready", archInfo });
       setSelectedArch(isKnownSuffix(archInfo.archSuffix) ? archInfo.archSuffix : "linux-x64");
+      if (archInfo.buildBranch) {
+        setBranchName(archInfo.buildBranch);
+        setBinarySource("branch");
+      }
     } catch (err) {
       setPhase({
         kind: "error",
@@ -87,6 +92,7 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
     setRemotePath("~/.local/bin/termihub-agent");
     setInstallService(false);
     setBinarySource("github");
+    setBranchName("");
     setLocalBinaryPath("");
     setLoading(false);
     setSubmitError(null);
@@ -107,6 +113,7 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
   const handleSetup = useCallback(async () => {
     if (!configRef.current || phase.kind !== "ready") return;
     if (binarySource === "local" && !localBinaryPath) return;
+    if (binarySource === "branch" && !branchName.trim()) return;
 
     setLoading(true);
     setSubmitError(null);
@@ -115,11 +122,15 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
     const remoteArch = archOption?.uname ?? phase.archInfo.arch;
 
     try {
+      const binarySourcePayload =
+        binarySource === "github"
+          ? ({ type: "githubDownload" } as const)
+          : binarySource === "branch"
+            ? ({ type: "branchBuild", branch: branchName.trim() } as const)
+            : ({ type: "localFile", path: localBinaryPath } as const);
+
       const result = await setupRemoteAgent(agent.id, configRef.current, {
-        binarySource:
-          binarySource === "github"
-            ? { type: "githubDownload" }
-            : { type: "localFile", path: localBinaryPath },
+        binarySource: binarySourcePayload,
         remoteArch,
         remotePath,
         installService,
@@ -157,6 +168,7 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
     phase,
     selectedArch,
     binarySource,
+    branchName,
     localBinaryPath,
     remotePath,
     installService,
@@ -168,8 +180,21 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
   const effectiveDownloadUrl =
     phase.kind === "ready" ? `${phase.archInfo.downloadBaseUrl}${selectedArch}` : null;
 
+  const sanitizeBranch = (b: string) =>
+    b
+      .replace(/[^a-zA-Z0-9-]/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "");
+
+  const branchBuildUrl = branchName.trim()
+    ? `https://github.com/armaxri/termiHub/releases/download/agent-branch-${sanitizeBranch(branchName.trim())}/termihub-agent-${selectedArch}`
+    : null;
+
   const isSubmitDisabled =
-    loading || phase.kind !== "ready" || (binarySource === "local" && !localBinaryPath);
+    loading ||
+    phase.kind !== "ready" ||
+    (binarySource === "local" && !localBinaryPath) ||
+    (binarySource === "branch" && !branchName.trim());
 
   return (
     <Dialog.Root open={isOpen} onOpenChange={onOpenChange}>
@@ -255,6 +280,37 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
                     </div>
                     {effectiveDownloadUrl && (
                       <div className="agent-setup-dialog__url">{effectiveDownloadUrl}</div>
+                    )}
+                  </label>
+
+                  <label
+                    className={`agent-setup-dialog__source-option${binarySource === "branch" ? " agent-setup-dialog__source-option--selected" : ""}`}
+                  >
+                    <div className="agent-setup-dialog__source-option-header">
+                      <input
+                        type="radio"
+                        name="binarySource"
+                        value="branch"
+                        checked={binarySource === "branch"}
+                        onChange={() => setBinarySource("branch")}
+                        data-testid="agent-setup-source-branch"
+                      />
+                      <span>Branch build</span>
+                    </div>
+                    {binarySource === "branch" && (
+                      <>
+                        <input
+                          className="agent-setup-dialog__input"
+                          type="text"
+                          value={branchName}
+                          onChange={(e) => setBranchName(e.target.value)}
+                          placeholder="e.g. feature/666-my-branch"
+                          data-testid="agent-setup-branch-name"
+                        />
+                        {branchBuildUrl && (
+                          <div className="agent-setup-dialog__url">{branchBuildUrl}</div>
+                        )}
+                      </>
                     )}
                   </label>
 
