@@ -12,7 +12,7 @@ import {
   resizeTerminal,
   closeTerminal,
   detachPersistentTab,
-  getPersistentSessionBuffer,
+  getAgentSessionBuffer,
 } from "@/services/api";
 import { terminalDispatcher } from "@/services/events";
 import { useTerminalRegistry } from "./TerminalRegistry";
@@ -232,7 +232,7 @@ export function Terminal({
           // to live events so the scrollback is visible from the start.
           if (persistentConnectionId) {
             try {
-              const buf = await getPersistentSessionBuffer(persistentConnectionId);
+              const buf = await getAgentSessionBuffer(sessionId);
               if (buf.length > 0) {
                 xterm.write(buf);
               }

@@ -60,6 +60,8 @@ export interface AgentSettings {
   startingDirectory: string;
   logLevel: "error" | "warn" | "info" | "debug" | "trace";
   verboseTracing: boolean;
+  /** Ring-buffer size for persistent sessions in MiB (1–64). */
+  persistentScrollbackBufferSizeMb: number;
 }
 
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
@@ -70,6 +72,7 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   startingDirectory: "~",
   logLevel: "info",
   verboseTracing: false,
+  persistentScrollbackBufferSizeMb: 1,
 };
 
 /** Capabilities reported by a connected remote agent. */

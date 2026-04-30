@@ -145,9 +145,9 @@ export async function listPersistentSessions(): Promise<PersistentSessionSummary
   return await invoke<PersistentSessionSummary[]>("list_persistent_sessions");
 }
 
-/** Fetch the scrollback buffer for a persistent session (up to 1 MiB). */
-export async function getPersistentSessionBuffer(connectionId: string): Promise<Uint8Array> {
-  const bytes = await invoke<number[]>("get_persistent_session_buffer", { connectionId });
+/** Fetch the scrollback buffer for a persistent session from the agent daemon. */
+export async function getAgentSessionBuffer(sessionId: string): Promise<Uint8Array> {
+  const bytes = await invoke<number[]>("get_agent_session_buffer", { sessionId });
   return new Uint8Array(bytes);
 }
 
