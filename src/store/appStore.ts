@@ -1113,14 +1113,8 @@ export const useAppStore = create<AppState>((set, get) => {
       try {
         await apiStartPersistentSession(
           connectionId,
-          "remote-session",
-          {
-            agentId,
-            sessionType: def.sessionType,
-            ...def.config,
-            persistent: true,
-            title: def.name,
-          },
+          def.sessionType,
+          { ...def.config, title: def.name },
           agentId
         );
       } catch (err) {
