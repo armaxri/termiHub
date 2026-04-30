@@ -370,6 +370,7 @@ function TerminalHost() {
           isVisible={tab.isActive}
           existingSessionId={tab.sessionId}
           initialCommand={tab.initialCommand}
+          persistentConnectionId={tab.persistentConnectionId}
         />
       ))}
     </>

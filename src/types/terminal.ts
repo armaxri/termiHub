@@ -158,6 +158,12 @@ export interface TerminalTab {
   workspaceAgentRef?: { agentId: string; definitionId: string };
   /** Optional command to send after the terminal session connects. */
   initialCommand?: string;
+  /**
+   * When set, this tab is attached to a persistent background session.
+   * Closing the tab detaches from the session (backend process keeps running)
+   * rather than terminating it.
+   */
+  persistentConnectionId?: string;
 }
 
 export interface LeafPanel {

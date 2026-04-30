@@ -31,6 +31,8 @@ import {
   DEFAULT_LAYOUT,
   LAYOUT_PRESETS,
   RecoveryWarning,
+  PersistentRunState,
+  PersistentSessionEntry,
 } from "@/types/connection";
 import { CredentialStoreStatusInfo } from "@/types/credential";
 import {
@@ -83,6 +85,9 @@ import {
   checkForUpdates as apiCheckForUpdates,
   skipUpdateVersion as apiSkipUpdateVersion,
   clearSkippedVersion as apiClearSkippedVersion,
+  startPersistentSession as apiStartPersistentSession,
+  stopPersistentSession as apiStopPersistentSession,
+  attachPersistentTab as apiAttachPersistentTab,
 } from "@/services/api";
 import type { ConnectionTypeInfo } from "@/services/api";
 import { RemoteAgentConfig } from "@/types/terminal";
@@ -121,7 +126,7 @@ import {
 } from "@/utils/workspaceLayout";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { SystemStats } from "@/types/monitoring";
-import { onSessionMonitoringStats } from "@/services/events";
+import { onSessionMonitoringStats, onPersistentSessionStateChanged } from "@/services/events";
 import { applyTheme, onThemeChange } from "@/themes";
 import { setOverrides as setKeybindingOverrides } from "@/services/keybindings";
 import {
@@ -243,8 +248,31 @@ interface AppState {
     panelId?: string,
     contentType?: TabContentType,
     terminalOptions?: TerminalOptions,
-    sessionId?: string | null
-  ) => void;
+    sessionId?: string | null,
+    persistentConnectionId?: string
+  ) => string;
+
+  // Persistent connection sessions
+  /** Live state of all persistent connection sessions, keyed by connectionId. */
+  persistentSessions: Record<string, PersistentSessionEntry>;
+  /** Start the background process for a persistent connection (does not open a tab). */
+  startPersistentSession: (connectionId: string) => Promise<void>;
+  /** Attach a new terminal tab to an already-running persistent session. */
+  attachPersistentSession: (connectionId: string, panelId?: string) => Promise<void>;
+  /** Gracefully stop the background process for a persistent connection. */
+  stopPersistentSession: (connectionId: string) => Promise<void>;
+  /** Update the store entry for a persistent session (called from event listener). */
+  setPersistentSessionEntry: (connectionId: string, patch: Partial<PersistentSessionEntry>) => void;
+  /** Transition a persistent session to the error state (called when process dies unexpectedly). */
+  setPersistentSessionError: (connectionId: string, errorMessage: string) => void;
+  /** Start a persistent background session for an agent-hosted connection definition. */
+  startAgentPersistentSession: (agentId: string, def: AgentDefinitionInfo) => Promise<void>;
+  /** Attach a new terminal tab to a running agent-hosted persistent session. */
+  attachAgentPersistentSession: (
+    agentId: string,
+    def: AgentDefinitionInfo,
+    panelId?: string
+  ) => Promise<void>;
   openSettingsTab: () => void;
   openLogViewerTab: () => void;
   openNetworkDiagnosticTab: (
@@ -603,7 +631,8 @@ function createTab(
   config: ConnectionConfig,
   panelId: string,
   contentType: TabContentType = "terminal",
-  sessionId: string | null = null
+  sessionId: string | null = null,
+  persistentConnectionId?: string
 ): TerminalTab {
   tabCounter++;
   return {
@@ -615,6 +644,7 @@ function createTab(
     config,
     panelId,
     isActive: true,
+    ...(persistentConnectionId ? { persistentConnectionId } : {}),
   };
 }
 
@@ -952,6 +982,201 @@ export const useAppStore = create<AppState>((set, get) => {
     draggingTabId: null,
     setDraggingTabId: (id) => set({ draggingTabId: id }),
 
+    // Persistent connection sessions
+    persistentSessions: {},
+
+    startPersistentSession: async (connectionId) => {
+      const conn = get().connections.find((c) => c.id === connectionId);
+      if (!conn) return;
+      set((state) => ({
+        persistentSessions: {
+          ...state.persistentSessions,
+          [connectionId]: {
+            connectionId,
+            sessionId: null,
+            state: "starting",
+            attachedTabIds: [],
+          },
+        },
+      }));
+      try {
+        await apiStartPersistentSession(connectionId, conn.config.type, conn.config.config);
+      } catch (err) {
+        set((state) => ({
+          persistentSessions: {
+            ...state.persistentSessions,
+            [connectionId]: {
+              ...state.persistentSessions[connectionId],
+              state: "error",
+              errorMessage: err instanceof Error ? err.message : String(err),
+            },
+          },
+        }));
+      }
+    },
+
+    attachPersistentSession: async (connectionId, panelId) => {
+      const entry = get().persistentSessions[connectionId];
+      const conn = get().connections.find((c) => c.id === connectionId);
+      if (!conn || !entry?.sessionId) return;
+      const tabId = get().addTab(
+        conn.name,
+        conn.config.type,
+        conn.config,
+        panelId,
+        "terminal",
+        conn.terminalOptions,
+        entry.sessionId,
+        connectionId
+      );
+      try {
+        await apiAttachPersistentTab(connectionId, tabId);
+        set((state) => {
+          const existing = state.persistentSessions[connectionId];
+          if (!existing) return state;
+          return {
+            persistentSessions: {
+              ...state.persistentSessions,
+              [connectionId]: {
+                ...existing,
+                attachedTabIds: [...existing.attachedTabIds, tabId],
+              },
+            },
+          };
+        });
+      } catch (err) {
+        frontendLog(
+          "app_store",
+          `attach_persistent_tab failed for ${connectionId}: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    },
+
+    stopPersistentSession: async (connectionId) => {
+      set((state) => {
+        const existing = state.persistentSessions[connectionId];
+        if (!existing) return state;
+        return {
+          persistentSessions: {
+            ...state.persistentSessions,
+            [connectionId]: { ...existing, state: "stopping" },
+          },
+        };
+      });
+      try {
+        await apiStopPersistentSession(connectionId);
+      } catch (err) {
+        frontendLog(
+          "app_store",
+          `stop_persistent_session failed for ${connectionId}: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    },
+
+    setPersistentSessionEntry: (connectionId, patch) =>
+      set((state) => {
+        const existing = state.persistentSessions[connectionId];
+        if (!existing) return state;
+        return {
+          persistentSessions: {
+            ...state.persistentSessions,
+            [connectionId]: { ...existing, ...patch },
+          },
+        };
+      }),
+
+    setPersistentSessionError: (connectionId, errorMessage) =>
+      set((state) => {
+        const existing = state.persistentSessions[connectionId];
+        if (!existing) return state;
+        return {
+          persistentSessions: {
+            ...state.persistentSessions,
+            [connectionId]: { ...existing, state: "error", errorMessage },
+          },
+        };
+      }),
+
+    startAgentPersistentSession: async (agentId, def) => {
+      const connectionId = `${agentId}:${def.id}`;
+      set((state) => ({
+        persistentSessions: {
+          ...state.persistentSessions,
+          [connectionId]: {
+            connectionId,
+            sessionId: null,
+            state: "starting",
+            attachedTabIds: [],
+          },
+        },
+      }));
+      try {
+        await apiStartPersistentSession(
+          connectionId,
+          def.sessionType,
+          { ...def.config, title: def.name },
+          agentId
+        );
+      } catch (err) {
+        set((state) => ({
+          persistentSessions: {
+            ...state.persistentSessions,
+            [connectionId]: {
+              ...state.persistentSessions[connectionId],
+              state: "error",
+              errorMessage: err instanceof Error ? err.message : String(err),
+            },
+          },
+        }));
+      }
+    },
+
+    attachAgentPersistentSession: async (agentId, def, panelId) => {
+      const connectionId = `${agentId}:${def.id}`;
+      const entry = get().persistentSessions[connectionId];
+      if (!entry?.sessionId) return;
+      const tabId = get().addTab(
+        def.name,
+        "remote-session",
+        {
+          type: "remote-session",
+          config: {
+            agentId,
+            sessionType: def.sessionType,
+            ...def.config,
+            persistent: true,
+            title: def.name,
+          },
+        },
+        panelId,
+        "terminal",
+        def.terminalOptions,
+        entry.sessionId,
+        connectionId
+      );
+      try {
+        await apiAttachPersistentTab(connectionId, tabId);
+        set((state) => {
+          const existing = state.persistentSessions[connectionId];
+          if (!existing) return state;
+          return {
+            persistentSessions: {
+              ...state.persistentSessions,
+              [connectionId]: {
+                ...existing,
+                attachedTabIds: [...existing.attachedTabIds, tabId],
+              },
+            },
+          };
+        });
+      } catch (err) {
+        frontendLog(
+          "app_store",
+          `attach_persistent_tab failed for ${connectionId}: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    },
+
     // Panels & Tabs
     rootPanel: initialPanel,
     activePanelId: initialPanel.id,
@@ -983,7 +1208,17 @@ export const useAppStore = create<AppState>((set, get) => {
       });
     },
 
-    addTab: (title, connectionType, config, panelId, contentType, terminalOptions, sessionId) =>
+    addTab: (
+      title,
+      connectionType,
+      config,
+      panelId,
+      contentType,
+      terminalOptions,
+      sessionId,
+      persistentConnectionId
+    ) => {
+      let createdTabId = "";
       set((state) => {
         const allLeaves = getAllLeaves(state.rootPanel);
         const targetPanelId = panelId ?? state.activePanelId ?? allLeaves[0]?.id;
@@ -999,8 +1234,10 @@ export const useAppStore = create<AppState>((set, get) => {
           defaultConfig,
           targetPanelId,
           contentType,
-          sessionId ?? null
+          sessionId ?? null,
+          persistentConnectionId
         );
+        createdTabId = newTab.id;
         const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
           const tabs = leaf.tabs.map((t) => ({ ...t, isActive: false }));
           tabs.push(newTab);
@@ -1029,7 +1266,9 @@ export const useAppStore = create<AppState>((set, get) => {
             ? { tabTerminalOptions: { ...state.tabTerminalOptions, [newTab.id]: tabOpts } }
             : {}),
         };
-      }),
+      });
+      return createdTabId;
+    },
 
     openSettingsTab: () =>
       set((state) => {
@@ -1302,6 +1541,17 @@ export const useAppStore = create<AppState>((set, get) => {
         const { [tabId]: _removedAutoRetry, ...remainingAutoRetry } = state.terminalAutoRetryCount;
         const { [tabId]: _removedWaiting, ...remainingWaiting } = state.terminalWaitingForAgent;
 
+        // Remove this tab from any persistent session's attachedTabIds
+        const persistentSessions = { ...state.persistentSessions };
+        for (const [connId, entry] of Object.entries(persistentSessions)) {
+          if (entry.attachedTabIds.includes(tabId)) {
+            persistentSessions[connId] = {
+              ...entry,
+              attachedTabIds: entry.attachedTabIds.filter((id) => id !== tabId),
+            };
+          }
+        }
+
         let rootPanel = updateLeaf(state.rootPanel, panelId, (leaf) =>
           removeTabFromLeaf(leaf, tabId)
         );
@@ -1322,6 +1572,7 @@ export const useAppStore = create<AppState>((set, get) => {
             rootPanel,
             activePanelId,
             zoomedTabId,
+            persistentSessions,
             tabCwds: remainingCwds,
             tabHorizontalScrolling: remainingHs,
             editorDirtyTabs: remainingDirty,
@@ -1344,6 +1595,7 @@ export const useAppStore = create<AppState>((set, get) => {
         return {
           rootPanel,
           zoomedTabId,
+          persistentSessions,
           tabCwds: remainingCwds,
           tabHorizontalScrolling: remainingHs,
           editorDirtyTabs: remainingDirty,
@@ -1765,6 +2017,43 @@ export const useAppStore = create<AppState>((set, get) => {
       } catch (err) {
         console.error("Failed to load recovery warnings:", err);
       }
+      // Subscribe to persistent session state changes from the backend
+      onPersistentSessionStateChanged((change) => {
+        const { connectionId, sessionId, state: rawState, attachedTabCount, errorMessage } = change;
+        const runState = rawState as PersistentRunState;
+        if (runState === "stopped") {
+          // Remove the entry entirely when the session stops
+          set((s) => {
+            const { [connectionId]: _dropped, ...remaining } = s.persistentSessions;
+            return { persistentSessions: remaining };
+          });
+        } else {
+          set((s) => {
+            const existing = s.persistentSessions[connectionId];
+            return {
+              persistentSessions: {
+                ...s.persistentSessions,
+                [connectionId]: {
+                  connectionId,
+                  sessionId: sessionId ?? existing?.sessionId ?? null,
+                  state: runState,
+                  attachedTabIds: existing?.attachedTabIds ?? [],
+                  ...(errorMessage ? { errorMessage } : {}),
+                },
+              },
+            };
+          });
+        }
+        frontendLog(
+          "app_store",
+          `persistent-session-state: ${connectionId} → ${rawState} (tabs: ${attachedTabCount})`
+        );
+      }).catch((err: unknown) => {
+        frontendLog(
+          "app_store",
+          `Failed to subscribe to persistent session events: ${err instanceof Error ? err.message : String(err)}`
+        );
+      });
     },
 
     updateSettings: async (newSettings) => {
