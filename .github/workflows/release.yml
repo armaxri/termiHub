@@ -146,7 +146,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: v${{ needs.create-release.outputs.version }}
+          tagName: ''
+          releaseName: ''
+          releaseBody: ''
+          releaseDraft: false
+          prerelease: false
           args: --target ${{ matrix.rust_target }} ${{ matrix.extra_args }}
 
       - name: Find and rename release artifact
