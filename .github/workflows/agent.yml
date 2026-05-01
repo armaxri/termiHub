@@ -2,13 +2,13 @@ name: Agent
 
 on:
   pull_request:
-    branches: [ main ]
+    branches: [ main, develop ]
     paths:
       - 'agent/**'
       - 'core/**'
       - 'Cargo.toml'
   push:
-    branches: [ main ]
+    branches: [ main, develop ]
     paths:
       - 'agent/**'
       - 'core/**'

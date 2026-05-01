@@ -116,17 +116,17 @@ describe("appStore — persistent sessions", () => {
 
       expect(mockStartPersistentSession).toHaveBeenCalledWith(
         CONNECTION_ID,
-        "remote-session",
-        expect.objectContaining({ agentId: AGENT_ID, sessionType: "shell" }),
+        "shell",
+        { shell: "/bin/bash", title: "Persistent Shell" },
         AGENT_ID
       );
     });
 
-    it("includes agentId inside the settings payload", async () => {
+    it("passes agentId as the fourth argument to the API", async () => {
       await useAppStore.getState().startAgentPersistentSession(AGENT_ID, makeDef());
 
-      const [, , settings] = mockStartPersistentSession.mock.calls[0];
-      expect(settings.agentId).toBe(AGENT_ID);
+      const [, , , agentId] = mockStartPersistentSession.mock.calls[0];
+      expect(agentId).toBe(AGENT_ID);
     });
 
     it("transitions entry to 'error' state on API failure", async () => {

@@ -2,11 +2,10 @@
 
 use std::time::Instant;
 
-use hickory_resolver::config::{
-    NameServerConfig, NameServerConfigGroup, Protocol as DnsProtocol, ResolverConfig, ResolverOpts,
-};
+use hickory_resolver::config::{NameServerConfig, ResolverConfig, ResolverOpts};
+use hickory_resolver::net::runtime::TokioRuntimeProvider;
 use hickory_resolver::proto::rr::RecordType;
-use hickory_resolver::TokioAsyncResolver;
+use hickory_resolver::TokioResolver;
 
 use super::error::NetworkError;
 use super::types::{DnsRecord, DnsRecordType, DnsResult};
@@ -37,13 +36,13 @@ pub async fn dns_lookup(
     let query_ms = started.elapsed().as_millis() as u64;
     let mut records = Vec::new();
 
-    for record in lookup.record_iter() {
-        if let Some(value) = format_rdata(record.data()) {
+    for record in lookup.answers() {
+        if let Some(value) = format_rdata(&record.data) {
             records.push(DnsRecord {
                 record_type: record_type_from_hickory(record.record_type()),
-                name: record.name().to_utf8(),
+                name: record.name.to_utf8(),
                 value,
-                ttl: record.ttl(),
+                ttl: record.ttl,
             });
         }
     }
@@ -53,18 +52,21 @@ pub async fn dns_lookup(
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-fn build_resolver(server: Option<&str>) -> Result<TokioAsyncResolver, NetworkError> {
+fn build_resolver(server: Option<&str>) -> Result<TokioResolver, NetworkError> {
     if let Some(ip_str) = server {
         let ip: std::net::IpAddr = ip_str.parse().map_err(|_| {
             NetworkError::InvalidParameter(format!("invalid DNS server IP: '{ip_str}'"))
         })?;
 
-        let ns = NameServerConfig::new(std::net::SocketAddr::new(ip, 53), DnsProtocol::Udp);
-        let ns_group = NameServerConfigGroup::from(vec![ns]);
-        let config = ResolverConfig::from_parts(None, vec![], ns_group);
-        Ok(TokioAsyncResolver::tokio(config, ResolverOpts::default()))
+        let config = ResolverConfig::from_parts(None, vec![], vec![NameServerConfig::udp(ip)]);
+        TokioResolver::builder_with_config(config, TokioRuntimeProvider::default())
+            .with_options(ResolverOpts::default())
+            .build()
+            .map_err(|e| NetworkError::Platform(e.to_string()))
     } else {
-        TokioAsyncResolver::tokio_from_system_conf()
+        TokioResolver::builder_tokio()
+            .map_err(|e| NetworkError::Platform(e.to_string()))?
+            .build()
             .map_err(|e| NetworkError::Platform(e.to_string()))
     }
 }
@@ -99,38 +101,39 @@ fn record_type_from_hickory(rt: RecordType) -> DnsRecordType {
     }
 }
 
-fn format_rdata(data: Option<&hickory_resolver::proto::rr::RData>) -> Option<String> {
+fn format_rdata(data: &hickory_resolver::proto::rr::RData) -> Option<String> {
     use hickory_resolver::proto::rr::RData;
-    Some(match data? {
+    Some(match data {
         RData::A(ip) => ip.to_string(),
         RData::AAAA(ip) => ip.to_string(),
         RData::CNAME(name) => name.to_utf8(),
         RData::NS(name) => name.to_utf8(),
         RData::PTR(name) => name.to_utf8(),
-        RData::MX(mx) => format!("{} {}", mx.preference(), mx.exchange().to_utf8()),
+        RData::MX(mx) => format!("{} {}", mx.preference, mx.exchange.to_utf8()),
         RData::TXT(txt) => txt
+            .txt_data
             .iter()
             .map(|b| String::from_utf8_lossy(b).into_owned())
             .collect::<Vec<_>>()
             .join(" "),
         RData::SRV(srv) => format!(
             "{} {} {} {}",
-            srv.priority(),
-            srv.weight(),
-            srv.port(),
-            srv.target().to_utf8()
+            srv.priority,
+            srv.weight,
+            srv.port,
+            srv.target.to_utf8()
         ),
         RData::SOA(soa) => format!(
             "{} {} {} {} {} {} {}",
-            soa.mname().to_utf8(),
-            soa.rname().to_utf8(),
-            soa.serial(),
-            soa.refresh(),
-            soa.retry(),
-            soa.expire(),
-            soa.minimum()
+            soa.mname.to_utf8(),
+            soa.rname.to_utf8(),
+            soa.serial,
+            soa.refresh,
+            soa.retry,
+            soa.expire,
+            soa.minimum
         ),
-        other => format!("{other:?}"),
+        other => return Some(format!("{other:?}")),
     })
 }
 
