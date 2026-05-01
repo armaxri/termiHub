@@ -12,6 +12,8 @@ import {
   LayoutDashboard,
   Stethoscope,
   Activity,
+  RefreshCw,
+  Info,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as ContextMenu from "@radix-ui/react-context-menu";
@@ -55,6 +57,7 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
   const setSidebarView = useAppStore((s) => s.setSidebarView);
   const openSettingsTab = useAppStore((s) => s.openSettingsTab);
   const openLogViewerTab = useAppStore((s) => s.openLogViewerTab);
+  const openOverlayView = useAppStore((s) => s.openOverlayView);
   const activityBarPosition = useAppStore((s) => s.layoutConfig.activityBarPosition);
   const hiddenActivityBarViews = useAppStore(
     (s) => s.layoutConfig.hiddenActivityBarViews ?? EMPTY_HIDDEN_VIEWS
@@ -175,6 +178,23 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
                   >
                     <Download size={14} />
                     Export Connections
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Separator className="settings-menu__separator" />
+                  <DropdownMenu.Item
+                    className="settings-menu__item"
+                    onSelect={() => openOverlayView("updates")}
+                    data-testid="settings-menu-updates"
+                  >
+                    <RefreshCw size={14} />
+                    Updates
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Item
+                    className="settings-menu__item"
+                    onSelect={() => openOverlayView("about")}
+                    data-testid="settings-menu-about"
+                  >
+                    <Info size={14} />
+                    About termiHub
                   </DropdownMenu.Item>
                 </DropdownMenu.Content>
               </DropdownMenu.Portal>

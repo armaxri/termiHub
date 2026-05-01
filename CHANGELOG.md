@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Settings: "Updates" and "About" are no longer sub-tabs inside the Settings panel. They are now direct entries in the settings gear dropdown menu and open in a focused overlay panel instead.
+
 ### Added
 
 - Develop-branch builds are now marked in the status bar with a purple "develop" badge next to the version, and automatically download agent binaries from the `dev-develop-latest` GitHub release instead of `dev-latest`.
