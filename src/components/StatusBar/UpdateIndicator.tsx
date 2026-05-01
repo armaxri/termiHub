@@ -1,24 +1,26 @@
 import { useEffect, useState } from "react";
 import { useAppStore } from "@/store/appStore";
-import { getAppInfo } from "@/services/api";
+import { getAppInfo, type AppInfo } from "@/services/api";
 
 /**
  * Version chip in the status bar.  Shows an amber or red dot when an update
  * is available.  Clicking re-shows the update notification popup.
+ * Shows a "develop" badge when running a develop-branch build.
  */
 export function UpdateIndicator() {
-  const [appVersion, setAppVersion] = useState("");
+  const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const updateInfo = useAppStore((s) => s.updateInfo);
   const updateCheckState = useAppStore((s) => s.updateCheckState);
 
   useEffect(() => {
     getAppInfo()
-      .then((info) => setAppVersion(info.version))
-      .catch(() => setAppVersion("?"));
+      .then(setAppInfo)
+      .catch(() => null);
   }, []);
 
   const hasUpdate = updateCheckState === "available" && updateInfo?.available === true;
   const isSecurity = hasUpdate && updateInfo?.isSecurity === true;
+  const isDevelop = appInfo?.buildBranch === "develop";
 
   const handleClick = () => {
     if (hasUpdate) {
@@ -34,12 +36,21 @@ export function UpdateIndicator() {
       title={
         hasUpdate
           ? `termiHub v${updateInfo?.latestVersion} is available — click to view`
-          : `termiHub v${appVersion}`
+          : `termiHub v${appInfo?.version ?? ""}`
       }
       data-testid="update-indicator"
       style={{ cursor: hasUpdate ? "pointer" : "default" }}
     >
-      v{appVersion}
+      v{appInfo?.version ?? ""}
+      {isDevelop && (
+        <span
+          className="update-indicator__develop-badge"
+          data-testid="develop-branch-badge"
+          aria-label="Develop branch build"
+        >
+          develop
+        </span>
+      )}
       {hasUpdate && (
         <span
           className={`update-indicator__dot update-indicator__dot--${isSecurity ? "red" : "amber"}`}
