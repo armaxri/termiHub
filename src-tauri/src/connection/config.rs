@@ -15,6 +15,10 @@ fn default_starting_directory() -> String {
     "~".to_string()
 }
 
+fn default_persistent_buffer_mb() -> u32 {
+    1
+}
+
 /// Runtime behaviour preferences for a connected remote agent.
 ///
 /// Stored locally with the connection profile; sent to the agent on startup
@@ -43,6 +47,9 @@ pub struct AgentSettings {
     /// Enable verbose JSON-RPC protocol tracing in agent logs.
     #[serde(default)]
     pub verbose_tracing: bool,
+    /// Ring-buffer size for persistent sessions in MiB (1–64).
+    #[serde(default = "default_persistent_buffer_mb")]
+    pub persistent_scrollback_buffer_size_mb: u32,
 }
 
 impl Default for AgentSettings {
@@ -55,6 +62,7 @@ impl Default for AgentSettings {
             starting_directory: "~".to_string(),
             log_level: "info".to_string(),
             verbose_tracing: false,
+            persistent_scrollback_buffer_size_mb: 1,
         }
     }
 }

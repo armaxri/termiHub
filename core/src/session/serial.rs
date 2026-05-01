@@ -128,20 +128,106 @@ pub fn open_serial_port(
         })
 }
 
-/// List available serial port names on the system.
+/// All built-in Linux `/dev` prefixes scanned to supplement `serialport::available_ports()`.
 ///
-/// Returns an empty vector if enumeration fails (e.g. on platforms
-/// where no serial driver is loaded). On Linux, the result is
-/// supplemented with a direct `/dev` scan for UART device patterns
-/// that the `serialport` crate may not enumerate (e.g. `ttyAMA*`,
-/// `ttyS*`, `uart_up*` on Raspberry Pi).
+/// Covers ARM SoC UARTs (PL011/PL010), NVIDIA Tegra/Jetson, NXP i.MX/LP-UART,
+/// Xilinx Zynq, Qualcomm MSM/GENI, Amlogic, Samsung Exynos, Renesas, Marvell EBU,
+/// STMicro, SiFive RISC-V, USB Gadget Serial, RPMsg co-processor TTYs, Bluetooth
+/// RFCOMM, and a range of legacy embedded platforms.
+pub const DEFAULT_EXTRA_LINUX_PREFIXES: &[&str] = &[
+    // Common ARM / SBC UARTs
+    "ttyAMA", // ARM PL011 UART (Raspberry Pi, most ARM SoCs)
+    "ttyAM",  // ARM PL010 UART (older ARM boards)
+    "ttyS",   // 8250/16550 standard PC UART
+    // Generic udev symlinks
+    "uart", "serial",
+    // NVIDIA Tegra / Jetson
+    "ttyTHS", // High-speed UART (Jetson Nano/TX1/TX2/Xavier/Orin)
+    "ttyTCU", // Tegra combined UART
+    // NXP / Freescale
+    "ttymxc", // i.MX6/7/8 UART
+    "ttyLP",  // LP-UART (i.MX7, i.MX8, Layerscape)
+    // Xilinx / AMD
+    "ttyPS", // Zynq / ZynqMP / Kria
+    // Qualcomm
+    "ttyMSM", // Legacy Snapdragon MSM UART
+    "ttyHS",  // Snapdragon 845+ GENI UART
+    // Amlogic
+    "ttyAML", // S905/S922 (ODROID-C4/N2, VIM3)
+    // Samsung
+    "ttySAC", // Exynos
+    // Renesas
+    "ttySC", // SuperH / RZ / R-Car
+    // Marvell
+    "ttyMV", // EBU (Armada, Turris MOX, ESPRESSObin)
+    // Qualcomm Atheros (OpenWrt routers)
+    "ttyATH", // AR933x
+    // STMicroelectronics
+    "ttyAS", // STi SoCs (set-top boxes)
+    // NXP automotive
+    "ttyLF", // S32 / LinFlex UART
+    // Microchip / Atmel
+    "ttyAT", // AT91 / SAM series
+    // SiFive RISC-V
+    "ttySIF", // HiFive Unleashed, U74
+    // Virtual / soft serial
+    "ttyGS",    // USB Gadget Serial (device side, e.g. RPi Zero acting as USB gadget)
+    "ttyRPMSG", // RPMsg TTY — co-processor IPC (STM32MP1, i.MX8, TI AM64x)
+    // Bluetooth RFCOMM
+    "rfcomm",
+    // Legacy / less common platforms
+    "ttyPSC", // Freescale MPC52xx / MPC512x (PowerPC)
+    "ttyLTQ", // Lantiq XWAY (DSL gateway SoCs)
+    "ttyTX",  // NXP LPC32xx
+    "ttyAPP", // NXP MXS / i.MX28
+    "ttyWMT", // VIA/WonderMedia (old Android tablets)
+    "ttyCL",  // Cirrus Logic CLPS711x (ARM7 embedded)
+    "ttySA",  // Intel StrongARM SA1100 (iPAQ era)
+    "ttyPCH", // Intel Platform Controller Hub EG20T (Atom embedded)
+    "ttyNVT", // Nuvoton MA35D1
+    "ttyRDA", // RDA Micro 8810
+    "ttyOWL", // Actions Semiconductor OWL
+    "ttyLXU", // LiteX FPGA soft UART
+    "ttyUSI", // Socionext Milbeaut
+    "ttySUP", // Sunplus SP7021
+    "ttyPIC", // Microchip PIC32 (MIPS)
+    "ttyAL",  // Altera/Intel FPGA (NIOS II)
+    "ttyHV",  // SPARC/Sun hypervisor serial
+    "ttyB",   // HP PA-RISC serial mux
+];
+
+/// List available serial port names using all built-in prefixes.
+///
+/// Returns an empty vector if enumeration fails (e.g. on platforms where no
+/// serial driver is loaded). On Linux, the result is supplemented with a
+/// direct `/dev` scan using [`DEFAULT_EXTRA_LINUX_PREFIXES`] for device
+/// patterns that the `serialport` crate may not enumerate.
 pub fn list_serial_ports() -> Vec<String> {
-    list_serial_ports_with_dev(std::path::Path::new("/dev"))
+    list_serial_ports_with_dev_and_prefixes(
+        std::path::Path::new("/dev"),
+        DEFAULT_EXTRA_LINUX_PREFIXES,
+    )
 }
 
-/// Inner implementation that accepts the device directory path so
-/// tests can inject a temporary directory without real devices.
+/// List available serial ports using a caller-supplied set of Linux `/dev` prefixes.
+///
+/// Useful when the caller wants to respect a user-configured prefix list rather
+/// than the built-in defaults. On non-Linux platforms the `enabled_prefixes`
+/// argument is ignored.
+pub fn list_serial_ports_with_enabled_prefixes(enabled_prefixes: &[&str]) -> Vec<String> {
+    list_serial_ports_with_dev_and_prefixes(std::path::Path::new("/dev"), enabled_prefixes)
+}
+
+/// Inner implementation used by Linux tests to inject a custom `/dev` directory.
+#[cfg(target_os = "linux")]
 pub(crate) fn list_serial_ports_with_dev(dev_dir: &std::path::Path) -> Vec<String> {
+    list_serial_ports_with_dev_and_prefixes(dev_dir, DEFAULT_EXTRA_LINUX_PREFIXES)
+}
+
+fn list_serial_ports_with_dev_and_prefixes(
+    dev_dir: &std::path::Path,
+    extra_prefixes: &[&str],
+) -> Vec<String> {
     let crate_ports: Vec<String> = serialport::available_ports()
         .unwrap_or_default()
         .into_iter()
@@ -151,7 +237,7 @@ pub(crate) fn list_serial_ports_with_dev(dev_dir: &std::path::Path) -> Vec<Strin
     #[cfg(target_os = "linux")]
     {
         let mut ports = crate_ports;
-        for extra in scan_extra_linux_serial_ports(dev_dir) {
+        for extra in scan_extra_linux_serial_ports(dev_dir, extra_prefixes) {
             if !ports.contains(&extra) {
                 ports.push(extra);
             }
@@ -162,7 +248,7 @@ pub(crate) fn list_serial_ports_with_dev(dev_dir: &std::path::Path) -> Vec<Strin
 
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = dev_dir;
+        let _ = (dev_dir, extra_prefixes);
         crate_ports
     }
 }
@@ -170,20 +256,15 @@ pub(crate) fn list_serial_ports_with_dev(dev_dir: &std::path::Path) -> Vec<Strin
 /// Scan `dev_dir` for Linux UART devices not always enumerated by the
 /// `serialport` crate (e.g. PL011 UARTs on Raspberry Pi).
 ///
-/// Matches entries whose names start with `ttyAMA`, `ttyS`, or `uart_up`.
+/// Matches `/dev` entries whose names start with any of the given `prefixes`.
 #[cfg(target_os = "linux")]
-fn scan_extra_linux_serial_ports(dev_dir: &std::path::Path) -> Vec<String> {
-    const EXTRA_PREFIXES: &[&str] = &["ttyAMA", "ttyS", "uart_up"];
-
+fn scan_extra_linux_serial_ports(dev_dir: &std::path::Path, prefixes: &[&str]) -> Vec<String> {
     let mut found = Vec::new();
     if let Ok(entries) = std::fs::read_dir(dev_dir) {
         for entry in entries.flatten() {
             let name = entry.file_name();
             let name_str = name.to_string_lossy();
-            if EXTRA_PREFIXES
-                .iter()
-                .any(|prefix| name_str.starts_with(prefix))
-            {
+            if prefixes.iter().any(|prefix| name_str.starts_with(prefix)) {
                 found.push(entry.path().to_string_lossy().into_owned());
             }
         }
@@ -643,7 +724,7 @@ mod tests {
         fn scan_finds_ttyama_devices() {
             let dir = TempDir::new().unwrap();
             make_dev_entries(dir.path(), &["ttyAMA1", "ttyAMA2", "tty", "random"]);
-            let mut found = scan_extra_linux_serial_ports(dir.path());
+            let mut found = scan_extra_linux_serial_ports(dir.path(), DEFAULT_EXTRA_LINUX_PREFIXES);
             found.sort();
             assert!(found.iter().any(|p| p.ends_with("ttyAMA1")));
             assert!(found.iter().any(|p| p.ends_with("ttyAMA2")));
@@ -654,43 +735,53 @@ mod tests {
         fn scan_finds_ttys_devices() {
             let dir = TempDir::new().unwrap();
             make_dev_entries(dir.path(), &["ttyS0", "ttyS1"]);
-            let found = scan_extra_linux_serial_ports(dir.path());
+            let found = scan_extra_linux_serial_ports(dir.path(), DEFAULT_EXTRA_LINUX_PREFIXES);
             assert!(found.iter().any(|p| p.ends_with("ttyS0")));
             assert!(found.iter().any(|p| p.ends_with("ttyS1")));
         }
 
         #[test]
-        fn scan_finds_uart_up_devices() {
+        fn scan_finds_uart_devices() {
             let dir = TempDir::new().unwrap();
-            make_dev_entries(dir.path(), &["uart_up1", "uart_up2"]);
-            let found = scan_extra_linux_serial_ports(dir.path());
-            assert!(found.iter().any(|p| p.ends_with("uart_up1")));
-            assert!(found.iter().any(|p| p.ends_with("uart_up2")));
+            make_dev_entries(dir.path(), &["uart0", "uart1"]);
+            let found = scan_extra_linux_serial_ports(dir.path(), DEFAULT_EXTRA_LINUX_PREFIXES);
+            assert!(found.iter().any(|p| p.ends_with("uart0")));
+            assert!(found.iter().any(|p| p.ends_with("uart1")));
+        }
+
+        #[test]
+        fn scan_finds_serial_devices() {
+            let dir = TempDir::new().unwrap();
+            make_dev_entries(dir.path(), &["serial0", "serial1"]);
+            let found = scan_extra_linux_serial_ports(dir.path(), DEFAULT_EXTRA_LINUX_PREFIXES);
+            assert!(found.iter().any(|p| p.ends_with("serial0")));
+            assert!(found.iter().any(|p| p.ends_with("serial1")));
         }
 
         #[test]
         fn scan_does_not_include_unrelated_devices() {
             let dir = TempDir::new().unwrap();
             make_dev_entries(dir.path(), &["ttyUSB0", "ttyACM0", "tty", "null", "zero"]);
-            let found = scan_extra_linux_serial_ports(dir.path());
+            let found = scan_extra_linux_serial_ports(dir.path(), DEFAULT_EXTRA_LINUX_PREFIXES);
             assert!(found.is_empty());
         }
 
         #[test]
         fn scan_handles_missing_directory_gracefully() {
             let path = std::path::Path::new("/nonexistent/dev/termiHub_test");
-            let found = scan_extra_linux_serial_ports(path);
+            let found = scan_extra_linux_serial_ports(path, DEFAULT_EXTRA_LINUX_PREFIXES);
             assert!(found.is_empty());
         }
 
         #[test]
         fn list_serial_ports_with_dev_includes_extra_linux_ports() {
             let dir = TempDir::new().unwrap();
-            make_dev_entries(dir.path(), &["ttyAMA1", "ttyS0", "uart_up1"]);
+            make_dev_entries(dir.path(), &["ttyAMA1", "ttyS0", "uart0", "serial0"]);
             let ports = list_serial_ports_with_dev(dir.path());
             assert!(ports.iter().any(|p| p.ends_with("ttyAMA1")));
             assert!(ports.iter().any(|p| p.ends_with("ttyS0")));
-            assert!(ports.iter().any(|p| p.ends_with("uart_up1")));
+            assert!(ports.iter().any(|p| p.ends_with("uart0")));
+            assert!(ports.iter().any(|p| p.ends_with("serial0")));
         }
 
         #[test]
@@ -705,7 +796,10 @@ mod tests {
         #[test]
         fn list_serial_ports_with_dev_output_is_sorted() {
             let dir = TempDir::new().unwrap();
-            make_dev_entries(dir.path(), &["ttyS2", "ttyAMA1", "uart_up1", "ttyS0"]);
+            make_dev_entries(
+                dir.path(),
+                &["ttyS2", "ttyAMA1", "uart0", "serial0", "ttyS0"],
+            );
             let ports = list_serial_ports_with_dev(dir.path());
             let mut sorted = ports.clone();
             sorted.sort();

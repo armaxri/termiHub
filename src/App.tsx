@@ -21,6 +21,7 @@ import { useWebviewZoom } from "@/hooks/useWebviewZoom";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { useAppStore } from "@/store/appStore";
 import { getCliWorkspace } from "@/services/workspaceApi";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./App.css";
 
 interface ErrorBoundaryState {
@@ -132,6 +133,21 @@ function App() {
       }
     })();
   }, [loadFromBackend]);
+
+  // Reload connections whenever this window regains focus so that changes made
+  // in a parallel instance (add, delete, rename) are immediately visible here.
+  // Uses the versioned reload guard so a stale focus reload cannot override a
+  // more recent mutation's correction.
+  useEffect(() => {
+    const unlisten = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+      if (focused) {
+        useAppStore.getState().reloadConnectionsFromBackend();
+      }
+    });
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+  }, []);
 
   // Schedule update check: 5-second delay on startup, then every 24 hours.
   useEffect(() => {

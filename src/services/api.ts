@@ -88,6 +88,69 @@ export async function closeTerminal(sessionId: SessionId): Promise<void> {
   await invoke("close_terminal", { sessionId });
 }
 
+// --- Persistent session commands ---
+
+/** Summary of a persistent session returned by the backend. */
+export interface PersistentSessionSummary {
+  connectionId: string;
+  sessionId: string;
+  attachedTabCount: number;
+}
+
+/**
+ * Start a persistent background session for a saved connection.
+ * Returns the backend session ID. Idempotent: if the session is already
+ * running the existing session ID is returned.
+ */
+export async function startPersistentSession(
+  connectionId: string,
+  typeId: string,
+  settings: Record<string, unknown>,
+  agentId?: string
+): Promise<SessionId> {
+  return await invoke<string>("start_persistent_session", {
+    connectionId,
+    typeId,
+    settings,
+    agentId,
+  });
+}
+
+/**
+ * Stop a persistent session, terminating the background process.
+ * All attached tabs will receive a terminal-exit event.
+ */
+export async function stopPersistentSession(connectionId: string): Promise<void> {
+  await invoke("stop_persistent_session", { connectionId });
+}
+
+/**
+ * Register `tabId` as attached to the persistent session for `connectionId`.
+ * Returns the new attached-tab count.
+ */
+export async function attachPersistentTab(connectionId: string, tabId: string): Promise<number> {
+  return await invoke<number>("attach_persistent_tab", { connectionId, tabId });
+}
+
+/**
+ * Unregister `tabId` from its persistent session, keeping the process alive.
+ * Returns the new attached-tab count.
+ */
+export async function detachPersistentTab(sessionId: SessionId, tabId: string): Promise<number> {
+  return await invoke<number>("detach_persistent_tab", { sessionId, tabId });
+}
+
+/** Return all currently registered persistent sessions. */
+export async function listPersistentSessions(): Promise<PersistentSessionSummary[]> {
+  return await invoke<PersistentSessionSummary[]>("list_persistent_sessions");
+}
+
+/** Fetch the scrollback buffer for a persistent session from the agent daemon. */
+export async function getAgentSessionBuffer(sessionId: string): Promise<Uint8Array> {
+  const bytes = await invoke<number[]>("get_agent_session_buffer", { sessionId });
+  return new Uint8Array(bytes);
+}
+
 /** Info about a local session managed by the desktop. */
 export interface LocalSessionInfo {
   id: string;
@@ -626,7 +689,10 @@ export async function deleteAgentFolder(agentId: string, folderId: string): Prom
 // --- Agent setup commands ---
 
 /** Source for the agent binary during setup. */
-export type AgentBinarySource = { type: "githubDownload" } | { type: "localFile"; path: string };
+export type AgentBinarySource =
+  | { type: "githubDownload" }
+  | { type: "branchBuild"; branch: string }
+  | { type: "localFile"; path: string };
 
 /** Configuration for setting up a remote agent. */
 export interface AgentSetupConfig {
@@ -650,6 +716,9 @@ export interface RemoteArchInfo {
   downloadBaseUrl: string;
   /** Pre-computed GitHub download URL for the detected arch. Null if arch is unsupported. */
   downloadUrl: string | null;
+  /** The git branch this desktop app was built from, if it is a feature-branch build.
+   *  Null for main/develop/release builds. Used to pre-fill the branch build option. */
+  buildBranch: string | null;
 }
 
 /** Result of initiating the agent setup flow. */
