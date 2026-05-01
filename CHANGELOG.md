@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Develop-branch builds are now marked in the status bar with a purple "develop" badge next to the version, and automatically download agent binaries from the `dev-develop-latest` GitHub release instead of `dev-latest`.
 - Open Connections panel: proxy sessions (desktop connections routed through a remote agent) are now shown in a "Connections via &lt;agent&gt;" section, grouped by agent, with individual Kill and Kill All buttons. They were previously invisible in the panel.
 - Serial port scan prefixes: the full list of Linux `/dev` prefixes scanned to discover serial ports (e.g. `ttyAMA*` on Raspberry Pi, `ttyTHS*` on Jetson, `ttymxc*` on i.MX, and 39 more) is now configurable via Settings → General. Built-in prefixes can be toggled on or off; custom prefixes can be added or removed. Changes take effect immediately when opening the serial port dropdown in a connection editor.
 - Persistent connections scrollback replay: when a tab re-attaches to a running persistent session, the agent queries the daemon's ring buffer via a new `MSG_QUERY_BUFFER` / `session.getBuffer` protocol exchange. The buffer lives on the agent machine and survives desktop restarts, correctly solving the offline-desktop use case. The ring buffer size is now configurable per agent in Agent Settings (1–64 MiB, default 1 MiB) (#666).
