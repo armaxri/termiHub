@@ -39,9 +39,11 @@ pub struct AppInfo {
     pub git_hash: String,
     /// Whether this is a development (non-production) build.
     pub is_dev: bool,
+    /// Git branch this binary was built from (e.g. `"main"`, `"develop"`, `"unknown"`).
+    pub build_branch: String,
 }
 
-/// Return build-time info (version, git hash, dev flag) to the frontend.
+/// Return build-time info (version, git hash, dev flag, build branch) to the frontend.
 #[tauri::command]
 pub fn get_app_info(app_handle: AppHandle) -> AppInfo {
     let base = app_handle.package_info().version.to_string();
@@ -51,6 +53,7 @@ pub fn get_app_info(app_handle: AppHandle) -> AppInfo {
         version,
         git_hash: env!("GIT_HASH").to_string(),
         is_dev,
+        build_branch: env!("TERMIHUB_BUILD_BRANCH").to_string(),
     }
 }
 
