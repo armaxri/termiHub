@@ -779,10 +779,12 @@ impl SessionManager {
     // ── End persistent session management ──────────────────────────────
 
     /// Build a human-readable title from type and settings.
+    ///
+    /// For proxy sessions (`agent_id` is `Some`) the same descriptive title is
+    /// used as for local sessions — the agent context is conveyed by the UI
+    /// section header, not by the title itself.
     fn build_title(type_id: &str, settings: &serde_json::Value, agent_id: Option<&str>) -> String {
-        if let Some(aid) = agent_id {
-            return format!("Remote: {aid}");
-        }
+        let _ = agent_id;
         match type_id {
             "local" => settings
                 .get("shell")
@@ -1175,6 +1177,15 @@ mod tests {
         let settings = serde_json::json!({"runtime": "docker"});
         let title = SessionManager::build_title("docker", &settings, None);
         assert_eq!(title, "Docker: unknown");
+    }
+
+    #[test]
+    fn build_title_proxy_session_uses_connection_info_not_agent_id() {
+        let settings =
+            serde_json::json!({"username": "alice", "host": "db-01.example.com", "port": 22});
+        let title = SessionManager::build_title("ssh", &settings, Some("production-server"));
+        // Proxy sessions get the same descriptive title as local sessions.
+        assert_eq!(title, "SSH: alice@db-01.example.com");
     }
 
     // ── EventEmitter DI tests ─────────────────────────────────────────

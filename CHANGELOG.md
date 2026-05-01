@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Open Connections panel: proxy sessions (desktop connections routed through a remote agent) are now shown in a "Connections via &lt;agent&gt;" section, grouped by agent, with individual Kill and Kill All buttons. They were previously invisible in the panel.
 - Serial port scan prefixes: the full list of Linux `/dev` prefixes scanned to discover serial ports (e.g. `ttyAMA*` on Raspberry Pi, `ttyTHS*` on Jetson, `ttymxc*` on i.MX, and 39 more) is now configurable via Settings → General. Built-in prefixes can be toggled on or off; custom prefixes can be added or removed. Changes take effect immediately when opening the serial port dropdown in a connection editor.
 - Persistent connections scrollback replay: when a tab re-attaches to a running persistent session, the agent queries the daemon's ring buffer via a new `MSG_QUERY_BUFFER` / `session.getBuffer` protocol exchange. The buffer lives on the agent machine and survives desktop restarts, correctly solving the offline-desktop use case. The ring buffer size is now configurable per agent in Agent Settings (1–64 MiB, default 1 MiB) (#666).
 - Persistent connections: SSH, serial, Docker, and WSL connections can now be started as persistent background sessions that keep the process running after the tab is closed. A `∞` badge and a colour-coded state dot appear on each persistent connection in the sidebar. Inline hover buttons and a state-aware context menu let you Start, Attach a new tab, or Stop the session. Multiple tabs can attach to the same running backend session simultaneously; closing a tab detaches without killing the process. A new `persistent-session-state-changed` Tauri event drives real-time state updates in the sidebar and store (#666).
@@ -24,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Open Connections panel: proxy session titles now show the actual connection info (e.g. "SSH: user@host", "Serial: /dev/ttyUSB0") instead of the generic "Remote: &lt;agent-id&gt;" label. The agent context is already conveyed by the section header.
 - CI: main-branch builds are now marked as dev builds — the app version shown in the UI includes a `-dev` suffix and the `isDev` flag is set to `true` for all CI builds triggered from `main` (not just local `tauri dev` sessions). Release-tag builds are unaffected (#663).
 - CI: Windows NSIS setup installer (`termiHub-dev-windows-x64-setup.exe`) was not being uploaded to the `dev-latest` release — it is now uploaded alongside the existing MSI artifact (#664).
 - CI: `dev-latest` release is now created as a draft and published atomically once all platform builds and agent binaries finish uploading, preventing the partial-artifact state visible during builds (#664).
