@@ -11,6 +11,7 @@ import {
   ConnectionEditorMeta,
 } from "@/types/terminal";
 import { listAvailableShells, resolveCredential } from "@/services/api";
+import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import type { ConnectionTypeInfo } from "@/services/api";
 import {
   SavedConnection,
@@ -674,11 +675,32 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       if (promptInfo) {
         const host = (connSettings[promptInfo.hostKey] as string) ?? "";
         const username = (connSettings[promptInfo.usernameKey] as string) ?? "";
-        const password = await requestPassword(host, username);
-        if (password === null) return;
+
+        // Before prompting, check whether the credential store already has a
+        // credential for this connection. This avoids re-entering a password
+        // when the user only changed a non-credential field and clicks Save & Connect.
+        const authMethod = connSettings.authMethod as string | undefined;
+        let resolvedPassword: string | null = null;
+        if (authMethod) {
+          const savePasswordFlag = connSettings.savePassword as boolean | undefined;
+          const resolution = await resolveConnectionCredential(
+            saved.id,
+            authMethod,
+            savePasswordFlag
+          );
+          if (resolution.usedStoredCredential && resolution.password) {
+            resolvedPassword = resolution.password;
+          }
+        }
+
+        if (!resolvedPassword) {
+          resolvedPassword = await requestPassword(host, username);
+          if (resolvedPassword === null) return;
+        }
+
         config = {
           ...config,
-          config: { ...config.config, [promptInfo.passwordKey]: password },
+          config: { ...config.config, [promptInfo.passwordKey]: resolvedPassword },
         } as ConnectionConfig;
       }
     }

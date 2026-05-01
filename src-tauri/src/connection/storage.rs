@@ -188,6 +188,13 @@ impl ConnectionStorage {
         };
         self.save_store(&store)
     }
+
+    /// Create a storage instance pointing directly at `file_path`.
+    /// Only available in tests; production code must go through `new()`.
+    #[cfg(test)]
+    pub fn new_for_test(file_path: std::path::PathBuf) -> Self {
+        Self { file_path }
+    }
 }
 
 /// Recursively recover valid tree nodes from a JSON array,

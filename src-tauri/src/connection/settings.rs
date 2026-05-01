@@ -240,6 +240,13 @@ impl SettingsStorage {
         })
     }
 
+    /// Create a storage instance pointing directly at `file_path`.
+    /// Only available in tests; production code must go through `new()`.
+    #[cfg(test)]
+    pub fn new_for_test(file_path: PathBuf) -> Self {
+        Self { file_path }
+    }
+
     /// Load with recovery: on parse failure, backs up the corrupt file and resets to defaults.
     ///
     /// Since `AppSettings` uses `#[serde(default)]`, partial field corruption is handled

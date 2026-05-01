@@ -27,6 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Open Connections panel: proxy session titles now show the actual connection info (e.g. "SSH: user@host", "Serial: /dev/ttyUSB0") instead of the generic "Remote: &lt;agent-id&gt;" label. The agent context is already conveyed by the section header.
+- Connections: running two termiHub instances simultaneously no longer causes deleted connections to reappear. Each write operation now reloads from disk before modifying in-memory state, preventing the stale second instance from overwriting changes made by the first.
+- Connections: agent reconnect operations (which trigger internal settings updates) no longer resurrect connections deleted by another instance — `update_agent_settings` and `reorder_agents` now also reload from disk before writing.
+- Connections: switching between termiHub windows can no longer resurrect deleted connections — the window-focus reload now runs through the same versioned-reload guard as all other state changes, so a stale focus event cannot overwrite a more recent correction.
+- Credential store: saving a serial or local connection no longer triggers the credential-store unlock dialog. The credential migration path now only runs for SSH connections (those with an `authMethod` setting), so non-SSH connection types can be saved without touching the credential store.
+- SSH connections: the Save & Connect flow in the Connection Editor no longer shows a password prompt when a stored credential already exists — it reads the stored password or key passphrase from the credential store and uses it directly.
+- SSH connections: connecting via the sidebar with key authentication and `savePassword=true` now correctly prompts for the key passphrase when none is stored, preventing a silent auth failure.
 - CI: main-branch builds are now marked as dev builds — the app version shown in the UI includes a `-dev` suffix and the `isDev` flag is set to `true` for all CI builds triggered from `main` (not just local `tauri dev` sessions). Release-tag builds are unaffected (#663).
 - CI: Windows NSIS setup installer (`termiHub-dev-windows-x64-setup.exe`) was not being uploaded to the `dev-latest` release — it is now uploaded alongside the existing MSI artifact (#664).
 - CI: `dev-latest` release is now created as a draft and published atomically once all platform builds and agent binaries finish uploading, preventing the partial-artifact state visible during builds (#664).
