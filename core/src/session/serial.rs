@@ -219,7 +219,7 @@ pub fn list_serial_ports_with_enabled_prefixes(enabled_prefixes: &[&str]) -> Vec
 }
 
 /// Inner implementation used by Linux tests to inject a custom `/dev` directory.
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", test))]
 pub(crate) fn list_serial_ports_with_dev(dev_dir: &std::path::Path) -> Vec<String> {
     list_serial_ports_with_dev_and_prefixes(dev_dir, DEFAULT_EXTRA_LINUX_PREFIXES)
 }
