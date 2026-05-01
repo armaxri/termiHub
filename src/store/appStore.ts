@@ -370,6 +370,8 @@ interface AppState {
   loadFromBackend: () => Promise<void>;
   updateSettings: (settings: AppSettings) => Promise<void>;
   reloadExternalConnections: () => Promise<void>;
+  /** Reload connections from the backend using the versioned reload guard. */
+  reloadConnectionsFromBackend: () => void;
   toggleFolder: (folderId: string) => void;
   addConnection: (connection: SavedConnection) => void;
   updateConnection: (connection: SavedConnection) => void;
@@ -680,7 +682,43 @@ function generateGroupId(): string {
   return `group-${Date.now()}-${groupCounter}-${Math.random().toString(36).slice(2, 6)}`;
 }
 
+// Monotonically increasing counters for connection-state reloads.
+// `_connReloadSeq` increments each time a reload is initiated; `_connAppliedSeq`
+// tracks the highest sequence whose result has been applied to the store.
+// This prevents a stale concurrent reload (lower seq) from overwriting a fresher
+// correction (higher seq) that happened to resolve first.
+let _connReloadSeq = 0;
+let _connAppliedSeq = 0;
+
+/** @internal Reset reload sequencer — for tests only. */
+export function _resetConnectionReloadSeq(): void {
+  _connReloadSeq = 0;
+  _connAppliedSeq = 0;
+}
+
 export const useAppStore = create<AppState>((set, get) => {
+  // Reload connections from the backend, applying the result only if this
+  // reload was initiated more recently than the last applied one.
+  function applyConnectionReload(): Promise<void> {
+    const mySeq = ++_connReloadSeq;
+    frontendLog("connection_sync", `reload initiated (seq=${mySeq})`);
+    return loadConnections().then(({ connections, folders }) => {
+      if (mySeq >= _connAppliedSeq) {
+        _connAppliedSeq = mySeq;
+        frontendLog(
+          "connection_sync",
+          `reload applied (seq=${mySeq}, conns=${connections.length}, folders=${folders.length})`
+        );
+        set({ connections, folders });
+      } else {
+        frontendLog(
+          "connection_sync",
+          `reload dropped (seq=${mySeq} superseded by applied=${_connAppliedSeq})`
+        );
+      }
+    });
+  }
+
   const initialPanel = createLeafPanel();
   const initialGroupId = generateGroupId();
   const initialGroup: TabGroup = {
@@ -2121,11 +2159,16 @@ export const useAppStore = create<AppState>((set, get) => {
       });
     },
 
+    reloadConnectionsFromBackend: () => {
+      frontendLog("connection_sync", "focus reload: triggered by external event");
+      void applyConnectionReload();
+    },
+
     addConnection: (connection) => {
       set((state) => ({ connections: [...state.connections, connection] }));
+      frontendLog("connection_sync", `addConnection: persisting ${connection.id}`);
       persistConnection(stripPassword(connection))
-        .then(() => loadConnections())
-        .then(({ connections, folders }) => set({ connections, folders }))
+        .then(() => applyConnectionReload())
         .catch((err) => console.error("Failed to persist new connection:", err));
     },
 
@@ -2133,27 +2176,31 @@ export const useAppStore = create<AppState>((set, get) => {
       set((state) => ({
         connections: state.connections.map((c) => (c.id === connection.id ? connection : c)),
       }));
+      frontendLog("connection_sync", `updateConnection: persisting ${connection.id}`);
       persistConnection(stripPassword(connection))
-        .then(() => loadConnections())
-        .then(({ connections, folders }) => set({ connections, folders }))
+        .then(() => applyConnectionReload())
         .catch((err) => console.error("Failed to persist connection update:", err));
     },
 
     deleteConnection: (connectionId) => {
       const conn = get().connections.find((c) => c.id === connectionId);
+      frontendLog("connection_sync", `deleteConnection: removing ${connectionId} optimistically`);
       set((state) => ({
         connections: state.connections.filter((c) => c.id !== connectionId),
       }));
-      removeConnection(connectionId, conn?.sourceFile).catch((err) =>
-        console.error("Failed to persist connection deletion:", err)
-      );
+      removeConnection(connectionId, conn?.sourceFile)
+        .then(() => {
+          frontendLog("connection_sync", `deleteConnection: backend confirmed, reloading`);
+          return applyConnectionReload();
+        })
+        .catch((err) => console.error("Failed to persist connection deletion:", err));
     },
 
     addFolder: (folder) => {
       set((state) => ({ folders: [...state.folders, folder] }));
+      frontendLog("connection_sync", `addFolder: persisting ${folder.id}`);
       persistFolder(folder)
-        .then(() => loadConnections())
-        .then(({ connections, folders }) => set({ connections, folders }))
+        .then(() => applyConnectionReload())
         .catch((err) => console.error("Failed to persist new folder:", err));
     },
 
@@ -2172,9 +2219,9 @@ export const useAppStore = create<AppState>((set, get) => {
 
         return { folders, connections };
       });
+      frontendLog("connection_sync", `deleteFolder: removing ${folderId}`);
       removeFolder(folderId)
-        .then(() => loadConnections())
-        .then(({ connections, folders }) => set({ connections, folders }))
+        .then(() => applyConnectionReload())
         .catch((err) => console.error("Failed to persist folder deletion:", err));
     },
 
@@ -2188,9 +2235,9 @@ export const useAppStore = create<AppState>((set, get) => {
         name: `Copy of ${original.name}`,
       };
       set((s) => ({ connections: [...s.connections, duplicate] }));
+      frontendLog("connection_sync", `duplicateConnection: persisting copy of ${connectionId}`);
       persistConnection(stripPassword(duplicate))
-        .then(() => loadConnections())
-        .then(({ connections, folders }) => set({ connections, folders }))
+        .then(() => applyConnectionReload())
         .catch((err) => console.error("Failed to persist duplicated connection:", err));
     },
 
@@ -2219,9 +2266,9 @@ export const useAppStore = create<AppState>((set, get) => {
       // (e.g., when moving a connection into a folder with a same-named sibling)
       const moved = get().connections.find((c) => c.id === connectionId);
       if (moved) {
+        frontendLog("connection_sync", `moveConnectionToFolder: persisting ${connectionId}`);
         persistConnection(stripPassword(moved))
-          .then(() => loadConnections())
-          .then(({ connections, folders }) => set({ connections, folders }))
+          .then(() => applyConnectionReload())
           .catch((err) => console.error("Failed to persist connection move:", err));
       }
     },
@@ -2236,9 +2283,12 @@ export const useAppStore = create<AppState>((set, get) => {
 
       // Persist all connections in parallel, then reload once
       const moved = get().connections.filter((c) => idSet.has(c.id));
+      frontendLog(
+        "connection_sync",
+        `bulkMoveConnectionsToFolder: persisting ${moved.length} connections`
+      );
       Promise.all(moved.map((conn) => persistConnection(stripPassword(conn))))
-        .then(() => loadConnections())
-        .then(({ connections, folders }) => set({ connections, folders }))
+        .then(() => applyConnectionReload())
         .catch((err) => console.error("Failed to persist bulk connection move:", err));
     },
 
