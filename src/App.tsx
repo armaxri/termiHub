@@ -11,6 +11,7 @@ import { UnlockDialog } from "@/components/UnlockDialog";
 import { MasterPasswordSetup } from "@/components/MasterPasswordSetup";
 import { RecoveryDialog } from "@/components/Settings/RecoveryDialog";
 import { ShortcutsOverlay } from "@/components/KeyboardShortcuts/ShortcutsOverlay";
+import { OverlayViewPanel } from "@/components/Settings/OverlayViewPanel";
 import { LargePasteDialog } from "@/components/Terminal/LargePasteDialog";
 import { UpdateNotification } from "@/components/UpdateNotification/UpdateNotification";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
@@ -223,6 +224,7 @@ function App() {
           warnings={recoveryWarnings}
         />
         <ShortcutsOverlay open={shortcutsOverlayOpen} onOpenChange={setShortcutsOverlayOpen} />
+        <OverlayViewPanel />
         <LargePasteDialog
           open={largePasteDialog.open}
           charCount={largePasteDialog.charCount}

@@ -329,6 +329,11 @@ interface AppState {
   shortcutsOverlayOpen: boolean;
   setShortcutsOverlayOpen: (open: boolean) => void;
 
+  // Standalone overlay views (updates, about) — opened from the settings menu
+  overlayView: "updates" | "about" | null;
+  openOverlayView: (view: "updates" | "about") => void;
+  closeOverlayView: () => void;
+
   // Panel zoom overlay (runtime-only) — temporarily expand the active terminal tab to full view
   zoomedTabId: string | null;
   setZoomedTabId: (tabId: string | null) => void;
@@ -1856,6 +1861,11 @@ export const useAppStore = create<AppState>((set, get) => {
     // Shortcuts overlay
     shortcutsOverlayOpen: false,
     setShortcutsOverlayOpen: (open) => set({ shortcutsOverlayOpen: open }),
+
+    // Standalone overlay views
+    overlayView: null,
+    openOverlayView: (view) => set({ overlayView: view }),
+    closeOverlayView: () => set({ overlayView: null }),
 
     // Panel zoom overlay
     zoomedTabId: null,
