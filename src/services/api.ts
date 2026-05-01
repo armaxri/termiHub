@@ -988,6 +988,8 @@ export interface AppInfo {
   gitHash: string;
   /** Whether this is a development (non-production) build. */
   isDev: boolean;
+  /** Git branch this binary was built from (e.g. `"main"`, `"develop"`, `"unknown"`). */
+  buildBranch: string;
 }
 
 /** Return build-time info: version (with `-dev` suffix in dev builds), git hash, and dev flag. */

@@ -124,6 +124,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TERMIHUB_DEV_BUILD: 'true'
+          TERMIHUB_BUILD_BRANCH: ${{ needs.prepare-release.outputs.branch }}
         with:
           tagName: ''
           releaseName: ''
