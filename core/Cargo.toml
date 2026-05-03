@@ -12,7 +12,7 @@ thiserror = { workspace = true }
 tokio = { version = "1", features = ["rt", "sync", "net", "time", "macros"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 surge-ping = "0.8"
-hickory-resolver = { version = "0.24", features = ["tokio-runtime"] }
+hickory-resolver = { version = "0.26", features = ["tokio", "system-config"] }
 socket2 = { version = "0.5", features = ["all"] }
 rand = "0.8"
 serialport = { workspace = true, optional = true }
