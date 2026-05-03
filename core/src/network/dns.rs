@@ -118,7 +118,10 @@ fn format_rdata(data: &hickory_resolver::proto::rr::RData) -> Option<String> {
             .join(" "),
         RData::SRV(srv) => format!(
             "{} {} {} {}",
-            srv.priority, srv.weight, srv.port, srv.target.to_utf8()
+            srv.priority,
+            srv.weight,
+            srv.port,
+            srv.target.to_utf8()
         ),
         RData::SOA(soa) => format!(
             "{} {} {} {} {} {} {}",
