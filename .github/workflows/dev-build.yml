@@ -133,6 +133,36 @@ jobs:
           prerelease: false
           args: --target ${{ matrix.rust_target }} ${{ matrix.extra_args }}
 
+      # Tauri applies an ad-hoc ('-') signature by default on macOS. Ad-hoc signatures
+      # are machine-local: on any other machine Gatekeeper treats the app as damaged
+      # rather than showing the bypassable security warning. Strip the signature so the
+      # app is fully unsigned — Gatekeeper then shows "cannot be opened because Apple
+      # cannot check it for malicious software", which users can bypass via System Settings.
+      - name: Strip ad-hoc signature from macOS DMG
+        if: startsWith(matrix.os, 'macos')
+        shell: bash
+        run: |
+          DMG=$(find "target/${{ matrix.rust_target }}/release/bundle/dmg" -name "*.dmg" | head -n 1)
+          WORKDIR=$(mktemp -d)
+          MOUNT="$WORKDIR/mount"
+          mkdir "$MOUNT"
+
+          hdiutil attach "$DMG" -mountpoint "$MOUNT" -nobrowse -quiet
+          APP_NAME=$(ls "$MOUNT" | grep '\.app$' | head -n 1)
+          cp -r "$MOUNT/$APP_NAME" "$WORKDIR/"
+          hdiutil detach "$MOUNT" -quiet
+
+          APP="$WORKDIR/$APP_NAME"
+          find "$APP" -type f \( -name "*.dylib" -o -name "*.so" \) \
+            -exec codesign --remove-signature {} \; 2>/dev/null || true
+          find "$APP/Contents/MacOS" -type f \
+            -exec codesign --remove-signature {} \; 2>/dev/null || true
+          codesign --remove-signature "$APP" 2>/dev/null || true
+
+          rm "$DMG"
+          hdiutil create -volname "termiHub" -srcfolder "$APP" -ov -format UDZO "$DMG"
+          rm -rf "$WORKDIR"
+
       - name: Collect primary artifact
         shell: bash
         run: |
@@ -285,6 +315,11 @@ jobs:
             echo "| Windows x64 | \`termiHub-dev-windows-x64.msi\`, \`termiHub-dev-windows-x64-setup.exe\` |"
             echo "| Linux x64 | \`termiHub-dev-linux-x64.AppImage\`, \`termiHub-dev-linux-x64.deb\` |"
             echo "| Linux ARM64 | \`termiHub-dev-linux-arm64.deb\`, \`termiHub-dev-linux-arm64.rpm\` |"
+            echo ""
+            echo "> **macOS — security warning on first launch.** These builds are unsigned (no Apple Developer"
+            echo "> account). macOS will block the app with _\"cannot be opened because Apple cannot check it"
+            echo "> for malicious software\"_. To bypass: open **System Settings → Privacy \& Security** and"
+            echo "> click **Open Anyway**. This is a one-time step per download."
             echo ""
             echo "### Agent Binaries (Static musl)"
             echo "| Target | Artifact |"
