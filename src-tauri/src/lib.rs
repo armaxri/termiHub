@@ -357,6 +357,13 @@ pub fn run() {
             commands::session::session_get_capabilities,
             commands::session::session_monitoring_open,
             commands::session::session_monitoring_close,
+            // Persistent session management
+            commands::session::start_persistent_session,
+            commands::session::stop_persistent_session,
+            commands::session::attach_persistent_tab,
+            commands::session::detach_persistent_tab,
+            commands::session::list_persistent_sessions,
+            commands::session::get_agent_session_buffer,
             // Connection management
             commands::connection::load_connections_and_folders,
             commands::connection::save_connection,

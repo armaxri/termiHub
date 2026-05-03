@@ -31,7 +31,12 @@ describe("AboutSettings", () => {
 
     mockedInvoke.mockImplementation((cmd) => {
       if (cmd === "get_app_info")
-        return Promise.resolve({ version: "1.2.3", gitHash: "abc1234", isDev: false });
+        return Promise.resolve({
+          version: "1.2.3",
+          gitHash: "abc1234",
+          isDev: false,
+          buildBranch: "main",
+        });
       return Promise.resolve(undefined);
     });
 

@@ -11,6 +11,7 @@ import { UnlockDialog } from "@/components/UnlockDialog";
 import { MasterPasswordSetup } from "@/components/MasterPasswordSetup";
 import { RecoveryDialog } from "@/components/Settings/RecoveryDialog";
 import { ShortcutsOverlay } from "@/components/KeyboardShortcuts/ShortcutsOverlay";
+import { OverlayViewPanel } from "@/components/Settings/OverlayViewPanel";
 import { LargePasteDialog } from "@/components/Terminal/LargePasteDialog";
 import { UpdateNotification } from "@/components/UpdateNotification/UpdateNotification";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
@@ -21,6 +22,7 @@ import { useWebviewZoom } from "@/hooks/useWebviewZoom";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { useAppStore } from "@/store/appStore";
 import { getCliWorkspace } from "@/services/workspaceApi";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./App.css";
 
 interface ErrorBoundaryState {
@@ -133,6 +135,21 @@ function App() {
     })();
   }, [loadFromBackend]);
 
+  // Reload connections whenever this window regains focus so that changes made
+  // in a parallel instance (add, delete, rename) are immediately visible here.
+  // Uses the versioned reload guard so a stale focus reload cannot override a
+  // more recent mutation's correction.
+  useEffect(() => {
+    const unlisten = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+      if (focused) {
+        useAppStore.getState().reloadConnectionsFromBackend();
+      }
+    });
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+  }, []);
+
   // Schedule update check: 5-second delay on startup, then every 24 hours.
   useEffect(() => {
     if (!settings.updates?.autoCheck && settings.updates?.autoCheck !== undefined) return;
@@ -207,6 +224,7 @@ function App() {
           warnings={recoveryWarnings}
         />
         <ShortcutsOverlay open={shortcutsOverlayOpen} onOpenChange={setShortcutsOverlayOpen} />
+        <OverlayViewPanel />
         <LargePasteDialog
           open={largePasteDialog.open}
           charCount={largePasteDialog.charCount}

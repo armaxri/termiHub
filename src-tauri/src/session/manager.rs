@@ -5,7 +5,7 @@
 //! connections. Local connections use the core backend implementations;
 //! remote connections use [`RemoteProxy`](super::remote_proxy::RemoteProxy).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -51,6 +51,32 @@ pub struct TerminalExitEvent {
     pub exit_code: Option<i32>,
 }
 
+/// State change event emitted when a persistent session transitions state.
+#[derive(Debug, Clone, Serialize)]
+pub struct PersistentSessionStateEvent {
+    pub connection_id: String,
+    pub session_id: Option<String>,
+    pub state: String,
+    pub attached_tab_count: u32,
+    pub error_message: Option<String>,
+}
+
+/// Public summary of a persistent session, returned by `list_persistent_sessions`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistentSessionSummary {
+    pub connection_id: String,
+    pub session_id: String,
+    pub attached_tab_count: u32,
+}
+
+/// Internal record for a persistent session.
+struct PersistentRecord {
+    connection_id: String,
+    session_id: String,
+    attached_tabs: HashSet<String>,
+}
+
 /// Error event emitted when a session-level error occurs.
 #[derive(Debug, Clone, Serialize)]
 #[allow(dead_code)]
@@ -73,6 +99,9 @@ pub trait EventEmitter: Clone + Send + Sync + 'static {
 
     /// Emit a session exit notification.
     fn emit_exit(&self, event: &TerminalExitEvent);
+
+    /// Emit a persistent session state change. Default no-op for test implementations.
+    fn emit_persistent_state(&self, _event: &PersistentSessionStateEvent) {}
 }
 
 impl<R: tauri::Runtime> EventEmitter for tauri::AppHandle<R> {
@@ -82,6 +111,10 @@ impl<R: tauri::Runtime> EventEmitter for tauri::AppHandle<R> {
 
     fn emit_exit(&self, event: &TerminalExitEvent) {
         let _ = self.emit("terminal-exit", event);
+    }
+
+    fn emit_persistent_state(&self, event: &PersistentSessionStateEvent) {
+        let _ = self.emit("persistent-session-state-changed", event);
     }
 }
 
@@ -102,6 +135,8 @@ pub struct SessionInfo {
 struct SessionEntry {
     connection: Box<dyn ConnectionType>,
     info: SessionInfo,
+    /// Remote session ID assigned by the agent (set for remote proxy sessions).
+    remote_session_id: Option<String>,
 }
 
 /// Push event emitted via Tauri when session-based monitoring delivers stats.
@@ -123,6 +158,8 @@ pub struct SessionManager {
     agent_manager: Arc<dyn AgentRpcClient>,
     /// Abort handles for active session-monitoring push tasks, keyed by session ID.
     monitoring_tasks: Arc<Mutex<HashMap<String, tokio::task::AbortHandle>>>,
+    /// Registry for persistent sessions, keyed by connection ID.
+    persistent_sessions: Arc<Mutex<HashMap<String, PersistentRecord>>>,
 }
 
 impl SessionManager {
@@ -133,6 +170,7 @@ impl SessionManager {
             registry: Arc::new(registry),
             agent_manager,
             monitoring_tasks: Arc::new(Mutex::new(HashMap::new())),
+            persistent_sessions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -162,30 +200,32 @@ impl SessionManager {
 
         let session_id = uuid::Uuid::new_v4().to_string();
 
-        let connection: Box<dyn ConnectionType> = if let Some(aid) = agent_id {
-            // Remote: create proxy to agent.
-            let mut proxy = RemoteProxy::new(aid.to_string(), self.agent_manager.clone());
-            // Wrap settings with the type information for the remote side.
-            let remote_settings = serde_json::json!({
-                "type": type_id,
-                "config": settings,
-            });
-            proxy
-                .connect(remote_settings)
-                .await
-                .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?;
-            Box::new(proxy)
-        } else {
-            // Local: instantiate from registry.
-            let mut conn = self
-                .registry
-                .create(type_id)
-                .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?;
-            conn.connect(settings.clone())
-                .await
-                .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?;
-            conn
-        };
+        let (connection, remote_session_id): (Box<dyn ConnectionType>, Option<String>) =
+            if let Some(aid) = agent_id {
+                // Remote: create proxy to agent.
+                let mut proxy = RemoteProxy::new(aid.to_string(), self.agent_manager.clone());
+                // Wrap settings with the type information for the remote side.
+                let remote_settings = serde_json::json!({
+                    "type": type_id,
+                    "config": settings,
+                });
+                proxy
+                    .connect(remote_settings)
+                    .await
+                    .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?;
+                let remote_sid = proxy.remote_session_id();
+                (Box::new(proxy), remote_sid)
+            } else {
+                // Local: instantiate from registry.
+                let mut conn = self
+                    .registry
+                    .create(type_id)
+                    .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?;
+                conn.connect(settings.clone())
+                    .await
+                    .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?;
+                (conn, None)
+            };
 
         // Build a human-readable title.
         let title = Self::build_title(type_id, &settings, agent_id);
@@ -209,6 +249,7 @@ impl SessionManager {
                 SessionEntry {
                     connection,
                     info: info.clone(),
+                    remote_session_id,
                 },
             );
         }
@@ -503,11 +544,247 @@ impl SessionManager {
         Ok(())
     }
 
-    /// Build a human-readable title from type and settings.
-    fn build_title(type_id: &str, settings: &serde_json::Value, agent_id: Option<&str>) -> String {
-        if let Some(aid) = agent_id {
-            return format!("Remote: {aid}");
+    // ── Persistent session management ──────────────────────────────────
+
+    /// Start a persistent session for `connection_id`.
+    ///
+    /// Creates a backend session and registers it in the persistent registry.
+    /// Returns the new session ID. If a session for this connection already exists,
+    /// returns `Ok(existing_session_id)` without creating a duplicate.
+    pub async fn start_persistent_session<E: EventEmitter>(
+        &self,
+        connection_id: &str,
+        type_id: &str,
+        settings: serde_json::Value,
+        agent_id: Option<&str>,
+        emitter: E,
+    ) -> Result<String, TerminalError> {
+        // Idempotency: if already running return the existing session ID.
+        {
+            let ps = self.persistent_sessions.lock().await;
+            if let Some(record) = ps.get(connection_id) {
+                let sessions = self.sessions.lock().await;
+                if sessions.contains_key(&record.session_id) {
+                    return Ok(record.session_id.clone());
+                }
+                // Session is registered but backend entry is gone (crashed) — fall through.
+            }
         }
+
+        let session_id = self
+            .create_connection(type_id, settings, agent_id, emitter.clone())
+            .await?;
+
+        {
+            let mut ps = self.persistent_sessions.lock().await;
+            ps.insert(
+                connection_id.to_string(),
+                PersistentRecord {
+                    connection_id: connection_id.to_string(),
+                    session_id: session_id.clone(),
+                    attached_tabs: HashSet::new(),
+                },
+            );
+        }
+
+        emitter.emit_persistent_state(&PersistentSessionStateEvent {
+            connection_id: connection_id.to_string(),
+            session_id: Some(session_id.clone()),
+            state: "running".to_string(),
+            attached_tab_count: 0,
+            error_message: None,
+        });
+
+        info!(connection_id, session_id, "Persistent session started");
+        Ok(session_id)
+    }
+
+    /// Stop a persistent session for `connection_id`.
+    ///
+    /// Closes the backend session and removes the persistent registry entry.
+    /// No-op if the session is not registered as persistent.
+    pub async fn stop_persistent_session<E: EventEmitter>(
+        &self,
+        connection_id: &str,
+        emitter: E,
+    ) -> Result<(), TerminalError> {
+        let record = {
+            let mut ps = self.persistent_sessions.lock().await;
+            ps.remove(connection_id)
+        };
+
+        let Some(record) = record else {
+            return Ok(());
+        };
+
+        self.close_session(&record.session_id).await?;
+
+        emitter.emit_persistent_state(&PersistentSessionStateEvent {
+            connection_id: connection_id.to_string(),
+            session_id: Some(record.session_id.clone()),
+            state: "stopped".to_string(),
+            attached_tab_count: 0,
+            error_message: None,
+        });
+
+        info!(connection_id, session_id = %record.session_id, "Persistent session stopped");
+        Ok(())
+    }
+
+    /// Register `tab_id` as attached to the persistent session for `connection_id`.
+    ///
+    /// Returns the new attached-tab count. Returns an error if the session is not
+    /// registered or the backend session is no longer alive.
+    pub async fn attach_persistent_tab<E: EventEmitter>(
+        &self,
+        connection_id: &str,
+        tab_id: &str,
+        emitter: E,
+    ) -> Result<u32, TerminalError> {
+        let count = {
+            let mut ps = self.persistent_sessions.lock().await;
+            let record = ps.get_mut(connection_id).ok_or_else(|| {
+                TerminalError::SessionNotFound(format!(
+                    "No persistent session for connection {connection_id}"
+                ))
+            })?;
+            // Verify backend session is still alive.
+            {
+                let sessions = self.sessions.lock().await;
+                if !sessions.contains_key(&record.session_id) {
+                    return Err(TerminalError::SessionNotFound(format!(
+                        "Persistent session {} for connection {} is no longer alive",
+                        record.session_id, connection_id
+                    )));
+                }
+            }
+            record.attached_tabs.insert(tab_id.to_string());
+            record.attached_tabs.len() as u32
+        };
+
+        let (sid, state) = {
+            let ps = self.persistent_sessions.lock().await;
+            let record = ps.get(connection_id).unwrap();
+            (
+                record.session_id.clone(),
+                if count > 0 { "attached" } else { "running" }.to_string(),
+            )
+        };
+
+        emitter.emit_persistent_state(&PersistentSessionStateEvent {
+            connection_id: connection_id.to_string(),
+            session_id: Some(sid),
+            state,
+            attached_tab_count: count,
+            error_message: None,
+        });
+
+        Ok(count)
+    }
+
+    /// Unregister `tab_id` from the persistent session identified by `session_id`.
+    ///
+    /// Keeps the backend session alive. Returns the new attached-tab count.
+    /// No-op (returns 0) if the session is not in the persistent registry.
+    pub async fn detach_persistent_tab<E: EventEmitter>(
+        &self,
+        session_id: &str,
+        tab_id: &str,
+        emitter: E,
+    ) -> Result<u32, TerminalError> {
+        let (connection_id, count) = {
+            let mut ps = self.persistent_sessions.lock().await;
+            let Some(record) = ps.values_mut().find(|r| r.session_id == session_id) else {
+                return Ok(0);
+            };
+            record.attached_tabs.remove(tab_id);
+            let count = record.attached_tabs.len() as u32;
+            (record.connection_id.clone(), count)
+        };
+
+        let state = if count > 0 { "attached" } else { "running" }.to_string();
+        emitter.emit_persistent_state(&PersistentSessionStateEvent {
+            connection_id: connection_id.clone(),
+            session_id: Some(session_id.to_string()),
+            state,
+            attached_tab_count: count,
+            error_message: None,
+        });
+
+        info!(
+            session_id,
+            tab_id,
+            remaining = count,
+            "Tab detached from persistent session"
+        );
+        Ok(count)
+    }
+
+    /// List all registered persistent sessions and their current state.
+    pub async fn list_persistent_sessions(&self) -> Vec<PersistentSessionSummary> {
+        let ps = self.persistent_sessions.lock().await;
+        ps.values()
+            .map(|r| PersistentSessionSummary {
+                connection_id: r.connection_id.clone(),
+                session_id: r.session_id.clone(),
+                attached_tab_count: r.attached_tabs.len() as u32,
+            })
+            .collect()
+    }
+
+    /// Fetch the scrollback buffer from the agent for a persistent session.
+    ///
+    /// Sends `session.getBuffer` over JSON-RPC to the agent, which queries
+    /// the daemon's ring buffer non-destructively and returns a base64-encoded
+    /// snapshot.
+    pub async fn get_remote_session_buffer(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<u8>, TerminalError> {
+        let (agent_id, remote_sid) = {
+            let sessions = self.sessions.lock().await;
+            let entry = sessions
+                .get(session_id)
+                .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
+            let agent_id =
+                entry.info.agent_id.clone().ok_or_else(|| {
+                    TerminalError::RemoteError("not a remote session".to_string())
+                })?;
+            let remote_sid = entry.remote_session_id.clone().ok_or_else(|| {
+                TerminalError::RemoteError("remote session ID unavailable".to_string())
+            })?;
+            (agent_id, remote_sid)
+        };
+
+        let result = self
+            .agent_manager
+            .send_request(
+                &agent_id,
+                "session.getBuffer",
+                serde_json::json!({ "session_id": remote_sid }),
+            )
+            .map_err(|e| TerminalError::RemoteError(e.to_string()))?;
+
+        let b64 = result.get("data").and_then(|v| v.as_str()).unwrap_or("");
+        if b64.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD
+            .decode(b64)
+            .map_err(|e| TerminalError::RemoteError(format!("base64 decode error: {e}")))
+    }
+
+    // ── End persistent session management ──────────────────────────────
+
+    /// Build a human-readable title from type and settings.
+    ///
+    /// For proxy sessions (`agent_id` is `Some`) the same descriptive title is
+    /// used as for local sessions — the agent context is conveyed by the UI
+    /// section header, not by the title itself.
+    fn build_title(type_id: &str, settings: &serde_json::Value, agent_id: Option<&str>) -> String {
+        let _ = agent_id;
         match type_id {
             "local" => settings
                 .get("shell")
@@ -581,6 +858,7 @@ impl SessionManager {
                     alive: true,
                     agent_id: None,
                 },
+                remote_session_id: None,
             },
         );
     }
@@ -643,7 +921,9 @@ impl SessionManager {
             // Drain any immediately available chunks.
             while coalescer.pending_len() < MAX_COALESCE_BYTES {
                 match output_rx.try_recv() {
-                    Ok(chunk) => coalescer.push(&chunk),
+                    Ok(chunk) => {
+                        coalescer.push(&chunk);
+                    }
                     Err(_) => break,
                 }
             }
@@ -778,6 +1058,7 @@ mod tests {
                     alive: true,
                     agent_id: None,
                 },
+                remote_session_id: None,
             },
         );
         drop(map);
@@ -896,6 +1177,15 @@ mod tests {
         let settings = serde_json::json!({"runtime": "docker"});
         let title = SessionManager::build_title("docker", &settings, None);
         assert_eq!(title, "Docker: unknown");
+    }
+
+    #[test]
+    fn build_title_proxy_session_uses_connection_info_not_agent_id() {
+        let settings =
+            serde_json::json!({"username": "alice", "host": "db-01.example.com", "port": 22});
+        let title = SessionManager::build_title("ssh", &settings, Some("production-server"));
+        // Proxy sessions get the same descriptive title as local sessions.
+        assert_eq!(title, "SSH: alice@db-01.example.com");
     }
 
     // ── EventEmitter DI tests ─────────────────────────────────────────
@@ -1166,6 +1456,33 @@ mod tests {
         }
     }
 
+    // ── get_remote_session_buffer tests ──────────────────────────────
+
+    #[tokio::test]
+    async fn get_remote_session_buffer_returns_error_for_nonexistent_session() {
+        let registry = ConnectionTypeRegistry::new();
+        let manager = SessionManager::new(registry, Arc::new(NullAgent));
+        let result = manager.get_remote_session_buffer("no-such-session").await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            TerminalError::SessionNotFound(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn get_remote_session_buffer_returns_remote_error_for_local_session() {
+        let registry = ConnectionTypeRegistry::new();
+        let manager = SessionManager::new(registry, Arc::new(NullAgent));
+        manager
+            .insert_test_session("local-sess", Box::new(MockConnection))
+            .await;
+        let result = manager.get_remote_session_buffer("local-sess").await;
+        assert!(result.is_err());
+        // Local sessions have no agent_id → RemoteError("not a remote session")
+        assert!(matches!(result.unwrap_err(), TerminalError::RemoteError(_)));
+    }
+
     // ── Regression test: close_session must call disconnect() ─────────
 
     /// Regression test for the serial port cleanup bug.
@@ -1188,6 +1505,265 @@ mod tests {
         assert!(
             disconnected.load(Ordering::SeqCst),
             "disconnect() must be called when a session is closed"
+        );
+    }
+
+    // ── MockPersistentEmitter ─────────────────────────────────────────
+
+    #[derive(Clone, Default)]
+    struct MockPersistentEmitter {
+        persistent_events: std::sync::Arc<std::sync::Mutex<Vec<PersistentSessionStateEvent>>>,
+    }
+
+    impl MockPersistentEmitter {
+        fn new() -> Self {
+            Self::default()
+        }
+
+        fn events(&self) -> Vec<PersistentSessionStateEvent> {
+            self.persistent_events.lock().unwrap().clone()
+        }
+    }
+
+    impl EventEmitter for MockPersistentEmitter {
+        fn emit_output(&self, _event: &TerminalOutputEvent) -> bool {
+            true
+        }
+        fn emit_exit(&self, _event: &TerminalExitEvent) {}
+        fn emit_persistent_state(&self, event: &PersistentSessionStateEvent) {
+            self.persistent_events.lock().unwrap().push(event.clone());
+        }
+    }
+
+    /// Build a `SessionManager` wired with a "mock" connection type for tests.
+    fn make_test_manager() -> SessionManager {
+        let mut registry = termihub_core::connection::ConnectionTypeRegistry::new();
+        registry.register(
+            "mock",
+            "Mock",
+            "mock",
+            Box::new(|| Box::new(MockConnection)),
+        );
+        let agent_manager = Arc::new(NullAgent);
+        SessionManager::new(registry, agent_manager)
+    }
+
+    // ── Persistent session tests ──────────────────────────────────────
+
+    #[tokio::test]
+    async fn start_persistent_session_creates_record_and_emits_running() {
+        let manager = make_test_manager();
+        let emitter = MockPersistentEmitter::new();
+
+        let session_id = manager
+            .start_persistent_session(
+                "conn-p1",
+                "mock",
+                serde_json::json!({}),
+                None,
+                emitter.clone(),
+            )
+            .await
+            .expect("start should succeed");
+
+        assert!(!session_id.is_empty());
+
+        let ps = manager.persistent_sessions.lock().await;
+        assert!(ps.contains_key("conn-p1"), "record must be inserted");
+        assert_eq!(ps["conn-p1"].session_id, session_id);
+        drop(ps);
+
+        let events = emitter.events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].state, "running");
+        assert_eq!(events[0].connection_id, "conn-p1");
+        assert_eq!(events[0].session_id.as_deref(), Some(session_id.as_str()));
+        assert_eq!(events[0].attached_tab_count, 0);
+    }
+
+    #[tokio::test]
+    async fn start_persistent_session_is_idempotent() {
+        let manager = make_test_manager();
+        let emitter = MockPersistentEmitter::new();
+
+        let first = manager
+            .start_persistent_session(
+                "conn-p1",
+                "mock",
+                serde_json::json!({}),
+                None,
+                emitter.clone(),
+            )
+            .await
+            .unwrap();
+        let second = manager
+            .start_persistent_session(
+                "conn-p1",
+                "mock",
+                serde_json::json!({}),
+                None,
+                emitter.clone(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(first, second, "idempotent call must return same session ID");
+        assert_eq!(
+            emitter.events().len(),
+            1,
+            "only the first start should emit an event"
+        );
+    }
+
+    #[tokio::test]
+    async fn stop_persistent_session_removes_record_and_emits_stopped() {
+        let manager = make_test_manager();
+        let emitter = MockPersistentEmitter::new();
+
+        manager
+            .start_persistent_session(
+                "conn-p1",
+                "mock",
+                serde_json::json!({}),
+                None,
+                emitter.clone(),
+            )
+            .await
+            .unwrap();
+
+        manager
+            .stop_persistent_session("conn-p1", emitter.clone())
+            .await
+            .unwrap();
+
+        let ps = manager.persistent_sessions.lock().await;
+        assert!(
+            !ps.contains_key("conn-p1"),
+            "record must be removed on stop"
+        );
+        drop(ps);
+
+        let events = emitter.events();
+        let last = events.last().expect("at least one event");
+        assert_eq!(last.state, "stopped");
+    }
+
+    #[tokio::test]
+    async fn attach_persistent_tab_emits_attached_with_tab_count() {
+        let manager = make_test_manager();
+        let emitter = MockPersistentEmitter::new();
+
+        manager
+            .start_persistent_session(
+                "conn-p1",
+                "mock",
+                serde_json::json!({}),
+                None,
+                emitter.clone(),
+            )
+            .await
+            .unwrap();
+
+        let count = manager
+            .attach_persistent_tab("conn-p1", "tab-1", emitter.clone())
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
+
+        let events = emitter.events();
+        let last = events.last().unwrap();
+        assert_eq!(last.state, "attached");
+        assert_eq!(last.attached_tab_count, 1);
+    }
+
+    #[tokio::test]
+    async fn detach_persistent_tab_emits_running_when_no_tabs_remain() {
+        let manager = make_test_manager();
+        let emitter = MockPersistentEmitter::new();
+
+        manager
+            .start_persistent_session(
+                "conn-p1",
+                "mock",
+                serde_json::json!({}),
+                None,
+                emitter.clone(),
+            )
+            .await
+            .unwrap();
+
+        manager
+            .attach_persistent_tab("conn-p1", "tab-1", emitter.clone())
+            .await
+            .unwrap();
+
+        let session_id = {
+            let ps = manager.persistent_sessions.lock().await;
+            ps["conn-p1"].session_id.clone()
+        };
+
+        let count = manager
+            .detach_persistent_tab(&session_id, "tab-1", emitter.clone())
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+
+        let events = emitter.events();
+        let last = events.last().unwrap();
+        assert_eq!(last.state, "running");
+        assert_eq!(last.attached_tab_count, 0);
+    }
+
+    #[tokio::test]
+    async fn list_persistent_sessions_returns_registered_sessions() {
+        let manager = make_test_manager();
+        let emitter = MockPersistentEmitter::new();
+
+        let session_id = manager
+            .start_persistent_session(
+                "conn-p1",
+                "mock",
+                serde_json::json!({}),
+                None,
+                emitter.clone(),
+            )
+            .await
+            .unwrap();
+
+        let list = manager.list_persistent_sessions().await;
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].connection_id, "conn-p1");
+        assert_eq!(list[0].session_id, session_id);
+        assert_eq!(list[0].attached_tab_count, 0);
+    }
+
+    /// Verify `PersistentSessionStateEvent` serialises with snake_case field names
+    /// so the TypeScript frontend's `event.payload.connection_id` etc. resolve correctly.
+    #[test]
+    fn persistent_session_state_event_serialises_snake_case() {
+        let event = PersistentSessionStateEvent {
+            connection_id: "agent-1:def-1".to_string(),
+            session_id: Some("sess-abc".to_string()),
+            state: "running".to_string(),
+            attached_tab_count: 2,
+            error_message: None,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(
+            json.contains("\"connection_id\""),
+            "must use snake_case; got: {json}"
+        );
+        assert!(
+            json.contains("\"session_id\""),
+            "must use snake_case; got: {json}"
+        );
+        assert!(
+            json.contains("\"attached_tab_count\""),
+            "must use snake_case; got: {json}"
+        );
+        assert!(
+            !json.contains("\"connectionId\"") && !json.contains("\"sessionId\""),
+            "camelCase must not appear; got: {json}"
         );
     }
 

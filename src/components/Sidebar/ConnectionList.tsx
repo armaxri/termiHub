@@ -444,6 +444,19 @@ export function ConnectionList() {
               frontendLog("connection_list", `Failed to store credential: ${err}`);
             });
           }
+        } else if (authMethod === "key" && savePassword) {
+          // Key auth with passphrase storage opted in but no passphrase stored yet —
+          // prompt for the passphrase so the backend can unlock the key.
+          const host = cfg.host as string;
+          const username = (cfg.username as string) ?? "";
+          const passphrase = await requestPassword(host, username);
+          if (passphrase === null) return;
+          config = { ...config, config: { ...cfg, password: passphrase } } as typeof config;
+          if (useAppStore.getState().passwordPromptShouldSave) {
+            await storeCredential(connection.id, "key_passphrase", passphrase).catch((err) => {
+              frontendLog("connection_list", `Failed to store key passphrase: ${err}`);
+            });
+          }
         }
       }
 
