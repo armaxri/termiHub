@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Connections sidebar: deleting multiple selected connections now removes all of them instead of only the one that was right-clicked.
+- Connections: changes made in one running instance (add, delete, rename) now propagate to all other running instances within ~1 second. Previously, other instances only updated on window focus.
+
 ### Changed
 
 - Settings: "Updates" and "About" are no longer sub-tabs inside the Settings panel. They are now direct entries in the settings gear dropdown menu and open in a focused overlay panel instead.

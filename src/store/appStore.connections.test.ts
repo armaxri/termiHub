@@ -379,6 +379,67 @@ describe("appStore — connections, folders, and special tabs", () => {
     });
   });
 
+  describe("bulkDeleteConnections", () => {
+    it("removes all specified connections from state immediately (optimistic)", () => {
+      const c1 = makeConnection({ id: "c-1" });
+      const c2 = makeConnection({ id: "c-2" });
+      const c3 = makeConnection({ id: "c-3" });
+      useAppStore.setState({ connections: [c1, c2, c3] });
+
+      useAppStore.getState().bulkDeleteConnections(["c-1", "c-2"]);
+
+      const remaining = useAppStore.getState().connections;
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0].id).toBe("c-3");
+    });
+
+    it("calls removeConnection for each deleted connection", async () => {
+      const c1 = makeConnection({ id: "c-1", sourceFile: "a.json" });
+      const c2 = makeConnection({ id: "c-2", sourceFile: undefined });
+      useAppStore.setState({ connections: [c1, c2] });
+
+      useAppStore.getState().bulkDeleteConnections(["c-1", "c-2"]);
+
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(vi.mocked(removeConnection)).toHaveBeenCalledWith("c-1", "a.json");
+      expect(vi.mocked(removeConnection)).toHaveBeenCalledWith("c-2", undefined);
+    });
+
+    it("reloads from backend once after all deletions complete", async () => {
+      const c1 = makeConnection({ id: "c-1" });
+      const c2 = makeConnection({ id: "c-2" });
+      useAppStore.setState({ connections: [c1, c2] });
+      vi.mocked(loadConnections).mockResolvedValueOnce({
+        connections: [],
+        folders: [],
+        agents: [],
+        externalErrors: [],
+      });
+
+      useAppStore.getState().bulkDeleteConnections(["c-1", "c-2"]);
+
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(vi.mocked(loadConnections)).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not affect connections not in the delete list", () => {
+      const c1 = makeConnection({ id: "c-1" });
+      const c2 = makeConnection({ id: "c-2" });
+      const c3 = makeConnection({ id: "c-3" });
+      useAppStore.setState({ connections: [c1, c2, c3] });
+
+      useAppStore.getState().bulkDeleteConnections(["c-1"]);
+
+      const remaining = useAppStore.getState().connections;
+      expect(remaining.map((c) => c.id)).toEqual(["c-2", "c-3"]);
+    });
+  });
+
   describe("duplicateConnection", () => {
     it("creates a copy with 'Copy of' prefix", () => {
       const conn = makeConnection({ id: "c-1", name: "My Connection" });

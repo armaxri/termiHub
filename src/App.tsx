@@ -23,6 +23,7 @@ import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { useAppStore } from "@/store/appStore";
 import { getCliWorkspace } from "@/services/workspaceApi";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 
 interface ErrorBoundaryState {
@@ -147,6 +148,17 @@ function App() {
     });
     return () => {
       void unlisten.then((fn) => fn());
+    };
+  }, []);
+
+  // Reload connections when another running instance modifies connections.json.
+  // The backend polls the file's mtime every second and emits this event on change.
+  useEffect(() => {
+    const unlistenPromise = listen<void>("connections-changed", () => {
+      useAppStore.getState().reloadConnectionsFromBackend();
+    });
+    return () => {
+      void unlistenPromise.then((fn) => fn());
     };
   }, []);
 
