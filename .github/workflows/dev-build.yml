@@ -133,62 +133,14 @@ jobs:
           prerelease: false
           args: --target ${{ matrix.rust_target }} ${{ matrix.extra_args }}
 
-      # Tauri applies an ad-hoc ('-') signature by default on macOS. Ad-hoc signatures
-      # are machine-local: on any other machine Gatekeeper treats the app as damaged
-      # rather than showing the bypassable security warning. Strip ALL signatures so the
-      # app is truly unsigned — Gatekeeper then shows the bypassable "cannot be opened
-      # because Apple cannot check it for malicious software" warning instead of the
-      # hard "can't be opened" (damaged) error.
-      - name: Strip ad-hoc signature from macOS DMG
-        if: startsWith(matrix.os, 'macos')
-        shell: bash
-        run: |
-          DMG=$(find "target/${{ matrix.rust_target }}/release/bundle/dmg" -name "*.dmg" | head -n 1)
-          WORKDIR=$(mktemp -d)
-          MOUNT="$WORKDIR/mount"
-          mkdir "$MOUNT"
-
-          hdiutil attach "$DMG" -mountpoint "$MOUNT" -nobrowse -quiet
-          APP_NAME=$(ls "$MOUNT" | grep '\.app$' | head -n 1)
-          # Use ditto to preserve macOS metadata (resource forks, symlinks, xattrs)
-          ditto "$MOUNT/$APP_NAME" "$WORKDIR/$APP_NAME"
-          hdiutil detach "$MOUNT" -quiet
-
-          APP="$WORKDIR/$APP_NAME"
-
-          # Strip signatures from every Mach-O binary in the bundle, regardless of
-          # location or extension. Using `file` detects actual Mach-O files without
-          # relying on paths like Contents/MacOS or extensions like .dylib.
-          while IFS= read -r -d '' f; do
-            if file "$f" 2>/dev/null | grep -q 'Mach-O'; then
-              codesign --remove-signature "$f" 2>/dev/null || true
-            fi
-          done < <(find "$APP" -type f -print0)
-
-          # Strip all nested bundle types as bundles (frameworks, plugins, helper apps,
-          # XPC services, app extensions). These need bundle-level stripping in addition
-          # to having their inner binaries stripped above.
-          while IFS= read -r -d '' bundle; do
-            codesign --remove-signature "$bundle" 2>/dev/null || true
-          done < <(find "$APP" -mindepth 1 -type d \( \
-            -name "*.framework" -o -name "*.app" -o \
-            -name "*.bundle" -o -name "*.appex" -o -name "*.xpc" \) -print0)
-
-          # Remove all _CodeSignature directories (signature manifests)
-          find "$APP" -name "_CodeSignature" -type d -print0 | xargs -0 rm -rf 2>/dev/null || true
-
-          # Strip the top-level app bundle
-          codesign --remove-signature "$APP" 2>/dev/null || true
-
-          # Diagnostic: confirm the app is now unsigned
-          echo "=== Signature state after stripping ==="
-          codesign -dv "$APP" 2>&1 && echo "WARNING: app still has a signature" || echo "OK: app is unsigned"
-          echo "=== Remaining _CodeSignature dirs ==="
-          find "$APP" -name "_CodeSignature" -type d 2>/dev/null || echo "(none)"
-
-          rm "$DMG"
-          hdiutil create -volname "termiHub" -srcfolder "$APP" -ov -format UDZO "$DMG"
-          rm -rf "$WORKDIR"
+      # The DMG ships with Tauri's default ad-hoc ('-') signature, which is required
+      # for the binary to execute on Apple Silicon (the kernel enforces code signing
+      # at the hardware level — a truly unsigned binary is killed immediately).
+      # Gatekeeper still blocks the app on first launch because it is not notarized.
+      # Users must remove the quarantine flag to bypass Gatekeeper while keeping the
+      # ad-hoc signature intact so the kernel accepts the binary:
+      #   xattr -dr com.apple.quarantine <path-to-dmg>
+      # The proper long-term fix is Apple Developer ID signing + notarization (#688).
 
       - name: Collect primary artifact
         shell: bash
@@ -343,10 +295,13 @@ jobs:
             echo "| Linux x64 | \`termiHub-dev-linux-x64.AppImage\`, \`termiHub-dev-linux-x64.deb\` |"
             echo "| Linux ARM64 | \`termiHub-dev-linux-arm64.deb\`, \`termiHub-dev-linux-arm64.rpm\` |"
             echo ""
-            echo "> **macOS — security warning on first launch.** These builds are unsigned (no Apple Developer"
-            echo "> account). macOS will block the app with _\"cannot be opened because Apple cannot check it"
-            echo "> for malicious software\"_. To bypass: open **System Settings → Privacy \& Security** and"
-            echo "> click **Open Anyway**. This is a one-time step per download."
+            echo "> **macOS — one-time setup required.** These builds have an ad-hoc signature (no Apple Developer"
+            echo "> account / notarization). Gatekeeper will block the app and there is no "Open Anyway" path."
+            echo "> **Before mounting the DMG**, run this command in Terminal to remove the quarantine flag:"
+            echo "> \`\`\`"
+            echo "> xattr -dr com.apple.quarantine ~/Downloads/termiHub-dev-macos-arm64.dmg"
+            echo "> \`\`\`"
+            echo "> (replace \`arm64\` with \`x64\` if you are on an Intel Mac). Then mount the DMG and install normally."
             echo ""
             echo "### Agent Binaries (Static musl)"
             echo "| Target | Artifact |"
