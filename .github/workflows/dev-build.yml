@@ -150,28 +150,41 @@ jobs:
 
           hdiutil attach "$DMG" -mountpoint "$MOUNT" -nobrowse -quiet
           APP_NAME=$(ls "$MOUNT" | grep '\.app$' | head -n 1)
-          cp -r "$MOUNT/$APP_NAME" "$WORKDIR/"
+          # Use ditto to preserve macOS metadata (resource forks, symlinks, xattrs)
+          ditto "$MOUNT/$APP_NAME" "$WORKDIR/$APP_NAME"
           hdiutil detach "$MOUNT" -quiet
 
           APP="$WORKDIR/$APP_NAME"
 
-          # Strip signatures from all individual Mach-O files
-          find "$APP" -type f \( -name "*.dylib" -o -name "*.so" \) \
-            -exec codesign --remove-signature {} \; 2>/dev/null || true
-          find "$APP/Contents/MacOS" -type f \
-            -exec codesign --remove-signature {} \; 2>/dev/null || true
-          find "$APP/Contents/Frameworks" -type f \
-            -exec codesign --remove-signature {} \; 2>/dev/null || true
+          # Strip signatures from every Mach-O binary in the bundle, regardless of
+          # location or extension. Using `file` detects actual Mach-O files without
+          # relying on paths like Contents/MacOS or extensions like .dylib.
+          while IFS= read -r -d '' f; do
+            if file "$f" 2>/dev/null | grep -q 'Mach-O'; then
+              codesign --remove-signature "$f" 2>/dev/null || true
+            fi
+          done < <(find "$APP" -type f -print0)
 
-          # Strip signatures from .framework bundles (must be treated as bundles, not files)
-          find "$APP" -name "*.framework" -type d \
-            -exec codesign --remove-signature {} \; 2>/dev/null || true
+          # Strip all nested bundle types as bundles (frameworks, plugins, helper apps,
+          # XPC services, app extensions). These need bundle-level stripping in addition
+          # to having their inner binaries stripped above.
+          while IFS= read -r -d '' bundle; do
+            codesign --remove-signature "$bundle" 2>/dev/null || true
+          done < <(find "$APP" -mindepth 1 -type d \( \
+            -name "*.framework" -o -name "*.app" -o \
+            -name "*.bundle" -o -name "*.appex" -o -name "*.xpc" \) -print0)
 
-          # Remove _CodeSignature directories (the signature manifest inside each bundle)
+          # Remove all _CodeSignature directories (signature manifests)
           find "$APP" -name "_CodeSignature" -type d -print0 | xargs -0 rm -rf 2>/dev/null || true
 
-          # Strip the top-level app bundle signature
+          # Strip the top-level app bundle
           codesign --remove-signature "$APP" 2>/dev/null || true
+
+          # Diagnostic: confirm the app is now unsigned
+          echo "=== Signature state after stripping ==="
+          codesign -dv "$APP" 2>&1 && echo "WARNING: app still has a signature" || echo "OK: app is unsigned"
+          echo "=== Remaining _CodeSignature dirs ==="
+          find "$APP" -name "_CodeSignature" -type d 2>/dev/null || echo "(none)"
 
           rm "$DMG"
           hdiutil create -volname "termiHub" -srcfolder "$APP" -ov -format UDZO "$DMG"
