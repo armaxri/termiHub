@@ -209,10 +209,10 @@ Use these skills with `/skill-name` during development:
 ## Git Workflow
 
 - **Always pull `origin/main` before starting new work**: run `git fetch origin && git checkout origin/main` before creating a feature branch — never branch from a stale local `main`
-- **Branch from `main`**: `feature/<description>` or `bugfix/<description>`
-- **Never commit directly to `main`**
-- **Never push directly to `main`**: all changes must be submitted via pull request — no exceptions, even for documentation-only changes
-- **Every change requires a PR**: create a feature or bugfix branch, push it to `origin`, and open a pull request. Direct pushes to `main` are prohibited.
+- **Always create a new branch before any work**: never commit to `main` or `develop` — every fix, feature, or doc change must start on a dedicated `feature/<description>` or `bugfix/<description>` branch. If you are already on `main` or `develop` when you begin, create and switch to a new branch first.
+- **Never commit directly to `main` or `develop`**
+- **Never push directly to `main` or `develop`**: all changes must be submitted via pull request — no exceptions, even for documentation-only changes
+- **Every change requires a PR**: create a feature or bugfix branch, push it to `origin`, and open a pull request. Direct pushes to `main` or `develop` are prohibited.
 - **Conventional Commits**: `type(scope): subject` — types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `chore`
 - **Scopes**: `terminal`, `ssh`, `serial`, `ui`, `backend`, `sftp`, `config`, `agent`, `credential`, `tunnel`, `workspace`, `network`, `embedded-servers`
 - **Always merge with a merge commit** (`gh pr merge --merge`) — never squash or rebase, never rebase branches
