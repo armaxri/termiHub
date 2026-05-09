@@ -135,9 +135,10 @@ jobs:
 
       # Tauri applies an ad-hoc ('-') signature by default on macOS. Ad-hoc signatures
       # are machine-local: on any other machine Gatekeeper treats the app as damaged
-      # rather than showing the bypassable security warning. Strip the signature so the
-      # app is fully unsigned — Gatekeeper then shows "cannot be opened because Apple
-      # cannot check it for malicious software", which users can bypass via System Settings.
+      # rather than showing the bypassable security warning. Strip ALL signatures so the
+      # app is truly unsigned — Gatekeeper then shows the bypassable "cannot be opened
+      # because Apple cannot check it for malicious software" warning instead of the
+      # hard "can't be opened" (damaged) error.
       - name: Strip ad-hoc signature from macOS DMG
         if: startsWith(matrix.os, 'macos')
         shell: bash
@@ -153,10 +154,23 @@ jobs:
           hdiutil detach "$MOUNT" -quiet
 
           APP="$WORKDIR/$APP_NAME"
+
+          # Strip signatures from all individual Mach-O files
           find "$APP" -type f \( -name "*.dylib" -o -name "*.so" \) \
             -exec codesign --remove-signature {} \; 2>/dev/null || true
           find "$APP/Contents/MacOS" -type f \
             -exec codesign --remove-signature {} \; 2>/dev/null || true
+          find "$APP/Contents/Frameworks" -type f \
+            -exec codesign --remove-signature {} \; 2>/dev/null || true
+
+          # Strip signatures from .framework bundles (must be treated as bundles, not files)
+          find "$APP" -name "*.framework" -type d \
+            -exec codesign --remove-signature {} \; 2>/dev/null || true
+
+          # Remove _CodeSignature directories (the signature manifest inside each bundle)
+          find "$APP" -name "_CodeSignature" -type d -print0 | xargs -0 rm -rf 2>/dev/null || true
+
+          # Strip the top-level app bundle signature
           codesign --remove-signature "$APP" 2>/dev/null || true
 
           rm "$DMG"
