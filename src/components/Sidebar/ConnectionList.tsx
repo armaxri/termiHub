@@ -322,6 +322,7 @@ export function ConnectionList() {
   const addTab = useAppStore((s) => s.addTab);
   const openConnectionEditorTab = useAppStore((s) => s.openConnectionEditorTab);
   const deleteConnection = useAppStore((s) => s.deleteConnection);
+  const bulkDeleteConnections = useAppStore((s) => s.bulkDeleteConnections);
   const deleteFolder = useAppStore((s) => s.deleteFolder);
   const addFolder = useAppStore((s) => s.addFolder);
   const duplicateConnection = useAppStore((s) => s.duplicateConnection);
@@ -481,9 +482,14 @@ export function ConnectionList() {
 
   const handleDelete = useCallback(
     (connectionId: string) => {
-      deleteConnection(connectionId);
+      if (selectedConnectionIds.size > 1 && selectedConnectionIds.has(connectionId)) {
+        bulkDeleteConnections([...selectedConnectionIds]);
+        clearConnectionSelection();
+      } else {
+        deleteConnection(connectionId);
+      }
     },
-    [deleteConnection]
+    [deleteConnection, bulkDeleteConnections, selectedConnectionIds, clearConnectionSelection]
   );
 
   const handleDuplicate = useCallback(

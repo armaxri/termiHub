@@ -381,6 +381,7 @@ interface AppState {
   addConnection: (connection: SavedConnection) => void;
   updateConnection: (connection: SavedConnection) => void;
   deleteConnection: (connectionId: string) => void;
+  bulkDeleteConnections: (connectionIds: string[]) => void;
   addFolder: (folder: ConnectionFolder) => void;
   deleteFolder: (folderId: string) => void;
   duplicateConnection: (connectionId: string) => void;
@@ -2204,6 +2205,24 @@ export const useAppStore = create<AppState>((set, get) => {
           return applyConnectionReload();
         })
         .catch((err) => console.error("Failed to persist connection deletion:", err));
+    },
+
+    bulkDeleteConnections: (connectionIds) => {
+      const idSet = new Set(connectionIds);
+      const toDelete = get().connections.filter((c) => idSet.has(c.id));
+      frontendLog(
+        "connection_sync",
+        `bulkDeleteConnections: removing ${connectionIds.join(", ")} optimistically`
+      );
+      set((state) => ({
+        connections: state.connections.filter((c) => !idSet.has(c.id)),
+      }));
+      Promise.all(toDelete.map((c) => removeConnection(c.id, c.sourceFile)))
+        .then(() => {
+          frontendLog("connection_sync", `bulkDeleteConnections: backend confirmed, reloading`);
+          return applyConnectionReload();
+        })
+        .catch((err) => console.error("Failed to persist bulk connection deletion:", err));
     },
 
     addFolder: (folder) => {
