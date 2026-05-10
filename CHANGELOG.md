@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Persistent sessions: after an agent disconnects and reconnects, the persistent session is now correctly marked as stopped so the sidebar green dot clears. Previously the stale "running" state was never invalidated, causing the "Attach" button to silently fail with a `SessionNotFound` error and open a blank, unclosable tab.
 - Connections sidebar: deleting multiple selected connections now removes all of them instead of only the one that was right-clicked.
 - Connections: changes made in one running instance (add, delete, rename) now propagate to all other running instances within ~1 second. Previously, other instances only updated on window focus.
 - Persistent sessions: "Attach new tab" no longer shows a blank terminal with no overlay. The backend now triggers a DaemonClient reconnect on attach so the scrollback buffer arrives via the notification path; if the session has already died, the placeholder tab is automatically removed instead of left in a broken state.
