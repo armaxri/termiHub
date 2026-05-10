@@ -1608,4 +1608,172 @@ mod tests {
             "reorder_agents must not resurrect connections deleted by another instance; got: {names:?}"
         );
     }
+
+    // Regression: import_json did not call sync_from_disk before merging and saving.
+    // A stale instance could resurrect connections that were deleted by the active
+    // instance simply by running an import (e.g., the user imports a backup file).
+    #[test]
+    fn import_json_does_not_resurrect_connection_deleted_by_another_instance() {
+        let dir = tempfile::tempdir().unwrap();
+        let cred_store = Arc::new(MockStore::new());
+
+        let make_conn = |name: &str| SavedConnection {
+            id: name.to_string(),
+            name: name.to_string(),
+            config: ConnectionConfig {
+                type_id: "local".to_string(),
+                settings: serde_json::json!({"shell": "bash"}),
+            },
+            folder_id: None,
+            terminal_options: None,
+            source_file: None,
+        };
+
+        // Populate with a connection, then drop the setup instance.
+        let setup = ConnectionManager::new_for_test(dir.path(), cred_store.clone()).unwrap();
+        setup.save_connection(make_conn("Old Connection")).unwrap();
+        drop(setup);
+
+        // "Instance B" (stale) loads ["Old Connection"] into its in-memory store.
+        let instance_b = ConnectionManager::new_for_test(dir.path(), cred_store.clone()).unwrap();
+
+        // "Instance A" deletes "Old Connection" — disk is now empty.
+        let instance_a = ConnectionManager::new_for_test(dir.path(), cred_store.clone()).unwrap();
+        instance_a.delete_connection("Old Connection").unwrap();
+        drop(instance_a);
+
+        // Instance B imports JSON (e.g., the user imports a backup file).
+        // Without sync_from_disk, instance_b would merge the import on top of its
+        // stale in-memory state and write ["Old Connection", "Imported"] back to disk.
+        let import_json = r#"{
+            "version": "2",
+            "children": [
+                {"type": "connection", "name": "Imported",
+                 "config": {"type": "local", "config": {"shell": "bash"}}}
+            ],
+            "agents": []
+        }"#;
+        instance_b.import_json(import_json).unwrap();
+
+        let all = instance_b.get_all().unwrap();
+        let names: Vec<&str> = all.connections.iter().map(|c| c.name.as_str()).collect();
+        assert!(
+            !names.contains(&"Old Connection"),
+            "import_json must not resurrect connections deleted by another instance; got: {names:?}"
+        );
+        assert!(
+            names.contains(&"Imported"),
+            "imported connection must be present; got: {names:?}"
+        );
+    }
+
+    // Regression: import_encrypted_json did not call sync_from_disk before merging
+    // and saving.  Same resurrection hazard as import_json, triggered via encrypted
+    // import (e.g., the user restores from an encrypted backup).
+    #[test]
+    fn import_encrypted_json_does_not_resurrect_connection_deleted_by_another_instance() {
+        let dir = tempfile::tempdir().unwrap();
+        let cred_store = Arc::new(MockStore::new());
+
+        let make_conn = |name: &str| SavedConnection {
+            id: name.to_string(),
+            name: name.to_string(),
+            config: ConnectionConfig {
+                type_id: "local".to_string(),
+                settings: serde_json::json!({"shell": "bash"}),
+            },
+            folder_id: None,
+            terminal_options: None,
+            source_file: None,
+        };
+
+        let setup = ConnectionManager::new_for_test(dir.path(), cred_store.clone()).unwrap();
+        setup.save_connection(make_conn("Old Connection")).unwrap();
+        drop(setup);
+
+        let instance_b = ConnectionManager::new_for_test(dir.path(), cred_store.clone()).unwrap();
+
+        let instance_a = ConnectionManager::new_for_test(dir.path(), cred_store.clone()).unwrap();
+        instance_a.delete_connection("Old Connection").unwrap();
+        drop(instance_a);
+
+        // Import via the encrypted path (no actual encryption — password is None).
+        // Without sync_from_disk, instance_b writes its stale state plus the import.
+        let import_json = r#"{
+            "version": "2",
+            "children": [
+                {"type": "connection", "name": "Imported Enc",
+                 "config": {"type": "local", "config": {"shell": "bash"}}}
+            ],
+            "agents": []
+        }"#;
+        instance_b.import_encrypted_json(import_json, None).unwrap();
+
+        let all = instance_b.get_all().unwrap();
+        let names: Vec<&str> = all.connections.iter().map(|c| c.name.as_str()).collect();
+        assert!(
+            !names.contains(&"Old Connection"),
+            "import_encrypted_json must not resurrect connections deleted by another instance; got: {names:?}"
+        );
+        assert!(
+            names.contains(&"Imported Enc"),
+            "imported connection must be present; got: {names:?}"
+        );
+    }
+
+    // Regression: move_connection_to_file did not call sync_from_disk before
+    // removing the connection from (or adding it to) the main store.  A stale
+    // instance executing a drag-to-file move could resurrect connections that the
+    // active instance had already deleted.
+    #[test]
+    fn move_connection_to_file_does_not_resurrect_connection_deleted_by_another_instance() {
+        let dir = tempfile::tempdir().unwrap();
+        let cred_store = Arc::new(MockStore::new());
+
+        let make_conn = |name: &str| SavedConnection {
+            id: name.to_string(),
+            name: name.to_string(),
+            config: ConnectionConfig {
+                type_id: "local".to_string(),
+                settings: serde_json::json!({"shell": "bash"}),
+            },
+            folder_id: None,
+            terminal_options: None,
+            source_file: None,
+        };
+
+        // Populate with two connections.
+        let setup = ConnectionManager::new_for_test(dir.path(), cred_store.clone()).unwrap();
+        setup.save_connection(make_conn("Connection A")).unwrap();
+        setup.save_connection(make_conn("Connection B")).unwrap();
+        drop(setup);
+
+        // "Instance B" (stale) loads ["Connection A", "Connection B"] into memory.
+        let instance_b = ConnectionManager::new_for_test(dir.path(), cred_store.clone()).unwrap();
+
+        // "Instance A" deletes "Connection B" — disk now has only ["Connection A"].
+        let instance_a = ConnectionManager::new_for_test(dir.path(), cred_store.clone()).unwrap();
+        instance_a.delete_connection("Connection B").unwrap();
+        drop(instance_a);
+
+        // Instance B moves "Connection A" from main to main (a round-trip move, e.g.,
+        // triggered by drag-and-drop back to the default location).
+        // Without sync_from_disk in step 1, it removes "Connection A" from its stale
+        // store {A, B} → leaves {B} → writes {B} (resurrects "Connection B").
+        // Step 2 then pushes "Connection A" back → {B, A} is written to disk.
+        instance_b
+            .move_connection_to_file("Connection A", None, None)
+            .unwrap();
+
+        let all = instance_b.get_all().unwrap();
+        let names: Vec<&str> = all.connections.iter().map(|c| c.name.as_str()).collect();
+        assert!(
+            !names.contains(&"Connection B"),
+            "move_connection_to_file must not resurrect connections deleted by another instance; got: {names:?}"
+        );
+        assert!(
+            names.contains(&"Connection A"),
+            "Connection A must still be present after the move; got: {names:?}"
+        );
+    }
 }
