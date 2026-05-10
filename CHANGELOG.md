@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Connections: importing a backup file or moving a connection to another file in one instance no longer resurrects connections that were deleted by a parallel running instance. Previously `import_json`, `import_encrypted_json`, and `move_connection_to_file` each wrote back to disk without first re-reading the current file state, causing deleted connections to reappear after the other instance restarted.
 - Connections sidebar: deleting multiple selected connections now removes all of them instead of only the one that was right-clicked.
 - Connections: changes made in one running instance (add, delete, rename) now propagate to all other running instances within ~1 second. Previously, other instances only updated on window focus.
 - Persistent sessions: "Attach new tab" no longer shows a blank terminal with no overlay. The backend now triggers a DaemonClient reconnect on attach so the scrollback buffer arrives via the notification path; if the session has already died, the placeholder tab is automatically removed instead of left in a broken state.
