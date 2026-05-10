@@ -4,6 +4,7 @@ import { ThemeDefinition } from "./types";
 export const darkTheme: ThemeDefinition = {
   id: "dark",
   name: "Dark",
+  colorScheme: "dark",
   colors: {
     // Backgrounds
     bgPrimary: "#1e1e1e",

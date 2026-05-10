@@ -98,12 +98,15 @@ function resolveTheme(setting: string | undefined): ThemeDefinition {
 }
 
 /** Write all theme colors as CSS custom properties on the document root. */
-function setCssVariables(colors: ThemeColors): void {
+function setCssVariables(theme: ThemeDefinition): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
   for (const [key, cssVar] of Object.entries(COLOR_TO_CSS_VAR)) {
-    root.style.setProperty(cssVar, colors[key as keyof ThemeColors]);
+    root.style.setProperty(cssVar, theme.colors[key as keyof ThemeColors]);
   }
+  // Tell WebKit which color scheme is active so system UI elements (scrollbars,
+  // form controls) render in the matching dark/light style.
+  root.style.colorScheme = theme.colorScheme;
 }
 
 /** Remove the current matchMedia listener if one exists. */
@@ -124,13 +127,13 @@ function removeMediaListener(): void {
 export function applyTheme(setting: string | undefined): void {
   removeMediaListener();
   currentTheme = resolveTheme(setting);
-  setCssVariables(currentTheme.colors);
+  setCssVariables(currentTheme);
 
   if (setting === "system" && typeof window !== "undefined") {
     mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
     mediaListener = ((e: MediaQueryListEvent) => {
       currentTheme = e.matches ? darkTheme : lightTheme;
-      setCssVariables(currentTheme.colors);
+      setCssVariables(currentTheme);
       for (const cb of changeCallbacks) cb();
     }) as EventListener;
     mediaQuery.addEventListener("change", mediaListener);
