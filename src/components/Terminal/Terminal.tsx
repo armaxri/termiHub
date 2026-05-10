@@ -12,7 +12,6 @@ import {
   resizeTerminal,
   closeTerminal,
   detachPersistentTab,
-  getAgentSessionBuffer,
 } from "@/services/api";
 import { terminalDispatcher } from "@/services/events";
 import { useTerminalRegistry } from "./TerminalRegistry";
@@ -228,18 +227,16 @@ export function Terminal({
         let sessionId: string;
         if (initialSessionIdRef.current) {
           sessionId = initialSessionIdRef.current;
-          // For persistent re-attach, replay buffered output before subscribing
-          // to live events so the scrollback is visible from the start.
+          // Buffer replay for persistent re-attach arrives via the
+          // connection.output notification path triggered by attach_persistent_tab
+          // on the backend (DaemonClient reconnect). subscribeOutput below will
+          // flush any replay already in pendingOutput, or deliver it directly
+          // when it arrives. No direct pull here to avoid racing with the
+          // notification and displaying content twice.
           if (persistentConnectionId) {
-            try {
-              const buf = await getAgentSessionBuffer(sessionId);
-              if (buf.length > 0) {
-                xterm.write(buf);
-              }
-            } catch {
-              // Non-fatal: continue without replay if fetch fails.
-            }
+            frontendLog("terminal", `Reattaching persistent session ${sessionId}`);
           }
+          if (isCanceled()) return;
         } else {
           let attempt = 0;
           let resolved: string | null = null;

@@ -641,7 +641,7 @@ impl SessionManager {
         tab_id: &str,
         emitter: E,
     ) -> Result<u32, TerminalError> {
-        let count = {
+        let (count, session_id) = {
             let mut ps = self.persistent_sessions.lock().await;
             let record = ps.get_mut(connection_id).ok_or_else(|| {
                 TerminalError::SessionNotFound(format!(
@@ -659,21 +659,42 @@ impl SessionManager {
                 }
             }
             record.attached_tabs.insert(tab_id.to_string());
-            record.attached_tabs.len() as u32
+            (record.attached_tabs.len() as u32, record.session_id.clone())
         };
 
-        let (sid, state) = {
-            let ps = self.persistent_sessions.lock().await;
-            let record = ps.get(connection_id).unwrap();
-            (
-                record.session_id.clone(),
-                if count > 0 { "attached" } else { "running" }.to_string(),
-            )
+        // Kick off a background reconnect of the DaemonClient so the daemon sends a
+        // fresh buffer replay as a connection.output notification. The new tab's
+        // Terminal component receives the scrollback when it calls subscribeOutput,
+        // which flushes pendingOutput — even when the DaemonClient went stale.
+        let agent_info = {
+            let sessions = self.sessions.lock().await;
+            sessions.get(&session_id).and_then(|e| {
+                e.info
+                    .agent_id
+                    .as_deref()
+                    .zip(e.remote_session_id.as_deref())
+                    .map(|(aid, rsid)| (aid.to_string(), rsid.to_string()))
+            })
         };
+        if let Some((agent_id, remote_sid)) = agent_info {
+            let am = self.agent_manager.clone();
+            // Detached task — the JoinHandle is intentionally dropped here so
+            // attach_persistent_tab returns immediately without waiting for the SSH
+            // round-trip. Dropping a tokio JoinHandle does not cancel the task.
+            let _reattach = tokio::task::spawn_blocking(move || {
+                if let Err(e) = am.attach_session(&agent_id, &remote_sid) {
+                    warn!(
+                        error = %e,
+                        "attach_persistent_tab: daemon client reattach failed"
+                    );
+                }
+            });
+        }
 
+        let state = if count > 0 { "attached" } else { "running" }.to_string();
         emitter.emit_persistent_state(&PersistentSessionStateEvent {
             connection_id: connection_id.to_string(),
-            session_id: Some(sid),
+            session_id: Some(session_id),
             state,
             attached_tab_count: count,
             error_message: None,
