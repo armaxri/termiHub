@@ -29,11 +29,14 @@ vi.mock("@/services/api", () => ({
   sftpListDir: vi.fn(),
   localListDir: vi.fn(),
   vscodeAvailable: vi.fn(() => Promise.resolve(false)),
+  attachPersistentTab: vi.fn(() => Promise.resolve(1)),
 }));
 
 import { useAppStore } from "./appStore";
 import type { LeafPanel } from "@/types/terminal";
 import { findLeaf, getAllLeaves } from "@/utils/panelTree";
+import * as api from "@/services/api";
+import type { AgentDefinitionInfo } from "@/services/api";
 
 describe("appStore", () => {
   beforeEach(() => {
@@ -411,6 +414,64 @@ describe("appStore", () => {
       const leaves = getAllLeaves(state.rootPanel);
       const logTabs = leaves.flatMap((l) => l.tabs).filter((t) => t.contentType === "log-viewer");
       expect(logTabs).toHaveLength(1);
+    });
+  });
+
+  describe("attachAgentPersistentSession", () => {
+    const def: AgentDefinitionInfo = {
+      id: "conn1",
+      name: "Test Shell",
+      sessionType: "local",
+      config: {},
+      persistent: true,
+      folderId: null,
+    };
+
+    beforeEach(() => {
+      // Seed a running persistent session so the attach path can proceed.
+      useAppStore.setState({
+        persistentSessions: {
+          "agent1:conn1": {
+            connectionId: "agent1:conn1",
+            sessionId: "session-1",
+            state: "running",
+            attachedTabIds: [],
+          },
+        },
+      });
+    });
+
+    it("removes the tab when attach_persistent_tab fails (regression: no blank terminal)", async () => {
+      vi.mocked(api.attachPersistentTab).mockRejectedValueOnce(
+        new Error("Session no longer alive")
+      );
+
+      const tabsBefore = getAllLeaves(useAppStore.getState().rootPanel).flatMap(
+        (l) => l.tabs
+      ).length;
+
+      await useAppStore.getState().attachAgentPersistentSession("agent1", def);
+
+      const tabsAfter = getAllLeaves(useAppStore.getState().rootPanel).flatMap(
+        (l) => l.tabs
+      ).length;
+      // The broken tab must have been removed — net tab count unchanged.
+      expect(tabsAfter).toBe(tabsBefore);
+    });
+
+    it("keeps the tab when attach_persistent_tab succeeds", async () => {
+      vi.mocked(api.attachPersistentTab).mockResolvedValueOnce(1);
+
+      const tabsBefore = getAllLeaves(useAppStore.getState().rootPanel).flatMap(
+        (l) => l.tabs
+      ).length;
+
+      await useAppStore.getState().attachAgentPersistentSession("agent1", def);
+
+      const tabsAfter = getAllLeaves(useAppStore.getState().rootPanel).flatMap(
+        (l) => l.tabs
+      ).length;
+      expect(tabsAfter).toBe(tabsBefore + 1);
     });
   });
 });
