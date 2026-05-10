@@ -208,11 +208,12 @@ Use these skills with `/skill-name` during development:
 
 ## Git Workflow
 
-- **Always pull `origin/main` before starting new work**: run `git fetch origin && git checkout origin/main` before creating a feature branch — never branch from a stale local `main`
+- **`develop` is the default base branch**: all feature and bugfix branches must be created from `origin/develop`. Only branch from `origin/main` when the user explicitly requests it.
+- **Always pull `origin/develop` before starting new work**: run `git fetch origin && git checkout -b <branch> origin/develop` to start from a fresh copy of develop — never branch from a stale local copy.
 - **Always create a new branch before any work**: never commit to `main` or `develop` — every fix, feature, or doc change must start on a dedicated `feature/<description>` or `bugfix/<description>` branch. If you are already on `main` or `develop` when you begin, create and switch to a new branch first.
 - **Never commit directly to `main` or `develop`**
 - **Never push directly to `main` or `develop`**: all changes must be submitted via pull request — no exceptions, even for documentation-only changes
-- **Every change requires a PR**: create a feature or bugfix branch, push it to `origin`, and open a pull request. Direct pushes to `main` or `develop` are prohibited.
+- **Every change requires a PR targeting `develop`**: create a feature or bugfix branch, push it to `origin`, and open a pull request against `develop`. Only target `main` when the user explicitly requests it.
 - **Conventional Commits**: `type(scope): subject` — types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `chore`
 - **Scopes**: `terminal`, `ssh`, `serial`, `ui`, `backend`, `sftp`, `config`, `agent`, `credential`, `tunnel`, `workspace`, `network`, `embedded-servers`
 - **Always merge with a merge commit** (`gh pr merge --merge`) — never squash or rebase, never rebase branches
@@ -222,7 +223,7 @@ Use these skills with `/skill-name` during development:
   - Formatting/lint fixes separate from functional changes
 - **Never pull or fetch before committing**: always commit local changes first before any git operations that touch the remote (fetch, pull, merge). Uncommitted work must never be at risk from remote operations.
 - **Update CHANGELOG.md** for every user-facing change (Keep a Changelog format, under `[Unreleased]`)
-- **Merge `origin/main` before creating a PR** (never rebase): before pushing the final branch and opening a PR, always `git fetch origin && git merge origin/main` into the feature branch, resolve any conflicts, and re-run tests/checks to ensure the branch is up to date and clean. Always use merge, never rebase.
+- **Merge `origin/develop` before creating a PR** (never rebase): before pushing the final branch and opening a PR, always `git fetch origin && git merge origin/develop` into the feature branch, resolve any conflicts, and re-run tests/checks to ensure the branch is up to date and clean. Always use merge, never rebase.
 
 ---
 
