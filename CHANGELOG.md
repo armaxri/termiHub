@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Updated npm dependencies (`vite`, `typescript-eslint`, `@wdio/*`, `vitest`) and added `pnpm.overrides` for transitive packages (`rollup`, `postcss`, `undici`, `flatted`, `fast-uri`, `dompurify`, `serialize-javascript`, `picomatch`, `brace-expansion`) to resolve all 39 npm security audit findings.
+
 ### Fixed
 
 - Connections sidebar: deleting multiple selected connections now removes all of them instead of only the one that was right-clicked.
