@@ -1198,6 +1198,8 @@ export const useAppStore = create<AppState>((set, get) => {
         entry.sessionId,
         connectionId
       );
+      // Resolve the actual panel the tab landed in so we can close it on failure.
+      const actualPanelId = findLeafByTab(get().rootPanel, tabId)?.id;
       try {
         await apiAttachPersistentTab(connectionId, tabId);
         set((state) => {
@@ -1218,6 +1220,10 @@ export const useAppStore = create<AppState>((set, get) => {
           "app_store",
           `attach_persistent_tab failed for ${connectionId}: ${err instanceof Error ? err.message : String(err)}`
         );
+        // Session is gone — remove the tab so the user does not see a blank terminal.
+        if (actualPanelId) {
+          get().closeTab(tabId, actualPanelId);
+        }
       }
     },
 

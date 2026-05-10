@@ -641,7 +641,7 @@ impl SessionManager {
         tab_id: &str,
         emitter: E,
     ) -> Result<u32, TerminalError> {
-        let count = {
+        let (count, session_id) = {
             let mut ps = self.persistent_sessions.lock().await;
             let record = ps.get_mut(connection_id).ok_or_else(|| {
                 TerminalError::SessionNotFound(format!(
@@ -659,21 +659,42 @@ impl SessionManager {
                 }
             }
             record.attached_tabs.insert(tab_id.to_string());
-            record.attached_tabs.len() as u32
+            (record.attached_tabs.len() as u32, record.session_id.clone())
         };
 
-        let (sid, state) = {
-            let ps = self.persistent_sessions.lock().await;
-            let record = ps.get(connection_id).unwrap();
-            (
-                record.session_id.clone(),
-                if count > 0 { "attached" } else { "running" }.to_string(),
-            )
+        // Kick off a background reconnect of the DaemonClient so the daemon sends a
+        // fresh buffer replay as a connection.output notification. The new tab's
+        // Terminal component receives the scrollback when it calls subscribeOutput,
+        // which flushes pendingOutput — even when the DaemonClient went stale.
+        let agent_info = {
+            let sessions = self.sessions.lock().await;
+            sessions.get(&session_id).and_then(|e| {
+                e.info
+                    .agent_id
+                    .as_deref()
+                    .zip(e.remote_session_id.as_deref())
+                    .map(|(aid, rsid)| (aid.to_string(), rsid.to_string()))
+            })
         };
+        if let Some((agent_id, remote_sid)) = agent_info {
+            let am = self.agent_manager.clone();
+            // Detached task — the JoinHandle is intentionally dropped here so
+            // attach_persistent_tab returns immediately without waiting for the SSH
+            // round-trip. Dropping a tokio JoinHandle does not cancel the task.
+            let _reattach = tokio::task::spawn_blocking(move || {
+                if let Err(e) = am.attach_session(&agent_id, &remote_sid) {
+                    warn!(
+                        error = %e,
+                        "attach_persistent_tab: daemon client reattach failed"
+                    );
+                }
+            });
+        }
 
+        let state = if count > 0 { "attached" } else { "running" }.to_string();
         emitter.emit_persistent_state(&PersistentSessionStateEvent {
             connection_id: connection_id.to_string(),
-            session_id: Some(sid),
+            session_id: Some(session_id),
             state,
             attached_tab_count: count,
             error_message: None,
@@ -1765,6 +1786,229 @@ mod tests {
             !json.contains("\"connectionId\"") && !json.contains("\"sessionId\""),
             "camelCase must not appear; got: {json}"
         );
+    }
+
+    // ── SpyAgent for attach_persistent_tab regression tests ──────────
+
+    type AttachLog = std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>;
+
+    /// An `AgentRpcClient` implementation that records `attach_session` calls.
+    struct SpyAgent {
+        attach_calls: AttachLog,
+    }
+
+    impl SpyAgent {
+        fn new() -> (Self, AttachLog) {
+            let calls: AttachLog = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            (
+                Self {
+                    attach_calls: calls.clone(),
+                },
+                calls,
+            )
+        }
+    }
+
+    impl AgentRpcClient for SpyAgent {
+        fn connect_agent(
+            &self,
+            _: &str,
+            _: &RemoteAgentConfig,
+            _: Option<&AgentSettings>,
+        ) -> Result<AgentConnectResult, TerminalError> {
+            unimplemented!()
+        }
+        fn disconnect_agent(&self, _: &str) -> Result<(), TerminalError> {
+            unimplemented!()
+        }
+        fn is_connected(&self, _: &str) -> bool {
+            false
+        }
+        fn get_capabilities(&self, _: &str) -> Option<AgentCapabilities> {
+            None
+        }
+        fn shutdown_agent(&self, _: &str, _: Option<&str>) -> Result<u32, TerminalError> {
+            unimplemented!()
+        }
+        fn send_request(&self, _: &str, _: &str, _: Value) -> Result<Value, TerminalError> {
+            unimplemented!()
+        }
+        fn create_session(
+            &self,
+            _: &str,
+            _: &str,
+            _: Value,
+            _: Option<&str>,
+        ) -> Result<AgentSessionInfo, TerminalError> {
+            unimplemented!()
+        }
+        fn attach_session(&self, agent_id: &str, remote_sid: &str) -> Result<(), TerminalError> {
+            self.attach_calls
+                .lock()
+                .unwrap()
+                .push((agent_id.to_string(), remote_sid.to_string()));
+            Ok(())
+        }
+        fn close_session(&self, _: &str, _: &str) -> Result<(), TerminalError> {
+            unimplemented!()
+        }
+        fn list_sessions(&self, _: &str) -> Result<Vec<AgentSessionInfo>, TerminalError> {
+            unimplemented!()
+        }
+        fn list_connections_and_folders(
+            &self,
+            _: &str,
+        ) -> Result<AgentConnectionsData, TerminalError> {
+            unimplemented!()
+        }
+        fn list_definitions(&self, _: &str) -> Result<Vec<AgentDefinitionInfo>, TerminalError> {
+            unimplemented!()
+        }
+        fn save_definition(&self, _: &str, _: Value) -> Result<AgentDefinitionInfo, TerminalError> {
+            unimplemented!()
+        }
+        fn update_definition(
+            &self,
+            _: &str,
+            _: Value,
+        ) -> Result<AgentDefinitionInfo, TerminalError> {
+            unimplemented!()
+        }
+        fn delete_definition(&self, _: &str, _: &str) -> Result<(), TerminalError> {
+            unimplemented!()
+        }
+        fn create_folder(
+            &self,
+            _: &str,
+            _: &str,
+            _: Option<&str>,
+        ) -> Result<AgentFolderInfo, TerminalError> {
+            unimplemented!()
+        }
+        fn update_folder(&self, _: &str, _: Value) -> Result<AgentFolderInfo, TerminalError> {
+            unimplemented!()
+        }
+        fn delete_folder(&self, _: &str, _: &str) -> Result<(), TerminalError> {
+            unimplemented!()
+        }
+        fn register_session_output(
+            &self,
+            _: &str,
+            _: &str,
+            _: OutputSender,
+        ) -> Result<(), TerminalError> {
+            unimplemented!()
+        }
+        fn unregister_session_output(&self, _: &str, _: &str) -> Result<(), TerminalError> {
+            unimplemented!()
+        }
+        fn register_monitoring_output(
+            &self,
+            _: &str,
+            _: &str,
+            _: MonitoringSender,
+        ) -> Result<(), TerminalError> {
+            unimplemented!()
+        }
+        fn unregister_monitoring_output(&self, _: &str, _: &str) -> Result<(), TerminalError> {
+            unimplemented!()
+        }
+        fn send_session_input(&self, _: &str, _: &str, _: &[u8]) -> Result<(), TerminalError> {
+            unimplemented!()
+        }
+        fn resize_session(&self, _: &str, _: &str, _: u16, _: u16) -> Result<(), TerminalError> {
+            unimplemented!()
+        }
+        fn apply_agent_settings(&self, _: &str, _: &AgentSettings) -> Result<(), TerminalError> {
+            unimplemented!()
+        }
+    }
+
+    /// Regression test: `attach_persistent_tab` must call `attach_session` on the
+    /// agent manager for remote-agent sessions so the DaemonClient reconnects and
+    /// sends a fresh buffer replay via the notification path.
+    ///
+    /// Without the fix, the DaemonClient could be stale and
+    /// `get_remote_session_buffer` would time out, leaving the new tab blank.
+    #[tokio::test]
+    async fn attach_persistent_tab_triggers_daemon_reattach_for_agent_session() {
+        let (spy, attach_calls) = SpyAgent::new();
+
+        let mut registry = ConnectionTypeRegistry::new();
+        registry.register(
+            "mock",
+            "Mock",
+            "mock",
+            Box::new(|| Box::new(MockConnection)),
+        );
+        let manager = SessionManager::new(registry, Arc::new(spy));
+        let emitter = MockPersistentEmitter::new();
+
+        let session_id = manager
+            .start_persistent_session(
+                "conn-1",
+                "mock",
+                serde_json::json!({}),
+                None,
+                emitter.clone(),
+            )
+            .await
+            .unwrap();
+
+        // Mark the session as agent-mediated.
+        {
+            let mut sessions = manager.sessions.lock().await;
+            let entry = sessions.get_mut(&session_id).unwrap();
+            entry.info.agent_id = Some("agent-1".to_string());
+            entry.remote_session_id = Some("remote-1".to_string());
+        }
+
+        manager
+            .attach_persistent_tab("conn-1", "tab-1", emitter.clone())
+            .await
+            .unwrap();
+
+        // spawn_blocking runs in a separate thread; give it a moment.
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let calls = attach_calls.lock().unwrap();
+        assert_eq!(
+            calls.len(),
+            1,
+            "attach_session must be called once for agent sessions"
+        );
+        assert_eq!(calls[0].0, "agent-1");
+        assert_eq!(calls[0].1, "remote-1");
+    }
+
+    /// Regression: `attach_persistent_tab` must NOT call `attach_session` for
+    /// local (non-agent) sessions where there is no agent_id or remote_session_id.
+    #[tokio::test]
+    async fn attach_persistent_tab_skips_daemon_reattach_for_local_session() {
+        // NullAgent.attach_session panics (unimplemented!), so if it were called
+        // by the local-session path this test would fail.
+        let manager = make_test_manager();
+        let emitter = MockPersistentEmitter::new();
+
+        manager
+            .start_persistent_session(
+                "conn-local",
+                "mock",
+                serde_json::json!({}),
+                None,
+                emitter.clone(),
+            )
+            .await
+            .unwrap();
+
+        // Should succeed without panicking (no attach_session call).
+        manager
+            .attach_persistent_tab("conn-local", "tab-1", emitter.clone())
+            .await
+            .unwrap();
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        // No assertion needed: if NullAgent.attach_session were called it would panic.
     }
 
     /// Tauri events are consumed by the TypeScript frontend which uses snake_case
