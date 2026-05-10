@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- CI: upgraded `docker/setup-buildx-action` from v3 to v4 and `docker/build-push-action` from v5 to v7 (Node.js 24); upgraded `pnpm/action-setup` from v5 to v6 — eliminates all "Node.js 20 actions are deprecated" warnings in GitHub Actions runs.
+
 ### Added
 
 - Open Connections panel: a new "Open Connections" option in the settings wheel menu lists all active connections across every subsystem — local terminal sessions, connected agents, sessions running on agents, SSH tunnels, SFTP, and monitoring. Each row has a Kill button; each section has a Kill All button for bulk teardown. This is the primary place to inspect and free connection resources.
