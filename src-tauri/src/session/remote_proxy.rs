@@ -78,7 +78,7 @@ impl RemoteProxy {
         &self.agent_id
     }
 
-    fn remote_session_id(&self) -> Option<String> {
+    pub fn remote_session_id(&self) -> Option<String> {
         self.remote_session_id.lock().ok()?.clone()
     }
 }

@@ -124,6 +124,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TERMIHUB_DEV_BUILD: 'true'
+          TERMIHUB_BUILD_BRANCH: ${{ needs.prepare-release.outputs.branch }}
         with:
           tagName: ''
           releaseName: ''
@@ -182,6 +183,7 @@ jobs:
           spctl --assess --type exec "$APP" 2>&1 || true
           echo "=== Signature info ==="
           codesign -dv "$APP" 2>&1 || true
+          find "$APP" -name "_CodeSignature" -type d 2>/dev/null || echo "(none)"
 
           rm "$DMG"
           hdiutil create -volname "termiHub" -srcfolder "$APP" -ov -format UDZO "$DMG"
@@ -281,6 +283,8 @@ jobs:
           cache-to: type=gha,mode=max,scope=dev-agent-${{ matrix.target }}
 
       - name: Build agent
+        env:
+          TERMIHUB_BUILD_BRANCH: ${{ github.ref_name }}
         run: CROSS_CONFIG=agent/Cross.toml cross build --release --target ${{ matrix.target }} -p termihub-agent
 
       - name: Rename agent binary

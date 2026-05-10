@@ -6,9 +6,7 @@ export type SettingsCategory =
   | "security"
   | "external-files"
   | "editor"
-  | "portable"
-  | "updates"
-  | "about";
+  | "portable";
 
 export interface CategoryDefinition {
   id: SettingsCategory;
@@ -32,8 +30,6 @@ export const CATEGORIES: CategoryDefinition[] = [
   { id: "external-files", label: "External Files" },
   { id: "editor", label: "Editor" },
   { id: "portable", label: "Portable Mode" },
-  { id: "updates", label: "Updates" },
-  { id: "about", label: "About" },
 ];
 
 export const SETTINGS_REGISTRY: SettingDefinition[] = [
@@ -181,6 +177,28 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     ],
   },
   {
+    id: "serialPortScanPrefixes",
+    label: "Serial Port Scan Prefixes",
+    description:
+      "Linux /dev prefixes scanned to discover serial ports that the system library may not enumerate (e.g. ttyAMA* on Raspberry Pi)",
+    category: "general",
+    keywords: [
+      "serial",
+      "port",
+      "tty",
+      "uart",
+      "linux",
+      "raspberry pi",
+      "embedded",
+      "device",
+      "prefix",
+      "scan",
+      "ttyAMA",
+      "ttyS",
+      "ttyUSB",
+    ],
+  },
+  {
     id: "experimentalFeaturesEnabled",
     label: "Allow Experimental Features",
     description:
@@ -209,27 +227,6 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     description: "Export or import configuration between installed and portable mode",
     category: "portable",
     keywords: ["export", "import", "migrate", "copy", "transfer", "backup", "portable"],
-  },
-  {
-    id: "updateStatus",
-    label: "Update Status",
-    description: "Check whether a new version of termiHub is available",
-    category: "updates",
-    keywords: ["update", "version", "upgrade", "release", "check", "new version"],
-  },
-  {
-    id: "updateAutoCheck",
-    label: "Auto-Check for Updates",
-    description: "Automatically check for new releases on startup",
-    category: "updates",
-    keywords: ["update", "auto", "automatic", "startup", "check", "notify"],
-  },
-  {
-    id: "aboutInfo",
-    label: "About termiHub",
-    description: "Version number, GitHub repository link, license, and project information",
-    category: "about",
-    keywords: ["about", "version", "license", "mit", "github", "repository", "credits", "info"],
   },
 ];
 

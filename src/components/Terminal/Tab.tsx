@@ -99,6 +99,7 @@ export function Tab({
         {isDirty && <span className="tab__dirty-dot" />}
         {tab.title}
       </span>
+      {tab.persistentConnectionId && <span className="tab__persistent-badge">∞</span>}
       <button
         className="tab__close"
         onClick={(e) => {

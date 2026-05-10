@@ -349,3 +349,17 @@
 .update-indicator__dot--red {
   background: var(--color-error, #f44336);
 }
+
+.update-indicator__develop-badge {
+  display: inline-block;
+  margin-left: 5px;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 14px;
+  vertical-align: middle;
+  background: #7c3aed;
+  color: #fff;
+  letter-spacing: 0.03em;
+}

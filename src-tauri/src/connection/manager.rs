@@ -129,6 +129,27 @@ impl ConnectionManager {
         })
     }
 
+    /// Create a manager backed by files in `dir` with the given credential store.
+    /// Only available in tests; production code must use `new()`.
+    #[cfg(test)]
+    pub fn new_for_test(
+        dir: &std::path::Path,
+        credential_store: Arc<dyn CredentialStore>,
+    ) -> Result<Self> {
+        let storage = ConnectionStorage::new_for_test(dir.join("connections.json"));
+        let settings_storage = SettingsStorage::new_for_test(dir.join("settings.json"));
+        let conn_result = storage.load_with_recovery()?;
+        let settings_result = settings_storage.load_with_recovery()?;
+        Ok(Self {
+            store: Mutex::new(conn_result.data),
+            storage,
+            settings: Mutex::new(settings_result.data),
+            settings_storage,
+            credential_store,
+            recovery_warnings: Mutex::new(Vec::new()),
+        })
+    }
+
     /// Drain and return any recovery warnings collected during initialization.
     pub fn take_recovery_warnings(&self) -> Vec<RecoveryWarning> {
         self.recovery_warnings
@@ -137,9 +158,13 @@ impl ConnectionManager {
             .unwrap_or_default()
     }
 
-    /// Get all connections, folders, and agents (flat in-memory view).
+    /// Get all connections, folders, and agents, reloading from disk first.
+    ///
+    /// Reloading on every read ensures that a second instance's changes (adds,
+    /// deletes, renames) are immediately visible without requiring a restart.
     pub fn get_all(&self) -> Result<FlatConnectionStore> {
-        let store = self.store.lock().unwrap();
+        let mut store = self.store.lock().unwrap();
+        self.sync_from_disk(&mut store);
         Ok(FlatConnectionStore {
             connections: store.connections.clone(),
             folders: store.folders.clone(),
@@ -147,10 +172,25 @@ impl ConnectionManager {
         })
     }
 
+    /// Reload the in-memory store from disk before a mutation.
+    ///
+    /// This prevents a second instance from restoring connections (or other data)
+    /// that were deleted by the first instance since startup.  Called at the top
+    /// of every write operation that holds `self.store`'s lock.
+    ///
+    /// Errors are intentionally swallowed: if the disk read fails we fall back to
+    /// the current in-memory state rather than aborting an otherwise valid write.
+    fn sync_from_disk(&self, store: &mut FlatConnectionStore) {
+        if let Ok(result) = self.storage.load_with_recovery() {
+            *store = result.data;
+        }
+    }
+
     /// Save (add or update) a remote agent. Passwords are stripped before persisting.
     pub fn save_agent(&self, agent: SavedRemoteAgent) -> Result<()> {
         let agent = prepare_agent_for_storage(agent, &*self.credential_store)?;
         let mut store = self.store.lock().unwrap();
+        self.sync_from_disk(&mut store);
 
         if let Some(existing) = store.agents.iter_mut().find(|a| a.id == agent.id) {
             *existing = agent;
@@ -166,6 +206,7 @@ impl ConnectionManager {
     /// Reorder remote agents by providing a list of agent IDs in the desired order.
     pub fn reorder_agents(&self, agent_ids: &[String]) -> Result<()> {
         let mut store = self.store.lock().unwrap();
+        self.sync_from_disk(&mut store);
 
         // Build the reordered list: place agents in the order given by agent_ids,
         // then append any agents not mentioned (shouldn't happen, but be safe).
@@ -190,6 +231,7 @@ impl ConnectionManager {
     /// Update only the agent runtime settings for an existing agent.
     pub fn update_agent_settings(&self, agent_id: &str, settings: AgentSettings) -> Result<()> {
         let mut store = self.store.lock().unwrap();
+        self.sync_from_disk(&mut store);
         if let Some(agent) = store.agents.iter_mut().find(|a| a.id == agent_id) {
             agent.agent_settings = settings;
             self.storage
@@ -204,6 +246,7 @@ impl ConnectionManager {
     pub fn delete_agent(&self, id: &str) -> Result<()> {
         self.credential_store.remove_all_for_connection(id)?;
         let mut store = self.store.lock().unwrap();
+        self.sync_from_disk(&mut store);
         store.agents.retain(|a| a.id != id);
         self.storage
             .save_flat(&store)
@@ -220,6 +263,7 @@ impl ConnectionManager {
         let connection = prepare_for_storage(connection, &*self.credential_store)?;
         let old_id = connection.id.clone();
         let mut store = self.store.lock().unwrap();
+        self.sync_from_disk(&mut store);
         let FlatConnectionStore {
             connections,
             folders,
@@ -247,9 +291,18 @@ impl ConnectionManager {
         // Deduplicate sibling names (may rename the connection and change its ID)
         deduplicate_sibling_names(connections, folders);
 
-        // Migrate credentials from old path-ID to new path-ID (if changed)
+        // Migrate credentials from old path-ID to new path-ID (if changed).
+        // Only attempt migration for connections that use authMethod-based auth
+        // (i.e. SSH). Other types (serial, local, telnet, …) never store
+        // credentials, so calling get() on a locked store would spuriously
+        // emit credential-store-unlock-needed and open the unlock dialog.
         let new_id = &connections[save_idx].id;
-        if *new_id != old_id {
+        let might_have_credentials = connections[save_idx]
+            .config
+            .settings
+            .get("authMethod")
+            .is_some();
+        if *new_id != old_id && might_have_credentials {
             let _ = migrate_credential(&old_id, new_id, &*self.credential_store);
         }
 
@@ -262,6 +315,7 @@ impl ConnectionManager {
     pub fn delete_connection(&self, id: &str) -> Result<()> {
         self.credential_store.remove_all_for_connection(id)?;
         let mut store = self.store.lock().unwrap();
+        self.sync_from_disk(&mut store);
         store.connections.retain(|c| c.id != id);
         self.storage
             .save_flat(&store)
@@ -274,6 +328,7 @@ impl ConnectionManager {
     /// connections and folders, migrating credentials as needed.
     pub fn save_folder(&self, folder: ConnectionFolder) -> Result<()> {
         let mut store = self.store.lock().unwrap();
+        self.sync_from_disk(&mut store);
 
         // Check if this is a rename (collect info before mutating)
         let rename_info: Option<(String, String)> = store
@@ -331,6 +386,7 @@ impl ConnectionManager {
     /// credentials.
     pub fn delete_folder(&self, id: &str) -> Result<()> {
         let mut store = self.store.lock().unwrap();
+        self.sync_from_disk(&mut store);
 
         let parent_id = store
             .folders
@@ -344,7 +400,9 @@ impl ConnectionManager {
                 let old_id = conn.id.clone();
                 conn.folder_id = parent_id.clone();
                 conn.id = compute_connection_id(parent_id.as_deref(), &conn.name);
-                let _ = migrate_credential(&old_id, &conn.id, &*self.credential_store);
+                if conn.config.settings.get("authMethod").is_some() {
+                    let _ = migrate_credential(&old_id, &conn.id, &*self.credential_store);
+                }
             }
         }
 
@@ -761,7 +819,9 @@ fn recompute_descendant_ids(
             let old_conn_id = conn.id.clone();
             conn.folder_id = Some(new_folder_id.to_string());
             conn.id = compute_connection_id(Some(new_folder_id), &conn.name);
-            let _ = migrate_credential(&old_conn_id, &conn.id, credential_store);
+            if conn.config.settings.get("authMethod").is_some() {
+                let _ = migrate_credential(&old_conn_id, &conn.id, credential_store);
+            }
         }
     }
 
@@ -1079,6 +1139,60 @@ mod tests {
         }
     }
 
+    /// Mock that records every `get()` call — used to assert no get() is made
+    /// when saving credential-free connection types (serial, local, …).
+    struct SpyStore {
+        get_calls: Mutex<Vec<CredentialKey>>,
+    }
+
+    impl SpyStore {
+        fn new() -> Self {
+            Self {
+                get_calls: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn get_call_count(&self) -> usize {
+            self.get_calls.lock().unwrap().len()
+        }
+    }
+
+    impl CredentialStore for SpyStore {
+        fn get(&self, key: &CredentialKey) -> Result<Option<String>> {
+            self.get_calls.lock().unwrap().push(key.clone());
+            Ok(None)
+        }
+        fn set(&self, _key: &CredentialKey, _value: &str) -> Result<()> {
+            Ok(())
+        }
+        fn remove(&self, _key: &CredentialKey) -> Result<()> {
+            Ok(())
+        }
+        fn remove_all_for_connection(&self, _connection_id: &str) -> Result<()> {
+            Ok(())
+        }
+        fn list_keys(&self) -> Result<Vec<CredentialKey>> {
+            Ok(Vec::new())
+        }
+        fn status(&self) -> CredentialStoreStatus {
+            CredentialStoreStatus::Unlocked
+        }
+    }
+
+    fn make_serial_conn(id: &str) -> SavedConnection {
+        SavedConnection {
+            id: id.to_string(),
+            name: "Serial".to_string(),
+            config: ConnectionConfig {
+                type_id: "serial".to_string(),
+                settings: serde_json::json!({"port": "/dev/ttyUSB0", "baudRate": "115200"}),
+            },
+            folder_id: None,
+            terminal_options: None,
+            source_file: None,
+        }
+    }
+
     fn make_local_conn(id: &str) -> SavedConnection {
         SavedConnection {
             id: id.to_string(),
@@ -1305,5 +1419,193 @@ mod tests {
         let preview = preview_import_json(json).unwrap();
         assert_eq!(preview.connection_count, 0);
         assert!(!preview.has_encrypted_credentials);
+    }
+
+    // Regression: migrate_credential itself calls get() on the store for every
+    // ID change. On a locked master-password store, get() fails and emits
+    // credential-store-unlock-needed, opening the unlock dialog spuriously.
+    // The callers of migrate_credential must guard the call with an authMethod
+    // check so credential-free connections (serial, local, …) never touch the
+    // store.
+    #[test]
+    fn migrate_credential_calls_get_on_store() {
+        let store = SpyStore::new();
+        migrate_credential("old-id", "new-id", &store).unwrap();
+        // Two get() calls: one for Password, one for KeyPassphrase
+        assert_eq!(
+            store.get_call_count(),
+            2,
+            "migrate_credential must call get() — callers must guard it for non-SSH types"
+        );
+    }
+
+    #[test]
+    fn prepare_for_storage_does_not_call_get_for_serial_connection() {
+        let store = SpyStore::new();
+        let conn = make_serial_conn("serial-1");
+        prepare_for_storage(conn, &store).unwrap();
+        assert_eq!(
+            store.get_call_count(),
+            0,
+            "prepare_for_storage must not call get() for serial connections"
+        );
+    }
+
+    #[test]
+    fn prepare_for_storage_does_not_call_get_for_local_connection() {
+        let store = SpyStore::new();
+        let conn = make_local_conn("local-1");
+        prepare_for_storage(conn, &store).unwrap();
+        assert_eq!(store.get_call_count(), 0);
+    }
+
+    // Regression: with two concurrent instances both loading the same connections.json at
+    // startup, the stale instance could resurrect connections that the active instance
+    // had already deleted.  The fix is for every mutation to reload from disk before
+    // modifying in-memory state (sync_from_disk).
+    #[test]
+    fn save_connection_does_not_resurrect_connection_deleted_by_another_instance() {
+        let dir = tempfile::tempdir().unwrap();
+        let cred_store = Arc::new(MockStore::new());
+
+        // Helper: make a connection with a distinct name (ID is computed from name)
+        let make_conn = |name: &str| SavedConnection {
+            id: format!("conn-{}", name),
+            name: name.to_string(),
+            config: ConnectionConfig {
+                type_id: "serial".to_string(),
+                settings: serde_json::json!({"port": "/dev/ttyUSB0", "baudRate": "115200"}),
+            },
+            folder_id: None,
+            terminal_options: None,
+            source_file: None,
+        };
+
+        // ── Populate initial state ─────────────────────────────────────────────────
+        // save_connection recomputes the ID from the name, so after saving
+        // "Old Port" the on-disk (and in-memory) ID becomes "Old Port".
+        let setup = ConnectionManager::new_for_test(dir.path(), cred_store.clone()).unwrap();
+        setup.save_connection(make_conn("Old Port")).unwrap();
+        drop(setup);
+
+        // ── "Instance B" starts and loads ["Old Port"] into its in-memory store ───
+        let instance_b = ConnectionManager::new_for_test(dir.path(), cred_store.clone()).unwrap();
+
+        // ── "Instance A" deletes "Old Port" → file now contains [] ────────────────
+        let instance_a = ConnectionManager::new_for_test(dir.path(), cred_store.clone()).unwrap();
+        instance_a.delete_connection("Old Port").unwrap();
+        drop(instance_a);
+
+        // ── Instance B (stale in-memory state) saves a brand-new connection ───────
+        // Without sync_from_disk, instance_b still has ["Old Port"] in memory and
+        // would write ["Old Port", "New Port"] to disk, resurrecting the deletion.
+        instance_b.save_connection(make_conn("New Port")).unwrap();
+
+        // ── Verify the final state ────────────────────────────────────────────────
+        let all = instance_b.get_all().unwrap();
+        let names: Vec<&str> = all.connections.iter().map(|c| c.name.as_str()).collect();
+        assert!(
+            !names.contains(&"Old Port"),
+            "deleted connection must not be resurrected; got: {names:?}"
+        );
+        assert!(
+            names.contains(&"New Port"),
+            "newly saved connection must be present; got: {names:?}"
+        );
+    }
+
+    // Regression: update_agent_settings did not call sync_from_disk before saving.
+    // An old parallel instance with stale in-memory connections could resurrect
+    // connections deleted by the active instance, simply by updating an agent's
+    // runtime settings (which happens automatically on connect/disconnect).
+    #[test]
+    fn update_agent_settings_does_not_resurrect_connections_deleted_by_another_instance() {
+        let dir = tempfile::tempdir().unwrap();
+        let cred_store = Arc::new(MockStore::new());
+
+        let make_conn = |name: &str| SavedConnection {
+            id: name.to_string(),
+            name: name.to_string(),
+            config: ConnectionConfig {
+                type_id: "local".to_string(),
+                settings: serde_json::json!({"shell": "bash"}),
+            },
+            folder_id: None,
+            terminal_options: None,
+            source_file: None,
+        };
+
+        // Populate with a connection and an agent
+        let setup = ConnectionManager::new_for_test(dir.path(), cred_store.clone()).unwrap();
+        setup.save_connection(make_conn("Old Connection")).unwrap();
+        setup
+            .save_agent(make_agent("agent-1", "password", None, None))
+            .unwrap();
+        drop(setup);
+
+        // "Instance B" (old) loads the stale state into memory
+        let instance_b = ConnectionManager::new_for_test(dir.path(), cred_store.clone()).unwrap();
+
+        // "Instance A" (new) deletes the connection — disk is now empty of connections
+        let instance_a = ConnectionManager::new_for_test(dir.path(), cred_store.clone()).unwrap();
+        instance_a.delete_connection("Old Connection").unwrap();
+        drop(instance_a);
+
+        // Instance B updates agent settings (e.g., on agent reconnect).
+        // Without sync_from_disk this writes its stale in-memory connections back to disk.
+        instance_b
+            .update_agent_settings("agent-1", AgentSettings::default())
+            .unwrap();
+
+        let all = instance_b.get_all().unwrap();
+        let names: Vec<&str> = all.connections.iter().map(|c| c.name.as_str()).collect();
+        assert!(
+            !names.contains(&"Old Connection"),
+            "update_agent_settings must not resurrect connections deleted by another instance; got: {names:?}"
+        );
+    }
+
+    // Regression: reorder_agents did not call sync_from_disk before saving.
+    // Same resurrection hazard as update_agent_settings.
+    #[test]
+    fn reorder_agents_does_not_resurrect_connections_deleted_by_another_instance() {
+        let dir = tempfile::tempdir().unwrap();
+        let cred_store = Arc::new(MockStore::new());
+
+        let make_conn = |name: &str| SavedConnection {
+            id: name.to_string(),
+            name: name.to_string(),
+            config: ConnectionConfig {
+                type_id: "local".to_string(),
+                settings: serde_json::json!({"shell": "bash"}),
+            },
+            folder_id: None,
+            terminal_options: None,
+            source_file: None,
+        };
+
+        let setup = ConnectionManager::new_for_test(dir.path(), cred_store.clone()).unwrap();
+        setup.save_connection(make_conn("Old Connection")).unwrap();
+        setup
+            .save_agent(make_agent("agent-1", "password", None, None))
+            .unwrap();
+        drop(setup);
+
+        let instance_b = ConnectionManager::new_for_test(dir.path(), cred_store.clone()).unwrap();
+
+        let instance_a = ConnectionManager::new_for_test(dir.path(), cred_store.clone()).unwrap();
+        instance_a.delete_connection("Old Connection").unwrap();
+        drop(instance_a);
+
+        // Instance B reorders agents (e.g., drag-and-drop in UI).
+        // Without sync_from_disk this writes stale in-memory connections back to disk.
+        instance_b.reorder_agents(&["agent-1".to_string()]).unwrap();
+
+        let all = instance_b.get_all().unwrap();
+        let names: Vec<&str> = all.connections.iter().map(|c| c.name.as_str()).collect();
+        assert!(
+            !names.contains(&"Old Connection"),
+            "reorder_agents must not resurrect connections deleted by another instance; got: {names:?}"
+        );
     }
 }

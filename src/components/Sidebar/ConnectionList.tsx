@@ -322,6 +322,7 @@ export function ConnectionList() {
   const addTab = useAppStore((s) => s.addTab);
   const openConnectionEditorTab = useAppStore((s) => s.openConnectionEditorTab);
   const deleteConnection = useAppStore((s) => s.deleteConnection);
+  const bulkDeleteConnections = useAppStore((s) => s.bulkDeleteConnections);
   const deleteFolder = useAppStore((s) => s.deleteFolder);
   const addFolder = useAppStore((s) => s.addFolder);
   const duplicateConnection = useAppStore((s) => s.duplicateConnection);
@@ -444,6 +445,19 @@ export function ConnectionList() {
               frontendLog("connection_list", `Failed to store credential: ${err}`);
             });
           }
+        } else if (authMethod === "key" && savePassword) {
+          // Key auth with passphrase storage opted in but no passphrase stored yet —
+          // prompt for the passphrase so the backend can unlock the key.
+          const host = cfg.host as string;
+          const username = (cfg.username as string) ?? "";
+          const passphrase = await requestPassword(host, username);
+          if (passphrase === null) return;
+          config = { ...config, config: { ...cfg, password: passphrase } } as typeof config;
+          if (useAppStore.getState().passwordPromptShouldSave) {
+            await storeCredential(connection.id, "key_passphrase", passphrase).catch((err) => {
+              frontendLog("connection_list", `Failed to store key passphrase: ${err}`);
+            });
+          }
         }
       }
 
@@ -468,9 +482,14 @@ export function ConnectionList() {
 
   const handleDelete = useCallback(
     (connectionId: string) => {
-      deleteConnection(connectionId);
+      if (selectedConnectionIds.size > 1 && selectedConnectionIds.has(connectionId)) {
+        bulkDeleteConnections([...selectedConnectionIds]);
+        clearConnectionSelection();
+      } else {
+        deleteConnection(connectionId);
+      }
     },
-    [deleteConnection]
+    [deleteConnection, bulkDeleteConnections, selectedConnectionIds, clearConnectionSelection]
   );
 
   const handleDuplicate = useCallback(

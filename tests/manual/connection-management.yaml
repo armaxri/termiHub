@@ -143,6 +143,42 @@ tests:
       - "Folder assignment persists correctly"
     verification: manual
 
+  # --- Multi-select delete (bugfix/multi-connection-delete) ---
+
+  - id: MT-CONN-33
+    name: "Delete multiple selected connections"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Create at least three connections in the sidebar"
+      - "Click the first connection to select it"
+      - "Ctrl+Click (or Cmd+Click on macOS) to add two more to the selection"
+      - "Right-click one of the selected connections and choose Delete"
+    expected:
+      - "All selected connections are removed from the sidebar immediately"
+      - "Unselected connections remain untouched"
+    verification: manual
+
+  # --- Cross-instance connection sync (bugfix/multi-connection-delete) ---
+
+  - id: MT-CONN-34
+    name: "Connection changes sync across parallel instances"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Launch two separate termiHub instances pointing at the same config directory"
+      - "In instance A, add a new connection"
+      - "Observe instance B within 2 seconds"
+      - "In instance A, delete that connection"
+      - "Observe instance B within 2 seconds"
+    expected:
+      - "The new connection appears in instance B's sidebar within ~1 second"
+      - "The deleted connection disappears from instance B's sidebar within ~1 second"
+      - "No manual window-focus switch is required to trigger the update"
+    verification: manual
+
   # --- Drag connection out of folder (#394) ---
 
   - id: MT-CONN-32

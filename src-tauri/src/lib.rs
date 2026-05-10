@@ -107,6 +107,9 @@ pub fn run() {
             };
             std::fs::create_dir_all(&config_dir).expect("Failed to create config directory");
 
+            // Capture path for the connections file watcher before config_dir is moved.
+            let connections_file = config_dir.join("connections.json");
+
             // Initialise the network manager with the config dir and app handle.
             if let Some(net_mgr) = app.try_state::<NetworkManager>() {
                 // SAFETY: NetworkManager is only initialised once at startup.
@@ -326,6 +329,33 @@ pub fn run() {
             // Store recovery warnings so the frontend can retrieve them
             app.manage(Mutex::new(recovery_warnings));
 
+            // Watch connections.json for changes made by other running instances.
+            // Each instance polls independently; when any instance writes the file,
+            // all others detect the mtime change and reload within ~1 second.
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    use std::time::SystemTime;
+                    let mut last_mtime: Option<SystemTime> = std::fs::metadata(&connections_file)
+                        .ok()
+                        .and_then(|m| m.modified().ok());
+                    let mut interval =
+                        tokio::time::interval(std::time::Duration::from_secs(1));
+                    interval
+                        .set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                    loop {
+                        interval.tick().await;
+                        let current_mtime = std::fs::metadata(&connections_file)
+                            .ok()
+                            .and_then(|m| m.modified().ok());
+                        if current_mtime != last_mtime && current_mtime.is_some() {
+                            last_mtime = current_mtime;
+                            let _ = handle.emit("connections-changed", ());
+                        }
+                    }
+                });
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -357,6 +387,13 @@ pub fn run() {
             commands::session::session_get_capabilities,
             commands::session::session_monitoring_open,
             commands::session::session_monitoring_close,
+            // Persistent session management
+            commands::session::start_persistent_session,
+            commands::session::stop_persistent_session,
+            commands::session::attach_persistent_tab,
+            commands::session::detach_persistent_tab,
+            commands::session::list_persistent_sessions,
+            commands::session::get_agent_session_buffer,
             // Connection management
             commands::connection::load_connections_and_folders,
             commands::connection::save_connection,

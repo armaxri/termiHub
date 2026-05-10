@@ -31,8 +31,13 @@ vi.mock("@/services/api", () => ({
   vscodeAvailable: vi.fn(() => Promise.resolve(false)),
 }));
 
-import { useAppStore } from "./appStore";
-import { persistConnection } from "@/services/storage";
+import { useAppStore, _resetConnectionReloadSeq } from "./appStore";
+import {
+  persistConnection,
+  loadConnections,
+  removeConnection,
+  persistFolder,
+} from "@/services/storage";
 import type { LeafPanel } from "@/types/terminal";
 import { findLeaf, getAllLeaves } from "@/utils/panelTree";
 import type { SavedConnection, ConnectionFolder } from "@/types/connection";
@@ -60,6 +65,18 @@ function makeFolder(overrides: Partial<ConnectionFolder> = {}): ConnectionFolder
 describe("appStore — connections, folders, and special tabs", () => {
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
+    _resetConnectionReloadSeq();
+    vi.mocked(loadConnections).mockReset();
+    vi.mocked(loadConnections).mockResolvedValue({
+      connections: [],
+      folders: [],
+      agents: [],
+      externalErrors: [],
+    });
+    vi.mocked(removeConnection).mockReset();
+    vi.mocked(removeConnection).mockResolvedValue(undefined);
+    vi.mocked(persistFolder).mockReset();
+    vi.mocked(persistFolder).mockResolvedValue(undefined);
   });
 
   describe("toggleFolder", () => {
@@ -202,6 +219,224 @@ describe("appStore — connections, folders, and special tabs", () => {
       const connections = useAppStore.getState().connections;
       expect(connections.find((c) => c.id === "c-1")?.folderId).toBeNull();
       expect(connections.find((c) => c.id === "c-2")?.folderId).toBe("f-2");
+    });
+  });
+
+  describe("deleteConnection", () => {
+    it("removes the connection from state immediately (optimistic)", () => {
+      const conn = makeConnection({ id: "c-1" });
+      useAppStore.setState({ connections: [conn] });
+
+      useAppStore.getState().deleteConnection("c-1");
+
+      expect(useAppStore.getState().connections).toHaveLength(0);
+    });
+
+    it("does not affect other connections", () => {
+      const conn1 = makeConnection({ id: "c-1" });
+      const conn2 = makeConnection({ id: "c-2" });
+      useAppStore.setState({ connections: [conn1, conn2] });
+
+      useAppStore.getState().deleteConnection("c-1");
+
+      const remaining = useAppStore.getState().connections;
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0].id).toBe("c-2");
+    });
+
+    it("reloads authoritative state from backend after deletion completes", async () => {
+      const survivor = makeConnection({ id: "c-2", name: "Survivor" });
+      const deleted = makeConnection({ id: "c-1", name: "To Delete" });
+      useAppStore.setState({ connections: [deleted, survivor] });
+
+      vi.mocked(loadConnections).mockResolvedValueOnce({
+        connections: [survivor],
+        folders: [],
+        agents: [],
+        externalErrors: [],
+      });
+
+      useAppStore.getState().deleteConnection("c-1");
+
+      // Flush: removeConnection → loadConnections → set
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(vi.mocked(removeConnection)).toHaveBeenCalledWith("c-1", undefined);
+      expect(vi.mocked(loadConnections)).toHaveBeenCalled();
+      const final = useAppStore.getState().connections;
+      expect(final).toHaveLength(1);
+      expect(final[0].id).toBe("c-2");
+    });
+
+    // Regression: without the fix, a concurrent addFolder call would trigger
+    // loadConnections while removeConnection was still in-flight, reading stale
+    // disk state and resurrecting the deleted connection. The fix chains
+    // loadConnections after removeConnection so the final authoritative read
+    // always runs after the deletion is committed.
+    it("does not resurrect deleted connection when a concurrent addFolder reloads connections", async () => {
+      const deleted = makeConnection({ id: "c-del", name: "Deleted" });
+      useAppStore.setState({ connections: [deleted] });
+
+      // addFolder's loadConnections returns stale data (deletion not yet on disk)
+      vi.mocked(loadConnections).mockResolvedValueOnce({
+        connections: [deleted],
+        folders: [],
+        agents: [],
+        externalErrors: [],
+      });
+      // deleteConnection's loadConnections returns authoritative data (deletion committed)
+      vi.mocked(loadConnections).mockResolvedValueOnce({
+        connections: [],
+        folders: [],
+        agents: [],
+        externalErrors: [],
+      });
+
+      useAppStore.getState().deleteConnection("c-del");
+      useAppStore.getState().addFolder(makeFolder({ id: "f-new" }));
+
+      // Flush all promise chains
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(useAppStore.getState().connections.find((c) => c.id === "c-del")).toBeUndefined();
+    });
+
+    // Regression: if a concurrent operation's loadConnections resolves AFTER
+    // deleteConnection's loadConnections but with stale data (connection still
+    // present on disk when the concurrent op ran), the stale result permanently
+    // overrides the delete correction.
+    //
+    // Scenario: persistFolder (fast) completes before removeConnection (slow),
+    // so addFolder's reload gets a lower sequence number. It resolves with stale
+    // data AFTER deleteConnection's clean reload — and without the version-counter
+    // guard, it overwrites the corrected state and resurrects the deleted connection.
+    it("does not resurrect deleted connection when a concurrent reload resolves last with stale data", async () => {
+      const deleted = makeConnection({ id: "c-del", name: "Deleted" });
+      useAppStore.setState({ connections: [deleted] });
+
+      // Make removeConnection slow (async) so persistFolder completes first,
+      // causing addFolder's loadConnections to be initiated before deleteConnection's.
+      let resolveRemove!: () => void;
+      vi.mocked(removeConnection).mockImplementationOnce(
+        () => new Promise<void>((resolve) => (resolveRemove = resolve))
+      );
+
+      // Track which loadConnections call belongs to which action.
+      // addFolder fires loadConnections first (persistFolder fast),
+      // deleteConnection fires second (after manual resolveRemove).
+      let resolveAddFolderReload!: (val: Awaited<ReturnType<typeof loadConnections>>) => void;
+      let resolveDeleteReload!: (val: Awaited<ReturnType<typeof loadConnections>>) => void;
+      let lcCount = 0;
+      vi.mocked(loadConnections).mockImplementation(
+        () =>
+          new Promise<Awaited<ReturnType<typeof loadConnections>>>((resolve) => {
+            lcCount++;
+            if (lcCount === 1) {
+              resolveAddFolderReload = resolve; // addFolder's stale reload
+            } else {
+              resolveDeleteReload = resolve; // deleteConnection's clean reload
+            }
+          })
+      );
+
+      useAppStore.getState().deleteConnection("c-del");
+      useAppStore.getState().addFolder(makeFolder({ id: "f-new" }));
+
+      // persistFolder is already resolved (mock default) → addFolder's .then fires
+      // → loadConnections #1 (addFolder, stale) initiated (lower seq)
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // Manually complete removeConnection → deleteConnection's .then fires
+      // → loadConnections #2 (deleteConnection, clean) initiated (higher seq)
+      resolveRemove();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // Resolve deleteConnection's clean reload FIRST
+      resolveDeleteReload({ connections: [], folders: [], agents: [], externalErrors: [] });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // Resolve addFolder's stale reload SECOND (includes the deleted connection)
+      resolveAddFolderReload({
+        connections: [deleted],
+        folders: [],
+        agents: [],
+        externalErrors: [],
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // Without version-counter: addFolder's stale result wins (applied last) → c-del is back
+      // With version-counter:    addFolder's seq < deleteConnection's seq → dropped → c-del stays gone
+      expect(useAppStore.getState().connections.find((c) => c.id === "c-del")).toBeUndefined();
+    });
+  });
+
+  describe("bulkDeleteConnections", () => {
+    it("removes all specified connections from state immediately (optimistic)", () => {
+      const c1 = makeConnection({ id: "c-1" });
+      const c2 = makeConnection({ id: "c-2" });
+      const c3 = makeConnection({ id: "c-3" });
+      useAppStore.setState({ connections: [c1, c2, c3] });
+
+      useAppStore.getState().bulkDeleteConnections(["c-1", "c-2"]);
+
+      const remaining = useAppStore.getState().connections;
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0].id).toBe("c-3");
+    });
+
+    it("calls removeConnection for each deleted connection", async () => {
+      const c1 = makeConnection({ id: "c-1", sourceFile: "a.json" });
+      const c2 = makeConnection({ id: "c-2", sourceFile: undefined });
+      useAppStore.setState({ connections: [c1, c2] });
+
+      useAppStore.getState().bulkDeleteConnections(["c-1", "c-2"]);
+
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(vi.mocked(removeConnection)).toHaveBeenCalledWith("c-1", "a.json");
+      expect(vi.mocked(removeConnection)).toHaveBeenCalledWith("c-2", undefined);
+    });
+
+    it("reloads from backend once after all deletions complete", async () => {
+      const c1 = makeConnection({ id: "c-1" });
+      const c2 = makeConnection({ id: "c-2" });
+      useAppStore.setState({ connections: [c1, c2] });
+      vi.mocked(loadConnections).mockResolvedValueOnce({
+        connections: [],
+        folders: [],
+        agents: [],
+        externalErrors: [],
+      });
+
+      useAppStore.getState().bulkDeleteConnections(["c-1", "c-2"]);
+
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(vi.mocked(loadConnections)).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not affect connections not in the delete list", () => {
+      const c1 = makeConnection({ id: "c-1" });
+      const c2 = makeConnection({ id: "c-2" });
+      const c3 = makeConnection({ id: "c-3" });
+      useAppStore.setState({ connections: [c1, c2, c3] });
+
+      useAppStore.getState().bulkDeleteConnections(["c-1"]);
+
+      const remaining = useAppStore.getState().connections;
+      expect(remaining.map((c) => c.id)).toEqual(["c-2", "c-3"]);
     });
   });
 

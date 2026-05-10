@@ -63,6 +63,59 @@ tests:
       - "A 'Retry' button and a 'Cancel' button are shown"
     verification: manual
 
+  # --- Configurable serial port scan prefixes (PR #TODO) ---
+
+  - id: MT-SER-06
+    name: "Serial port scan prefixes appear in Settings → General"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open Settings (gear icon in the Activity Bar)"
+      - "Navigate to General"
+      - "Scroll to the 'Serial Port Scan Prefixes' section"
+    expected:
+      - "The section shows a badge with the count of enabled / total prefixes (e.g. '42 / 42 enabled')"
+      - "A list of built-in prefixes is shown, each with a toggle switch"
+      - "An 'Add' input and button are present at the bottom"
+    verification: manual
+    tags: [settings, serial]
+
+  - id: MT-SER-07
+    name: "Disabling a prefix removes its ports from the serial dropdown"
+    platforms: [linux]
+    prerequisites:
+      - app: true
+      - hardware: "A Linux machine with at least one /dev/ttyS* device present"
+    instructions:
+      - "Open Settings → General → Serial Port Scan Prefixes"
+      - "Toggle the 'ttyS' prefix off"
+      - "Open a connection editor for a Serial connection type"
+      - "Click the Port dropdown"
+    expected:
+      - "No /dev/ttyS* ports appear in the dropdown"
+      - "Toggle 'ttyS' back on; re-open the dropdown — the ports reappear"
+    verification: manual
+    tags: [settings, serial]
+
+  - id: MT-SER-08
+    name: "Adding a custom prefix discovers matching ports"
+    platforms: [linux]
+    prerequisites:
+      - app: true
+      - hardware: "A Linux machine with a device matching a non-default /dev prefix (e.g. create a test symlink: sudo ln -s /dev/null /dev/ttyTEST0)"
+    instructions:
+      - "Open Settings → General → Serial Port Scan Prefixes"
+      - "Type 'ttyTEST' in the add-prefix input and click Add"
+      - "Open a connection editor for a Serial connection type"
+      - "Click the Port dropdown"
+    expected:
+      - "The custom prefix 'ttyTEST' appears in the list with a delete button"
+      - "/dev/ttyTEST0 appears in the port dropdown"
+      - "Deleting the custom prefix and reopening the dropdown removes the port"
+    verification: manual
+    tags: [settings, serial]
+
   - id: MT-SER-05
     name: "Serial port busy shows 'already in use' hint"
     platforms: [all]
