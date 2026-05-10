@@ -262,10 +262,18 @@ impl SessionManager {
 
         // Spawn output streaming task.
         let sessions_clone = self.sessions.clone();
+        let persistent_sessions_clone = self.persistent_sessions.clone();
         let sid = session_id.clone();
         tokio::spawn(async move {
-            Self::run_output_reader(sid, output_rx, emitter, sessions_clone, has_initial_command)
-                .await;
+            Self::run_output_reader(
+                sid,
+                output_rx,
+                emitter,
+                sessions_clone,
+                persistent_sessions_clone,
+                has_initial_command,
+            )
+            .await;
         });
 
         // Send initial command after a short delay.
@@ -893,6 +901,7 @@ impl SessionManager {
         mut output_rx: tokio::sync::mpsc::Receiver<Vec<u8>>,
         emitter: E,
         sessions: Arc<Mutex<HashMap<String, SessionEntry>>>,
+        persistent_sessions: Arc<Mutex<HashMap<String, PersistentRecord>>>,
         wait_for_clear: bool,
     ) {
         // Phase 1: optionally buffer until the screen-clear sequence.
@@ -915,7 +924,14 @@ impl SessionManager {
                     }
                     Ok(None) => {
                         // Channel closed during startup.
-                        Self::emit_and_cleanup(&session_id, buffer, &emitter, &sessions).await;
+                        Self::emit_and_cleanup(
+                            &session_id,
+                            buffer,
+                            &emitter,
+                            &sessions,
+                            &persistent_sessions,
+                        )
+                        .await;
                         return;
                     }
                     Err(_) => break, // Timeout
@@ -961,15 +977,31 @@ impl SessionManager {
             }
         }
 
-        Self::emit_and_cleanup(&session_id, Vec::new(), &emitter, &sessions).await;
+        Self::emit_and_cleanup(
+            &session_id,
+            Vec::new(),
+            &emitter,
+            &sessions,
+            &persistent_sessions,
+        )
+        .await;
     }
 
     /// Emit remaining data (if any), send the exit event, and remove the session.
+    ///
+    /// If the session is registered as a persistent session, also removes the
+    /// persistent registry entry and emits a "stopped" state event so the
+    /// frontend clears the stale green dot. This covers the case where the
+    /// agent SSH connection drops while a persistent shell daemon is still
+    /// running: the desktop output reader exits, which must invalidate the
+    /// persistent session entry or the user can never re-attach (the next
+    /// `attach_persistent_tab` call would fail with `SessionNotFound`).
     async fn emit_and_cleanup<E: EventEmitter>(
         session_id: &str,
         data: Vec<u8>,
         emitter: &E,
         sessions: &Arc<Mutex<HashMap<String, SessionEntry>>>,
+        persistent_sessions: &Arc<Mutex<HashMap<String, PersistentRecord>>>,
     ) {
         if !data.is_empty() {
             let event = TerminalOutputEvent {
@@ -988,6 +1020,31 @@ impl SessionManager {
         {
             let mut sessions = sessions.lock().await;
             sessions.remove(session_id);
+        }
+
+        // If this was a persistent session, clear its registry entry and notify
+        // the frontend. Without this the frontend retains a stale "running" state
+        // and any subsequent attach attempt fails with SessionNotFound.
+        let stale_connection_id = {
+            let mut ps = persistent_sessions.lock().await;
+            let conn_id = ps
+                .iter()
+                .find(|(_, r)| r.session_id == session_id)
+                .map(|(k, _)| k.clone());
+            if let Some(ref cid) = conn_id {
+                ps.remove(cid);
+            }
+            conn_id
+        };
+        if let Some(connection_id) = stale_connection_id {
+            emitter.emit_persistent_state(&PersistentSessionStateEvent {
+                connection_id,
+                session_id: Some(session_id.to_string()),
+                state: "stopped".to_string(),
+                attached_tab_count: 0,
+                error_message: None,
+            });
+            info!("Persistent session stopped due to backend exit: {session_id}");
         }
 
         info!("Session ended: {session_id}");
@@ -1092,6 +1149,7 @@ mod tests {
     struct MockEventEmitter {
         outputs: std::sync::Arc<std::sync::Mutex<Vec<TerminalOutputEvent>>>,
         exits: std::sync::Arc<std::sync::Mutex<Vec<TerminalExitEvent>>>,
+        persistent_states: std::sync::Arc<std::sync::Mutex<Vec<PersistentSessionStateEvent>>>,
         fail_output: bool,
     }
 
@@ -1117,6 +1175,9 @@ mod tests {
         }
         fn emit_exit(&self, event: &TerminalExitEvent) {
             self.exits.lock().unwrap().push(event.clone());
+        }
+        fn emit_persistent_state(&self, event: &PersistentSessionStateEvent) {
+            self.persistent_states.lock().unwrap().push(event.clone());
         }
     }
 
@@ -1211,12 +1272,23 @@ mod tests {
 
     // ── EventEmitter DI tests ─────────────────────────────────────────
 
+    fn empty_persistent_sessions() -> Arc<Mutex<HashMap<String, PersistentRecord>>> {
+        Arc::new(Mutex::new(HashMap::new()))
+    }
+
     #[tokio::test]
     async fn emit_and_cleanup_sends_exit_event() {
         let emitter = MockEventEmitter::new();
         let sessions = sessions_with_mock("sess-exit").await;
 
-        SessionManager::emit_and_cleanup("sess-exit", Vec::new(), &emitter, &sessions).await;
+        SessionManager::emit_and_cleanup(
+            "sess-exit",
+            Vec::new(),
+            &emitter,
+            &sessions,
+            &empty_persistent_sessions(),
+        )
+        .await;
 
         {
             let exits = emitter.exits.lock().unwrap();
@@ -1232,8 +1304,14 @@ mod tests {
         let emitter = MockEventEmitter::new();
         let sessions = sessions_with_mock("sess-data").await;
 
-        SessionManager::emit_and_cleanup("sess-data", b"final bytes".to_vec(), &emitter, &sessions)
-            .await;
+        SessionManager::emit_and_cleanup(
+            "sess-data",
+            b"final bytes".to_vec(),
+            &emitter,
+            &sessions,
+            &empty_persistent_sessions(),
+        )
+        .await;
 
         {
             let outputs = emitter.outputs.lock().unwrap();
@@ -1257,6 +1335,7 @@ mod tests {
             rx,
             emitter.clone(),
             sessions.clone(),
+            empty_persistent_sessions(),
             false,
         )
         .await;
@@ -1292,6 +1371,7 @@ mod tests {
             rx,
             emitter.clone(),
             sessions,
+            empty_persistent_sessions(),
             false,
         )
         .await;
@@ -1299,6 +1379,76 @@ mod tests {
         // No outputs recorded (emitter failed)
         let outputs = emitter.outputs.lock().unwrap();
         assert!(outputs.is_empty());
+    }
+
+    /// Regression: when a persistent session's output channel closes (e.g. agent
+    /// SSH disconnect), `emit_and_cleanup` must remove the persistent registry
+    /// entry and emit a "stopped" state event.  Without this the frontend retains
+    /// a stale "running" green dot and any subsequent attach attempt fails with
+    /// SessionNotFound.
+    #[tokio::test]
+    async fn emit_and_cleanup_emits_stopped_for_persistent_session() {
+        let emitter = MockEventEmitter::new();
+        let sessions = sessions_with_mock("sess-ps").await;
+        let persistent_sessions: Arc<Mutex<HashMap<String, PersistentRecord>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        {
+            let mut ps = persistent_sessions.lock().await;
+            ps.insert(
+                "conn-ps".to_string(),
+                PersistentRecord {
+                    connection_id: "conn-ps".to_string(),
+                    session_id: "sess-ps".to_string(),
+                    attached_tabs: HashSet::new(),
+                },
+            );
+        }
+
+        SessionManager::emit_and_cleanup(
+            "sess-ps",
+            Vec::new(),
+            &emitter,
+            &sessions,
+            &persistent_sessions,
+        )
+        .await;
+
+        // Persistent registry entry must be cleared.
+        assert!(
+            !persistent_sessions.lock().await.contains_key("conn-ps"),
+            "stale persistent record must be removed"
+        );
+
+        // A "stopped" event must have been emitted.
+        let ps_events = emitter.persistent_states.lock().unwrap();
+        assert_eq!(ps_events.len(), 1, "exactly one persistent state event");
+        assert_eq!(ps_events[0].state, "stopped");
+        assert_eq!(ps_events[0].connection_id, "conn-ps");
+        assert_eq!(ps_events[0].session_id.as_deref(), Some("sess-ps"));
+    }
+
+    /// Non-persistent sessions must not trigger any persistent-state events on
+    /// backend exit — `emit_and_cleanup` should leave the persistent registry
+    /// unchanged.
+    #[tokio::test]
+    async fn emit_and_cleanup_does_not_emit_stopped_for_non_persistent_session() {
+        let emitter = MockEventEmitter::new();
+        let sessions = sessions_with_mock("sess-local").await;
+
+        SessionManager::emit_and_cleanup(
+            "sess-local",
+            Vec::new(),
+            &emitter,
+            &sessions,
+            &empty_persistent_sessions(),
+        )
+        .await;
+
+        let ps_events = emitter.persistent_states.lock().unwrap();
+        assert!(
+            ps_events.is_empty(),
+            "no persistent state event for non-persistent session"
+        );
     }
 
     // ── DisconnectSpy ─────────────────────────────────────────────────
