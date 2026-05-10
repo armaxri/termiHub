@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Settings: "Updates" and "About" are no longer sub-tabs inside the Settings panel. They are now direct entries in the settings gear dropdown menu and open in a focused overlay panel instead.
 - CI: upgraded `docker/setup-buildx-action` from v3 to v4 and `docker/build-push-action` from v5 to v7 (Node.js 24); upgraded `pnpm/action-setup` from v5 to v6; upgraded CI Node.js version from 20 to 22 (LTS) — eliminates all "Node.js 20 actions are deprecated" warnings in GitHub Actions runs.
+- CI: replaced hardcoded `--platform=linux/amd64` with `--platform=$BUILDPLATFORM` in all three agent cross-compilation Dockerfiles — eliminates `FromPlatformFlagConstDisallowed` Docker lint warnings.
 
 ### Added
 
