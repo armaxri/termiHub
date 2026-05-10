@@ -493,17 +493,14 @@ describe("appStore", () => {
     const makeConn = (id: string, name: string) => ({
       id,
       name,
-      config: { typeId: "local", settings: { shell: "bash" } },
+      config: { type: "local", config: { shell: "bash" } },
       folderId: null,
-      terminalOptions: null,
       sourceFile: null,
     });
 
     it("replaces store connections with the fresh list returned by the backend", async () => {
       // Seed stale in-store state that includes a connection deleted in another instance.
-      useAppStore.setState({
-        connections: [makeConn("conn-deleted", "Deleted Connection")],
-      } as Parameters<typeof useAppStore.setState>[0]);
+      useAppStore.setState({ connections: [makeConn("conn-deleted", "Deleted Connection")] });
 
       // Backend returns a list without the deleted connection.
       vi.mocked(storage.loadConnections).mockResolvedValueOnce({
