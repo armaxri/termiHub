@@ -488,6 +488,7 @@ impl ConnectionManager {
         let count = imported_conns.len();
 
         let mut store = self.store.lock().unwrap();
+        self.sync_from_disk(&mut store);
 
         // Merge: add imported folders that don't already exist (by name path)
         for folder in imported_folders {
@@ -705,6 +706,7 @@ impl ConnectionManager {
 
         // Merge connections, folders, and agents
         let mut store = self.store.lock().unwrap();
+        self.sync_from_disk(&mut store);
 
         for folder in imported_folders {
             if !store.folders.iter().any(|f| f.id == folder.id) {
@@ -757,6 +759,7 @@ impl ConnectionManager {
         let mut connection = match current_source {
             None => {
                 let mut store = self.store.lock().unwrap();
+                self.sync_from_disk(&mut store);
                 let idx = store
                     .connections
                     .iter()
@@ -779,6 +782,7 @@ impl ConnectionManager {
                     prepare_for_storage(connection.clone(), &*self.credential_store)?;
                 disk_conn.source_file = None;
                 let mut store = self.store.lock().unwrap();
+                self.sync_from_disk(&mut store);
                 store.connections.push(disk_conn);
                 self.storage
                     .save_flat(&store)
