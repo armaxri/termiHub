@@ -153,6 +153,209 @@ describe("ConnectionEditor — credential hint", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Realistic SSH type with authMethod selector and conditional password field.
+// Used for Save & Connect credential-store tests.
+// ---------------------------------------------------------------------------
+
+const SSH_TYPE_FULL: ConnectionTypeInfo = {
+  typeId: "ssh",
+  displayName: "SSH",
+  icon: "ssh",
+  schema: {
+    groups: [
+      {
+        key: "conn",
+        label: "Connection",
+        fields: [
+          { key: "host", label: "Host", fieldType: { type: "text" }, required: true },
+          { key: "username", label: "Username", fieldType: { type: "text" }, required: true },
+          {
+            key: "authMethod",
+            label: "Auth Method",
+            fieldType: {
+              type: "select",
+              options: [
+                { value: "password", label: "Password" },
+                { value: "key", label: "Key" },
+                { value: "agent", label: "Agent" },
+              ],
+            },
+            required: true,
+            default: "password",
+          },
+          {
+            key: "password",
+            label: "Password",
+            fieldType: { type: "password" },
+            required: false,
+            visibleWhen: { field: "authMethod", equals: "password" },
+          },
+          {
+            key: "savePassword",
+            label: "Save Password",
+            fieldType: { type: "boolean" },
+            required: false,
+          },
+        ],
+      },
+    ],
+  },
+  capabilities: { monitoring: false, fileBrowser: false, resize: true, persistent: false },
+};
+
+/** Existing SSH connection — password auth, savePassword=true, password stripped from storage. */
+const SSH_CONN_PASSWORD: SavedConnection = {
+  id: "ssh-pw-conn",
+  name: "My SSH Server",
+  config: {
+    type: "ssh",
+    config: { host: "192.168.1.1", username: "admin", authMethod: "password", savePassword: true },
+  },
+  folderId: null,
+};
+
+/** Existing SSH connection — key auth, savePassword=true (passphrase stored). */
+const SSH_CONN_KEY: SavedConnection = {
+  id: "ssh-key-conn",
+  name: "My Key SSH",
+  config: {
+    type: "ssh",
+    config: { host: "192.168.1.2", username: "admin", authMethod: "key", savePassword: true },
+  },
+  folderId: null,
+};
+
+describe("ConnectionEditor — Save & Connect credential handling", () => {
+  function renderFor(connId: string) {
+    act(() => {
+      root.render(
+        <ConnectionEditor
+          tabId="tab-sc-1"
+          meta={{ connectionId: connId, folderId: null }}
+          isVisible={true}
+        />
+      );
+    });
+  }
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    resetRuntimeCache();
+    useAppStore.setState({
+      ...useAppStore.getInitialState(),
+      connections: [SSH_CONN_PASSWORD, SSH_CONN_KEY],
+      connectionTypes: [SSH_TYPE_FULL],
+      credentialStoreStatus: { mode: "master_password", status: "unlocked" },
+    });
+  });
+
+  afterEach(() => {
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+    vi.clearAllMocks();
+  });
+
+  it("uses stored credential without prompting when password is already in the vault", async () => {
+    // Regression: handleSaveAndConnect previously always prompted for the
+    // password because connSettings.password is stripped from storage, even
+    // when the vault already holds a valid credential. It must check the
+    // store first and skip the dialog when a credential is found.
+    mockedInvoke.mockImplementation((cmd) => {
+      if (cmd === "resolve_credential") return Promise.resolve("vault-secret");
+      if (cmd === "save_connection") return Promise.resolve();
+      if (cmd === "load_connections_and_folders")
+        return Promise.resolve({ connections: [SSH_CONN_PASSWORD, SSH_CONN_KEY], folders: [] });
+      return Promise.resolve(null);
+    });
+
+    renderFor(SSH_CONN_PASSWORD.id);
+
+    // Flush initial effects (credential hint resolution, etc.)
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const btn = container.querySelector(
+      '[data-testid="connection-editor-save-connect"]'
+    ) as HTMLButtonElement;
+    expect(btn).not.toBeNull();
+
+    await act(async () => {
+      btn.click();
+    });
+    // Extra flush to let the async handleSaveAndConnect finish
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // The password dialog must NOT have opened — the vault credential was used
+    expect(useAppStore.getState().passwordPromptOpen).toBe(false);
+  });
+
+  it("prompts for password when no stored credential exists", async () => {
+    mockedInvoke.mockImplementation((cmd) => {
+      if (cmd === "resolve_credential") return Promise.resolve(null);
+      if (cmd === "save_connection") return Promise.resolve();
+      if (cmd === "load_connections_and_folders")
+        return Promise.resolve({ connections: [SSH_CONN_PASSWORD, SSH_CONN_KEY], folders: [] });
+      return Promise.resolve(null);
+    });
+
+    renderFor(SSH_CONN_PASSWORD.id);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const btn = container.querySelector(
+      '[data-testid="connection-editor-save-connect"]'
+    ) as HTMLButtonElement;
+    await act(async () => {
+      btn.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // No stored credential → password dialog must appear
+    expect(useAppStore.getState().passwordPromptOpen).toBe(true);
+  });
+
+  it("does not prompt for key auth (no password field visible)", async () => {
+    mockedInvoke.mockImplementation((cmd) => {
+      if (cmd === "resolve_credential") return Promise.resolve(null);
+      if (cmd === "save_connection") return Promise.resolve();
+      if (cmd === "load_connections_and_folders")
+        return Promise.resolve({ connections: [SSH_CONN_PASSWORD, SSH_CONN_KEY], folders: [] });
+      return Promise.resolve(null);
+    });
+
+    renderFor(SSH_CONN_KEY.id);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const btn = container.querySelector(
+      '[data-testid="connection-editor-save-connect"]'
+    ) as HTMLButtonElement;
+    await act(async () => {
+      btn.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Key auth: password field hidden → findPasswordPromptInfo returns null → no dialog
+    expect(useAppStore.getState().passwordPromptOpen).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Minimal connection type used for dirty-state tests (no auth, no credentials)
 // ---------------------------------------------------------------------------
 

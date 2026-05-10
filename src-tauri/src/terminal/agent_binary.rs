@@ -86,15 +86,126 @@ pub fn find_bundled_binary(app_handle: &tauri::AppHandle, arch_suffix: &str) -> 
     }
 }
 
+/// Sanitize a git branch name for use as a GitHub release tag component.
+///
+/// Replaces any character that is not alphanumeric or `-` with `-`, then
+/// collapses consecutive dashes and strips leading/trailing dashes.
+pub fn sanitize_branch_name(branch: &str) -> String {
+    let sanitized: String = branch
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    sanitized
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+/// Build the full GitHub Releases download URL for an agent built from a specific branch.
+///
+/// Branch release tags follow the pattern `agent-branch-{sanitized-branch}`.
+pub fn compute_branch_build_url(branch: &str, arch_suffix: &str) -> String {
+    let tag = format!("agent-branch-{}", sanitize_branch_name(branch));
+    format!("https://github.com/{GITHUB_REPO}/releases/download/{tag}/termihub-agent-{arch_suffix}")
+}
+
+/// Download the agent binary from an explicit URL and cache it under `cache_key/termihub-agent-{arch}`.
+pub fn download_agent_binary_from_url<F>(
+    url: &str,
+    cache_key: &str,
+    arch_suffix: &str,
+    progress_cb: F,
+) -> Result<PathBuf>
+where
+    F: Fn(u64, u64),
+{
+    info!("Downloading agent binary from {}", url);
+
+    let response = reqwest::blocking::Client::new()
+        .get(url)
+        .send()
+        .context("Failed to start download")?;
+
+    if !response.status().is_success() {
+        bail!("Download failed: HTTP {} for {}", response.status(), url);
+    }
+
+    let total_size = response.content_length().unwrap_or(0);
+    let bytes = response.bytes().context("Failed to read response body")?;
+    progress_cb(bytes.len() as u64, total_size);
+
+    let dest = cache_dir()
+        .join(cache_key)
+        .join(format!("termihub-agent-{arch_suffix}"));
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create cache dir: {}", parent.display()))?;
+    }
+    let mut file = fs::File::create(&dest)
+        .with_context(|| format!("Failed to create cache file: {}", dest.display()))?;
+    file.write_all(&bytes)?;
+
+    info!(
+        "Agent binary cached at {} ({} bytes)",
+        dest.display(),
+        bytes.len()
+    );
+    Ok(dest)
+}
+
+/// Resolve the agent binary for a specific branch build.
+///
+/// Checks the local cache first (under `branch-{sanitized}/termihub-agent-{arch}`),
+/// then downloads from the branch release on GitHub.
+pub fn resolve_branch_build_binary<F>(
+    branch: &str,
+    arch_suffix: &str,
+    progress_cb: F,
+) -> Result<PathBuf>
+where
+    F: Fn(u64, u64),
+{
+    let cache_key = format!("branch-{}", sanitize_branch_name(branch));
+    let cached = cache_dir()
+        .join(&cache_key)
+        .join(format!("termihub-agent-{arch_suffix}"));
+
+    if cached.is_file() {
+        if let Ok(meta) = fs::metadata(&cached) {
+            if meta.len() > 0 {
+                debug!("Using cached branch build binary: {}", cached.display());
+                return Ok(cached);
+            }
+        }
+    }
+
+    let url = compute_branch_build_url(branch, arch_suffix);
+    download_agent_binary_from_url(&url, &cache_key, arch_suffix, progress_cb)
+}
+
 /// Return the base download URL (without arch suffix) for the current build.
 ///
-/// Debug builds and versions ending with `-dev` use the `dev-latest` tag.
-/// Release builds use `v{version}`.
+/// Dev builds (debug mode, `-dev` version suffix, or CI dev-build flag) use a
+/// branch-specific tag: `dev-develop-latest` for develop, `dev-latest` for everything
+/// else. Release builds use `v{version}`.
 ///
 /// Append an arch suffix (e.g. `"linux-arm64"`) to obtain the full URL.
 pub fn compute_download_base_url(version: &str) -> String {
-    let tag = if cfg!(debug_assertions) || version.ends_with("-dev") {
-        "dev-latest".to_string()
+    let is_dev =
+        cfg!(debug_assertions) || env!("TERMIHUB_IS_DEV_BUILD") == "1" || version.ends_with("-dev");
+    let tag = if is_dev {
+        if env!("TERMIHUB_BUILD_BRANCH") == "develop" {
+            "dev-develop-latest".to_string()
+        } else {
+            "dev-latest".to_string()
+        }
     } else {
         format!("v{version}")
     };
@@ -106,12 +217,21 @@ pub fn compute_download_url(version: &str, arch_suffix: &str) -> String {
     format!("{}{}", compute_download_base_url(version), arch_suffix)
 }
 
-// Test helpers with an explicit dev-build flag so tests are not affected by
+// Test helpers with explicit flags so tests are not affected by
 // whether the test runner itself is a debug or release build.
 #[cfg(test)]
-pub(crate) fn compute_download_base_url_impl(version: &str, is_debug_build: bool) -> String {
-    let tag = if is_debug_build || version.ends_with("-dev") {
-        "dev-latest".to_string()
+pub(crate) fn compute_download_base_url_impl(
+    version: &str,
+    is_debug_build: bool,
+    branch: &str,
+) -> String {
+    let is_dev = is_debug_build || version.ends_with("-dev");
+    let tag = if is_dev {
+        if branch == "develop" {
+            "dev-develop-latest".to_string()
+        } else {
+            "dev-latest".to_string()
+        }
     } else {
         format!("v{version}")
     };
@@ -123,10 +243,11 @@ pub(crate) fn compute_download_url_impl(
     version: &str,
     arch_suffix: &str,
     is_debug_build: bool,
+    branch: &str,
 ) -> String {
     format!(
         "{}{}",
-        compute_download_base_url_impl(version, is_debug_build),
+        compute_download_base_url_impl(version, is_debug_build, branch),
         arch_suffix
     )
 }
@@ -289,7 +410,7 @@ mod tests {
 
     #[test]
     fn compute_download_url_release_build_uses_version_tag() {
-        let url = compute_download_url_impl("1.2.3", "linux-x64", false);
+        let url = compute_download_url_impl("1.2.3", "linux-x64", false, "main");
         assert_eq!(
             url,
             "https://github.com/armaxri/termiHub/releases/download/v1.2.3/termihub-agent-linux-x64"
@@ -298,7 +419,7 @@ mod tests {
 
     #[test]
     fn compute_download_url_debug_build_uses_dev_latest() {
-        let url = compute_download_url_impl("1.2.3", "linux-x64", true);
+        let url = compute_download_url_impl("1.2.3", "linux-x64", true, "main");
         assert_eq!(
             url,
             "https://github.com/armaxri/termiHub/releases/download/dev-latest/termihub-agent-linux-x64"
@@ -307,7 +428,7 @@ mod tests {
 
     #[test]
     fn compute_download_url_dev_version_suffix_uses_dev_latest() {
-        let url = compute_download_url_impl("0.1.0-dev", "linux-arm64", false);
+        let url = compute_download_url_impl("0.1.0-dev", "linux-arm64", false, "main");
         assert_eq!(
             url,
             "https://github.com/armaxri/termiHub/releases/download/dev-latest/termihub-agent-linux-arm64"
@@ -316,7 +437,7 @@ mod tests {
 
     #[test]
     fn compute_download_url_dev_version_armv7() {
-        let url = compute_download_url_impl("2.0.0-dev", "linux-armv7", false);
+        let url = compute_download_url_impl("2.0.0-dev", "linux-armv7", false, "main");
         assert!(url.contains("dev-latest"));
         assert!(url.contains("linux-armv7"));
         assert!(!url.contains("v2.0.0"));
@@ -324,8 +445,75 @@ mod tests {
 
     #[test]
     fn compute_download_url_release_build_does_not_use_dev_latest() {
-        let url = compute_download_url_impl("1.0.0", "linux-x64", false);
+        let url = compute_download_url_impl("1.0.0", "linux-x64", false, "main");
         assert!(!url.contains("dev-latest"));
         assert!(url.contains("v1.0.0"));
+    }
+
+    #[test]
+    fn compute_download_url_develop_branch_debug_uses_dev_develop_latest() {
+        let url = compute_download_url_impl("1.2.3", "linux-x64", true, "develop");
+        assert_eq!(
+            url,
+            "https://github.com/armaxri/termiHub/releases/download/dev-develop-latest/termihub-agent-linux-x64"
+        );
+    }
+
+    #[test]
+    fn compute_download_url_develop_branch_dev_version_uses_dev_develop_latest() {
+        let url = compute_download_url_impl("0.1.0-dev", "linux-arm64", false, "develop");
+        assert_eq!(
+            url,
+            "https://github.com/armaxri/termiHub/releases/download/dev-develop-latest/termihub-agent-linux-arm64"
+        );
+    }
+
+    #[test]
+    fn compute_download_url_develop_branch_release_build_uses_version_tag() {
+        let url = compute_download_url_impl("1.2.3", "linux-x64", false, "develop");
+        assert_eq!(
+            url,
+            "https://github.com/armaxri/termiHub/releases/download/v1.2.3/termihub-agent-linux-x64"
+        );
+    }
+
+    #[test]
+    fn sanitize_branch_name_replaces_slash() {
+        assert_eq!(
+            sanitize_branch_name("feature/666-my-branch"),
+            "feature-666-my-branch"
+        );
+    }
+
+    #[test]
+    fn sanitize_branch_name_replaces_underscores() {
+        assert_eq!(sanitize_branch_name("feature_foo_bar"), "feature-foo-bar");
+    }
+
+    #[test]
+    fn sanitize_branch_name_collapses_dashes() {
+        assert_eq!(sanitize_branch_name("foo//bar"), "foo-bar");
+        assert_eq!(sanitize_branch_name("foo--bar"), "foo-bar");
+    }
+
+    #[test]
+    fn sanitize_branch_name_strips_leading_trailing() {
+        assert_eq!(sanitize_branch_name("/foo/"), "foo");
+    }
+
+    #[test]
+    fn compute_branch_build_url_structure() {
+        let url = compute_branch_build_url("feature/666-my-feature", "linux-arm64");
+        assert_eq!(
+            url,
+            "https://github.com/armaxri/termiHub/releases/download/agent-branch-feature-666-my-feature/termihub-agent-linux-arm64"
+        );
+    }
+
+    #[test]
+    fn compute_branch_build_url_main() {
+        let url = compute_branch_build_url("main", "linux-x64");
+        assert!(url.contains("agent-branch-main"));
+        assert!(url.contains("linux-x64"));
     }
 }

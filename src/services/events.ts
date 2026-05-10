@@ -53,10 +53,13 @@ export async function onTerminalExit(
  * terminal event type and routes events to per-session callbacks via Map
  * lookup. This replaces the O(N) fan-out pattern where each Terminal
  * component registered its own global listener.
+ *
+ * Multiple subscribers per session are supported (needed for persistent
+ * sessions where several tabs can attach to the same backend process).
  */
 export class TerminalOutputDispatcher {
-  private outputCallbacks = new Map<string, (data: Uint8Array) => void>();
-  private exitCallbacks = new Map<string, (exitCode: number | null) => void>();
+  private outputCallbacks = new Map<string, Set<(data: Uint8Array) => void>>();
+  private exitCallbacks = new Map<string, Set<(exitCode: number | null) => void>>();
   private remoteStateCallbacks = new Map<string, (state: string) => void>();
   private agentStateCallbacks = new Map<string, (state: string) => void>();
   /** Buffer output for sessions whose subscriber hasn't registered yet. */
@@ -89,9 +92,10 @@ export class TerminalOutputDispatcher {
 
     const unlistenOutput = await listen<TerminalOutputPayload>("terminal-output", (event) => {
       const { session_id, data } = event.payload;
-      const cb = this.outputCallbacks.get(session_id);
-      if (cb) {
-        cb(new Uint8Array(data));
+      const cbs = this.outputCallbacks.get(session_id);
+      if (cbs && cbs.size > 0) {
+        const chunk = new Uint8Array(data);
+        for (const cb of cbs) cb(chunk);
       } else {
         // Buffer output for sessions whose subscriber hasn't registered yet
         // (e.g. pre-existing sessions created by agent setup).
@@ -112,9 +116,9 @@ export class TerminalOutputDispatcher {
 
     const unlistenExit = await listen<TerminalExitPayload>("terminal-exit", (event) => {
       const { session_id, exit_code } = event.payload;
-      const cb = this.exitCallbacks.get(session_id);
-      if (cb) {
-        cb(exit_code);
+      const cbs = this.exitCallbacks.get(session_id);
+      if (cbs) {
+        for (const cb of cbs) cb(exit_code);
       }
     });
 
@@ -173,7 +177,12 @@ export class TerminalOutputDispatcher {
 
   /** Subscribe to output events for a specific session. Returns an unsubscribe function. */
   subscribeOutput(sessionId: string, callback: (data: Uint8Array) => void): () => void {
-    this.outputCallbacks.set(sessionId, callback);
+    let cbs = this.outputCallbacks.get(sessionId);
+    if (!cbs) {
+      cbs = new Set();
+      this.outputCallbacks.set(sessionId, cbs);
+    }
+    cbs.add(callback);
     // Flush any output that arrived before the subscriber registered
     const buffered = this.pendingOutput.get(sessionId);
     if (buffered) {
@@ -183,15 +192,28 @@ export class TerminalOutputDispatcher {
       }
     }
     return () => {
-      this.outputCallbacks.delete(sessionId);
+      const set = this.outputCallbacks.get(sessionId);
+      if (set) {
+        set.delete(callback);
+        if (set.size === 0) this.outputCallbacks.delete(sessionId);
+      }
     };
   }
 
   /** Subscribe to exit events for a specific session. Returns an unsubscribe function. */
   subscribeExit(sessionId: string, callback: (exitCode: number | null) => void): () => void {
-    this.exitCallbacks.set(sessionId, callback);
+    let cbs = this.exitCallbacks.get(sessionId);
+    if (!cbs) {
+      cbs = new Set();
+      this.exitCallbacks.set(sessionId, cbs);
+    }
+    cbs.add(callback);
     return () => {
-      this.exitCallbacks.delete(sessionId);
+      const set = this.exitCallbacks.get(sessionId);
+      if (set) {
+        set.delete(callback);
+        if (set.size === 0) this.exitCallbacks.delete(sessionId);
+      }
     };
   }
 
@@ -378,4 +400,41 @@ export async function onSessionMonitoringStats(
   return await listen<SessionMonitoringStatsPayload>("session-monitoring-stats", (event) => {
     callback(event.payload.session_id, event.payload.stats);
   });
+}
+
+// --- Persistent session events ---
+
+interface PersistentSessionStatePayload {
+  connection_id: string;
+  session_id: string | null;
+  state: string;
+  attached_tab_count: number;
+  error_message: string | null;
+}
+
+/** Parsed persistent session state change notification. */
+export interface PersistentSessionStateChange {
+  connectionId: string;
+  sessionId: string | null;
+  state: string;
+  attachedTabCount: number;
+  errorMessage: string | null;
+}
+
+/** Subscribe to persistent session state change events from the backend. */
+export async function onPersistentSessionStateChanged(
+  callback: (change: PersistentSessionStateChange) => void
+): Promise<UnlistenFn> {
+  return await listen<PersistentSessionStatePayload>(
+    "persistent-session-state-changed",
+    (event) => {
+      callback({
+        connectionId: event.payload.connection_id,
+        sessionId: event.payload.session_id,
+        state: event.payload.state,
+        attachedTabCount: event.payload.attached_tab_count,
+        errorMessage: event.payload.error_message,
+      });
+    }
+  );
 }

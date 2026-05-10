@@ -1,0 +1,28 @@
+name: Agent Branch Release Cleanup
+
+on:
+  delete:
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    name: Delete Branch Release
+    runs-on: ubuntu-latest
+    # Only act on branch deletions (not tag deletions).
+    if: github.event.ref_type == 'branch'
+
+    steps:
+      - name: Compute release tag
+        id: tag
+        run: |
+          BRANCH="${{ github.event.ref }}"
+          SANITIZED=$(echo "$BRANCH" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g' | sed 's/-\+/-/g' | sed 's/^-\|-$//g')
+          echo "value=agent-branch-${SANITIZED}" >> "$GITHUB_OUTPUT"
+
+      - name: Delete branch release (if it exists)
+        run: gh release delete "${{ steps.tag.outputs.value }}" --yes --cleanup-tag 2>/dev/null || true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}

@@ -2,7 +2,7 @@ name: Agent
 
 on:
   pull_request:
-    branches: [ main ]
+    branches: [ main, develop ]
     paths:
       - 'agent/**'
       - 'core/**'
@@ -57,6 +57,8 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.target }}
 
       - name: Build
+        env:
+          TERMIHUB_BUILD_BRANCH: ${{ github.head_ref || github.ref_name }}
         run: CROSS_CONFIG=agent/Cross.toml cross build --release --target ${{ matrix.target }} -p termihub-agent
 
       - name: Upload artifact

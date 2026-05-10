@@ -133,6 +133,31 @@ export function AgentSettingsForm({ settings, onChange, capabilities }: AgentSet
       </div>
 
       <div className="settings-panel__category">
+        <h3 className="settings-panel__category-title">Persistent Sessions</h3>
+
+        <label className="settings-form__field">
+          <span className="settings-form__label">Persistent Scrollback Buffer</span>
+          <input
+            type="number"
+            min={1}
+            max={64}
+            step={1}
+            value={settings.persistentScrollbackBufferSizeMb}
+            onChange={(e) =>
+              update(
+                "persistentScrollbackBufferSizeMb",
+                Math.min(64, Math.max(1, parseInt(e.target.value, 10) || 1))
+              )
+            }
+          />
+          <span className="settings-form__hint">
+            Size of the ring buffer kept on the agent for persistent sessions (1–64 MiB). Changes
+            apply to newly started sessions.
+          </span>
+        </label>
+      </div>
+
+      <div className="settings-panel__category">
         <h3 className="settings-panel__category-title">Diagnostics</h3>
 
         <label className="settings-form__field">

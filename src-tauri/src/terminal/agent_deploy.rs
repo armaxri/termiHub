@@ -69,11 +69,14 @@ pub fn probe_remote_agent(
 
     let (found, version, compatible) = match version_output {
         Ok(output) if !output.is_empty() => {
-            // Expected format: "termihub-agent 0.1.0"
+            // Expected format: "termihub-agent 0.1.0" or "termihub-agent 0.1.0 (branch: foo)"
+            // Take only the version token so branch annotations are ignored.
             let ver = output
                 .strip_prefix("termihub-agent ")
                 .unwrap_or(&output)
-                .trim()
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
                 .to_string();
             let compat = version::is_version_compatible(&ver, expected_version);
             debug!(
@@ -434,21 +437,40 @@ mod tests {
 
     #[test]
     fn version_parsing_from_agent_output() {
-        // Simulate the output of `termihub-agent --version`
         let output = "termihub-agent 0.1.0";
-        let ver = output.strip_prefix("termihub-agent ").unwrap().trim();
+        let ver = output
+            .strip_prefix("termihub-agent ")
+            .unwrap_or(output)
+            .split_whitespace()
+            .next()
+            .unwrap_or("");
+        assert_eq!(ver, "0.1.0");
+        assert!(version::is_version_compatible(ver, "0.1.0"));
+    }
+
+    #[test]
+    fn version_parsing_with_branch_annotation() {
+        // Branch builds append "(branch: foo)" — parser must ignore it.
+        let output = "termihub-agent 0.1.0 (branch: feature/666-persistent-connection-ux)";
+        let ver = output
+            .strip_prefix("termihub-agent ")
+            .unwrap_or(output)
+            .split_whitespace()
+            .next()
+            .unwrap_or("");
         assert_eq!(ver, "0.1.0");
         assert!(version::is_version_compatible(ver, "0.1.0"));
     }
 
     #[test]
     fn version_parsing_bare() {
-        // Handle case where output is just the version
         let output = "0.2.0";
         let ver = output
             .strip_prefix("termihub-agent ")
             .unwrap_or(output)
-            .trim();
+            .split_whitespace()
+            .next()
+            .unwrap_or("");
         assert_eq!(ver, "0.2.0");
     }
 }

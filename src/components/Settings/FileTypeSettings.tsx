@@ -41,7 +41,10 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
   const settings = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
 
-  const userMappings = settings.fileLanguageMappings ?? {};
+  const userMappings = useMemo(
+    () => settings.fileLanguageMappings ?? {},
+    [settings.fileLanguageMappings]
+  );
 
   const [newPattern, setNewPattern] = useState("");
   const [newLanguage, setNewLanguage] = useState("");

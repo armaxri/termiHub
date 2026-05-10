@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -81,6 +82,12 @@ pub trait SessionManagerApi: Send + Sync + 'static {
 
     /// Resize a session's terminal.
     async fn resize(&self, session_id: &str, cols: u16, rows: u16) -> Result<(), String>;
+
+    /// Return the current scrollback buffer for a session (daemon-backed only).
+    async fn get_buffer(&self, session_id: &str) -> Result<Vec<u8>, String>;
+
+    /// Update the ring-buffer size used for future daemon spawns.
+    async fn set_persistent_buffer_size_bytes(&self, bytes: usize);
 }
 
 /// Errors that can occur during session creation.
@@ -122,6 +129,7 @@ pub trait DaemonLauncher: Send + Sync + 'static {
         type_id: &str,
         settings: &serde_json::Value,
         notification_tx: NotificationSender,
+        buffer_size_bytes: usize,
     ) -> Result<SessionBackend, anyhow::Error>;
 }
 
@@ -138,6 +146,7 @@ impl DaemonLauncher for SystemDaemonLauncher {
         type_id: &str,
         settings: &serde_json::Value,
         notification_tx: NotificationSender,
+        buffer_size_bytes: usize,
     ) -> Result<SessionBackend, anyhow::Error> {
         let socket_path = socket_dir().join(format!("session-{session_id}.sock"));
         let settings_json = serde_json::to_string(settings)?;
@@ -149,6 +158,7 @@ impl DaemonLauncher for SystemDaemonLauncher {
             .env("TERMIHUB_SOCKET_PATH", &socket_path)
             .env("TERMIHUB_TYPE_ID", type_id)
             .env("TERMIHUB_SETTINGS", &settings_json)
+            .env("TERMIHUB_BUFFER_SIZE", buffer_size_bytes.to_string())
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::inherit())
@@ -164,6 +174,9 @@ impl DaemonLauncher for SystemDaemonLauncher {
     }
 }
 
+/// Default persistent session ring-buffer size (1 MiB).
+const DEFAULT_PERSISTENT_BUFFER_SIZE: usize = 1_048_576;
+
 /// In-memory session manager.
 ///
 /// Tracks sessions in a `HashMap` protected by a `tokio::sync::Mutex`
@@ -176,6 +189,8 @@ pub struct SessionManager {
     launcher: Arc<dyn DaemonLauncher>,
     #[cfg(unix)]
     state: Mutex<AgentState>,
+    /// Configurable ring-buffer size for daemon-backed persistent sessions.
+    persistent_buffer_size: Arc<AtomicUsize>,
 }
 
 impl SessionManager {
@@ -188,6 +203,7 @@ impl SessionManager {
             launcher: Arc::new(SystemDaemonLauncher),
             #[cfg(unix)]
             state: Mutex::new(AgentState::load()),
+            persistent_buffer_size: Arc::new(AtomicUsize::new(DEFAULT_PERSISTENT_BUFFER_SIZE)),
         }
     }
 
@@ -204,6 +220,7 @@ impl SessionManager {
             registry,
             launcher,
             state: Mutex::new(AgentState::load()),
+            persistent_buffer_size: Arc::new(AtomicUsize::new(DEFAULT_PERSISTENT_BUFFER_SIZE)),
         }
     }
 
@@ -306,9 +323,37 @@ impl SessionManager {
         type_id: &str,
         settings: &serde_json::Value,
     ) -> Result<SessionBackend, anyhow::Error> {
+        let buffer_size = self.persistent_buffer_size.load(Ordering::Relaxed);
         self.launcher
-            .launch(session_id, type_id, settings, self.notification_tx.clone())
+            .launch(
+                session_id,
+                type_id,
+                settings,
+                self.notification_tx.clone(),
+                buffer_size,
+            )
             .await
+    }
+
+    /// Return the current scrollback buffer for a session (daemon-backed only).
+    pub async fn get_buffer(&self, session_id: &str) -> Result<Vec<u8>, String> {
+        let mut sessions = self.sessions.lock().await;
+        let info = sessions
+            .get_mut(session_id)
+            .ok_or_else(|| "Session not found".to_string())?;
+
+        match info.backend {
+            #[cfg(unix)]
+            SessionBackend::Daemon(ref mut client) => {
+                client.query_buffer().await.map_err(|e| e.to_string())
+            }
+            _ => Ok(Vec::new()),
+        }
+    }
+
+    /// Update the ring-buffer size used for future daemon spawns.
+    pub fn set_persistent_buffer_size_bytes(&self, bytes: usize) {
+        self.persistent_buffer_size.store(bytes, Ordering::Relaxed);
     }
 
     /// Create a ConnectionType in-process and start output forwarding.
@@ -738,6 +783,14 @@ impl SessionManagerApi for SessionManager {
     async fn resize(&self, session_id: &str, cols: u16, rows: u16) -> Result<(), String> {
         SessionManager::resize(self, session_id, cols, rows).await
     }
+
+    async fn get_buffer(&self, session_id: &str) -> Result<Vec<u8>, String> {
+        SessionManager::get_buffer(self, session_id).await
+    }
+
+    async fn set_persistent_buffer_size_bytes(&self, bytes: usize) {
+        SessionManager::set_persistent_buffer_size_bytes(self, bytes);
+    }
 }
 
 // ── Tests ──────────────────────────────────────────────────────────
@@ -861,6 +914,39 @@ mod tests {
         assert!(mgr.registry().has_type("ssh"));
     }
 
+    #[tokio::test]
+    async fn get_buffer_returns_error_for_nonexistent_session() {
+        let mgr = SessionManager::new(test_notification_tx(), test_registry());
+        let result = mgr.get_buffer("nonexistent-session-id").await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Session not found"));
+    }
+
+    #[tokio::test]
+    async fn get_buffer_returns_empty_for_stub_session() {
+        let mgr = SessionManager::new(test_notification_tx(), test_registry());
+        mgr.create_stub_session("stub", "Test Stub".to_string(), serde_json::json!({}))
+            .await
+            .unwrap();
+        let sessions = mgr.list().await;
+        let session_id = sessions[0].id.clone();
+        // Stub sessions return empty buffer
+        let result = mgr.get_buffer(&session_id).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn set_persistent_buffer_size_bytes_updates_atomic() {
+        let mgr = SessionManager::new(test_notification_tx(), test_registry());
+        mgr.set_persistent_buffer_size_bytes(2 * 1024 * 1024);
+        assert_eq!(
+            mgr.persistent_buffer_size
+                .load(std::sync::atomic::Ordering::Relaxed),
+            2 * 1024 * 1024
+        );
+    }
+
     // ── DaemonLauncher unit tests (Unix only) ─────────────────────────
 
     #[cfg(unix)]
@@ -897,6 +983,7 @@ mod tests {
                 type_id: &str,
                 _settings: &serde_json::Value,
                 _notification_tx: NotificationSender,
+                _buffer_size_bytes: usize,
             ) -> Result<SessionBackend, anyhow::Error> {
                 if self.should_fail {
                     return Err(anyhow::anyhow!("mock: daemon spawn failed"));
