@@ -17,7 +17,10 @@ export function SerialPortSettings({ visibleFields }: SerialPortSettingsProps) {
   const [newPrefix, setNewPrefix] = useState("");
   const [addError, setAddError] = useState("");
 
-  const prefixes: SerialPortScanPrefix[] = settings.serialPortScanPrefixes ?? [];
+  const prefixes = useMemo(
+    () => settings.serialPortScanPrefixes ?? [],
+    [settings.serialPortScanPrefixes]
+  );
 
   const handleToggle = useCallback(
     (prefix: string) => {

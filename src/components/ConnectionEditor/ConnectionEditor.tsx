@@ -81,6 +81,13 @@ function findSchema(connectionTypes: ConnectionTypeInfo[], typeId: string) {
   return connectionTypes.find((ct) => ct.typeId === typeId);
 }
 
+/** Normalize legacy session-type aliases to the canonical registry ID. */
+function normalizeAgentTypeId(typeId: string, types: ConnectionTypeInfo[]): string {
+  if (types.some((ct) => ct.typeId === typeId)) return typeId;
+  const aliases: Record<string, string> = { shell: "local" };
+  return aliases[typeId] ?? typeId;
+}
+
 /** Build default settings for a type, applying app settings defaults. */
 function buildTypeDefaults(
   typeInfo: ConnectionTypeInfo | undefined,
@@ -188,13 +195,6 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     [existingAgent?.capabilities?.connectionTypes]
   );
   const effectiveRegistry = isAgentDefinitionMode ? agentConnectionTypes : connectionTypes;
-
-  /** Normalize legacy session-type aliases to the canonical registry ID. */
-  function normalizeAgentTypeId(typeId: string, types: typeof agentConnectionTypes): string {
-    if (types.some((ct) => ct.typeId === typeId)) return typeId;
-    const aliases: Record<string, string> = { shell: "local" };
-    return aliases[typeId] ?? typeId;
-  }
 
   const defaultShell = useAppStore((s) => s.defaultShell);
 
