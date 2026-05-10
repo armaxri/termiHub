@@ -4,6 +4,7 @@ import { ThemeDefinition } from "./types";
 export const lightTheme: ThemeDefinition = {
   id: "light",
   name: "Light",
+  colorScheme: "light",
   colors: {
     // Backgrounds
     bgPrimary: "#ffffff",

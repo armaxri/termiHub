@@ -84,5 +84,7 @@ export interface ThemeColors {
 export interface ThemeDefinition {
   id: string;
   name: string;
+  /** Controls the CSS `color-scheme` property so WebKit renders system UI (scrollbars, inputs) in the matching mode. */
+  colorScheme: "dark" | "light";
   colors: ThemeColors;
 }

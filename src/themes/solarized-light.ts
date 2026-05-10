@@ -4,6 +4,7 @@ import { ThemeDefinition } from "./types";
 export const solarizedLightTheme: ThemeDefinition = {
   id: "solarized-light",
   name: "Solarized Light",
+  colorScheme: "light",
   colors: {
     // Backgrounds — derived from the Solarized base0x monotone ramp
     bgPrimary: "#fdf6e3", // base3
