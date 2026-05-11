@@ -181,8 +181,21 @@ impl ConnectionManager {
     /// Errors are intentionally swallowed: if the disk read fails we fall back to
     /// the current in-memory state rather than aborting an otherwise valid write.
     fn sync_from_disk(&self, store: &mut FlatConnectionStore) {
-        if let Ok(result) = self.storage.load_with_recovery() {
-            *store = result.data;
+        match self.storage.load_with_recovery() {
+            Ok(result) => {
+                tracing::debug!(
+                    connections = result.data.connections.len(),
+                    folders = result.data.folders.len(),
+                    agents = result.data.agents.len(),
+                    "sync_from_disk: reloaded from disk"
+                );
+                *store = result.data;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "sync_from_disk: failed to reload from disk, keeping in-memory state: {e}"
+                );
+            }
         }
     }
 
@@ -244,7 +257,16 @@ impl ConnectionManager {
 
     /// Delete a remote agent by ID.
     pub fn delete_agent(&self, id: &str) -> Result<()> {
-        self.credential_store.remove_all_for_connection(id)?;
+        // Best-effort credential cleanup: if the store is locked (e.g. master-password
+        // mode with auto-lock engaged), we cannot remove credentials but must still
+        // delete the agent config from disk.  Orphaned credential entries are harmless
+        // and will be cleaned up on the next unlock.
+        if let Err(e) = self.credential_store.remove_all_for_connection(id) {
+            tracing::warn!(
+                agent_id = id,
+                "Failed to remove credentials for agent (best-effort, proceeding with delete): {e}"
+            );
+        }
         let mut store = self.store.lock().unwrap();
         self.sync_from_disk(&mut store);
         store.agents.retain(|a| a.id != id);
@@ -313,7 +335,16 @@ impl ConnectionManager {
 
     /// Delete a connection by ID.
     pub fn delete_connection(&self, id: &str) -> Result<()> {
-        self.credential_store.remove_all_for_connection(id)?;
+        // Best-effort credential cleanup: if the store is locked (e.g. master-password
+        // mode with auto-lock engaged), we cannot remove credentials but must still
+        // delete the connection config from disk.  Orphaned credential entries are
+        // harmless and will be cleaned up on the next unlock.
+        if let Err(e) = self.credential_store.remove_all_for_connection(id) {
+            tracing::warn!(
+                connection_id = id,
+                "Failed to remove credentials for connection (best-effort, proceeding with delete): {e}"
+            );
+        }
         let mut store = self.store.lock().unwrap();
         self.sync_from_disk(&mut store);
         store.connections.retain(|c| c.id != id);
@@ -582,7 +613,12 @@ impl ConnectionManager {
         match source_file {
             None => self.delete_connection(id),
             Some(file_path) => {
-                self.credential_store.remove_all_for_connection(id)?;
+                if let Err(e) = self.credential_store.remove_all_for_connection(id) {
+                    tracing::warn!(
+                        connection_id = id,
+                        "Failed to remove credentials for connection in external file (best-effort, proceeding with delete): {e}"
+                    );
+                }
                 remove_from_external_file(file_path, id)
             }
         }
