@@ -251,7 +251,6 @@ export function Terminal({
             }
             if (isCanceled()) return;
           }
-          if (isCanceled()) return;
         } else {
           let attempt = 0;
           let resolved: string | null = null;
