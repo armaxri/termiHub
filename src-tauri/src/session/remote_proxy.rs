@@ -81,6 +81,51 @@ impl RemoteProxy {
     pub fn remote_session_id(&self) -> Option<String> {
         self.remote_session_id.lock().ok()?.clone()
     }
+
+    /// Re-establish a desktop-side connection to an existing daemon session on the
+    /// agent without creating a new session via JSON-RPC.
+    ///
+    /// Called by [`SessionManager::attach_persistent_tab`] when the desktop's
+    /// session entry was cleaned up after an agent SSH disconnect, but the daemon
+    /// process survived on the remote host. Registers a fresh output channel and
+    /// calls `attach_session` so the daemon sends a buffer replay.
+    ///
+    /// The caller must insert the returned proxy into `SessionManager::sessions`
+    /// under the **same** session ID that was stored in `PersistentRecord` so that
+    /// the tab's `existingSessionId` prop and the pending-output buffer in
+    /// `TerminalOutputDispatcher` continue to work without any frontend state update.
+    pub fn reconnect_existing(
+        agent_id: String,
+        remote_session_id: String,
+        agent_manager: Arc<dyn AgentRpcClient>,
+    ) -> Result<Self, SessionError> {
+        let (std_tx, std_rx) = mpsc::sync_channel::<Vec<u8>>(OUTPUT_CHANNEL_CAPACITY);
+
+        agent_manager
+            .register_session_output(&agent_id, &remote_session_id, std_tx)
+            .map_err(|e| SessionError::SpawnFailed(e.to_string()))?;
+
+        agent_manager
+            .attach_session(&agent_id, &remote_session_id)
+            .map_err(|e| SessionError::SpawnFailed(e.to_string()))?;
+
+        Ok(Self {
+            agent_id,
+            remote_session_id: Mutex::new(Some(remote_session_id)),
+            agent_manager,
+            remote_type_id: Mutex::new("remote".to_string()),
+            remote_capabilities: Mutex::new(Capabilities {
+                monitoring: false,
+                file_browser: false,
+                resize: true,
+                persistent: true,
+            }),
+            std_output_rx: Mutex::new(Some(std_rx)),
+            connected: AtomicBool::new(true),
+            file_browser_proxy: None,
+            monitoring_proxy: None,
+        })
+    }
 }
 
 #[async_trait::async_trait]

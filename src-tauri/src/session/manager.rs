@@ -75,6 +75,11 @@ struct PersistentRecord {
     connection_id: String,
     session_id: String,
     attached_tabs: HashSet<String>,
+    /// Agent-side session ID — used to re-attach to the daemon when the desktop
+    /// session entry is cleaned up after an agent SSH disconnect.
+    remote_session_id: Option<String>,
+    /// Agent that owns this session — paired with `remote_session_id` for reconnect.
+    agent_id: Option<String>,
 }
 
 /// Error event emitted when a session-level error occurs.
@@ -262,18 +267,10 @@ impl SessionManager {
 
         // Spawn output streaming task.
         let sessions_clone = self.sessions.clone();
-        let persistent_sessions_clone = self.persistent_sessions.clone();
         let sid = session_id.clone();
         tokio::spawn(async move {
-            Self::run_output_reader(
-                sid,
-                output_rx,
-                emitter,
-                sessions_clone,
-                persistent_sessions_clone,
-                has_initial_command,
-            )
-            .await;
+            Self::run_output_reader(sid, output_rx, emitter, sessions_clone, has_initial_command)
+                .await;
         });
 
         // Send initial command after a short delay.
@@ -583,6 +580,16 @@ impl SessionManager {
             .create_connection(type_id, settings, agent_id, emitter.clone())
             .await?;
 
+        // Capture the agent-side remote session ID so that attach_persistent_tab
+        // can re-create the RemoteProxy if the desktop session is cleaned up after
+        // an agent SSH disconnect (while the daemon itself survives).
+        let remote_session_id = {
+            let sessions = self.sessions.lock().await;
+            sessions
+                .get(&session_id)
+                .and_then(|e| e.remote_session_id.clone())
+        };
+
         {
             let mut ps = self.persistent_sessions.lock().await;
             ps.insert(
@@ -591,6 +598,8 @@ impl SessionManager {
                     connection_id: connection_id.to_string(),
                     session_id: session_id.clone(),
                     attached_tabs: HashSet::new(),
+                    remote_session_id,
+                    agent_id: agent_id.map(|s| s.to_string()),
                 },
             );
         }
@@ -642,61 +651,144 @@ impl SessionManager {
     /// Register `tab_id` as attached to the persistent session for `connection_id`.
     ///
     /// Returns the new attached-tab count. Returns an error if the session is not
-    /// registered or the backend session is no longer alive.
+    /// registered and cannot be reconnected.
+    ///
+    /// When the agent SSH connection drops, `emit_and_cleanup` removes the desktop
+    /// session from `sessions` but leaves the `PersistentRecord` intact because the
+    /// daemon process on the remote host is still alive. The next `attach_persistent_tab`
+    /// call detects the missing session entry and calls
+    /// [`RemoteProxy::reconnect_existing`] to re-establish the desktop side, reusing
+    /// the same session ID so the tab's `existingSessionId` prop keeps working without
+    /// any frontend state update.
     pub async fn attach_persistent_tab<E: EventEmitter>(
         &self,
         connection_id: &str,
         tab_id: &str,
         emitter: E,
     ) -> Result<u32, TerminalError> {
-        let (count, session_id) = {
+        // Phase 1: Read record info without holding the persistent_sessions lock so we
+        // never hold it simultaneously with the sessions lock (avoids deadlock ordering).
+        let (session_id, opt_agent_id, opt_remote_sid) = {
+            let ps = self.persistent_sessions.lock().await;
+            let record = ps.get(connection_id).ok_or_else(|| {
+                TerminalError::SessionNotFound(format!(
+                    "No persistent session for connection {connection_id}"
+                ))
+            })?;
+            (
+                record.session_id.clone(),
+                record.agent_id.clone(),
+                record.remote_session_id.clone(),
+            )
+        };
+
+        // Phase 2: Check if the backend session is alive. If not, try to re-create
+        // the RemoteProxy by reconnecting to the surviving daemon on the agent.
+        let session_alive = self.sessions.lock().await.contains_key(&session_id);
+        if !session_alive {
+            match (opt_agent_id, opt_remote_sid) {
+                (Some(agent_id), Some(remote_sid)) => {
+                    // Re-create the RemoteProxy for the daemon that survived the disconnect.
+                    // This calls register_session_output + attach_session synchronously, so
+                    // buffer replay will be in-flight before subscribe_output() bridges it.
+                    let proxy = RemoteProxy::reconnect_existing(
+                        agent_id.clone(),
+                        remote_sid.clone(),
+                        self.agent_manager.clone(),
+                    )
+                    .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?;
+
+                    let output_rx = proxy.subscribe_output();
+
+                    // Re-insert under the same session_id so the tab's existingSessionId
+                    // prop and the TerminalOutputDispatcher's pendingOutput buffer both
+                    // continue to work without any frontend state update.
+                    {
+                        let mut sessions = self.sessions.lock().await;
+                        sessions.insert(
+                            session_id.clone(),
+                            SessionEntry {
+                                connection: Box::new(proxy),
+                                info: SessionInfo {
+                                    id: session_id.clone(),
+                                    title: "Persistent Session".to_string(),
+                                    connection_type: "remote".to_string(),
+                                    alive: true,
+                                    agent_id: Some(agent_id),
+                                },
+                                remote_session_id: Some(remote_sid),
+                            },
+                        );
+                    }
+
+                    // Spawn output reader for the re-created session.
+                    let sessions_clone = self.sessions.clone();
+                    let emitter_clone = emitter.clone();
+                    let sid = session_id.clone();
+                    tokio::spawn(async move {
+                        Self::run_output_reader(
+                            sid,
+                            output_rx,
+                            emitter_clone,
+                            sessions_clone,
+                            false,
+                        )
+                        .await;
+                    });
+
+                    info!(
+                        connection_id,
+                        session_id = %session_id,
+                        "Persistent session backend re-created after agent reconnect"
+                    );
+                }
+                _ => {
+                    return Err(TerminalError::SessionNotFound(format!(
+                        "Persistent session {} for connection {} is no longer alive",
+                        session_id, connection_id
+                    )));
+                }
+            }
+        }
+
+        // Phase 3: Register tab attachment.
+        let count = {
             let mut ps = self.persistent_sessions.lock().await;
             let record = ps.get_mut(connection_id).ok_or_else(|| {
                 TerminalError::SessionNotFound(format!(
                     "No persistent session for connection {connection_id}"
                 ))
             })?;
-            // Verify backend session is still alive.
-            {
-                let sessions = self.sessions.lock().await;
-                if !sessions.contains_key(&record.session_id) {
-                    return Err(TerminalError::SessionNotFound(format!(
-                        "Persistent session {} for connection {} is no longer alive",
-                        record.session_id, connection_id
-                    )));
-                }
-            }
             record.attached_tabs.insert(tab_id.to_string());
-            (record.attached_tabs.len() as u32, record.session_id.clone())
+            record.attached_tabs.len() as u32
         };
 
-        // Kick off a background reconnect of the DaemonClient so the daemon sends a
-        // fresh buffer replay as a connection.output notification. The new tab's
-        // Terminal component receives the scrollback when it calls subscribeOutput,
-        // which flushes pendingOutput — even when the DaemonClient went stale.
-        let agent_info = {
-            let sessions = self.sessions.lock().await;
-            sessions.get(&session_id).and_then(|e| {
-                e.info
-                    .agent_id
-                    .as_deref()
-                    .zip(e.remote_session_id.as_deref())
-                    .map(|(aid, rsid)| (aid.to_string(), rsid.to_string()))
-            })
-        };
-        if let Some((agent_id, remote_sid)) = agent_info {
-            let am = self.agent_manager.clone();
-            // Detached task — the JoinHandle is intentionally dropped here so
-            // attach_persistent_tab returns immediately without waiting for the SSH
-            // round-trip. Dropping a tokio JoinHandle does not cancel the task.
-            let _reattach = tokio::task::spawn_blocking(move || {
-                if let Err(e) = am.attach_session(&agent_id, &remote_sid) {
-                    warn!(
-                        error = %e,
-                        "attach_persistent_tab: daemon client reattach failed"
-                    );
-                }
-            });
+        // Phase 4: For sessions that were already alive (not just reconnected), kick
+        // the daemon client reattach to send a fresh buffer replay.
+        // (Reconnected sessions already called attach_session inside reconnect_existing.)
+        if session_alive {
+            let agent_info = {
+                let sessions = self.sessions.lock().await;
+                sessions.get(&session_id).and_then(|e| {
+                    e.info
+                        .agent_id
+                        .as_deref()
+                        .zip(e.remote_session_id.as_deref())
+                        .map(|(aid, rsid)| (aid.to_string(), rsid.to_string()))
+                })
+            };
+            if let Some((agent_id, remote_sid)) = agent_info {
+                let am = self.agent_manager.clone();
+                // Detached task — dropped JoinHandle does not cancel the task.
+                let _reattach = tokio::task::spawn_blocking(move || {
+                    if let Err(e) = am.attach_session(&agent_id, &remote_sid) {
+                        warn!(
+                            error = %e,
+                            "attach_persistent_tab: daemon client reattach failed"
+                        );
+                    }
+                });
+            }
         }
 
         let state = if count > 0 { "attached" } else { "running" }.to_string();
@@ -901,7 +993,6 @@ impl SessionManager {
         mut output_rx: tokio::sync::mpsc::Receiver<Vec<u8>>,
         emitter: E,
         sessions: Arc<Mutex<HashMap<String, SessionEntry>>>,
-        persistent_sessions: Arc<Mutex<HashMap<String, PersistentRecord>>>,
         wait_for_clear: bool,
     ) {
         // Phase 1: optionally buffer until the screen-clear sequence.
@@ -924,14 +1015,7 @@ impl SessionManager {
                     }
                     Ok(None) => {
                         // Channel closed during startup.
-                        Self::emit_and_cleanup(
-                            &session_id,
-                            buffer,
-                            &emitter,
-                            &sessions,
-                            &persistent_sessions,
-                        )
-                        .await;
+                        Self::emit_and_cleanup(&session_id, buffer, &emitter, &sessions).await;
                         return;
                     }
                     Err(_) => break, // Timeout
@@ -977,31 +1061,20 @@ impl SessionManager {
             }
         }
 
-        Self::emit_and_cleanup(
-            &session_id,
-            Vec::new(),
-            &emitter,
-            &sessions,
-            &persistent_sessions,
-        )
-        .await;
+        Self::emit_and_cleanup(&session_id, Vec::new(), &emitter, &sessions).await;
     }
 
     /// Emit remaining data (if any), send the exit event, and remove the session.
     ///
-    /// If the session is registered as a persistent session, also removes the
-    /// persistent registry entry and emits a "stopped" state event so the
-    /// frontend clears the stale green dot. This covers the case where the
-    /// agent SSH connection drops while a persistent shell daemon is still
-    /// running: the desktop output reader exits, which must invalidate the
-    /// persistent session entry or the user can never re-attach (the next
-    /// `attach_persistent_tab` call would fail with `SessionNotFound`).
+    /// Intentionally does NOT touch `persistent_sessions`: when an agent SSH
+    /// connection drops, the daemon process on the remote host survives. The
+    /// `PersistentRecord` must be kept so that the next `attach_persistent_tab`
+    /// call can re-create the `RemoteProxy` and reconnect to the surviving daemon.
     async fn emit_and_cleanup<E: EventEmitter>(
         session_id: &str,
         data: Vec<u8>,
         emitter: &E,
         sessions: &Arc<Mutex<HashMap<String, SessionEntry>>>,
-        persistent_sessions: &Arc<Mutex<HashMap<String, PersistentRecord>>>,
     ) {
         if !data.is_empty() {
             let event = TerminalOutputEvent {
@@ -1020,31 +1093,6 @@ impl SessionManager {
         {
             let mut sessions = sessions.lock().await;
             sessions.remove(session_id);
-        }
-
-        // If this was a persistent session, clear its registry entry and notify
-        // the frontend. Without this the frontend retains a stale "running" state
-        // and any subsequent attach attempt fails with SessionNotFound.
-        let stale_connection_id = {
-            let mut ps = persistent_sessions.lock().await;
-            let conn_id = ps
-                .iter()
-                .find(|(_, r)| r.session_id == session_id)
-                .map(|(k, _)| k.clone());
-            if let Some(ref cid) = conn_id {
-                ps.remove(cid);
-            }
-            conn_id
-        };
-        if let Some(connection_id) = stale_connection_id {
-            emitter.emit_persistent_state(&PersistentSessionStateEvent {
-                connection_id,
-                session_id: Some(session_id.to_string()),
-                state: "stopped".to_string(),
-                attached_tab_count: 0,
-                error_message: None,
-            });
-            info!("Persistent session stopped due to backend exit: {session_id}");
         }
 
         info!("Session ended: {session_id}");
@@ -1149,7 +1197,6 @@ mod tests {
     struct MockEventEmitter {
         outputs: std::sync::Arc<std::sync::Mutex<Vec<TerminalOutputEvent>>>,
         exits: std::sync::Arc<std::sync::Mutex<Vec<TerminalExitEvent>>>,
-        persistent_states: std::sync::Arc<std::sync::Mutex<Vec<PersistentSessionStateEvent>>>,
         fail_output: bool,
     }
 
@@ -1175,9 +1222,6 @@ mod tests {
         }
         fn emit_exit(&self, event: &TerminalExitEvent) {
             self.exits.lock().unwrap().push(event.clone());
-        }
-        fn emit_persistent_state(&self, event: &PersistentSessionStateEvent) {
-            self.persistent_states.lock().unwrap().push(event.clone());
         }
     }
 
@@ -1272,23 +1316,12 @@ mod tests {
 
     // ── EventEmitter DI tests ─────────────────────────────────────────
 
-    fn empty_persistent_sessions() -> Arc<Mutex<HashMap<String, PersistentRecord>>> {
-        Arc::new(Mutex::new(HashMap::new()))
-    }
-
     #[tokio::test]
     async fn emit_and_cleanup_sends_exit_event() {
         let emitter = MockEventEmitter::new();
         let sessions = sessions_with_mock("sess-exit").await;
 
-        SessionManager::emit_and_cleanup(
-            "sess-exit",
-            Vec::new(),
-            &emitter,
-            &sessions,
-            &empty_persistent_sessions(),
-        )
-        .await;
+        SessionManager::emit_and_cleanup("sess-exit", Vec::new(), &emitter, &sessions).await;
 
         {
             let exits = emitter.exits.lock().unwrap();
@@ -1304,14 +1337,8 @@ mod tests {
         let emitter = MockEventEmitter::new();
         let sessions = sessions_with_mock("sess-data").await;
 
-        SessionManager::emit_and_cleanup(
-            "sess-data",
-            b"final bytes".to_vec(),
-            &emitter,
-            &sessions,
-            &empty_persistent_sessions(),
-        )
-        .await;
+        SessionManager::emit_and_cleanup("sess-data", b"final bytes".to_vec(), &emitter, &sessions)
+            .await;
 
         {
             let outputs = emitter.outputs.lock().unwrap();
@@ -1335,7 +1362,6 @@ mod tests {
             rx,
             emitter.clone(),
             sessions.clone(),
-            empty_persistent_sessions(),
             false,
         )
         .await;
@@ -1371,7 +1397,6 @@ mod tests {
             rx,
             emitter.clone(),
             sessions,
-            empty_persistent_sessions(),
             false,
         )
         .await;
@@ -1381,13 +1406,12 @@ mod tests {
         assert!(outputs.is_empty());
     }
 
-    /// Regression: when a persistent session's output channel closes (e.g. agent
-    /// SSH disconnect), `emit_and_cleanup` must remove the persistent registry
-    /// entry and emit a "stopped" state event.  Without this the frontend retains
-    /// a stale "running" green dot and any subsequent attach attempt fails with
-    /// SessionNotFound.
+    /// Regression: `emit_and_cleanup` must NOT clear the persistent session record
+    /// when the output channel closes. The daemon on the remote host is still alive
+    /// after an agent SSH disconnect; keeping the record allows `attach_persistent_tab`
+    /// to re-create the desktop-side `RemoteProxy` on the next attach attempt.
     #[tokio::test]
-    async fn emit_and_cleanup_emits_stopped_for_persistent_session() {
+    async fn emit_and_cleanup_preserves_persistent_session_record() {
         let emitter = MockEventEmitter::new();
         let sessions = sessions_with_mock("sess-ps").await;
         let persistent_sessions: Arc<Mutex<HashMap<String, PersistentRecord>>> =
@@ -1400,54 +1424,18 @@ mod tests {
                     connection_id: "conn-ps".to_string(),
                     session_id: "sess-ps".to_string(),
                     attached_tabs: HashSet::new(),
+                    remote_session_id: Some("remote-1".to_string()),
+                    agent_id: Some("agent-1".to_string()),
                 },
             );
         }
 
-        SessionManager::emit_and_cleanup(
-            "sess-ps",
-            Vec::new(),
-            &emitter,
-            &sessions,
-            &persistent_sessions,
-        )
-        .await;
+        SessionManager::emit_and_cleanup("sess-ps", Vec::new(), &emitter, &sessions).await;
 
-        // Persistent registry entry must be cleared.
+        // The persistent record must still be present — the daemon is alive.
         assert!(
-            !persistent_sessions.lock().await.contains_key("conn-ps"),
-            "stale persistent record must be removed"
-        );
-
-        // A "stopped" event must have been emitted.
-        let ps_events = emitter.persistent_states.lock().unwrap();
-        assert_eq!(ps_events.len(), 1, "exactly one persistent state event");
-        assert_eq!(ps_events[0].state, "stopped");
-        assert_eq!(ps_events[0].connection_id, "conn-ps");
-        assert_eq!(ps_events[0].session_id.as_deref(), Some("sess-ps"));
-    }
-
-    /// Non-persistent sessions must not trigger any persistent-state events on
-    /// backend exit — `emit_and_cleanup` should leave the persistent registry
-    /// unchanged.
-    #[tokio::test]
-    async fn emit_and_cleanup_does_not_emit_stopped_for_non_persistent_session() {
-        let emitter = MockEventEmitter::new();
-        let sessions = sessions_with_mock("sess-local").await;
-
-        SessionManager::emit_and_cleanup(
-            "sess-local",
-            Vec::new(),
-            &emitter,
-            &sessions,
-            &empty_persistent_sessions(),
-        )
-        .await;
-
-        let ps_events = emitter.persistent_states.lock().unwrap();
-        assert!(
-            ps_events.is_empty(),
-            "no persistent state event for non-persistent session"
+            persistent_sessions.lock().await.contains_key("conn-ps"),
+            "persistent record must be kept after backend exit (daemon still alive)"
         );
     }
 
@@ -1942,7 +1930,8 @@ mod tests {
 
     type AttachLog = std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>;
 
-    /// An `AgentRpcClient` implementation that records `attach_session` calls.
+    /// An `AgentRpcClient` implementation that records `attach_session` calls
+    /// and succeeds silently on `register_session_output`.
     struct SpyAgent {
         attach_calls: AttachLog,
     }
@@ -2047,10 +2036,10 @@ mod tests {
             _: &str,
             _: OutputSender,
         ) -> Result<(), TerminalError> {
-            unimplemented!()
+            Ok(())
         }
         fn unregister_session_output(&self, _: &str, _: &str) -> Result<(), TerminalError> {
-            unimplemented!()
+            Ok(())
         }
         fn register_monitoring_output(
             &self,
@@ -2159,6 +2148,96 @@ mod tests {
 
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
         // No assertion needed: if NullAgent.attach_session were called it would panic.
+    }
+
+    /// Regression: after an agent SSH disconnect, `emit_and_cleanup` removes the
+    /// desktop session from `sessions` but the daemon process on the remote host
+    /// is still alive. `attach_persistent_tab` must re-create the `RemoteProxy`
+    /// and re-insert it under the same session ID so the tab's `existingSessionId`
+    /// prop keeps working without any frontend state update.
+    #[tokio::test]
+    async fn attach_persistent_tab_reconnects_after_agent_disconnect() {
+        let (spy, attach_calls) = SpyAgent::new();
+
+        let mut registry = ConnectionTypeRegistry::new();
+        registry.register(
+            "mock",
+            "Mock",
+            "mock",
+            Box::new(|| Box::new(MockConnection)),
+        );
+        let manager = SessionManager::new(registry, Arc::new(spy));
+        let emitter = MockPersistentEmitter::new();
+
+        let session_id = manager
+            .start_persistent_session(
+                "conn-1",
+                "mock",
+                serde_json::json!({}),
+                None,
+                emitter.clone(),
+            )
+            .await
+            .unwrap();
+
+        // Inject agent-side session info as if this were a real remote session.
+        {
+            let mut sessions = manager.sessions.lock().await;
+            if let Some(entry) = sessions.get_mut(&session_id) {
+                entry.info.agent_id = Some("agent-1".to_string());
+                entry.remote_session_id = Some("remote-1".to_string());
+            }
+        }
+        // Also update the persistent record with the same info (mirrors what
+        // start_persistent_session does when agent_id is Some).
+        {
+            let mut ps = manager.persistent_sessions.lock().await;
+            if let Some(record) = ps.get_mut("conn-1") {
+                record.agent_id = Some("agent-1".to_string());
+                record.remote_session_id = Some("remote-1".to_string());
+            }
+        }
+
+        // Simulate agent disconnect: remove the session from sessions (what
+        // emit_and_cleanup does) but leave the persistent record intact.
+        {
+            let mut sessions = manager.sessions.lock().await;
+            sessions.remove(&session_id);
+        }
+        assert!(
+            !manager.sessions.lock().await.contains_key(&session_id),
+            "session must be removed to simulate agent disconnect"
+        );
+        assert!(
+            manager
+                .persistent_sessions
+                .lock()
+                .await
+                .contains_key("conn-1"),
+            "persistent record must survive agent disconnect"
+        );
+
+        // Now simulate the user clicking "Attach" after the agent reconnects.
+        manager
+            .attach_persistent_tab("conn-1", "tab-after-reconnect", emitter.clone())
+            .await
+            .expect("attach must succeed after agent reconnect");
+
+        // The session must have been re-inserted under the same session ID.
+        assert!(
+            manager.sessions.lock().await.contains_key(&session_id),
+            "session must be re-created under the same ID after reconnect"
+        );
+
+        // attach_session must have been called (by reconnect_existing) to get the buffer replay.
+        let calls = attach_calls.lock().unwrap();
+        assert_eq!(
+            calls.len(),
+            1,
+            "attach_session must be called once for reconnect"
+        );
+        assert_eq!(calls[0].0, "agent-1");
+        assert_eq!(calls[0].1, "remote-1");
     }
 
     /// Tauri events are consumed by the TypeScript frontend which uses snake_case
