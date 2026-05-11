@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Persistent sessions: after an agent disconnects and the user reconnects, clicking "Attach" now correctly re-connects the desktop to the surviving daemon process on the remote host. Previously the desktop-side session entry was cleaned up on disconnect but not restored on reconnect, so "Attach" would silently open and immediately close a blank tab due to a `SessionNotFound` error.
 - Connections: importing a backup file or moving a connection to another file in one instance no longer resurrects connections that were deleted by a parallel running instance. Previously `import_json`, `import_encrypted_json`, and `move_connection_to_file` each wrote back to disk without first re-reading the current file state, causing deleted connections to reappear after the other instance restarted.
 - Connections sidebar: deleting multiple selected connections now removes all of them instead of only the one that was right-clicked.
 - Connections: changes made in one running instance (add, delete, rename) now propagate to all other running instances within ~1 second. Previously, other instances only updated on window focus.
