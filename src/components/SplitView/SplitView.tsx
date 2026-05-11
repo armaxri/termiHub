@@ -73,6 +73,7 @@ export function SplitView() {
   const terminalConnecting = useAppStore((s) => s.terminalConnecting);
   const terminalAutoRetryCountZoom = useAppStore((s) => s.terminalAutoRetryCount);
   const terminalWaitingForAgentZoom = useAppStore((s) => s.terminalWaitingForAgent);
+  const terminalReattachingZoom = useAppStore((s) => s.terminalReattaching);
   const tabHorizontalScrollingZoom = useAppStore((s) => s.tabHorizontalScrolling);
   const setTabHorizontalScrollingZoom = useAppStore((s) => s.setTabHorizontalScrolling);
   const tabColorsZoom = useAppStore((s) => s.tabColors);
@@ -364,7 +365,8 @@ export function SplitView() {
               (terminalSpawnErrors[zoomedTabId] ||
                 terminalConnecting[zoomedTabId] ||
                 (terminalAutoRetryCountZoom[zoomedTabId] ?? 0) > 0 ||
-                !!terminalWaitingForAgentZoom[zoomedTabId]) ? (
+                !!terminalWaitingForAgentZoom[zoomedTabId] ||
+                !!terminalReattachingZoom[zoomedTabId]) ? (
                 <TerminalConnectionOverlay
                   key={`zoom-${zoomedTabId}`}
                   tabId={zoomedTabId}
@@ -539,6 +541,7 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
   const terminalConnecting = useAppStore((s) => s.terminalConnecting);
   const terminalAutoRetryCount = useAppStore((s) => s.terminalAutoRetryCount);
   const terminalWaitingForAgent = useAppStore((s) => s.terminalWaitingForAgent);
+  const terminalReattaching = useAppStore((s) => s.terminalReattaching);
   const rightClickBehavior = useAppStore((s) => s.settings.rightClickBehavior);
   const useQuickAction =
     rightClickBehavior === "quickAction" || (!rightClickBehavior && isWindows());
@@ -653,7 +656,8 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
             (terminalSpawnErrors[tab.id] ||
               terminalConnecting[tab.id] ||
               (terminalAutoRetryCount[tab.id] ?? 0) > 0 ||
-              !!terminalWaitingForAgent[tab.id]) ? (
+              !!terminalWaitingForAgent[tab.id] ||
+              !!terminalReattaching[tab.id]) ? (
             <TerminalConnectionOverlay
               key={tab.id}
               tabId={tab.id}
