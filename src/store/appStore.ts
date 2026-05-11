@@ -444,6 +444,8 @@ interface AppState {
   terminalViewMode: Record<string, boolean>;
   /** True while the agent is actively trying to reconnect (shows spinner overlay). */
   terminalReconnectingTabs: Record<string, boolean>;
+  /** True while cached scrollback is being fetched and written after a persistent session reattach. */
+  terminalReattaching: Record<string, boolean>;
   /** True when the "reconnect?" prompt should appear (triggered by Enter in view mode). */
   terminalReconnectPrompt: Record<string, boolean>;
   /** Error message that triggered the auto-reconnect, shown during the spinner overlay. */
@@ -451,6 +453,7 @@ interface AppState {
   setTerminalExited: (tabId: string) => void;
   setTerminalDisconnectWithError: (tabId: string, error: string) => void;
   setTerminalReconnecting: (tabId: string, reconnecting: boolean) => void;
+  setTerminalReattaching: (tabId: string, reattaching: boolean) => void;
   setTerminalReconnectTriggerError: (tabId: string, error: string | null) => void;
   /** Dismiss the disconnect overlay into "view mode": scrollback is preserved, a thin banner shows. */
   dismissTerminalDisconnect: (tabId: string) => void;
@@ -1587,6 +1590,7 @@ export const useAppStore = create<AppState>((set, get) => {
         const { [tabId]: _removedErr, ...remainingDiscErr } = state.terminalDisconnectErrors;
         const { [tabId]: _removedView, ...remainingView } = state.terminalViewMode;
         const { [tabId]: _removedReconn, ...remainingReconn } = state.terminalReconnectingTabs;
+        const { [tabId]: _removedReattach, ...remainingReattach } = state.terminalReattaching;
         const { [tabId]: _removedPrompt, ...remainingPrompt } = state.terminalReconnectPrompt;
         const { [tabId]: _removedAutoRetry, ...remainingAutoRetry } = state.terminalAutoRetryCount;
         const { [tabId]: _removedWaiting, ...remainingWaiting } = state.terminalWaitingForAgent;
@@ -1636,6 +1640,7 @@ export const useAppStore = create<AppState>((set, get) => {
             terminalDisconnectErrors: remainingDiscErr,
             terminalViewMode: remainingView,
             terminalReconnectingTabs: remainingReconn,
+            terminalReattaching: remainingReattach,
             terminalReconnectPrompt: remainingPrompt,
             terminalAutoRetryCount: remainingAutoRetry,
             terminalWaitingForAgent: remainingWaiting,
@@ -1659,6 +1664,7 @@ export const useAppStore = create<AppState>((set, get) => {
           terminalDisconnectErrors: remainingDiscErr,
           terminalViewMode: remainingView,
           terminalReconnectingTabs: remainingReconn,
+          terminalReattaching: remainingReattach,
           terminalReconnectPrompt: remainingPrompt,
           terminalAutoRetryCount: remainingAutoRetry,
           terminalWaitingForAgent: remainingWaiting,
@@ -2520,6 +2526,7 @@ export const useAppStore = create<AppState>((set, get) => {
     terminalDisconnectErrors: {},
     terminalViewMode: {},
     terminalReconnectingTabs: {},
+    terminalReattaching: {},
     terminalReconnectPrompt: {},
     terminalReconnectTriggerErrors: {},
     setTerminalExited: (tabId) => {
@@ -2567,6 +2574,14 @@ export const useAppStore = create<AppState>((set, get) => {
           terminalReconnectingTabs: remaining,
           terminalReconnectTriggerErrors: remainingTrigger,
         };
+      }),
+    setTerminalReattaching: (tabId, reattaching) =>
+      set((state) => {
+        if (reattaching) {
+          return { terminalReattaching: { ...state.terminalReattaching, [tabId]: true } };
+        }
+        const { [tabId]: _removed, ...remaining } = state.terminalReattaching;
+        return { terminalReattaching: remaining };
       }),
     setTerminalReconnectTriggerError: (tabId, error) =>
       set((state) => {

@@ -46,6 +46,7 @@ export function TerminalConnectionOverlay({
   const isConnecting = useAppStore((s) => s.terminalConnecting[tabId] ?? false);
   const autoRetryCount = useAppStore((s) => s.terminalAutoRetryCount[tabId] ?? 0);
   const waitingForAgent = useAppStore((s) => s.terminalWaitingForAgent[tabId]);
+  const isReattaching = useAppStore((s) => s.terminalReattaching[tabId] ?? false);
   const error = useAppStore((s) => s.terminalSpawnErrors[tabId] ?? "");
 
   const handleCancel = useCallback(() => {
@@ -65,6 +66,23 @@ export function TerminalConnectionOverlay({
     isSerial && !isSerialPermission && SERIAL_BUSY_PATTERNS.some((p) => error.includes(p));
 
   const cls = `terminal-connection-overlay${isVisible ? "" : " terminal-connection-overlay--hidden"}`;
+
+  if (isReattaching) {
+    return (
+      <div className={cls} data-testid="terminal-connection-overlay">
+        <div className="terminal-connection-overlay__body">
+          <Loader2
+            size={32}
+            className="terminal-connection-overlay__icon terminal-connection-overlay__icon--spin"
+          />
+          <p className="terminal-connection-overlay__heading">Restoring session…</p>
+          <p className="terminal-connection-overlay__subheading">
+            Loading cached scrollback from the persistent session.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (waitingForAgent) {
     return (

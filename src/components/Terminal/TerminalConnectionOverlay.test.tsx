@@ -20,6 +20,7 @@ function resetStore() {
     terminalAutoRetryCount: {},
     terminalWaitingForAgent: {},
     terminalRetryCounters: {},
+    terminalReattaching: {},
   });
 }
 
@@ -108,6 +109,60 @@ describe("TerminalConnectionOverlay — auto-retrying state", () => {
     expect(
       container.querySelector("[data-testid='terminal-connection-cancel-btn']")
     ).not.toBeNull();
+  });
+});
+
+describe("TerminalConnectionOverlay — reattaching state", () => {
+  let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot>;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    resetStore();
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it("shows Restoring session spinner when terminalReattaching is true", () => {
+    useAppStore.setState({ terminalReattaching: { [TAB_ID]: true } });
+    act(() => {
+      root.render(
+        <TerminalConnectionOverlay
+          tabId={TAB_ID}
+          panelId={PANEL_ID}
+          tabTitle="my-server"
+          isVisible={true}
+        />
+      );
+    });
+    expect(container.textContent).toContain("Restoring session");
+    // No cancel button — user cannot interrupt a buffer fetch
+    expect(container.querySelector("[data-testid='terminal-connection-cancel-btn']")).toBeNull();
+    expect(container.querySelector("[data-testid='terminal-connection-retry-btn']")).toBeNull();
+  });
+
+  it("reattaching takes priority over waiting-for-agent", () => {
+    useAppStore.setState({
+      terminalReattaching: { [TAB_ID]: true },
+      terminalWaitingForAgent: { [TAB_ID]: "agent-1" },
+    });
+    act(() => {
+      root.render(
+        <TerminalConnectionOverlay
+          tabId={TAB_ID}
+          panelId={PANEL_ID}
+          tabTitle="my-server"
+          isVisible={true}
+        />
+      );
+    });
+    expect(container.textContent).toContain("Restoring session");
+    expect(container.textContent).not.toContain("Waiting for agent");
   });
 });
 
