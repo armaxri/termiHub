@@ -60,6 +60,14 @@ describe("classifyAgentError", () => {
     expect(result.category).toBe("agent-outdated");
   });
 
+  it("classifies already-connected error", () => {
+    const result = classifyAgentError(
+      "Remote agent error: Agent agent-1776461038114 is already connected"
+    );
+    expect(result.category).toBe("already-connected");
+    expect(result.title).toBe("Already Connected");
+  });
+
   it("classifies unknown errors with raw message", () => {
     const result = classifyAgentError("Something unexpected");
     expect(result.category).toBe("unknown");
