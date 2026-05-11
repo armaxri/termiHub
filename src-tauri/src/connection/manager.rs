@@ -1938,4 +1938,130 @@ mod tests {
             source.connections.iter().map(|c| &c.id).collect::<Vec<_>>()
         );
     }
+
+    // After deleting a connection with a locked store, saving a new connection with the
+    // same name must result in exactly one entry (not zero, not two).  This catches a
+    // scenario where the deletion appeared to succeed but left a ghost on disk, so the
+    // subsequent save hit the "update existing" branch and the new item was never
+    // persisted as a fresh row.
+    #[test]
+    fn recreate_same_name_connection_after_delete_with_locked_store() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let setup =
+            ConnectionManager::new_for_test(dir.path(), Arc::new(MockStore::new())).unwrap();
+        setup.save_connection(make_serial_conn("Serial")).unwrap();
+        drop(setup);
+
+        let manager =
+            ConnectionManager::new_for_test(dir.path(), Arc::new(LockedCredentialStore)).unwrap();
+        manager.delete_connection("Serial").unwrap();
+
+        // Save a brand-new connection reusing the same name (same computed ID).
+        manager
+            .save_connection(make_local_conn("Serial"))
+            .expect("save after delete must succeed");
+
+        let all = manager.get_all().unwrap();
+        assert_eq!(
+            all.connections.len(),
+            1,
+            "exactly one connection must exist after delete + recreate; got: {:?}",
+            all.connections.iter().map(|c| &c.id).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            all.connections[0].config.type_id, "local",
+            "the recreated connection must be the new one (local), not the old serial"
+        );
+    }
+
+    // Delete one connection out of several with a locked store — the siblings must
+    // survive untouched.
+    #[test]
+    fn delete_connection_with_locked_store_preserves_siblings() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let setup =
+            ConnectionManager::new_for_test(dir.path(), Arc::new(MockStore::new())).unwrap();
+        setup.save_connection(make_serial_conn("Serial")).unwrap();
+        setup.save_connection(make_local_conn("Local")).unwrap();
+        drop(setup);
+
+        let manager =
+            ConnectionManager::new_for_test(dir.path(), Arc::new(LockedCredentialStore)).unwrap();
+        manager
+            .delete_connection("Serial")
+            .expect("delete must succeed with locked store");
+
+        let all = manager.get_all().unwrap();
+        let ids: Vec<&str> = all.connections.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(
+            all.connections.len(),
+            1,
+            "only the deleted connection should be gone; remaining: {ids:?}"
+        );
+        assert_eq!(ids[0], "Local", "the surviving connection must be Local");
+    }
+
+    // Deleting a connection ID that does not exist must be a harmless no-op — even
+    // when the credential store is locked.
+    #[test]
+    fn delete_nonexistent_connection_with_locked_store_is_harmless() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let setup =
+            ConnectionManager::new_for_test(dir.path(), Arc::new(MockStore::new())).unwrap();
+        setup.save_connection(make_serial_conn("Serial")).unwrap();
+        drop(setup);
+
+        let manager =
+            ConnectionManager::new_for_test(dir.path(), Arc::new(LockedCredentialStore)).unwrap();
+        manager
+            .delete_connection("does-not-exist")
+            .expect("deleting a nonexistent connection must not error");
+
+        let all = manager.get_all().unwrap();
+        assert_eq!(
+            all.connections.len(),
+            1,
+            "the existing connection must be unaffected by the phantom delete; got: {:?}",
+            all.connections.iter().map(|c| &c.id).collect::<Vec<_>>()
+        );
+    }
+
+    // Same recreate-after-delete scenario for agents: delete with a locked store, then
+    // save a new agent with the same ID — must result in exactly one agent.
+    #[test]
+    fn recreate_same_id_agent_after_delete_with_locked_store() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let setup =
+            ConnectionManager::new_for_test(dir.path(), Arc::new(MockStore::new())).unwrap();
+        setup
+            .save_agent(make_agent("agent-1", "password", None, None))
+            .unwrap();
+        drop(setup);
+
+        let manager =
+            ConnectionManager::new_for_test(dir.path(), Arc::new(LockedCredentialStore)).unwrap();
+        manager.delete_agent("agent-1").unwrap();
+
+        let mut fresh = make_agent("agent-1", "key", None, None);
+        fresh.name = "Recreated".to_string();
+        manager
+            .save_agent(fresh)
+            .expect("save after delete must succeed");
+
+        let all = manager.get_all().unwrap();
+        assert_eq!(
+            all.agents.len(),
+            1,
+            "exactly one agent must exist after delete + recreate; got: {:?}",
+            all.agents.iter().map(|a| &a.id).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            all.agents[0].name, "Recreated",
+            "the recreated agent must be the new one"
+        );
+    }
 }
