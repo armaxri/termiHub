@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Persistent sessions: "Attach new tab" now correctly restores the terminal scrollback. The frontend explicitly fetches the ring-buffer snapshot from the agent on reattach, resets xterm, and writes the snapshot before subscribing to live output — ensuring the cached history is always visible and never raced by live events. A "Restoring session…" spinner overlay is shown during the fetch.
 - Persistent sessions: "Attach new tab" no longer shows a blank terminal with no overlay. The backend now triggers a DaemonClient reconnect on attach so the scrollback buffer arrives via the notification path; if the session has already died, the placeholder tab is automatically removed instead of left in a broken state.
 - Persistent sessions: "Restoring session…" overlay is now correctly displayed while the scrollback buffer is being fetched on reattach. The SplitView rendering condition was missing the `terminalReattaching` flag, so the overlay was never shown and the terminal appeared blank and non-interactive during the fetch window.
+- Persistent sessions: after reattaching to a session whose shell had already exited (e.g. crash while the tab was closed), the terminal now shows "[Process exited]" instead of appearing interactive but silently dropping all input. The fix buffers the `terminal-exit` event in the frontend dispatcher so it is delivered even if it fires before the reattaching tab subscribes.
 
 ### Changed
 

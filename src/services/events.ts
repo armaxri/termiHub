@@ -64,6 +64,8 @@ export class TerminalOutputDispatcher {
   private agentStateCallbacks = new Map<string, (state: string) => void>();
   /** Buffer output for sessions whose subscriber hasn't registered yet. */
   private pendingOutput = new Map<string, Uint8Array[]>();
+  /** Buffer exit events for sessions whose subscriber hasn't registered yet. */
+  private pendingExit = new Map<string, number | null>();
   private unlistenOutput: UnlistenFn | null = null;
   private unlistenExit: UnlistenFn | null = null;
   private unlistenRemoteState: UnlistenFn | null = null;
@@ -117,8 +119,12 @@ export class TerminalOutputDispatcher {
     const unlistenExit = await listen<TerminalExitPayload>("terminal-exit", (event) => {
       const { session_id, exit_code } = event.payload;
       const cbs = this.exitCallbacks.get(session_id);
-      if (cbs) {
+      if (cbs && cbs.size > 0) {
         for (const cb of cbs) cb(exit_code);
+      } else {
+        // Buffer the exit for sessions whose subscriber hasn't registered yet
+        // (e.g. race between session death and tab reattach setup).
+        this.pendingExit.set(session_id, exit_code);
       }
     });
 
@@ -208,6 +214,12 @@ export class TerminalOutputDispatcher {
       this.exitCallbacks.set(sessionId, cbs);
     }
     cbs.add(callback);
+    // Fire any exit that arrived before this subscriber registered
+    if (this.pendingExit.has(sessionId)) {
+      const exitCode = this.pendingExit.get(sessionId)!;
+      this.pendingExit.delete(sessionId);
+      callback(exitCode);
+    }
     return () => {
       const set = this.exitCallbacks.get(sessionId);
       if (set) {
@@ -215,6 +227,11 @@ export class TerminalOutputDispatcher {
         if (set.size === 0) this.exitCallbacks.delete(sessionId);
       }
     };
+  }
+
+  /** Discard any buffered exit for a session (call at the start of a fresh reattach to clear stale exits). */
+  clearPendingExit(sessionId: string): void {
+    this.pendingExit.delete(sessionId);
   }
 
   /** Discard any buffered output for a session (call before writing cached buffer to avoid duplication). */
@@ -262,6 +279,7 @@ export class TerminalOutputDispatcher {
     this.remoteStateCallbacks.clear();
     this.agentStateCallbacks.clear();
     this.pendingOutput.clear();
+    this.pendingExit.clear();
     this.initPromise = null;
   }
 }

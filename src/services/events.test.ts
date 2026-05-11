@@ -372,7 +372,111 @@ describe("events service", () => {
       expect(cb).toHaveBeenCalledTimes(2);
     });
 
-    it("does not buffer output for sessions that already have a subscriber", async () => {
+    it("buffers exit event for sessions with no subscriber", async () => {
+      const handlers: Record<string, (event: unknown) => void> = {};
+      mockedListen.mockImplementation((eventName, handler) => {
+        handlers[eventName as string] = handler as (event: unknown) => void;
+        return Promise.resolve(vi.fn());
+      });
+
+      await dispatcher.init();
+
+      // Fire exit before any subscriber — should not throw
+      handlers["terminal-exit"]({
+        payload: { session_id: "sess-unsubbed", exit_code: 1 },
+      });
+    });
+
+    it("delivers buffered exit when subscriber registers after exit fired", async () => {
+      const handlers: Record<string, (event: unknown) => void> = {};
+      mockedListen.mockImplementation((eventName, handler) => {
+        handlers[eventName as string] = handler as (event: unknown) => void;
+        return Promise.resolve(vi.fn());
+      });
+
+      await dispatcher.init();
+
+      // Fire exit BEFORE any subscriber
+      handlers["terminal-exit"]({
+        payload: { session_id: "sess-pre-exit", exit_code: 42 },
+      });
+
+      // Now subscribe — should receive the buffered exit immediately
+      const cb = vi.fn();
+      dispatcher.subscribeExit("sess-pre-exit", cb);
+
+      expect(cb).toHaveBeenCalledTimes(1);
+      expect(cb).toHaveBeenCalledWith(42);
+    });
+
+    it("delivers buffered null exit code when exit_code is null", async () => {
+      const handlers: Record<string, (event: unknown) => void> = {};
+      mockedListen.mockImplementation((eventName, handler) => {
+        handlers[eventName as string] = handler as (event: unknown) => void;
+        return Promise.resolve(vi.fn());
+      });
+
+      await dispatcher.init();
+
+      handlers["terminal-exit"]({
+        payload: { session_id: "sess-null", exit_code: null },
+      });
+
+      const cb = vi.fn();
+      dispatcher.subscribeExit("sess-null", cb);
+
+      expect(cb).toHaveBeenCalledWith(null);
+    });
+
+    it("does not re-deliver buffered exit on a second subscribeExit call", async () => {
+      const handlers: Record<string, (event: unknown) => void> = {};
+      mockedListen.mockImplementation((eventName, handler) => {
+        handlers[eventName as string] = handler as (event: unknown) => void;
+        return Promise.resolve(vi.fn());
+      });
+
+      await dispatcher.init();
+
+      handlers["terminal-exit"]({
+        payload: { session_id: "sess-once", exit_code: 0 },
+      });
+
+      const cb1 = vi.fn();
+      dispatcher.subscribeExit("sess-once", cb1);
+      expect(cb1).toHaveBeenCalledTimes(1);
+
+      // Second subscriber for same session should NOT get the already-consumed exit
+      const cb2 = vi.fn();
+      dispatcher.subscribeExit("sess-once", cb2);
+      expect(cb2).not.toHaveBeenCalled();
+    });
+
+    it("clearPendingExit discards buffered exit so a subsequent subscriber does not see it", async () => {
+      const handlers: Record<string, (event: unknown) => void> = {};
+      mockedListen.mockImplementation((eventName, handler) => {
+        handlers[eventName as string] = handler as (event: unknown) => void;
+        return Promise.resolve(vi.fn());
+      });
+
+      await dispatcher.init();
+
+      handlers["terminal-exit"]({
+        payload: { session_id: "sess-cleared", exit_code: 5 },
+      });
+
+      dispatcher.clearPendingExit("sess-cleared");
+
+      const cb = vi.fn();
+      dispatcher.subscribeExit("sess-cleared", cb);
+
+      expect(cb).not.toHaveBeenCalled();
+    });
+
+    it("clearPendingExit does not affect other sessions", async () => {
+      expect(() => dispatcher.clearPendingExit("nonexistent-session")).not.toThrow();
+    });
+
+    it("does not buffer exit for sessions that already have a subscriber", async () => {
       const handlers: Record<string, (event: unknown) => void> = {};
       mockedListen.mockImplementation((eventName, handler) => {
         handlers[eventName as string] = handler as (event: unknown) => void;

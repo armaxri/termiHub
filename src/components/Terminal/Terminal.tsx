@@ -231,6 +231,12 @@ export function Terminal({
           if (persistentConnectionId) {
             // Show the reattaching overlay while we fetch and replay the scrollback buffer.
             useAppStore.getState().setTerminalReattaching(tabId, true);
+            // Clear any exit that arrived for this session before we subscribed.
+            // This prevents a stale exit from a previous attachment (e.g. temporary
+            // agent-connection drop that was since recovered) from firing as "[Process
+            // exited]" on the new tab.  Any exit that fires AFTER this point will be
+            // buffered and delivered when subscribeExit is called below.
+            terminalDispatcher.clearPendingExit(sessionId);
             frontendLog("terminal", `Reattaching persistent session ${sessionId}, fetching buffer`);
             try {
               const buffer = await getAgentSessionBuffer(sessionId);
