@@ -26,7 +26,8 @@ const SERIAL_BUSY_PATTERNS = ["busy", "in use", "Access is denied"];
 /**
  * Shown over a terminal slot while the backend session is being established.
  *
- * Four states (highest priority first):
+ * Five states (highest priority first):
+ *   reattaching       — fetching cached scrollback after persistent session reattach
  *   waiting-for-agent — parent agent transport still connecting
  *   auto-retrying     — agent session failed, retrying in background
  *   connecting        — createTerminal() is in-flight
