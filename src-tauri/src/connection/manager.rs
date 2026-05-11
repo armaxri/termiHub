@@ -181,8 +181,21 @@ impl ConnectionManager {
     /// Errors are intentionally swallowed: if the disk read fails we fall back to
     /// the current in-memory state rather than aborting an otherwise valid write.
     fn sync_from_disk(&self, store: &mut FlatConnectionStore) {
-        if let Ok(result) = self.storage.load_with_recovery() {
-            *store = result.data;
+        match self.storage.load_with_recovery() {
+            Ok(result) => {
+                tracing::debug!(
+                    connections = result.data.connections.len(),
+                    folders = result.data.folders.len(),
+                    agents = result.data.agents.len(),
+                    "sync_from_disk: reloaded from disk"
+                );
+                *store = result.data;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "sync_from_disk: failed to reload from disk, keeping in-memory state: {e}"
+                );
+            }
         }
     }
 
@@ -244,7 +257,16 @@ impl ConnectionManager {
 
     /// Delete a remote agent by ID.
     pub fn delete_agent(&self, id: &str) -> Result<()> {
-        self.credential_store.remove_all_for_connection(id)?;
+        // Best-effort credential cleanup: if the store is locked (e.g. master-password
+        // mode with auto-lock engaged), we cannot remove credentials but must still
+        // delete the agent config from disk.  Orphaned credential entries are harmless
+        // and will be cleaned up on the next unlock.
+        if let Err(e) = self.credential_store.remove_all_for_connection(id) {
+            tracing::warn!(
+                agent_id = id,
+                "Failed to remove credentials for agent (best-effort, proceeding with delete): {e}"
+            );
+        }
         let mut store = self.store.lock().unwrap();
         self.sync_from_disk(&mut store);
         store.agents.retain(|a| a.id != id);
@@ -313,7 +335,16 @@ impl ConnectionManager {
 
     /// Delete a connection by ID.
     pub fn delete_connection(&self, id: &str) -> Result<()> {
-        self.credential_store.remove_all_for_connection(id)?;
+        // Best-effort credential cleanup: if the store is locked (e.g. master-password
+        // mode with auto-lock engaged), we cannot remove credentials but must still
+        // delete the connection config from disk.  Orphaned credential entries are
+        // harmless and will be cleaned up on the next unlock.
+        if let Err(e) = self.credential_store.remove_all_for_connection(id) {
+            tracing::warn!(
+                connection_id = id,
+                "Failed to remove credentials for connection (best-effort, proceeding with delete): {e}"
+            );
+        }
         let mut store = self.store.lock().unwrap();
         self.sync_from_disk(&mut store);
         store.connections.retain(|c| c.id != id);
@@ -582,7 +613,12 @@ impl ConnectionManager {
         match source_file {
             None => self.delete_connection(id),
             Some(file_path) => {
-                self.credential_store.remove_all_for_connection(id)?;
+                if let Err(e) = self.credential_store.remove_all_for_connection(id) {
+                    tracing::warn!(
+                        connection_id = id,
+                        "Failed to remove credentials for connection in external file (best-effort, proceeding with delete): {e}"
+                    );
+                }
                 remove_from_external_file(file_path, id)
             }
         }
@@ -1778,6 +1814,254 @@ mod tests {
         assert!(
             names.contains(&"Connection A"),
             "Connection A must still be present after the move; got: {names:?}"
+        );
+    }
+
+    /// A credential store whose `remove_all_for_connection` always fails,
+    /// simulating a locked master-password store.
+    struct LockedCredentialStore;
+
+    impl CredentialStore for LockedCredentialStore {
+        fn get(&self, _key: &CredentialKey) -> Result<Option<String>> {
+            Ok(None)
+        }
+        fn set(&self, _key: &CredentialKey, _value: &str) -> Result<()> {
+            Ok(())
+        }
+        fn remove(&self, _key: &CredentialKey) -> Result<()> {
+            Ok(())
+        }
+        fn remove_all_for_connection(&self, _connection_id: &str) -> Result<()> {
+            Err(anyhow::anyhow!(
+                "Store is locked — unlock before accessing credentials"
+            ))
+        }
+        fn list_keys(&self) -> Result<Vec<CredentialKey>> {
+            Ok(Vec::new())
+        }
+        fn status(&self) -> CredentialStoreStatus {
+            CredentialStoreStatus::Locked
+        }
+    }
+
+    // Regression: delete_connection used `?` on remove_all_for_connection, so when the
+    // master-password credential store was locked it returned early with an error and
+    // never wrote the deletion to disk.  Serial/local connections (no credentials) were
+    // silently not deleted, reappearing on restart.
+    #[test]
+    fn delete_connection_succeeds_when_credential_store_is_locked() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Populate with a serial connection using a normal store.
+        let setup =
+            ConnectionManager::new_for_test(dir.path(), Arc::new(MockStore::new())).unwrap();
+        setup.save_connection(make_serial_conn("Serial")).unwrap();
+        drop(setup);
+
+        // Open with a locked credential store (simulates master-password auto-lock).
+        let manager =
+            ConnectionManager::new_for_test(dir.path(), Arc::new(LockedCredentialStore)).unwrap();
+
+        // Delete must succeed despite the locked store.
+        manager
+            .delete_connection("Serial")
+            .expect("delete_connection must succeed even when credential store is locked");
+
+        let all = manager.get_all().unwrap();
+        assert!(
+            all.connections.is_empty(),
+            "connection must be gone from disk after delete; got: {:?}",
+            all.connections.iter().map(|c| &c.id).collect::<Vec<_>>()
+        );
+    }
+
+    // Regression: delete_agent used `?` on remove_all_for_connection with the same
+    // locked-store failure path.
+    #[test]
+    fn delete_agent_succeeds_when_credential_store_is_locked() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let setup =
+            ConnectionManager::new_for_test(dir.path(), Arc::new(MockStore::new())).unwrap();
+        setup
+            .save_agent(make_agent("agent-1", "password", None, None))
+            .unwrap();
+        drop(setup);
+
+        let manager =
+            ConnectionManager::new_for_test(dir.path(), Arc::new(LockedCredentialStore)).unwrap();
+
+        manager
+            .delete_agent("agent-1")
+            .expect("delete_agent must succeed even when credential store is locked");
+
+        let all = manager.get_all().unwrap();
+        assert!(
+            all.agents.is_empty(),
+            "agent must be gone from disk after delete; got: {:?}",
+            all.agents.iter().map(|a| &a.id).collect::<Vec<_>>()
+        );
+    }
+
+    // Regression: delete_connection_routed (external-file path) had the same `?` on
+    // remove_all_for_connection.
+    #[test]
+    fn delete_connection_routed_external_succeeds_when_credential_store_is_locked() {
+        let dir = tempfile::tempdir().unwrap();
+        let ext_file = dir.path().join("ext.json");
+        let ext_path = ext_file.to_str().unwrap();
+
+        // Write an external connections file with one connection.
+        save_external_file(
+            ext_path,
+            "Ext",
+            vec![],
+            vec![make_serial_conn("Serial")],
+            &crate::credential::NullStore,
+        )
+        .unwrap();
+
+        let manager =
+            ConnectionManager::new_for_test(dir.path(), Arc::new(LockedCredentialStore)).unwrap();
+
+        manager
+            .delete_connection_routed("Serial", Some(ext_path))
+            .expect("delete_connection_routed must succeed even when credential store is locked");
+
+        // Verify the connection was removed from the external file.
+        let main_folders = std::collections::HashSet::new();
+        let source =
+            try_load_external_file(ext_path, &main_folders, &crate::credential::NullStore).unwrap();
+        assert!(
+            source.connections.is_empty(),
+            "connection must be gone from external file; got: {:?}",
+            source.connections.iter().map(|c| &c.id).collect::<Vec<_>>()
+        );
+    }
+
+    // After deleting a connection with a locked store, saving a new connection with the
+    // same name must result in exactly one entry (not zero, not two).  This catches a
+    // scenario where the deletion appeared to succeed but left a ghost on disk, so the
+    // subsequent save hit the "update existing" branch and the new item was never
+    // persisted as a fresh row.
+    #[test]
+    fn recreate_same_name_connection_after_delete_with_locked_store() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let setup =
+            ConnectionManager::new_for_test(dir.path(), Arc::new(MockStore::new())).unwrap();
+        setup.save_connection(make_serial_conn("Serial")).unwrap();
+        drop(setup);
+
+        let manager =
+            ConnectionManager::new_for_test(dir.path(), Arc::new(LockedCredentialStore)).unwrap();
+        manager.delete_connection("Serial").unwrap();
+
+        // Save a brand-new connection reusing the same name (same computed ID).
+        manager
+            .save_connection(make_local_conn("Serial"))
+            .expect("save after delete must succeed");
+
+        let all = manager.get_all().unwrap();
+        assert_eq!(
+            all.connections.len(),
+            1,
+            "exactly one connection must exist after delete + recreate; got: {:?}",
+            all.connections.iter().map(|c| &c.id).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            all.connections[0].config.type_id, "local",
+            "the recreated connection must be the new one (local), not the old serial"
+        );
+    }
+
+    // Delete one connection out of several with a locked store — the siblings must
+    // survive untouched.
+    #[test]
+    fn delete_connection_with_locked_store_preserves_siblings() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let setup =
+            ConnectionManager::new_for_test(dir.path(), Arc::new(MockStore::new())).unwrap();
+        setup.save_connection(make_serial_conn("Serial")).unwrap();
+        setup.save_connection(make_local_conn("Local")).unwrap();
+        drop(setup);
+
+        let manager =
+            ConnectionManager::new_for_test(dir.path(), Arc::new(LockedCredentialStore)).unwrap();
+        manager
+            .delete_connection("Serial")
+            .expect("delete must succeed with locked store");
+
+        let all = manager.get_all().unwrap();
+        let ids: Vec<&str> = all.connections.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(
+            all.connections.len(),
+            1,
+            "only the deleted connection should be gone; remaining: {ids:?}"
+        );
+        assert_eq!(ids[0], "Local", "the surviving connection must be Local");
+    }
+
+    // Deleting a connection ID that does not exist must be a harmless no-op — even
+    // when the credential store is locked.
+    #[test]
+    fn delete_nonexistent_connection_with_locked_store_is_harmless() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let setup =
+            ConnectionManager::new_for_test(dir.path(), Arc::new(MockStore::new())).unwrap();
+        setup.save_connection(make_serial_conn("Serial")).unwrap();
+        drop(setup);
+
+        let manager =
+            ConnectionManager::new_for_test(dir.path(), Arc::new(LockedCredentialStore)).unwrap();
+        manager
+            .delete_connection("does-not-exist")
+            .expect("deleting a nonexistent connection must not error");
+
+        let all = manager.get_all().unwrap();
+        assert_eq!(
+            all.connections.len(),
+            1,
+            "the existing connection must be unaffected by the phantom delete; got: {:?}",
+            all.connections.iter().map(|c| &c.id).collect::<Vec<_>>()
+        );
+    }
+
+    // Same recreate-after-delete scenario for agents: delete with a locked store, then
+    // save a new agent with the same ID — must result in exactly one agent.
+    #[test]
+    fn recreate_same_id_agent_after_delete_with_locked_store() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let setup =
+            ConnectionManager::new_for_test(dir.path(), Arc::new(MockStore::new())).unwrap();
+        setup
+            .save_agent(make_agent("agent-1", "password", None, None))
+            .unwrap();
+        drop(setup);
+
+        let manager =
+            ConnectionManager::new_for_test(dir.path(), Arc::new(LockedCredentialStore)).unwrap();
+        manager.delete_agent("agent-1").unwrap();
+
+        let mut fresh = make_agent("agent-1", "key", None, None);
+        fresh.name = "Recreated".to_string();
+        manager
+            .save_agent(fresh)
+            .expect("save after delete must succeed");
+
+        let all = manager.get_all().unwrap();
+        assert_eq!(
+            all.agents.len(),
+            1,
+            "exactly one agent must exist after delete + recreate; got: {:?}",
+            all.agents.iter().map(|a| &a.id).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            all.agents[0].name, "Recreated",
+            "the recreated agent must be the new one"
         );
     }
 }
