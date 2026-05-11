@@ -16,6 +16,7 @@ interface ConnectionErrorDialogProps {
   onOpenChange: (open: boolean) => void;
   error: ClassifiedAgentError | null;
   onSetupAgent?: () => void;
+  onForceReconnect?: () => void;
 }
 
 export function ConnectionErrorDialog({
@@ -23,6 +24,7 @@ export function ConnectionErrorDialog({
   onOpenChange,
   error,
   onSetupAgent,
+  onForceReconnect,
 }: ConnectionErrorDialogProps) {
   if (!error) return null;
 
@@ -69,6 +71,18 @@ export function ConnectionErrorDialog({
                   Setup Agent
                 </button>
               )}
+            {error.category === "already-connected" && onForceReconnect && (
+              <button
+                className="connection-error-dialog__btn connection-error-dialog__btn--primary"
+                onClick={() => {
+                  onOpenChange(false);
+                  onForceReconnect();
+                }}
+                data-testid="connection-error-force-reconnect"
+              >
+                Force Reconnect
+              </button>
+            )}
             <button
               className="connection-error-dialog__btn connection-error-dialog__btn--secondary"
               onClick={() => onOpenChange(false)}
