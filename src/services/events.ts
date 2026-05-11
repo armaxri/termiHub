@@ -217,6 +217,11 @@ export class TerminalOutputDispatcher {
     };
   }
 
+  /** Discard any buffered output for a session (call before writing cached buffer to avoid duplication). */
+  clearPendingOutput(sessionId: string): void {
+    this.pendingOutput.delete(sessionId);
+  }
+
   /** Subscribe to remote state change events for a specific session. Returns an unsubscribe function. */
   subscribeRemoteState(sessionId: string, callback: (state: string) => void): () => void {
     this.remoteStateCallbacks.set(sessionId, callback);

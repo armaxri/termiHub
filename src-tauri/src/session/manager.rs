@@ -763,34 +763,6 @@ impl SessionManager {
             record.attached_tabs.len() as u32
         };
 
-        // Phase 4: For sessions that were already alive (not just reconnected), kick
-        // the daemon client reattach to send a fresh buffer replay.
-        // (Reconnected sessions already called attach_session inside reconnect_existing.)
-        if session_alive {
-            let agent_info = {
-                let sessions = self.sessions.lock().await;
-                sessions.get(&session_id).and_then(|e| {
-                    e.info
-                        .agent_id
-                        .as_deref()
-                        .zip(e.remote_session_id.as_deref())
-                        .map(|(aid, rsid)| (aid.to_string(), rsid.to_string()))
-                })
-            };
-            if let Some((agent_id, remote_sid)) = agent_info {
-                let am = self.agent_manager.clone();
-                // Detached task — dropped JoinHandle does not cancel the task.
-                let _reattach = tokio::task::spawn_blocking(move || {
-                    if let Err(e) = am.attach_session(&agent_id, &remote_sid) {
-                        warn!(
-                            error = %e,
-                            "attach_persistent_tab: daemon client reattach failed"
-                        );
-                    }
-                });
-            }
-        }
-
         let state = if count > 0 { "attached" } else { "running" }.to_string();
         emitter.emit_persistent_state(&PersistentSessionStateEvent {
             connection_id: connection_id.to_string(),
@@ -2061,63 +2033,6 @@ mod tests {
         fn apply_agent_settings(&self, _: &str, _: &AgentSettings) -> Result<(), TerminalError> {
             unimplemented!()
         }
-    }
-
-    /// Regression test: `attach_persistent_tab` must call `attach_session` on the
-    /// agent manager for remote-agent sessions so the DaemonClient reconnects and
-    /// sends a fresh buffer replay via the notification path.
-    ///
-    /// Without the fix, the DaemonClient could be stale and
-    /// `get_remote_session_buffer` would time out, leaving the new tab blank.
-    #[tokio::test]
-    async fn attach_persistent_tab_triggers_daemon_reattach_for_agent_session() {
-        let (spy, attach_calls) = SpyAgent::new();
-
-        let mut registry = ConnectionTypeRegistry::new();
-        registry.register(
-            "mock",
-            "Mock",
-            "mock",
-            Box::new(|| Box::new(MockConnection)),
-        );
-        let manager = SessionManager::new(registry, Arc::new(spy));
-        let emitter = MockPersistentEmitter::new();
-
-        let session_id = manager
-            .start_persistent_session(
-                "conn-1",
-                "mock",
-                serde_json::json!({}),
-                None,
-                emitter.clone(),
-            )
-            .await
-            .unwrap();
-
-        // Mark the session as agent-mediated.
-        {
-            let mut sessions = manager.sessions.lock().await;
-            let entry = sessions.get_mut(&session_id).unwrap();
-            entry.info.agent_id = Some("agent-1".to_string());
-            entry.remote_session_id = Some("remote-1".to_string());
-        }
-
-        manager
-            .attach_persistent_tab("conn-1", "tab-1", emitter.clone())
-            .await
-            .unwrap();
-
-        // spawn_blocking runs in a separate thread; give it a moment.
-        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-
-        let calls = attach_calls.lock().unwrap();
-        assert_eq!(
-            calls.len(),
-            1,
-            "attach_session must be called once for agent sessions"
-        );
-        assert_eq!(calls[0].0, "agent-1");
-        assert_eq!(calls[0].1, "remote-1");
     }
 
     /// Regression: `attach_persistent_tab` must NOT call `attach_session` for

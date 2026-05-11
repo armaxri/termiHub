@@ -12,6 +12,7 @@ import {
   resizeTerminal,
   closeTerminal,
   detachPersistentTab,
+  getAgentSessionBuffer,
 } from "@/services/api";
 import { terminalDispatcher } from "@/services/events";
 import { useTerminalRegistry } from "./TerminalRegistry";
@@ -227,14 +228,28 @@ export function Terminal({
         let sessionId: string;
         if (initialSessionIdRef.current) {
           sessionId = initialSessionIdRef.current;
-          // Buffer replay for persistent re-attach arrives via the
-          // connection.output notification path triggered by attach_persistent_tab
-          // on the backend (DaemonClient reconnect). subscribeOutput below will
-          // flush any replay already in pendingOutput, or deliver it directly
-          // when it arrives. No direct pull here to avoid racing with the
-          // notification and displaying content twice.
           if (persistentConnectionId) {
-            frontendLog("terminal", `Reattaching persistent session ${sessionId}`);
+            // Show the reattaching overlay while we fetch and replay the scrollback buffer.
+            useAppStore.getState().setTerminalReattaching(tabId, true);
+            frontendLog("terminal", `Reattaching persistent session ${sessionId}, fetching buffer`);
+            try {
+              const buffer = await getAgentSessionBuffer(sessionId);
+              if (isCanceled()) return;
+              if (buffer.length > 0) {
+                // Discard any buffered live output that arrived before we subscribed —
+                // the full buffer already contains it.
+                terminalDispatcher.clearPendingOutput(sessionId);
+                xterm.reset();
+                await new Promise<void>((resolve) => xterm.write(buffer, resolve));
+              }
+            } catch (err) {
+              frontendLog("terminal", `Failed to fetch reattach buffer: ${err}`);
+            } finally {
+              if (!isCanceled()) {
+                useAppStore.getState().setTerminalReattaching(tabId, false);
+              }
+            }
+            if (isCanceled()) return;
           }
           if (isCanceled()) return;
         } else {
