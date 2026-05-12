@@ -670,6 +670,11 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
     setSetupDialogOpen(true);
   }, []);
 
+  const handleForceReconnect = useCallback(async () => {
+    await disconnectRemoteAgent(agent.id);
+    void handleConnect();
+  }, [agent.id, disconnectRemoteAgent, handleConnect]);
+
   const handleDisconnect = useCallback(() => {
     disconnectRemoteAgent(agent.id);
   }, [agent.id, disconnectRemoteAgent]);
@@ -955,6 +960,7 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
         onOpenChange={setErrorDialogOpen}
         error={connectionError}
         onSetupAgent={handleSetupFromError}
+        onForceReconnect={handleForceReconnect}
       />
 
       {agent.isExpanded && (

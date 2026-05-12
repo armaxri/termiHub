@@ -8,6 +8,7 @@ export type AgentErrorCategory =
   | "auth-failure"
   | "agent-missing"
   | "agent-outdated"
+  | "already-connected"
   | "unknown";
 
 export interface ClassifiedAgentError {
@@ -61,6 +62,16 @@ export function classifyAgentError(error: unknown): ClassifiedAgentError {
       title: "Agent Version Incompatible",
       message:
         "The remote agent binary is not compatible with this version of termiHub. Please re-deploy the agent to update it.",
+      rawError: raw,
+    };
+  }
+
+  if (raw.includes("is already connected")) {
+    return {
+      category: "already-connected",
+      title: "Already Connected",
+      message:
+        "This agent is already connected. You can force a reconnect to drop the existing connection and establish a new one.",
       rawError: raw,
     };
   }
