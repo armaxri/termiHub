@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Agent: macOS is now a supported agent target (`macos-arm64`, `macos-x64`). The desktop resolves the correct binary when connecting to a macOS remote host via SSH agent mode. The agent setup dialog shows macOS arch options when connecting to a Darwin host.
+- Agent: five local TCP integration tests (`cargo test -p termihub-agent --test local_agent_integration`) that spawn the agent in `--listen` mode on localhost — no SSH, no cross-compilation, no Raspberry Pi required. These make it fast to iterate on agent behavior on any dev machine (macOS, Linux, Windows).
+- CI: macOS agent binaries are now built and published in all CI pipelines (agent PR checks, dev builds, releases) using native `macos-latest` runners. The `build-agents.sh` help text now documents macOS native build targets.
+
 ### Security
 
 - Updated npm dependencies (`vite`, `typescript-eslint`, `@wdio/*`, `vitest`) and added `pnpm.overrides` for transitive packages (`rollup`, `postcss`, `undici`, `flatted`, `fast-uri`, `dompurify`, `serialize-javascript`, `picomatch`, `brace-expansion`) to resolve all 39 npm security audit findings.

@@ -233,8 +233,8 @@ jobs:
           path: termiHub-dev-${{ matrix.platform }}*
           if-no-files-found: error
 
-  # ── 3. Build and stage agent binaries ─────────────────────────────────────
-  build-agents:
+  # ── 3a. Build and stage Linux agent binaries (cross-compiled via cross-rs) ──
+  build-agents-linux:
     name: Agent Binary (${{ matrix.target }})
     needs: prepare-release
     runs-on: ubuntu-latest
@@ -297,10 +297,54 @@ jobs:
           path: ${{ matrix.artifact_name }}
           if-no-files-found: error
 
+  # ── 3b. Build and stage macOS agent binaries (native build) ───────────────
+  build-agents-macos:
+    name: Agent Binary (${{ matrix.target }})
+    needs: prepare-release
+    runs-on: macos-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            artifact_name: termihub-agent-macos-arm64
+          - target: x86_64-apple-darwin
+            artifact_name: termihub-agent-macos-x64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: dev-agent-${{ matrix.target }}
+
+      - name: Build agent
+        env:
+          TERMIHUB_BUILD_BRANCH: ${{ github.ref_name }}
+        run: cargo build --release --target ${{ matrix.target }} -p termihub-agent
+
+      - name: Rename agent binary
+        run: cp "target/${{ matrix.target }}/release/termihub-agent" "${{ matrix.artifact_name }}"
+
+      - name: Upload agent binary to staging
+        uses: actions/upload-artifact@v7
+        with:
+          name: agent-${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_name }}
+          if-no-files-found: error
+
   # ── 4. Atomically publish release once all artifacts are staged ────────────
   publish-release:
     name: Publish Dev Release
-    needs: [prepare-release, build-app, build-agents]
+    needs: [prepare-release, build-app, build-agents-linux, build-agents-macos]
     runs-on: ubuntu-latest
     # Run even if some build jobs failed so the release is always updated
     if: ${{ !cancelled() && needs.prepare-release.result == 'success' }}
@@ -346,12 +390,14 @@ jobs:
             echo "> Developer account). On first launch macOS will warn that the developer cannot be verified."
             echo "> Open **System Settings → Privacy \& Security** and click **Open Anyway**. This is a one-time step."
             echo ""
-            echo "### Agent Binaries (Static musl)"
+            echo "### Agent Binaries"
             echo "| Target | Artifact |"
             echo "|--------|---------|"
-            echo "| Linux x64 | \`termihub-agent-linux-x64\` |"
-            echo "| Linux ARM64 | \`termihub-agent-linux-arm64\` |"
-            echo "| Linux ARMv7 | \`termihub-agent-linux-armv7\` |"
+            echo "| Linux x64 (musl) | \`termihub-agent-linux-x64\` |"
+            echo "| Linux ARM64 (musl) | \`termihub-agent-linux-arm64\` |"
+            echo "| Linux ARMv7 (musl) | \`termihub-agent-linux-armv7\` |"
+            echo "| macOS ARM64 | \`termihub-agent-macos-arm64\` |"
+            echo "| macOS x64 | \`termihub-agent-macos-x64\` |"
           } > release_notes.md
 
       - name: Create and publish dev release

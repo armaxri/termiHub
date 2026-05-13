@@ -191,8 +191,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # Build and upload agent binaries as release assets (static musl binaries)
-  agent-binaries:
+  # Build and upload Linux agent binaries as release assets (static musl)
+  agent-binaries-linux:
     name: Agent Binary (${{ matrix.target }})
     needs: create-release
     runs-on: ubuntu-latest
@@ -250,10 +250,49 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # Build and upload macOS agent binaries as release assets (native build)
+  agent-binaries-macos:
+    name: Agent Binary (${{ matrix.target }})
+    needs: create-release
+    runs-on: macos-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            artifact_name: termihub-agent-macos-arm64
+          - target: x86_64-apple-darwin
+            artifact_name: termihub-agent-macos-x64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release-agent-${{ matrix.target }}
+
+      - name: Build agent
+        run: cargo build --release --target ${{ matrix.target }} -p termihub-agent
+
+      - name: Upload agent binary as release asset
+        run: |
+          cp target/${{ matrix.target }}/release/termihub-agent ${{ matrix.artifact_name }}
+          gh release upload v${{ needs.create-release.outputs.version }} "${{ matrix.artifact_name }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   # Update latest release tag
   update-latest:
     name: Update Latest Tag
-    needs: [create-release, build-and-upload, agent-binaries]
+    needs: [create-release, build-and-upload, agent-binaries-linux, agent-binaries-macos]
     runs-on: ubuntu-latest
 
     steps:
@@ -270,7 +309,7 @@ jobs:
   # Notify on Discord/Slack (optional)
   notify:
     name: Notify Release
-    needs: [create-release, build-and-upload, agent-binaries]
+    needs: [create-release, build-and-upload, agent-binaries-linux, agent-binaries-macos]
     runs-on: ubuntu-latest
     if: success()
 
