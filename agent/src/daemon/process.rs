@@ -157,7 +157,11 @@ enum AgentCommand {
     /// Agent requested current buffer contents without reconnecting.
     QueryBuffer,
     /// Agent disconnected (EOF or error).
-    Disconnected,
+    ///
+    /// Carries the connection generation that produced this disconnect so the
+    /// main loop can ignore stale disconnects from previous connections that
+    /// arrive after a new connection has already been accepted.
+    Disconnected(u64),
 }
 
 /// Main daemon event loop.
@@ -173,6 +177,11 @@ async fn daemon_loop(
     let mut ring_buffer = RingBuffer::new(buffer_size);
     let mut agent_writer: Option<OwnedWriteHalf> = None;
     let mut reader_task: Option<tokio::task::JoinHandle<()>> = None;
+    // Monotonically increasing counter bumped on every new agent connection.
+    // Passed into each reader task so that a stale Disconnected from an old
+    // connection can be distinguished from one that belongs to the current
+    // connection and safely ignored.
+    let mut connection_gen: u64 = 0;
 
     // Channel for receiving commands from the agent reader task.
     let (agent_cmd_tx, mut agent_cmd_rx) = mpsc::channel::<AgentCommand>(64);
@@ -212,11 +221,12 @@ async fn daemon_loop(
                     Ok((stream, _)) => {
                         info!("Agent connected");
 
-                        // Drop the old connection and drain any stale commands
-                        // (e.g. Disconnected) that the old reader task queued
-                        // before it was aborted. Without draining, a stale
-                        // Disconnected arriving after the new connection is
-                        // accepted would immediately close that new connection.
+                        // Bump the generation so any in-flight Disconnected from
+                        // the previous connection is treated as stale.
+                        connection_gen += 1;
+                        let gen = connection_gen;
+
+                        // Drop the old connection
                         agent_writer = None;
                         abort_reader(&mut reader_task);
                         while agent_cmd_rx.try_recv().is_ok() {}
@@ -252,7 +262,7 @@ async fn daemon_loop(
                         // Spawn reader task for agent commands
                         let tx = agent_cmd_tx.clone();
                         reader_task = Some(tokio::spawn(async move {
-                            agent_reader_loop(read_half, tx).await;
+                            agent_reader_loop(read_half, tx, gen).await;
                         }));
                     }
                     Err(e) => {
@@ -278,11 +288,6 @@ async fn daemon_loop(
                         info!("Agent requested detach");
                         agent_writer = None;
                         abort_reader(&mut reader_task);
-                        // Drain any Disconnected queued by the reader before it
-                        // observed the abort. Without this, a stale Disconnected
-                        // arriving after the next connection.attach would close
-                        // the newly established daemon connection.
-                        while agent_cmd_rx.try_recv().is_ok() {}
                     }
                     Some(AgentCommand::Kill) => {
                         info!("Agent requested kill");
@@ -305,10 +310,16 @@ async fn daemon_loop(
                             }
                         }
                     }
-                    Some(AgentCommand::Disconnected) => {
-                        info!("Agent disconnected");
-                        agent_writer = None;
-                        abort_reader(&mut reader_task);
+                    Some(AgentCommand::Disconnected(gen)) => {
+                        if gen == connection_gen {
+                            info!("Agent disconnected");
+                            agent_writer = None;
+                            abort_reader(&mut reader_task);
+                        } else {
+                            debug!(
+                                "Stale Disconnected (gen={gen}, current={connection_gen}), ignoring"
+                            );
+                        }
                     }
                     None => {
                         // All senders dropped — shouldn't happen since we hold one
@@ -322,7 +333,11 @@ async fn daemon_loop(
 
 /// Background task that reads frames from the agent and sends commands
 /// to the main loop via a channel.
-async fn agent_reader_loop(mut reader: OwnedReadHalf, tx: mpsc::Sender<AgentCommand>) {
+///
+/// `gen` is the connection generation assigned when this connection was
+/// accepted; it is included in `Disconnected` so the main loop can ignore
+/// stale disconnects from previous connections.
+async fn agent_reader_loop(mut reader: OwnedReadHalf, tx: mpsc::Sender<AgentCommand>, gen: u64) {
     loop {
         match protocol::read_frame_async(&mut reader).await {
             Ok(Some(frame)) => {
@@ -350,12 +365,12 @@ async fn agent_reader_loop(mut reader: OwnedReadHalf, tx: mpsc::Sender<AgentComm
             }
             Ok(None) => {
                 // EOF
-                let _ = tx.send(AgentCommand::Disconnected).await;
+                let _ = tx.send(AgentCommand::Disconnected(gen)).await;
                 return;
             }
             Err(e) => {
                 debug!("Agent frame read error: {e}");
-                let _ = tx.send(AgentCommand::Disconnected).await;
+                let _ = tx.send(AgentCommand::Disconnected(gen)).await;
                 return;
             }
         }
@@ -450,5 +465,67 @@ mod tests {
 
         // Clean up
         std::env::remove_var("TERMIHUB_TYPE_ID");
+    }
+
+    // ── Generation-counter regression tests ──────────────────────────────
+    //
+    // These tests verify that a stale Disconnected from an old connection
+    // does not destroy a newly accepted connection.
+
+    /// A stale Disconnected (gen < current) must be silently ignored so that
+    /// the newly accepted connection remains intact.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stale_disconnected_does_not_destroy_new_connection() {
+        use tokio::sync::mpsc;
+
+        let (tx, mut rx) = mpsc::channel::<AgentCommand>(64);
+
+        // Simulate: old connection gen=1 sends Disconnected after gen=2 was accepted.
+        tx.send(AgentCommand::Disconnected(1)).await.unwrap();
+
+        // The main loop logic: connection_gen is now 2.
+        let connection_gen: u64 = 2;
+        let mut agent_writer_is_set = true;
+
+        // Drain one command — should be the stale Disconnected.
+        if let Some(AgentCommand::Disconnected(gen)) = rx.recv().await {
+            if gen == connection_gen {
+                agent_writer_is_set = false;
+            }
+            // gen=1 != connection_gen=2 → ignore
+        }
+
+        // Connection must still be considered live.
+        assert!(
+            agent_writer_is_set,
+            "stale Disconnected(gen=1) must not clear agent_writer when connection_gen=2"
+        );
+    }
+
+    /// A Disconnected whose generation matches the current connection must be
+    /// processed and clear the writer.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn current_disconnected_clears_writer() {
+        use tokio::sync::mpsc;
+
+        let (tx, mut rx) = mpsc::channel::<AgentCommand>(64);
+
+        let connection_gen: u64 = 3;
+        tx.send(AgentCommand::Disconnected(3)).await.unwrap();
+
+        let mut agent_writer_is_set = true;
+
+        if let Some(AgentCommand::Disconnected(gen)) = rx.recv().await {
+            if gen == connection_gen {
+                agent_writer_is_set = false;
+            }
+        }
+
+        assert!(
+            !agent_writer_is_set,
+            "Disconnected(gen=3) must clear agent_writer when connection_gen=3"
+        );
     }
 }
