@@ -167,11 +167,14 @@ pub fn deploy_agent(
         "Detecting remote system…",
         -1.0,
     );
-    let (_remote_os, remote_arch) = detect_remote_info(&session)?;
+    let (remote_os, remote_arch) = detect_remote_info(&session)?;
 
-    let arch_suffix = agent_binary::artifact_name_for_arch(&remote_arch).ok_or_else(|| {
-        TerminalError::RemoteError(format!("Unsupported remote architecture: {remote_arch}"))
-    })?;
+    let arch_suffix = agent_binary::artifact_name_for_os_arch(&remote_os, &remote_arch)
+        .ok_or_else(|| {
+            TerminalError::RemoteError(format!(
+                "Unsupported remote platform: {remote_os} {remote_arch}"
+            ))
+        })?;
 
     // 3. Resolve binary locally
     emit_progress(

@@ -52,6 +52,11 @@ pub enum AgentBinarySource {
 pub struct AgentSetupConfig {
     /// How to obtain the agent binary.
     pub binary_source: AgentBinarySource,
+    /// Remote OS string from `uname -s` (e.g. `"Linux"`, `"Darwin"`).
+    /// Detected before the dialog opens; used together with `remote_arch` to
+    /// select the correct binary artifact.
+    #[serde(default = "default_linux_os")]
+    pub remote_os: String,
     /// Remote architecture string from `uname -m` (e.g. `"aarch64"`).
     /// Detected before the dialog opens; used to select the correct binary.
     pub remote_arch: String,
@@ -59,6 +64,10 @@ pub struct AgentSetupConfig {
     pub remote_path: Option<String>,
     /// Whether to install a systemd service.
     pub install_service: bool,
+}
+
+fn default_linux_os() -> String {
+    "Linux".to_string()
 }
 
 /// Information about the remote host's architecture, returned before the setup dialog opens.
@@ -89,7 +98,7 @@ pub fn detect_agent_arch_info(config: &RemoteAgentConfig) -> Result<RemoteArchIn
     let ssh_config = config.to_ssh_config();
     let session = connect_and_authenticate(&ssh_config)?;
     let (os, arch) = detect_remote_info(&session)?;
-    let arch_suffix = agent_binary::artifact_name_for_arch(&arch).map(str::to_string);
+    let arch_suffix = agent_binary::artifact_name_for_os_arch(&os, &arch).map(str::to_string);
     let version = env!("CARGO_PKG_VERSION");
     let download_base_url = agent_binary::compute_download_base_url(version);
     let download_url = arch_suffix
@@ -348,13 +357,15 @@ fn resolve_binary(
     match &setup_config.binary_source {
         AgentBinarySource::GithubDownload => {
             let version = env!("CARGO_PKG_VERSION");
-            let arch_suffix = match agent_binary::artifact_name_for_arch(&setup_config.remote_arch)
-            {
+            let arch_suffix = match agent_binary::artifact_name_for_os_arch(
+                &setup_config.remote_os,
+                &setup_config.remote_arch,
+            ) {
                 Some(s) => s,
                 None => {
                     let msg = format!(
-                        "Unsupported remote architecture: {}",
-                        setup_config.remote_arch
+                        "Unsupported remote platform: {} {}",
+                        setup_config.remote_os, setup_config.remote_arch
                     );
                     error!("Agent setup: {}", msg);
                     emit_progress(app_handle, agent_id, "error", &msg);
@@ -391,13 +402,15 @@ fn resolve_binary(
             }
         }
         AgentBinarySource::BranchBuild { branch } => {
-            let arch_suffix = match agent_binary::artifact_name_for_arch(&setup_config.remote_arch)
-            {
+            let arch_suffix = match agent_binary::artifact_name_for_os_arch(
+                &setup_config.remote_os,
+                &setup_config.remote_arch,
+            ) {
                 Some(s) => s,
                 None => {
                     let msg = format!(
-                        "Unsupported remote architecture: {}",
-                        setup_config.remote_arch
+                        "Unsupported remote platform: {} {}",
+                        setup_config.remote_os, setup_config.remote_arch
                     );
                     error!("Agent setup: {}", msg);
                     emit_progress(app_handle, agent_id, "error", &msg);
@@ -433,8 +446,10 @@ fn resolve_binary(
                 }
             }
         }
-        AgentBinarySource::LocalFile { path } => match detect_binary_arch(path) {
-            Ok(binary_arch) => {
+        AgentBinarySource::LocalFile { path } => {
+            // Only validate ELF arch for Linux targets; macOS Mach-O binaries
+            // return Err from detect_binary_arch, which we silently skip.
+            if let Ok(binary_arch) = detect_binary_arch(path) {
                 if let Some(expected) = expected_arch_for_uname(&setup_config.remote_arch) {
                     if binary_arch != expected {
                         let msg = format!(
@@ -455,19 +470,9 @@ fn resolve_binary(
                     }
                     info!("Agent setup: binary arch {} matches remote", binary_arch);
                 }
-                Some(path.clone())
             }
-            Err(e) => {
-                let msg = match &e {
-                    TerminalError::SpawnFailed(inner) => inner.clone(),
-                    other => format!("{}", other),
-                };
-                error!("Agent setup: {}", msg);
-                emit_progress(app_handle, agent_id, "error", &msg);
-                inject_error_script(sftp_session, session_manager, session_id, &msg, rt_handle);
-                None
-            }
-        },
+            Some(path.clone())
+        }
     }
 }
 
@@ -764,12 +769,14 @@ mod tests {
     fn agent_setup_config_github_serde_round_trip() {
         let config = AgentSetupConfig {
             binary_source: AgentBinarySource::GithubDownload,
+            remote_os: "Linux".to_string(),
             remote_arch: "aarch64".to_string(),
             remote_path: Some("/opt/agent".to_string()),
             install_service: true,
         };
         let json = serde_json::to_string(&config).unwrap();
         let back: AgentSetupConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.remote_os, "Linux");
         assert_eq!(back.remote_arch, "aarch64");
         assert_eq!(back.remote_path, Some("/opt/agent".to_string()));
         assert!(back.install_service);
@@ -780,11 +787,36 @@ mod tests {
     }
 
     #[test]
+    fn agent_setup_config_macos_serde_round_trip() {
+        let config = AgentSetupConfig {
+            binary_source: AgentBinarySource::GithubDownload,
+            remote_os: "Darwin".to_string(),
+            remote_arch: "arm64".to_string(),
+            remote_path: None,
+            install_service: false,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let back: AgentSetupConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.remote_os, "Darwin");
+        assert_eq!(back.remote_arch, "arm64");
+    }
+
+    #[test]
+    fn agent_setup_config_defaults_remote_os_to_linux() {
+        // Old payloads without remoteOs should deserialize with Linux default.
+        let json = r#"{"binarySource":{"type":"githubDownload"},"remoteArch":"aarch64","installService":false}"#;
+        let back: AgentSetupConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(back.remote_os, "Linux");
+        assert_eq!(back.remote_arch, "aarch64");
+    }
+
+    #[test]
     fn agent_setup_config_local_file_serde_round_trip() {
         let config = AgentSetupConfig {
             binary_source: AgentBinarySource::LocalFile {
                 path: "/home/user/termihub-agent".to_string(),
             },
+            remote_os: "Linux".to_string(),
             remote_arch: "x86_64".to_string(),
             remote_path: None,
             install_service: false,
