@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Agent: macOS is now a supported agent target (`macos-arm64`, `macos-x64`). The desktop resolves the correct binary when connecting to a macOS remote host via SSH agent mode. The agent setup dialog shows macOS arch options when connecting to a Darwin host.
 - Agent: five local TCP integration tests (`cargo test -p termihub-agent --test local_agent_integration`) that spawn the agent in `--listen` mode on localhost — no SSH, no cross-compilation, no Raspberry Pi required. These make it fast to iterate on agent behavior on any dev machine (macOS, Linux, Windows).
+- Agent: six additional integration tests covering shell session lifecycle (create, attach, receive output, persist across client disconnect, reattach after reconnect) and persistent shell buffer replay — verifying that the daemon ring buffer is replayed correctly on same-connection reattach and after full TCP reconnect.
 - CI: macOS agent binaries are now built and published in all CI pipelines (agent PR checks, dev builds, releases) using native `macos-latest` runners. The `build-agents.sh` help text now documents macOS native build targets.
 
 ### Security
@@ -19,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Agent daemon: fixed a race condition where a stale `Disconnected` command queued by the old reader task could arrive after a new `connection.attach` was accepted, immediately closing the newly established connection with a broken pipe error. The fix drains the command channel after `abort_reader()` in both the detach handler and the new-connection handler.
 - Remote agents: when a connection attempt fails because the agent is already connected, the error dialog now shows a **Force Reconnect** button that drops the existing connection and immediately establishes a new one. Previously the dialog offered only "Close" with no way to recover without restarting the app.
 - Connections: deleting connections or agents while the master-password credential store is locked no longer silently fails. Previously, `delete_connection` and `delete_agent` used `?` on `remove_all_for_connection`, which returned an error when the store was locked and aborted the delete before writing to disk — leaving the connection in the file and making it reappear after restart. Credential cleanup is now best-effort; orphaned encrypted entries are harmless until the store is next unlocked.
 - Persistent sessions: after an agent disconnects and the user reconnects, clicking "Attach" now correctly re-connects the desktop to the surviving daemon process on the remote host. Previously the desktop-side session entry was cleaned up on disconnect but not restored on reconnect, so "Attach" would silently open and immediately close a blank tab due to a `SessionNotFound` error.

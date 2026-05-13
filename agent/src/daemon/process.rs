@@ -212,9 +212,14 @@ async fn daemon_loop(
                     Ok((stream, _)) => {
                         info!("Agent connected");
 
-                        // Drop the old connection
+                        // Drop the old connection and drain any stale commands
+                        // (e.g. Disconnected) that the old reader task queued
+                        // before it was aborted. Without draining, a stale
+                        // Disconnected arriving after the new connection is
+                        // accepted would immediately close that new connection.
                         agent_writer = None;
                         abort_reader(&mut reader_task);
+                        while agent_cmd_rx.try_recv().is_ok() {}
 
                         let (read_half, mut write_half) = stream.into_split();
 
@@ -273,6 +278,11 @@ async fn daemon_loop(
                         info!("Agent requested detach");
                         agent_writer = None;
                         abort_reader(&mut reader_task);
+                        // Drain any Disconnected queued by the reader before it
+                        // observed the abort. Without this, a stale Disconnected
+                        // arriving after the next connection.attach would close
+                        // the newly established daemon connection.
+                        while agent_cmd_rx.try_recv().is_ok() {}
                     }
                     Some(AgentCommand::Kill) => {
                         info!("Agent requested kill");
