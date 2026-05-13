@@ -697,6 +697,8 @@ export type AgentBinarySource =
 /** Configuration for setting up a remote agent. */
 export interface AgentSetupConfig {
   binarySource: AgentBinarySource;
+  /** Raw `uname -s` output detected before the dialog opened (e.g. `"Linux"`, `"Darwin"`). */
+  remoteOs: string;
   /** Raw `uname -m` output detected before the dialog opened. */
   remoteArch: string;
   remotePath?: string;
