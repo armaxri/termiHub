@@ -58,11 +58,21 @@ function getMaxLineCells(xterm: XTerm): number {
  * Width is at least the viewport width (fittedCols) so the scrollbar
  * only appears when content is actually wider.
  */
-function updateHorizontalScrollWidth(xterm: XTerm, fitAddon: FitAddon, container: HTMLElement) {
+function updateHorizontalScrollWidth(xterm: XTerm, fitAddon: FitAddon, _container: HTMLElement) {
   const dims = fitAddon.proposeDimensions();
   if (!dims || dims.cols <= 0) return;
 
-  const cellWidth = container.clientWidth / dims.cols;
+  // Use the actual rendered cell width from xterm's render service — the same
+  // source FitAddon uses internally. FitAddon already subtracted the scrollbar
+  // width from the available width before computing dims.cols, so using the
+  // true cell width here ensures targetWidth stays within the scrollbar-free
+  // area. Using container.clientWidth / dims.cols would produce a slightly
+  // inflated cell width (full width ÷ reduced cols), pushing targetWidth back
+  // to full container width and hiding content under the right-side scrollbar.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const cellWidth: number = (xterm as any)._core?._renderService?.dimensions?.css?.cell?.width;
+  if (!cellWidth || cellWidth <= 0) return;
+
   const contentCols = getMaxLineCells(xterm);
   const effectiveCols = Math.max(contentCols, dims.cols);
   const targetWidth = Math.ceil(effectiveCols * cellWidth);
