@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Parsed system statistics from a Linux host.
+/// Parsed system statistics from a local or remote host.
 ///
 /// Fields use `camelCase` serialization to match the JSON convention used
 /// by both the desktop frontend and the agent protocol.

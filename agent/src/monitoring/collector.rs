@@ -34,8 +34,8 @@ use termihub_core::monitoring::{parse_cpu_line, parse_meminfo_value};
 /// and `uname` as subprocesses. On macOS, uses `sysctl`, `vm_stat`,
 /// and `df`.
 pub struct LocalCollector {
-    // Used on Linux for delta-based CPU%, not used on macOS.
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    // Used on Linux and macOS for delta-based CPU%.
+    #[cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(dead_code))]
     prev_cpu: Option<CpuCounters>,
     /// Cached hostname (doesn't change at runtime).
     #[cfg_attr(not(unix), allow(dead_code))]
@@ -214,12 +214,14 @@ fn collect_macos(collector: &mut LocalCollector) -> Result<SystemStats> {
     // Uptime from kern.boottime
     let uptime_seconds = parse_macos_uptime();
 
-    // CPU: macOS doesn't have /proc/stat, use host_processor_info or
-    // fall back to a simplified approach via `top -l 1`
-    // For simplicity, we use sysctl kern.cp_time when available
-    let cpu_usage_percent = 0.0; // macOS CPU tracking is best-effort
-                                 // Note: delta-based CPU on macOS would require host_statistics() from mach,
-                                 // which is complex. We leave it at 0.0 for now (load average is available).
+    // CPU: delta-based tracking via kern.cp_time (fields: user nice sys intr idle)
+    let cp_time_str = run_command("sysctl", &["-n", "kern.cp_time"]).unwrap_or_default();
+    let cpu_counters = parse_macos_cp_time(cp_time_str.trim());
+    let cpu_usage_percent = match &collector.prev_cpu {
+        Some(prev) => cpu_percent_from_delta(prev, &cpu_counters),
+        None => 0.0,
+    };
+    collector.prev_cpu = Some(cpu_counters);
 
     // Disk
     let df_output = run_command("df", &["-Pk", "/"]).unwrap_or_default();
@@ -253,7 +255,29 @@ fn parse_macos_loadavg(output: &str) -> [f64; 3] {
     ]
 }
 
+/// Parse macOS CPU ticks from `sysctl -n kern.cp_time`.
+/// Output format: "user nice sys intr idle" (5 space-separated u64 values).
+#[cfg(target_os = "macos")]
+fn parse_macos_cp_time(output: &str) -> CpuCounters {
+    let mut parts = output
+        .split_whitespace()
+        .filter_map(|s| s.parse::<u64>().ok());
+    CpuCounters {
+        user: parts.next().unwrap_or(0),
+        nice: parts.next().unwrap_or(0),
+        system: parts.next().unwrap_or(0),
+        irq: parts.next().unwrap_or(0),
+        idle: parts.next().unwrap_or(0),
+        iowait: 0,
+        softirq: 0,
+        steal: 0,
+    }
+}
+
 /// Parse available memory from macOS `vm_stat` output.
+///
+/// Counts free + speculative + inactive + purgeable pages — matching what
+/// Activity Monitor reports as available (pages the OS can reclaim on demand).
 /// Returns available memory in KB.
 #[cfg(target_os = "macos")]
 fn parse_macos_vm_stat_available(output: &str) -> u64 {
@@ -264,16 +288,22 @@ fn parse_macos_vm_stat_available(output: &str) -> u64 {
 
     let mut free_pages: u64 = 0;
     let mut speculative_pages: u64 = 0;
+    let mut inactive_pages: u64 = 0;
+    let mut purgeable_pages: u64 = 0;
 
     for line in output.lines() {
         if line.starts_with("Pages free:") {
             free_pages = extract_vm_stat_value(line);
         } else if line.starts_with("Pages speculative:") {
             speculative_pages = extract_vm_stat_value(line);
+        } else if line.starts_with("Pages inactive:") {
+            inactive_pages = extract_vm_stat_value(line);
+        } else if line.starts_with("Pages purgeable:") {
+            purgeable_pages = extract_vm_stat_value(line);
         }
     }
 
-    (free_pages + speculative_pages) * page_size / 1024
+    (free_pages + speculative_pages + inactive_pages + purgeable_pages) * page_size / 1024
 }
 
 /// Extract the numeric value from a vm_stat line like `"Pages free:                             1234."`.
@@ -489,5 +519,53 @@ Filesystem     1024-blocks      Used Available Capacity Mounted on
             12345
         );
         assert_eq!(extract_vm_stat_value("Pages free:   0."), 0);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn extract_vm_stat_value_inactive_and_purgeable() {
+        assert_eq!(
+            extract_vm_stat_value("Pages inactive:                          5678."),
+            5678
+        );
+        assert_eq!(
+            extract_vm_stat_value("Pages purgeable:                         1234."),
+            1234
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn parse_macos_cp_time_basic() {
+        let counters = parse_macos_cp_time("1000 200 300 50 8450");
+        assert_eq!(counters.user, 1000);
+        assert_eq!(counters.nice, 200);
+        assert_eq!(counters.system, 300);
+        assert_eq!(counters.irq, 50);
+        assert_eq!(counters.idle, 8450);
+        assert_eq!(counters.iowait, 0);
+        assert_eq!(counters.softirq, 0);
+        assert_eq!(counters.steal, 0);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn parse_macos_cp_time_empty() {
+        let counters = parse_macos_cp_time("");
+        assert_eq!(counters.user, 0);
+        assert_eq!(counters.idle, 0);
+        assert_eq!(counters.total(), 0);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn parse_macos_cp_time_partial() {
+        // Only 3 fields — remaining fields default to 0
+        let counters = parse_macos_cp_time("500 100 200");
+        assert_eq!(counters.user, 500);
+        assert_eq!(counters.nice, 100);
+        assert_eq!(counters.system, 200);
+        assert_eq!(counters.irq, 0);
+        assert_eq!(counters.idle, 0);
     }
 }
