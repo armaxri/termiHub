@@ -8,6 +8,13 @@ use ssh2::Session;
 use crate::terminal::backend::SshConfig;
 use crate::utils::errors::TerminalError;
 
+/// Timeout applied to all blocking libssh2 operations (ms).
+///
+/// Covers handshake, channel open, exec, read, and SFTP init. Without this,
+/// libssh2's internal select() loops run indefinitely regardless of the
+/// TCP-level read/write timeouts set on the underlying socket.
+const SSH_OP_TIMEOUT_MS: u32 = 30_000;
+
 /// Connect to an SSH server, perform handshake, and authenticate.
 ///
 /// Returns an authenticated `Session` in blocking mode.
@@ -29,6 +36,13 @@ pub fn connect_and_authenticate(config: &SshConfig) -> Result<Session, TerminalE
         .map_err(|e| TerminalError::SshError(format!("Read timeout setup failed: {e}")))?;
 
     let mut session = Session::new().map_err(|e| TerminalError::SshError(e.to_string()))?;
+
+    // Apply a libssh2-level timeout so that all blocking operations (handshake,
+    // channel open, exec, read, sftp init) give up after this deadline rather
+    // than hanging forever. The TCP-level read/write timeouts set above only
+    // bound individual recv()/send() syscalls; libssh2's internal select() loops
+    // in blocking mode are unaffected by them without this call.
+    session.set_timeout(SSH_OP_TIMEOUT_MS);
 
     session.set_tcp_stream(tcp);
     session

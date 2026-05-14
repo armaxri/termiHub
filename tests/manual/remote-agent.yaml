@@ -100,3 +100,19 @@ tests:
       - "As soon as the agent transitions to 'connected', the session starts automatically"
       - "The overlay disappears and normal terminal output appears without any user action"
     verification: manual
+
+  # --- Agent setup SSH timeout fix (bugfix/agent-setup-ssh-timeout-hang) ---
+
+  - id: MT-AGENT-12
+    name: "Agent update dialog does not hang when SSH is unresponsive"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Configure an agent whose SSH host is reachable at TCP level but unresponsive (e.g. firewall drops packets after connect, or the SSH daemon is frozen)"
+      - "Open the Setup Agent dialog for that agent (Settings wheel → Setup Agent)"
+      - "Observe the 'Connecting and detecting architecture…' phase"
+    expected:
+      - "The dialog does not hang indefinitely — after ~30 seconds it displays an error message (SSH timeout or similar)"
+      - "The UI remains responsive; no restart of the app is required"
+    verification: manual
