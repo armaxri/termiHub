@@ -182,9 +182,9 @@ pub fn build_shell_command(config: &ShellConfig) -> ShellCommand {
 ///   paths; injected visibly via the WSL temp-file source mechanism.
 /// - `"ssh"` — OSC 7, SSH variant: no `/mnt/` guard; injected visibly via
 ///   stdin.
-/// - `"bash"` / `"gitbash"` / `"zsh"` — OSC 7; the hook detects zsh via
-///   `$ZSH_VERSION` and uses `precmd_functions`, falls back to bash's
-///   `PROMPT_COMMAND`; injected visibly via stdin.
+/// - `"bash"` / `"gitbash"` / `"zsh"` — OSC 7; uses `if [ -n "$ZSH_VERSION" ]`
+///   to route zsh to `precmd_functions` and bash to `PROMPT_COMMAND`;
+///   injected visibly via stdin.
 /// - `"powershell"` — OSC 9;9: overrides the `prompt` function; injected via
 ///   `-NoExit -Command` startup args (not stdin) to avoid echo.
 /// - `"cmd"` — OSC 9;9: sets the `PROMPT` variable via `/K` startup arg
@@ -321,15 +321,19 @@ pub fn initial_command_strategy(
 /// since WSL defaults to the Windows user directory which is inaccessible
 /// through the `\\wsl$\` UNC share.
 ///
-/// Prints a visible notice so the user knows what termiHub is doing.
+/// Uses `if [ -n "$ZSH_VERSION" ]; then ... else ... fi` for the same reason
+/// as [`bash_osc7_command()`] — see that function's doc for the rationale.
 /// Injected via the WSL temp-file source mechanism in `wsl.rs`.
 fn wsl_osc7_command() -> &'static str {
     concat!(
         r#"echo '# [termiHub] Shell integration: setting up OSC 7 CWD tracking'; "#,
         r#"case "$PWD" in /mnt/[a-z]|/mnt/[a-z]/*) cd;; esac; "#,
         r#"__termihub_osc7(){ printf '\e]7;file://%s\a' "$PWD"; }; "#,
-        r#"[ "$ZSH_VERSION" ] && precmd_functions+=(__termihub_osc7) || "#,
-        r#"PROMPT_COMMAND="__termihub_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}""#,
+        r#"if [ -n "$ZSH_VERSION" ]; then "#,
+        r#"precmd_functions+=(__termihub_osc7); "#,
+        r#"else "#,
+        r#"PROMPT_COMMAND="__termihub_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}"; "#,
+        r#"fi"#,
     )
 }
 
@@ -339,15 +343,20 @@ fn wsl_osc7_command() -> &'static str {
 /// for `/mnt/` paths. Supports both bash (`PROMPT_COMMAND`) and zsh
 /// (`precmd_functions`).
 ///
-/// Prints a visible notice so the user knows what termiHub is doing.
-/// Injected visibly via stdin — the shell echoes the command and then the
-/// `echo` output appears before the next prompt.
+/// Uses `if/else/fi` to isolate the ZSH and bash code paths. The former
+/// `&&...||` form was unsafe: if `precmd_functions+=` returned non-zero,
+/// the `||` fallback would set PROMPT_COMMAND. In ZSH, `${PROMPT_COMMAND:+…}`
+/// inside a double-quoted string could produce unbalanced quotes (when the
+/// variable contains `"`), leaving the shell at the `>` secondary prompt.
 fn bash_osc7_command() -> &'static str {
     concat!(
         r#"echo '# [termiHub] Shell integration: setting up OSC 7 CWD tracking'; "#,
         r#"__termihub_osc7(){ printf '\e]7;file://%s\a' "$PWD"; }; "#,
-        r#"[ "$ZSH_VERSION" ] && precmd_functions+=(__termihub_osc7) || "#,
-        r#"PROMPT_COMMAND="__termihub_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}""#,
+        r#"if [ -n "$ZSH_VERSION" ]; then "#,
+        r#"precmd_functions+=(__termihub_osc7); "#,
+        r#"else "#,
+        r#"PROMPT_COMMAND="__termihub_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}"; "#,
+        r#"fi"#,
     )
 }
 
@@ -853,6 +862,45 @@ mod tests {
         assert!(
             setup.contains("precmd_functions"),
             "expected zsh precmd_functions hook, got: {setup}"
+        );
+    }
+
+    /// Regression: ZSH must not reach the PROMPT_COMMAND assignment.
+    ///
+    /// Previously, the script used `[ "$ZSH_VERSION" ] && precmd_functions+=... || PROMPT_COMMAND=...`.
+    /// If `precmd_functions+=` returned non-zero for any reason, the `||` fallback
+    /// would set PROMPT_COMMAND to a string that could contain unbalanced double quotes
+    /// (from `${PROMPT_COMMAND:+;$PROMPT_COMMAND}` expansion), leaving ZSH at the `>`
+    /// secondary prompt with no way to type.
+    ///
+    /// The fix uses `if...else...fi` so PROMPT_COMMAND is only set in the bash branch.
+    #[test]
+    fn osc7_zsh_uses_if_else_not_and_or_for_precmd() {
+        let setup = osc7_setup_command("zsh").expect("expected Some for zsh");
+
+        assert!(
+            setup.contains("if [") || setup.contains("if["),
+            "ZSH setup must use if statement (not &&/||): {setup}"
+        );
+
+        // precmd_functions must be in the then-branch (before else)
+        let else_pos = setup.find("else").unwrap_or(setup.len());
+        let then_part = &setup[..else_pos];
+        let else_part = &setup[else_pos..];
+
+        assert!(
+            then_part.contains("precmd_functions"),
+            "precmd_functions must be in the then-branch (before else): {setup}"
+        );
+
+        // PROMPT_COMMAND must only appear in the else-branch (bash path)
+        assert!(
+            !then_part.contains("PROMPT_COMMAND"),
+            "PROMPT_COMMAND must NOT be reachable in ZSH (then-branch): {setup}"
+        );
+        assert!(
+            else_part.contains("PROMPT_COMMAND"),
+            "PROMPT_COMMAND must be in the else-branch (bash-only path): {setup}"
         );
     }
 
