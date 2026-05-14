@@ -17,15 +17,22 @@ use tracing::{debug, info, warn};
 /// GitHub repository for release downloads.
 const GITHUB_REPO: &str = "armaxri/termiHub";
 
-/// Map a `uname -m` architecture string to the artifact suffix we use.
+/// Map a `uname -s` OS string and `uname -m` architecture string to the artifact suffix we use.
 ///
-/// Returns `None` for unsupported architectures.
-pub fn artifact_name_for_arch(uname_arch: &str) -> Option<&'static str> {
-    match uname_arch {
-        "x86_64" | "amd64" => Some("linux-x64"),
-        "aarch64" | "arm64" => Some("linux-arm64"),
-        "armv7l" | "armhf" => Some("linux-armv7"),
-        _ => None,
+/// Returns `None` for unsupported OS/architecture combinations.
+pub fn artifact_name_for_os_arch(uname_os: &str, uname_arch: &str) -> Option<&'static str> {
+    match uname_os {
+        "Darwin" => match uname_arch {
+            "x86_64" | "amd64" => Some("macos-x64"),
+            "aarch64" | "arm64" => Some("macos-arm64"),
+            _ => None,
+        },
+        _ => match uname_arch {
+            "x86_64" | "amd64" => Some("linux-x64"),
+            "aarch64" | "arm64" => Some("linux-arm64"),
+            "armv7l" | "armhf" => Some("linux-armv7"),
+            _ => None,
+        },
     }
 }
 
@@ -342,27 +349,74 @@ mod tests {
     use super::*;
 
     #[test]
-    fn artifact_name_x86_64() {
-        assert_eq!(artifact_name_for_arch("x86_64"), Some("linux-x64"));
-        assert_eq!(artifact_name_for_arch("amd64"), Some("linux-x64"));
+    fn artifact_name_linux_x86_64() {
+        assert_eq!(
+            artifact_name_for_os_arch("Linux", "x86_64"),
+            Some("linux-x64")
+        );
+        assert_eq!(
+            artifact_name_for_os_arch("Linux", "amd64"),
+            Some("linux-x64")
+        );
     }
 
     #[test]
-    fn artifact_name_aarch64() {
-        assert_eq!(artifact_name_for_arch("aarch64"), Some("linux-arm64"));
-        assert_eq!(artifact_name_for_arch("arm64"), Some("linux-arm64"));
+    fn artifact_name_linux_aarch64() {
+        assert_eq!(
+            artifact_name_for_os_arch("Linux", "aarch64"),
+            Some("linux-arm64")
+        );
+        assert_eq!(
+            artifact_name_for_os_arch("Linux", "arm64"),
+            Some("linux-arm64")
+        );
     }
 
     #[test]
-    fn artifact_name_armv7() {
-        assert_eq!(artifact_name_for_arch("armv7l"), Some("linux-armv7"));
-        assert_eq!(artifact_name_for_arch("armhf"), Some("linux-armv7"));
+    fn artifact_name_linux_armv7() {
+        assert_eq!(
+            artifact_name_for_os_arch("Linux", "armv7l"),
+            Some("linux-armv7")
+        );
+        assert_eq!(
+            artifact_name_for_os_arch("Linux", "armhf"),
+            Some("linux-armv7")
+        );
     }
 
     #[test]
-    fn artifact_name_unknown() {
-        assert_eq!(artifact_name_for_arch("mips"), None);
-        assert_eq!(artifact_name_for_arch(""), None);
+    fn artifact_name_macos() {
+        assert_eq!(
+            artifact_name_for_os_arch("Darwin", "arm64"),
+            Some("macos-arm64")
+        );
+        assert_eq!(
+            artifact_name_for_os_arch("Darwin", "aarch64"),
+            Some("macos-arm64")
+        );
+        assert_eq!(
+            artifact_name_for_os_arch("Darwin", "x86_64"),
+            Some("macos-x64")
+        );
+        assert_eq!(
+            artifact_name_for_os_arch("Darwin", "amd64"),
+            Some("macos-x64")
+        );
+    }
+
+    #[test]
+    fn artifact_name_unknown_falls_back_to_linux() {
+        assert_eq!(
+            artifact_name_for_os_arch("FreeBSD", "x86_64"),
+            Some("linux-x64")
+        );
+    }
+
+    #[test]
+    fn artifact_name_unknown_arch() {
+        assert_eq!(artifact_name_for_os_arch("Linux", "mips"), None);
+        assert_eq!(artifact_name_for_os_arch("Linux", ""), None);
+        assert_eq!(artifact_name_for_os_arch("Darwin", "mips"), None);
     }
 
     #[test]

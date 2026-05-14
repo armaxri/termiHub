@@ -29,9 +29,11 @@ type DialogPhase =
 
 /** Supported target architectures for GitHub downloads. */
 const ARCH_OPTIONS = [
-  { suffix: "linux-x64", uname: "x86_64", label: "linux-x64 (x86_64)" },
-  { suffix: "linux-arm64", uname: "aarch64", label: "linux-arm64 (aarch64)" },
-  { suffix: "linux-armv7", uname: "armv7l", label: "linux-armv7 (armv7l)" },
+  { suffix: "linux-x64", uname: "x86_64", os: "Linux", label: "linux-x64 (x86_64)" },
+  { suffix: "linux-arm64", uname: "aarch64", os: "Linux", label: "linux-arm64 (aarch64)" },
+  { suffix: "linux-armv7", uname: "armv7l", os: "Linux", label: "linux-armv7 (armv7l)" },
+  { suffix: "macos-x64", uname: "x86_64", os: "Darwin", label: "macos-x64 (x86_64)" },
+  { suffix: "macos-arm64", uname: "arm64", os: "Darwin", label: "macos-arm64 (arm64)" },
 ] as const;
 
 type ArchSuffix = (typeof ARCH_OPTIONS)[number]["suffix"];
@@ -119,6 +121,7 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
     setSubmitError(null);
 
     const archOption = ARCH_OPTIONS.find((o) => o.suffix === selectedArch);
+    const remoteOs = archOption?.os ?? phase.archInfo.os;
     const remoteArch = archOption?.uname ?? phase.archInfo.arch;
 
     try {
@@ -131,6 +134,7 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
 
       const result = await setupRemoteAgent(agent.id, configRef.current, {
         binarySource: binarySourcePayload,
+        remoteOs,
         remoteArch,
         remotePath,
         installService,

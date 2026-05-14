@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# Cross-compile the remote agent (termihub-agent) for Linux targets (musl, static).
-# Uses cross-rs for all targets. Multiple targets are built in parallel by default,
-# each in its own CARGO_TARGET_DIR to avoid cargo's workspace build lock.
+# Build the remote agent (termihub-agent) for Linux and macOS targets.
+# Linux targets use cross-rs (static musl). macOS targets use native cargo.
+# Multiple targets are built in parallel by default, each in its own
+# CARGO_TARGET_DIR to avoid cargo's workspace build lock.
 #
 # Usage: ./scripts/build-agents.sh [--targets <list>] [--sequential] [--native] [--dev] [--help]
 #
-# Run ./scripts/setup-agent-cross.sh first to install required toolchains (not needed for --native).
+# Run ./scripts/setup-agent-cross.sh first for Linux cross-compilation
+# (not needed for --native or for macOS native builds).
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
@@ -45,30 +47,36 @@ while [[ $# -gt 0 ]]; do
             cat <<'USAGE'
 Usage: build-agents.sh [OPTIONS]
 
-Cross-compile the remote agent for Linux targets (static musl binaries).
+Build the remote agent for Linux and macOS targets.
+Linux builds use cross-rs (static musl). macOS uses native cargo.
 Multiple targets are built in parallel by default.
 
 Options:
-  --targets <list>   Comma-separated list of targets to build (default: all, or host for --native)
+  --targets <list>   Comma-separated list of targets to build (default: all Linux
+                     targets in cross-rs mode; host triple in --native mode)
   --sequential       Build targets one at a time (useful for debugging)
   --native           Build using the local cargo toolchain instead of cross-rs/Docker.
-                     Defaults to the host target triple. Faster for local development on
-                     the target machine; no container runtime required.
+                     Defaults to the host target triple. Faster for local development;
+                     no container runtime required. Required for macOS targets.
   --dev              Build in debug profile (omits --release). Much faster to compile;
                      binary lands in target/<triple>/debug/ instead of release/.
   --help, -h         Show this help message
 
-Targets (cross-rs mode only):
+Linux targets (cross-rs mode, require setup-agent-cross.sh):
   x86_64-unknown-linux-musl       Static x64 binaries (musl)
   aarch64-unknown-linux-musl      Static ARM64 binaries (musl)
   armv7-unknown-linux-musleabihf  Static ARMv7 binaries (musl, older Raspberry Pi)
 
+macOS targets (--native only, build on a Mac):
+  aarch64-apple-darwin            Apple Silicon (M1/M2/M3/M4)
+  x86_64-apple-darwin             Intel Mac
+
 Examples:
-  ./scripts/build-agents.sh
+  ./scripts/build-agents.sh                                   # all Linux targets
   ./scripts/build-agents.sh --targets aarch64-unknown-linux-musl
   ./scripts/build-agents.sh --sequential
-  ./scripts/build-agents.sh --native --dev
-  ./scripts/build-agents.sh --native --targets aarch64-unknown-linux-gnu
+  ./scripts/build-agents.sh --native --dev                    # current host (fast)
+  ./scripts/build-agents.sh --native --targets aarch64-apple-darwin  # macOS ARM64
 USAGE
             exit 0
             ;;

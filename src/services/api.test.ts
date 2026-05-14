@@ -787,6 +787,7 @@ describe("api service", () => {
       };
       const setupConfig = {
         binarySource: { type: "githubDownload" as const },
+        remoteOs: "Linux",
         remoteArch: "aarch64",
         remotePath: "/usr/local/bin/termihub-agent",
         installService: false,
@@ -812,6 +813,7 @@ describe("api service", () => {
       };
       const setupConfig = {
         binarySource: { type: "localFile" as const, path: "/tmp/agent" },
+        remoteOs: "Linux",
         remoteArch: "x86_64",
         installService: false,
       };
@@ -835,6 +837,7 @@ describe("api service", () => {
           },
           {
             binarySource: { type: "githubDownload" },
+            remoteOs: "Linux",
             remoteArch: "x86_64",
             installService: false,
           }

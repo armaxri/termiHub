@@ -229,6 +229,7 @@ async fn daemon_loop(
                         // Drop the old connection
                         agent_writer = None;
                         abort_reader(&mut reader_task);
+                        while agent_cmd_rx.try_recv().is_ok() {}
 
                         let (read_half, mut write_half) = stream.into_split();
 
