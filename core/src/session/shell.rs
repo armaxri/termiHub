@@ -321,7 +321,8 @@ pub fn initial_command_strategy(
 /// since WSL defaults to the Windows user directory which is inaccessible
 /// through the `\\wsl$\` UNC share.
 ///
-/// Prints a visible notice so the user knows what termiHub is doing.
+/// Uses `if [ -n "$ZSH_VERSION" ]; then ... else ... fi` for the same reason
+/// as [`bash_osc7_command()`] — see that function's doc for the rationale.
 /// Injected via the WSL temp-file source mechanism in `wsl.rs`.
 fn wsl_osc7_command() -> &'static str {
     concat!(
@@ -347,10 +348,6 @@ fn wsl_osc7_command() -> &'static str {
 /// the `||` fallback would set PROMPT_COMMAND. In ZSH, `${PROMPT_COMMAND:+…}`
 /// inside a double-quoted string could produce unbalanced quotes (when the
 /// variable contains `"`), leaving the shell at the `>` secondary prompt.
-///
-/// Prints a visible notice so the user knows what termiHub is doing.
-/// Injected visibly via stdin — the shell echoes the command and then the
-/// `echo` output appears before the next prompt.
 fn bash_osc7_command() -> &'static str {
     concat!(
         r#"echo '# [termiHub] Shell integration: setting up OSC 7 CWD tracking'; "#,
@@ -881,7 +878,6 @@ mod tests {
     fn osc7_zsh_uses_if_else_not_and_or_for_precmd() {
         let setup = osc7_setup_command("zsh").expect("expected Some for zsh");
 
-        // Must use if/else/fi, not &&...||
         assert!(
             setup.contains("if [") || setup.contains("if["),
             "ZSH setup must use if statement (not &&/||): {setup}"
