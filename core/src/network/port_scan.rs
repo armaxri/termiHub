@@ -144,6 +144,32 @@ async fn probe_port(host: &str, port: u16, timeout: Duration) -> PortScanResult 
     }
 }
 
+/// Maximum number of expanded targets accepted from a target spec.
+///
+/// Guards against accidental large scans (e.g. someone pasting `0.0.0.0/0`).
+/// `/16` already expands to 65 534 hosts — anything above that is almost
+/// certainly a mistake and would risk creating a denial-of-service
+/// situation on the local network.
+pub const MAX_EXPANDED_TARGETS: usize = 65_536;
+
+/// Parse a human-readable target specification into a list of hostnames / IPs.
+///
+/// Accepted formats (comma-separated, mixed freely):
+/// - Single hostname: `"example.com"`
+/// - Single IPv4 / IPv6: `"192.168.1.1"`, `"::1"`
+/// - CIDR (IPv4 or IPv6): `"192.168.0.0/24"`, `"2001:db8::/120"`
+///
+/// CIDR ranges expand to their host addresses (network and broadcast
+/// addresses are excluded for IPv4 prefixes shorter than `/31`). Returns
+/// [`NetworkError::InvalidParameter`] if any token is malformed, the spec
+/// is empty, or the expansion exceeds [`MAX_EXPANDED_TARGETS`].
+pub fn parse_target_spec(_spec: &str) -> Result<Vec<String>, NetworkError> {
+    // Stub — implementation lands in the next commit (TDD red phase).
+    Err(NetworkError::InvalidParameter(
+        "parse_target_spec is not yet implemented".into(),
+    ))
+}
+
 /// Parse a human-readable port specification into a list of port numbers.
 ///
 /// Accepted formats:
@@ -235,6 +261,111 @@ mod tests {
     #[test]
     fn parse_empty_spec() {
         assert!(parse_port_spec("").is_err());
+    }
+
+    // ── parse_target_spec ────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_target_single_ipv4() {
+        assert_eq!(
+            parse_target_spec("192.168.1.10").unwrap(),
+            vec!["192.168.1.10".to_string()]
+        );
+    }
+
+    #[test]
+    fn parse_target_single_ipv6() {
+        assert_eq!(
+            parse_target_spec("::1").unwrap(),
+            vec!["::1".to_string()]
+        );
+    }
+
+    #[test]
+    fn parse_target_hostname_passthrough() {
+        // Hostnames are not parseable as IPs and must pass through unchanged
+        // for downstream DNS resolution.
+        assert_eq!(
+            parse_target_spec("example.com").unwrap(),
+            vec!["example.com".to_string()]
+        );
+    }
+
+    #[test]
+    fn parse_target_ipv4_cidr_slash_30() {
+        // /30 contains 4 addresses; .hosts() returns the 2 usable host
+        // addresses (network + broadcast excluded).
+        let result = parse_target_spec("192.168.1.0/30").unwrap();
+        assert_eq!(result, vec!["192.168.1.1", "192.168.1.2"]);
+    }
+
+    #[test]
+    fn parse_target_ipv4_cidr_slash_31() {
+        // /31 (RFC 3021) — both addresses are usable.
+        let result = parse_target_spec("192.168.1.0/31").unwrap();
+        assert_eq!(result, vec!["192.168.1.0", "192.168.1.1"]);
+    }
+
+    #[test]
+    fn parse_target_ipv4_cidr_slash_32() {
+        // /32 — single host.
+        let result = parse_target_spec("10.0.0.5/32").unwrap();
+        assert_eq!(result, vec!["10.0.0.5"]);
+    }
+
+    #[test]
+    fn parse_target_ipv4_cidr_slash_24_size() {
+        // /24 expands to 254 usable hosts.
+        let result = parse_target_spec("192.168.0.0/24").unwrap();
+        assert_eq!(result.len(), 254);
+        assert_eq!(result.first().unwrap(), "192.168.0.1");
+        assert_eq!(result.last().unwrap(), "192.168.0.254");
+    }
+
+    #[test]
+    fn parse_target_ipv6_cidr() {
+        // /126 has 4 addresses; for IPv6 `.hosts()` returns all of them.
+        let result = parse_target_spec("2001:db8::/126").unwrap();
+        assert_eq!(result.len(), 4);
+        assert!(result.iter().any(|h| h == "2001:db8::"));
+    }
+
+    #[test]
+    fn parse_target_mixed_comma_list() {
+        let result = parse_target_spec("192.168.1.1, 10.0.0.0/30, example.com").unwrap();
+        // 1 (single) + 2 (/30 hosts) + 1 (hostname) = 4
+        assert_eq!(result.len(), 4);
+        assert_eq!(result[0], "192.168.1.1");
+        assert_eq!(result[1], "10.0.0.1");
+        assert_eq!(result[2], "10.0.0.2");
+        assert_eq!(result[3], "example.com");
+    }
+
+    #[test]
+    fn parse_target_empty_spec_errors() {
+        assert!(parse_target_spec("").is_err());
+        assert!(parse_target_spec("  ").is_err());
+        assert!(parse_target_spec(",,").is_err());
+    }
+
+    #[test]
+    fn parse_target_invalid_cidr_errors() {
+        assert!(parse_target_spec("192.168.1.0/33").is_err());
+        assert!(parse_target_spec("999.999.999.0/24").is_err());
+    }
+
+    #[test]
+    fn parse_target_too_large_cidr_errors() {
+        // /8 = 16 777 214 hosts → exceeds MAX_EXPANDED_TARGETS.
+        let err = parse_target_spec("10.0.0.0/8").unwrap_err();
+        assert!(matches!(err, NetworkError::InvalidParameter(_)));
+    }
+
+    #[test]
+    fn parse_target_skips_empty_tokens() {
+        // Leading/trailing/extra commas should be tolerated.
+        let result = parse_target_spec(",192.168.1.1,,10.0.0.1,").unwrap();
+        assert_eq!(result, vec!["192.168.1.1", "10.0.0.1"]);
     }
 
     #[tokio::test]
