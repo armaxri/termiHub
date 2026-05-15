@@ -346,10 +346,7 @@ mod tests {
 
     #[test]
     fn parse_target_single_ipv6() {
-        assert_eq!(
-            parse_target_spec("::1").unwrap(),
-            vec!["::1".to_string()]
-        );
+        assert_eq!(parse_target_spec("::1").unwrap(), vec!["::1".to_string()]);
     }
 
     #[test]
