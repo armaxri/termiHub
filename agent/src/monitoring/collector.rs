@@ -10,6 +10,7 @@ use std::io::Read;
 use std::net::TcpStream;
 
 use anyhow::{bail, Context, Result};
+use sysinfo::{Disks, System};
 use tracing::debug;
 
 use crate::protocol::methods::SshSessionConfig;
@@ -18,339 +19,132 @@ use crate::protocol::methods::SshSessionConfig;
 pub use termihub_core::monitoring::StatsCollector;
 
 use termihub_core::errors::CoreError;
-#[cfg(any(unix, test))]
-use termihub_core::monitoring::parse_df_output;
 use termihub_core::monitoring::{
     cpu_percent_from_delta, parse_stats, CpuCounters, SystemStats, MONITORING_COMMAND,
 };
-#[cfg(target_os = "linux")]
-use termihub_core::monitoring::{parse_cpu_line, parse_meminfo_value};
 
 // ── Local collector ─────────────────────────────────────────────────
 
-/// Collects system statistics from the agent's own host.
+/// Collects system statistics from the agent's own host using the `sysinfo` crate.
 ///
-/// On Linux, reads `/proc/*` files directly and runs `df`, `hostname`,
-/// and `uname` as subprocesses. On macOS, uses `sysctl`, `vm_stat`,
-/// and `df`.
+/// Cross-platform: works on Linux, macOS, Windows, and any other platform
+/// supported by `sysinfo`. The `System` instance is kept alive between polls
+/// so that `global_cpu_usage()` can compute delta-based percentages correctly.
 pub struct LocalCollector {
-    // Used on Linux and macOS for delta-based CPU%.
-    #[cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(dead_code))]
-    prev_cpu: Option<CpuCounters>,
-    /// Cached hostname (doesn't change at runtime).
-    #[cfg_attr(not(unix), allow(dead_code))]
-    cached_hostname: Option<String>,
-    /// Cached OS info (doesn't change at runtime).
-    #[cfg_attr(not(unix), allow(dead_code))]
-    cached_os_info: Option<String>,
+    sys: System,
+    cached_hostname: String,
+    cached_os_info: String,
 }
 
 impl LocalCollector {
     pub fn new() -> Self {
+        let mut sys = System::new();
+        // Prime the CPU counters so the first real `collect()` call returns a
+        // meaningful delta rather than 0 %.
+        sys.refresh_cpu_usage();
+
+        let hostname = System::host_name().unwrap_or_else(|| "unknown".to_string());
+        let os_info = System::long_os_version()
+            .or_else(|| {
+                let name = System::name()?;
+                let ver = System::os_version().unwrap_or_default();
+                Some(if ver.is_empty() {
+                    name
+                } else {
+                    format!("{name} {ver}")
+                })
+            })
+            .unwrap_or_else(|| "Unknown OS".to_string());
+
         Self {
-            prev_cpu: None,
-            cached_hostname: None,
-            cached_os_info: None,
+            sys,
+            cached_hostname: hostname,
+            cached_os_info: os_info,
         }
     }
+}
 
-    #[cfg(unix)]
-    fn hostname(&mut self) -> String {
-        if let Some(ref h) = self.cached_hostname {
-            return h.clone();
-        }
-        let h = run_command("hostname", &[]).unwrap_or_else(|_| "unknown".to_string());
-        let h = h.trim().to_string();
-        self.cached_hostname = Some(h.clone());
-        h
-    }
-
-    #[cfg(unix)]
-    fn os_info(&mut self) -> String {
-        if let Some(ref o) = self.cached_os_info {
-            return o.clone();
-        }
-        let o = run_command("uname", &["-sr"]).unwrap_or_default();
-        let o = o.trim().to_string();
-        self.cached_os_info = Some(o.clone());
-        o
+impl Default for LocalCollector {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
 impl StatsCollector for LocalCollector {
-    #[cfg(target_os = "linux")]
     fn collect(&mut self, _host_label: &str) -> Result<SystemStats, CoreError> {
-        collect_linux(self).map_err(|e| CoreError::Other(e.to_string()))
-    }
+        self.sys.refresh_cpu_usage();
+        self.sys.refresh_memory();
 
-    #[cfg(target_os = "macos")]
-    fn collect(&mut self, _host_label: &str) -> Result<SystemStats, CoreError> {
-        collect_macos(self).map_err(|e| CoreError::Other(e.to_string()))
-    }
+        let disks = Disks::new_with_refreshed_list();
 
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    fn collect(&mut self, _host_label: &str) -> Result<SystemStats, CoreError> {
-        Err(CoreError::Other(
-            "Local monitoring is not supported on this platform".to_string(),
-        ))
-    }
-}
+        let cpu_usage_percent = self.sys.global_cpu_usage() as f64;
 
-/// Linux: read `/proc/*` directly and run `df`.
-#[cfg(target_os = "linux")]
-fn collect_linux(collector: &mut LocalCollector) -> Result<SystemStats> {
-    // Read /proc files directly (faster than spawning processes)
-    let loadavg =
-        std::fs::read_to_string("/proc/loadavg").context("Failed to read /proc/loadavg")?;
-    let stat_line = read_first_cpu_line().context("Failed to read /proc/stat")?;
-    let meminfo =
-        std::fs::read_to_string("/proc/meminfo").context("Failed to read /proc/meminfo")?;
-    let uptime = std::fs::read_to_string("/proc/uptime").context("Failed to read /proc/uptime")?;
-    let df_output = run_command("df", &["-Pk", "/"]).context("Failed to run df")?;
+        let mem_total_kb = self.sys.total_memory() / 1024;
+        let mem_available_kb = self.sys.available_memory() / 1024;
+        let memory_used_percent = if mem_total_kb > 0 {
+            let used = mem_total_kb.saturating_sub(mem_available_kb);
+            used as f64 / mem_total_kb as f64 * 100.0
+        } else {
+            0.0
+        };
 
-    // Parse load average
-    let load_parts: Vec<&str> = loadavg.split_whitespace().collect();
-    let load_average = [
-        load_parts
-            .first()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0.0),
-        load_parts
-            .get(1)
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0.0),
-        load_parts
-            .get(2)
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0.0),
-    ];
+        let (disk_total_kb, disk_used_kb, disk_used_percent) = root_disk_stats(&disks);
 
-    // Parse CPU counters
-    let cpu_counters = parse_cpu_line(&stat_line);
-    let cpu_usage_percent = match &collector.prev_cpu {
-        Some(prev) => cpu_percent_from_delta(prev, &cpu_counters),
-        None => 0.0,
-    };
-    collector.prev_cpu = Some(cpu_counters);
+        let uptime_seconds = System::uptime() as f64;
+        let load_avg = System::load_average();
+        let load_average = [load_avg.one, load_avg.five, load_avg.fifteen];
 
-    // Parse memory
-    let mut mem_total_kb: u64 = 0;
-    let mut mem_available_kb: u64 = 0;
-    for line in meminfo.lines() {
-        if line.starts_with("MemTotal:") {
-            mem_total_kb = parse_meminfo_value(line);
-        } else if line.starts_with("MemAvailable:") {
-            mem_available_kb = parse_meminfo_value(line);
-        }
-    }
-    let memory_used_percent = if mem_total_kb > 0 {
-        let used = mem_total_kb.saturating_sub(mem_available_kb);
-        (used as f64 / mem_total_kb as f64) * 100.0
-    } else {
-        0.0
-    };
-
-    // Parse uptime
-    let uptime_seconds: f64 = uptime
-        .split_whitespace()
-        .next()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0.0);
-
-    // Parse df output
-    let (disk_total_kb, disk_used_kb, disk_used_percent) = parse_df_output(&df_output);
-
-    Ok(SystemStats {
-        hostname: collector.hostname(),
-        uptime_seconds,
-        load_average,
-        cpu_usage_percent,
-        memory_total_kb: mem_total_kb,
-        memory_available_kb: mem_available_kb,
-        memory_used_percent,
-        disk_total_kb,
-        disk_used_kb,
-        disk_used_percent,
-        os_info: collector.os_info(),
-    })
-}
-
-/// Read the first `cpu` aggregate line from `/proc/stat`.
-#[cfg(target_os = "linux")]
-fn read_first_cpu_line() -> Result<String> {
-    let content = std::fs::read_to_string("/proc/stat")?;
-    content
-        .lines()
-        .find(|l| l.starts_with("cpu "))
-        .map(|s| s.to_string())
-        .context("No aggregate cpu line found in /proc/stat")
-}
-
-/// macOS: use sysctl, vm_stat, and df.
-#[cfg(target_os = "macos")]
-fn collect_macos(collector: &mut LocalCollector) -> Result<SystemStats> {
-    // Load average
-    let loadavg_str = run_command("sysctl", &["-n", "vm.loadavg"])
-        .unwrap_or_else(|_| "{ 0.0 0.0 0.0 }".to_string());
-    let load_average = parse_macos_loadavg(&loadavg_str);
-
-    // Memory: total from hw.memsize, available estimated from vm_stat
-    let mem_total_bytes: u64 = run_command("sysctl", &["-n", "hw.memsize"])
-        .ok()
-        .and_then(|s| s.trim().parse().ok())
-        .unwrap_or(0);
-    let mem_total_kb = mem_total_bytes / 1024;
-
-    let vm_stat_output = run_command("vm_stat", &[]).unwrap_or_default();
-    let mem_available_kb = parse_macos_vm_stat_available(&vm_stat_output);
-
-    let memory_used_percent = if mem_total_kb > 0 {
-        let used = mem_total_kb.saturating_sub(mem_available_kb);
-        (used as f64 / mem_total_kb as f64) * 100.0
-    } else {
-        0.0
-    };
-
-    // Uptime from kern.boottime
-    let uptime_seconds = parse_macos_uptime();
-
-    // CPU: delta-based tracking via kern.cp_time (fields: user nice sys intr idle)
-    let cp_time_str = run_command("sysctl", &["-n", "kern.cp_time"]).unwrap_or_default();
-    let cpu_counters = parse_macos_cp_time(cp_time_str.trim());
-    let cpu_usage_percent = match &collector.prev_cpu {
-        Some(prev) => cpu_percent_from_delta(prev, &cpu_counters),
-        None => 0.0,
-    };
-    collector.prev_cpu = Some(cpu_counters);
-
-    // Disk
-    let df_output = run_command("df", &["-Pk", "/"]).unwrap_or_default();
-    let (disk_total_kb, disk_used_kb, disk_used_percent) = parse_df_output(&df_output);
-
-    Ok(SystemStats {
-        hostname: collector.hostname(),
-        uptime_seconds,
-        load_average,
-        cpu_usage_percent,
-        memory_total_kb: mem_total_kb,
-        memory_available_kb: mem_available_kb,
-        memory_used_percent,
-        disk_total_kb,
-        disk_used_kb,
-        disk_used_percent,
-        os_info: collector.os_info(),
-    })
-}
-
-/// Parse macOS load average from `sysctl -n vm.loadavg`.
-/// Output format: `{ 1.23 0.45 0.67 }`
-#[cfg(target_os = "macos")]
-fn parse_macos_loadavg(output: &str) -> [f64; 3] {
-    let trimmed = output.trim().trim_start_matches('{').trim_end_matches('}');
-    let parts: Vec<&str> = trimmed.split_whitespace().collect();
-    [
-        parts.first().and_then(|s| s.parse().ok()).unwrap_or(0.0),
-        parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0.0),
-        parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0.0),
-    ]
-}
-
-/// Parse macOS CPU ticks from `sysctl -n kern.cp_time`.
-/// Output format: "user nice sys intr idle" (5 space-separated u64 values).
-#[cfg(target_os = "macos")]
-fn parse_macos_cp_time(output: &str) -> CpuCounters {
-    let mut parts = output
-        .split_whitespace()
-        .filter_map(|s| s.parse::<u64>().ok());
-    CpuCounters {
-        user: parts.next().unwrap_or(0),
-        nice: parts.next().unwrap_or(0),
-        system: parts.next().unwrap_or(0),
-        irq: parts.next().unwrap_or(0),
-        idle: parts.next().unwrap_or(0),
-        iowait: 0,
-        softirq: 0,
-        steal: 0,
+        Ok(SystemStats {
+            hostname: self.cached_hostname.clone(),
+            uptime_seconds,
+            load_average,
+            cpu_usage_percent,
+            memory_total_kb: mem_total_kb,
+            memory_available_kb: mem_available_kb,
+            memory_used_percent,
+            disk_total_kb,
+            disk_used_kb,
+            disk_used_percent,
+            os_info: self.cached_os_info.clone(),
+        })
     }
 }
 
-/// Parse available memory from macOS `vm_stat` output.
+/// Pick the disk that represents the user-visible root filesystem.
 ///
-/// Counts free + speculative + inactive + purgeable pages — matching what
-/// Activity Monitor reports as available (pages the OS can reclaim on demand).
-/// Returns available memory in KB.
-#[cfg(target_os = "macos")]
-fn parse_macos_vm_stat_available(output: &str) -> u64 {
-    let page_size: u64 = run_command("sysctl", &["-n", "hw.pagesize"])
-        .ok()
-        .and_then(|s| s.trim().parse().ok())
-        .unwrap_or(4096);
+/// On macOS Catalina+, `/` is a read-only System snapshot; the real user
+/// data (and correct total/used figures) live on `/System/Volumes/Data`.
+/// On every other platform we use `/` (Linux) or `C:\` (Windows) and fall
+/// back to whichever mounted disk has the most total space.
+fn root_disk_stats(disks: &Disks) -> (u64, u64, f64) {
+    let preferred = if cfg!(target_os = "macos") {
+        std::path::Path::new("/System/Volumes/Data")
+    } else if cfg!(windows) {
+        std::path::Path::new("C:\\")
+    } else {
+        std::path::Path::new("/")
+    };
+    let fallback = std::path::Path::new("/");
 
-    let mut free_pages: u64 = 0;
-    let mut speculative_pages: u64 = 0;
-    let mut inactive_pages: u64 = 0;
-    let mut purgeable_pages: u64 = 0;
+    let disk = disks
+        .iter()
+        .find(|d| d.mount_point() == preferred)
+        .or_else(|| disks.iter().find(|d| d.mount_point() == fallback))
+        .or_else(|| disks.iter().max_by_key(|d| d.total_space()));
 
-    for line in output.lines() {
-        if line.starts_with("Pages free:") {
-            free_pages = extract_vm_stat_value(line);
-        } else if line.starts_with("Pages speculative:") {
-            speculative_pages = extract_vm_stat_value(line);
-        } else if line.starts_with("Pages inactive:") {
-            inactive_pages = extract_vm_stat_value(line);
-        } else if line.starts_with("Pages purgeable:") {
-            purgeable_pages = extract_vm_stat_value(line);
-        }
-    }
+    let Some(disk) = disk else {
+        return (0, 0, 0.0);
+    };
 
-    (free_pages + speculative_pages + inactive_pages + purgeable_pages) * page_size / 1024
-}
-
-/// Extract the numeric value from a vm_stat line like `"Pages free:                             1234."`.
-#[cfg(target_os = "macos")]
-fn extract_vm_stat_value(line: &str) -> u64 {
-    line.split(':')
-        .nth(1)
-        .and_then(|s| s.trim().trim_end_matches('.').parse().ok())
-        .unwrap_or(0)
-}
-
-/// Parse macOS uptime from `kern.boottime`.
-#[cfg(target_os = "macos")]
-fn parse_macos_uptime() -> f64 {
-    let output = run_command("sysctl", &["-n", "kern.boottime"]).unwrap_or_default();
-    // Format: "{ sec = 1234567890, usec = 123456 }"
-    let sec: Option<u64> = output
-        .split("sec = ")
-        .nth(1)
-        .and_then(|s| s.split(',').next())
-        .and_then(|s| s.trim().parse().ok());
-
-    match sec {
-        Some(boot_sec) => {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-            (now - boot_sec) as f64
-        }
-        None => 0.0,
-    }
-}
-
-/// Run a command and capture its stdout as a string.
-#[cfg(unix)]
-fn run_command(cmd: &str, args: &[&str]) -> Result<String> {
-    let output = std::process::Command::new(cmd)
-        .args(args)
-        .output()
-        .with_context(|| format!("Failed to execute {cmd}"))?;
-
-    if !output.status.success() {
-        bail!("{cmd} exited with status {}", output.status);
-    }
-
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    let total = disk.total_space() / 1024;
+    let avail = disk.available_space() / 1024;
+    let used = total.saturating_sub(avail);
+    let pct = if total > 0 {
+        used as f64 / total as f64 * 100.0
+    } else {
+        0.0
+    };
+    (total, used, pct)
 }
 
 // ── SSH collector ───────────────────────────────────────────────────
@@ -484,88 +278,57 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_df_output_basic() {
-        let output = "\
-Filesystem     1024-blocks      Used Available Capacity Mounted on
-/dev/sda1        50000000  20000000  28000000      42% /";
-        let (total, used, pct) = parse_df_output(output);
-        assert_eq!(total, 50000000);
-        assert_eq!(used, 20000000);
-        assert!((pct - 42.0).abs() < 0.1);
-    }
+    fn local_collector_returns_valid_stats() {
+        let mut collector = LocalCollector::new();
+        let stats = collector.collect("test").expect("collect should succeed");
 
-    #[test]
-    fn parse_df_output_empty() {
-        let (total, used, pct) = parse_df_output("");
-        assert_eq!(total, 0);
-        assert_eq!(used, 0);
-        assert!((pct - 0.0).abs() < 0.001);
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn parse_macos_loadavg_basic() {
-        let result = parse_macos_loadavg("{ 1.23 0.45 0.67 }");
-        assert!((result[0] - 1.23).abs() < 0.01);
-        assert!((result[1] - 0.45).abs() < 0.01);
-        assert!((result[2] - 0.67).abs() < 0.01);
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn extract_vm_stat_value_basic() {
-        assert_eq!(
-            extract_vm_stat_value("Pages free:                             12345."),
-            12345
+        assert!(!stats.hostname.is_empty());
+        assert!(stats.uptime_seconds > 0.0);
+        assert!(
+            (0.0..=100.0).contains(&stats.cpu_usage_percent),
+            "cpu_usage_percent out of range: {}",
+            stats.cpu_usage_percent
         );
-        assert_eq!(extract_vm_stat_value("Pages free:   0."), 0);
+        assert!(stats.memory_total_kb > 0, "memory_total_kb should be > 0");
+        assert!(
+            stats.memory_available_kb <= stats.memory_total_kb,
+            "available memory exceeds total"
+        );
+        assert!(
+            (0.0..=100.0).contains(&stats.memory_used_percent),
+            "memory_used_percent out of range: {}",
+            stats.memory_used_percent
+        );
+        assert!(!stats.os_info.is_empty());
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
-    fn extract_vm_stat_value_inactive_and_purgeable() {
-        assert_eq!(
-            extract_vm_stat_value("Pages inactive:                          5678."),
-            5678
-        );
-        assert_eq!(
-            extract_vm_stat_value("Pages purgeable:                         1234."),
-            1234
+    fn local_collector_second_sample_has_cpu() {
+        // The first sample primes the counters; the second should reflect
+        // real usage (> 0 on any active machine, though we only verify it's valid).
+        let mut collector = LocalCollector::new();
+        let _first = collector.collect("test").unwrap();
+        let second = collector.collect("test").unwrap();
+        assert!(
+            (0.0..=100.0).contains(&second.cpu_usage_percent),
+            "cpu_usage_percent out of range on second sample: {}",
+            second.cpu_usage_percent
         );
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
-    fn parse_macos_cp_time_basic() {
-        let counters = parse_macos_cp_time("1000 200 300 50 8450");
-        assert_eq!(counters.user, 1000);
-        assert_eq!(counters.nice, 200);
-        assert_eq!(counters.system, 300);
-        assert_eq!(counters.irq, 50);
-        assert_eq!(counters.idle, 8450);
-        assert_eq!(counters.iowait, 0);
-        assert_eq!(counters.softirq, 0);
-        assert_eq!(counters.steal, 0);
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn parse_macos_cp_time_empty() {
-        let counters = parse_macos_cp_time("");
-        assert_eq!(counters.user, 0);
-        assert_eq!(counters.idle, 0);
-        assert_eq!(counters.total(), 0);
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn parse_macos_cp_time_partial() {
-        // Only 3 fields — remaining fields default to 0
-        let counters = parse_macos_cp_time("500 100 200");
-        assert_eq!(counters.user, 500);
-        assert_eq!(counters.nice, 100);
-        assert_eq!(counters.system, 200);
-        assert_eq!(counters.irq, 0);
-        assert_eq!(counters.idle, 0);
+    fn local_collector_disk_stats_nonzero() {
+        let mut collector = LocalCollector::new();
+        let stats = collector.collect("test").unwrap();
+        assert!(stats.disk_total_kb > 0, "disk_total_kb should be > 0");
+        assert!(
+            stats.disk_used_kb <= stats.disk_total_kb,
+            "used disk exceeds total"
+        );
+        assert!(
+            (0.0..=100.0).contains(&stats.disk_used_percent),
+            "disk_used_percent out of range: {}",
+            stats.disk_used_percent
+        );
     }
 }
