@@ -11,6 +11,8 @@ node_modules
 dist
 dist-ssr
 *.local
+dev.local.json
+.dev-agent/
 coverage
 test-results
 tests/reports/*.json
