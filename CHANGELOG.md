@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Connection Editor: the dynamic connection form now uses `react-hook-form` for field state management and `zod` for client-side validation. Invalid port values (out of 1–65535), empty required text fields, and out-of-range numbers now show inline error messages next to the relevant field without requiring a connection attempt.
 - Dev scripts: `dev.sh` and `dev.cmd` now read per-checkout settings from a gitignored `dev.local.json` file (`dev_port`, `dev_name`). On Unix/macOS, setting `dev_agent_port` auto-builds the agent binary, starts a local `sshd`, and registers a "Dev Agent" entry directly in termiHub's `connections.json` — enabling zero-config local agent testing without a remote machine. Multiple parallel workspaces coexist via port-scoped agent IDs.
 - Agent: macOS is now a supported agent target (`macos-arm64`, `macos-x64`). The desktop resolves the correct binary when connecting to a macOS remote host via SSH agent mode. The agent setup dialog shows macOS arch options when connecting to a Darwin host.
 - Agent: five local TCP integration tests (`cargo test -p termihub-agent --test local_agent_integration`) that spawn the agent in `--listen` mode on localhost — no SSH, no cross-compilation, no Raspberry Pi required. These make it fast to iterate on agent behavior on any dev machine (macOS, Linux, Windows).
