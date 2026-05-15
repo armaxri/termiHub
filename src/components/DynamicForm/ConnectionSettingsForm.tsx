@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
-import { useForm, Controller } from "react-hook-form";
+import { useForm, useWatch, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import type { SettingsSchema } from "@/types/schema";
 import { isFieldVisible } from "@/utils/schemaDefaults";
@@ -47,11 +47,15 @@ export function ConnectionSettingsForm({
   });
 
   // Reset the form when the connection type changes (schema groups differ).
+  // isResetting suppresses the watch callback that reset fires synchronously,
+  // preventing a spurious onChange call back to the parent on type switch.
   const schemaKey = schema.groups.map((g) => g.key).join("|");
   const prevSchemaKey = useRef(schemaKey);
+  const isResetting = useRef(false);
   useEffect(() => {
     if (prevSchemaKey.current !== schemaKey) {
       prevSchemaKey.current = schemaKey;
+      isResetting.current = true;
       reset(settings);
     }
     // Only trigger on schema change, not on every settings update.
@@ -61,13 +65,17 @@ export function ConnectionSettingsForm({
   // Propagate every form value change to the parent.
   useEffect(() => {
     const subscription = watch((values) => {
+      if (isResetting.current) {
+        isResetting.current = false;
+        return;
+      }
       onChange(values as Record<string, unknown>);
     });
     return () => subscription.unsubscribe();
   }, [watch, onChange]);
 
   // Live form values used for visibleWhen evaluation.
-  const watchedValues = watch();
+  const watchedValues = useWatch({ control });
 
   return (
     <div data-testid="connection-settings-form">
