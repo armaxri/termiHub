@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { Play, StopCircle } from "lucide-react";
 import {
   networkPortScan,
@@ -111,9 +111,9 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
   }, []);
 
   // Only show the Host column when results span more than one host
-  // (single-host scans look cleaner without it).
-  const distinctHosts = new Set(results.map((r) => r.host));
-  const showHostColumn = distinctHosts.size > 1;
+  // (single-host scans look cleaner without it). Memoised because results
+  // can grow to tens of thousands of rows on a CIDR-range scan.
+  const showHostColumn = useMemo(() => new Set(results.map((r) => r.host)).size > 1, [results]);
 
   const columns = showHostColumn
     ? [

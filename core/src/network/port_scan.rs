@@ -206,7 +206,6 @@ pub fn parse_target_spec(spec: &str) -> Result<Vec<String>, NetworkError> {
         }
 
         if token.contains('/') {
-            // Parse as CIDR. `ipnet::IpNet` covers IPv4 and IPv6.
             let net: IpNet = token.parse().map_err(|e| {
                 NetworkError::InvalidParameter(format!("invalid CIDR '{token}': {e}"))
             })?;
@@ -221,8 +220,8 @@ pub fn parse_target_spec(spec: &str) -> Result<Vec<String>, NetworkError> {
                 targets.push(host.to_string());
             }
         } else {
-            // Single host — keep the original string so hostnames pass through
-            // untouched for downstream DNS resolution.
+            // Keep the original string so hostnames pass through untouched
+            // for downstream DNS resolution.
             if targets.len() >= MAX_EXPANDED_TARGETS {
                 return Err(NetworkError::InvalidParameter(format!(
                     "target spec expands to more than {MAX_EXPANDED_TARGETS} hosts"
