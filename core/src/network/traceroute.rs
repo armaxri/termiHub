@@ -140,9 +140,8 @@ fn run_trace(
                 Ok((len, src_addr)) => {
                     // SAFETY: socket2 initializes the first `len` bytes on success;
                     // MaybeUninit<u8> and u8 share the same memory layout.
-                    let filled = unsafe {
-                        std::slice::from_raw_parts(buf.as_ptr().cast::<u8>(), len)
-                    };
+                    let filled =
+                        unsafe { std::slice::from_raw_parts(buf.as_ptr().cast::<u8>(), len) };
                     if is_valid_icmp_reply(filled, dest_ip.is_ipv6()) {
                         let rtt = started.elapsed().as_secs_f64() * 1000.0;
                         *rtt_slot = Some(rtt);
