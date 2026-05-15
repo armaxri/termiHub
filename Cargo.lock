@@ -5940,6 +5940,7 @@ dependencies = [
  "bollard",
  "futures-util",
  "hickory-resolver",
+ "ipnet",
  "openssl",
  "portable-pty",
  "rand 0.8.5",
