@@ -256,7 +256,9 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   ]);
 
   const [name, setName] = useState(
-    existingAgentDef?.name ?? existingConnection?.name ?? existingAgent?.name ?? ""
+    existingAgentDef?.name ??
+      existingConnection?.name ??
+      (isAgentDefinitionMode ? "" : (existingAgent?.name ?? ""))
   );
   const folderId = existingConnection?.folderId ?? editingConnectionFolderId ?? null;
   const [selectedType, setSelectedType] = useState(initialTypeAndSettings.typeId);
