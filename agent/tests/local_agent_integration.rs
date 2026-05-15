@@ -16,6 +16,7 @@
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
@@ -41,7 +42,7 @@ struct LocalAgent {
 
 impl LocalAgent {
     fn spawn() -> Self {
-        let port = free_port();
+        let port = unique_agent_port();
         let addr = format!("127.0.0.1:{port}");
 
         let process = Command::new(agent_binary())
@@ -65,13 +66,30 @@ impl Drop for LocalAgent {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/// Find a free local TCP port by binding to port 0 and reading the OS assignment.
-fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .expect("failed to bind port 0")
-        .local_addr()
-        .expect("no local addr")
-        .port()
+/// Atomic port counter to prevent TOCTOU collisions when many tests run in parallel.
+///
+/// `free_port()` (bind :0, get port, drop listener, return port) has a race window
+/// between dropping the listener and the agent binding the same port: a concurrent
+/// test can claim the same port in that gap, causing both agents to collide and one
+/// test to connect to the other's agent, which gets killed before it can respond.
+///
+/// Using an incrementing counter means each test in this binary gets a unique port.
+/// Ports 19200–19900 are IANA-unassigned and not in use by any well-known service.
+static NEXT_TEST_PORT: AtomicU16 = AtomicU16::new(19200);
+
+/// Reserve a unique TCP port for a test agent.
+///
+/// Advances a per-binary atomic counter so parallel tests never pick the same port.
+/// Skips any port that happens to be in use by an external process (rare on a
+/// dedicated CI runner, but handled to avoid spurious failures).
+fn unique_agent_port() -> u16 {
+    loop {
+        let port = NEXT_TEST_PORT.fetch_add(1, Ordering::Relaxed);
+        assert!(port < 19900, "exhausted test port range 19200–19900");
+        if TcpListener::bind(format!("127.0.0.1:{port}")).is_ok() {
+            return port;
+        }
+    }
 }
 
 /// Retry-connect to `addr` until it accepts or the deadline is exceeded.
@@ -630,7 +648,7 @@ struct IsolatedAgent {
 #[cfg(unix)]
 impl IsolatedAgent {
     fn spawn(xdg_home: &std::path::Path) -> Self {
-        let port = free_port();
+        let port = unique_agent_port();
         let addr = format!("127.0.0.1:{port}");
         let process = Command::new(agent_binary())
             .args(["--listen", &addr])
