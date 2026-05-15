@@ -8,8 +8,8 @@ import type { SettingsField, SettingsSchema } from "@/types/schema";
  * bounds. Backend validation in Agent.connect remains authoritative; this
  * schema is for UX feedback only.
  */
-export function settingsSchemaToZod(schema: SettingsSchema): z.ZodObject<z.ZodRawShape> {
-  const shape: z.ZodRawShape = {};
+export function settingsSchemaToZod(schema: SettingsSchema) {
+  const shape: Record<string, z.ZodTypeAny> = {};
   for (const group of schema.groups) {
     for (const field of group.fields) {
       shape[field.key] = fieldToZod(field);
