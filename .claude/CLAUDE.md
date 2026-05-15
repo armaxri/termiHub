@@ -113,6 +113,22 @@ examples/                     # Quick-start dev environment (SSH, Telnet, virtua
 
 ## Coding Standards
 
+### Dependencies — Prefer Libraries Over Custom Code
+
+**Default to existing libraries.** Before writing custom code for any non-trivial concern (parsers, protocol clients, layout systems, form state, networking primitives, file format handlers, encryption envelopes, etc.), search crates.io and npm for a mature option and propose it. When extending or reviewing existing code, actively flag opportunities to replace custom implementations with well-maintained libraries — even if the current code works.
+
+- **A maintained, widely-used library beats in-house code**, even when the library is larger or pulls in more dependencies. Bundle size, dep-tree depth, and migration effort are **secondary**. Maintenance ownership, edge-case correctness, and platform coverage are **primary**.
+- "I could write this in 50 lines" is **not** a reason to skip a library.
+- When proposing a new feature or refactor, list candidate libraries first and only justify a custom implementation if no library fits.
+
+Acceptable reasons to keep custom code:
+
+1. **No actively-maintained library exists** — last release >2 years ago, abandoned, or fundamentally broken
+2. **The library's design fundamentally conflicts** with surrounding code (e.g., async-only when the call site cannot become async) and the surrounding code cannot reasonably change
+3. **Genuinely domain-specific glue** with no library analog (e.g., termiHub's panel-tree layout, daemon binary frame protocol, embedded-server lifecycle plumbing)
+
+Bundle/dep-size concerns belong in the "secondary" bucket — raise them in PR discussion if relevant, but never use them to block a sensible adoption.
+
 ### TypeScript / React
 
 - No `any` types
