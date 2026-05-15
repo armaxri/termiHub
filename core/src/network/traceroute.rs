@@ -10,6 +10,10 @@ use std::mem::MaybeUninit;
 use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, Instant};
 
+use pnet_packet::icmp::{IcmpPacket, IcmpTypes};
+use pnet_packet::icmpv6::{Icmpv6Packet, Icmpv6Types};
+use pnet_packet::ipv4::Ipv4Packet;
+use pnet_packet::Packet;
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 use tokio_util::sync::CancellationToken;
 
@@ -25,8 +29,29 @@ const UDP_DEST_PORT: u16 = 33434;
 ///
 /// For IPv4, `buf` includes the IP header (socket2 includes it on all
 /// platforms). For IPv6, `buf` starts directly with the ICMPv6 header.
-fn is_valid_icmp_reply(_buf: &[u8], _is_ipv6: bool) -> bool {
-    false
+fn is_valid_icmp_reply(buf: &[u8], is_ipv6: bool) -> bool {
+    if is_ipv6 {
+        Icmpv6Packet::new(buf)
+            .map(|pkt| {
+                matches!(
+                    pkt.get_icmpv6_type(),
+                    Icmpv6Types::TimeExceeded | Icmpv6Types::DestinationUnreachable
+                )
+            })
+            .unwrap_or(false)
+    } else {
+        // IPv4 raw socket: buf starts with the IP header; use it to locate the ICMP payload.
+        let Some(ip) = Ipv4Packet::new(buf) else {
+            return false;
+        };
+        let Some(pkt) = IcmpPacket::new(ip.payload()) else {
+            return false;
+        };
+        matches!(
+            pkt.get_icmp_type(),
+            IcmpTypes::TimeExceeded | IcmpTypes::DestinationUnreachable
+        )
+    }
 }
 
 /// Run a traceroute to `host`, streaming each hop via `on_hop`.
@@ -187,6 +212,8 @@ mod tests {
     fn ipv4_icmp_bytes(icmp_type: u8) -> Vec<u8> {
         let mut buf = vec![0u8; 28]; // 20B IPv4 header + 8B ICMP header
         buf[0] = 0x45; // version=4, IHL=5 (20-byte header)
+        buf[2] = 0x00; // total length = 28 (big-endian high byte)
+        buf[3] = 28; // total length = 28 (big-endian low byte)
         buf[9] = 1; // protocol = ICMP
         buf[20] = icmp_type;
         buf
