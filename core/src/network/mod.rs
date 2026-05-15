@@ -26,6 +26,7 @@ pub mod types;
 pub mod wol;
 
 pub use error::NetworkError;
+pub use port_scan::{parse_port_spec, parse_target_spec, MAX_EXPANDED_TARGETS};
 pub use types::{
     DnsRecord, DnsRecordType, DnsResult, OpenPort, PingResult, PingStats, PortScanResult,
     PortScanSummary, PortState, Protocol, TracerouteHop, WolDevice,

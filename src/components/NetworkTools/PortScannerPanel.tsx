@@ -15,6 +15,7 @@ interface PortScannerPanelProps {
 }
 
 interface ScanRow {
+  host: string;
   port: number;
   state: string;
   latencyMs?: number;
@@ -65,7 +66,12 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
         if (payload.taskId !== taskId) return;
         setResults((prev) => [
           ...prev,
-          { port: payload.port, state: payload.state, latencyMs: payload.latencyMs },
+          {
+            host: payload.host,
+            port: payload.port,
+            state: payload.state,
+            latencyMs: payload.latencyMs,
+          },
         ]);
       });
 
@@ -104,13 +110,26 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
     };
   }, []);
 
-  const columns = [
-    { key: "port", label: "Port" },
-    { key: "state", label: "State" },
-    { key: "latencyMs", label: "Latency" },
-  ];
+  // Only show the Host column when results span more than one host
+  // (single-host scans look cleaner without it).
+  const distinctHosts = new Set(results.map((r) => r.host));
+  const showHostColumn = distinctHosts.size > 1;
+
+  const columns = showHostColumn
+    ? [
+        { key: "host", label: "Host" },
+        { key: "port", label: "Port" },
+        { key: "state", label: "State" },
+        { key: "latencyMs", label: "Latency" },
+      ]
+    : [
+        { key: "port", label: "Port" },
+        { key: "state", label: "State" },
+        { key: "latencyMs", label: "Latency" },
+      ];
 
   const formattedRows = results.map((r) => ({
+    host: r.host,
     port: r.port,
     state: r.state,
     latencyMs: r.latencyMs != null ? `${r.latencyMs}ms` : "—",
@@ -142,12 +161,12 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
 
       <div className="network-panel__form">
         <label className="network-panel__field">
-          <span>Host</span>
+          <span>Host / CIDR</span>
           <input
             className="network-panel__input"
             value={host}
             onChange={(e) => setHost(e.target.value)}
-            placeholder="192.168.1.1"
+            placeholder="192.168.1.1, 10.0.0.0/24, example.com"
             data-testid="port-scanner-host"
           />
         </label>

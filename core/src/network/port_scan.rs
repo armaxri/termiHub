@@ -7,6 +7,7 @@ use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use ipnet::IpNet;
 use tokio::net::TcpStream;
 use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
@@ -14,7 +15,8 @@ use tokio_util::sync::CancellationToken;
 use super::error::NetworkError;
 use super::types::{PortScanResult, PortScanSummary, PortState};
 
-/// Scan a set of TCP ports on a host, streaming individual results via `on_result`.
+/// Scan a set of TCP ports on a single host, streaming individual results via
+/// `on_result`. Convenience wrapper around [`scan_targets`].
 ///
 /// # Arguments
 /// * `host` – Target hostname or IP address.
@@ -35,40 +37,67 @@ pub async fn scan_ports(
     on_result: impl Fn(PortScanResult) + Send + Sync + 'static,
     cancel: CancellationToken,
 ) -> Result<PortScanSummary, NetworkError> {
+    scan_targets(
+        &[host.to_string()],
+        ports,
+        timeout_ms,
+        concurrency,
+        on_result,
+        cancel,
+    )
+    .await
+}
+
+/// Scan a set of TCP ports across one or more targets. Probes for every
+/// `(target, port)` combination share a single concurrency budget — useful
+/// when expanding a CIDR range without overwhelming the local network stack.
+///
+/// See [`scan_ports`] for argument semantics. `targets` may contain hostnames
+/// or IP addresses; each result carries its originating `host` for grouping.
+pub async fn scan_targets(
+    targets: &[String],
+    ports: &[u16],
+    timeout_ms: u64,
+    concurrency: usize,
+    on_result: impl Fn(PortScanResult) + Send + Sync + 'static,
+    cancel: CancellationToken,
+) -> Result<PortScanSummary, NetworkError> {
     let concurrency = concurrency.max(1);
     let timeout = Duration::from_millis(timeout_ms);
     let sem = Arc::new(Semaphore::new(concurrency));
     let on_result = Arc::new(on_result);
 
     let started = Instant::now();
-    let mut handles = Vec::with_capacity(ports.len());
+    let mut handles = Vec::with_capacity(targets.len().saturating_mul(ports.len()));
 
-    for &port in ports {
-        if cancel.is_cancelled() {
-            break;
-        }
-
-        let permit = Arc::clone(&sem)
-            .acquire_owned()
-            .await
-            .map_err(|_| NetworkError::Cancelled)?;
-
-        let host = host.to_string();
-        let cb = Arc::clone(&on_result);
-        let cancel = cancel.clone();
-
-        let handle = tokio::spawn(async move {
-            let _permit = permit;
+    'outer: for target in targets {
+        for &port in ports {
             if cancel.is_cancelled() {
-                return None;
+                break 'outer;
             }
 
-            let result = probe_port(&host, port, timeout).await;
-            cb(result.clone());
-            Some(result)
-        });
+            let permit = Arc::clone(&sem)
+                .acquire_owned()
+                .await
+                .map_err(|_| NetworkError::Cancelled)?;
 
-        handles.push(handle);
+            let host = target.clone();
+            let cb = Arc::clone(&on_result);
+            let cancel = cancel.clone();
+
+            let handle = tokio::spawn(async move {
+                let _permit = permit;
+                if cancel.is_cancelled() {
+                    return None;
+                }
+
+                let result = probe_port(&host, port, timeout).await;
+                cb(result.clone());
+                Some(result)
+            });
+
+            handles.push(handle);
+        }
     }
 
     let mut open = 0u32;
@@ -108,6 +137,7 @@ async fn probe_port(host: &str, port: u16, timeout: Duration) -> PortScanResult 
         Ok(Some(addr)) => addr,
         _ => {
             return PortScanResult {
+                host: host.to_string(),
                 port,
                 state: PortState::Filtered,
                 latency_ms: None,
@@ -118,6 +148,7 @@ async fn probe_port(host: &str, port: u16, timeout: Duration) -> PortScanResult 
     let started = Instant::now();
     match tokio::time::timeout(timeout, TcpStream::connect(addr)).await {
         Ok(Ok(_stream)) => PortScanResult {
+            host: host.to_string(),
             port,
             state: PortState::Open,
             latency_ms: Some(started.elapsed().as_millis() as u64),
@@ -131,12 +162,14 @@ async fn probe_port(host: &str, port: u16, timeout: Duration) -> PortScanResult 
                 PortState::Filtered
             };
             PortScanResult {
+                host: host.to_string(),
                 port,
                 state,
                 latency_ms: None,
             }
         }
         Err(_timeout) => PortScanResult {
+            host: host.to_string(),
             port,
             state: PortState::Filtered,
             latency_ms: None,
@@ -163,11 +196,49 @@ pub const MAX_EXPANDED_TARGETS: usize = 65_536;
 /// addresses are excluded for IPv4 prefixes shorter than `/31`). Returns
 /// [`NetworkError::InvalidParameter`] if any token is malformed, the spec
 /// is empty, or the expansion exceeds [`MAX_EXPANDED_TARGETS`].
-pub fn parse_target_spec(_spec: &str) -> Result<Vec<String>, NetworkError> {
-    // Stub — implementation lands in the next commit (TDD red phase).
-    Err(NetworkError::InvalidParameter(
-        "parse_target_spec is not yet implemented".into(),
-    ))
+pub fn parse_target_spec(spec: &str) -> Result<Vec<String>, NetworkError> {
+    let mut targets: Vec<String> = Vec::new();
+
+    for raw in spec.split(',') {
+        let token = raw.trim();
+        if token.is_empty() {
+            continue;
+        }
+
+        if token.contains('/') {
+            // Parse as CIDR. `ipnet::IpNet` covers IPv4 and IPv6.
+            let net: IpNet = token.parse().map_err(|e| {
+                NetworkError::InvalidParameter(format!("invalid CIDR '{token}': {e}"))
+            })?;
+
+            for host in net.hosts() {
+                if targets.len() >= MAX_EXPANDED_TARGETS {
+                    return Err(NetworkError::InvalidParameter(format!(
+                        "target spec expands to more than {MAX_EXPANDED_TARGETS} hosts; \
+                         refine the CIDR range (current token: '{token}')"
+                    )));
+                }
+                targets.push(host.to_string());
+            }
+        } else {
+            // Single host — keep the original string so hostnames pass through
+            // untouched for downstream DNS resolution.
+            if targets.len() >= MAX_EXPANDED_TARGETS {
+                return Err(NetworkError::InvalidParameter(format!(
+                    "target spec expands to more than {MAX_EXPANDED_TARGETS} hosts"
+                )));
+            }
+            targets.push(token.to_string());
+        }
+    }
+
+    if targets.is_empty() {
+        return Err(NetworkError::InvalidParameter(
+            "target specification is empty".into(),
+        ));
+    }
+
+    Ok(targets)
 }
 
 /// Parse a human-readable port specification into a list of port numbers.
@@ -366,6 +437,33 @@ mod tests {
         // Leading/trailing/extra commas should be tolerated.
         let result = parse_target_spec(",192.168.1.1,,10.0.0.1,").unwrap();
         assert_eq!(result, vec!["192.168.1.1", "10.0.0.1"]);
+    }
+
+    #[tokio::test]
+    async fn scan_targets_reports_host_per_result() {
+        // Scan two distinct loopback targets; every result must carry the
+        // host string it originated from.
+        let cancel = CancellationToken::new();
+        let results = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let results_cb = Arc::clone(&results);
+
+        let targets = vec!["127.0.0.1".to_string(), "127.0.0.2".to_string()];
+        let summary = scan_targets(
+            &targets,
+            &[1],
+            500,
+            2,
+            move |r| results_cb.lock().unwrap().push(r),
+            cancel,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(summary.total, 2);
+        let results = results.lock().unwrap();
+        let hosts: std::collections::HashSet<_> = results.iter().map(|r| r.host.clone()).collect();
+        assert!(hosts.contains("127.0.0.1"));
+        assert!(hosts.contains("127.0.0.2"));
     }
 
     #[tokio::test]
