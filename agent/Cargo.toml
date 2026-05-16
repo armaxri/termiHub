@@ -32,7 +32,8 @@ tokio-util = { version = "0.7", features = ["rt"] }
 # Used by monitoring/collector.rs (SshCollector) and capability detection.
 # Will be removed when monitoring is fully delegated to ConnectionType.
 serialport = { workspace = true }
-ssh2 = "0.9"
+russh = { workspace = true }
+russh-keys = { workspace = true }
 shellexpand = "3"
 sysinfo = "0.33"
 
@@ -40,8 +41,6 @@ sysinfo = "0.33"
 nix = { version = "0.29", features = ["signal", "process", "term", "poll", "fs"] }
 libc = "0.2"
 
-[target.'cfg(target_os = "linux")'.dependencies]
-openssl = { version = "0.10", features = ["vendored"] }
 
 [dev-dependencies]
 tempfile = "3"
