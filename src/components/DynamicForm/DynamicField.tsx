@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { HelpCircle, X } from "lucide-react";
 import type { SettingsField, FieldType } from "@/types/schema";
@@ -9,7 +9,9 @@ import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 interface DynamicFieldProps {
   field: SettingsField;
   value: unknown;
-  onChange: (key: string, value: unknown) => void;
+  onChange: (value: unknown) => void;
+  /** Validation error message to display inline below the field. */
+  error?: string;
   /** When true, shows a "Password saved in credential store" hint below password fields. */
   credentialSaved?: boolean;
   /**
@@ -31,14 +33,21 @@ export function DynamicField({
   field,
   value,
   onChange,
+  error,
   credentialSaved,
   availablePorts,
 }: DynamicFieldProps) {
-  const handleChange = useCallback((v: unknown) => onChange(field.key, v), [field.key, onChange]);
-
   return (
     <div className="settings-form__field" data-testid={`dynamic-field-${field.key}`}>
-      {renderFieldInput(field, field.fieldType, value, handleChange, availablePorts)}
+      {renderFieldInput(field, field.fieldType, value, onChange, availablePorts)}
+      {error && (
+        <p
+          className="settings-form__hint settings-form__hint--error"
+          data-testid={`field-${field.key}-error`}
+        >
+          {error}
+        </p>
+      )}
       {field.description && <p className="settings-form__hint">{field.description}</p>}
       {credentialSaved && (
         <p
