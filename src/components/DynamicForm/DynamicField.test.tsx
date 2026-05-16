@@ -45,8 +45,8 @@ function query(testId: string): HTMLElement | null {
 function renderField(
   field: SettingsField,
   value: unknown,
-  onChange: (k: string, v: unknown) => void,
-  opts: { availablePorts?: string[] } = {}
+  onChange: (v: unknown) => void,
+  opts: { availablePorts?: string[]; error?: string } = {}
 ) {
   act(() => {
     root.render(
@@ -55,6 +55,7 @@ function renderField(
         value={value}
         onChange={onChange}
         availablePorts={opts.availablePorts}
+        error={opts.error}
       />
     );
   });
@@ -114,7 +115,7 @@ describe("DynamicField", () => {
         nativeInputValueSetter?.call(input, "new");
         input.dispatchEvent(new Event("input", { bubbles: true }));
       });
-      expect(onChange).toHaveBeenCalledWith("host", "new");
+      expect(onChange).toHaveBeenCalledWith("new");
     });
 
     it("renders placeholder", () => {
@@ -319,7 +320,7 @@ describe("DynamicField", () => {
       act(() => {
         (query("field-envVars-add") as HTMLElement).click();
       });
-      expect(onChange).toHaveBeenCalledWith("envVars", [{ key: "", value: "" }]);
+      expect(onChange).toHaveBeenCalledWith([{ key: "", value: "" }]);
     });
 
     it("removes item on click", () => {
@@ -332,7 +333,7 @@ describe("DynamicField", () => {
       act(() => {
         (query("field-envVars-remove-0") as HTMLElement).click();
       });
-      expect(onChange).toHaveBeenCalledWith("envVars", [{ key: "B", value: "2" }]);
+      expect(onChange).toHaveBeenCalledWith([{ key: "B", value: "2" }]);
     });
   });
 
@@ -406,7 +407,7 @@ describe("DynamicField", () => {
         select.value = "/dev/ttyS0";
         select.dispatchEvent(new Event("change", { bubbles: true }));
       });
-      expect(onChange).toHaveBeenCalledWith("port", "/dev/ttyS0");
+      expect(onChange).toHaveBeenCalledWith("/dev/ttyS0");
     });
 
     it("uses provided availablePorts instead of calling listSerialPorts", async () => {
@@ -487,9 +488,7 @@ describe("DynamicField", () => {
       act(() => {
         (query("field-volumes-add") as HTMLElement).click();
       });
-      expect(onChange).toHaveBeenCalledWith("volumes", [
-        { hostPath: "", containerPath: "", readOnly: false },
-      ]);
+      expect(onChange).toHaveBeenCalledWith([{ hostPath: "", containerPath: "", readOnly: false }]);
     });
 
     it("removes item on click", () => {
@@ -502,9 +501,22 @@ describe("DynamicField", () => {
       act(() => {
         (query("field-volumes-remove-0") as HTMLElement).click();
       });
-      expect(onChange).toHaveBeenCalledWith("volumes", [
+      expect(onChange).toHaveBeenCalledWith([
         { hostPath: "/c", containerPath: "/d", readOnly: true },
       ]);
+    });
+  });
+
+  describe("error prop", () => {
+    it("displays inline error message when error is provided", () => {
+      renderField(textField("host"), "", vi.fn(), { error: "Host is required" });
+      expect(container.textContent).toContain("Host is required");
+      expect(query("field-host-error")).toBeTruthy();
+    });
+
+    it("does not render error element when error is undefined", () => {
+      renderField(textField("host"), "example.com", vi.fn());
+      expect(query("field-host-error")).toBeNull();
     });
   });
 });

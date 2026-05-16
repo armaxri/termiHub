@@ -9,6 +9,11 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: vi.fn().mockResolvedValue(null),
 }));
 
+// Mock serial port listing
+vi.mock("@/services/api", () => ({
+  listSerialPorts: vi.fn().mockResolvedValue([]),
+}));
+
 // Mock KeyPathInput
 vi.mock("@/components/Settings/KeyPathInput", () => ({
   KeyPathInput: ({ value }: { value: string }) => (
@@ -171,5 +176,76 @@ describe("ConnectionSettingsForm", () => {
     renderForm({ groups: [] }, {}, vi.fn());
     expect(query("connection-settings-form")).toBeTruthy();
     expect(queryAll("[data-testid^='form-group-']").length).toBe(0);
+  });
+
+  it("shows credential saved hint for empty password fields when enabled", () => {
+    const schema: SettingsSchema = {
+      groups: [
+        {
+          key: "auth",
+          label: "Auth",
+          fields: [
+            {
+              key: "password",
+              label: "Password",
+              fieldType: { type: "password" },
+              required: false,
+            },
+          ],
+        },
+      ],
+    };
+    act(() => {
+      root.render(
+        <ConnectionSettingsForm
+          schema={schema}
+          settings={{}}
+          onChange={vi.fn()}
+          credentialSavedHint={true}
+        />
+      );
+    });
+    expect(query("field-password-credential-saved")).toBeTruthy();
+  });
+
+  it("shows validation error for invalid port", async () => {
+    await act(async () => {
+      renderForm(SSH_SCHEMA, { authMethod: "key", port: 22, host: "h" }, vi.fn());
+    });
+    const portInput = query("field-port") as HTMLInputElement;
+    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value"
+    )?.set;
+    await act(async () => {
+      nativeInputValueSetter?.call(portInput, "0");
+      portInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(query("field-port-error")).toBeTruthy();
+  });
+
+  it("clears validation error when field becomes valid", async () => {
+    await act(async () => {
+      renderForm(SSH_SCHEMA, { authMethod: "key", port: 22, host: "" }, vi.fn());
+    });
+    const hostInput = query("field-host") as HTMLInputElement;
+    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value"
+    )?.set;
+
+    // Trigger error
+    await act(async () => {
+      nativeInputValueSetter?.call(hostInput, "");
+      hostInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    // Fix the value
+    await act(async () => {
+      nativeInputValueSetter?.call(hostInput, "fixed-host");
+      hostInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    expect(query("field-host-error")).toBeNull();
   });
 });
