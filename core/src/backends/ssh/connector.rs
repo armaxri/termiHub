@@ -6,8 +6,8 @@
 //!
 //! # Production path
 //!
-//! [`Ssh2SshConnector`] calls [`connect_and_authenticate`] and uses
-//! libssh2 to open a PTY shell channel, including optional X11 forwarding.
+//! [`RusshSshConnector`] calls [`connect_and_authenticate`] and uses
+//! russh to open a PTY shell channel with optional X11 forwarding.
 //!
 //! # Test path
 //!
@@ -16,7 +16,7 @@
 
 use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::config::SshConfig;
@@ -36,115 +36,129 @@ type IoFn = Arc<dyn Fn() -> Result<(), SessionError> + Send + Sync>;
 /// Returned by [`SshConnector::open_shell`] and consumed by the
 /// `Ssh` backend's `connect()` method.
 pub struct SshShellHandle {
-    /// Reads from the SSH channel. In production, returns `WouldBlock`
-    /// when no data is available; the [`Ssh2SshShellReader`] wrapper
-    /// handles the retry loop.
+    /// Reads SSH channel output; blocks until data is available or the
+    /// session's `alive` flag is cleared.
     pub reader: Box<dyn Read + Send>,
-    /// Writes input data to the channel (handles blocking-mode toggle internally).
+    /// Writes input data to the channel.
     pub write: WriteFn,
     /// Resizes the PTY to `(cols, rows)`.
     pub resize: ResizeFn,
-    /// Switches the underlying session's blocking mode.
+    /// No-op with russh (kept for API compatibility with mocks).
     pub set_blocking: SetBlockingFn,
     /// Sends EOF on the channel.
     pub send_eof: IoFn,
     /// Closes the channel.
     pub close: IoFn,
-    /// Opaque extensions kept alive for the session lifetime (e.g. X11Forwarder).
+    /// Opaque resources kept alive for the session lifetime (e.g. X11Forwarder).
     pub extensions: Vec<Box<dyn std::any::Any + Send>>,
 }
 
 // ── SshConnector trait ─────────────────────────────────────────────
 
 /// SSH connection + shell-channel factory.
-///
-/// The production implementation ([`Ssh2SshConnector`]) opens a real
-/// TCP+SSH connection, authenticates, sets up an optional X11 tunnel,
-/// requests a PTY, and starts a shell. Tests inject a mock that returns
-/// in-memory pipes.
+#[async_trait::async_trait]
 pub trait SshConnector: Send + Sync + 'static {
-    /// Connect to the SSH server described by `config` and open a
-    /// shell channel, returning I/O handles.
-    ///
-    /// `alive` is the session's liveness flag; the connector may store
-    /// a clone for use in background threads (e.g. X11 tunnel).
-    fn open_shell(
+    async fn open_shell(
         &self,
         config: &SshConfig,
         alive: Arc<AtomicBool>,
     ) -> Result<SshShellHandle, SessionError>;
 }
 
-// ── Ssh2SshShellReader ─────────────────────────────────────────────
+// ── Command enum for the channel task ─────────────────────────────
 
-/// Wraps an `ssh2::Channel` to implement `Read` with non-blocking
-/// retry logic suitable for the background reader thread.
+enum ChannelCmd {
+    Write(Vec<u8>),
+    Resize(u32, u32),
+    Eof,
+}
+
+// ── RusshShellReader ───────────────────────────────────────────────
+
+/// Bridges async russh channel output to a synchronous `Read` impl.
 ///
-/// `ssh2` in non-blocking mode returns `WouldBlock` when no data is
-/// available. This reader sleeps briefly and retries until data arrives,
-/// the channel reaches EOF, or the session's `alive` flag is cleared.
-pub struct Ssh2SshShellReader {
-    channel: Arc<Mutex<ssh2::Channel>>,
+/// A background tokio task owns the russh [`Channel`] and sends data
+/// chunks through a `std::sync::mpsc`. This reader drains that queue,
+/// blocking briefly on each receive to avoid busy-waiting.
+struct RusshShellReader {
+    rx: std::sync::mpsc::Receiver<Vec<u8>>,
+    buf: Vec<u8>,
+    buf_pos: usize,
     alive: Arc<AtomicBool>,
 }
 
-impl Ssh2SshShellReader {
-    pub fn new(channel: Arc<Mutex<ssh2::Channel>>, alive: Arc<AtomicBool>) -> Self {
-        Self { channel, alive }
+impl RusshShellReader {
+    fn new(rx: std::sync::mpsc::Receiver<Vec<u8>>, alive: Arc<AtomicBool>) -> Self {
+        Self {
+            rx,
+            buf: Vec::new(),
+            buf_pos: 0,
+            alive,
+        }
     }
 }
 
-impl Read for Ssh2SshShellReader {
+impl Read for RusshShellReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        // Drain leftover bytes from previous receive first.
+        if self.buf_pos < self.buf.len() {
+            let n = (self.buf.len() - self.buf_pos).min(buf.len());
+            buf[..n].copy_from_slice(&self.buf[self.buf_pos..self.buf_pos + n]);
+            self.buf_pos += n;
+            if self.buf_pos == self.buf.len() {
+                self.buf.clear();
+                self.buf_pos = 0;
+            }
+            return Ok(n);
+        }
+
         loop {
             if !self.alive.load(Ordering::SeqCst) {
                 return Ok(0);
             }
-            let result = {
-                let mut ch = self
-                    .channel
-                    .lock()
-                    .map_err(|e| std::io::Error::other(format!("channel lock: {e}")))?;
-                ch.read(buf)
-            };
-            match result {
-                ok @ Ok(_) => return ok,
-                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(Duration::from_millis(10));
-                    continue;
+            match self.rx.recv_timeout(Duration::from_millis(50)) {
+                Ok(data) if !data.is_empty() => {
+                    let n = data.len().min(buf.len());
+                    buf[..n].copy_from_slice(&data[..n]);
+                    if n < data.len() {
+                        self.buf = data[n..].to_vec();
+                        self.buf_pos = 0;
+                    }
+                    return Ok(n);
                 }
-                Err(e) => return Err(e),
+                // Empty vec = EOF sentinel from the channel task.
+                Ok(_) => return Ok(0),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return Ok(0),
             }
         }
     }
 }
 
-// ── Ssh2SshConnector (production) ─────────────────────────────────
+// ── RusshSshConnector (production) ────────────────────────────────
 
-/// Production SSH connector using libssh2.
-///
-/// Calls [`connect_and_authenticate`] then opens a PTY shell channel
-/// (with optional X11 forwarding). Supports all auth methods handled
-/// by [`super::auth::connect_and_authenticate`].
-pub struct Ssh2SshConnector;
+/// Production SSH connector using russh.
+pub struct RusshSshConnector;
 
-impl SshConnector for Ssh2SshConnector {
-    fn open_shell(
+#[async_trait::async_trait]
+impl SshConnector for RusshSshConnector {
+    async fn open_shell(
         &self,
         config: &SshConfig,
         alive: Arc<AtomicBool>,
     ) -> Result<SshShellHandle, SessionError> {
         use super::auth::connect_and_authenticate;
         use super::x11::X11Forwarder;
+        use russh::ChannelMsg;
 
-        let session = Arc::new(connect_and_authenticate(config)?);
+        let (mut session, registry) = connect_and_authenticate(config).await?;
 
-        // Optional X11 forwarding must be set up before the shell channel.
+        // Optional X11 forwarding (must be set up before opening the shell channel).
         let mut extensions: Vec<Box<dyn std::any::Any + Send>> = Vec::new();
         let mut x11_display: Option<u32> = None;
         let mut x11_cookie: Option<String> = None;
         if config.enable_x11_forwarding {
-            match X11Forwarder::start(config, alive.clone()) {
+            match X11Forwarder::start(config, &mut session, registry, alive.clone()).await {
                 Ok((forwarder, display_num, cookie)) => {
                     x11_display = Some(display_num);
                     x11_cookie = cookie;
@@ -157,121 +171,125 @@ impl SshConnector for Ssh2SshConnector {
         }
 
         let mut channel = session
-            .channel_session()
+            .channel_open_session()
+            .await
             .map_err(|e| SessionError::SpawnFailed(format!("Channel open failed: {e}")))?;
 
-        // Try to set DISPLAY via setenv before PTY/shell.
-        let mut display_set_via_env = false;
-        if let Some(display_num) = x11_display {
-            let display_val = format!("localhost:{display_num}.0");
-            if channel.setenv("DISPLAY", &display_val).is_ok() {
-                display_set_via_env = true;
-            }
-        }
-
-        // User-specified environment variables.
+        // User-specified environment variables (best-effort; many servers reject setenv).
         for (key, value) in &config.env {
-            let _ = channel.setenv(key, value);
+            let _ = channel.set_env(false, key, value).await;
         }
 
         channel
             .request_pty(
+                false,
                 "xterm-256color",
-                None,
-                Some((config.cols as u32, config.rows as u32, 0, 0)),
+                config.cols as u32,
+                config.rows as u32,
+                0,
+                0,
+                &[],
             )
+            .await
             .map_err(|e| SessionError::SpawnFailed(format!("PTY request failed: {e}")))?;
 
         channel
-            .shell()
+            .request_shell(false)
+            .await
             .map_err(|e| SessionError::SpawnFailed(format!("Shell request failed: {e}")))?;
 
-        // Inject DISPLAY/xauth if setenv failed (most servers reject it).
+        // Inject DISPLAY and xauth if X11 forwarding is active.
         if let Some(display_num) = x11_display {
-            if !display_set_via_env {
-                let _ = std::io::Write::write_all(
-                    &mut channel,
-                    format!("export DISPLAY=localhost:{display_num}.0\n").as_bytes(),
-                );
-            }
+            let export_cmd = format!("export DISPLAY=localhost:{display_num}.0\n");
+            let _ = channel.data(export_cmd.as_bytes()).await;
             if let Some(ref cookie) = x11_cookie {
-                let _ = std::io::Write::write_all(
-                    &mut channel,
-                    format!(
-                        "xauth add localhost:{display_num} MIT-MAGIC-COOKIE-1 {cookie} 2>/dev/null\n"
-                    )
-                    .as_bytes(),
+                let xauth_cmd = format!(
+                    "xauth add localhost:{display_num} MIT-MAGIC-COOKIE-1 {cookie} 2>/dev/null\n"
                 );
+                let _ = channel.data(xauth_cmd.as_bytes()).await;
             }
         }
 
-        // Switch to non-blocking for the reader thread.
-        session.set_blocking(false);
+        // ── Async→sync bridge ──────────────────────────────────────────
 
-        let channel = Arc::new(Mutex::new(channel));
-        let session_for_write = session.clone();
-        let session_for_resize = session.clone();
-        let session_for_blocking = session.clone();
-        let channel_for_write = channel.clone();
-        let channel_for_resize = channel.clone();
-        let channel_for_eof = channel.clone();
-        let channel_for_close = channel.clone();
-        let session_for_close = session.clone();
-        // Clone alive for the write closure so a write failure (e.g. TCP write
-        // timeout on a dead connection) signals the reader thread to exit, which
-        // then drops the output sender and triggers terminal-exit.
-        let alive_for_write = alive.clone();
+        // data_tx: channel task → blocking reader thread
+        let (data_tx, data_rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(64);
+        // cmd_tx:  write/resize/close closures → channel task
+        let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel::<ChannelCmd>();
+
+        let alive_task = alive.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    biased;
+                    // Outgoing commands (write / resize / close).
+                    cmd = cmd_rx.recv() => {
+                        match cmd {
+                            Some(ChannelCmd::Write(data)) => {
+                                let _ = channel.data(&data[..]).await;
+                            }
+                            Some(ChannelCmd::Resize(cols, rows)) => {
+                                let _ = channel.window_change(cols, rows, 0, 0).await;
+                            }
+                            Some(ChannelCmd::Eof) | None => {
+                                let _ = channel.eof().await;
+                                break;
+                            }
+                        }
+                    }
+                    // Incoming data from the server.
+                    msg = channel.wait() => {
+                        match msg {
+                            Some(ChannelMsg::Data { ref data }) => {
+                                if data_tx.send(data.to_vec()).is_err() {
+                                    break;
+                                }
+                            }
+                            Some(ChannelMsg::Eof) | None => {
+                                // Signal EOF to the reader.
+                                let _ = data_tx.send(Vec::new());
+                                break;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            alive_task.store(false, Ordering::SeqCst);
+        });
+
+        // Clone cmd_tx for each closure (UnboundedSender::send is non-blocking,
+        // safe to call from any thread including non-tokio threads).
+        let cmd_write = cmd_tx.clone();
+        let cmd_resize = cmd_tx.clone();
+        let cmd_eof = cmd_tx.clone();
+        let cmd_close = cmd_tx;
+        let alive_write = alive.clone();
 
         Ok(SshShellHandle {
-            reader: Box::new(Ssh2SshShellReader::new(channel.clone(), alive)),
+            reader: Box::new(RusshShellReader::new(data_rx, alive.clone())),
             write: Arc::new(move |data: &[u8]| {
-                if !alive_for_write.load(Ordering::SeqCst) {
+                if !alive_write.load(Ordering::SeqCst) {
                     return Err(SessionError::Io(std::io::Error::other("session dead")));
                 }
-                let mut ch = channel_for_write
-                    .lock()
-                    .map_err(|e| SessionError::Io(std::io::Error::other(format!("lock: {e}"))))?;
-                session_for_write.set_blocking(true);
-                let result = std::io::Write::write_all(&mut *ch, data);
-                session_for_write.set_blocking(false);
-                drop(ch);
-                if result.is_err() {
-                    alive_for_write.store(false, Ordering::SeqCst);
-                }
-                result.map_err(SessionError::Io)
+                cmd_write
+                    .send(ChannelCmd::Write(data.to_vec()))
+                    .map_err(|e| SessionError::Io(std::io::Error::other(e.to_string())))
             }),
             resize: Arc::new(move |cols: u16, rows: u16| {
-                let mut ch = channel_for_resize
-                    .lock()
-                    .map_err(|e| SessionError::Io(std::io::Error::other(format!("lock: {e}"))))?;
-                session_for_resize.set_blocking(true);
-                let result = ch.request_pty_size(cols as u32, rows as u32, None, None);
-                session_for_resize.set_blocking(false);
-                drop(ch);
-                result.map_err(|e| {
-                    SessionError::Io(std::io::Error::other(format!("PTY resize failed: {e}")))
-                })
+                cmd_resize
+                    .send(ChannelCmd::Resize(cols as u32, rows as u32))
+                    .map_err(|e| SessionError::Io(std::io::Error::other(e.to_string())))
             }),
-            set_blocking: Arc::new(move |blocking: bool| {
-                session_for_blocking.set_blocking(blocking);
-            }),
+            set_blocking: Arc::new(|_| {}),
             send_eof: Arc::new(move || {
-                let mut ch = channel_for_eof
-                    .lock()
-                    .map_err(|e| SessionError::Io(std::io::Error::other(format!("lock: {e}"))))?;
-                ch.send_eof()
+                cmd_eof
+                    .send(ChannelCmd::Eof)
                     .map_err(|e| SessionError::Io(std::io::Error::other(e.to_string())))
             }),
             close: Arc::new(move || {
-                let mut ch = channel_for_close
-                    .lock()
-                    .map_err(|e| SessionError::Io(std::io::Error::other(format!("lock: {e}"))))?;
-                session_for_close.set_blocking(true);
-                let _ = ch.send_eof();
-                let result = ch.close();
-                session_for_close.set_blocking(false);
-                drop(ch);
-                result.map_err(|e| SessionError::Io(std::io::Error::other(e.to_string())))
+                let _ = cmd_close.send(ChannelCmd::Eof);
+                Ok(())
             }),
             extensions,
         })
