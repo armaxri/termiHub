@@ -1,22 +1,24 @@
 //! Shared agent connection manager — one SSH connection per agent,
 //! with multiplexed sessions over JSON-RPC.
 //!
-//! Each agent runs in a dedicated I/O thread that owns the SSH `Session`
-//! and `Channel`. Multiple sessions share the connection, with output
+//! Each agent runs in a dedicated async tokio task that owns the russh
+//! `Channel`. Multiple sessions share the connection, with output
 //! notifications routed to per-session `OutputSender` channels.
 
 use std::collections::HashMap;
-use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex};
 
 use base64::Engine;
+use russh::ChannelMsg;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use ssh2::Session;
 use tauri::{AppHandle, Emitter};
+use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use tokio::sync::oneshot;
 use tracing::{error, info, warn};
 
+use termihub_core::backends::ssh::handler::SshSession;
 use termihub_core::monitoring::{MonitoringSender, SystemStats};
 
 use crate::connection::config::AgentSettings;
@@ -140,13 +142,13 @@ fn parse_agent_folder(v: &Value) -> Option<AgentFolderInfo> {
     })
 }
 
-/// Commands sent to the agent I/O thread.
+/// Commands sent to the agent I/O task.
 enum AgentIoCommand {
-    /// Send JSON-RPC request and get a response.
+    /// Send JSON-RPC request and get a response via a oneshot channel.
     Request {
         method: String,
         params: Value,
-        response_tx: std::sync::mpsc::Sender<Result<Value, String>>,
+        response_tx: oneshot::Sender<Result<Value, String>>,
     },
     /// Send input to a specific session (fire-and-forget).
     SessionInput { session_id: String, data: Vec<u8> },
@@ -176,7 +178,7 @@ enum AgentIoCommand {
 
 /// State for a single connected agent.
 struct AgentConnection {
-    command_tx: mpsc::Sender<AgentIoCommand>,
+    command_tx: UnboundedSender<AgentIoCommand>,
     alive: Arc<AtomicBool>,
     capabilities: AgentCapabilities,
     /// Stored for future version-gated feature checks.
@@ -365,7 +367,7 @@ impl AgentConnectionManager {
     /// Connect to a remote agent via SSH.
     ///
     /// Performs SSH authentication, starts the agent, and runs `initialize`
-    /// to get capabilities. Spawns a dedicated I/O thread for the connection.
+    /// to get capabilities. Spawns a dedicated async tokio task for the I/O loop.
     pub fn connect_agent(
         &self,
         agent_id: &str,
@@ -377,7 +379,7 @@ impl AgentConnectionManager {
             .lock()
             .map_err(|e| TerminalError::RemoteError(format!("Lock failed: {}", e)))?;
 
-        // Evict a dead entry left behind when the I/O thread exits without
+        // Evict a dead entry left behind when the I/O task exits without
         // removing itself (e.g. reconnection failed after a dropped connection).
         if let Some(existing) = agents.get(agent_id) {
             if existing.alive.load(Ordering::SeqCst) {
@@ -392,33 +394,6 @@ impl AgentConnectionManager {
         // Emit connecting state
         emit_agent_state(&self.app_handle, agent_id, "connecting");
 
-        // 1. SSH connect and authenticate
-        let ssh_config = config.to_ssh_config();
-        let session = connect_and_authenticate(&ssh_config).inspect_err(|_| {
-            emit_agent_state(&self.app_handle, agent_id, "disconnected");
-        })?;
-
-        // 2. Open exec channel and launch agent
-        let mut channel = session.channel_session().map_err(|e| {
-            emit_agent_state(&self.app_handle, agent_id, "disconnected");
-            TerminalError::RemoteError(format!("Channel open failed: {}", e))
-        })?;
-        let exec_cmd = config.agent_exec_command();
-        channel.exec(&exec_cmd).map_err(|e| {
-            emit_agent_state(&self.app_handle, agent_id, "disconnected");
-            TerminalError::RemoteError(format!("Exec failed: {}", e))
-        })?;
-
-        // 3. Blocking handshake: initialize
-        let enabled_external_files: Vec<&str> = config
-            .external_connection_files
-            .iter()
-            .filter(|f| f.enabled)
-            .map(|f| f.path.as_str())
-            .collect();
-
-        let mut request_id: u64 = 0;
-        request_id += 1;
         let default_settings;
         let settings_ref = match agent_settings {
             Some(s) => s,
@@ -427,88 +402,140 @@ impl AgentConnectionManager {
                 &default_settings
             }
         };
-        let init_params = build_initialize_params(settings_ref, &enabled_external_files);
-        jsonrpc::write_request(&mut channel, request_id, "initialize", init_params).map_err(
-            |e| {
-                emit_agent_state(&self.app_handle, agent_id, "disconnected");
-                TerminalError::RemoteError(format!("Write initialize failed: {}", e))
-            },
-        )?;
 
-        let resp_line = jsonrpc::read_line_blocking(&mut channel).map_err(|e| {
-            emit_agent_state(&self.app_handle, agent_id, "disconnected");
-            TerminalError::RemoteError(format!("Read initialize response: {}", e))
-        })?;
-        let msg = jsonrpc::parse_message(&resp_line).map_err(|e| {
-            emit_agent_state(&self.app_handle, agent_id, "disconnected");
-            TerminalError::RemoteError(format!("Parse initialize response: {}", e))
-        })?;
-
-        let (capabilities, agent_version, protocol_version) = match msg {
-            jsonrpc::JsonRpcMessage::Response { result, .. } => {
-                let caps = result.get("capabilities").ok_or_else(|| {
-                    emit_agent_state(&self.app_handle, agent_id, "disconnected");
-                    TerminalError::RemoteError("Missing capabilities in initialize response".into())
-                })?;
-                let mut capabilities = serde_json::from_value::<AgentCapabilities>(caps.clone())
-                    .map_err(|e| {
-                        emit_agent_state(&self.app_handle, agent_id, "disconnected");
-                        TerminalError::RemoteError(format!("Parse capabilities: {}", e))
-                    })?;
-                let agent_version = result
-                    .get("agent_version")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown")
-                    .to_string();
-                let protocol_version = result
-                    .get("protocol_version")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown")
-                    .to_string();
-                // Copy agent_version into capabilities so the UI can read it from there.
-                capabilities.agent_version = agent_version.clone();
-                (capabilities, agent_version, protocol_version)
-            }
-            jsonrpc::JsonRpcMessage::Error { message, .. } => {
-                emit_agent_state(&self.app_handle, agent_id, "disconnected");
-                return Err(TerminalError::RemoteError(format!(
-                    "Initialize rejected: {}",
-                    message
-                )));
-            }
-            _ => {
-                emit_agent_state(&self.app_handle, agent_id, "disconnected");
-                return Err(TerminalError::RemoteError(
-                    "Unexpected response to initialize".into(),
-                ));
-            }
-        };
-
-        // 4. Switch to non-blocking and spawn I/O thread
-        session.set_blocking(false);
-
-        let alive = Arc::new(AtomicBool::new(true));
-        let (command_tx, command_rx) = mpsc::channel();
-
-        let alive_clone = alive.clone();
+        let ssh_config = config.to_ssh_config();
         let app_handle_clone = self.app_handle.clone();
-        let agent_id_owned = agent_id.to_string();
+        let agent_id_str = agent_id.to_string();
         let config_clone = config.clone();
         let settings_clone = settings_ref.clone();
 
-        std::thread::spawn(move || {
-            agent_io_thread(
-                session,
-                channel,
-                command_rx,
-                alive_clone,
-                app_handle_clone,
-                agent_id_owned,
-                config_clone,
-                settings_clone,
-                request_id,
-            );
-        });
+        // Run the async connect+handshake on the current tokio runtime.
+        let handle = tokio::runtime::Handle::current();
+        let (capabilities, agent_version, protocol_version, command_tx, alive) =
+            handle.block_on(async {
+                // 1. SSH connect and authenticate
+                let session = connect_and_authenticate(&ssh_config).inspect_err(|_| {
+                    emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
+                })?;
+
+                // 2. Open exec channel and launch agent
+                let mut channel = session.channel_open_session().await.map_err(|e| {
+                    emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
+                    TerminalError::RemoteError(format!("Channel open failed: {}", e))
+                })?;
+                let exec_cmd = config_clone.agent_exec_command();
+                channel.exec(false, exec_cmd.as_str()).await.map_err(|e| {
+                    emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
+                    TerminalError::RemoteError(format!("Exec failed: {}", e))
+                })?;
+
+                // 3. Blocking handshake: initialize
+                let enabled_external_files: Vec<&str> = config_clone
+                    .external_connection_files
+                    .iter()
+                    .filter(|f| f.enabled)
+                    .map(|f| f.path.as_str())
+                    .collect();
+
+                let request_id: u64 = 1;
+                let init_params = build_initialize_params(&settings_clone, &enabled_external_files);
+                let req_line =
+                    serialize_request(request_id, "initialize", init_params).map_err(|e| {
+                        emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
+                        TerminalError::RemoteError(format!("Serialize initialize failed: {}", e))
+                    })?;
+
+                channel.data(req_line.as_bytes()).await.map_err(|e| {
+                    emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
+                    TerminalError::RemoteError(format!("Write initialize failed: {}", e))
+                })?;
+
+                // Read the initialize response line-by-line from the channel
+                let resp_line =
+                    read_channel_line(&mut channel, &agent_id_str, &app_handle_clone).await?;
+
+                let msg = jsonrpc::parse_message(&resp_line).map_err(|e| {
+                    emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
+                    TerminalError::RemoteError(format!("Parse initialize response: {}", e))
+                })?;
+
+                let (capabilities, agent_version, protocol_version) = match msg {
+                    jsonrpc::JsonRpcMessage::Response { result, .. } => {
+                        let caps = result.get("capabilities").ok_or_else(|| {
+                            emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
+                            TerminalError::RemoteError(
+                                "Missing capabilities in initialize response".into(),
+                            )
+                        })?;
+                        let mut capabilities = serde_json::from_value::<AgentCapabilities>(
+                            caps.clone(),
+                        )
+                        .map_err(|e| {
+                            emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
+                            TerminalError::RemoteError(format!("Parse capabilities: {}", e))
+                        })?;
+                        let agent_version = result
+                            .get("agent_version")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown")
+                            .to_string();
+                        let protocol_version = result
+                            .get("protocol_version")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown")
+                            .to_string();
+                        // Copy agent_version into capabilities so the UI can read it.
+                        capabilities.agent_version = agent_version.clone();
+                        (capabilities, agent_version, protocol_version)
+                    }
+                    jsonrpc::JsonRpcMessage::Error { message, .. } => {
+                        emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
+                        return Err(TerminalError::RemoteError(format!(
+                            "Initialize rejected: {}",
+                            message
+                        )));
+                    }
+                    _ => {
+                        emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
+                        return Err(TerminalError::RemoteError(
+                            "Unexpected response to initialize".into(),
+                        ));
+                    }
+                };
+
+                // 4. Spawn the async I/O task
+                let alive = Arc::new(AtomicBool::new(true));
+                let (command_tx, command_rx) = mpsc::unbounded_channel::<AgentIoCommand>();
+
+                let alive_clone = alive.clone();
+                let app_handle_task = app_handle_clone.clone();
+                let agent_id_task = agent_id_str.clone();
+                let config_task = config_clone.clone();
+                let settings_task = settings_clone.clone();
+
+                tokio::spawn(async move {
+                    agent_io_task(
+                        session,
+                        channel,
+                        command_rx,
+                        alive_clone,
+                        app_handle_task,
+                        agent_id_task,
+                        config_task,
+                        settings_task,
+                        request_id,
+                    )
+                    .await;
+                });
+
+                Ok::<_, TerminalError>((
+                    capabilities,
+                    agent_version,
+                    protocol_version,
+                    command_tx,
+                    alive,
+                ))
+            })?;
 
         emit_agent_state(&self.app_handle, agent_id, "connected");
 
@@ -609,20 +636,20 @@ impl AgentConnectionManager {
             TerminalError::RemoteError(format!("Agent {} not connected", agent_id))
         })?;
 
-        let (resp_tx, resp_rx) = mpsc::channel();
+        let (resp_tx, resp_rx) = oneshot::channel();
         conn.command_tx
             .send(AgentIoCommand::Request {
                 method: method.to_string(),
                 params,
                 response_tx: resp_tx,
             })
-            .map_err(|_| TerminalError::RemoteError("Agent I/O thread gone".to_string()))?;
+            .map_err(|_| TerminalError::RemoteError("Agent I/O task gone".to_string()))?;
 
         // Drop the lock before waiting for response
         drop(agents);
 
         resp_rx
-            .recv_timeout(std::time::Duration::from_secs(10))
+            .blocking_recv()
             .map_err(|_| TerminalError::RemoteError("Agent request timed out".to_string()))?
             .map_err(TerminalError::RemoteError)
     }
@@ -810,7 +837,7 @@ impl AgentConnectionManager {
         Ok(())
     }
 
-    /// Register an output sender for a session on the agent's I/O thread.
+    /// Register an output sender for a session on the agent's I/O task.
     pub fn register_session_output(
         &self,
         agent_id: &str,
@@ -831,10 +858,10 @@ impl AgentConnectionManager {
                 session_id: remote_session_id.to_string(),
                 output_tx,
             })
-            .map_err(|_| TerminalError::RemoteError("Agent I/O thread gone".to_string()))
+            .map_err(|_| TerminalError::RemoteError("Agent I/O task gone".to_string()))
     }
 
-    /// Unregister a session's output sender from the agent's I/O thread.
+    /// Unregister a session's output sender from the agent's I/O task.
     pub fn unregister_session_output(
         &self,
         agent_id: &str,
@@ -853,7 +880,7 @@ impl AgentConnectionManager {
             .send(AgentIoCommand::UnregisterSession {
                 session_id: remote_session_id.to_string(),
             })
-            .map_err(|_| TerminalError::RemoteError("Agent I/O thread gone".to_string()))
+            .map_err(|_| TerminalError::RemoteError("Agent I/O task gone".to_string()))
     }
 
     /// Register a monitoring channel for a remote session so that
@@ -878,7 +905,7 @@ impl AgentConnectionManager {
                 session_id: remote_session_id.to_string(),
                 monitoring_tx,
             })
-            .map_err(|_| TerminalError::RemoteError("Agent I/O thread gone".to_string()))
+            .map_err(|_| TerminalError::RemoteError("Agent I/O task gone".to_string()))
     }
 
     /// Unregister the monitoring channel for a remote session.
@@ -900,7 +927,7 @@ impl AgentConnectionManager {
             .send(AgentIoCommand::UnregisterMonitoring {
                 session_id: remote_session_id.to_string(),
             })
-            .map_err(|_| TerminalError::RemoteError("Agent I/O thread gone".to_string()))
+            .map_err(|_| TerminalError::RemoteError("Agent I/O task gone".to_string()))
     }
 
     /// Send input to a session on the agent (fire-and-forget).
@@ -924,7 +951,7 @@ impl AgentConnectionManager {
                 session_id: remote_session_id.to_string(),
                 data: data.to_vec(),
             })
-            .map_err(|_| TerminalError::WriteFailed("Agent I/O thread gone".to_string()))
+            .map_err(|_| TerminalError::WriteFailed("Agent I/O task gone".to_string()))
     }
 
     /// Resize a session on the agent (fire-and-forget).
@@ -950,7 +977,7 @@ impl AgentConnectionManager {
                 cols,
                 rows,
             })
-            .map_err(|_| TerminalError::ResizeFailed("Agent I/O thread gone".to_string()))
+            .map_err(|_| TerminalError::ResizeFailed("Agent I/O task gone".to_string()))
     }
 }
 
@@ -1140,6 +1167,8 @@ impl AgentRpcClient for AgentConnectionManager {
     }
 }
 
+// ── Helpers ─────────────────────────────────────────────────────────
+
 /// Build the `initialize` JSON-RPC params including agent runtime settings and external files.
 fn build_initialize_params(settings: &AgentSettings, external_files: &[&str]) -> Value {
     serde_json::json!({
@@ -1149,6 +1178,63 @@ fn build_initialize_params(settings: &AgentSettings, external_files: &[&str]) ->
         "agentSettings": settings,
         "externalConnectionFiles": external_files
     })
+}
+
+/// Serialize a JSON-RPC request to a newline-terminated string for channel writes.
+fn serialize_request(id: u64, method: &str, params: Value) -> Result<String, String> {
+    let req = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": method,
+        "params": params,
+        "id": id,
+    });
+    let mut line = serde_json::to_string(&req).map_err(|e| format!("Serialize JSON-RPC: {}", e))?;
+    line.push('\n');
+    Ok(line)
+}
+
+/// Read a single newline-terminated JSON-RPC line from a russh channel during
+/// the handshake phase. Accumulates `ChannelMsg::Data` chunks until a `\n`
+/// is encountered, then returns the trimmed line.
+async fn read_channel_line(
+    channel: &mut russh::Channel<russh::client::Msg>,
+    agent_id: &str,
+    app_handle: &AppHandle,
+) -> Result<String, TerminalError> {
+    let mut buf = String::new();
+    loop {
+        match channel.wait().await {
+            Some(ChannelMsg::Data { ref data }) => {
+                buf.push_str(&String::from_utf8_lossy(data));
+                if let Some(pos) = buf.find('\n') {
+                    let line = buf[..pos].trim().to_string();
+                    return Ok(line);
+                }
+            }
+            Some(ChannelMsg::ExtendedData { ref data, ext: 1 }) => {
+                // stderr — log but don't fail
+                warn!(
+                    "Agent {}: stderr during handshake: {}",
+                    agent_id,
+                    String::from_utf8_lossy(data)
+                );
+            }
+            Some(ChannelMsg::Eof) | None => {
+                emit_agent_state(app_handle, agent_id, "disconnected");
+                return Err(TerminalError::RemoteError(
+                    "Channel closed before initialize response".into(),
+                ));
+            }
+            Some(ChannelMsg::ExitStatus { exit_status }) => {
+                emit_agent_state(app_handle, agent_id, "disconnected");
+                return Err(TerminalError::RemoteError(format!(
+                    "Agent process exited with status {} before initialize response",
+                    exit_status
+                )));
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Emit an agent state change event with an optional error description.
@@ -1173,15 +1259,19 @@ fn emit_agent_state(app_handle: &AppHandle, agent_id: &str, state: &str) {
     emit_agent_state_with_error(app_handle, agent_id, state, None);
 }
 
-/// Main I/O thread for an agent connection.
+// ── Async I/O task ───────────────────────────────────────────────────
+
+/// Main async I/O task for an agent connection.
 ///
-/// Owns the SSH Session + Channel exclusively. Processes commands from
-/// the mpsc channel and routes output notifications to registered sessions.
+/// Owns the russh `SshSession` and `Channel` exclusively. Concurrently polls
+/// incoming SSH data and outgoing commands using `tokio::select!`. Routes
+/// JSON-RPC responses to waiting callers and notifications to registered
+/// session output channels.
 #[allow(clippy::too_many_arguments)]
-fn agent_io_thread(
-    _session: Session,
-    mut channel: ssh2::Channel,
-    command_rx: mpsc::Receiver<AgentIoCommand>,
+async fn agent_io_task(
+    session: SshSession,
+    mut channel: russh::Channel<russh::client::Msg>,
+    mut command_rx: UnboundedReceiver<AgentIoCommand>,
     alive: Arc<AtomicBool>,
     app_handle: AppHandle,
     agent_id: String,
@@ -1191,143 +1281,163 @@ fn agent_io_thread(
 ) {
     let b64 = base64::engine::general_purpose::STANDARD;
     let mut line_buf = String::new();
-    let mut read_buf = [0u8; 4096];
     let mut session_outputs: HashMap<String, OutputSender> = HashMap::new();
     let mut monitoring_outputs: HashMap<String, MonitoringSender> = HashMap::new();
-    let mut pending_responses: HashMap<u64, mpsc::Sender<Result<Value, String>>> = HashMap::new();
-
+    let mut pending_responses: HashMap<u64, oneshot::Sender<Result<Value, String>>> =
+        HashMap::new();
     let mut connection_error: Option<String> = None;
 
+    // Keep the current session handle alive. On reconnect this is replaced so
+    // the old session is dropped and the new one is held for the next loop iteration.
+    let mut _current_session: Option<SshSession> = Some(session);
+
     'outer: loop {
-        // Inner read loop
+        // connection_broken is true when we need to reconnect.
         let connection_broken = loop {
-            // 1. Process pending commands (non-blocking)
-            while let Ok(cmd) = command_rx.try_recv() {
-                match cmd {
-                    AgentIoCommand::Request {
-                        method,
-                        params,
-                        response_tx,
-                    } => {
-                        request_id += 1;
-                        pending_responses.insert(request_id, response_tx);
-                        if let Err(e) =
-                            jsonrpc::write_request(&mut channel, request_id, &method, params)
-                        {
-                            if let Some(tx) = pending_responses.remove(&request_id) {
-                                let _ = tx.send(Err(format!("Write failed: {}", e)));
-                            }
+            tokio::select! {
+                biased;
+
+                // 1. Process incoming commands
+                cmd = command_rx.recv() => {
+                    let cmd = match cmd {
+                        Some(c) => c,
+                        None => {
+                            // Sender dropped — clean shutdown
+                            alive.store(false, Ordering::SeqCst);
+                            return;
                         }
-                    }
-                    AgentIoCommand::SessionInput { session_id, data } => {
-                        request_id += 1;
-                        let encoded = b64.encode(&data);
-                        let _ = jsonrpc::write_request(
-                            &mut channel,
-                            request_id,
-                            "connection.write",
-                            serde_json::json!({
-                                "session_id": session_id,
-                                "data": encoded,
-                            }),
-                        );
-                    }
-                    AgentIoCommand::SessionResize {
-                        session_id,
-                        cols,
-                        rows,
-                    } => {
-                        request_id += 1;
-                        let _ = jsonrpc::write_request(
-                            &mut channel,
-                            request_id,
-                            "connection.resize",
-                            serde_json::json!({
-                                "session_id": session_id,
-                                "cols": cols,
-                                "rows": rows,
-                            }),
-                        );
-                    }
-                    AgentIoCommand::RegisterSession {
-                        session_id,
-                        output_tx,
-                    } => {
-                        session_outputs.insert(session_id, output_tx);
-                    }
-                    AgentIoCommand::UnregisterSession { session_id } => {
-                        session_outputs.remove(&session_id);
-                    }
-                    AgentIoCommand::RegisterMonitoring {
-                        session_id,
-                        monitoring_tx,
-                    } => {
-                        monitoring_outputs.insert(session_id, monitoring_tx);
-                    }
-                    AgentIoCommand::UnregisterMonitoring { session_id } => {
-                        monitoring_outputs.remove(&session_id);
-                    }
-                    AgentIoCommand::Disconnect => {
-                        alive.store(false, Ordering::SeqCst);
-                        return;
-                    }
-                }
-            }
-
-            // 2. Non-blocking read from SSH channel
-            match channel.read(&mut read_buf) {
-                Ok(0) => {
-                    // EOF — connection closed
-                    break true;
-                }
-                Ok(n) => {
-                    let chunk = &read_buf[..n];
-                    line_buf.push_str(&String::from_utf8_lossy(chunk));
-
-                    // Process complete lines
-                    while let Some(pos) = line_buf.find('\n') {
-                        let line = line_buf[..pos].trim().to_string();
-                        line_buf = line_buf[pos + 1..].to_string();
-
-                        if line.is_empty() {
-                            continue;
-                        }
-
-                        match jsonrpc::parse_message(&line) {
-                            Ok(jsonrpc::JsonRpcMessage::Response { id, result }) => {
-                                if let Some(tx) = pending_responses.remove(&id) {
-                                    let _ = tx.send(Ok(result));
+                    };
+                    match cmd {
+                        AgentIoCommand::Request { method, params, response_tx } => {
+                            request_id += 1;
+                            match serialize_request(request_id, &method, params) {
+                                Ok(line) => {
+                                    if let Err(e) = channel.data(line.as_bytes()).await {
+                                        let _ = response_tx
+                                            .send(Err(format!("Write failed: {}", e)));
+                                    } else {
+                                        pending_responses.insert(request_id, response_tx);
+                                    }
+                                }
+                                Err(e) => {
+                                    let _ = response_tx.send(Err(e));
                                 }
                             }
-                            Ok(jsonrpc::JsonRpcMessage::Error { id, message, .. }) => {
-                                if let Some(tx) = pending_responses.remove(&id) {
-                                    let _ = tx.send(Err(message));
-                                }
+                        }
+                        AgentIoCommand::SessionInput { session_id, data } => {
+                            request_id += 1;
+                            let encoded = b64.encode(&data);
+                            if let Ok(line) = serialize_request(
+                                request_id,
+                                "connection.write",
+                                serde_json::json!({
+                                    "session_id": session_id,
+                                    "data": encoded,
+                                }),
+                            ) {
+                                let _ = channel.data(line.as_bytes()).await;
                             }
-                            Ok(jsonrpc::JsonRpcMessage::Notification { method, params }) => {
-                                handle_notification(
-                                    &method,
-                                    &params,
-                                    &session_outputs,
-                                    &monitoring_outputs,
-                                    &b64,
-                                );
+                        }
+                        AgentIoCommand::SessionResize { session_id, cols, rows } => {
+                            request_id += 1;
+                            if let Ok(line) = serialize_request(
+                                request_id,
+                                "connection.resize",
+                                serde_json::json!({
+                                    "session_id": session_id,
+                                    "cols": cols,
+                                    "rows": rows,
+                                }),
+                            ) {
+                                let _ = channel.data(line.as_bytes()).await;
                             }
-                            Err(e) => {
-                                warn!("Agent {}: failed to parse message: {}", agent_id, e);
-                            }
+                        }
+                        AgentIoCommand::RegisterSession { session_id, output_tx } => {
+                            session_outputs.insert(session_id, output_tx);
+                        }
+                        AgentIoCommand::UnregisterSession { session_id } => {
+                            session_outputs.remove(&session_id);
+                        }
+                        AgentIoCommand::RegisterMonitoring { session_id, monitoring_tx } => {
+                            monitoring_outputs.insert(session_id, monitoring_tx);
+                        }
+                        AgentIoCommand::UnregisterMonitoring { session_id } => {
+                            monitoring_outputs.remove(&session_id);
+                        }
+                        AgentIoCommand::Disconnect => {
+                            alive.store(false, Ordering::SeqCst);
+                            return;
                         }
                     }
                 }
-                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    // No data available — sleep briefly
-                    std::thread::sleep(std::time::Duration::from_millis(10));
-                }
-                Err(e) => {
-                    let err_msg = e.to_string();
-                    error!("Agent {}: read error: {}", agent_id, err_msg);
-                    connection_error = Some(err_msg);
-                    break true;
+
+                // 2. Poll incoming SSH channel data
+                msg = channel.wait() => {
+                    match msg {
+                        None => {
+                            // Channel closed cleanly
+                            break true;
+                        }
+                        Some(ChannelMsg::Data { ref data }) => {
+                            line_buf.push_str(&String::from_utf8_lossy(data));
+
+                            // Process all complete newline-delimited JSON lines
+                            while let Some(pos) = line_buf.find('\n') {
+                                let line = line_buf[..pos].trim().to_string();
+                                line_buf = line_buf[pos + 1..].to_string();
+
+                                if line.is_empty() {
+                                    continue;
+                                }
+
+                                match jsonrpc::parse_message(&line) {
+                                    Ok(jsonrpc::JsonRpcMessage::Response { id, result }) => {
+                                        if let Some(tx) = pending_responses.remove(&id) {
+                                            let _ = tx.send(Ok(result));
+                                        }
+                                    }
+                                    Ok(jsonrpc::JsonRpcMessage::Error { id, message, .. }) => {
+                                        if let Some(tx) = pending_responses.remove(&id) {
+                                            let _ = tx.send(Err(message));
+                                        }
+                                    }
+                                    Ok(jsonrpc::JsonRpcMessage::Notification { method, params }) => {
+                                        handle_notification(
+                                            &method,
+                                            &params,
+                                            &session_outputs,
+                                            &monitoring_outputs,
+                                            &b64,
+                                        );
+                                    }
+                                    Err(e) => {
+                                        warn!("Agent {}: failed to parse message: {}", agent_id, e);
+                                    }
+                                }
+                            }
+                        }
+                        Some(ChannelMsg::ExtendedData { ref data, ext: 1 }) => {
+                            // stderr from the remote agent process (SSH_EXTENDED_DATA_STDERR = 1)
+                            warn!(
+                                "Agent {}: stderr: {}",
+                                agent_id,
+                                String::from_utf8_lossy(data)
+                            );
+                        }
+                        Some(ChannelMsg::Eof) => {
+                            // Remote side sent EOF — connection is gone
+                            break true;
+                        }
+                        Some(ChannelMsg::ExitStatus { exit_status }) => {
+                            if exit_status != 0 {
+                                let msg = format!("Agent process exited with status {}", exit_status);
+                                error!("Agent {}: {}", agent_id, msg);
+                                connection_error = Some(msg);
+                            }
+                            break true;
+                        }
+                        _ => {}
+                    }
                 }
             }
         };
@@ -1345,17 +1455,18 @@ fn agent_io_thread(
         );
         info!("Agent {}: connection lost, attempting reconnect", agent_id);
 
-        match reconnect_agent(&config, &agent_settings, &mut request_id, &alive) {
+        match reconnect_agent(&config, &agent_settings, &mut request_id, &alive).await {
             Ok((new_session, new_channel)) => {
-                // Replace the old channel (session is consumed by io_thread signature)
-                // We need to start a new I/O loop with the new channel
-                let _ = new_session; // session set_blocking(false) already called in reconnect
+                // Replace the current session handle with the new one.
+                // This drops the old (broken) session and keeps the new one alive
+                // for the next iteration of the outer loop.
+                _current_session = Some(new_session);
                 channel = new_channel;
                 line_buf.clear();
                 connection_error = None;
                 emit_agent_state(&app_handle, &agent_id, "connected");
                 info!("Agent {}: reconnected successfully", agent_id);
-                // Clear pending responses with errors
+                // Notify all pending requests that the connection was lost
                 for (_, tx) in pending_responses.drain() {
                     let _ = tx.send(Err("Connection lost during request".to_string()));
                 }
@@ -1401,7 +1512,8 @@ fn handle_notification(
                 Err(_) => return,
             };
             if let Some(output_tx) = session_outputs.get(session_id) {
-                let _ = output_tx.send(data);
+                // Use try_send to avoid blocking the async I/O task.
+                let _ = output_tx.try_send(data);
             }
         }
         "connection.monitoring.data" => {
@@ -1424,26 +1536,34 @@ fn handle_notification(
 /// Attempt to reconnect to an agent with exponential backoff.
 ///
 /// Respects the `alive` flag — if it becomes `false` during the inter-attempt
-/// sleep the function returns immediately so the caller can exit cleanly.
-fn reconnect_agent(
+/// delay the function returns immediately so the caller can exit cleanly.
+async fn reconnect_agent(
     config: &RemoteAgentConfig,
     agent_settings: &AgentSettings,
     request_id: &mut u64,
     alive: &Arc<AtomicBool>,
-) -> Result<(Session, ssh2::Channel), String> {
+) -> Result<(SshSession, russh::Channel<russh::client::Msg>), String> {
     const MAX_RETRIES: u32 = 10;
     const MAX_BACKOFF_SECS: u64 = 30;
-    const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 
     for attempt in 0..MAX_RETRIES {
         let backoff_secs = std::cmp::min(2u64.pow(attempt), MAX_BACKOFF_SECS);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(backoff_secs);
-        while std::time::Instant::now() < deadline {
+
+        // Sleep in small increments so we can respect the alive flag promptly
+        let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(backoff_secs);
+        loop {
             if !alive.load(Ordering::SeqCst) {
                 return Err("Reconnect stopped by user".to_string());
             }
-            std::thread::sleep(POLL_INTERVAL);
+            let now = tokio::time::Instant::now();
+            if now >= deadline {
+                break;
+            }
+            let remaining = deadline - now;
+            let sleep_ms = remaining.as_millis().min(100).try_into().unwrap_or(100u64);
+            tokio::time::sleep(tokio::time::Duration::from_millis(sleep_ms)).await;
         }
+
         if !alive.load(Ordering::SeqCst) {
             return Err("Reconnect stopped by user".to_string());
         }
@@ -1460,7 +1580,7 @@ fn reconnect_agent(
         };
 
         // 2. Open channel and start agent
-        let mut channel = match session.channel_session() {
+        let mut channel = match session.channel_open_session().await {
             Ok(c) => c,
             Err(e) => {
                 warn!("Reconnect attempt {} failed (channel): {}", attempt + 1, e);
@@ -1468,7 +1588,7 @@ fn reconnect_agent(
             }
         };
         let exec_cmd = config.agent_exec_command();
-        if let Err(e) = channel.exec(&exec_cmd) {
+        if let Err(e) = channel.exec(false, exec_cmd.as_str()).await {
             warn!("Reconnect attempt {} failed (exec): {}", attempt + 1, e);
             continue;
         }
@@ -1482,8 +1602,19 @@ fn reconnect_agent(
             .map(|f| f.path.as_str())
             .collect();
         let init_params = build_initialize_params(agent_settings, &enabled_files);
-        if let Err(e) = jsonrpc::write_request(&mut channel, *request_id, "initialize", init_params)
-        {
+        let req_line = match serialize_request(*request_id, "initialize", init_params) {
+            Ok(l) => l,
+            Err(e) => {
+                warn!(
+                    "Reconnect attempt {} failed (serialize init): {}",
+                    attempt + 1,
+                    e
+                );
+                continue;
+            }
+        };
+
+        if let Err(e) = channel.data(req_line.as_bytes()).await {
             warn!(
                 "Reconnect attempt {} failed (write init): {}",
                 attempt + 1,
@@ -1492,36 +1623,65 @@ fn reconnect_agent(
             continue;
         }
 
-        match jsonrpc::read_line_blocking(&mut channel) {
-            Ok(line) => match jsonrpc::parse_message(&line) {
-                Ok(jsonrpc::JsonRpcMessage::Response { .. }) => {
-                    session.set_blocking(false);
-                    return Ok((session, channel));
+        // 4. Read initialize response
+        let mut line_buf = String::new();
+        let mut success = false;
+        let resp_line = loop {
+            match channel.wait().await {
+                Some(ChannelMsg::Data { ref data }) => {
+                    line_buf.push_str(&String::from_utf8_lossy(data));
+                    if let Some(pos) = line_buf.find('\n') {
+                        let line = line_buf[..pos].trim().to_string();
+                        break Some(line);
+                    }
                 }
-                Ok(jsonrpc::JsonRpcMessage::Error { message, .. }) => {
+                Some(ChannelMsg::Eof) | None => {
+                    break None;
+                }
+                Some(ChannelMsg::ExitStatus { exit_status }) => {
                     warn!(
-                        "Reconnect attempt {} failed (init rejected): {}",
+                        "Reconnect attempt {} failed (agent exited {})",
                         attempt + 1,
-                        message
+                        exit_status
                     );
-                    continue;
+                    break None;
                 }
-                _ => {
-                    warn!(
-                        "Reconnect attempt {} failed (unexpected init response)",
-                        attempt + 1
-                    );
-                    continue;
-                }
-            },
-            Err(e) => {
+                _ => {}
+            }
+        };
+
+        let resp_line = match resp_line {
+            Some(l) => l,
+            None => {
                 warn!(
-                    "Reconnect attempt {} failed (read init): {}",
-                    attempt + 1,
-                    e
+                    "Reconnect attempt {} failed (channel closed during init read)",
+                    attempt + 1
                 );
                 continue;
             }
+        };
+
+        match jsonrpc::parse_message(&resp_line) {
+            Ok(jsonrpc::JsonRpcMessage::Response { .. }) => {
+                success = true;
+            }
+            Ok(jsonrpc::JsonRpcMessage::Error { message, .. }) => {
+                warn!(
+                    "Reconnect attempt {} failed (init rejected): {}",
+                    attempt + 1,
+                    message
+                );
+            }
+            _ => {
+                warn!(
+                    "Reconnect attempt {} failed (unexpected init response)",
+                    attempt + 1
+                );
+            }
+        }
+
+        if success {
+            return Ok((session, channel));
         }
     }
 
@@ -1908,8 +2068,8 @@ mod tests {
     /// Regression test for #627: reconnect_agent must stop when `alive` is set
     /// to false by the caller (e.g. disconnect_agent). Without the alive check
     /// the reconnect loop sleeps up to 3 minutes before giving up.
-    #[test]
-    fn reconnect_agent_stops_when_alive_is_false() {
+    #[tokio::test]
+    async fn reconnect_agent_stops_when_alive_is_false() {
         let config = RemoteAgentConfig {
             host: "unreachable.example.com".to_string(),
             port: 22,
@@ -1925,7 +2085,7 @@ mod tests {
         let mut request_id = 0u64;
         let alive = Arc::new(AtomicBool::new(false));
 
-        let result = reconnect_agent(&config, &settings, &mut request_id, &alive);
+        let result = reconnect_agent(&config, &settings, &mut request_id, &alive).await;
 
         assert!(result.is_err());
         let err = result.err().unwrap();
@@ -1933,5 +2093,16 @@ mod tests {
             err.contains("stopped") || err.contains("cancelled"),
             "expected stop-related error, got: {err}"
         );
+    }
+
+    /// serialize_request produces valid newline-terminated JSON-RPC.
+    #[test]
+    fn serialize_request_format() {
+        let line = serialize_request(42, "connection.create", json!({"type": "shell"})).unwrap();
+        assert!(line.ends_with('\n'));
+        let parsed: Value = serde_json::from_str(line.trim()).unwrap();
+        assert_eq!(parsed["id"], 42);
+        assert_eq!(parsed["method"], "connection.create");
+        assert_eq!(parsed["jsonrpc"], "2.0");
     }
 }

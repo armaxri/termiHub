@@ -6,14 +6,13 @@
 //! The monitoring task adds the `host` field when building protocol-level
 //! [`MonitoringData`](crate::protocol::methods::MonitoringData).
 
-use std::io::Read;
-use std::net::TcpStream;
-
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
+use russh::ChannelMsg;
 use sysinfo::{Disks, System};
 use tracing::debug;
 
 use crate::protocol::methods::SshSessionConfig;
+use termihub_core::backends::ssh::handler::SshSession;
 
 // Re-export core trait so the monitoring manager can import it from here.
 pub use termihub_core::monitoring::StatsCollector;
@@ -151,22 +150,21 @@ fn root_disk_stats(disks: &Disks) -> (u64, u64, f64) {
 
 /// Collects system statistics from a remote Linux host via SSH exec.
 ///
-/// Opens a persistent SSH connection and executes the monitoring
-/// command on each collection cycle.
+/// Opens a persistent russh connection and executes the monitoring
+/// command on each collection cycle via async exec channels.
 pub struct SshCollector {
-    session: ssh2::Session,
+    session: SshSession,
     prev_cpu: Option<CpuCounters>,
 }
-
-// ssh2::Session contains raw pointers but is safe to send between
-// threads when access is serialized (we only access from the
-// monitoring task).
-unsafe impl Send for SshCollector {}
 
 impl SshCollector {
     /// Open a new SSH connection for monitoring.
     pub fn new(config: &SshSessionConfig) -> Result<Self> {
-        let session = connect_ssh(config)?;
+        let (session, _registry) = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current()
+                .block_on(termihub_core::backends::ssh::auth::connect_and_authenticate(config))
+        })
+        .context("SSH connection failed")?;
         debug!(
             "SSH monitoring connection established to {}@{}",
             config.username, config.host
@@ -179,21 +177,35 @@ impl SshCollector {
 
     /// Execute a command over SSH and return stdout.
     fn exec(&self, command: &str) -> Result<String> {
-        let mut channel = self
-            .session
-            .channel_session()
-            .context("SSH channel open failed")?;
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                let mut channel = self
+                    .session
+                    .channel_open_session()
+                    .await
+                    .context("SSH channel open failed")?;
 
-        channel.exec(command).context("SSH exec failed")?;
+                channel
+                    .exec(false, command)
+                    .await
+                    .context("SSH exec failed")?;
 
-        let mut output = String::new();
-        channel
-            .read_to_string(&mut output)
-            .context("SSH read failed")?;
-
-        channel.wait_close().ok();
-
-        Ok(output)
+                let mut output = String::new();
+                loop {
+                    match channel.wait().await {
+                        Some(ChannelMsg::Data { ref data }) => {
+                            if let Ok(s) = std::str::from_utf8(data) {
+                                output.push_str(s);
+                            }
+                        }
+                        Some(ChannelMsg::ExitStatus { .. }) => {}
+                        Some(ChannelMsg::Eof) | None => break,
+                        _ => {}
+                    }
+                }
+                Ok::<String, anyhow::Error>(output)
+            })
+        })
     }
 }
 
@@ -225,52 +237,6 @@ impl StatsCollector for SshCollector {
             os_info: stats.os_info,
         })
     }
-}
-
-/// Establish an SSH connection using the given config.
-fn connect_ssh(config: &SshSessionConfig) -> Result<ssh2::Session> {
-    let port = config.port;
-    let addr = format!("{}:{}", config.host, port);
-
-    let tcp = TcpStream::connect(&addr).with_context(|| format!("TCP connect to {addr} failed"))?;
-
-    let mut session = ssh2::Session::new().context("Failed to create SSH session")?;
-    session.set_tcp_stream(tcp);
-    session.handshake().context("SSH handshake failed")?;
-    session.set_blocking(true);
-
-    match config.auth_method.as_str() {
-        "key" => {
-            let key_path = config.key_path.as_deref().unwrap_or("~/.ssh/id_rsa");
-            let expanded = shellexpand::tilde(key_path);
-            session
-                .userauth_pubkey_file(
-                    &config.username,
-                    None,
-                    std::path::Path::new(expanded.as_ref()),
-                    None,
-                )
-                .context("SSH key auth failed")?;
-        }
-        "password" => {
-            let password = config.password.as_deref().unwrap_or("");
-            session
-                .userauth_password(&config.username, password)
-                .context("SSH password auth failed")?;
-        }
-        "agent" => {
-            session
-                .userauth_agent(&config.username)
-                .context("SSH agent auth failed")?;
-        }
-        other => bail!("Unknown SSH auth method: {other}"),
-    }
-
-    if !session.authenticated() {
-        bail!("SSH authentication failed");
-    }
-
-    Ok(session)
 }
 
 #[cfg(test)]

@@ -23,21 +23,25 @@ use termihub_core::backends::ssh::auth::connect_and_authenticate;
 
 // ── NET-FAULT-01: 500ms latency ─────────────────────────────────────
 
-#[test]
-fn net_fault_01_high_latency() {
+#[tokio::test]
+async fn net_fault_01_high_latency() {
     require_docker!(PORT_NETWORK_FAULT);
     let _guard = FaultGuard::new();
 
     // Establish baseline connection.
     let config = ssh_password_config(PORT_NETWORK_FAULT);
-    let session = connect_and_authenticate(&config).expect("Baseline connection should succeed");
+    let (session, _) = connect_and_authenticate(&config)
+        .await
+        .expect("Baseline connection should succeed");
 
     // Inject 500ms latency.
     apply_fault(&["apply-latency", "500ms"]).expect("Fault injection should succeed");
 
     // Measure round-trip time for a command.
     let start = Instant::now();
-    let output = ssh_exec(&session, "echo NET_FAULT_01_OK").expect("Command should succeed");
+    let output = ssh_exec(&session, "echo NET_FAULT_01_OK")
+        .await
+        .expect("Command should succeed");
     let rtt = start.elapsed();
 
     assert!(
@@ -52,19 +56,23 @@ fn net_fault_01_high_latency() {
 
 // ── NET-FAULT-02: 2000ms extreme latency ────────────────────────────
 
-#[test]
-fn net_fault_02_extreme_latency() {
+#[tokio::test]
+async fn net_fault_02_extreme_latency() {
     require_docker!(PORT_NETWORK_FAULT);
     let _guard = FaultGuard::new();
 
     let config = ssh_password_config(PORT_NETWORK_FAULT);
-    let session = connect_and_authenticate(&config).expect("Baseline connection should succeed");
+    let (session, _) = connect_and_authenticate(&config)
+        .await
+        .expect("Baseline connection should succeed");
 
     // Inject 2000ms latency.
     apply_fault(&["apply-latency", "2000ms"]).expect("Fault injection should succeed");
 
     let start = Instant::now();
-    let output = ssh_exec(&session, "echo NET_FAULT_02_OK").expect("Command should still succeed");
+    let output = ssh_exec(&session, "echo NET_FAULT_02_OK")
+        .await
+        .expect("Command should still succeed");
     let rtt = start.elapsed();
 
     assert!(
@@ -79,20 +87,23 @@ fn net_fault_02_extreme_latency() {
 
 // ── NET-FAULT-03: 10% packet loss ───────────────────────────────────
 
-#[test]
-fn net_fault_03_moderate_packet_loss() {
+#[tokio::test]
+async fn net_fault_03_moderate_packet_loss() {
     require_docker!(PORT_NETWORK_FAULT);
     let _guard = FaultGuard::new();
 
     let config = ssh_password_config(PORT_NETWORK_FAULT);
-    let session = connect_and_authenticate(&config).expect("Baseline connection should succeed");
+    let (session, _) = connect_and_authenticate(&config)
+        .await
+        .expect("Baseline connection should succeed");
 
     // Inject 10% packet loss.
     apply_fault(&["apply-loss", "10%"]).expect("Fault injection should succeed");
 
     // SSH/TCP should handle retransmissions — the command should still succeed.
-    let output =
-        ssh_exec(&session, "echo NET_FAULT_03_OK").expect("Command should succeed despite loss");
+    let output = ssh_exec(&session, "echo NET_FAULT_03_OK")
+        .await
+        .expect("Command should succeed despite loss");
 
     assert!(
         output.contains("NET_FAULT_03_OK"),
@@ -102,19 +113,21 @@ fn net_fault_03_moderate_packet_loss() {
 
 // ── NET-FAULT-04: 50% severe packet loss ────────────────────────────
 
-#[test]
-fn net_fault_04_severe_packet_loss() {
+#[tokio::test]
+async fn net_fault_04_severe_packet_loss() {
     require_docker!(PORT_NETWORK_FAULT);
     let _guard = FaultGuard::new();
 
     let config = ssh_password_config(PORT_NETWORK_FAULT);
-    let session = connect_and_authenticate(&config).expect("Baseline connection should succeed");
+    let (session, _) = connect_and_authenticate(&config)
+        .await
+        .expect("Baseline connection should succeed");
 
     // Inject 50% packet loss — severe but SSH/TCP should still cope.
     apply_fault(&["apply-loss", "50%"]).expect("Fault injection should succeed");
 
     // This may take a while due to retransmissions, but should eventually succeed.
-    let result = ssh_exec(&session, "echo NET_FAULT_04_OK");
+    let result = ssh_exec(&session, "echo NET_FAULT_04_OK").await;
 
     // With 50% loss, the command might fail or succeed very slowly.
     // Either outcome is acceptable — the important thing is no crash/hang.
@@ -133,19 +146,22 @@ fn net_fault_04_severe_packet_loss() {
 
 // ── NET-FAULT-05: 56kbps bandwidth throttle ─────────────────────────
 
-#[test]
-fn net_fault_05_dialup_throttle() {
+#[tokio::test]
+async fn net_fault_05_dialup_throttle() {
     require_docker!(PORT_NETWORK_FAULT);
     let _guard = FaultGuard::new();
 
     let config = ssh_password_config(PORT_NETWORK_FAULT);
-    let session = connect_and_authenticate(&config).expect("Baseline connection should succeed");
+    let (session, _) = connect_and_authenticate(&config)
+        .await
+        .expect("Baseline connection should succeed");
 
     // Inject 56kbps throttle.
     apply_fault(&["apply-throttle", "56kbit"]).expect("Fault injection should succeed");
 
     // A simple command should still work, just slower.
     let output = ssh_exec(&session, "echo NET_FAULT_05_OK")
+        .await
         .expect("Command should succeed at low bandwidth");
 
     assert!(
@@ -156,19 +172,22 @@ fn net_fault_05_dialup_throttle() {
 
 // ── NET-FAULT-06: 1Mbps bandwidth throttle ──────────────────────────
 
-#[test]
-fn net_fault_06_1mbps_throttle() {
+#[tokio::test]
+async fn net_fault_06_1mbps_throttle() {
     require_docker!(PORT_NETWORK_FAULT);
     let _guard = FaultGuard::new();
 
     let config = ssh_password_config(PORT_NETWORK_FAULT);
-    let session = connect_and_authenticate(&config).expect("Baseline connection should succeed");
+    let (session, _) = connect_and_authenticate(&config)
+        .await
+        .expect("Baseline connection should succeed");
 
     // Inject 1Mbps throttle.
     apply_fault(&["apply-throttle", "1mbit"]).expect("Fault injection should succeed");
 
-    let output =
-        ssh_exec(&session, "echo NET_FAULT_06_OK").expect("Command should succeed at 1Mbps");
+    let output = ssh_exec(&session, "echo NET_FAULT_06_OK")
+        .await
+        .expect("Command should succeed at 1Mbps");
 
     assert!(
         output.contains("NET_FAULT_06_OK"),
@@ -178,21 +197,21 @@ fn net_fault_06_1mbps_throttle() {
 
 // ── NET-FAULT-07: Full disconnect (100% loss) ───────────────────────
 
-#[test]
-fn net_fault_07_full_disconnect() {
+#[tokio::test]
+async fn net_fault_07_full_disconnect() {
     require_docker!(PORT_NETWORK_FAULT);
     let _guard = FaultGuard::new();
 
     let config = ssh_password_config(PORT_NETWORK_FAULT);
-    let session = connect_and_authenticate(&config).expect("Baseline connection should succeed");
+    let (session, _) = connect_and_authenticate(&config)
+        .await
+        .expect("Baseline connection should succeed");
 
     // Inject 100% packet loss — total disconnect.
     apply_fault(&["apply-disconnect"]).expect("Fault injection should succeed");
 
     // Attempting a command should fail or timeout.
-    // Set a short timeout on the session to avoid hanging.
-    session.set_timeout(5000);
-    let result = ssh_exec(&session, "echo NET_FAULT_07_OK");
+    let result = ssh_exec(&session, "echo NET_FAULT_07_OK").await;
 
     assert!(
         result.is_err(),
@@ -202,8 +221,8 @@ fn net_fault_07_full_disconnect() {
 
 // ── NET-FAULT-08: Disconnect + recovery ─────────────────────────────
 
-#[test]
-fn net_fault_08_disconnect_and_recovery() {
+#[tokio::test]
+async fn net_fault_08_disconnect_and_recovery() {
     require_docker!(PORT_NETWORK_FAULT);
     let _guard = FaultGuard::new();
 
@@ -218,11 +237,13 @@ fn net_fault_08_disconnect_and_recovery() {
     apply_fault(&["reset-faults"]).expect("Reset should succeed");
 
     // A new connection should succeed after recovery.
-    let session = connect_and_authenticate(&config)
+    let (session, _) = connect_and_authenticate(&config)
+        .await
         .expect("NET-FAULT-08: Reconnection after recovery should succeed");
 
-    let output =
-        ssh_exec(&session, "echo NET_FAULT_08_OK").expect("Command after recovery should work");
+    let output = ssh_exec(&session, "echo NET_FAULT_08_OK")
+        .await
+        .expect("Command after recovery should work");
     assert!(
         output.contains("NET_FAULT_08_OK"),
         "NET-FAULT-08: Post-recovery command should produce output"
@@ -231,20 +252,23 @@ fn net_fault_08_disconnect_and_recovery() {
 
 // ── NET-FAULT-09: Jitter simulation ─────────────────────────────────
 
-#[test]
-fn net_fault_09_jitter() {
+#[tokio::test]
+async fn net_fault_09_jitter() {
     require_docker!(PORT_NETWORK_FAULT);
     let _guard = FaultGuard::new();
 
     let config = ssh_password_config(PORT_NETWORK_FAULT);
-    let session = connect_and_authenticate(&config).expect("Baseline connection should succeed");
+    let (session, _) = connect_and_authenticate(&config)
+        .await
+        .expect("Baseline connection should succeed");
 
     // Inject jitter: 200ms base ± 100ms variation.
     apply_fault(&["apply-jitter", "200ms", "100ms"]).expect("Jitter injection should succeed");
 
     // Session should remain stable despite variable latency.
-    let output =
-        ssh_exec(&session, "echo NET_FAULT_09_OK").expect("Command should succeed despite jitter");
+    let output = ssh_exec(&session, "echo NET_FAULT_09_OK")
+        .await
+        .expect("Command should succeed despite jitter");
 
     assert!(
         output.contains("NET_FAULT_09_OK"),
@@ -254,19 +278,21 @@ fn net_fault_09_jitter() {
 
 // ── NET-FAULT-10: Packet corruption ─────────────────────────────────
 
-#[test]
-fn net_fault_10_packet_corruption() {
+#[tokio::test]
+async fn net_fault_10_packet_corruption() {
     require_docker!(PORT_NETWORK_FAULT);
     let _guard = FaultGuard::new();
 
     let config = ssh_password_config(PORT_NETWORK_FAULT);
-    let session = connect_and_authenticate(&config).expect("Baseline connection should succeed");
+    let (session, _) = connect_and_authenticate(&config)
+        .await
+        .expect("Baseline connection should succeed");
 
     // Inject 5% packet corruption.
     apply_fault(&["apply-corrupt", "5%"]).expect("Corruption injection should succeed");
 
     // SSH has integrity checks — corrupted packets should be retransmitted.
-    let result = ssh_exec(&session, "echo NET_FAULT_10_OK");
+    let result = ssh_exec(&session, "echo NET_FAULT_10_OK").await;
 
     // Either succeeds (SSH handled retransmission) or fails gracefully.
     match result {

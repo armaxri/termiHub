@@ -1,12 +1,9 @@
-//! X11 forwarding via SSH reverse port tunnel.
+//! X11 forwarding via SSH reverse port tunnel (russh implementation).
 //!
-//! Uses a dedicated SSH session with `channel_forward_listen()` to accept
-//! X11 connections on the remote host and proxy them to the local X server.
-//!
-//! All SSH channel I/O runs on a single thread because libssh2 sessions
-//! are not thread-safe.
+//! Uses russh's `tcpip_forward` to request the SSH server to listen for X11
+//! connections, then routes incoming channels through the [`ForwardedChannelRegistry`]
+//! to async proxy tasks that bridge to the local X server.
 
-use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,7 +13,7 @@ use tracing::{debug, error, info, warn};
 use crate::config::SshConfig;
 use crate::errors::SessionError;
 
-use super::auth::connect_and_authenticate;
+use super::handler::{ForwardedChannelRegistry, IncomingChannel, SshSession};
 
 /// Describes how to connect to the local X server.
 #[derive(Debug, Clone)]
@@ -36,15 +33,17 @@ pub struct LocalXServerInfo {
 /// Manages X11 forwarding over an SSH tunnel.
 pub struct X11Forwarder {
     alive: Arc<AtomicBool>,
-    listener_handle: Option<std::thread::JoinHandle<()>>,
+    task_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl X11Forwarder {
-    /// Start X11 forwarding using a new SSH session.
+    /// Start X11 forwarding using an existing SSH session.
     ///
     /// Returns `(forwarder, remote_display_number, xauth_cookie)`.
-    pub fn start(
-        config: &SshConfig,
+    pub async fn start(
+        _config: &SshConfig,
+        session: &mut SshSession,
+        registry: ForwardedChannelRegistry,
         alive: Arc<AtomicBool>,
     ) -> Result<(Self, u32, Option<String>), SessionError> {
         let local_x = detect_local_x_server().ok_or_else(|| {
@@ -68,34 +67,62 @@ impl X11Forwarder {
             );
         }
 
-        let session = connect_and_authenticate(config)?;
+        // Request the SSH server to listen for X11 connections on a random port.
+        let bound_port = session.tcpip_forward("localhost", 0).await.map_err(|e| {
+            SessionError::SpawnFailed(format!("X11 tcpip-forward request failed: {e}"))
+        })?;
 
-        let (mut listener, bound_port) = session
-            .channel_forward_listen(0, Some("localhost"), None)
-            .map_err(|e| SessionError::SpawnFailed(format!("X11 forward listen failed: {e}")))?;
-
-        let display_number = (bound_port as u32).saturating_sub(6000);
+        let display_number = bound_port.saturating_sub(6000);
         info!(
             "X11 forwarding: remote listening on port {} (display :{})",
             bound_port, display_number
         );
 
-        session.set_blocking(false);
+        // Register a receiver in the ForwardedChannelRegistry for the bound port.
+        let (channel_tx, mut channel_rx) =
+            tokio::sync::mpsc::unbounded_channel::<IncomingChannel>();
+        {
+            let mut reg = registry
+                .lock()
+                .map_err(|_| SessionError::SpawnFailed("Registry lock failed".to_string()))?;
+            reg.insert(bound_port, channel_tx);
+        }
 
         let alive_clone = alive.clone();
-        let listener_handle = std::thread::Builder::new()
-            .name("x11-event-loop".to_string())
-            .spawn(move || {
-                event_loop(&session, &mut listener, &alive_clone, &local_x);
-            })
-            .map_err(|e| {
-                SessionError::SpawnFailed(format!("Failed to spawn X11 event loop: {e}"))
-            })?;
+        let local_x = Arc::new(local_x);
+        let registry_clone = registry.clone();
+
+        let task_handle = tokio::spawn(async move {
+            while alive_clone.load(Ordering::SeqCst) {
+                tokio::select! {
+                    biased;
+                    incoming = channel_rx.recv() => {
+                        match incoming {
+                            Some(ch) => {
+                                debug!("X11 forwarding: accepted new channel");
+                                let local_x = local_x.clone();
+                                tokio::spawn(async move {
+                                    proxy_x11_channel(ch.channel, &local_x).await;
+                                });
+                            }
+                            None => break,
+                        }
+                    }
+                    _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+                }
+            }
+
+            // Deregister from the registry.
+            if let Ok(mut reg) = registry_clone.lock() {
+                reg.remove(&bound_port);
+            }
+            debug!("X11 event loop stopped");
+        });
 
         Ok((
             Self {
                 alive,
-                listener_handle: Some(listener_handle),
+                task_handle: Some(task_handle),
             },
             display_number,
             xauth_cookie,
@@ -106,204 +133,46 @@ impl X11Forwarder {
 impl Drop for X11Forwarder {
     fn drop(&mut self) {
         self.alive.store(false, Ordering::SeqCst);
-        if let Some(handle) = self.listener_handle.take() {
-            let _ = handle.join();
+        if let Some(handle) = self.task_handle.take() {
+            handle.abort();
         }
         info!("X11 forwarder stopped");
     }
 }
 
-/// An active proxy connection between an SSH channel and a local X stream.
-struct ActiveProxy {
-    channel: ssh2::Channel,
-    local_stream: LocalStream,
-}
-
-impl ActiveProxy {
-    fn new(channel: ssh2::Channel, local_x: &LocalXServerInfo) -> Option<Self> {
-        let local_stream = match &local_x.connection {
-            #[cfg(unix)]
-            LocalXConnection::UnixSocket(path) => {
-                use std::os::unix::net::UnixStream;
-                match UnixStream::connect(path) {
-                    Ok(s) => {
-                        let _ = s.set_nonblocking(true);
-                        LocalStream::Unix(s)
-                    }
-                    Err(e) => {
-                        error!(
-                            "X11 proxy: failed to connect to Unix socket {}: {}",
-                            path, e
-                        );
-                        return None;
-                    }
-                }
-            }
-            LocalXConnection::Tcp(host, port) => {
-                match std::net::TcpStream::connect((host.as_str(), *port)) {
-                    Ok(s) => {
-                        let _ = s.set_nonblocking(true);
-                        LocalStream::Tcp(s)
-                    }
-                    Err(e) => {
-                        error!("X11 proxy: failed to connect to {}:{}: {}", host, port, e);
-                        return None;
-                    }
-                }
-            }
-        };
-
-        Some(Self {
-            channel,
-            local_stream,
-        })
-    }
-
-    /// Pump data in both directions. Returns `true` if the proxy is still alive.
-    fn pump(&mut self) -> bool {
-        let mut buf = [0u8; 16384];
-
-        // channel -> local X server
-        match self.channel.read(&mut buf) {
-            Ok(0) => return false,
-            Ok(n) => {
-                if write_all_nonblocking(&self.local_stream, &buf[..n]).is_err() {
-                    return false;
-                }
-            }
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
-            Err(_) => return false,
-        }
-
-        // local X server -> channel
-        match self.local_stream.read(&mut buf) {
-            Ok(0) => return false,
-            Ok(n) => {
-                if write_all_retry(&mut self.channel, &buf[..n]).is_err() {
-                    return false;
-                }
-            }
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
-            Err(_) => return false,
-        }
-
-        true
-    }
-}
-
-/// Single-threaded event loop: accept new channels and pump all proxies.
-fn event_loop(
-    _session: &ssh2::Session,
-    listener: &mut ssh2::Listener,
-    alive: &Arc<AtomicBool>,
+/// Proxy data bidirectionally between an SSH channel and the local X server.
+async fn proxy_x11_channel(
+    channel: russh::Channel<russh::client::Msg>,
     local_x: &LocalXServerInfo,
 ) {
-    let mut proxies: Vec<ActiveProxy> = Vec::new();
+    #[allow(unused_mut)]
+    let mut channel_stream = channel.into_stream();
 
-    while alive.load(Ordering::SeqCst) {
-        match listener.accept() {
-            Ok(channel) => {
-                debug!("X11 forwarding: accepted new channel");
-                if let Some(proxy) = ActiveProxy::new(channel, local_x) {
-                    proxies.push(proxy);
-                }
-            }
-            Err(ref e) if e.code() == ssh2::ErrorCode::Session(-37) => {
-                // EAGAIN / WouldBlock
+    match &local_x.connection {
+        #[cfg(unix)]
+        LocalXConnection::UnixSocket(path) => match tokio::net::UnixStream::connect(path).await {
+            Ok(mut unix_stream) => {
+                let _ = tokio::io::copy_bidirectional(&mut unix_stream, &mut channel_stream).await;
             }
             Err(e) => {
-                if alive.load(Ordering::SeqCst) {
-                    warn!("X11 listener error: {}", e);
+                error!("X11 proxy: failed to connect to Unix socket {path}: {e}");
+            }
+        },
+        LocalXConnection::Tcp(host, port) => {
+            match tokio::net::TcpStream::connect((host.as_str(), *port)).await {
+                Ok(mut tcp_stream) => {
+                    let _ =
+                        tokio::io::copy_bidirectional(&mut tcp_stream, &mut channel_stream).await;
                 }
-                break;
+                Err(e) => {
+                    error!("X11 proxy: failed to connect to {host}:{port}: {e}");
+                }
             }
-        }
-
-        proxies.retain_mut(|proxy| proxy.pump());
-
-        if proxies.is_empty() {
-            std::thread::sleep(Duration::from_millis(50));
-        } else {
-            std::thread::sleep(Duration::from_millis(1));
-        }
-    }
-
-    for proxy in &mut proxies {
-        let _ = proxy.channel.send_eof();
-        let _ = proxy.channel.close();
-    }
-    debug!(
-        "X11 event loop finished ({} proxies cleaned up)",
-        proxies.len()
-    );
-}
-
-/// Write all bytes to a non-blocking local stream, retrying on WouldBlock.
-fn write_all_nonblocking(stream: &LocalStream, mut buf: &[u8]) -> std::io::Result<()> {
-    while !buf.is_empty() {
-        match stream.write(buf) {
-            Ok(0) => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::WriteZero,
-                    "write returned 0",
-                ))
-            }
-            Ok(n) => buf = &buf[n..],
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                std::thread::sleep(Duration::from_micros(100));
-            }
-            Err(e) => return Err(e),
-        }
-    }
-    Ok(())
-}
-
-/// Write all bytes to an SSH channel, retrying on WouldBlock.
-fn write_all_retry(channel: &mut ssh2::Channel, mut buf: &[u8]) -> std::io::Result<()> {
-    while !buf.is_empty() {
-        match channel.write(buf) {
-            Ok(0) => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::WriteZero,
-                    "write returned 0",
-                ))
-            }
-            Ok(n) => buf = &buf[n..],
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                std::thread::sleep(Duration::from_micros(100));
-            }
-            Err(e) => return Err(e),
-        }
-    }
-    Ok(())
-}
-
-/// Wrapper around either a Unix or TCP stream for the local X connection.
-enum LocalStream {
-    #[cfg(unix)]
-    Unix(std::os::unix::net::UnixStream),
-    Tcp(std::net::TcpStream),
-}
-
-impl LocalStream {
-    fn read(&self, buf: &mut [u8]) -> std::io::Result<usize> {
-        match self {
-            #[cfg(unix)]
-            Self::Unix(s) => (&*s).read(buf),
-            Self::Tcp(s) => (&*s).read(buf),
-        }
-    }
-
-    fn write(&self, buf: &[u8]) -> std::io::Result<usize> {
-        match self {
-            #[cfg(unix)]
-            Self::Unix(s) => (&*s).write(buf),
-            Self::Tcp(s) => (&*s).write(buf),
         }
     }
 }
 
-// --- X11 detection utilities ---
+// ── X11 detection utilities ──────────────────────────────────────────
 
 /// Parse a DISPLAY string into (host, display_number, screen_number).
 fn parse_display(display: &str) -> Option<(Option<String>, u32, u32)> {
@@ -333,7 +202,6 @@ fn parse_display(display: &str) -> Option<(Option<String>, u32, u32)> {
 fn info_from_parsed(host: Option<String>, display_number: u32) -> LocalXServerInfo {
     match host {
         None => {
-            // Local display `:N` — try Unix socket first, fall back to TCP.
             #[cfg(unix)]
             {
                 let socket_path = format!("/tmp/.X11-unix/X{display_number}");
@@ -353,7 +221,6 @@ fn info_from_parsed(host: Option<String>, display_number: u32) -> LocalXServerIn
             }
         }
         Some(ref h) if h.starts_with('/') => {
-            // macOS XQuartz: /private/tmp/com.apple.launchd.xxx/org.xquartz:0
             #[cfg(unix)]
             {
                 if std::path::Path::new(h).exists()
@@ -389,13 +256,10 @@ fn info_from_parsed(host: Option<String>, display_number: u32) -> LocalXServerIn
                 connection: LocalXConnection::Tcp(h.clone(), 6000 + display_number as u16),
             }
         }
-        Some(h) => {
-            // Remote host — TCP only.
-            LocalXServerInfo {
-                display_number,
-                connection: LocalXConnection::Tcp(h, 6000 + display_number as u16),
-            }
-        }
+        Some(h) => LocalXServerInfo {
+            display_number,
+            connection: LocalXConnection::Tcp(h, 6000 + display_number as u16),
+        },
     }
 }
 

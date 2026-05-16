@@ -18,16 +18,15 @@ use termihub_core::backends::ssh::auth::connect_and_authenticate;
 
 // ── SSH-JUMP-01: 2-hop ProxyJump chain ───────────────────────────────
 
-#[test]
-fn ssh_jump_01_two_hop_proxy_jump() {
+#[tokio::test]
+async fn ssh_jump_01_two_hop_proxy_jump() {
     require_docker!(PORT_SSH_BASTION);
 
     // Step 1: Connect to the bastion host.
     let bastion_config = ssh_key_config(PORT_SSH_BASTION, "ed25519");
-    let bastion_session = connect_and_authenticate(&bastion_config)
+    let (bastion_session, _) = connect_and_authenticate(&bastion_config)
+        .await
         .expect("SSH-JUMP-01: Bastion connection should succeed");
-
-    assert!(bastion_session.authenticated());
 
     // Step 2: Verify the bastion can reach the internal target.
     // The ssh2 crate's `set_tcp_stream` requires `AsRawFd`, which
@@ -41,6 +40,7 @@ fn ssh_jump_01_two_hop_proxy_jump() {
          -i /home/testuser/.ssh/ed25519 \
          testuser@termihub-ssh-target 'cat /home/testuser/marker.txt'",
     )
+    .await
     .expect("SSH-JUMP-01: SSH through bastion to target should succeed");
 
     assert!(
@@ -51,25 +51,26 @@ fn ssh_jump_01_two_hop_proxy_jump() {
     // Step 3: Also verify direct-tcpip channel creation works
     // (this is the underlying mechanism for ProxyJump).
     let _channel = bastion_session
-        .channel_direct_tcpip("termihub-ssh-target", 22, None)
+        .channel_open_direct_tcpip("termihub-ssh-target", 22, "localhost", 0)
+        .await
         .expect("SSH-JUMP-01: Direct-tcpip channel to target should succeed");
 }
 
 // ── SSH-SHELL-01: Restricted shell (rbash) ───────────────────────────
 
-#[test]
-fn ssh_shell_01_restricted_shell() {
+#[tokio::test]
+async fn ssh_shell_01_restricted_shell() {
     require_docker!(PORT_SSH_RESTRICTED);
 
     let config = ssh_password_config(PORT_SSH_RESTRICTED);
-    let session = connect_and_authenticate(&config)
+    let (session, _) = connect_and_authenticate(&config)
+        .await
         .expect("SSH-SHELL-01: Restricted shell connection should succeed");
 
-    assert!(session.authenticated());
-
     // In rbash, `cd` should fail because changing directories is restricted.
-    let output =
-        ssh_exec(&session, "cd /tmp 2>&1; echo EXIT_CODE=$?").expect("Command should execute");
+    let output = ssh_exec(&session, "cd /tmp 2>&1; echo EXIT_CODE=$?")
+        .await
+        .expect("Command should execute");
 
     // rbash should reject the cd command.
     assert!(
@@ -80,8 +81,8 @@ fn ssh_shell_01_restricted_shell() {
 
 // ── SSH-SHELL-02: Unrestricted comparison ────────────────────────────
 
-#[test]
-fn ssh_shell_02_unrestricted_shell() {
+#[tokio::test]
+async fn ssh_shell_02_unrestricted_shell() {
     require_docker!(PORT_SSH_RESTRICTED);
 
     // Connect as freeuser who has an unrestricted shell.
@@ -94,13 +95,14 @@ fn ssh_shell_02_unrestricted_shell() {
         ..Default::default()
     };
 
-    let session = connect_and_authenticate(&config)
+    let (session, _) = connect_and_authenticate(&config)
+        .await
         .expect("SSH-SHELL-02: Unrestricted shell connection should succeed");
 
-    assert!(session.authenticated());
-
     // freeuser should be able to cd freely.
-    let output = ssh_exec(&session, "cd /tmp && pwd").expect("Command should execute");
+    let output = ssh_exec(&session, "cd /tmp && pwd")
+        .await
+        .expect("Command should execute");
     assert!(
         output.trim().contains("/tmp"),
         "SSH-SHELL-02: 'cd /tmp' should succeed for freeuser, got: {output}"
@@ -109,33 +111,37 @@ fn ssh_shell_02_unrestricted_shell() {
 
 // ── SSH-TUNNEL-01: Local port forward (HTTP) ─────────────────────────
 
-#[test]
-fn ssh_tunnel_01_local_forward_http() {
+#[tokio::test]
+async fn ssh_tunnel_01_local_forward_http() {
     require_docker!(PORT_SSH_TUNNEL);
 
     let config = ssh_password_config(PORT_SSH_TUNNEL);
-    let session =
-        connect_and_authenticate(&config).expect("SSH-TUNNEL-01: Tunnel connection should succeed");
-
-    assert!(session.authenticated());
+    let (session, _) = connect_and_authenticate(&config)
+        .await
+        .expect("SSH-TUNNEL-01: Tunnel connection should succeed");
 
     // Open a direct-tcpip channel to the internal HTTP server (port 8080).
-    let mut channel = session
-        .channel_direct_tcpip("127.0.0.1", 8080, None)
+    let channel = session
+        .channel_open_direct_tcpip("127.0.0.1", 8080, "localhost", 0)
+        .await
         .expect("SSH-TUNNEL-01: Direct-tcpip to HTTP should succeed");
 
     // Send an HTTP request through the tunnel.
-    use std::io::{Read, Write};
-    channel
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut stream = channel.into_stream();
+    stream
         .write_all(b"GET / HTTP/1.0\r\nHost: localhost\r\n\r\n")
+        .await
         .expect("HTTP request write should succeed");
-    channel.flush().expect("Flush should succeed");
+    stream.flush().await.expect("Flush should succeed");
 
-    // Read the response.
-    let mut response = String::new();
-    channel
-        .read_to_string(&mut response)
+    // Read the full response (HTTP/1.0 server closes connection after reply).
+    let mut response = Vec::new();
+    stream
+        .read_to_end(&mut response)
+        .await
         .expect("HTTP response read should succeed");
+    let response = String::from_utf8_lossy(&response);
 
     assert!(
         response.contains("TUNNEL_TEST_OK"),
@@ -145,34 +151,37 @@ fn ssh_tunnel_01_local_forward_http() {
 
 // ── SSH-TUNNEL-02: TCP echo via tunnel ───────────────────────────────
 
-#[test]
-fn ssh_tunnel_02_tcp_echo_via_tunnel() {
+#[tokio::test]
+async fn ssh_tunnel_02_tcp_echo_via_tunnel() {
     require_docker!(PORT_SSH_TUNNEL);
 
     let config = ssh_password_config(PORT_SSH_TUNNEL);
-    let session =
-        connect_and_authenticate(&config).expect("SSH-TUNNEL-02: Tunnel connection should succeed");
-
-    assert!(session.authenticated());
+    let (session, _) = connect_and_authenticate(&config)
+        .await
+        .expect("SSH-TUNNEL-02: Tunnel connection should succeed");
 
     // Open a direct-tcpip channel to the internal echo server (port 9090).
-    let mut channel = session
-        .channel_direct_tcpip("127.0.0.1", 9090, None)
+    let channel = session
+        .channel_open_direct_tcpip("127.0.0.1", 9090, "localhost", 0)
+        .await
         .expect("SSH-TUNNEL-02: Direct-tcpip to echo should succeed");
 
     // Send test data through the tunnel.
-    use std::io::{Read, Write};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut stream = channel.into_stream();
     let test_data = b"ECHO_TEST_12345\n";
-    channel
+    stream
         .write_all(test_data)
+        .await
         .expect("Echo write should succeed");
-    channel.flush().expect("Flush should succeed");
+    stream.flush().await.expect("Flush should succeed");
 
     // Read back the echoed data.
     let mut buf = vec![0u8; 256];
-    // Use a short timeout — the echo server should respond immediately.
-    session.set_blocking(true);
-    let n = channel.read(&mut buf).expect("Echo read should succeed");
+    let n = stream
+        .read(&mut buf)
+        .await
+        .expect("Echo read should succeed");
 
     let response = String::from_utf8_lossy(&buf[..n]);
     assert!(

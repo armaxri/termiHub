@@ -1,21 +1,16 @@
-use std::io::{Read, Write};
-use std::net::TcpListener;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::Duration;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::Arc;
 
-use ssh2::Session;
+use termihub_core::backends::ssh::handler::SshSession;
 
 use super::config::{LocalForwardConfig, TunnelStats};
 
 /// Manages a local port forwarding tunnel.
 ///
-/// Binds a local TCP listener and spawns relay threads for each incoming
-/// connection, forwarding traffic through an SSH channel.
+/// Binds a local TCP listener and spawns async relay tasks for each incoming
+/// connection, forwarding traffic through an SSH `channel_open_direct_tcpip`.
 pub struct LocalForwarder {
-    shutdown: Arc<AtomicBool>,
-    listener_thread: Option<thread::JoinHandle<()>>,
+    task_handle: Option<tokio::task::JoinHandle<()>>,
     stats: Arc<ForwarderStats>,
 }
 
@@ -68,38 +63,28 @@ impl LocalForwarder {
     /// Start a local port forwarding tunnel.
     ///
     /// Binds to `config.local_host:config.local_port` and for each incoming
-    /// connection, opens an SSH `channel_direct_tcpip` to
+    /// connection opens an SSH `channel_open_direct_tcpip` to
     /// `config.remote_host:config.remote_port` and relays data bidirectionally.
     pub fn start(
         config: &LocalForwardConfig,
-        session: Arc<Mutex<Session>>,
+        session: Arc<SshSession>,
     ) -> Result<Self, std::io::Error> {
         let addr = format!("{}:{}", config.local_host, config.local_port);
-        let listener = TcpListener::bind(&addr)?;
-        listener.set_nonblocking(true)?;
+        let std_listener = std::net::TcpListener::bind(&addr)?;
+        std_listener.set_nonblocking(true)?;
+        let listener = tokio::net::TcpListener::from_std(std_listener)?;
 
-        let shutdown = Arc::new(AtomicBool::new(false));
         let stats = Arc::new(ForwarderStats::new());
-
+        let stats_clone = Arc::clone(&stats);
         let remote_host = config.remote_host.clone();
         let remote_port = config.remote_port;
-        let shutdown_clone = Arc::clone(&shutdown);
-        let stats_clone = Arc::clone(&stats);
 
-        let listener_thread = thread::spawn(move || {
-            Self::accept_loop(
-                listener,
-                session,
-                &remote_host,
-                remote_port,
-                shutdown_clone,
-                stats_clone,
-            );
+        let task_handle = tokio::spawn(async move {
+            Self::accept_loop(listener, session, remote_host, remote_port, stats_clone).await;
         });
 
         Ok(Self {
-            shutdown,
-            listener_thread: Some(listener_thread),
+            task_handle: Some(task_handle),
             stats,
         })
     }
@@ -109,161 +94,66 @@ impl LocalForwarder {
         self.stats.to_tunnel_stats()
     }
 
-    /// Stop the forwarder and wait for the listener thread to finish.
+    /// Stop the forwarder by aborting the accept task.
     pub fn stop(&mut self) {
-        self.shutdown.store(true, Ordering::Relaxed);
-        if let Some(handle) = self.listener_thread.take() {
-            let _ = handle.join();
+        if let Some(handle) = self.task_handle.take() {
+            handle.abort();
         }
     }
 
-    fn accept_loop(
-        listener: TcpListener,
-        session: Arc<Mutex<Session>>,
-        remote_host: &str,
+    async fn accept_loop(
+        listener: tokio::net::TcpListener,
+        session: Arc<SshSession>,
+        remote_host: String,
         remote_port: u16,
-        shutdown: Arc<AtomicBool>,
         stats: Arc<ForwarderStats>,
     ) {
-        while !shutdown.load(Ordering::Relaxed) {
-            match listener.accept() {
+        loop {
+            match listener.accept().await {
                 Ok((stream, _addr)) => {
                     stats.increment_active();
-
                     let session = Arc::clone(&session);
-                    let remote_host = remote_host.to_string();
-                    let shutdown = Arc::clone(&shutdown);
+                    let remote_host = remote_host.clone();
                     let stats = Arc::clone(&stats);
-
-                    // Each connection gets its own thread that owns the SSH channel.
-                    // The session lock is held briefly to create the channel, then released.
-                    thread::spawn(move || {
-                        Self::relay_connection(
-                            stream,
-                            session,
-                            &remote_host,
-                            remote_port,
-                            &shutdown,
-                            &stats,
-                        );
+                    tokio::spawn(async move {
+                        Self::relay_connection(stream, session, &remote_host, remote_port, &stats)
+                            .await;
                         stats.decrement_active();
                     });
                 }
-                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    thread::sleep(Duration::from_millis(50));
-                }
                 Err(e) => {
-                    if !shutdown.load(Ordering::Relaxed) {
-                        tracing::error!("Local forward accept error: {}", e);
-                    }
+                    tracing::error!("Local forward accept error: {}", e);
                     break;
                 }
             }
         }
     }
 
-    /// Relay data between a TCP connection and an SSH channel.
-    ///
-    /// Uses a single-threaded polling approach because `ssh2::Channel` is `!Send`.
-    /// Both the TCP stream and SSH session are set to non-blocking, and we poll
-    /// both directions in a loop with a small sleep to avoid busy-waiting.
-    fn relay_connection(
-        mut tcp_stream: std::net::TcpStream,
-        session: Arc<Mutex<Session>>,
+    async fn relay_connection(
+        mut stream: tokio::net::TcpStream,
+        session: Arc<SshSession>,
         remote_host: &str,
         remote_port: u16,
-        shutdown: &AtomicBool,
         stats: &ForwarderStats,
     ) {
-        // Set TCP stream to non-blocking for polling
-        if tcp_stream.set_nonblocking(true).is_err() {
-            return;
-        }
-
-        // Open SSH channel — briefly lock session
-        let mut channel = {
-            let sess = match session.lock() {
-                Ok(s) => s,
-                Err(_) => return,
-            };
-            // Set session to non-blocking for the relay
-            sess.set_blocking(false);
-            match sess.channel_direct_tcpip(remote_host, remote_port, None) {
-                Ok(ch) => ch,
-                Err(e) => {
-                    tracing::error!("Failed to open direct-tcpip channel: {}", e);
-                    // Restore blocking mode
-                    sess.set_blocking(true);
-                    return;
-                }
+        let channel = match session
+            .channel_open_direct_tcpip(remote_host, remote_port as u32, "localhost", 0)
+            .await
+        {
+            Ok(ch) => ch,
+            Err(e) => {
+                tracing::error!("Failed to open direct-tcpip channel: {}", e);
+                return;
             }
         };
-        // Session lock released here
 
-        let mut buf = [0u8; 8192];
-        let mut tcp_eof = false;
-        let mut ssh_eof = false;
-
-        while !shutdown.load(Ordering::Relaxed) && (!tcp_eof || !ssh_eof) {
-            let mut did_work = false;
-
-            // TCP -> SSH
-            if !tcp_eof {
-                match tcp_stream.read(&mut buf) {
-                    Ok(0) => {
-                        tcp_eof = true;
-                        let _ = channel.send_eof();
-                    }
-                    Ok(n) => {
-                        // Lock session briefly for channel write
-                        if let Ok(_sess) = session.lock() {
-                            if channel.write_all(&buf[..n]).is_err() {
-                                break;
-                            }
-                            stats.add_bytes_sent(n as u64);
-                            did_work = true;
-                        }
-                    }
-                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
-                    Err(_) => {
-                        tcp_eof = true;
-                        let _ = channel.send_eof();
-                    }
-                }
-            }
-
-            // SSH -> TCP
-            if !ssh_eof {
-                // Lock session briefly for channel read
-                if let Ok(_sess) = session.lock() {
-                    match channel.read(&mut buf) {
-                        Ok(0) => {
-                            ssh_eof = true;
-                        }
-                        Ok(n) => {
-                            drop(_sess);
-                            if tcp_stream.write_all(&buf[..n]).is_err() {
-                                break;
-                            }
-                            stats.add_bytes_received(n as u64);
-                            did_work = true;
-                        }
-                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
-                        Err(_) => {
-                            ssh_eof = true;
-                        }
-                    }
-                }
-            }
-
-            if !did_work {
-                thread::sleep(Duration::from_millis(10));
-            }
+        let mut channel_stream = channel.into_stream();
+        if let Ok((sent, received)) =
+            tokio::io::copy_bidirectional(&mut stream, &mut channel_stream).await
+        {
+            stats.add_bytes_sent(sent);
+            stats.add_bytes_received(received);
         }
-
-        // Clean up
-        let _ = channel.close();
-        let _ = tcp_stream.shutdown(std::net::Shutdown::Both);
     }
 }
 
