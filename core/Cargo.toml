@@ -15,6 +15,7 @@ surge-ping = "0.8"
 hickory-resolver = { version = "0.26", features = ["tokio", "system-config"] }
 socket2 = { version = "0.5", features = ["all"] }
 ipnet = "2.10"
+pnet_packet = "0.35"
 rand = "0.8"
 serialport = { workspace = true, optional = true }
 portable-pty = { version = "0.8", optional = true }
