@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Core: the internal `RingBuffer` (1 MiB capture buffer used by serial sessions and the agent daemon) is now backed by the [`ringbuf`](https://crates.io/crates/ringbuf) crate (`HeapRb<u8>`) instead of a custom circular-byte-buffer implementation. Public API is unchanged.
+
 ### Added
 
 - Network tools: `pnet_packet` is now used to validate ICMP/ICMPv6 reply types in traceroute. Only Time Exceeded and Destination Unreachable packets are accepted as valid hop replies; unrelated ICMP packets received on the raw socket are silently ignored. Improves correctness and lays the groundwork for better Windows raw-socket support.
