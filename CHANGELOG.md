@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Core: the internal `RingBuffer` (1 MiB capture buffer used by serial sessions and the agent daemon) is now backed by the [`ringbuf`](https://crates.io/crates/ringbuf) crate (`HeapRb<u8>`) instead of a custom circular-byte-buffer implementation. Public API is unchanged.
+
 ### Added
 
 - Network tools: the Port Scanner now accepts CIDR ranges (e.g. `192.168.0.0/24`), single IP/host names, or a comma-separated mix of the two as its target. Results are grouped per host when multiple targets are scanned. Backed by the `ipnet` crate; capped at 65 536 expanded hosts per scan to prevent runaway internet-scale scans. Closes #732.
