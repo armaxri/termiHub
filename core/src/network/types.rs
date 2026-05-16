@@ -20,6 +20,10 @@ pub enum PortState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PortScanResult {
+    /// The target host this probe was made against. Carried in the result so
+    /// callers iterating multiple targets (e.g. CIDR ranges) can group output
+    /// by host.
+    pub host: String,
     pub port: u16,
     pub state: PortState,
     /// Round-trip latency in milliseconds for open ports.

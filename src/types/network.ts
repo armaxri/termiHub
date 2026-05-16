@@ -8,6 +8,7 @@
 export type PortState = "open" | "closed" | "filtered";
 
 export interface PortScanResult {
+  host: string;
   port: number;
   state: PortState;
   latencyMs?: number;

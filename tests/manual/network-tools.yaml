@@ -119,3 +119,18 @@ tests:
     expected:
       - Results return showing the listening ports on the remote machine
       - Port list differs from the local machine's ports
+
+  - id: MT-NET-20
+    title: Port Scanner — CIDR / multi-target scan
+    automated_by: null
+    pr: 732
+    steps:
+      - Open the Port Scanner panel
+      - Enter a small local CIDR range in the Host / CIDR field, e.g. `192.168.1.0/30` (or a /29 on your real LAN)
+      - Enter `22,80,443` in Ports and click Run
+    expected:
+      - Scan probes every host in the range against the requested ports
+      - The results table shows a Host column with one row per (host, port) pair
+      - Scan completes and the footer reports the total probe count (e.g. 4 hosts × 3 ports = 12)
+      - Re-running with a comma-separated mix (e.g. `127.0.0.1, 10.0.0.0/30, example.com`) also produces correctly-grouped results
+      - Entering an obviously oversized range (e.g. `10.0.0.0/8`) surfaces an error instead of starting a runaway scan

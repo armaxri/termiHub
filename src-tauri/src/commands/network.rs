@@ -18,8 +18,11 @@ use crate::utils::errors::TerminalError;
 
 /// Start a TCP port scan. Returns a task ID; results are emitted as events.
 ///
+/// `host` accepts a single host, an IPv4 or IPv6 address, a CIDR range (e.g.
+/// `192.168.0.0/24`), or a comma-separated mix of those.
+///
 /// Events emitted:
-/// - `network-scan-result` per port: `{ taskId, port, state, latencyMs? }`
+/// - `network-scan-result` per port: `{ taskId, host, port, state, latencyMs? }`
 /// - `network-scan-complete`: `{ taskId, summary }`
 #[tauri::command]
 pub async fn network_port_scan(
@@ -31,6 +34,8 @@ pub async fn network_port_scan(
     app: AppHandle,
 ) -> Result<String, TerminalError> {
     let port_list = port_scan::parse_port_spec(&ports)
+        .map_err(|e| TerminalError::NetworkError(e.to_string()))?;
+    let targets = port_scan::parse_target_spec(&host)
         .map_err(|e| TerminalError::NetworkError(e.to_string()))?;
 
     let (task_id, cancel) = manager.register_task();
@@ -51,6 +56,7 @@ pub async fn network_port_scan(
                     "network-scan-result",
                     serde_json::json!({
                         "taskId": tid,
+                        "host": result.host,
                         "port": result.port,
                         "state": result.state,
                         "latencyMs": result.latency_ms,
@@ -59,8 +65,8 @@ pub async fn network_port_scan(
             }
         };
 
-        let summary = port_scan::scan_ports(
-            &host,
+        let summary = port_scan::scan_targets(
+            &targets,
             &port_list,
             timeout_ms.unwrap_or(2000),
             concurrency.unwrap_or(100),

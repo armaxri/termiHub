@@ -5982,6 +5982,7 @@ dependencies = [
  "bollard",
  "futures-util",
  "hickory-resolver",
+ "ipnet",
  "openssl",
  "pnet_packet 0.35.0",
  "portable-pty",

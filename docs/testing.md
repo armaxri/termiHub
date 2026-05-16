@@ -753,8 +753,8 @@ See [scripts/README.md](../scripts/README.md) for all options. Reports are saved
 | Cross-Platform        | [`cross-platform.yaml`](../tests/manual/cross-platform.yaml)               | `MT-XPLAT` | 1       |
 | Portable Mode         | [`portable-mode.yaml`](../tests/manual/portable-mode.yaml)                 | `MT-PORT`  | 4       |
 | Embedded Services     | [`embedded-services.yaml`](../tests/manual/embedded-services.yaml)         | `MT-SVC`   | 3       |
-| Network Tools         | [`network-tools.yaml`](../tests/manual/network-tools.yaml)                 | `MT-NET`   | 10      |
-| **Total**             |                                                                            |            | **110** |
+| Network Tools         | [`network-tools.yaml`](../tests/manual/network-tools.yaml)                 | `MT-NET`   | 11      |
+| **Total**             |                                                                            |            | **111** |
 
 When adding new manual tests, add the YAML definition to the appropriate file in `tests/manual/` — the YAML files are the **source of truth** for guided testing.
 
