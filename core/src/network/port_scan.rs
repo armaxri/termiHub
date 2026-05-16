@@ -7,6 +7,7 @@ use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use ipnet::IpNet;
 use tokio::net::TcpStream;
 use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
@@ -14,7 +15,8 @@ use tokio_util::sync::CancellationToken;
 use super::error::NetworkError;
 use super::types::{PortScanResult, PortScanSummary, PortState};
 
-/// Scan a set of TCP ports on a host, streaming individual results via `on_result`.
+/// Scan a set of TCP ports on a single host, streaming individual results via
+/// `on_result`. Convenience wrapper around [`scan_targets`].
 ///
 /// # Arguments
 /// * `host` – Target hostname or IP address.
@@ -35,40 +37,67 @@ pub async fn scan_ports(
     on_result: impl Fn(PortScanResult) + Send + Sync + 'static,
     cancel: CancellationToken,
 ) -> Result<PortScanSummary, NetworkError> {
+    scan_targets(
+        &[host.to_string()],
+        ports,
+        timeout_ms,
+        concurrency,
+        on_result,
+        cancel,
+    )
+    .await
+}
+
+/// Scan a set of TCP ports across one or more targets. Probes for every
+/// `(target, port)` combination share a single concurrency budget — useful
+/// when expanding a CIDR range without overwhelming the local network stack.
+///
+/// See [`scan_ports`] for argument semantics. `targets` may contain hostnames
+/// or IP addresses; each result carries its originating `host` for grouping.
+pub async fn scan_targets(
+    targets: &[String],
+    ports: &[u16],
+    timeout_ms: u64,
+    concurrency: usize,
+    on_result: impl Fn(PortScanResult) + Send + Sync + 'static,
+    cancel: CancellationToken,
+) -> Result<PortScanSummary, NetworkError> {
     let concurrency = concurrency.max(1);
     let timeout = Duration::from_millis(timeout_ms);
     let sem = Arc::new(Semaphore::new(concurrency));
     let on_result = Arc::new(on_result);
 
     let started = Instant::now();
-    let mut handles = Vec::with_capacity(ports.len());
+    let mut handles = Vec::with_capacity(targets.len().saturating_mul(ports.len()));
 
-    for &port in ports {
-        if cancel.is_cancelled() {
-            break;
-        }
-
-        let permit = Arc::clone(&sem)
-            .acquire_owned()
-            .await
-            .map_err(|_| NetworkError::Cancelled)?;
-
-        let host = host.to_string();
-        let cb = Arc::clone(&on_result);
-        let cancel = cancel.clone();
-
-        let handle = tokio::spawn(async move {
-            let _permit = permit;
+    'outer: for target in targets {
+        for &port in ports {
             if cancel.is_cancelled() {
-                return None;
+                break 'outer;
             }
 
-            let result = probe_port(&host, port, timeout).await;
-            cb(result.clone());
-            Some(result)
-        });
+            let permit = Arc::clone(&sem)
+                .acquire_owned()
+                .await
+                .map_err(|_| NetworkError::Cancelled)?;
 
-        handles.push(handle);
+            let host = target.clone();
+            let cb = Arc::clone(&on_result);
+            let cancel = cancel.clone();
+
+            let handle = tokio::spawn(async move {
+                let _permit = permit;
+                if cancel.is_cancelled() {
+                    return None;
+                }
+
+                let result = probe_port(&host, port, timeout).await;
+                cb(result.clone());
+                Some(result)
+            });
+
+            handles.push(handle);
+        }
     }
 
     let mut open = 0u32;
@@ -108,6 +137,7 @@ async fn probe_port(host: &str, port: u16, timeout: Duration) -> PortScanResult 
         Ok(Some(addr)) => addr,
         _ => {
             return PortScanResult {
+                host: host.to_string(),
                 port,
                 state: PortState::Filtered,
                 latency_ms: None,
@@ -118,6 +148,7 @@ async fn probe_port(host: &str, port: u16, timeout: Duration) -> PortScanResult 
     let started = Instant::now();
     match tokio::time::timeout(timeout, TcpStream::connect(addr)).await {
         Ok(Ok(_stream)) => PortScanResult {
+            host: host.to_string(),
             port,
             state: PortState::Open,
             latency_ms: Some(started.elapsed().as_millis() as u64),
@@ -131,17 +162,82 @@ async fn probe_port(host: &str, port: u16, timeout: Duration) -> PortScanResult 
                 PortState::Filtered
             };
             PortScanResult {
+                host: host.to_string(),
                 port,
                 state,
                 latency_ms: None,
             }
         }
         Err(_timeout) => PortScanResult {
+            host: host.to_string(),
             port,
             state: PortState::Filtered,
             latency_ms: None,
         },
     }
+}
+
+/// Maximum number of expanded targets accepted from a target spec.
+///
+/// Guards against accidental large scans (e.g. someone pasting `0.0.0.0/0`).
+/// `/16` already expands to 65 534 hosts — anything above that is almost
+/// certainly a mistake and would risk creating a denial-of-service
+/// situation on the local network.
+pub const MAX_EXPANDED_TARGETS: usize = 65_536;
+
+/// Parse a human-readable target specification into a list of hostnames / IPs.
+///
+/// Accepted formats (comma-separated, mixed freely):
+/// - Single hostname: `"example.com"`
+/// - Single IPv4 / IPv6: `"192.168.1.1"`, `"::1"`
+/// - CIDR (IPv4 or IPv6): `"192.168.0.0/24"`, `"2001:db8::/120"`
+///
+/// CIDR ranges expand to their host addresses (network and broadcast
+/// addresses are excluded for IPv4 prefixes shorter than `/31`). Returns
+/// [`NetworkError::InvalidParameter`] if any token is malformed, the spec
+/// is empty, or the expansion exceeds [`MAX_EXPANDED_TARGETS`].
+pub fn parse_target_spec(spec: &str) -> Result<Vec<String>, NetworkError> {
+    let mut targets: Vec<String> = Vec::new();
+
+    for raw in spec.split(',') {
+        let token = raw.trim();
+        if token.is_empty() {
+            continue;
+        }
+
+        if token.contains('/') {
+            let net: IpNet = token.parse().map_err(|e| {
+                NetworkError::InvalidParameter(format!("invalid CIDR '{token}': {e}"))
+            })?;
+
+            for host in net.hosts() {
+                if targets.len() >= MAX_EXPANDED_TARGETS {
+                    return Err(NetworkError::InvalidParameter(format!(
+                        "target spec expands to more than {MAX_EXPANDED_TARGETS} hosts; \
+                         refine the CIDR range (current token: '{token}')"
+                    )));
+                }
+                targets.push(host.to_string());
+            }
+        } else {
+            // Keep the original string so hostnames pass through untouched
+            // for downstream DNS resolution.
+            if targets.len() >= MAX_EXPANDED_TARGETS {
+                return Err(NetworkError::InvalidParameter(format!(
+                    "target spec expands to more than {MAX_EXPANDED_TARGETS} hosts"
+                )));
+            }
+            targets.push(token.to_string());
+        }
+    }
+
+    if targets.is_empty() {
+        return Err(NetworkError::InvalidParameter(
+            "target specification is empty".into(),
+        ));
+    }
+
+    Ok(targets)
 }
 
 /// Parse a human-readable port specification into a list of port numbers.
@@ -235,6 +331,135 @@ mod tests {
     #[test]
     fn parse_empty_spec() {
         assert!(parse_port_spec("").is_err());
+    }
+
+    // ── parse_target_spec ────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_target_single_ipv4() {
+        assert_eq!(
+            parse_target_spec("192.168.1.10").unwrap(),
+            vec!["192.168.1.10".to_string()]
+        );
+    }
+
+    #[test]
+    fn parse_target_single_ipv6() {
+        assert_eq!(parse_target_spec("::1").unwrap(), vec!["::1".to_string()]);
+    }
+
+    #[test]
+    fn parse_target_hostname_passthrough() {
+        // Hostnames are not parseable as IPs and must pass through unchanged
+        // for downstream DNS resolution.
+        assert_eq!(
+            parse_target_spec("example.com").unwrap(),
+            vec!["example.com".to_string()]
+        );
+    }
+
+    #[test]
+    fn parse_target_ipv4_cidr_slash_30() {
+        // /30 contains 4 addresses; .hosts() returns the 2 usable host
+        // addresses (network + broadcast excluded).
+        let result = parse_target_spec("192.168.1.0/30").unwrap();
+        assert_eq!(result, vec!["192.168.1.1", "192.168.1.2"]);
+    }
+
+    #[test]
+    fn parse_target_ipv4_cidr_slash_31() {
+        // /31 (RFC 3021) — both addresses are usable.
+        let result = parse_target_spec("192.168.1.0/31").unwrap();
+        assert_eq!(result, vec!["192.168.1.0", "192.168.1.1"]);
+    }
+
+    #[test]
+    fn parse_target_ipv4_cidr_slash_32() {
+        // /32 — single host.
+        let result = parse_target_spec("10.0.0.5/32").unwrap();
+        assert_eq!(result, vec!["10.0.0.5"]);
+    }
+
+    #[test]
+    fn parse_target_ipv4_cidr_slash_24_size() {
+        // /24 expands to 254 usable hosts.
+        let result = parse_target_spec("192.168.0.0/24").unwrap();
+        assert_eq!(result.len(), 254);
+        assert_eq!(result.first().unwrap(), "192.168.0.1");
+        assert_eq!(result.last().unwrap(), "192.168.0.254");
+    }
+
+    #[test]
+    fn parse_target_ipv6_cidr() {
+        // /126 has 4 addresses; for IPv6 `.hosts()` returns all of them.
+        let result = parse_target_spec("2001:db8::/126").unwrap();
+        assert_eq!(result.len(), 4);
+        assert!(result.iter().any(|h| h == "2001:db8::"));
+    }
+
+    #[test]
+    fn parse_target_mixed_comma_list() {
+        let result = parse_target_spec("192.168.1.1, 10.0.0.0/30, example.com").unwrap();
+        // 1 (single) + 2 (/30 hosts) + 1 (hostname) = 4
+        assert_eq!(result.len(), 4);
+        assert_eq!(result[0], "192.168.1.1");
+        assert_eq!(result[1], "10.0.0.1");
+        assert_eq!(result[2], "10.0.0.2");
+        assert_eq!(result[3], "example.com");
+    }
+
+    #[test]
+    fn parse_target_empty_spec_errors() {
+        assert!(parse_target_spec("").is_err());
+        assert!(parse_target_spec("  ").is_err());
+        assert!(parse_target_spec(",,").is_err());
+    }
+
+    #[test]
+    fn parse_target_invalid_cidr_errors() {
+        assert!(parse_target_spec("192.168.1.0/33").is_err());
+        assert!(parse_target_spec("999.999.999.0/24").is_err());
+    }
+
+    #[test]
+    fn parse_target_too_large_cidr_errors() {
+        // /8 = 16 777 214 hosts → exceeds MAX_EXPANDED_TARGETS.
+        let err = parse_target_spec("10.0.0.0/8").unwrap_err();
+        assert!(matches!(err, NetworkError::InvalidParameter(_)));
+    }
+
+    #[test]
+    fn parse_target_skips_empty_tokens() {
+        // Leading/trailing/extra commas should be tolerated.
+        let result = parse_target_spec(",192.168.1.1,,10.0.0.1,").unwrap();
+        assert_eq!(result, vec!["192.168.1.1", "10.0.0.1"]);
+    }
+
+    #[tokio::test]
+    async fn scan_targets_reports_host_per_result() {
+        // Scan two distinct loopback targets; every result must carry the
+        // host string it originated from.
+        let cancel = CancellationToken::new();
+        let results = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let results_cb = Arc::clone(&results);
+
+        let targets = vec!["127.0.0.1".to_string(), "127.0.0.2".to_string()];
+        let summary = scan_targets(
+            &targets,
+            &[1],
+            500,
+            2,
+            move |r| results_cb.lock().unwrap().push(r),
+            cancel,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(summary.total, 2);
+        let results = results.lock().unwrap();
+        let hosts: std::collections::HashSet<_> = results.iter().map(|r| r.host.clone()).collect();
+        assert!(hosts.contains("127.0.0.1"));
+        assert!(hosts.contains("127.0.0.2"));
     }
 
     #[tokio::test]

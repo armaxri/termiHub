@@ -1,3 +1,8 @@
+use ringbuf::{
+    traits::{Consumer, Observer, Producer, Split},
+    HeapCons, HeapProd, HeapRb,
+};
+
 /// Default buffer capacity: 1 MiB.
 pub const DEFAULT_BUFFER_CAPACITY: usize = 1_048_576;
 
@@ -9,67 +14,63 @@ pub const DEFAULT_BUFFER_CAPACITY: usize = 1_048_576;
 /// Used by: serial sessions (24/7 capture), daemon PTY (output replay),
 /// and potentially desktop sessions (reconnect replay).
 pub struct RingBuffer {
-    data: Vec<u8>,
+    prod: HeapProd<u8>,
+    cons: HeapCons<u8>,
     capacity: usize,
-    /// Next index to write to.
-    write_pos: usize,
-    /// Total bytes ever written (used to compute readable range).
-    total_written: usize,
 }
 
 impl RingBuffer {
     /// Create a new ring buffer with the given capacity in bytes.
     pub fn new(capacity: usize) -> Self {
+        let (prod, cons) = HeapRb::<u8>::new(capacity).split();
         Self {
-            data: vec![0u8; capacity],
+            prod,
+            cons,
             capacity,
-            write_pos: 0,
-            total_written: 0,
         }
     }
 
     /// Append data to the buffer, overwriting oldest data if full.
     pub fn write(&mut self, data: &[u8]) {
-        for &byte in data {
-            self.data[self.write_pos] = byte;
-            self.write_pos = (self.write_pos + 1) % self.capacity;
+        if data.is_empty() {
+            return;
         }
-        self.total_written += data.len();
+        // If data exceeds capacity, keep only the most recent bytes.
+        let data = if data.len() > self.capacity {
+            &data[data.len() - self.capacity..]
+        } else {
+            data
+        };
+        // Make room by discarding oldest bytes when needed.
+        let vacant = self.prod.vacant_len();
+        if data.len() > vacant {
+            self.cons.skip(data.len() - vacant);
+        }
+        self.prod.push_slice(data);
     }
 
     /// Read all buffered data in order (oldest to newest).
     pub fn read_all(&self) -> Vec<u8> {
-        let stored = self.len();
-        if stored == 0 {
-            return Vec::new();
-        }
-
-        if self.total_written <= self.capacity {
-            // Buffer has not wrapped — data starts at index 0
-            self.data[..stored].to_vec()
-        } else {
-            // Buffer has wrapped — oldest data starts at write_pos
-            let mut result = Vec::with_capacity(self.capacity);
-            result.extend_from_slice(&self.data[self.write_pos..]);
-            result.extend_from_slice(&self.data[..self.write_pos]);
-            result
-        }
+        let (head, tail) = self.cons.as_slices();
+        let mut result = Vec::with_capacity(head.len() + tail.len());
+        result.extend_from_slice(head);
+        result.extend_from_slice(tail);
+        result
     }
 
     /// Return the number of bytes currently stored.
     pub fn len(&self) -> usize {
-        std::cmp::min(self.total_written, self.capacity)
+        self.cons.occupied_len()
     }
 
     /// Return true if no data is buffered.
     pub fn is_empty(&self) -> bool {
-        self.total_written == 0
+        self.cons.is_empty()
     }
 
     /// Clear all buffered data.
     pub fn clear(&mut self) {
-        self.write_pos = 0;
-        self.total_written = 0;
+        self.cons.clear();
     }
 
     /// Return the buffer capacity in bytes.
@@ -164,10 +165,6 @@ mod tests {
         rb.write(b"AAAA"); // fill
         rb.write(b"BBBB"); // overwrite all
         rb.write(b"CC"); // partial overwrite
-                         // After "AAAA": data=[A,A,A,A], write_pos=0, total=4
-                         // After "BBBB": data=[B,B,B,B], write_pos=0, total=8
-                         // After "CC":   data=[C,C,B,B], write_pos=2, total=10
-                         // read_all: total>capacity, so: data[2..] + data[..2] = [B,B,C,C]
         assert_eq!(rb.read_all(), b"BBCC");
     }
 
@@ -180,5 +177,33 @@ mod tests {
     #[test]
     fn default_capacity_constant() {
         assert_eq!(DEFAULT_BUFFER_CAPACITY, 1_048_576);
+    }
+
+    #[test]
+    fn write_empty_slice_is_noop() {
+        let mut rb = RingBuffer::new(8);
+        rb.write(b"hello");
+        rb.write(b"");
+        assert_eq!(rb.read_all(), b"hello");
+        assert_eq!(rb.len(), 5);
+    }
+
+    #[test]
+    fn write_much_larger_than_capacity() {
+        let mut rb = RingBuffer::new(4);
+        // 10 bytes into a 4-byte buffer: only the last 4 bytes should survive
+        rb.write(b"0123456789");
+        assert_eq!(rb.read_all(), b"6789");
+        assert_eq!(rb.len(), 4);
+    }
+
+    #[test]
+    fn write_and_read_after_clear() {
+        let mut rb = RingBuffer::new(8);
+        rb.write(b"first");
+        rb.clear();
+        rb.write(b"second");
+        assert_eq!(rb.read_all(), b"second");
+        assert_eq!(rb.len(), 6);
     }
 }

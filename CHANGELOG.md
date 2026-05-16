@@ -7,7 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Core: the internal `RingBuffer` (1 MiB capture buffer used by serial sessions and the agent daemon) is now backed by the [`ringbuf`](https://crates.io/crates/ringbuf) crate (`HeapRb<u8>`) instead of a custom circular-byte-buffer implementation. Public API is unchanged.
+
 ### Added
+
+- Network tools: the Port Scanner now accepts CIDR ranges (e.g. `192.168.0.0/24`), single IP/host names, or a comma-separated mix of the two as its target. Results are grouped per host when multiple targets are scanned. Backed by the `ipnet` crate; capped at 65 536 expanded hosts per scan to prevent runaway internet-scale scans. Closes #732.
+- Connection Editor: the dynamic connection form now uses `react-hook-form` for field state management and `zod` for client-side validation. Invalid port values (out of 1–65535), empty required text fields, and out-of-range numbers now show inline error messages next to the relevant field without requiring a connection attempt.
+- Network tools: `pnet_packet` is now used to validate ICMP/ICMPv6 reply types in traceroute. Only Time Exceeded and Destination Unreachable packets are accepted as valid hop replies; unrelated ICMP packets received on the raw socket are silently ignored. Improves correctness and lays the groundwork for better Windows raw-socket support.
 
 - Dev scripts: `dev.sh` and `dev.cmd` now read per-checkout settings from a gitignored `dev.local.json` file (`dev_port`, `dev_name`). On Unix/macOS, setting `dev_agent_port` auto-builds the agent binary, starts a local `sshd`, and registers a "Dev Agent" entry directly in termiHub's `connections.json` — enabling zero-config local agent testing without a remote machine. Multiple parallel workspaces coexist via port-scoped agent IDs.
 - Agent: macOS is now a supported agent target (`macos-arm64`, `macos-x64`). The desktop resolves the correct binary when connecting to a macOS remote host via SSH agent mode. The agent setup dialog shows macOS arch options when connecting to a Darwin host.
