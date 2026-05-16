@@ -181,4 +181,32 @@ mod tests {
     fn default_capacity_constant() {
         assert_eq!(DEFAULT_BUFFER_CAPACITY, 1_048_576);
     }
+
+    #[test]
+    fn write_empty_slice_is_noop() {
+        let mut rb = RingBuffer::new(8);
+        rb.write(b"hello");
+        rb.write(b"");
+        assert_eq!(rb.read_all(), b"hello");
+        assert_eq!(rb.len(), 5);
+    }
+
+    #[test]
+    fn write_much_larger_than_capacity() {
+        let mut rb = RingBuffer::new(4);
+        // 10 bytes into a 4-byte buffer: only the last 4 bytes should survive
+        rb.write(b"0123456789");
+        assert_eq!(rb.read_all(), b"6789");
+        assert_eq!(rb.len(), 4);
+    }
+
+    #[test]
+    fn write_and_read_after_clear() {
+        let mut rb = RingBuffer::new(8);
+        rb.write(b"first");
+        rb.clear();
+        rb.write(b"second");
+        assert_eq!(rb.read_all(), b"second");
+        assert_eq!(rb.len(), 6);
+    }
 }
