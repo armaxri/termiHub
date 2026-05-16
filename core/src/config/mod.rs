@@ -994,4 +994,60 @@ mod tests {
         std::env::remove_var("TERMIHUB_TEST_WSL_DISTRO");
         std::env::remove_var("TERMIHUB_TEST_WSL_CMD");
     }
+
+    // --- New ${VAR} placeholder syntax (#726) ---
+
+    #[test]
+    fn ssh_config_expand_supports_dollar_brace_syntax() {
+        std::env::set_var("TERMIHUB_NEW_SSH_HOST", "10.10.10.10");
+        std::env::set_var("TERMIHUB_NEW_SSH_USER", "ops");
+        let cfg = SshConfig {
+            host: "${TERMIHUB_NEW_SSH_HOST}".into(),
+            username: "${TERMIHUB_NEW_SSH_USER}".into(),
+            auth_method: "key".into(),
+            ..SshConfig::default()
+        };
+        let expanded = cfg.expand();
+        assert_eq!(expanded.host, "10.10.10.10");
+        assert_eq!(expanded.username, "ops");
+        std::env::remove_var("TERMIHUB_NEW_SSH_HOST");
+        std::env::remove_var("TERMIHUB_NEW_SSH_USER");
+    }
+
+    #[test]
+    fn telnet_config_expand_supports_dollar_brace_syntax() {
+        std::env::set_var("TERMIHUB_NEW_TELNET_HOST", "172.16.0.5");
+        let cfg = TelnetConfig {
+            host: "${TERMIHUB_NEW_TELNET_HOST}".into(),
+            ..TelnetConfig::default()
+        };
+        let expanded = cfg.expand();
+        assert_eq!(expanded.host, "172.16.0.5");
+        std::env::remove_var("TERMIHUB_NEW_TELNET_HOST");
+    }
+
+    #[test]
+    fn ssh_config_expand_unknown_var_becomes_empty_string() {
+        std::env::remove_var("TERMIHUB_DEFINITELY_UNSET_VAR_QQ");
+        let cfg = SshConfig {
+            host: "host-${TERMIHUB_DEFINITELY_UNSET_VAR_QQ}-end".into(),
+            username: "user".into(),
+            auth_method: "password".into(),
+            ..SshConfig::default()
+        };
+        let expanded = cfg.expand();
+        assert_eq!(expanded.host, "host--end");
+    }
+
+    #[test]
+    fn docker_config_expand_supports_dollar_brace_syntax() {
+        std::env::set_var("TERMIHUB_NEW_DOCKER_IMG", "alpine");
+        let cfg = DockerConfig {
+            image: "${TERMIHUB_NEW_DOCKER_IMG}:3".into(),
+            ..DockerConfig::default()
+        };
+        let expanded = cfg.expand();
+        assert_eq!(expanded.image, "alpine:3");
+        std::env::remove_var("TERMIHUB_NEW_DOCKER_IMG");
+    }
 }
