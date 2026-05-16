@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Updated npm dependencies (`vite`, `typescript-eslint`, `@wdio/*`, `vitest`) and added `pnpm.overrides` for transitive packages (`rollup`, `postcss`, `undici`, `flatted`, `fast-uri`, `dompurify`, `serialize-javascript`, `picomatch`, `brace-expansion`) to resolve all 39 npm security audit findings.
 
+### Changed
+
+- SSH backend: replaced `ssh2` (C-backed, vendored OpenSSL) with `russh` (pure-Rust async SSH) across the core library, src-tauri desktop backend, and agent crate. All SSH authentication methods (password, RSA/Ed25519/ECDSA keys, keys with passphrase, SSH agent), SFTP, port forwarding (local, remote, dynamic SOCKS5), X11 forwarding, and monitoring continue to work; no user-visible behaviour changes.
+
 ### Fixed
 
 - Monitoring: agent local-host stats (CPU %, memory, disk) are now collected via the `sysinfo` crate instead of hand-rolled `/proc` parsing and `sysctl`/`vm_stat`/`top` subprocess calls. This fixes two macOS regressions from the previous implementation: (1) CPU usage was always reported as 0 % because `sysctl kern.cp_time` does not exist on macOS (it is a FreeBSD key) — `sysinfo` uses the correct platform API; (2) disk usage was severely underreported because `df /` shows only the read-only System snapshot (~12 GB); `sysinfo` returns the `/System/Volumes/Data` volume which contains actual user data.
