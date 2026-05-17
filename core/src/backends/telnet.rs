@@ -204,7 +204,7 @@ impl ConnectionType for Telnet {
 
         let config = TelnetConfig { host, port };
 
-        // Expand ${env:VAR} placeholders.
+        // Expand ${VAR} placeholders.
         let config = config.expand();
 
         if config.host.is_empty() {

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking — Connection config placeholders**: environment-variable placeholders in connection fields have changed from `${env:VAR}` to standard shell syntax `${VAR}` (also `$VAR`), now backed by the [`shellexpand`](https://crates.io/crates/shellexpand) crate. Unknown variables now expand to an empty string instead of being left as the literal placeholder. Existing connections that used `${env:VAR}` must be edited to use `${VAR}`. Tilde expansion (`~` / `~/...`) is unchanged. Closes #726.
 - Core: the internal `RingBuffer` (1 MiB capture buffer used by serial sessions and the agent daemon) is now backed by the [`ringbuf`](https://crates.io/crates/ringbuf) crate (`HeapRb<u8>`) instead of a custom circular-byte-buffer implementation. Public API is unchanged.
 
 ### Added

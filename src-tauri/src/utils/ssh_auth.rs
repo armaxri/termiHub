@@ -61,7 +61,7 @@ pub fn connect_and_authenticate(config: &SshConfig) -> Result<Session, TerminalE
                 .as_deref()
                 .filter(|s| !s.is_empty())
                 .unwrap_or("~/.ssh/id_rsa");
-            let expanded = crate::utils::expand::expand_tilde(key_path_str);
+            let expanded = crate::utils::expand::expand_config_value(key_path_str);
             let key_path = std::path::PathBuf::from(&expanded);
             let passphrase = config.password.as_deref();
 

@@ -12,7 +12,7 @@ use std::path::PathBuf;
 
 use socket2::TcpKeepalive;
 
-use crate::config::expand::expand_tilde;
+use crate::config::expand_config_value;
 use crate::config::SshConfig;
 use crate::errors::SessionError;
 
@@ -82,7 +82,7 @@ pub fn connect_and_authenticate(config: &SshConfig) -> Result<ssh2::Session, Ses
                 .as_deref()
                 .filter(|s| !s.is_empty())
                 .unwrap_or("~/.ssh/id_rsa");
-            let expanded = expand_tilde(key_path_str);
+            let expanded = expand_config_value(key_path_str);
             let key_path = PathBuf::from(&expanded);
             let passphrase = config.password.as_deref();
 

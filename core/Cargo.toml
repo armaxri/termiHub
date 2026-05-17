@@ -26,6 +26,7 @@ openssl = { workspace = true, optional = true }
 bollard = { workspace = true, optional = true }
 futures-util = { version = "0.3", optional = true }
 ringbuf = "0.5.0"
+shellexpand = "3.1"
 
 [dev-dependencies]
 tempfile = "3"
