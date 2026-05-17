@@ -1,18 +1,28 @@
+//! JSON-RPC method handler using jsonrpsee's [`RpcModule`].
+//!
+//! [`AgentHandler`] registers all protocol methods into a [`RpcModule`] and
+//! exposes a single [`AgentHandler::call_raw`] entry point used by the
+//! NDJSON transport loop. Shared mutable state lives in
+//! `Arc<Mutex<HandlerState>>`; the shutdown signal is conveyed through
+//! `Arc<AtomicBool>` so the transport can stop after `agent.shutdown`.
+
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
-use serde_json::{json, Value};
-use tracing::{debug, warn};
-
 use base64::Engine;
+use jsonrpsee::core::server::RpcModule;
+use jsonrpsee::types::ErrorObjectOwned;
+use serde_json::{json, Value};
+use tokio::sync::Mutex;
+use tracing::{debug, warn};
 
 use crate::files::local::LocalFileBackend;
 use crate::files::{FileBackend, FileError};
 use crate::monitoring::MonitoringManagerApi;
 use crate::network;
 use crate::protocol::errors;
-use crate::protocol::messages::{JsonRpcErrorResponse, JsonRpcRequest, JsonRpcResponse};
 use crate::protocol::methods::{
     AgentSettings, AgentSettingsUpdateParams, AgentShutdownParams, AgentShutdownResult,
     Capabilities, ConnectionCreateParams, ConnectionDeleteParams, ConnectionTypesResult,
@@ -26,298 +36,370 @@ use crate::protocol::methods::{
     SessionInputParams, SessionListEntry, SessionListResult, SessionResizeParams,
 };
 use crate::session::definitions::{Connection, ConnectionStoreApi, Folder};
-use crate::session::manager::{
-    SessionCreateError, SessionManager, SessionManagerApi, MAX_SESSIONS,
-};
+use crate::session::manager::{SessionCreateError, SessionManagerApi, MAX_SESSIONS};
 
 /// The agent's protocol version.
 ///
 /// Bumped to 0.2.0 for the connection.* protocol migration (#360).
 const AGENT_PROTOCOL_VERSION: &str = "0.2.0";
 
-/// Dispatcher handles incoming JSON-RPC requests and routes them
-/// to the appropriate handler function.
+/// Maximum response body size for jsonrpsee method calls: 32 MiB.
 ///
-/// Generic over `M: SessionManagerApi` so it can be tested with a mock
-/// session manager without spawning real backends or registries.
-/// Defaults to [`SessionManager`] in production.
-pub struct Dispatcher<M: SessionManagerApi = SessionManager> {
-    session_manager: Arc<M>,
+/// Large enough to accommodate base64-encoded file reads while still
+/// providing a safety bound against runaway allocations.
+const MAX_RESPONSE_BODY_SIZE: usize = 32 * 1024 * 1024;
+
+// ── Shared handler state ───────────────────────────────────────────
+
+/// Shared mutable state for all registered RPC method handlers.
+struct HandlerState {
+    session_manager: Arc<dyn SessionManagerApi>,
     connection_store: Arc<dyn ConnectionStoreApi>,
     monitoring_manager: Arc<dyn MonitoringManagerApi>,
     initialized: bool,
     start_time: Instant,
-    /// Runtime settings received from the desktop on initialize or settingsUpdate.
     agent_settings: AgentSettings,
+    /// Shared with [`AgentHandler::shutdown_flag`] so the transport loop can
+    /// detect shutdown without re-locking the mutex after every request.
+    shutdown_flag: Arc<AtomicBool>,
 }
 
-/// The result of dispatching a request: either a success or error response.
-pub enum DispatchResult {
-    Success(JsonRpcResponse),
-    Error(JsonRpcErrorResponse),
-    /// Send the response, then signal the transport loop to shut down.
-    SuccessAndShutdown(JsonRpcResponse),
+// ── AgentHandler ───────────────────────────────────────────────────
+
+/// JSON-RPC handler backed by jsonrpsee's [`RpcModule`].
+///
+/// All methods from the termiHub agent protocol are registered during
+/// construction. The transport loop calls [`call_raw`] for each incoming
+/// NDJSON line; jsonrpsee handles routing, error formatting, and response
+/// serialisation.
+pub struct AgentHandler {
+    module: RpcModule<Mutex<HandlerState>>,
+    pub shutdown_flag: Arc<AtomicBool>,
 }
 
-impl DispatchResult {
-    /// Serialize the result to a JSON `Value`.
-    pub fn to_json(&self) -> Value {
-        match self {
-            Self::Success(resp) | Self::SuccessAndShutdown(resp) => {
-                serde_json::to_value(resp).unwrap()
-            }
-            Self::Error(resp) => serde_json::to_value(resp).unwrap(),
-        }
-    }
-
-    /// Returns `true` if this result signals the agent should shut down
-    /// after sending the response.
-    pub fn is_shutdown(&self) -> bool {
-        matches!(self, Self::SuccessAndShutdown(_))
-    }
-}
-
-impl<M: SessionManagerApi> Dispatcher<M> {
+impl AgentHandler {
     pub fn new(
-        session_manager: Arc<M>,
+        session_manager: Arc<dyn SessionManagerApi>,
         connection_store: Arc<dyn ConnectionStoreApi>,
         monitoring_manager: Arc<dyn MonitoringManagerApi>,
-    ) -> Self {
-        Self {
+    ) -> anyhow::Result<Self> {
+        let shutdown_flag = Arc::new(AtomicBool::new(false));
+
+        let state = Mutex::new(HandlerState {
             session_manager,
             connection_store,
             monitoring_manager,
             initialized: false,
             start_time: Instant::now(),
             agent_settings: AgentSettings::default(),
-        }
+            shutdown_flag: shutdown_flag.clone(),
+        });
+
+        let mut module: RpcModule<Mutex<HandlerState>> = RpcModule::new(state);
+
+        register_all(&mut module)?;
+
+        Ok(AgentHandler {
+            module,
+            shutdown_flag,
+        })
     }
 
-    /// Dispatch a parsed JSON-RPC request to the appropriate handler.
-    pub async fn dispatch(&mut self, request: JsonRpcRequest) -> DispatchResult {
-        let id = request.id.clone();
-        let method = request.method.as_str();
+    /// Process a raw JSON-RPC request string and return the response string.
+    ///
+    /// Also returns a boolean indicating whether `agent.shutdown` was called
+    /// and the transport loop should stop after sending the response.
+    pub async fn call_raw(&self, request: &str) -> (String, bool) {
+        debug!("Dispatching: {}", request);
+        let result = self
+            .module
+            .raw_json_request(request, MAX_RESPONSE_BODY_SIZE)
+            .await;
 
-        debug!("Dispatching method: {}", method);
-
-        // The `initialize` method is always allowed
-        if method == "initialize" {
-            return self.handle_initialize(request).await;
-        }
-
-        // All other methods require initialization
-        if !self.initialized {
-            return DispatchResult::Error(JsonRpcErrorResponse::new(
-                id,
-                errors::NOT_INITIALIZED,
-                "Agent not initialized — call 'initialize' first",
-            ));
-        }
-
-        match method {
-            // connection.* — active terminal sessions
-            "connection.create" => self.handle_session_create(request).await,
-            "connection.list" => self.handle_session_list(request).await,
-            "connection.close" => self.handle_session_close(request).await,
-            "connection.attach" => self.handle_session_attach(request).await,
-            "connection.detach" => self.handle_session_detach(request).await,
-            "connection.write" => self.handle_session_input(request).await,
-            "connection.resize" => self.handle_session_resize(request).await,
-            "connection.types" => self.handle_connection_types(request).await,
-            "session.getBuffer" => self.handle_session_get_buffer(request).await,
-
-            // connections.* — saved connection presets
-            "connections.list" => self.handle_connections_list(request).await,
-            "connections.create" => self.handle_connections_create(request).await,
-            "connections.update" => self.handle_connections_update(request).await,
-            "connections.delete" => self.handle_connections_delete(request).await,
-            "connections.folders.create" => self.handle_connections_folders_create(request).await,
-            "connections.folders.update" => self.handle_connections_folders_update(request).await,
-            "connections.folders.delete" => self.handle_connections_folders_delete(request).await,
-
-            // connection.files.* — file browsing scoped to connections
-            "connection.files.list" => self.handle_files_list(request).await,
-            "connection.files.read" => self.handle_files_read(request).await,
-            "connection.files.write" => self.handle_files_write(request).await,
-            "connection.files.delete" => self.handle_files_delete(request).await,
-            "connection.files.rename" => self.handle_files_rename(request).await,
-            "connection.files.stat" => self.handle_files_stat(request).await,
-            "connection.files.mkdir" => self.handle_files_mkdir(request).await,
-
-            // connection.monitoring.* — system monitoring
-            "connection.monitoring.subscribe" => self.handle_monitoring_subscribe(request).await,
-            "connection.monitoring.unsubscribe" => {
-                self.handle_monitoring_unsubscribe(request).await
-            }
-
-            // network.* — diagnostic tools
-            "network.port_scan" => self.handle_network_port_scan(request).await,
-            "network.ping" => self.handle_network_ping(request).await,
-            "network.dns_lookup" => self.handle_network_dns_lookup(request).await,
-            "network.open_ports" => self.handle_network_open_ports(request).await,
-            "network.traceroute" => self.handle_network_traceroute(request).await,
-            "network.wol" => self.handle_network_wol(request).await,
-
-            // Utility
-            "health.check" => self.handle_health_check(request).await,
-            "agent.shutdown" => self.handle_agent_shutdown(request).await,
-            "agent.settingsUpdate" => self.handle_settings_update(request).await,
-            _ => {
-                warn!("Unknown method: {}", method);
-                DispatchResult::Error(JsonRpcErrorResponse::new(
-                    id,
-                    errors::METHOD_NOT_FOUND,
-                    format!("Method not found: {method}"),
-                ))
-            }
-        }
-    }
-
-    async fn handle_initialize(&mut self, request: JsonRpcRequest) -> DispatchResult {
-        let id = request.id.clone();
-
-        let params: InitializeParams = match serde_json::from_value(request.params) {
-            Ok(p) => p,
+        let response = match result {
+            Ok((resp, _)) => resp,
             Err(e) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(
-                    id,
-                    errors::INVALID_PARAMS,
-                    format!("Invalid initialize params: {e}"),
-                ));
+                warn!("RpcModule error: {e}");
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32700_i32, "message": format!("Parse error: {e}")},
+                    "id": null
+                })
+                .to_string()
             }
         };
+        let is_shutdown = self.shutdown_flag.load(Ordering::Acquire);
+        debug!("Response: {}", response);
+        (response, is_shutdown)
+    }
 
-        // Version negotiation: we only support major version 0
-        let requested: Vec<&str> = params.protocol_version.split('.').collect();
-        let major = requested.first().and_then(|s| s.parse::<u32>().ok());
+    /// Whether `agent.shutdown` has been invoked.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn is_shutdown(&self) -> bool {
+        self.shutdown_flag.load(Ordering::Acquire)
+    }
+}
+
+// ── Error helpers ──────────────────────────────────────────────────
+
+fn rpc_err(code: i64, message: impl Into<String>) -> ErrorObjectOwned {
+    ErrorObjectOwned::owned(code as i32, message.into(), None::<Value>)
+}
+
+fn rpc_err_data(code: i64, message: impl Into<String>, data: Value) -> ErrorObjectOwned {
+    ErrorObjectOwned::owned(code as i32, message.into(), Some(data))
+}
+
+fn not_initialized() -> ErrorObjectOwned {
+    rpc_err(
+        errors::NOT_INITIALIZED,
+        "Agent not initialized — call 'initialize' first",
+    )
+}
+
+fn invalid_params(context: &str, e: impl std::fmt::Display) -> ErrorObjectOwned {
+    rpc_err(
+        errors::INVALID_PARAMS,
+        format!("Invalid {context} params: {e}"),
+    )
+}
+
+fn map_file_error(e: FileError) -> ErrorObjectOwned {
+    match e {
+        FileError::NotFound(msg) => rpc_err(errors::FILE_NOT_FOUND, msg),
+        FileError::PermissionDenied(msg) => rpc_err(errors::PERMISSION_DENIED, msg),
+        FileError::OperationFailed(msg) => rpc_err(errors::FILE_OPERATION_FAILED, msg),
+        FileError::NotSupported => rpc_err(errors::FILE_BROWSING_NOT_SUPPORTED, e.to_string()),
+        FileError::Io(e) => rpc_err(errors::FILE_OPERATION_FAILED, e.to_string()),
+    }
+}
+
+/// Convert a megabyte count (from agent settings) to a byte count,
+/// with a floor of 64 KiB to avoid a zero-length buffer.
+fn mb_to_bytes(mb: u32) -> usize {
+    (mb as usize).saturating_mul(1_048_576).max(65_536)
+}
+
+// ── State-extraction helpers ───────────────────────────────────────
+//
+// Each helper locks HandlerState, enforces the initialized gate, and
+// clones only the resource(s) the caller needs.  The lock is always
+// released before the caller does any async work.
+
+async fn check_initialized(ctx: &tokio::sync::Mutex<HandlerState>) -> Result<(), ErrorObjectOwned> {
+    let s = ctx.lock().await;
+    if !s.initialized {
+        return Err(not_initialized());
+    }
+    Ok(())
+}
+
+async fn get_session_manager(
+    ctx: &tokio::sync::Mutex<HandlerState>,
+) -> Result<Arc<dyn SessionManagerApi>, ErrorObjectOwned> {
+    let s = ctx.lock().await;
+    if !s.initialized {
+        return Err(not_initialized());
+    }
+    Ok(s.session_manager.clone())
+}
+
+async fn get_connection_store(
+    ctx: &tokio::sync::Mutex<HandlerState>,
+) -> Result<Arc<dyn ConnectionStoreApi>, ErrorObjectOwned> {
+    let s = ctx.lock().await;
+    if !s.initialized {
+        return Err(not_initialized());
+    }
+    Ok(s.connection_store.clone())
+}
+
+async fn get_file_managers(
+    ctx: &tokio::sync::Mutex<HandlerState>,
+) -> Result<(Arc<dyn SessionManagerApi>, Arc<dyn ConnectionStoreApi>), ErrorObjectOwned> {
+    let s = ctx.lock().await;
+    if !s.initialized {
+        return Err(not_initialized());
+    }
+    Ok((s.session_manager.clone(), s.connection_store.clone()))
+}
+
+async fn get_monitoring_managers(
+    ctx: &tokio::sync::Mutex<HandlerState>,
+) -> Result<(Arc<dyn SessionManagerApi>, Arc<dyn MonitoringManagerApi>), ErrorObjectOwned> {
+    let s = ctx.lock().await;
+    if !s.initialized {
+        return Err(not_initialized());
+    }
+    Ok((s.session_manager.clone(), s.monitoring_manager.clone()))
+}
+
+// ── Method registration ────────────────────────────────────────────
+
+fn register_all(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    register_initialize(module)?;
+    register_connection_create(module)?;
+    register_connection_list(module)?;
+    register_connection_close(module)?;
+    register_connection_attach(module)?;
+    register_connection_detach(module)?;
+    register_connection_write(module)?;
+    register_connection_resize(module)?;
+    register_connection_types(module)?;
+    register_session_get_buffer(module)?;
+    register_connections_list(module)?;
+    register_connections_create(module)?;
+    register_connections_update(module)?;
+    register_connections_delete(module)?;
+    register_connections_folders_create(module)?;
+    register_connections_folders_update(module)?;
+    register_connections_folders_delete(module)?;
+    register_files_list(module)?;
+    register_files_read(module)?;
+    register_files_write(module)?;
+    register_files_delete(module)?;
+    register_files_rename(module)?;
+    register_files_stat(module)?;
+    register_files_mkdir(module)?;
+    register_monitoring_subscribe(module)?;
+    register_monitoring_unsubscribe(module)?;
+    register_network_port_scan(module)?;
+    register_network_ping(module)?;
+    register_network_dns_lookup(module)?;
+    register_network_open_ports(module)?;
+    register_network_traceroute(module)?;
+    register_network_wol(module)?;
+    register_health_check(module)?;
+    register_agent_shutdown(module)?;
+    register_agent_settings_update(module)?;
+    Ok(())
+}
+
+// ── initialize ────────────────────────────────────────────────────
+
+fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("initialize", |params, ctx, _ext| async move {
+        let p: InitializeParams = params
+            .parse()
+            .map_err(|e| invalid_params("initialize", e))?;
+
+        let major = p
+            .protocol_version
+            .split('.')
+            .next()
+            .and_then(|s| s.parse::<u32>().ok());
 
         if major != Some(0) {
-            return DispatchResult::Error(JsonRpcErrorResponse::new(
-                id,
+            return Err(rpc_err(
                 errors::VERSION_NOT_SUPPORTED,
                 format!(
                     "Unsupported protocol version: {} (agent supports 0.x)",
-                    params.protocol_version
+                    p.protocol_version
                 ),
             ));
         }
 
-        self.initialized = true;
-        self.agent_settings = params.agent_settings.clone();
+        let (session_manager, connection_store, buffer_size) = {
+            let mut s = ctx.lock().await;
+            s.initialized = true;
+            s.agent_settings = p.agent_settings.clone();
+            let buffer_size = mb_to_bytes(p.agent_settings.persistent_scrollback_buffer_size_mb);
+            (
+                s.session_manager.clone(),
+                s.connection_store.clone(),
+                buffer_size,
+            )
+        };
 
-        // Apply buffer size from agent settings
-        let buffer_size_bytes = (params.agent_settings.persistent_scrollback_buffer_size_mb
-            as usize)
-            .saturating_mul(1_048_576)
-            .max(65_536); // minimum 64 KiB
-        self.session_manager
-            .set_persistent_buffer_size_bytes(buffer_size_bytes)
+        session_manager
+            .set_persistent_buffer_size_bytes(buffer_size)
             .await;
 
-        if !params.external_connection_files.is_empty() {
-            self.connection_store
-                .load_external_files(&params.external_connection_files)
+        if !p.external_connection_files.is_empty() {
+            connection_store
+                .load_external_files(&p.external_connection_files)
                 .await;
         }
 
         let docker_available = detect_docker_available();
-        let connection_types = self.session_manager.registry().available_types();
+        let connection_types = session_manager.registry().available_types();
 
-        let result = InitializeResult {
-            protocol_version: AGENT_PROTOCOL_VERSION.to_string(),
-            agent_version: env!("CARGO_PKG_VERSION").to_string(),
-            capabilities: Capabilities {
-                connection_types,
-                max_sessions: MAX_SESSIONS,
-                available_shells: detect_available_shells(),
-                available_serial_ports: termihub_core::session::serial::list_serial_ports(),
-                docker_available,
-                available_docker_images: detect_docker_images(),
-                monitoring_supported: detect_monitoring_supported(),
-            },
-        };
+        Ok::<_, ErrorObjectOwned>(
+            serde_json::to_value(InitializeResult {
+                protocol_version: AGENT_PROTOCOL_VERSION.to_string(),
+                agent_version: env!("CARGO_PKG_VERSION").to_string(),
+                capabilities: Capabilities {
+                    connection_types,
+                    max_sessions: MAX_SESSIONS,
+                    available_shells: detect_available_shells(),
+                    available_serial_ports: termihub_core::session::serial::list_serial_ports(),
+                    docker_available,
+                    available_docker_images: detect_docker_images(),
+                    monitoring_supported: detect_monitoring_supported(),
+                },
+            })
+            .unwrap(),
+        )
+    })?;
+    Ok(())
+}
 
-        DispatchResult::Success(JsonRpcResponse::new(
-            id,
-            serde_json::to_value(result).unwrap(),
-        ))
-    }
+// ── connection.* ──────────────────────────────────────────────────
 
-    async fn handle_session_create(&self, request: JsonRpcRequest) -> DispatchResult {
-        let id = request.id.clone();
+fn register_connection_create(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("connection.create", |params, ctx, _ext| async move {
+        let session_manager = get_session_manager(&ctx).await?;
 
-        let params: SessionCreateParams = match serde_json::from_value(request.params) {
-            Ok(p) => p,
-            Err(e) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(
-                    id,
-                    errors::INVALID_PARAMS,
-                    format!("Invalid session.create params: {e}"),
-                ));
-            }
-        };
+        let p: SessionCreateParams = params
+            .parse()
+            .map_err(|e| invalid_params("connection.create", e))?;
 
-        // Normalize user-facing type names to registry type IDs
-        // (e.g. "shell" → "local").
-        let type_id = normalize_type_id(&params.session_type);
+        let type_id = normalize_type_id(&p.session_type);
 
-        // Validate that the type exists in the registry.
-        if !self.session_manager.registry().has_type(type_id) {
-            return DispatchResult::Error(JsonRpcErrorResponse::new(
-                id,
+        if !session_manager.registry().has_type(type_id) {
+            return Err(rpc_err(
                 errors::INVALID_CONFIGURATION,
                 format!("Unsupported connection type: {type_id}"),
             ));
         }
 
-        let title = params.title.unwrap_or_else(|| format!("{type_id} session"));
+        let title = p.title.unwrap_or_else(|| format!("{type_id} session"));
 
-        let snapshot = match self
-            .session_manager
-            .create(type_id, title, params.config)
+        let snapshot = session_manager
+            .create(type_id, title, p.config)
             .await
-        {
-            Ok(snapshot) => snapshot,
-            Err(SessionCreateError::LimitReached) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(
-                    id,
+            .map_err(|e| match e {
+                SessionCreateError::LimitReached => rpc_err(
                     errors::SESSION_LIMIT_REACHED,
                     format!("Session limit reached (max {MAX_SESSIONS})"),
-                ));
-            }
-            Err(SessionCreateError::InvalidConfig(msg)) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(
-                    id,
-                    errors::INVALID_CONFIGURATION,
-                    msg,
-                ));
-            }
-            Err(SessionCreateError::BackendFailed(msg)) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(
-                    id,
-                    errors::SESSION_CREATION_FAILED,
-                    msg,
-                ));
-            }
-        };
+                ),
+                SessionCreateError::InvalidConfig(msg) => {
+                    rpc_err(errors::INVALID_CONFIGURATION, msg)
+                }
+                SessionCreateError::BackendFailed(msg) => {
+                    rpc_err(errors::SESSION_CREATION_FAILED, msg)
+                }
+            })?;
 
-        let result = SessionCreateResult {
-            session_id: snapshot.id,
-            title: snapshot.title,
-            session_type: snapshot.type_id,
-            status: snapshot.status.as_str().to_string(),
-            created_at: snapshot.created_at.to_rfc3339(),
-        };
+        Ok::<_, ErrorObjectOwned>(
+            serde_json::to_value(SessionCreateResult {
+                session_id: snapshot.id,
+                title: snapshot.title,
+                session_type: snapshot.type_id,
+                status: snapshot.status.as_str().to_string(),
+                created_at: snapshot.created_at.to_rfc3339(),
+            })
+            .unwrap(),
+        )
+    })?;
+    Ok(())
+}
 
-        DispatchResult::Success(JsonRpcResponse::new(
-            id,
-            serde_json::to_value(result).unwrap(),
-        ))
-    }
+fn register_connection_list(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("connection.list", |_params, ctx, _ext| async move {
+        let session_manager = get_session_manager(&ctx).await?;
 
-    async fn handle_session_list(&self, request: JsonRpcRequest) -> DispatchResult {
-        let sessions = self.session_manager.list().await;
-
+        let sessions = session_manager.list().await;
         let entries: Vec<SessionListEntry> = sessions
             .into_iter()
             .map(|s| SessionListEntry {
@@ -331,265 +413,135 @@ impl<M: SessionManagerApi> Dispatcher<M> {
             })
             .collect();
 
-        let result = SessionListResult { sessions: entries };
+        Ok::<_, ErrorObjectOwned>(
+            serde_json::to_value(SessionListResult { sessions: entries }).unwrap(),
+        )
+    })?;
+    Ok(())
+}
 
-        DispatchResult::Success(JsonRpcResponse::new(
-            request.id,
-            serde_json::to_value(result).unwrap(),
-        ))
-    }
+fn register_connection_close(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("connection.close", |params, ctx, _ext| async move {
+        let session_manager = get_session_manager(&ctx).await?;
 
-    async fn handle_session_close(&self, request: JsonRpcRequest) -> DispatchResult {
-        let id = request.id.clone();
+        let p: SessionCloseParams = params
+            .parse()
+            .map_err(|e| invalid_params("connection.close", e))?;
 
-        let params: SessionCloseParams = match serde_json::from_value(request.params) {
-            Ok(p) => p,
-            Err(e) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(
-                    id,
-                    errors::INVALID_PARAMS,
-                    format!("Invalid session.close params: {e}"),
-                ));
-            }
-        };
-
-        if self.session_manager.close(&params.session_id).await {
-            DispatchResult::Success(JsonRpcResponse::new(id, json!({})))
+        if session_manager.close(&p.session_id).await {
+            Ok::<_, ErrorObjectOwned>(json!({}))
         } else {
-            DispatchResult::Error(
-                JsonRpcErrorResponse::new(id, errors::SESSION_NOT_FOUND, "Session not found")
-                    .with_data(json!({"session_id": params.session_id})),
+            Err(rpc_err_data(
+                errors::SESSION_NOT_FOUND,
+                "Session not found",
+                json!({"session_id": p.session_id}),
+            ))
+        }
+    })?;
+    Ok(())
+}
+
+fn register_connection_attach(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("connection.attach", |params, ctx, _ext| async move {
+        let session_manager = get_session_manager(&ctx).await?;
+
+        let p: SessionAttachParams = params
+            .parse()
+            .map_err(|e| invalid_params("connection.attach", e))?;
+
+        session_manager.attach(&p.session_id).await.map_err(|msg| {
+            rpc_err_data(
+                errors::SESSION_NOT_FOUND,
+                msg,
+                json!({"session_id": p.session_id}),
             )
-        }
-    }
+        })?;
 
-    async fn handle_health_check(&self, request: JsonRpcRequest) -> DispatchResult {
-        let uptime = self.start_time.elapsed().as_secs();
-        let active = self.session_manager.active_count().await;
+        Ok::<_, ErrorObjectOwned>(json!({}))
+    })?;
+    Ok(())
+}
 
-        let result = HealthCheckResult {
-            status: "ok".to_string(),
-            uptime_secs: uptime,
-            active_sessions: active,
-        };
+fn register_connection_detach(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("connection.detach", |params, ctx, _ext| async move {
+        let session_manager = get_session_manager(&ctx).await?;
 
-        DispatchResult::Success(JsonRpcResponse::new(
-            request.id,
-            serde_json::to_value(result).unwrap(),
-        ))
-    }
+        let p: SessionDetachParams = params
+            .parse()
+            .map_err(|e| invalid_params("connection.detach", e))?;
 
-    async fn handle_settings_update(&mut self, request: JsonRpcRequest) -> DispatchResult {
-        let id = request.id.clone();
+        session_manager.detach(&p.session_id).await.map_err(|msg| {
+            rpc_err_data(
+                errors::SESSION_NOT_FOUND,
+                msg,
+                json!({"session_id": p.session_id}),
+            )
+        })?;
 
-        let params: AgentSettingsUpdateParams = match serde_json::from_value(request.params) {
-            Ok(p) => p,
-            Err(e) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(
-                    id,
-                    errors::INVALID_PARAMS,
-                    format!("Invalid agent.settingsUpdate params: {e}"),
-                ));
-            }
-        };
+        Ok::<_, ErrorObjectOwned>(json!({}))
+    })?;
+    Ok(())
+}
 
-        self.agent_settings = params.settings.clone();
+fn register_connection_write(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("connection.write", |params, ctx, _ext| async move {
+        let session_manager = get_session_manager(&ctx).await?;
 
-        // Apply buffer size from updated settings
-        let buffer_size_bytes = (params.settings.persistent_scrollback_buffer_size_mb as usize)
-            .saturating_mul(1_048_576)
-            .max(65_536); // minimum 64 KiB
-        self.session_manager
-            .set_persistent_buffer_size_bytes(buffer_size_bytes)
-            .await;
-
-        DispatchResult::Success(JsonRpcResponse::new(id, json!({"applied": true})))
-    }
-
-    async fn handle_agent_shutdown(&self, request: JsonRpcRequest) -> DispatchResult {
-        let id = request.id.clone();
-
-        let _params: AgentShutdownParams = match serde_json::from_value(request.params) {
-            Ok(p) => p,
-            Err(e) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(
-                    id,
-                    errors::INVALID_PARAMS,
-                    format!("Invalid agent.shutdown params: {e}"),
-                ));
-            }
-        };
-
-        // Count active sessions before shutdown — they will be detached
-        // (left running in daemons) so the next agent instance can recover them.
-        let detached = self.session_manager.active_count().await;
-
-        // Stop monitoring subscriptions
-        self.monitoring_manager.shutdown().await;
-
-        let result = AgentShutdownResult {
-            detached_sessions: detached,
-        };
-
-        // Use SuccessAndShutdown so the transport loop exits after sending this response.
-        DispatchResult::SuccessAndShutdown(JsonRpcResponse::new(
-            id,
-            serde_json::to_value(result).unwrap(),
-        ))
-    }
-
-    async fn handle_session_attach(&self, request: JsonRpcRequest) -> DispatchResult {
-        let id = request.id.clone();
-
-        let params: SessionAttachParams = match serde_json::from_value(request.params) {
-            Ok(p) => p,
-            Err(e) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(
-                    id,
-                    errors::INVALID_PARAMS,
-                    format!("Invalid session.attach params: {e}"),
-                ));
-            }
-        };
-
-        match self.session_manager.attach(&params.session_id).await {
-            Ok(()) => DispatchResult::Success(JsonRpcResponse::new(id, json!({}))),
-            Err(msg) => DispatchResult::Error(
-                JsonRpcErrorResponse::new(id, errors::SESSION_NOT_FOUND, msg)
-                    .with_data(json!({"session_id": params.session_id})),
-            ),
-        }
-    }
-
-    async fn handle_session_detach(&self, request: JsonRpcRequest) -> DispatchResult {
-        let id = request.id.clone();
-
-        let params: SessionDetachParams = match serde_json::from_value(request.params) {
-            Ok(p) => p,
-            Err(e) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(
-                    id,
-                    errors::INVALID_PARAMS,
-                    format!("Invalid session.detach params: {e}"),
-                ));
-            }
-        };
-
-        match self.session_manager.detach(&params.session_id).await {
-            Ok(()) => DispatchResult::Success(JsonRpcResponse::new(id, json!({}))),
-            Err(msg) => DispatchResult::Error(
-                JsonRpcErrorResponse::new(id, errors::SESSION_NOT_FOUND, msg)
-                    .with_data(json!({"session_id": params.session_id})),
-            ),
-        }
-    }
-
-    async fn handle_session_input(&self, request: JsonRpcRequest) -> DispatchResult {
-        let id = request.id.clone();
-
-        let params: SessionInputParams = match serde_json::from_value(request.params) {
-            Ok(p) => p,
-            Err(e) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(
-                    id,
-                    errors::INVALID_PARAMS,
-                    format!("Invalid session.input params: {e}"),
-                ));
-            }
-        };
+        let p: SessionInputParams = params
+            .parse()
+            .map_err(|e| invalid_params("connection.write", e))?;
 
         let b64 = base64::engine::general_purpose::STANDARD;
-        let data = match b64.decode(&params.data) {
-            Ok(d) => d,
-            Err(e) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(
-                    id,
-                    errors::INVALID_PARAMS,
-                    format!("Invalid base64 data: {e}"),
-                ));
-            }
-        };
+        let data = b64
+            .decode(&p.data)
+            .map_err(|e| rpc_err(errors::INVALID_PARAMS, format!("Invalid base64 data: {e}")))?;
 
-        match self
-            .session_manager
-            .write_input(&params.session_id, &data)
+        session_manager
+            .write_input(&p.session_id, &data)
             .await
-        {
-            Ok(()) => DispatchResult::Success(JsonRpcResponse::new(id, json!({}))),
-            Err(msg) => DispatchResult::Error(
-                JsonRpcErrorResponse::new(id, errors::SESSION_NOT_FOUND, msg)
-                    .with_data(json!({"session_id": params.session_id})),
-            ),
-        }
-    }
+            .map_err(|msg| {
+                rpc_err_data(
+                    errors::SESSION_NOT_FOUND,
+                    msg,
+                    json!({"session_id": p.session_id}),
+                )
+            })?;
 
-    async fn handle_session_resize(&self, request: JsonRpcRequest) -> DispatchResult {
-        let id = request.id.clone();
+        Ok::<_, ErrorObjectOwned>(json!({}))
+    })?;
+    Ok(())
+}
 
-        let params: SessionResizeParams = match serde_json::from_value(request.params) {
-            Ok(p) => p,
-            Err(e) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(
-                    id,
-                    errors::INVALID_PARAMS,
-                    format!("Invalid session.resize params: {e}"),
-                ));
-            }
-        };
+fn register_connection_resize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("connection.resize", |params, ctx, _ext| async move {
+        let session_manager = get_session_manager(&ctx).await?;
 
-        match self
-            .session_manager
-            .resize(&params.session_id, params.cols, params.rows)
+        let p: SessionResizeParams = params
+            .parse()
+            .map_err(|e| invalid_params("connection.resize", e))?;
+
+        session_manager
+            .resize(&p.session_id, p.cols, p.rows)
             .await
-        {
-            Ok(()) => DispatchResult::Success(JsonRpcResponse::new(id, json!({}))),
-            Err(msg) => DispatchResult::Error(
-                JsonRpcErrorResponse::new(id, errors::SESSION_NOT_FOUND, msg)
-                    .with_data(json!({"session_id": params.session_id})),
-            ),
-        }
-    }
+            .map_err(|msg| {
+                rpc_err_data(
+                    errors::SESSION_NOT_FOUND,
+                    msg,
+                    json!({"session_id": p.session_id}),
+                )
+            })?;
 
-    async fn handle_session_get_buffer(&self, request: JsonRpcRequest) -> DispatchResult {
-        let id = request.id.clone();
+        Ok::<_, ErrorObjectOwned>(json!({}))
+    })?;
+    Ok(())
+}
 
-        let params: SessionGetBufferParams = match serde_json::from_value(request.params) {
-            Ok(p) => p,
-            Err(e) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(
-                    id,
-                    errors::INVALID_PARAMS,
-                    format!("Invalid session.getBuffer params: {e}"),
-                ));
-            }
-        };
+fn register_connection_types(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("connection.types", |_params, ctx, _ext| async move {
+        let session_manager = get_session_manager(&ctx).await?;
 
-        match self.session_manager.get_buffer(&params.session_id).await {
-            Ok(data) => {
-                let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
-                DispatchResult::Success(JsonRpcResponse::new(
-                    id,
-                    serde_json::to_value(SessionGetBufferResult {
-                        session_id: params.session_id,
-                        data: encoded,
-                    })
-                    .unwrap(),
-                ))
-            }
-            Err(e) => {
-                DispatchResult::Error(JsonRpcErrorResponse::new(id, errors::SESSION_NOT_FOUND, e))
-            }
-        }
-    }
-
-    async fn handle_connection_types(&self, request: JsonRpcRequest) -> DispatchResult {
         let monitoring_ok = detect_monitoring_supported();
-        // The "local" shell backend declares monitoring: false because the
-        // desktop handles local monitoring differently (direct SSH session).
-        // In the agent context, "local" sessions run on this machine and
-        // monitoring via "self" is available, so we override here.
-        let types = self
-            .session_manager
+        let types = session_manager
             .registry()
             .available_types()
             .into_iter()
@@ -600,71 +552,93 @@ impl<M: SessionManagerApi> Dispatcher<M> {
                 info
             })
             .collect();
-        let result = ConnectionTypesResult { types };
-        DispatchResult::Success(JsonRpcResponse::new(
-            request.id,
-            serde_json::to_value(result).unwrap(),
-        ))
-    }
 
-    // ── connections.* handlers ───────────────────────────────────────
+        Ok::<_, ErrorObjectOwned>(serde_json::to_value(ConnectionTypesResult { types }).unwrap())
+    })?;
+    Ok(())
+}
 
-    async fn handle_connections_list(&self, request: JsonRpcRequest) -> DispatchResult {
-        let (connections, folders) = self.connection_store.list().await;
-        DispatchResult::Success(JsonRpcResponse::new(
-            request.id,
-            json!({"connections": connections, "folders": folders}),
-        ))
-    }
+fn register_session_get_buffer(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("session.getBuffer", |params, ctx, _ext| async move {
+        let session_manager = get_session_manager(&ctx).await?;
 
-    async fn handle_connections_create(&self, request: JsonRpcRequest) -> DispatchResult {
-        let id = request.id.clone();
+        let p: SessionGetBufferParams = params
+            .parse()
+            .map_err(|e| invalid_params("session.getBuffer", e))?;
 
-        let params: ConnectionCreateParams = match serde_json::from_value(request.params) {
-            Ok(p) => p,
-            Err(e) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(
-                    id,
-                    errors::INVALID_PARAMS,
-                    format!("Invalid connections.create params: {e}"),
-                ));
-            }
-        };
+        let data = session_manager
+            .get_buffer(&p.session_id)
+            .await
+            .map_err(|e| rpc_err(errors::SESSION_NOT_FOUND, e))?;
+
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
+        Ok::<_, ErrorObjectOwned>(
+            serde_json::to_value(SessionGetBufferResult {
+                session_id: p.session_id,
+                data: encoded,
+            })
+            .unwrap(),
+        )
+    })?;
+    Ok(())
+}
+
+// ── connections.* ─────────────────────────────────────────────────
+
+fn register_connections_list(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("connections.list", |_params, ctx, _ext| async move {
+        let connection_store = get_connection_store(&ctx).await?;
+
+        let (connections, folders) = connection_store.list().await;
+        Ok::<_, ErrorObjectOwned>(json!({"connections": connections, "folders": folders}))
+    })?;
+    Ok(())
+}
+
+fn register_connections_create(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("connections.create", |params, ctx, _ext| async move {
+        let connection_store = get_connection_store(&ctx).await?;
+
+        let p: ConnectionCreateParams = params
+            .parse()
+            .map_err(|e| invalid_params("connections.create", e))?;
 
         let conn = Connection {
             id: format!("conn-{}", uuid::Uuid::new_v4()),
-            name: params.name,
-            session_type: params.session_type,
-            config: params.config,
-            persistent: params.persistent,
-            folder_id: params.folder_id,
-            terminal_options: params.terminal_options,
-            icon: params.icon,
+            name: p.name,
+            session_type: p.session_type,
+            config: p.config,
+            persistent: p.persistent,
+            folder_id: p.folder_id,
+            terminal_options: p.terminal_options,
+            icon: p.icon,
         };
 
-        let snapshot = self.connection_store.create(conn).await;
-        DispatchResult::Success(JsonRpcResponse::new(
-            id,
-            serde_json::to_value(snapshot).unwrap(),
-        ))
-    }
+        let snapshot = connection_store.create(conn).await;
+        Ok::<_, ErrorObjectOwned>(serde_json::to_value(snapshot).unwrap())
+    })?;
+    Ok(())
+}
 
-    async fn handle_connections_update(&self, request: JsonRpcRequest) -> DispatchResult {
-        let id = request.id.clone();
+fn register_connections_update(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("connections.update", |params, ctx, _ext| async move {
+        let connection_store = get_connection_store(&ctx).await?;
 
-        let params: ConnectionUpdateParams = match serde_json::from_value(request.params) {
-            Ok(p) => p,
-            Err(e) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(
-                    id,
-                    errors::INVALID_PARAMS,
-                    format!("Invalid connections.update params: {e}"),
-                ));
+        let p: ConnectionUpdateParams = params
+            .parse()
+            .map_err(|e| invalid_params("connections.update", e))?;
+
+        let folder_id = p.folder_id.map(|v| {
+            if v.is_null() {
+                None
+            } else {
+                v.as_str().map(|s| s.to_string())
             }
-        };
-
-        // Convert folder_id: absent → None, null → Some(None), string → Some(Some(s))
-        let folder_id = params.folder_id.map(|v| {
+        });
+        let terminal_options = p
+            .terminal_options
+            .map(|v| if v.is_null() { None } else { Some(v) });
+        let icon = p.icon.map(|v| {
             if v.is_null() {
                 None
             } else {
@@ -672,680 +646,568 @@ impl<M: SessionManagerApi> Dispatcher<M> {
             }
         });
 
-        // Convert optional nullable JSON values to Option<Option<T>>
-        let terminal_options =
-            params
-                .terminal_options
-                .map(|v| if v.is_null() { None } else { Some(v) });
-        let icon = params.icon.map(|v| {
-            if v.is_null() {
-                None
-            } else {
-                v.as_str().map(|s| s.to_string())
-            }
-        });
-
-        match self
-            .connection_store
+        match connection_store
             .update(
-                &params.id,
-                params.name,
-                params.session_type,
-                params.config,
-                params.persistent,
+                &p.id,
+                p.name,
+                p.session_type,
+                p.config,
+                p.persistent,
                 folder_id,
                 terminal_options,
                 icon,
             )
             .await
         {
-            Some(snapshot) => DispatchResult::Success(JsonRpcResponse::new(
-                id,
-                serde_json::to_value(snapshot).unwrap(),
+            Some(snapshot) => Ok::<_, ErrorObjectOwned>(serde_json::to_value(snapshot).unwrap()),
+            None => Err(rpc_err_data(
+                errors::CONNECTION_NOT_FOUND,
+                "Connection not found",
+                json!({"id": p.id}),
             )),
-            None => DispatchResult::Error(
-                JsonRpcErrorResponse::new(id, errors::CONNECTION_NOT_FOUND, "Connection not found")
-                    .with_data(json!({"id": params.id})),
-            ),
         }
-    }
+    })?;
+    Ok(())
+}
 
-    async fn handle_connections_delete(&self, request: JsonRpcRequest) -> DispatchResult {
-        let id = request.id.clone();
+fn register_connections_delete(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("connections.delete", |params, ctx, _ext| async move {
+        let connection_store = get_connection_store(&ctx).await?;
 
-        let params: ConnectionDeleteParams = match serde_json::from_value(request.params) {
-            Ok(p) => p,
-            Err(e) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(
-                    id,
-                    errors::INVALID_PARAMS,
-                    format!("Invalid connections.delete params: {e}"),
-                ));
-            }
-        };
+        let p: ConnectionDeleteParams = params
+            .parse()
+            .map_err(|e| invalid_params("connections.delete", e))?;
 
-        if self.connection_store.delete(&params.id).await {
-            DispatchResult::Success(JsonRpcResponse::new(id, json!({})))
+        if connection_store.delete(&p.id).await {
+            Ok::<_, ErrorObjectOwned>(json!({}))
         } else {
-            DispatchResult::Error(
-                JsonRpcErrorResponse::new(id, errors::CONNECTION_NOT_FOUND, "Connection not found")
-                    .with_data(json!({"id": params.id})),
-            )
+            Err(rpc_err_data(
+                errors::CONNECTION_NOT_FOUND,
+                "Connection not found",
+                json!({"id": p.id}),
+            ))
         }
-    }
+    })?;
+    Ok(())
+}
 
-    async fn handle_connections_folders_create(&self, request: JsonRpcRequest) -> DispatchResult {
-        let id = request.id.clone();
+fn register_connections_folders_create(
+    module: &mut RpcModule<Mutex<HandlerState>>,
+) -> anyhow::Result<()> {
+    module.register_async_method(
+        "connections.folders.create",
+        |params, ctx, _ext| async move {
+            let connection_store = get_connection_store(&ctx).await?;
 
-        let params: FolderCreateParams = match serde_json::from_value(request.params) {
-            Ok(p) => p,
-            Err(e) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(
-                    id,
-                    errors::INVALID_PARAMS,
-                    format!("Invalid connections.folders.create params: {e}"),
-                ));
+            let p: FolderCreateParams = params
+                .parse()
+                .map_err(|e| invalid_params("connections.folders.create", e))?;
+
+            let folder = Folder {
+                id: format!("folder-{}", uuid::Uuid::new_v4()),
+                name: p.name,
+                parent_id: p.parent_id,
+                is_expanded: false,
+            };
+
+            let snapshot = connection_store.create_folder(folder).await;
+            Ok::<_, ErrorObjectOwned>(serde_json::to_value(snapshot).unwrap())
+        },
+    )?;
+    Ok(())
+}
+
+fn register_connections_folders_update(
+    module: &mut RpcModule<Mutex<HandlerState>>,
+) -> anyhow::Result<()> {
+    module.register_async_method(
+        "connections.folders.update",
+        |params, ctx, _ext| async move {
+            let connection_store = get_connection_store(&ctx).await?;
+
+            let p: FolderUpdateParams = params
+                .parse()
+                .map_err(|e| invalid_params("connections.folders.update", e))?;
+
+            let parent_id = p.parent_id.map(|v| {
+                if v.is_null() {
+                    None
+                } else {
+                    v.as_str().map(|s| s.to_string())
+                }
+            });
+
+            match connection_store
+                .update_folder(&p.id, p.name, parent_id, p.is_expanded)
+                .await
+            {
+                Some(snapshot) => {
+                    Ok::<_, ErrorObjectOwned>(serde_json::to_value(snapshot).unwrap())
+                }
+                None => Err(rpc_err_data(
+                    errors::FOLDER_NOT_FOUND,
+                    "Folder not found",
+                    json!({"id": p.id}),
+                )),
             }
-        };
+        },
+    )?;
+    Ok(())
+}
 
-        let folder = Folder {
-            id: format!("folder-{}", uuid::Uuid::new_v4()),
-            name: params.name,
-            parent_id: params.parent_id,
-            is_expanded: false,
-        };
+fn register_connections_folders_delete(
+    module: &mut RpcModule<Mutex<HandlerState>>,
+) -> anyhow::Result<()> {
+    module.register_async_method(
+        "connections.folders.delete",
+        |params, ctx, _ext| async move {
+            let connection_store = get_connection_store(&ctx).await?;
 
-        let snapshot = self.connection_store.create_folder(folder).await;
-        DispatchResult::Success(JsonRpcResponse::new(
-            id,
-            serde_json::to_value(snapshot).unwrap(),
-        ))
-    }
+            let p: FolderDeleteParams = params
+                .parse()
+                .map_err(|e| invalid_params("connections.folders.delete", e))?;
 
-    async fn handle_connections_folders_update(&self, request: JsonRpcRequest) -> DispatchResult {
-        let id = request.id.clone();
-
-        let params: FolderUpdateParams = match serde_json::from_value(request.params) {
-            Ok(p) => p,
-            Err(e) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(
-                    id,
-                    errors::INVALID_PARAMS,
-                    format!("Invalid connections.folders.update params: {e}"),
-                ));
-            }
-        };
-
-        // Convert parent_id: absent → None, null → Some(None), string → Some(Some(s))
-        let parent_id = params.parent_id.map(|v| {
-            if v.is_null() {
-                None
+            if connection_store.delete_folder(&p.id).await {
+                Ok::<_, ErrorObjectOwned>(json!({}))
             } else {
-                v.as_str().map(|s| s.to_string())
+                Err(rpc_err_data(
+                    errors::FOLDER_NOT_FOUND,
+                    "Folder not found",
+                    json!({"id": p.id}),
+                ))
             }
-        });
+        },
+    )?;
+    Ok(())
+}
 
-        match self
-            .connection_store
-            .update_folder(&params.id, params.name, parent_id, params.is_expanded)
-            .await
-        {
-            Some(snapshot) => DispatchResult::Success(JsonRpcResponse::new(
-                id,
-                serde_json::to_value(snapshot).unwrap(),
+// ── connection.files.* ────────────────────────────────────────────
+
+async fn resolve_file_backend(
+    session_manager: &Arc<dyn SessionManagerApi>,
+    connection_store: &Arc<dyn ConnectionStoreApi>,
+    connection_id: Option<String>,
+) -> Result<Box<dyn FileBackend>, ErrorObjectOwned> {
+    let id = match connection_id {
+        None => return Ok(Box::new(LocalFileBackend::new())),
+        Some(id) => id,
+    };
+
+    if let Some(type_id) = session_manager.get_session_type_id(&id).await {
+        return match normalize_type_id(&type_id) {
+            "local" => Ok(Box::new(LocalFileBackend::new())),
+            other => Err(rpc_err(
+                errors::FILE_BROWSING_NOT_SUPPORTED,
+                format!("File browsing is not yet supported for '{other}' sessions"),
             )),
-            None => DispatchResult::Error(
-                JsonRpcErrorResponse::new(id, errors::FOLDER_NOT_FOUND, "Folder not found")
-                    .with_data(json!({"id": params.id})),
-            ),
-        }
+        };
     }
 
-    async fn handle_connections_folders_delete(&self, request: JsonRpcRequest) -> DispatchResult {
-        let id = request.id.clone();
+    let connection = connection_store.get(&id).await.ok_or_else(|| {
+        rpc_err(
+            errors::CONNECTION_NOT_FOUND,
+            format!("Connection not found: {id}"),
+        )
+    })?;
 
-        let params: FolderDeleteParams = match serde_json::from_value(request.params) {
-            Ok(p) => p,
-            Err(e) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(
-                    id,
-                    errors::INVALID_PARAMS,
-                    format!("Invalid connections.folders.delete params: {e}"),
-                ));
-            }
-        };
-
-        if self.connection_store.delete_folder(&params.id).await {
-            DispatchResult::Success(JsonRpcResponse::new(id, json!({})))
-        } else {
-            DispatchResult::Error(
-                JsonRpcErrorResponse::new(id, errors::FOLDER_NOT_FOUND, "Folder not found")
-                    .with_data(json!({"id": params.id})),
-            )
-        }
+    match connection.session_type.as_str() {
+        "local" | "shell" => Ok(Box::new(LocalFileBackend::new())),
+        other => Err(rpc_err(
+            errors::FILE_BROWSING_NOT_SUPPORTED,
+            format!("File browsing is not yet supported for '{other}' connections"),
+        )),
     }
+}
 
-    // ── files.* handlers ───────────────────────────────────────────
+fn register_files_list(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("connection.files.list", |params, ctx, _ext| async move {
+        let (session_manager, connection_store) = get_file_managers(&ctx).await?;
 
-    async fn handle_files_list(&self, request: JsonRpcRequest) -> DispatchResult {
-        let id = request.id.clone();
+        let p: FilesListParams = params
+            .parse()
+            .map_err(|e| invalid_params("connection.files.list", e))?;
 
-        let params: FilesListParams = match serde_json::from_value(request.params) {
-            Ok(p) => p,
-            Err(e) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(
-                    id,
-                    errors::INVALID_PARAMS,
-                    format!("Invalid files.list params: {e}"),
-                ));
-            }
-        };
+        let backend =
+            resolve_file_backend(&session_manager, &connection_store, p.connection_id).await?;
 
-        let backend = match self.resolve_file_backend(params.connection_id).await {
-            Ok(b) => b,
-            Err((code, msg)) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
-            }
-        };
+        backend
+            .list(&p.path)
+            .await
+            .map(|entries| serde_json::to_value(FilesListResult { entries }).unwrap())
+            .map_err(map_file_error)
+    })?;
+    Ok(())
+}
 
-        match backend.list(&params.path).await {
-            Ok(entries) => {
-                let result = FilesListResult { entries };
-                DispatchResult::Success(JsonRpcResponse::new(
-                    id,
-                    serde_json::to_value(result).unwrap(),
-                ))
-            }
-            Err(e) => {
-                let (code, msg) = map_file_error(e);
-                DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
-            }
-        }
-    }
+fn register_files_read(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("connection.files.read", |params, ctx, _ext| async move {
+        let (session_manager, connection_store) = get_file_managers(&ctx).await?;
 
-    async fn handle_files_read(&self, request: JsonRpcRequest) -> DispatchResult {
-        let id = request.id.clone();
+        let p: FilesReadParams = params
+            .parse()
+            .map_err(|e| invalid_params("connection.files.read", e))?;
 
-        let params: FilesReadParams = match serde_json::from_value(request.params) {
-            Ok(p) => p,
-            Err(e) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(
-                    id,
-                    errors::INVALID_PARAMS,
-                    format!("Invalid files.read params: {e}"),
-                ));
-            }
-        };
+        let backend =
+            resolve_file_backend(&session_manager, &connection_store, p.connection_id).await?;
 
-        let backend = match self.resolve_file_backend(params.connection_id).await {
-            Ok(b) => b,
-            Err((code, msg)) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
-            }
-        };
+        let data = backend.read(&p.path).await.map_err(map_file_error)?;
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let size = data.len() as u64;
+        Ok::<_, ErrorObjectOwned>(
+            serde_json::to_value(FilesReadResult {
+                data: b64.encode(&data),
+                size,
+            })
+            .unwrap(),
+        )
+    })?;
+    Ok(())
+}
 
-        match backend.read(&params.path).await {
-            Ok(data) => {
-                let b64 = base64::engine::general_purpose::STANDARD;
-                let size = data.len() as u64;
-                let result = FilesReadResult {
-                    data: b64.encode(&data),
-                    size,
-                };
-                DispatchResult::Success(JsonRpcResponse::new(
-                    id,
-                    serde_json::to_value(result).unwrap(),
-                ))
-            }
-            Err(e) => {
-                let (code, msg) = map_file_error(e);
-                DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
-            }
-        }
-    }
+fn register_files_write(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("connection.files.write", |params, ctx, _ext| async move {
+        let (session_manager, connection_store) = get_file_managers(&ctx).await?;
 
-    async fn handle_files_write(&self, request: JsonRpcRequest) -> DispatchResult {
-        let id = request.id.clone();
-
-        let params: FilesWriteParams = match serde_json::from_value(request.params) {
-            Ok(p) => p,
-            Err(e) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(
-                    id,
-                    errors::INVALID_PARAMS,
-                    format!("Invalid files.write params: {e}"),
-                ));
-            }
-        };
+        let p: FilesWriteParams = params
+            .parse()
+            .map_err(|e| invalid_params("connection.files.write", e))?;
 
         let b64 = base64::engine::general_purpose::STANDARD;
-        let data = match b64.decode(&params.data) {
-            Ok(d) => d,
-            Err(e) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(
-                    id,
-                    errors::INVALID_PARAMS,
-                    format!("Invalid base64 data: {e}"),
-                ));
-            }
-        };
+        let data = b64
+            .decode(&p.data)
+            .map_err(|e| rpc_err(errors::INVALID_PARAMS, format!("Invalid base64 data: {e}")))?;
 
-        let backend = match self.resolve_file_backend(params.connection_id).await {
-            Ok(b) => b,
-            Err((code, msg)) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
-            }
-        };
+        let backend =
+            resolve_file_backend(&session_manager, &connection_store, p.connection_id).await?;
 
-        match backend.write(&params.path, &data).await {
-            Ok(()) => DispatchResult::Success(JsonRpcResponse::new(id, json!({}))),
-            Err(e) => {
-                let (code, msg) = map_file_error(e);
-                DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
-            }
-        }
-    }
-
-    async fn handle_files_delete(&self, request: JsonRpcRequest) -> DispatchResult {
-        let id = request.id.clone();
-
-        let params: FilesDeleteParams = match serde_json::from_value(request.params) {
-            Ok(p) => p,
-            Err(e) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(
-                    id,
-                    errors::INVALID_PARAMS,
-                    format!("Invalid files.delete params: {e}"),
-                ));
-            }
-        };
-
-        let backend = match self.resolve_file_backend(params.connection_id).await {
-            Ok(b) => b,
-            Err((code, msg)) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
-            }
-        };
-
-        match backend.delete(&params.path, params.is_directory).await {
-            Ok(()) => DispatchResult::Success(JsonRpcResponse::new(id, json!({}))),
-            Err(e) => {
-                let (code, msg) = map_file_error(e);
-                DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
-            }
-        }
-    }
-
-    async fn handle_files_rename(&self, request: JsonRpcRequest) -> DispatchResult {
-        let id = request.id.clone();
-
-        let params: FilesRenameParams = match serde_json::from_value(request.params) {
-            Ok(p) => p,
-            Err(e) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(
-                    id,
-                    errors::INVALID_PARAMS,
-                    format!("Invalid files.rename params: {e}"),
-                ));
-            }
-        };
-
-        let backend = match self.resolve_file_backend(params.connection_id).await {
-            Ok(b) => b,
-            Err((code, msg)) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
-            }
-        };
-
-        match backend.rename(&params.old_path, &params.new_path).await {
-            Ok(()) => DispatchResult::Success(JsonRpcResponse::new(id, json!({}))),
-            Err(e) => {
-                let (code, msg) = map_file_error(e);
-                DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
-            }
-        }
-    }
-
-    async fn handle_files_stat(&self, request: JsonRpcRequest) -> DispatchResult {
-        let id = request.id.clone();
-
-        let params: FilesStatParams = match serde_json::from_value(request.params) {
-            Ok(p) => p,
-            Err(e) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(
-                    id,
-                    errors::INVALID_PARAMS,
-                    format!("Invalid files.stat params: {e}"),
-                ));
-            }
-        };
-
-        let backend = match self.resolve_file_backend(params.connection_id).await {
-            Ok(b) => b,
-            Err((code, msg)) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
-            }
-        };
-
-        match backend.stat(&params.path).await {
-            Ok(result) => DispatchResult::Success(JsonRpcResponse::new(
-                id,
-                serde_json::to_value(result).unwrap(),
-            )),
-            Err(e) => {
-                let (code, msg) = map_file_error(e);
-                DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
-            }
-        }
-    }
-
-    // ── monitoring.* handlers ─────────────────────────────────────────
-
-    /// Resolve the monitoring host for a given host identifier.
-    ///
-    /// If `host` is a session ID whose type is "local", returns `"self"` so
-    /// the `MonitoringManager` subscribes to the local machine stats.
-    /// For SSH session IDs and bare hostnames/IPs the value passes through unchanged.
-    async fn resolve_monitoring_host(&self, host: &str) -> String {
-        if let Some(type_id) = self.session_manager.get_session_type_id(host).await {
-            if type_id == "local" {
-                return "self".to_string();
-            }
-        }
-        host.to_string()
-    }
-
-    async fn handle_monitoring_subscribe(&self, request: JsonRpcRequest) -> DispatchResult {
-        let id = request.id.clone();
-
-        let params: MonitoringSubscribeParams = match serde_json::from_value(request.params) {
-            Ok(p) => p,
-            Err(e) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(
-                    id,
-                    errors::INVALID_PARAMS,
-                    format!("Invalid monitoring.subscribe params: {e}"),
-                ));
-            }
-        };
-
-        let host = self.resolve_monitoring_host(&params.host).await;
-        match self
-            .monitoring_manager
-            .subscribe(&host, params.interval_ms)
+        backend
+            .write(&p.path, &data)
             .await
-        {
-            Ok(()) => DispatchResult::Success(JsonRpcResponse::new(id, json!({}))),
-            Err(e) => DispatchResult::Error(JsonRpcErrorResponse::new(
-                id,
-                errors::MONITORING_ERROR,
-                format!("Failed to subscribe: {e}"),
-            )),
-        }
-    }
+            .map_err(map_file_error)?;
+        Ok::<_, ErrorObjectOwned>(json!({}))
+    })?;
+    Ok(())
+}
 
-    async fn handle_monitoring_unsubscribe(&self, request: JsonRpcRequest) -> DispatchResult {
-        let id = request.id.clone();
+fn register_files_delete(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("connection.files.delete", |params, ctx, _ext| async move {
+        let (session_manager, connection_store) = get_file_managers(&ctx).await?;
 
-        let params: MonitoringUnsubscribeParams = match serde_json::from_value(request.params) {
-            Ok(p) => p,
-            Err(e) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(
-                    id,
-                    errors::INVALID_PARAMS,
-                    format!("Invalid monitoring.unsubscribe params: {e}"),
-                ));
-            }
-        };
+        let p: FilesDeleteParams = params
+            .parse()
+            .map_err(|e| invalid_params("connection.files.delete", e))?;
 
-        let host = self.resolve_monitoring_host(&params.host).await;
-        self.monitoring_manager.unsubscribe(&host).await;
-        DispatchResult::Success(JsonRpcResponse::new(id, json!({})))
-    }
+        let backend =
+            resolve_file_backend(&session_manager, &connection_store, p.connection_id).await?;
 
-    /// Resolve the appropriate file backend for a connection.
-    ///
-    /// - `None` → local filesystem
-    /// - `Some(id)` → look up connection preset and resolve by type
-    ///
-    /// For "local" connections, uses the local filesystem backend.
-    /// Other connection types currently fall back to "not supported"
-    /// until ConnectionType::file_browser() is wired up.
-    async fn handle_files_mkdir(&self, request: JsonRpcRequest) -> DispatchResult {
-        let id = request.id.clone();
-
-        let params: FilesMkdirParams = match serde_json::from_value(request.params) {
-            Ok(p) => p,
-            Err(e) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(
-                    id,
-                    errors::INVALID_PARAMS,
-                    format!("Invalid files.mkdir params: {e}"),
-                ));
-            }
-        };
-
-        let backend = match self.resolve_file_backend(params.connection_id).await {
-            Ok(b) => b,
-            Err((code, msg)) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
-            }
-        };
-
-        match backend.mkdir(&params.path).await {
-            Ok(()) => DispatchResult::Success(JsonRpcResponse::new(id, json!({}))),
-            Err(e) => {
-                let (code, msg) = map_file_error(e);
-                DispatchResult::Error(JsonRpcErrorResponse::new(id, code, msg))
-            }
-        }
-    }
-
-    async fn resolve_file_backend(
-        &self,
-        connection_id: Option<String>,
-    ) -> Result<Box<dyn FileBackend>, (i64, String)> {
-        let connection_id = match connection_id {
-            None => return Ok(Box::new(LocalFileBackend::new())),
-            Some(id) => id,
-        };
-
-        // Check if this is an active session ID (sent by the desktop RemoteProxy).
-        if let Some(type_id) = self
-            .session_manager
-            .get_session_type_id(&connection_id)
+        backend
+            .delete(&p.path, p.is_directory)
             .await
-        {
-            return match normalize_type_id(&type_id) {
-                "local" => Ok(Box::new(LocalFileBackend::new())),
-                other => Err((
-                    errors::FILE_BROWSING_NOT_SUPPORTED,
-                    format!("File browsing is not yet supported for '{other}' sessions"),
-                )),
-            };
-        }
-
-        // Fall back to connection preset lookup.
-        let connection = self.connection_store.get(&connection_id).await.ok_or((
-            errors::CONNECTION_NOT_FOUND,
-            format!("Connection not found: {connection_id}"),
-        ))?;
-
-        match connection.session_type.as_str() {
-            // Local shell connections use the local filesystem.
-            "local" | "shell" => Ok(Box::new(LocalFileBackend::new())),
-            // Other types: file browsing via ConnectionType::file_browser()
-            // will be wired up once old backends are removed.
-            other => Err((
-                errors::FILE_BROWSING_NOT_SUPPORTED,
-                format!("File browsing is not yet supported for '{other}' connections"),
-            )),
-        }
-    }
-
-    // ── network.* handlers ─────────────────────────────────────────
-
-    async fn handle_network_port_scan(&self, request: JsonRpcRequest) -> DispatchResult {
-        let id = request.id.clone();
-        let params: NetworkPortScanParams = match serde_json::from_value(request.params) {
-            Ok(p) => p,
-            Err(e) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(
-                    id,
-                    errors::INVALID_PARAMS,
-                    format!("Invalid network.port_scan params: {e}"),
-                ));
-            }
-        };
-        match network::handle_port_scan(params).await {
-            Ok(result) => DispatchResult::Success(JsonRpcResponse::new(
-                id,
-                serde_json::to_value(result).unwrap(),
-            )),
-            Err(e) => DispatchResult::Error(JsonRpcErrorResponse::new(
-                id,
-                errors::INTERNAL_ERROR,
-                e.to_string(),
-            )),
-        }
-    }
-
-    async fn handle_network_ping(&self, request: JsonRpcRequest) -> DispatchResult {
-        let id = request.id.clone();
-        let params: NetworkPingParams = match serde_json::from_value(request.params) {
-            Ok(p) => p,
-            Err(e) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(
-                    id,
-                    errors::INVALID_PARAMS,
-                    format!("Invalid network.ping params: {e}"),
-                ));
-            }
-        };
-        match network::handle_ping(params).await {
-            Ok(result) => DispatchResult::Success(JsonRpcResponse::new(
-                id,
-                serde_json::to_value(result).unwrap(),
-            )),
-            Err(e) => DispatchResult::Error(JsonRpcErrorResponse::new(
-                id,
-                errors::INTERNAL_ERROR,
-                e.to_string(),
-            )),
-        }
-    }
-
-    async fn handle_network_dns_lookup(&self, request: JsonRpcRequest) -> DispatchResult {
-        let id = request.id.clone();
-        let params: NetworkDnsLookupParams = match serde_json::from_value(request.params) {
-            Ok(p) => p,
-            Err(e) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(
-                    id,
-                    errors::INVALID_PARAMS,
-                    format!("Invalid network.dns_lookup params: {e}"),
-                ));
-            }
-        };
-        match network::handle_dns_lookup(params).await {
-            Ok(result) => DispatchResult::Success(JsonRpcResponse::new(
-                id,
-                serde_json::to_value(result).unwrap(),
-            )),
-            Err(e) => DispatchResult::Error(JsonRpcErrorResponse::new(
-                id,
-                errors::INTERNAL_ERROR,
-                e.to_string(),
-            )),
-        }
-    }
-
-    async fn handle_network_open_ports(&self, request: JsonRpcRequest) -> DispatchResult {
-        let id = request.id.clone();
-        match network::handle_open_ports() {
-            Ok(result) => DispatchResult::Success(JsonRpcResponse::new(
-                id,
-                serde_json::to_value(result).unwrap(),
-            )),
-            Err(e) => DispatchResult::Error(JsonRpcErrorResponse::new(
-                id,
-                errors::INTERNAL_ERROR,
-                e.to_string(),
-            )),
-        }
-    }
-
-    async fn handle_network_traceroute(&self, request: JsonRpcRequest) -> DispatchResult {
-        let id = request.id.clone();
-        let params: NetworkTracerouteParams = match serde_json::from_value(request.params) {
-            Ok(p) => p,
-            Err(e) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(
-                    id,
-                    errors::INVALID_PARAMS,
-                    format!("Invalid network.traceroute params: {e}"),
-                ));
-            }
-        };
-        match network::handle_traceroute(params).await {
-            Ok(result) => DispatchResult::Success(JsonRpcResponse::new(
-                id,
-                serde_json::to_value(result).unwrap(),
-            )),
-            Err(e) => DispatchResult::Error(JsonRpcErrorResponse::new(
-                id,
-                errors::INTERNAL_ERROR,
-                e.to_string(),
-            )),
-        }
-    }
-
-    async fn handle_network_wol(&self, request: JsonRpcRequest) -> DispatchResult {
-        let id = request.id.clone();
-        let params: NetworkWolParams = match serde_json::from_value(request.params) {
-            Ok(p) => p,
-            Err(e) => {
-                return DispatchResult::Error(JsonRpcErrorResponse::new(
-                    id,
-                    errors::INVALID_PARAMS,
-                    format!("Invalid network.wol params: {e}"),
-                ));
-            }
-        };
-        match network::handle_wol(params) {
-            Ok(()) => DispatchResult::Success(JsonRpcResponse::new(id, json!({}))),
-            Err(e) => DispatchResult::Error(JsonRpcErrorResponse::new(
-                id,
-                errors::INTERNAL_ERROR,
-                e.to_string(),
-            )),
-        }
-    }
+            .map_err(map_file_error)?;
+        Ok::<_, ErrorObjectOwned>(json!({}))
+    })?;
+    Ok(())
 }
 
-/// Map a `FileError` to a JSON-RPC error code and message.
-fn map_file_error(e: FileError) -> (i64, String) {
-    match e {
-        FileError::NotFound(msg) => (errors::FILE_NOT_FOUND, msg),
-        FileError::PermissionDenied(msg) => (errors::PERMISSION_DENIED, msg),
-        FileError::OperationFailed(msg) => (errors::FILE_OPERATION_FAILED, msg),
-        FileError::NotSupported => (errors::FILE_BROWSING_NOT_SUPPORTED, e.to_string()),
-        FileError::Io(e) => (errors::FILE_OPERATION_FAILED, e.to_string()),
-    }
+fn register_files_rename(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("connection.files.rename", |params, ctx, _ext| async move {
+        let (session_manager, connection_store) = get_file_managers(&ctx).await?;
+
+        let p: FilesRenameParams = params
+            .parse()
+            .map_err(|e| invalid_params("connection.files.rename", e))?;
+
+        let backend =
+            resolve_file_backend(&session_manager, &connection_store, p.connection_id).await?;
+
+        backend
+            .rename(&p.old_path, &p.new_path)
+            .await
+            .map_err(map_file_error)?;
+        Ok::<_, ErrorObjectOwned>(json!({}))
+    })?;
+    Ok(())
 }
 
-/// Normalize user-facing session type names to registry type IDs.
-///
-/// Connection definitions and the frontend use `"shell"` as the session
-/// type for local shell connections, but the backend registry registers
-/// the local shell under the type ID `"local"`. This function maps
-/// known aliases to their canonical registry type IDs.
-fn normalize_type_id(raw: &str) -> &str {
-    match raw {
-        "shell" => "local",
-        other => other,
-    }
+fn register_files_stat(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("connection.files.stat", |params, ctx, _ext| async move {
+        let (session_manager, connection_store) = get_file_managers(&ctx).await?;
+
+        let p: FilesStatParams = params
+            .parse()
+            .map_err(|e| invalid_params("connection.files.stat", e))?;
+
+        let backend =
+            resolve_file_backend(&session_manager, &connection_store, p.connection_id).await?;
+
+        let result = backend.stat(&p.path).await.map_err(map_file_error)?;
+        Ok::<_, ErrorObjectOwned>(serde_json::to_value(result).unwrap())
+    })?;
+    Ok(())
 }
+
+fn register_files_mkdir(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("connection.files.mkdir", |params, ctx, _ext| async move {
+        let (session_manager, connection_store) = get_file_managers(&ctx).await?;
+
+        let p: FilesMkdirParams = params
+            .parse()
+            .map_err(|e| invalid_params("connection.files.mkdir", e))?;
+
+        let backend =
+            resolve_file_backend(&session_manager, &connection_store, p.connection_id).await?;
+
+        backend.mkdir(&p.path).await.map_err(map_file_error)?;
+        Ok::<_, ErrorObjectOwned>(json!({}))
+    })?;
+    Ok(())
+}
+
+// ── connection.monitoring.* ───────────────────────────────────────
+
+async fn resolve_monitoring_host(
+    session_manager: &Arc<dyn SessionManagerApi>,
+    host: &str,
+) -> String {
+    if let Some(type_id) = session_manager.get_session_type_id(host).await {
+        if type_id == "local" {
+            return "self".to_string();
+        }
+    }
+    host.to_string()
+}
+
+fn register_monitoring_subscribe(
+    module: &mut RpcModule<Mutex<HandlerState>>,
+) -> anyhow::Result<()> {
+    module.register_async_method(
+        "connection.monitoring.subscribe",
+        |params, ctx, _ext| async move {
+            let (session_manager, monitoring_manager) = get_monitoring_managers(&ctx).await?;
+
+            let p: MonitoringSubscribeParams = params
+                .parse()
+                .map_err(|e| invalid_params("monitoring.subscribe", e))?;
+
+            let host = resolve_monitoring_host(&session_manager, &p.host).await;
+
+            monitoring_manager
+                .subscribe(&host, p.interval_ms)
+                .await
+                .map_err(|e| {
+                    rpc_err(
+                        errors::MONITORING_ERROR,
+                        format!("Failed to subscribe: {e}"),
+                    )
+                })?;
+
+            Ok::<_, ErrorObjectOwned>(json!({}))
+        },
+    )?;
+    Ok(())
+}
+
+fn register_monitoring_unsubscribe(
+    module: &mut RpcModule<Mutex<HandlerState>>,
+) -> anyhow::Result<()> {
+    module.register_async_method(
+        "connection.monitoring.unsubscribe",
+        |params, ctx, _ext| async move {
+            let (session_manager, monitoring_manager) = get_monitoring_managers(&ctx).await?;
+
+            let p: MonitoringUnsubscribeParams = params
+                .parse()
+                .map_err(|e| invalid_params("monitoring.unsubscribe", e))?;
+
+            let host = resolve_monitoring_host(&session_manager, &p.host).await;
+            monitoring_manager.unsubscribe(&host).await;
+
+            Ok::<_, ErrorObjectOwned>(json!({}))
+        },
+    )?;
+    Ok(())
+}
+
+// ── network.* ─────────────────────────────────────────────────────
+
+fn register_network_port_scan(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("network.port_scan", |params, ctx, _ext| async move {
+        check_initialized(&ctx).await?;
+
+        let p: NetworkPortScanParams = params
+            .parse()
+            .map_err(|e| invalid_params("network.port_scan", e))?;
+
+        network::handle_port_scan(p)
+            .await
+            .map(|r| serde_json::to_value(r).unwrap())
+            .map_err(|e| rpc_err(errors::INTERNAL_ERROR, e.to_string()))
+    })?;
+    Ok(())
+}
+
+fn register_network_ping(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("network.ping", |params, ctx, _ext| async move {
+        check_initialized(&ctx).await?;
+
+        let p: NetworkPingParams = params
+            .parse()
+            .map_err(|e| invalid_params("network.ping", e))?;
+
+        network::handle_ping(p)
+            .await
+            .map(|r| serde_json::to_value(r).unwrap())
+            .map_err(|e| rpc_err(errors::INTERNAL_ERROR, e.to_string()))
+    })?;
+    Ok(())
+}
+
+fn register_network_dns_lookup(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("network.dns_lookup", |params, ctx, _ext| async move {
+        check_initialized(&ctx).await?;
+
+        let p: NetworkDnsLookupParams = params
+            .parse()
+            .map_err(|e| invalid_params("network.dns_lookup", e))?;
+
+        network::handle_dns_lookup(p)
+            .await
+            .map(|r| serde_json::to_value(r).unwrap())
+            .map_err(|e| rpc_err(errors::INTERNAL_ERROR, e.to_string()))
+    })?;
+    Ok(())
+}
+
+fn register_network_open_ports(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("network.open_ports", |_params, ctx, _ext| async move {
+        check_initialized(&ctx).await?;
+
+        network::handle_open_ports()
+            .map(|r| serde_json::to_value(r).unwrap())
+            .map_err(|e| rpc_err(errors::INTERNAL_ERROR, e.to_string()))
+    })?;
+    Ok(())
+}
+
+fn register_network_traceroute(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("network.traceroute", |params, ctx, _ext| async move {
+        check_initialized(&ctx).await?;
+
+        let p: NetworkTracerouteParams = params
+            .parse()
+            .map_err(|e| invalid_params("network.traceroute", e))?;
+
+        network::handle_traceroute(p)
+            .await
+            .map(|r| serde_json::to_value(r).unwrap())
+            .map_err(|e| rpc_err(errors::INTERNAL_ERROR, e.to_string()))
+    })?;
+    Ok(())
+}
+
+fn register_network_wol(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("network.wol", |params, ctx, _ext| async move {
+        check_initialized(&ctx).await?;
+
+        let p: NetworkWolParams = params
+            .parse()
+            .map_err(|e| invalid_params("network.wol", e))?;
+
+        network::handle_wol(p)
+            .map(|()| json!({}))
+            .map_err(|e| rpc_err(errors::INTERNAL_ERROR, e.to_string()))
+    })?;
+    Ok(())
+}
+
+// ── health.check / agent.* ────────────────────────────────────────
+
+fn register_health_check(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("health.check", |_params, ctx, _ext| async move {
+        let (session_manager, uptime) = {
+            let s = ctx.lock().await;
+            if !s.initialized {
+                return Err(not_initialized());
+            }
+            (s.session_manager.clone(), s.start_time.elapsed().as_secs())
+        };
+
+        let active = session_manager.active_count().await;
+        Ok::<_, ErrorObjectOwned>(
+            serde_json::to_value(HealthCheckResult {
+                status: "ok".to_string(),
+                uptime_secs: uptime,
+                active_sessions: active,
+            })
+            .unwrap(),
+        )
+    })?;
+    Ok(())
+}
+
+fn register_agent_shutdown(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("agent.shutdown", |params, ctx, _ext| async move {
+        let (session_manager, monitoring_manager, shutdown_flag) = {
+            let s = ctx.lock().await;
+            if !s.initialized {
+                return Err(not_initialized());
+            }
+            (
+                s.session_manager.clone(),
+                s.monitoring_manager.clone(),
+                s.shutdown_flag.clone(),
+            )
+        };
+
+        let _p: AgentShutdownParams = params
+            .parse()
+            .map_err(|e| invalid_params("agent.shutdown", e))?;
+
+        let detached = session_manager.active_count().await;
+        monitoring_manager.shutdown().await;
+        shutdown_flag.store(true, Ordering::Release);
+
+        Ok::<_, ErrorObjectOwned>(
+            serde_json::to_value(AgentShutdownResult {
+                detached_sessions: detached,
+            })
+            .unwrap(),
+        )
+    })?;
+    Ok(())
+}
+
+fn register_agent_settings_update(
+    module: &mut RpcModule<Mutex<HandlerState>>,
+) -> anyhow::Result<()> {
+    module.register_async_method("agent.settingsUpdate", |params, ctx, _ext| async move {
+        // Init check before params parse (protocol: NOT_INITIALIZED takes priority).
+        // A second lock below applies the settings — initialized is monotone so
+        // there is no TOCTOU hazard.
+        check_initialized(&ctx).await?;
+
+        let p: AgentSettingsUpdateParams = params
+            .parse()
+            .map_err(|e| invalid_params("agent.settingsUpdate", e))?;
+
+        let session_manager = {
+            let mut s = ctx.lock().await;
+            s.agent_settings = p.settings.clone();
+            s.session_manager.clone()
+        };
+
+        session_manager
+            .set_persistent_buffer_size_bytes(mb_to_bytes(
+                p.settings.persistent_scrollback_buffer_size_mb,
+            ))
+            .await;
+
+        Ok::<_, ErrorObjectOwned>(json!({"applied": true}))
+    })?;
+    Ok(())
+}
+
+// ── Capability detection ───────────────────────────────────────────
 
 /// Well-known shell paths to probe on the host system.
 const SHELL_CANDIDATES: &[&str] = &[
@@ -1366,21 +1228,17 @@ const SHELL_CANDIDATES: &[&str] = &[
     "/snap/bin/pwsh",
 ];
 
-/// Check whether system monitoring is available on this host.
 fn detect_monitoring_supported() -> bool {
-    // On Linux, monitoring reads from /proc. On other platforms it uses platform APIs.
     #[cfg(target_os = "linux")]
     {
         std::path::Path::new("/proc/stat").exists()
     }
     #[cfg(not(target_os = "linux"))]
     {
-        // macOS and Windows have alternative monitoring backends.
         true
     }
 }
 
-/// Detect available shells by checking which candidate paths exist on disk.
 fn detect_available_shells() -> Vec<String> {
     SHELL_CANDIDATES
         .iter()
@@ -1389,7 +1247,6 @@ fn detect_available_shells() -> Vec<String> {
         .collect()
 }
 
-/// Check if Docker is available and running.
 fn detect_docker_available() -> bool {
     std::process::Command::new("docker")
         .args(["info"])
@@ -1400,7 +1257,6 @@ fn detect_docker_available() -> bool {
         .unwrap_or(false)
 }
 
-/// List locally available Docker images as "repository:tag" strings.
 fn detect_docker_images() -> Vec<String> {
     let output = std::process::Command::new("docker")
         .args(["images", "--format", "{{.Repository}}:{{.Tag}}"])
@@ -1416,38 +1272,58 @@ fn detect_docker_images() -> Vec<String> {
     }
 }
 
+/// Normalize user-facing session type names to registry type IDs.
+fn normalize_type_id(raw: &str) -> &str {
+    match raw {
+        "shell" => "local",
+        other => other,
+    }
+}
+
+// ── Tests ──────────────────────────────────────────────────────────
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::manager::SessionManager;
     use serde_json::json;
 
-    fn make_dispatcher() -> Dispatcher {
-        let (mgr, _) = make_dispatcher_with_manager();
-        mgr
+    // ── Test helpers ───────────────────────────────────────────────
+
+    fn make_handler() -> AgentHandler {
+        let (handler, _) = make_handler_with_manager();
+        handler
     }
 
-    fn make_dispatcher_with_manager() -> (Dispatcher, Arc<SessionManager>) {
+    fn make_handler_with_manager() -> (AgentHandler, Arc<SessionManager>) {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let tmp = std::env::temp_dir().join(format!("termihub-test-{}.json", uuid::Uuid::new_v4()));
-        let conn_store = Arc::new(ConnectionStore::new_temp(tmp));
+        let conn_store = Arc::new(crate::session::definitions::ConnectionStore::new_temp(tmp));
         let registry = Arc::new(crate::registry::build_registry());
         let session_manager = Arc::new(SessionManager::new(tx.clone(), registry));
-        let monitoring_manager = Arc::new(MonitoringManager::new(tx, conn_store.clone()));
-        let dispatcher = Dispatcher::new(
-            session_manager.clone(),
+        let monitoring_manager = Arc::new(crate::monitoring::MonitoringManager::new(
+            tx,
+            conn_store.clone(),
+        ));
+        let handler = AgentHandler::new(
+            session_manager.clone() as Arc<dyn SessionManagerApi>,
             conn_store as Arc<dyn ConnectionStoreApi>,
             monitoring_manager as Arc<dyn MonitoringManagerApi>,
-        );
-        (dispatcher, session_manager)
+        )
+        .unwrap();
+        (handler, session_manager)
     }
 
-    fn make_request(method: &str, params: Value, id: u64) -> JsonRpcRequest {
-        JsonRpcRequest {
-            jsonrpc: "2.0".to_string(),
-            method: method.to_string(),
-            params,
-            id: json!(id),
-        }
+    async fn dispatch(handler: &AgentHandler, method: &str, params: Value, id: u64) -> Value {
+        let req = serde_json::to_string(&json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+            "id": id
+        }))
+        .unwrap();
+        let (response, _) = handler.call_raw(&req).await;
+        serde_json::from_str(&response).unwrap()
     }
 
     fn init_params() -> Value {
@@ -1458,25 +1334,21 @@ mod tests {
         })
     }
 
-    async fn init_dispatcher(d: &mut Dispatcher) {
-        let req = make_request("initialize", init_params(), 1);
-        let result = d.dispatch(req).await;
-        assert!(matches!(result, DispatchResult::Success(_)));
+    async fn init_handler(handler: &AgentHandler) {
+        let result = dispatch(handler, "initialize", init_params(), 1).await;
+        assert!(result.get("result").is_some(), "init failed: {result}");
     }
 
-    // ── Initialize tests ────────────────────────────────────────────
+    // ── Initialize tests ───────────────────────────────────────────
 
     #[tokio::test]
     async fn initialize_succeeds() {
-        let mut d = make_dispatcher();
-        let req = make_request("initialize", init_params(), 1);
-        let result = d.dispatch(req).await;
+        let handler = make_handler();
+        let result = dispatch(&handler, "initialize", init_params(), 1).await;
 
-        let json = result.to_json();
-        assert_eq!(json["result"]["protocol_version"], AGENT_PROTOCOL_VERSION);
-        assert_eq!(json["result"]["capabilities"]["maxSessions"], 20);
-        // connectionTypes is an array of objects with typeId fields
-        let conn_types = json["result"]["capabilities"]["connectionTypes"]
+        assert_eq!(result["result"]["protocol_version"], AGENT_PROTOCOL_VERSION);
+        assert_eq!(result["result"]["capabilities"]["maxSessions"], 20);
+        let conn_types = result["result"]["capabilities"]["connectionTypes"]
             .as_array()
             .expect("connectionTypes should be an array");
         let type_ids: Vec<&str> = conn_types
@@ -1488,46 +1360,39 @@ mod tests {
             "Expected 'local' in {type_ids:?}"
         );
         assert!(type_ids.contains(&"ssh"), "Expected 'ssh' in {type_ids:?}");
-        // availableShells and availableSerialPorts must be arrays
-        assert!(json["result"]["capabilities"]["availableShells"]
+        assert!(result["result"]["capabilities"]["availableShells"]
             .as_array()
             .is_some());
-        assert!(json["result"]["capabilities"]["availableSerialPorts"]
+        assert!(result["result"]["capabilities"]["availableSerialPorts"]
             .as_array()
             .is_some());
     }
 
     #[tokio::test]
     async fn initialize_rejects_incompatible_version() {
-        let mut d = make_dispatcher();
-        let req = make_request(
+        let handler = make_handler();
+        let result = dispatch(
+            &handler,
             "initialize",
-            json!({
-                "protocolVersion": "1.0.0",
-                "client": "test",
-                "clientVersion": "1.0.0"
-            }),
+            json!({"protocolVersion": "1.0.0", "client": "test", "clientVersion": "1.0.0"}),
             1,
-        );
-        let result = d.dispatch(req).await;
-        let json = result.to_json();
-        assert_eq!(json["error"]["code"], errors::VERSION_NOT_SUPPORTED);
+        )
+        .await;
+        assert_eq!(result["error"]["code"], errors::VERSION_NOT_SUPPORTED);
     }
 
     #[tokio::test]
     async fn initialize_rejects_invalid_params() {
-        let mut d = make_dispatcher();
-        let req = make_request("initialize", json!({}), 1);
-        let result = d.dispatch(req).await;
-        let json = result.to_json();
-        assert_eq!(json["error"]["code"], errors::INVALID_PARAMS);
+        let handler = make_handler();
+        let result = dispatch(&handler, "initialize", json!({}), 1).await;
+        assert_eq!(result["error"]["code"], errors::INVALID_PARAMS);
     }
 
-    // ── Not-initialized gate ────────────────────────────────────────
+    // ── Not-initialized gate ───────────────────────────────────────
 
     #[tokio::test]
     async fn methods_require_initialization() {
-        let mut d = make_dispatcher();
+        let handler = make_handler();
 
         for method in &[
             "connection.create",
@@ -1537,32 +1402,30 @@ mod tests {
             "connections.list",
             "connections.create",
         ] {
-            let req = make_request(method, json!({}), 1);
-            let result = d.dispatch(req).await;
-            let json = result.to_json();
+            let result = dispatch(&handler, method, json!({}), 1).await;
             assert_eq!(
-                json["error"]["code"],
+                result["error"]["code"],
                 errors::NOT_INITIALIZED,
                 "{method} should require initialization"
             );
         }
     }
 
-    // ── Session create tests ────────────────────────────────────────
+    // ── Session create tests ───────────────────────────────────────
 
     #[tokio::test]
-    async fn connection_create_unsupported_type() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+    async fn session_create_unknown_type() {
+        let handler = make_handler();
+        init_handler(&handler).await;
 
-        let req = make_request(
+        let result = dispatch(
+            &handler,
             "connection.create",
             json!({"type": "unknown", "config": {}}),
             2,
-        );
-        let result = d.dispatch(req).await;
-        let json = result.to_json();
-        assert_eq!(json["error"]["code"], errors::INVALID_CONFIGURATION);
+        )
+        .await;
+        assert_eq!(result["error"]["code"], errors::INVALID_CONFIGURATION);
     }
 
     #[test]
@@ -1584,42 +1447,38 @@ mod tests {
         assert_eq!(normalize_type_id("unknown"), "unknown");
     }
 
-    // ── Session list tests ──────────────────────────────────────────
+    // ── Session list tests ─────────────────────────────────────────
 
     #[tokio::test]
     async fn session_list_empty() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
-        let req = make_request("connection.list", json!({}), 2);
-        let result = d.dispatch(req).await;
-        let json = result.to_json();
-        assert_eq!(json["result"]["sessions"].as_array().unwrap().len(), 0);
+        let result = dispatch(&handler, "connection.list", json!({}), 2).await;
+        assert_eq!(result["result"]["sessions"].as_array().unwrap().len(), 0);
     }
 
     #[tokio::test]
     async fn session_list_after_create() {
-        let (mut d, mgr) = make_dispatcher_with_manager();
-        init_dispatcher(&mut d).await;
+        let (handler, mgr) = make_handler_with_manager();
+        init_handler(&handler).await;
 
         mgr.create_stub_session("local", "test".to_string(), json!({}))
             .await
             .unwrap();
 
-        let req = make_request("connection.list", json!({}), 3);
-        let result = d.dispatch(req).await;
-        let json = result.to_json();
-        let sessions = json["result"]["sessions"].as_array().unwrap();
+        let result = dispatch(&handler, "connection.list", json!({}), 3).await;
+        let sessions = result["result"]["sessions"].as_array().unwrap();
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0]["title"], "test");
     }
 
-    // ── Session close tests ─────────────────────────────────────────
+    // ── Session close tests ────────────────────────────────────────
 
     #[tokio::test]
     async fn session_close_success() {
-        let (mut d, mgr) = make_dispatcher_with_manager();
-        init_dispatcher(&mut d).await;
+        let (handler, mgr) = make_handler_with_manager();
+        init_handler(&handler).await;
 
         let snapshot = mgr
             .create_stub_session("local", "temp".to_string(), json!({}))
@@ -1627,114 +1486,115 @@ mod tests {
             .unwrap();
         let sid = snapshot.id;
 
-        let req = make_request("connection.close", json!({"session_id": sid}), 3);
-        let result = d.dispatch(req).await;
-        let json = result.to_json();
-        assert!(json.get("result").is_some());
+        let result = dispatch(&handler, "connection.close", json!({"session_id": sid}), 3).await;
+        assert!(result.get("result").is_some());
 
-        let req = make_request("connection.list", json!({}), 4);
-        let result = d.dispatch(req).await.to_json();
+        let result = dispatch(&handler, "connection.list", json!({}), 4).await;
         assert_eq!(result["result"]["sessions"].as_array().unwrap().len(), 0);
     }
 
     #[tokio::test]
     async fn session_close_not_found() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
-        let req = make_request("connection.close", json!({"session_id": "nonexistent"}), 2);
-        let result = d.dispatch(req).await;
-        let json = result.to_json();
-        assert_eq!(json["error"]["code"], errors::SESSION_NOT_FOUND);
-        assert_eq!(json["error"]["data"]["session_id"], "nonexistent");
+        let result = dispatch(
+            &handler,
+            "connection.close",
+            json!({"session_id": "nonexistent"}),
+            2,
+        )
+        .await;
+        assert_eq!(result["error"]["code"], errors::SESSION_NOT_FOUND);
+        assert_eq!(result["error"]["data"]["session_id"], "nonexistent");
     }
 
-    // ── Health check tests ──────────────────────────────────────────
+    // ── Health check tests ─────────────────────────────────────────
 
     #[tokio::test]
     async fn health_check() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
-        let req = make_request("health.check", json!({}), 2);
-        let result = d.dispatch(req).await;
-        let json = result.to_json();
-        assert_eq!(json["result"]["status"], "ok");
-        assert!(json["result"]["uptime_secs"].is_number());
-        assert_eq!(json["result"]["active_sessions"], 0);
+        let result = dispatch(&handler, "health.check", json!({}), 2).await;
+        assert_eq!(result["result"]["status"], "ok");
+        assert!(result["result"]["uptime_secs"].as_u64().is_some());
+        assert_eq!(result["result"]["active_sessions"], 0);
     }
-
-    // ── Unknown method ──────────────────────────────────────────────
 
     #[tokio::test]
-    async fn unknown_method() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
-
-        let req = make_request("unknown.method", json!({}), 2);
-        let result = d.dispatch(req).await;
-        let json = result.to_json();
-        assert_eq!(json["error"]["code"], errors::METHOD_NOT_FOUND);
+    async fn health_check_requires_initialization() {
+        let handler = make_handler();
+        let result = dispatch(&handler, "health.check", json!({}), 1).await;
+        assert_eq!(result["error"]["code"], errors::NOT_INITIALIZED);
     }
 
-    // ── Session attach/detach/input tests ──────────────────────────
+    // ── Session attach/detach tests ────────────────────────────────
 
     #[tokio::test]
     async fn session_attach_not_found() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
-        let req = make_request("connection.attach", json!({"session_id": "nonexistent"}), 2);
-        let result = d.dispatch(req).await;
-        let json = result.to_json();
-        assert_eq!(json["error"]["code"], errors::SESSION_NOT_FOUND);
+        let result = dispatch(
+            &handler,
+            "connection.attach",
+            json!({"session_id": "nonexistent"}),
+            2,
+        )
+        .await;
+        assert_eq!(result["error"]["code"], errors::SESSION_NOT_FOUND);
     }
 
     #[tokio::test]
     async fn session_detach_not_found() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
-        let req = make_request("connection.detach", json!({"session_id": "nonexistent"}), 2);
-        let result = d.dispatch(req).await;
-        let json = result.to_json();
-        assert_eq!(json["error"]["code"], errors::SESSION_NOT_FOUND);
+        let result = dispatch(
+            &handler,
+            "connection.detach",
+            json!({"session_id": "nonexistent"}),
+            2,
+        )
+        .await;
+        assert_eq!(result["error"]["code"], errors::SESSION_NOT_FOUND);
     }
 
     #[tokio::test]
     async fn session_input_not_found() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
-        let req = make_request(
+        let result = dispatch(
+            &handler,
             "connection.write",
             json!({"session_id": "nonexistent", "data": "aGVsbG8="}),
             2,
-        );
-        let result = d.dispatch(req).await;
-        let json = result.to_json();
-        assert_eq!(json["error"]["code"], errors::SESSION_NOT_FOUND);
+        )
+        .await;
+        assert_eq!(result["error"]["code"], errors::SESSION_NOT_FOUND);
     }
 
     #[tokio::test]
     async fn session_input_invalid_base64() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
-        let req = make_request(
+        let result = dispatch(
+            &handler,
             "connection.write",
             json!({"session_id": "any", "data": "!!!not-base64!!!"}),
             2,
-        );
-        let result = d.dispatch(req).await;
-        let json = result.to_json();
-        assert_eq!(json["error"]["code"], errors::INVALID_PARAMS);
+        )
+        .await;
+        assert_eq!(result["error"]["code"], errors::INVALID_PARAMS);
     }
 
     #[tokio::test]
     async fn session_resize_returns_success() {
-        let (mut d, mgr) = make_dispatcher_with_manager();
-        init_dispatcher(&mut d).await;
+        let (handler, mgr) = make_handler_with_manager();
+        init_handler(&handler).await;
 
         let snapshot = mgr
             .create_stub_session("local", "resize-test".to_string(), json!({}))
@@ -1742,103 +1602,115 @@ mod tests {
             .unwrap();
         let sid = snapshot.id;
 
-        let req = make_request(
+        let result = dispatch(
+            &handler,
             "connection.resize",
             json!({"session_id": sid, "cols": 120, "rows": 40}),
             3,
-        );
-        let result = d.dispatch(req).await;
-        let json = result.to_json();
-        assert!(json.get("result").is_some());
+        )
+        .await;
+        assert!(result.get("result").is_some());
     }
 
     #[tokio::test]
     async fn session_resize_not_found() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
-        let req = make_request(
+        let result = dispatch(
+            &handler,
             "connection.resize",
             json!({"session_id": "nonexistent", "cols": 120, "rows": 40}),
             2,
-        );
-        let result = d.dispatch(req).await;
-        let json = result.to_json();
-        assert_eq!(json["error"]["code"], errors::SESSION_NOT_FOUND);
+        )
+        .await;
+        assert_eq!(result["error"]["code"], errors::SESSION_NOT_FOUND);
     }
 
-    // ── Full protocol flow integration test ─────────────────────────
+    // ── Full protocol flow integration test ────────────────────────
 
     #[tokio::test]
     async fn full_protocol_flow() {
-        let (mut d, mgr) = make_dispatcher_with_manager();
+        let (handler, mgr) = make_handler_with_manager();
 
         // 1. Initialize
-        let req = make_request("initialize", init_params(), 1);
-        let result = d.dispatch(req).await.to_json();
+        let result = dispatch(&handler, "initialize", init_params(), 1).await;
         assert_eq!(result["result"]["protocol_version"], AGENT_PROTOCOL_VERSION);
 
-        // 2. Create a stub session (avoids spawning real backends)
+        // 2. Create a stub session
         let snapshot = mgr
             .create_stub_session("local", "Build".to_string(), json!({}))
             .await
             .unwrap();
         let session_id = snapshot.id;
 
-        // 3. Attach to the session
-        let req = make_request("connection.attach", json!({"session_id": session_id}), 3);
-        let result = d.dispatch(req).await.to_json();
+        // 3. Attach
+        let result = dispatch(
+            &handler,
+            "connection.attach",
+            json!({"session_id": session_id}),
+            3,
+        )
+        .await;
         assert!(result.get("result").is_some());
 
-        // 4. Send input (no-op for stub, but protocol should succeed)
-        let req = make_request(
+        // 4. Send input
+        let result = dispatch(
+            &handler,
             "connection.write",
             json!({"session_id": session_id, "data": "aGVsbG8="}),
             4,
-        );
-        let result = d.dispatch(req).await.to_json();
+        )
+        .await;
         assert!(result.get("result").is_some());
 
-        // 5. Resize (no-op for stub sessions)
-        let req = make_request(
+        // 5. Resize
+        let result = dispatch(
+            &handler,
             "connection.resize",
             json!({"session_id": session_id, "cols": 120, "rows": 40}),
             5,
-        );
-        let result = d.dispatch(req).await.to_json();
+        )
+        .await;
         assert!(result.get("result").is_some());
 
         // 6. List shows attached
-        let req = make_request("connection.list", json!({}), 6);
-        let result = d.dispatch(req).await.to_json();
+        let result = dispatch(&handler, "connection.list", json!({}), 6).await;
         let sessions = result["result"]["sessions"].as_array().unwrap();
         assert_eq!(sessions.len(), 1);
         assert!(sessions[0]["attached"].as_bool().unwrap());
 
         // 7. Detach
-        let req = make_request("connection.detach", json!({"session_id": session_id}), 7);
-        let result = d.dispatch(req).await.to_json();
+        let result = dispatch(
+            &handler,
+            "connection.detach",
+            json!({"session_id": session_id}),
+            7,
+        )
+        .await;
         assert!(result.get("result").is_some());
 
         // 8. List shows detached
-        let req = make_request("connection.list", json!({}), 8);
-        let result = d.dispatch(req).await.to_json();
+        let result = dispatch(&handler, "connection.list", json!({}), 8).await;
         let sessions = result["result"]["sessions"].as_array().unwrap();
         assert!(!sessions[0]["attached"].as_bool().unwrap());
 
-        // 9. Health check shows 1 active session
-        let req = make_request("health.check", json!({}), 9);
-        let result = d.dispatch(req).await.to_json();
+        // 9. Health check: 1 active session
+        let result = dispatch(&handler, "health.check", json!({}), 9).await;
         assert_eq!(result["result"]["active_sessions"], 1);
 
         // 10. Close session
-        let req = make_request("connection.close", json!({"session_id": session_id}), 10);
-        let result = d.dispatch(req).await.to_json();
+        let result = dispatch(
+            &handler,
+            "connection.close",
+            json!({"session_id": session_id}),
+            10,
+        )
+        .await;
         assert!(result.get("result").is_some());
 
-        // 11. Health check shows 0 active sessions
-        let req = make_request("health.check", json!({}), 11);
-        let result = d.dispatch(req).await.to_json();
+        // 11. Health check: 0 active sessions
+        let result = dispatch(&handler, "health.check", json!({}), 11).await;
         assert_eq!(result["result"]["active_sessions"], 0);
     }
 
@@ -1866,33 +1738,26 @@ mod tests {
         assert!(ports.len() < 1000, "Unreasonably many ports detected");
     }
 
-    // ── Connection tests ────────────────────────────────────────────
+    // ── Connection tests ───────────────────────────────────────────
 
     #[tokio::test]
     async fn connections_create_and_list() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
-        // Create
-        let req = make_request(
+        let result = dispatch(
+            &handler,
             "connections.create",
-            json!({
-                "name": "Build Shell",
-                "type": "shell",
-                "config": {"shell": "/bin/bash"},
-                "persistent": true
-            }),
+            json!({"name": "Build Shell", "type": "shell", "config": {"shell": "/bin/bash"}, "persistent": true}),
             2,
-        );
-        let result = d.dispatch(req).await.to_json();
+        )
+        .await;
         let conn_id = result["result"]["id"].as_str().unwrap();
         assert!(conn_id.starts_with("conn-"));
         assert_eq!(result["result"]["name"], "Build Shell");
         assert!(result["result"]["persistent"].as_bool().unwrap());
 
-        // List
-        let req = make_request("connections.list", json!({}), 3);
-        let result = d.dispatch(req).await.to_json();
+        let result = dispatch(&handler, "connections.list", json!({}), 3).await;
         let conns = result["result"]["connections"].as_array().unwrap();
         assert_eq!(conns.len(), 1);
         assert_eq!(conns[0]["name"], "Build Shell");
@@ -1902,100 +1767,100 @@ mod tests {
 
     #[tokio::test]
     async fn connections_update() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
-        // Create
-        let req = make_request(
+        let result = dispatch(
+            &handler,
             "connections.create",
             json!({"name": "Old", "type": "shell"}),
             2,
-        );
-        let result = d.dispatch(req).await.to_json();
+        )
+        .await;
         let conn_id = result["result"]["id"].as_str().unwrap().to_string();
 
-        // Update
-        let req = make_request(
+        let result = dispatch(
+            &handler,
             "connections.update",
             json!({"id": conn_id, "name": "New", "persistent": true}),
             3,
-        );
-        let result = d.dispatch(req).await.to_json();
+        )
+        .await;
         assert_eq!(result["result"]["name"], "New");
         assert!(result["result"]["persistent"].as_bool().unwrap());
     }
 
     #[tokio::test]
     async fn connections_update_not_found() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
-        let req = make_request(
+        let result = dispatch(
+            &handler,
             "connections.update",
             json!({"id": "nonexistent", "name": "X"}),
             2,
-        );
-        let result = d.dispatch(req).await.to_json();
+        )
+        .await;
         assert_eq!(result["error"]["code"], errors::CONNECTION_NOT_FOUND);
     }
 
     #[tokio::test]
     async fn connections_delete() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
-        // Create
-        let req = make_request(
+        let result = dispatch(
+            &handler,
             "connections.create",
             json!({"name": "Temp", "type": "shell"}),
             2,
-        );
-        let result = d.dispatch(req).await.to_json();
+        )
+        .await;
         let conn_id = result["result"]["id"].as_str().unwrap().to_string();
 
-        // Delete
-        let req = make_request("connections.delete", json!({"id": conn_id}), 3);
-        let result = d.dispatch(req).await.to_json();
+        let result = dispatch(&handler, "connections.delete", json!({"id": conn_id}), 3).await;
         assert!(result.get("result").is_some());
 
-        // Verify gone
-        let req = make_request("connections.list", json!({}), 4);
-        let result = d.dispatch(req).await.to_json();
+        let result = dispatch(&handler, "connections.list", json!({}), 4).await;
         assert_eq!(result["result"]["connections"].as_array().unwrap().len(), 0);
     }
 
     #[tokio::test]
     async fn connections_delete_not_found() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
-        let req = make_request("connections.delete", json!({"id": "nonexistent"}), 2);
-        let result = d.dispatch(req).await.to_json();
+        let result = dispatch(
+            &handler,
+            "connections.delete",
+            json!({"id": "nonexistent"}),
+            2,
+        )
+        .await;
         assert_eq!(result["error"]["code"], errors::CONNECTION_NOT_FOUND);
     }
 
-    // ── Folder tests ────────────────────────────────────────────────
+    // ── Folder tests ───────────────────────────────────────────────
 
     #[tokio::test]
     async fn folders_create_and_list() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
-        // Create folder
-        let req = make_request(
+        let result = dispatch(
+            &handler,
             "connections.folders.create",
             json!({"name": "Project A"}),
             2,
-        );
-        let result = d.dispatch(req).await.to_json();
+        )
+        .await;
         let folder_id = result["result"]["id"].as_str().unwrap();
         assert!(folder_id.starts_with("folder-"));
         assert_eq!(result["result"]["name"], "Project A");
         assert!(!result["result"]["is_expanded"].as_bool().unwrap());
 
-        // List
-        let req = make_request("connections.list", json!({}), 3);
-        let result = d.dispatch(req).await.to_json();
+        let result = dispatch(&handler, "connections.list", json!({}), 3).await;
         let folders = result["result"]["folders"].as_array().unwrap();
         assert_eq!(folders.len(), 1);
         assert_eq!(folders[0]["name"], "Project A");
@@ -2003,95 +1868,107 @@ mod tests {
 
     #[tokio::test]
     async fn folders_update() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
-        // Create
-        let req = make_request("connections.folders.create", json!({"name": "Old Name"}), 2);
-        let result = d.dispatch(req).await.to_json();
+        let result = dispatch(
+            &handler,
+            "connections.folders.create",
+            json!({"name": "Old Name"}),
+            2,
+        )
+        .await;
         let folder_id = result["result"]["id"].as_str().unwrap().to_string();
 
-        // Update
-        let req = make_request(
+        let result = dispatch(
+            &handler,
             "connections.folders.update",
             json!({"id": folder_id, "name": "New Name", "is_expanded": true}),
             3,
-        );
-        let result = d.dispatch(req).await.to_json();
+        )
+        .await;
         assert_eq!(result["result"]["name"], "New Name");
         assert!(result["result"]["is_expanded"].as_bool().unwrap());
     }
 
     #[tokio::test]
     async fn folders_update_not_found() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
-        let req = make_request(
+        let result = dispatch(
+            &handler,
             "connections.folders.update",
             json!({"id": "nonexistent", "name": "X"}),
             2,
-        );
-        let result = d.dispatch(req).await.to_json();
+        )
+        .await;
         assert_eq!(result["error"]["code"], errors::FOLDER_NOT_FOUND);
     }
 
     #[tokio::test]
     async fn folders_delete() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
-        // Create
-        let req = make_request(
+        let result = dispatch(
+            &handler,
             "connections.folders.create",
             json!({"name": "Temp Folder"}),
             2,
-        );
-        let result = d.dispatch(req).await.to_json();
+        )
+        .await;
         let folder_id = result["result"]["id"].as_str().unwrap().to_string();
 
-        // Delete
-        let req = make_request("connections.folders.delete", json!({"id": folder_id}), 3);
-        let result = d.dispatch(req).await.to_json();
+        let result = dispatch(
+            &handler,
+            "connections.folders.delete",
+            json!({"id": folder_id}),
+            3,
+        )
+        .await;
         assert!(result.get("result").is_some());
 
-        // Verify gone
-        let req = make_request("connections.list", json!({}), 4);
-        let result = d.dispatch(req).await.to_json();
+        let result = dispatch(&handler, "connections.list", json!({}), 4).await;
         assert_eq!(result["result"]["folders"].as_array().unwrap().len(), 0);
     }
 
     #[tokio::test]
     async fn folders_delete_not_found() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
-        let req = make_request(
+        let result = dispatch(
+            &handler,
             "connections.folders.delete",
             json!({"id": "nonexistent"}),
             2,
-        );
-        let result = d.dispatch(req).await.to_json();
+        )
+        .await;
         assert_eq!(result["error"]["code"], errors::FOLDER_NOT_FOUND);
     }
 
     #[tokio::test]
     async fn connections_with_folder() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
-        // Create folder
-        let req = make_request("connections.folders.create", json!({"name": "Project"}), 2);
-        let result = d.dispatch(req).await.to_json();
+        let result = dispatch(
+            &handler,
+            "connections.folders.create",
+            json!({"name": "Project"}),
+            2,
+        )
+        .await;
         let folder_id = result["result"]["id"].as_str().unwrap().to_string();
 
-        // Create connection in folder
-        let req = make_request(
+        let result = dispatch(
+            &handler,
             "connections.create",
             json!({"name": "Shell", "type": "shell", "folder_id": folder_id}),
             3,
-        );
-        let result = d.dispatch(req).await.to_json();
+        )
+        .await;
         assert_eq!(result["result"]["folder_id"], folder_id);
     }
 
@@ -2099,18 +1976,19 @@ mod tests {
 
     #[tokio::test]
     async fn files_list_local() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("hello.txt"), "world").unwrap();
 
-        let req = make_request(
+        let result = dispatch(
+            &handler,
             "connection.files.list",
             json!({"path": dir.path().to_str().unwrap()}),
             2,
-        );
-        let result = d.dispatch(req).await.to_json();
+        )
+        .await;
         let entries = result["result"]["entries"].as_array().unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0]["name"], "hello.txt");
@@ -2120,60 +1998,67 @@ mod tests {
 
     #[tokio::test]
     async fn files_list_not_found() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
-        let req = make_request(
+        let result = dispatch(
+            &handler,
             "connection.files.list",
             json!({"path": "/nonexistent/path/abc123"}),
             2,
-        );
-        let result = d.dispatch(req).await.to_json();
+        )
+        .await;
         assert_eq!(result["error"]["code"], errors::FILE_NOT_FOUND);
     }
 
     #[tokio::test]
     async fn files_read_write_round_trip() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
         let dir = tempfile::tempdir().unwrap();
         let file_path = dir.path().join("test.txt");
         let path_str = file_path.to_str().unwrap();
 
-        // Write
         let data_b64 =
             base64::Engine::encode(&base64::engine::general_purpose::STANDARD, b"hello, world!");
-        let req = make_request(
+
+        let result = dispatch(
+            &handler,
             "connection.files.write",
             json!({"path": path_str, "data": data_b64}),
             2,
-        );
-        let result = d.dispatch(req).await.to_json();
+        )
+        .await;
         assert!(result.get("result").is_some());
 
-        // Read
-        let req = make_request("connection.files.read", json!({"path": path_str}), 3);
-        let result = d.dispatch(req).await.to_json();
+        let result = dispatch(
+            &handler,
+            "connection.files.read",
+            json!({"path": path_str}),
+            3,
+        )
+        .await;
         assert_eq!(result["result"]["data"], data_b64);
         assert_eq!(result["result"]["size"], 13);
     }
 
     #[tokio::test]
     async fn files_stat() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
         let dir = tempfile::tempdir().unwrap();
         let file_path = dir.path().join("stat_test.txt");
         std::fs::write(&file_path, "hello").unwrap();
 
-        let req = make_request(
+        let result = dispatch(
+            &handler,
             "connection.files.stat",
             json!({"path": file_path.to_str().unwrap()}),
             2,
-        );
-        let result = d.dispatch(req).await.to_json();
+        )
+        .await;
         assert_eq!(result["result"]["name"], "stat_test.txt");
         assert_eq!(result["result"]["isDirectory"], false);
         assert_eq!(result["result"]["size"], 5);
@@ -2181,39 +2066,41 @@ mod tests {
 
     #[tokio::test]
     async fn files_delete() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
         let dir = tempfile::tempdir().unwrap();
         let file_path = dir.path().join("to_delete.txt");
         std::fs::write(&file_path, "delete me").unwrap();
 
-        let req = make_request(
+        let result = dispatch(
+            &handler,
             "connection.files.delete",
             json!({"path": file_path.to_str().unwrap(), "isDirectory": false}),
             2,
-        );
-        let result = d.dispatch(req).await.to_json();
+        )
+        .await;
         assert!(result.get("result").is_some());
         assert!(!file_path.exists());
     }
 
     #[tokio::test]
     async fn files_rename() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
         let dir = tempfile::tempdir().unwrap();
         let old = dir.path().join("old.txt");
         let new = dir.path().join("new.txt");
         std::fs::write(&old, "content").unwrap();
 
-        let req = make_request(
+        let result = dispatch(
+            &handler,
             "connection.files.rename",
             json!({"old_path": old.to_str().unwrap(), "new_path": new.to_str().unwrap()}),
             2,
-        );
-        let result = d.dispatch(req).await.to_json();
+        )
+        .await;
         assert!(result.get("result").is_some());
         assert!(!old.exists());
         assert!(new.exists());
@@ -2221,70 +2108,67 @@ mod tests {
 
     #[tokio::test]
     async fn files_with_connection_id_not_found() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
-        let req = make_request(
+        let result = dispatch(
+            &handler,
             "connection.files.list",
             json!({"connection_id": "nonexistent", "path": "/tmp"}),
             2,
-        );
-        let result = d.dispatch(req).await.to_json();
+        )
+        .await;
         assert_eq!(result["error"]["code"], errors::CONNECTION_NOT_FOUND);
     }
 
     #[tokio::test]
     async fn files_serial_not_supported() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
-        // Create a serial connection preset
-        let req = make_request(
+        let result = dispatch(
+            &handler,
             "connections.create",
-            json!({
-                "name": "Serial",
-                "type": "serial",
-                "config": {"port": "/dev/ttyUSB0"}
-            }),
+            json!({"name": "Serial", "type": "serial", "config": {"port": "/dev/ttyUSB0"}}),
             2,
-        );
-        let result = d.dispatch(req).await.to_json();
+        )
+        .await;
         let conn_id = result["result"]["id"].as_str().unwrap().to_string();
 
-        // Try to list files via serial connection
-        let req = make_request(
+        let result = dispatch(
+            &handler,
             "connection.files.list",
             json!({"connection_id": conn_id, "path": "/tmp"}),
             3,
-        );
-        let result = d.dispatch(req).await.to_json();
+        )
+        .await;
         assert_eq!(result["error"]["code"], errors::FILE_BROWSING_NOT_SUPPORTED);
     }
 
     #[tokio::test]
     async fn files_shell_connection_uses_local() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("file.txt"), "data").unwrap();
 
-        // Create a shell connection preset
-        let req = make_request(
+        let result = dispatch(
+            &handler,
             "connections.create",
             json!({"name": "Shell", "type": "shell", "config": {"shell": "/bin/sh"}}),
             2,
-        );
-        let result = d.dispatch(req).await.to_json();
+        )
+        .await;
         let conn_id = result["result"]["id"].as_str().unwrap().to_string();
 
-        // List files via shell connection (should use local backend)
-        let req = make_request(
+        let result = dispatch(
+            &handler,
             "connection.files.list",
             json!({"connection_id": conn_id, "path": dir.path().to_str().unwrap()}),
             3,
-        );
-        let result = d.dispatch(req).await.to_json();
+        )
+        .await;
         let entries = result["result"]["entries"].as_array().unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0]["name"], "file.txt");
@@ -2292,31 +2176,25 @@ mod tests {
 
     #[tokio::test]
     async fn files_list_via_session_id_uses_local_backend() {
-        // Regression test: desktop RemoteProxy sends the session UUID as
-        // connection_id. resolve_file_backend must look it up in the session
-        // manager (not the connection preset store) and return LocalFileBackend
-        // for "local" sessions.
-        let (mut d, mgr) = make_dispatcher_with_manager();
-        init_dispatcher(&mut d).await;
+        let (handler, mgr) = make_handler_with_manager();
+        init_handler(&handler).await;
 
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("from_session.txt"), "hi").unwrap();
 
-        // Create a stub local session (simulates what the agent does when the
-        // desktop calls connection.create with type="local").
         let snapshot = mgr
             .create_stub_session("local", "test shell".to_string(), json!({}))
             .await
             .unwrap();
         let session_id = snapshot.id;
 
-        // List files using the session UUID as connection_id.
-        let req = make_request(
+        let result = dispatch(
+            &handler,
             "connection.files.list",
             json!({"connection_id": session_id, "path": dir.path().to_str().unwrap()}),
             2,
-        );
-        let result = d.dispatch(req).await.to_json();
+        )
+        .await;
         let entries = result["result"]["entries"].as_array().unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0]["name"], "from_session.txt");
@@ -2324,159 +2202,163 @@ mod tests {
 
     #[tokio::test]
     async fn files_require_initialization() {
-        let mut d = make_dispatcher();
+        let handler = make_handler();
 
-        let req = make_request("connection.files.list", json!({"path": "/tmp"}), 1);
-        let result = d.dispatch(req).await.to_json();
+        let result = dispatch(
+            &handler,
+            "connection.files.list",
+            json!({"path": "/tmp"}),
+            1,
+        )
+        .await;
         assert_eq!(result["error"]["code"], errors::NOT_INITIALIZED);
     }
 
     #[tokio::test]
     async fn files_write_invalid_base64() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
-        let req = make_request(
+        let result = dispatch(
+            &handler,
             "connection.files.write",
             json!({"path": "/tmp/test.txt", "data": "!!!not-base64!!!"}),
             2,
-        );
-        let result = d.dispatch(req).await.to_json();
+        )
+        .await;
         assert_eq!(result["error"]["code"], errors::INVALID_PARAMS);
     }
 
-    // ── Monitoring tests ────────────────────────────────────────────
+    // ── Monitoring tests ───────────────────────────────────────────
 
     #[tokio::test]
     async fn monitoring_subscribe_self() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
-        let req = make_request(
+        let result = dispatch(
+            &handler,
             "connection.monitoring.subscribe",
             json!({"host": "self", "interval_ms": 5000}),
             2,
-        );
-        let result = d.dispatch(req).await.to_json();
+        )
+        .await;
         assert!(result.get("result").is_some());
 
-        // Clean up
-        let req = make_request(
+        let result = dispatch(
+            &handler,
             "connection.monitoring.unsubscribe",
             json!({"host": "self"}),
             3,
-        );
-        d.dispatch(req).await;
+        )
+        .await;
+        assert!(result.get("result").is_some());
     }
 
     #[tokio::test]
     async fn monitoring_unsubscribe_nonexistent() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
-        let req = make_request(
+        let result = dispatch(
+            &handler,
             "connection.monitoring.unsubscribe",
             json!({"host": "nonexistent"}),
             2,
-        );
-        let result = d.dispatch(req).await.to_json();
-        // Unsubscribe always succeeds (idempotent)
+        )
+        .await;
         assert!(result.get("result").is_some());
     }
 
     #[tokio::test]
     async fn monitoring_subscribe_invalid_params() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
-        let req = make_request("connection.monitoring.subscribe", json!({}), 2);
-        let result = d.dispatch(req).await.to_json();
+        let result = dispatch(&handler, "connection.monitoring.subscribe", json!({}), 2).await;
         assert_eq!(result["error"]["code"], errors::INVALID_PARAMS);
     }
 
     #[tokio::test]
     async fn monitoring_requires_initialization() {
-        let mut d = make_dispatcher();
+        let handler = make_handler();
 
-        let req = make_request(
+        let result = dispatch(
+            &handler,
             "connection.monitoring.subscribe",
             json!({"host": "self"}),
             1,
-        );
-        let result = d.dispatch(req).await.to_json();
+        )
+        .await;
         assert_eq!(result["error"]["code"], errors::NOT_INITIALIZED);
     }
 
     #[tokio::test]
     async fn monitoring_subscribe_unknown_connection() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
-        let req = make_request(
+        let result = dispatch(
+            &handler,
             "connection.monitoring.subscribe",
             json!({"host": "nonexistent-conn"}),
             2,
-        );
-        let result = d.dispatch(req).await.to_json();
+        )
+        .await;
         assert_eq!(result["error"]["code"], errors::MONITORING_ERROR);
     }
 
     #[tokio::test]
     async fn connection_types_local_has_monitoring_matching_platform() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
-        let req = make_request("connection.types", json!({}), 2);
-        let result = d.dispatch(req).await.to_json();
-
-        let types = result["result"]["types"]
-            .as_array()
-            .expect("types should be an array");
+        let result = dispatch(&handler, "connection.types", json!({}), 2).await;
+        let types = result["result"]["types"].as_array().expect("types array");
         let local_type = types
             .iter()
             .find(|t| t["typeId"].as_str() == Some("local"))
-            .expect("local type should be present");
-
+            .expect("local type");
         let monitoring_cap = local_type["capabilities"]["monitoring"]
             .as_bool()
-            .expect("monitoring should be a bool");
-        assert_eq!(
-            monitoring_cap,
-            detect_monitoring_supported(),
-            "local type should report monitoring capability matching platform support"
-        );
+            .expect("monitoring bool");
+        assert_eq!(monitoring_cap, detect_monitoring_supported());
     }
 
     #[tokio::test]
     async fn monitoring_subscribe_local_session_resolves_to_self() {
+        use crate::monitoring::MonitoringManagerApi;
+        use crate::session::definitions::ConnectionStoreApi;
+
         let store = Arc::new(MockConnectionStore::new());
         let monitor = Arc::new(MockMonitoringManager::new());
         let subscribed = monitor.subscribed.clone();
-        let mut d = make_mock_dispatcher_with_stores(
+
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let registry = Arc::new(crate::registry::build_registry());
+        let session_manager = Arc::new(SessionManager::new(tx, registry));
+
+        let handler = AgentHandler::new(
+            session_manager.clone() as Arc<dyn SessionManagerApi>,
             store as Arc<dyn ConnectionStoreApi>,
             monitor as Arc<dyn MonitoringManagerApi>,
-        );
-        init_mock(&mut d).await;
+        )
+        .unwrap();
+        init_handler(&handler).await;
 
-        // Create a "local" session.
-        let create_req = make_request(
-            "connection.create",
-            json!({"type": "local", "title": "Shell", "config": {}}),
-            2,
-        );
-        let create_result = d.dispatch(create_req).await.to_json();
-        let session_id = create_result["result"]["session_id"]
-            .as_str()
-            .expect("session_id should be present")
-            .to_string();
+        let snapshot = session_manager
+            .create_stub_session("local", "Shell".to_string(), json!({}))
+            .await
+            .unwrap();
+        let session_id = snapshot.id;
 
-        // Subscribe using the session ID as host — should resolve to "self".
-        let sub_req = make_request(
+        let result = dispatch(
+            &handler,
             "connection.monitoring.subscribe",
             json!({"host": session_id, "interval_ms": 2000}),
             3,
-        );
-        let result = d.dispatch(sub_req).await.to_json();
+        )
+        .await;
         assert!(
             result.get("result").is_some(),
             "subscribe with local session id should succeed: {result}"
@@ -2490,34 +2372,38 @@ mod tests {
 
     #[tokio::test]
     async fn monitoring_unsubscribe_local_session_resolves_to_self() {
+        use crate::monitoring::MonitoringManagerApi;
+        use crate::session::definitions::ConnectionStoreApi;
+
         let store = Arc::new(MockConnectionStore::new());
         let monitor = Arc::new(MockMonitoringManager::new());
         let unsubscribed = monitor.unsubscribed.clone();
-        let mut d = make_mock_dispatcher_with_stores(
+
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let registry = Arc::new(crate::registry::build_registry());
+        let session_manager = Arc::new(SessionManager::new(tx, registry));
+
+        let handler = AgentHandler::new(
+            session_manager.clone() as Arc<dyn SessionManagerApi>,
             store as Arc<dyn ConnectionStoreApi>,
             monitor as Arc<dyn MonitoringManagerApi>,
-        );
-        init_mock(&mut d).await;
+        )
+        .unwrap();
+        init_handler(&handler).await;
 
-        // Create a "local" session.
-        let create_req = make_request(
-            "connection.create",
-            json!({"type": "local", "title": "Shell", "config": {}}),
-            2,
-        );
-        let create_result = d.dispatch(create_req).await.to_json();
-        let session_id = create_result["result"]["session_id"]
-            .as_str()
-            .expect("session_id should be present")
-            .to_string();
+        let snapshot = session_manager
+            .create_stub_session("local", "Shell".to_string(), json!({}))
+            .await
+            .unwrap();
+        let session_id = snapshot.id;
 
-        // Unsubscribe using the session ID — should resolve to "self".
-        let unsub_req = make_request(
+        dispatch(
+            &handler,
             "connection.monitoring.unsubscribe",
             json!({"host": session_id}),
             3,
-        );
-        d.dispatch(unsub_req).await;
+        )
+        .await;
         assert_eq!(
             unsubscribed.lock().await.as_slice(),
             ["self"],
@@ -2525,110 +2411,81 @@ mod tests {
         );
     }
 
-    // ── agent.shutdown tests ─────────────────────────────────────────
+    // ── agent.shutdown tests ───────────────────────────────────────
 
     #[tokio::test]
     async fn agent_shutdown_returns_session_count() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
-        let req = make_request("agent.shutdown", json!({}), 2);
-        let result = d.dispatch(req).await;
-        assert!(result.is_shutdown());
-        let json = result.to_json();
-        assert_eq!(json["result"]["detached_sessions"], 0);
+        let result = dispatch(&handler, "agent.shutdown", json!({}), 2).await;
+        assert!(handler.is_shutdown());
+        assert_eq!(result["result"]["detached_sessions"], 0);
     }
 
     #[tokio::test]
     async fn agent_shutdown_with_reason() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
-        let req = make_request("agent.shutdown", json!({"reason": "update"}), 2);
-        let result = d.dispatch(req).await;
-        assert!(result.is_shutdown());
-        let json = result.to_json();
-        assert!(json.get("result").is_some());
+        let result = dispatch(&handler, "agent.shutdown", json!({"reason": "update"}), 2).await;
+        assert!(handler.is_shutdown());
+        assert!(result.get("result").is_some());
     }
 
     #[tokio::test]
     async fn agent_shutdown_with_active_sessions() {
-        let (mut d, mgr) = make_dispatcher_with_manager();
-        init_dispatcher(&mut d).await;
+        let (handler, mgr) = make_handler_with_manager();
+        init_handler(&handler).await;
 
-        // Create a stub session
         mgr.create_stub_session("local", "test".to_string(), json!({}))
             .await
             .unwrap();
 
-        let req = make_request("agent.shutdown", json!({}), 2);
-        let result = d.dispatch(req).await;
-        assert!(result.is_shutdown());
-        let json = result.to_json();
-        assert_eq!(json["result"]["detached_sessions"], 1);
+        let result = dispatch(&handler, "agent.shutdown", json!({}), 2).await;
+        assert!(handler.is_shutdown());
+        assert_eq!(result["result"]["detached_sessions"], 1);
     }
 
     #[tokio::test]
     async fn agent_shutdown_requires_initialization() {
-        let mut d = make_dispatcher();
+        let handler = make_handler();
 
-        let req = make_request("agent.shutdown", json!({}), 1);
-        let result = d.dispatch(req).await;
-        assert!(!result.is_shutdown());
-        let json = result.to_json();
-        assert_eq!(json["error"]["code"], errors::NOT_INITIALIZED);
+        let result = dispatch(&handler, "agent.shutdown", json!({}), 1).await;
+        assert!(!handler.is_shutdown());
+        assert_eq!(result["error"]["code"], errors::NOT_INITIALIZED);
     }
 
-    // ── Shell candidate tests ─────────────────────────────────────────
+    // ── Shell candidate tests ──────────────────────────────────────
 
     #[test]
     fn shell_candidates_includes_pwsh_paths() {
-        let candidates: Vec<&str> = SHELL_CANDIDATES.to_vec();
-        assert!(
-            candidates.contains(&"/usr/local/bin/pwsh"),
-            "expected /usr/local/bin/pwsh in SHELL_CANDIDATES"
-        );
-        assert!(
-            candidates.contains(&"/usr/bin/pwsh"),
-            "expected /usr/bin/pwsh in SHELL_CANDIDATES"
-        );
-        assert!(
-            candidates.contains(&"/snap/bin/pwsh"),
-            "expected /snap/bin/pwsh in SHELL_CANDIDATES"
-        );
+        assert!(SHELL_CANDIDATES.contains(&"/usr/local/bin/pwsh"));
+        assert!(SHELL_CANDIDATES.contains(&"/usr/bin/pwsh"));
+        assert!(SHELL_CANDIDATES.contains(&"/snap/bin/pwsh"));
     }
 
     #[test]
     fn shell_candidates_includes_nushell_paths() {
-        let candidates: Vec<&str> = SHELL_CANDIDATES.to_vec();
-        assert!(
-            candidates.contains(&"/usr/local/bin/nu"),
-            "expected /usr/local/bin/nu in SHELL_CANDIDATES"
-        );
-        assert!(
-            candidates.contains(&"/usr/bin/nu"),
-            "expected /usr/bin/nu in SHELL_CANDIDATES"
-        );
-        assert!(
-            candidates.contains(&"/snap/bin/nu"),
-            "expected /snap/bin/nu in SHELL_CANDIDATES"
-        );
+        assert!(SHELL_CANDIDATES.contains(&"/usr/local/bin/nu"));
+        assert!(SHELL_CANDIDATES.contains(&"/usr/bin/nu"));
+        assert!(SHELL_CANDIDATES.contains(&"/snap/bin/nu"));
     }
 
-    // ── network.* tests ─────────────────────────────────────────────
+    // ── network.* tests ────────────────────────────────────────────
 
     #[tokio::test]
     async fn network_dns_lookup_invalid_type_returns_error() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
-        let req = make_request(
+        let result = dispatch(
+            &handler,
             "network.dns_lookup",
             json!({"hostname": "example.com", "record_type": "BOGUS"}),
             2,
-        );
-        let result = d.dispatch(req).await.to_json();
-        // Should fail due to unknown record type
+        )
+        .await;
         assert!(
             result.get("error").is_some(),
             "expected error for unknown record type"
@@ -2637,15 +2494,16 @@ mod tests {
 
     #[tokio::test]
     async fn network_port_scan_invalid_port_spec_returns_error() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
-        let req = make_request(
+        let result = dispatch(
+            &handler,
             "network.port_scan",
             json!({"host": "localhost", "ports": "not-a-port"}),
             2,
-        );
-        let result = d.dispatch(req).await.to_json();
+        )
+        .await;
         assert!(
             result.get("error").is_some(),
             "expected error for invalid port spec"
@@ -2654,11 +2512,10 @@ mod tests {
 
     #[tokio::test]
     async fn network_wol_invalid_mac_returns_error() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
-        let req = make_request("network.wol", json!({"mac": "not-a-mac"}), 2);
-        let result = d.dispatch(req).await.to_json();
+        let result = dispatch(&handler, "network.wol", json!({"mac": "not-a-mac"}), 2).await;
         assert!(
             result.get("error").is_some(),
             "expected error for invalid MAC"
@@ -2667,12 +2524,10 @@ mod tests {
 
     #[tokio::test]
     async fn network_open_ports_returns_result() {
-        let mut d = make_dispatcher();
-        init_dispatcher(&mut d).await;
+        let handler = make_handler();
+        init_handler(&handler).await;
 
-        let req = make_request("network.open_ports", json!({}), 2);
-        let result = d.dispatch(req).await.to_json();
-        // Should succeed and return a ports array
+        let result = dispatch(&handler, "network.open_ports", json!({}), 2).await;
         assert!(
             result.get("result").is_some(),
             "expected result for open_ports"
@@ -2682,27 +2537,166 @@ mod tests {
 
     #[tokio::test]
     async fn network_methods_require_initialization() {
-        let mut d = make_dispatcher();
+        let handler = make_handler();
 
-        let req = make_request("network.open_ports", json!({}), 1);
-        let result = d.dispatch(req).await.to_json();
+        let result = dispatch(&handler, "network.open_ports", json!({}), 1).await;
         assert_eq!(result["error"]["code"], errors::NOT_INITIALIZED);
     }
 
-    // ── MockSessionManager + DI tests ──────────────────────────────
+    // ── Mock managers for DI tests ─────────────────────────────────
 
-    use crate::monitoring::MonitoringManager;
+    use tokio::sync::Mutex as AsyncMutex;
+
     use crate::session::definitions::{
         Connection, ConnectionSnapshot, ConnectionStore, ConnectionStoreApi, Folder, FolderSnapshot,
     };
     use crate::session::manager::SessionManagerApi;
+
+    struct MockConnectionStore {
+        connections: AsyncMutex<Vec<ConnectionSnapshot>>,
+        folders: AsyncMutex<Vec<FolderSnapshot>>,
+    }
+
+    impl MockConnectionStore {
+        fn new() -> Self {
+            Self {
+                connections: AsyncMutex::new(Vec::new()),
+                folders: AsyncMutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ConnectionStoreApi for MockConnectionStore {
+        async fn get(&self, id: &str) -> Option<ConnectionSnapshot> {
+            self.connections
+                .lock()
+                .await
+                .iter()
+                .find(|c| c.id == id)
+                .cloned()
+        }
+
+        async fn create(&self, conn: Connection) -> ConnectionSnapshot {
+            let snap = ConnectionSnapshot {
+                id: conn.id.clone(),
+                name: conn.name,
+                session_type: conn.session_type,
+                config: conn.config,
+                persistent: conn.persistent,
+                folder_id: conn.folder_id,
+                terminal_options: conn.terminal_options,
+                icon: conn.icon,
+                source_file: None,
+            };
+            self.connections.lock().await.push(snap.clone());
+            snap
+        }
+
+        async fn update(
+            &self,
+            id: &str,
+            name: Option<String>,
+            _session_type: Option<String>,
+            _config: Option<serde_json::Value>,
+            _persistent: Option<bool>,
+            _folder_id: Option<Option<String>>,
+            _terminal_options: Option<Option<serde_json::Value>>,
+            _icon: Option<Option<String>>,
+        ) -> Option<ConnectionSnapshot> {
+            let mut conns = self.connections.lock().await;
+            let conn = conns.iter_mut().find(|c| c.id == id)?;
+            if let Some(n) = name {
+                conn.name = n;
+            }
+            Some(conn.clone())
+        }
+
+        async fn list(&self) -> (Vec<ConnectionSnapshot>, Vec<FolderSnapshot>) {
+            (
+                self.connections.lock().await.clone(),
+                self.folders.lock().await.clone(),
+            )
+        }
+
+        async fn delete(&self, id: &str) -> bool {
+            let mut conns = self.connections.lock().await;
+            let before = conns.len();
+            conns.retain(|c| c.id != id);
+            conns.len() < before
+        }
+
+        async fn create_folder(&self, folder: Folder) -> FolderSnapshot {
+            let snap = FolderSnapshot {
+                id: folder.id,
+                name: folder.name,
+                parent_id: folder.parent_id,
+                is_expanded: folder.is_expanded,
+            };
+            self.folders.lock().await.push(snap.clone());
+            snap
+        }
+
+        async fn update_folder(
+            &self,
+            id: &str,
+            name: Option<String>,
+            _parent_id: Option<Option<String>>,
+            _is_expanded: Option<bool>,
+        ) -> Option<FolderSnapshot> {
+            let mut folders = self.folders.lock().await;
+            let folder = folders.iter_mut().find(|f| f.id == id)?;
+            if let Some(n) = name {
+                folder.name = n;
+            }
+            Some(folder.clone())
+        }
+
+        async fn delete_folder(&self, id: &str) -> bool {
+            let mut folders = self.folders.lock().await;
+            let before = folders.len();
+            folders.retain(|f| f.id != id);
+            folders.len() < before
+        }
+
+        async fn load_external_files(&self, _paths: &[String]) {}
+    }
+
+    struct MockMonitoringManager {
+        subscribed: Arc<AsyncMutex<Vec<String>>>,
+        unsubscribed: Arc<AsyncMutex<Vec<String>>>,
+    }
+
+    impl MockMonitoringManager {
+        fn new() -> Self {
+            Self {
+                subscribed: Arc::new(AsyncMutex::new(Vec::new())),
+                unsubscribed: Arc::new(AsyncMutex::new(Vec::new())),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MonitoringManagerApi for MockMonitoringManager {
+        async fn subscribe(&self, host: &str, _interval_ms: Option<u64>) -> anyhow::Result<()> {
+            self.subscribed.lock().await.push(host.to_string());
+            Ok(())
+        }
+
+        async fn unsubscribe(&self, host: &str) {
+            self.unsubscribed.lock().await.push(host.to_string());
+        }
+
+        async fn shutdown(&self) {}
+    }
+
+    // ── Mock SessionManager DI tests ───────────────────────────────
+
     use crate::session::types::{SessionSnapshot, SessionStatus};
     use termihub_core::connection::ConnectionTypeRegistry;
-    use tokio::sync::Mutex as AsyncMutex;
 
     struct MockSessionManager {
         registry: ConnectionTypeRegistry,
-        /// When `Some`, `create()` returns this error.
         create_error: Option<SessionCreateError>,
         sessions: Arc<AsyncMutex<Vec<SessionSnapshot>>>,
     }
@@ -2725,7 +2719,7 @@ mod tests {
         }
     }
 
-    #[async_trait::async_trait(?Send)]
+    #[async_trait::async_trait]
     impl SessionManagerApi for MockSessionManager {
         fn registry(&self) -> &ConnectionTypeRegistry {
             &self.registry
@@ -2836,208 +2830,56 @@ mod tests {
             }
         }
 
-        async fn set_persistent_buffer_size_bytes(&self, _bytes: usize) {
-            // no-op in mock
-        }
+        async fn set_persistent_buffer_size_bytes(&self, _bytes: usize) {}
     }
 
-    fn make_mock_dispatcher() -> Dispatcher<MockSessionManager> {
+    fn make_mock_handler() -> AgentHandler {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let tmp = std::env::temp_dir().join(format!("termihub-mock-{}.json", uuid::Uuid::new_v4()));
         let conn_store = Arc::new(ConnectionStore::new_temp(tmp));
-        let monitoring_manager = Arc::new(MonitoringManager::new(tx, conn_store.clone()));
+        let monitoring_manager = Arc::new(crate::monitoring::MonitoringManager::new(
+            tx,
+            conn_store.clone(),
+        ));
         let session_manager = Arc::new(MockSessionManager::new());
-        Dispatcher::new(
-            session_manager,
+        AgentHandler::new(
+            session_manager as Arc<dyn SessionManagerApi>,
             conn_store as Arc<dyn ConnectionStoreApi>,
             monitoring_manager as Arc<dyn MonitoringManagerApi>,
         )
+        .unwrap()
     }
 
-    fn make_mock_dispatcher_failing(error: SessionCreateError) -> Dispatcher<MockSessionManager> {
+    fn make_mock_handler_failing(error: SessionCreateError) -> AgentHandler {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let tmp = std::env::temp_dir().join(format!("termihub-mock-{}.json", uuid::Uuid::new_v4()));
         let conn_store = Arc::new(ConnectionStore::new_temp(tmp));
-        let monitoring_manager = Arc::new(MonitoringManager::new(tx, conn_store.clone()));
+        let monitoring_manager = Arc::new(crate::monitoring::MonitoringManager::new(
+            tx,
+            conn_store.clone(),
+        ));
         let session_manager = Arc::new(MockSessionManager::with_create_error(error));
-        Dispatcher::new(
-            session_manager,
+        AgentHandler::new(
+            session_manager as Arc<dyn SessionManagerApi>,
             conn_store as Arc<dyn ConnectionStoreApi>,
             monitoring_manager as Arc<dyn MonitoringManagerApi>,
         )
-    }
-
-    // ── Mock ConnectionStore and MonitoringManager for DI tests ──────
-
-    /// In-memory mock connection store (no filesystem).
-    struct MockConnectionStore {
-        connections: AsyncMutex<Vec<ConnectionSnapshot>>,
-        folders: AsyncMutex<Vec<FolderSnapshot>>,
-    }
-
-    impl MockConnectionStore {
-        fn new() -> Self {
-            Self {
-                connections: AsyncMutex::new(Vec::new()),
-                folders: AsyncMutex::new(Vec::new()),
-            }
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl ConnectionStoreApi for MockConnectionStore {
-        async fn get(&self, id: &str) -> Option<ConnectionSnapshot> {
-            self.connections
-                .lock()
-                .await
-                .iter()
-                .find(|c| c.id == id)
-                .cloned()
-        }
-
-        async fn create(&self, conn: Connection) -> ConnectionSnapshot {
-            let snap = ConnectionSnapshot {
-                id: conn.id.clone(),
-                name: conn.name,
-                session_type: conn.session_type,
-                config: conn.config,
-                persistent: conn.persistent,
-                folder_id: conn.folder_id,
-                terminal_options: conn.terminal_options,
-                icon: conn.icon,
-                source_file: None,
-            };
-            self.connections.lock().await.push(snap.clone());
-            snap
-        }
-
-        async fn update(
-            &self,
-            id: &str,
-            name: Option<String>,
-            _session_type: Option<String>,
-            _config: Option<serde_json::Value>,
-            _persistent: Option<bool>,
-            _folder_id: Option<Option<String>>,
-            _terminal_options: Option<Option<serde_json::Value>>,
-            _icon: Option<Option<String>>,
-        ) -> Option<ConnectionSnapshot> {
-            let mut conns = self.connections.lock().await;
-            let conn = conns.iter_mut().find(|c| c.id == id)?;
-            if let Some(n) = name {
-                conn.name = n;
-            }
-            Some(conn.clone())
-        }
-
-        async fn list(&self) -> (Vec<ConnectionSnapshot>, Vec<FolderSnapshot>) {
-            (
-                self.connections.lock().await.clone(),
-                self.folders.lock().await.clone(),
-            )
-        }
-
-        async fn delete(&self, id: &str) -> bool {
-            let mut conns = self.connections.lock().await;
-            let before = conns.len();
-            conns.retain(|c| c.id != id);
-            conns.len() < before
-        }
-
-        async fn create_folder(&self, folder: Folder) -> FolderSnapshot {
-            let snap = FolderSnapshot {
-                id: folder.id,
-                name: folder.name,
-                parent_id: folder.parent_id,
-                is_expanded: folder.is_expanded,
-            };
-            self.folders.lock().await.push(snap.clone());
-            snap
-        }
-
-        async fn update_folder(
-            &self,
-            id: &str,
-            name: Option<String>,
-            _parent_id: Option<Option<String>>,
-            _is_expanded: Option<bool>,
-        ) -> Option<FolderSnapshot> {
-            let mut folders = self.folders.lock().await;
-            let folder = folders.iter_mut().find(|f| f.id == id)?;
-            if let Some(n) = name {
-                folder.name = n;
-            }
-            Some(folder.clone())
-        }
-
-        async fn delete_folder(&self, id: &str) -> bool {
-            let mut folders = self.folders.lock().await;
-            let before = folders.len();
-            folders.retain(|f| f.id != id);
-            folders.len() < before
-        }
-    }
-
-    /// Mock monitoring manager that records calls.
-    struct MockMonitoringManager {
-        subscribed: Arc<AsyncMutex<Vec<String>>>,
-        unsubscribed: Arc<AsyncMutex<Vec<String>>>,
-        shutdown_called: Arc<AsyncMutex<bool>>,
-    }
-
-    impl MockMonitoringManager {
-        fn new() -> Self {
-            Self {
-                subscribed: Arc::new(AsyncMutex::new(Vec::new())),
-                unsubscribed: Arc::new(AsyncMutex::new(Vec::new())),
-                shutdown_called: Arc::new(AsyncMutex::new(false)),
-            }
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl MonitoringManagerApi for MockMonitoringManager {
-        async fn subscribe(&self, host: &str, _interval_ms: Option<u64>) -> anyhow::Result<()> {
-            self.subscribed.lock().await.push(host.to_string());
-            Ok(())
-        }
-
-        async fn unsubscribe(&self, host: &str) {
-            self.unsubscribed.lock().await.push(host.to_string());
-        }
-
-        async fn shutdown(&self) {
-            *self.shutdown_called.lock().await = true;
-        }
-    }
-
-    fn make_mock_dispatcher_with_stores(
-        conn_store: Arc<dyn ConnectionStoreApi>,
-        monitor: Arc<dyn MonitoringManagerApi>,
-    ) -> Dispatcher<MockSessionManager> {
-        let session_manager = Arc::new(MockSessionManager::new());
-        Dispatcher::new(session_manager, conn_store, monitor)
-    }
-
-    async fn init_mock(d: &mut Dispatcher<MockSessionManager>) {
-        let req = make_request("initialize", init_params(), 1);
-        let result = d.dispatch(req).await;
-        assert!(matches!(result, DispatchResult::Success(_)));
+        .unwrap()
     }
 
     #[tokio::test]
     async fn mock_session_create_backend_failed_returns_error() {
-        let mut d = make_mock_dispatcher_failing(SessionCreateError::BackendFailed(
-            "PTY spawn failed".to_string(),
-        ));
-        init_mock(&mut d).await;
+        let handler =
+            make_mock_handler_failing(SessionCreateError::BackendFailed("PTY spawn failed".into()));
+        dispatch(&handler, "initialize", init_params(), 1).await;
 
-        let req = make_request(
+        let result = dispatch(
+            &handler,
             "connection.create",
             json!({"type": "local", "config": {}}),
             2,
-        );
-        let result = d.dispatch(req).await.to_json();
+        )
+        .await;
         assert_eq!(result["error"]["code"], errors::SESSION_CREATION_FAILED);
         assert!(result["error"]["message"]
             .as_str()
@@ -3047,37 +2889,38 @@ mod tests {
 
     #[tokio::test]
     async fn mock_session_create_limit_reached_returns_error() {
-        let mut d = make_mock_dispatcher_failing(SessionCreateError::LimitReached);
-        init_mock(&mut d).await;
+        let handler = make_mock_handler_failing(SessionCreateError::LimitReached);
+        dispatch(&handler, "initialize", init_params(), 1).await;
 
-        let req = make_request(
+        let result = dispatch(
+            &handler,
             "connection.create",
             json!({"type": "local", "config": {}}),
             2,
-        );
-        let result = d.dispatch(req).await.to_json();
+        )
+        .await;
         assert_eq!(result["error"]["code"], errors::SESSION_LIMIT_REACHED);
     }
 
     #[tokio::test]
     async fn mock_session_create_and_list() {
-        let mut d = make_mock_dispatcher();
-        init_mock(&mut d).await;
+        let handler = make_mock_handler();
+        dispatch(&handler, "initialize", init_params(), 1).await;
 
-        let req = make_request(
+        let create_result = dispatch(
+            &handler,
             "connection.create",
             json!({"type": "local", "title": "My Shell", "config": {}}),
             2,
-        );
-        let create_result = d.dispatch(req).await.to_json();
+        )
+        .await;
         assert!(
             create_result.get("result").is_some(),
             "expected session create to succeed: {create_result}"
         );
         let sid = create_result["result"]["session_id"].as_str().unwrap();
 
-        let req = make_request("connection.list", json!({}), 3);
-        let list_result = d.dispatch(req).await.to_json();
+        let list_result = dispatch(&handler, "connection.list", json!({}), 3).await;
         let sessions = list_result["result"]["sessions"].as_array().unwrap();
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0]["session_id"], sid);
@@ -3085,39 +2928,47 @@ mod tests {
 
     #[tokio::test]
     async fn mock_health_check_counts_sessions() {
-        let mut d = make_mock_dispatcher();
-        init_mock(&mut d).await;
+        let handler = make_mock_handler();
+        dispatch(&handler, "initialize", init_params(), 1).await;
 
-        let req = make_request(
+        dispatch(
+            &handler,
             "connection.create",
             json!({"type": "local", "config": {}}),
             2,
-        );
-        d.dispatch(req).await;
+        )
+        .await;
 
-        let req = make_request("health.check", json!({}), 3);
-        let result = d.dispatch(req).await.to_json();
+        let result = dispatch(&handler, "health.check", json!({}), 3).await;
         assert_eq!(result["result"]["active_sessions"], 1);
     }
-
-    // ── ConnectionStoreApi + MonitoringManagerApi DI tests ────────────
 
     #[tokio::test]
     async fn mock_connections_create_via_store_trait() {
         let store = Arc::new(MockConnectionStore::new());
         let monitor = Arc::new(MockMonitoringManager::new());
-        let mut d = make_mock_dispatcher_with_stores(
-            store.clone() as Arc<dyn ConnectionStoreApi>,
-            monitor.clone() as Arc<dyn MonitoringManagerApi>,
-        );
-        init_mock(&mut d).await;
 
-        let req = make_request(
+        let (_tx, _rx) = tokio::sync::mpsc::unbounded_channel::<
+            crate::protocol::messages::JsonRpcNotification,
+        >();
+        let _registry = Arc::new(crate::registry::build_registry());
+        let session_manager = Arc::new(MockSessionManager::new());
+
+        let handler = AgentHandler::new(
+            session_manager as Arc<dyn SessionManagerApi>,
+            store.clone() as Arc<dyn ConnectionStoreApi>,
+            monitor as Arc<dyn MonitoringManagerApi>,
+        )
+        .unwrap();
+        dispatch(&handler, "initialize", init_params(), 1).await;
+
+        let result = dispatch(
+            &handler,
             "connections.create",
             json!({"name": "My SSH", "type": "ssh", "config": {"host": "example.com"}}),
             2,
-        );
-        let result = d.dispatch(req).await.to_json();
+        )
+        .await;
         assert!(
             result.get("result").is_some(),
             "create should succeed: {result}"
@@ -3126,92 +2977,5 @@ mod tests {
         let conns = store.connections.lock().await;
         assert_eq!(conns.len(), 1);
         assert_eq!(conns[0].name, "My SSH");
-    }
-
-    #[tokio::test]
-    async fn mock_connections_delete_via_store_trait() {
-        let store = Arc::new(MockConnectionStore::new());
-        let monitor = Arc::new(MockMonitoringManager::new());
-
-        // Pre-seed a connection
-        let conn = Connection {
-            id: "conn-test-1".to_string(),
-            name: "Test".to_string(),
-            session_type: "ssh".to_string(),
-            config: serde_json::json!({}),
-            persistent: false,
-            folder_id: None,
-            terminal_options: None,
-            icon: None,
-        };
-        store.connections.lock().await.push(ConnectionSnapshot {
-            id: conn.id.clone(),
-            name: conn.name.clone(),
-            session_type: conn.session_type.clone(),
-            config: conn.config.clone(),
-            persistent: conn.persistent,
-            folder_id: None,
-            terminal_options: None,
-            icon: None,
-            source_file: None,
-        });
-
-        let mut d = make_mock_dispatcher_with_stores(
-            store.clone() as Arc<dyn ConnectionStoreApi>,
-            monitor as Arc<dyn MonitoringManagerApi>,
-        );
-        init_mock(&mut d).await;
-
-        let req = make_request("connections.delete", json!({"id": "conn-test-1"}), 2);
-        let result = d.dispatch(req).await.to_json();
-        assert!(
-            result.get("result").is_some(),
-            "delete should succeed: {result}"
-        );
-        assert!(store.connections.lock().await.is_empty());
-    }
-
-    #[tokio::test]
-    async fn mock_monitoring_subscribe_via_trait() {
-        let store = Arc::new(MockConnectionStore::new());
-        let monitor = Arc::new(MockMonitoringManager::new());
-        let subscribed = monitor.subscribed.clone();
-        let mut d = make_mock_dispatcher_with_stores(
-            store as Arc<dyn ConnectionStoreApi>,
-            monitor as Arc<dyn MonitoringManagerApi>,
-        );
-        init_mock(&mut d).await;
-
-        let req = make_request(
-            "connection.monitoring.subscribe",
-            json!({"host": "self"}),
-            2,
-        );
-        let result = d.dispatch(req).await.to_json();
-        assert!(
-            result.get("result").is_some(),
-            "subscribe should succeed: {result}"
-        );
-        assert_eq!(subscribed.lock().await.as_slice(), ["self"]);
-    }
-
-    #[tokio::test]
-    async fn mock_monitoring_unsubscribe_via_trait() {
-        let store = Arc::new(MockConnectionStore::new());
-        let monitor = Arc::new(MockMonitoringManager::new());
-        let unsubscribed = monitor.unsubscribed.clone();
-        let mut d = make_mock_dispatcher_with_stores(
-            store as Arc<dyn ConnectionStoreApi>,
-            monitor as Arc<dyn MonitoringManagerApi>,
-        );
-        init_mock(&mut d).await;
-
-        let req = make_request(
-            "connection.monitoring.unsubscribe",
-            json!({"host": "self"}),
-            2,
-        );
-        d.dispatch(req).await;
-        assert_eq!(unsubscribed.lock().await.as_slice(), ["self"]);
     }
 }

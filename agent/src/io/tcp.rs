@@ -5,7 +5,7 @@ use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use crate::handler::dispatch::Dispatcher;
+use crate::handler::dispatch::AgentHandler;
 use crate::io::transport::run_transport_loop;
 use crate::monitoring::{MonitoringManager, MonitoringManagerApi};
 use crate::protocol::messages::JsonRpcNotification;
@@ -58,11 +58,11 @@ pub async fn run_tcp_listener(addr: &str, shutdown: CancellationToken) -> anyhow
                 // replayed on attach, so these are not needed.
                 while notification_rx.try_recv().is_ok() {}
 
-                let mut dispatcher = Dispatcher::new(
+                let handler = AgentHandler::new(
                     session_manager.clone(),
                     connection_store.clone() as Arc<dyn ConnectionStoreApi>,
                     monitoring_manager.clone() as Arc<dyn MonitoringManagerApi>,
-                );
+                )?;
 
                 let (reader_half, mut writer_half) = stream.into_split();
                 let mut reader = BufReader::new(reader_half);
@@ -70,7 +70,7 @@ pub async fn run_tcp_listener(addr: &str, shutdown: CancellationToken) -> anyhow
                 let result = run_transport_loop(
                     &mut reader,
                     &mut writer_half,
-                    &mut dispatcher,
+                    &handler,
                     &mut notification_rx,
                     shutdown.child_token(),
                 )

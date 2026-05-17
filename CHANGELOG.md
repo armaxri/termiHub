@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Agent: the hand-rolled JSON-RPC 2.0 dispatch layer (~5 k LOC) has been replaced by [`jsonrpsee`](https://crates.io/crates/jsonrpsee) 0.24. All 35 protocol methods are now registered via `RpcModule`; routing, error formatting, and response serialisation are handled by the library. Custom request/response/error structs in `core/src/protocol/` have been removed; only `JsonRpcNotification` (agent → desktop push) remains. Closes #727.
 - Core: the internal `RingBuffer` (1 MiB capture buffer used by serial sessions and the agent daemon) is now backed by the [`ringbuf`](https://crates.io/crates/ringbuf) crate (`HeapRb<u8>`) instead of a custom circular-byte-buffer implementation. Public API is unchanged.
 
 ### Added
