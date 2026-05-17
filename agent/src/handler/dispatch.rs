@@ -120,10 +120,12 @@ impl AgentHandler {
             Ok((resp, _)) => resp,
             Err(e) => {
                 warn!("RpcModule error: {e}");
-                format!(
-                    r#"{{"jsonrpc":"2.0","error":{{"code":-32700,"message":"Parse error: {}"}},"id":null}}"#,
-                    e.to_string().replace('"', "'")
-                )
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32700_i32, "message": format!("Parse error: {e}")},
+                    "id": null
+                })
+                .to_string()
             }
         };
         let is_shutdown = self.shutdown_flag.load(Ordering::Acquire);
@@ -170,6 +172,66 @@ fn map_file_error(e: FileError) -> ErrorObjectOwned {
         FileError::NotSupported => rpc_err(errors::FILE_BROWSING_NOT_SUPPORTED, e.to_string()),
         FileError::Io(e) => rpc_err(errors::FILE_OPERATION_FAILED, e.to_string()),
     }
+}
+
+/// Convert a megabyte count (from agent settings) to a byte count,
+/// with a floor of 64 KiB to avoid a zero-length buffer.
+fn mb_to_bytes(mb: u32) -> usize {
+    (mb as usize).saturating_mul(1_048_576).max(65_536)
+}
+
+// ── State-extraction helpers ───────────────────────────────────────
+//
+// Each helper locks HandlerState, enforces the initialized gate, and
+// clones only the resource(s) the caller needs.  The lock is always
+// released before the caller does any async work.
+
+async fn check_initialized(ctx: &tokio::sync::Mutex<HandlerState>) -> Result<(), ErrorObjectOwned> {
+    let s = ctx.lock().await;
+    if !s.initialized {
+        return Err(not_initialized());
+    }
+    Ok(())
+}
+
+async fn get_session_manager(
+    ctx: &tokio::sync::Mutex<HandlerState>,
+) -> Result<Arc<dyn SessionManagerApi>, ErrorObjectOwned> {
+    let s = ctx.lock().await;
+    if !s.initialized {
+        return Err(not_initialized());
+    }
+    Ok(s.session_manager.clone())
+}
+
+async fn get_connection_store(
+    ctx: &tokio::sync::Mutex<HandlerState>,
+) -> Result<Arc<dyn ConnectionStoreApi>, ErrorObjectOwned> {
+    let s = ctx.lock().await;
+    if !s.initialized {
+        return Err(not_initialized());
+    }
+    Ok(s.connection_store.clone())
+}
+
+async fn get_file_managers(
+    ctx: &tokio::sync::Mutex<HandlerState>,
+) -> Result<(Arc<dyn SessionManagerApi>, Arc<dyn ConnectionStoreApi>), ErrorObjectOwned> {
+    let s = ctx.lock().await;
+    if !s.initialized {
+        return Err(not_initialized());
+    }
+    Ok((s.session_manager.clone(), s.connection_store.clone()))
+}
+
+async fn get_monitoring_managers(
+    ctx: &tokio::sync::Mutex<HandlerState>,
+) -> Result<(Arc<dyn SessionManagerApi>, Arc<dyn MonitoringManagerApi>), ErrorObjectOwned> {
+    let s = ctx.lock().await;
+    if !s.initialized {
+        return Err(not_initialized());
+    }
+    Ok((s.session_manager.clone(), s.monitoring_manager.clone()))
 }
 
 // ── Method registration ────────────────────────────────────────────
@@ -241,9 +303,7 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
             let mut s = ctx.lock().await;
             s.initialized = true;
             s.agent_settings = p.agent_settings.clone();
-            let buffer_size = (p.agent_settings.persistent_scrollback_buffer_size_mb as usize)
-                .saturating_mul(1_048_576)
-                .max(65_536);
+            let buffer_size = mb_to_bytes(p.agent_settings.persistent_scrollback_buffer_size_mb);
             (
                 s.session_manager.clone(),
                 s.connection_store.clone(),
@@ -288,13 +348,7 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
 
 fn register_connection_create(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
     module.register_async_method("connection.create", |params, ctx, _ext| async move {
-        let session_manager = {
-            let s = ctx.lock().await;
-            if !s.initialized {
-                return Err(not_initialized());
-            }
-            s.session_manager.clone()
-        };
+        let session_manager = get_session_manager(&ctx).await?;
 
         let p: SessionCreateParams = params
             .parse()
@@ -343,13 +397,7 @@ fn register_connection_create(module: &mut RpcModule<Mutex<HandlerState>>) -> an
 
 fn register_connection_list(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
     module.register_async_method("connection.list", |_params, ctx, _ext| async move {
-        let session_manager = {
-            let s = ctx.lock().await;
-            if !s.initialized {
-                return Err(not_initialized());
-            }
-            s.session_manager.clone()
-        };
+        let session_manager = get_session_manager(&ctx).await?;
 
         let sessions = session_manager.list().await;
         let entries: Vec<SessionListEntry> = sessions
@@ -374,13 +422,7 @@ fn register_connection_list(module: &mut RpcModule<Mutex<HandlerState>>) -> anyh
 
 fn register_connection_close(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
     module.register_async_method("connection.close", |params, ctx, _ext| async move {
-        let session_manager = {
-            let s = ctx.lock().await;
-            if !s.initialized {
-                return Err(not_initialized());
-            }
-            s.session_manager.clone()
-        };
+        let session_manager = get_session_manager(&ctx).await?;
 
         let p: SessionCloseParams = params
             .parse()
@@ -401,13 +443,7 @@ fn register_connection_close(module: &mut RpcModule<Mutex<HandlerState>>) -> any
 
 fn register_connection_attach(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
     module.register_async_method("connection.attach", |params, ctx, _ext| async move {
-        let session_manager = {
-            let s = ctx.lock().await;
-            if !s.initialized {
-                return Err(not_initialized());
-            }
-            s.session_manager.clone()
-        };
+        let session_manager = get_session_manager(&ctx).await?;
 
         let p: SessionAttachParams = params
             .parse()
@@ -428,13 +464,7 @@ fn register_connection_attach(module: &mut RpcModule<Mutex<HandlerState>>) -> an
 
 fn register_connection_detach(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
     module.register_async_method("connection.detach", |params, ctx, _ext| async move {
-        let session_manager = {
-            let s = ctx.lock().await;
-            if !s.initialized {
-                return Err(not_initialized());
-            }
-            s.session_manager.clone()
-        };
+        let session_manager = get_session_manager(&ctx).await?;
 
         let p: SessionDetachParams = params
             .parse()
@@ -455,13 +485,7 @@ fn register_connection_detach(module: &mut RpcModule<Mutex<HandlerState>>) -> an
 
 fn register_connection_write(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
     module.register_async_method("connection.write", |params, ctx, _ext| async move {
-        let session_manager = {
-            let s = ctx.lock().await;
-            if !s.initialized {
-                return Err(not_initialized());
-            }
-            s.session_manager.clone()
-        };
+        let session_manager = get_session_manager(&ctx).await?;
 
         let p: SessionInputParams = params
             .parse()
@@ -490,13 +514,7 @@ fn register_connection_write(module: &mut RpcModule<Mutex<HandlerState>>) -> any
 
 fn register_connection_resize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
     module.register_async_method("connection.resize", |params, ctx, _ext| async move {
-        let session_manager = {
-            let s = ctx.lock().await;
-            if !s.initialized {
-                return Err(not_initialized());
-            }
-            s.session_manager.clone()
-        };
+        let session_manager = get_session_manager(&ctx).await?;
 
         let p: SessionResizeParams = params
             .parse()
@@ -520,13 +538,7 @@ fn register_connection_resize(module: &mut RpcModule<Mutex<HandlerState>>) -> an
 
 fn register_connection_types(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
     module.register_async_method("connection.types", |_params, ctx, _ext| async move {
-        let session_manager = {
-            let s = ctx.lock().await;
-            if !s.initialized {
-                return Err(not_initialized());
-            }
-            s.session_manager.clone()
-        };
+        let session_manager = get_session_manager(&ctx).await?;
 
         let monitoring_ok = detect_monitoring_supported();
         let types = session_manager
@@ -548,13 +560,7 @@ fn register_connection_types(module: &mut RpcModule<Mutex<HandlerState>>) -> any
 
 fn register_session_get_buffer(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
     module.register_async_method("session.getBuffer", |params, ctx, _ext| async move {
-        let session_manager = {
-            let s = ctx.lock().await;
-            if !s.initialized {
-                return Err(not_initialized());
-            }
-            s.session_manager.clone()
-        };
+        let session_manager = get_session_manager(&ctx).await?;
 
         let p: SessionGetBufferParams = params
             .parse()
@@ -581,13 +587,7 @@ fn register_session_get_buffer(module: &mut RpcModule<Mutex<HandlerState>>) -> a
 
 fn register_connections_list(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
     module.register_async_method("connections.list", |_params, ctx, _ext| async move {
-        let connection_store = {
-            let s = ctx.lock().await;
-            if !s.initialized {
-                return Err(not_initialized());
-            }
-            s.connection_store.clone()
-        };
+        let connection_store = get_connection_store(&ctx).await?;
 
         let (connections, folders) = connection_store.list().await;
         Ok::<_, ErrorObjectOwned>(json!({"connections": connections, "folders": folders}))
@@ -597,13 +597,7 @@ fn register_connections_list(module: &mut RpcModule<Mutex<HandlerState>>) -> any
 
 fn register_connections_create(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
     module.register_async_method("connections.create", |params, ctx, _ext| async move {
-        let connection_store = {
-            let s = ctx.lock().await;
-            if !s.initialized {
-                return Err(not_initialized());
-            }
-            s.connection_store.clone()
-        };
+        let connection_store = get_connection_store(&ctx).await?;
 
         let p: ConnectionCreateParams = params
             .parse()
@@ -628,13 +622,7 @@ fn register_connections_create(module: &mut RpcModule<Mutex<HandlerState>>) -> a
 
 fn register_connections_update(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
     module.register_async_method("connections.update", |params, ctx, _ext| async move {
-        let connection_store = {
-            let s = ctx.lock().await;
-            if !s.initialized {
-                return Err(not_initialized());
-            }
-            s.connection_store.clone()
-        };
+        let connection_store = get_connection_store(&ctx).await?;
 
         let p: ConnectionUpdateParams = params
             .parse()
@@ -684,13 +672,7 @@ fn register_connections_update(module: &mut RpcModule<Mutex<HandlerState>>) -> a
 
 fn register_connections_delete(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
     module.register_async_method("connections.delete", |params, ctx, _ext| async move {
-        let connection_store = {
-            let s = ctx.lock().await;
-            if !s.initialized {
-                return Err(not_initialized());
-            }
-            s.connection_store.clone()
-        };
+        let connection_store = get_connection_store(&ctx).await?;
 
         let p: ConnectionDeleteParams = params
             .parse()
@@ -715,13 +697,7 @@ fn register_connections_folders_create(
     module.register_async_method(
         "connections.folders.create",
         |params, ctx, _ext| async move {
-            let connection_store = {
-                let s = ctx.lock().await;
-                if !s.initialized {
-                    return Err(not_initialized());
-                }
-                s.connection_store.clone()
-            };
+            let connection_store = get_connection_store(&ctx).await?;
 
             let p: FolderCreateParams = params
                 .parse()
@@ -747,13 +723,7 @@ fn register_connections_folders_update(
     module.register_async_method(
         "connections.folders.update",
         |params, ctx, _ext| async move {
-            let connection_store = {
-                let s = ctx.lock().await;
-                if !s.initialized {
-                    return Err(not_initialized());
-                }
-                s.connection_store.clone()
-            };
+            let connection_store = get_connection_store(&ctx).await?;
 
             let p: FolderUpdateParams = params
                 .parse()
@@ -791,13 +761,7 @@ fn register_connections_folders_delete(
     module.register_async_method(
         "connections.folders.delete",
         |params, ctx, _ext| async move {
-            let connection_store = {
-                let s = ctx.lock().await;
-                if !s.initialized {
-                    return Err(not_initialized());
-                }
-                s.connection_store.clone()
-            };
+            let connection_store = get_connection_store(&ctx).await?;
 
             let p: FolderDeleteParams = params
                 .parse()
@@ -857,13 +821,7 @@ async fn resolve_file_backend(
 
 fn register_files_list(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
     module.register_async_method("connection.files.list", |params, ctx, _ext| async move {
-        let (session_manager, connection_store) = {
-            let s = ctx.lock().await;
-            if !s.initialized {
-                return Err(not_initialized());
-            }
-            (s.session_manager.clone(), s.connection_store.clone())
-        };
+        let (session_manager, connection_store) = get_file_managers(&ctx).await?;
 
         let p: FilesListParams = params
             .parse()
@@ -883,13 +841,7 @@ fn register_files_list(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
 
 fn register_files_read(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
     module.register_async_method("connection.files.read", |params, ctx, _ext| async move {
-        let (session_manager, connection_store) = {
-            let s = ctx.lock().await;
-            if !s.initialized {
-                return Err(not_initialized());
-            }
-            (s.session_manager.clone(), s.connection_store.clone())
-        };
+        let (session_manager, connection_store) = get_file_managers(&ctx).await?;
 
         let p: FilesReadParams = params
             .parse()
@@ -914,13 +866,7 @@ fn register_files_read(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
 
 fn register_files_write(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
     module.register_async_method("connection.files.write", |params, ctx, _ext| async move {
-        let (session_manager, connection_store) = {
-            let s = ctx.lock().await;
-            if !s.initialized {
-                return Err(not_initialized());
-            }
-            (s.session_manager.clone(), s.connection_store.clone())
-        };
+        let (session_manager, connection_store) = get_file_managers(&ctx).await?;
 
         let p: FilesWriteParams = params
             .parse()
@@ -945,13 +891,7 @@ fn register_files_write(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::
 
 fn register_files_delete(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
     module.register_async_method("connection.files.delete", |params, ctx, _ext| async move {
-        let (session_manager, connection_store) = {
-            let s = ctx.lock().await;
-            if !s.initialized {
-                return Err(not_initialized());
-            }
-            (s.session_manager.clone(), s.connection_store.clone())
-        };
+        let (session_manager, connection_store) = get_file_managers(&ctx).await?;
 
         let p: FilesDeleteParams = params
             .parse()
@@ -971,13 +911,7 @@ fn register_files_delete(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow:
 
 fn register_files_rename(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
     module.register_async_method("connection.files.rename", |params, ctx, _ext| async move {
-        let (session_manager, connection_store) = {
-            let s = ctx.lock().await;
-            if !s.initialized {
-                return Err(not_initialized());
-            }
-            (s.session_manager.clone(), s.connection_store.clone())
-        };
+        let (session_manager, connection_store) = get_file_managers(&ctx).await?;
 
         let p: FilesRenameParams = params
             .parse()
@@ -997,13 +931,7 @@ fn register_files_rename(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow:
 
 fn register_files_stat(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
     module.register_async_method("connection.files.stat", |params, ctx, _ext| async move {
-        let (session_manager, connection_store) = {
-            let s = ctx.lock().await;
-            if !s.initialized {
-                return Err(not_initialized());
-            }
-            (s.session_manager.clone(), s.connection_store.clone())
-        };
+        let (session_manager, connection_store) = get_file_managers(&ctx).await?;
 
         let p: FilesStatParams = params
             .parse()
@@ -1020,13 +948,7 @@ fn register_files_stat(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
 
 fn register_files_mkdir(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
     module.register_async_method("connection.files.mkdir", |params, ctx, _ext| async move {
-        let (session_manager, connection_store) = {
-            let s = ctx.lock().await;
-            if !s.initialized {
-                return Err(not_initialized());
-            }
-            (s.session_manager.clone(), s.connection_store.clone())
-        };
+        let (session_manager, connection_store) = get_file_managers(&ctx).await?;
 
         let p: FilesMkdirParams = params
             .parse()
@@ -1061,13 +983,7 @@ fn register_monitoring_subscribe(
     module.register_async_method(
         "connection.monitoring.subscribe",
         |params, ctx, _ext| async move {
-            let (session_manager, monitoring_manager) = {
-                let s = ctx.lock().await;
-                if !s.initialized {
-                    return Err(not_initialized());
-                }
-                (s.session_manager.clone(), s.monitoring_manager.clone())
-            };
+            let (session_manager, monitoring_manager) = get_monitoring_managers(&ctx).await?;
 
             let p: MonitoringSubscribeParams = params
                 .parse()
@@ -1097,13 +1013,7 @@ fn register_monitoring_unsubscribe(
     module.register_async_method(
         "connection.monitoring.unsubscribe",
         |params, ctx, _ext| async move {
-            let (session_manager, monitoring_manager) = {
-                let s = ctx.lock().await;
-                if !s.initialized {
-                    return Err(not_initialized());
-                }
-                (s.session_manager.clone(), s.monitoring_manager.clone())
-            };
+            let (session_manager, monitoring_manager) = get_monitoring_managers(&ctx).await?;
 
             let p: MonitoringUnsubscribeParams = params
                 .parse()
@@ -1122,12 +1032,7 @@ fn register_monitoring_unsubscribe(
 
 fn register_network_port_scan(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
     module.register_async_method("network.port_scan", |params, ctx, _ext| async move {
-        {
-            let s = ctx.lock().await;
-            if !s.initialized {
-                return Err(not_initialized());
-            }
-        }
+        check_initialized(&ctx).await?;
 
         let p: NetworkPortScanParams = params
             .parse()
@@ -1143,12 +1048,7 @@ fn register_network_port_scan(module: &mut RpcModule<Mutex<HandlerState>>) -> an
 
 fn register_network_ping(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
     module.register_async_method("network.ping", |params, ctx, _ext| async move {
-        {
-            let s = ctx.lock().await;
-            if !s.initialized {
-                return Err(not_initialized());
-            }
-        }
+        check_initialized(&ctx).await?;
 
         let p: NetworkPingParams = params
             .parse()
@@ -1164,12 +1064,7 @@ fn register_network_ping(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow:
 
 fn register_network_dns_lookup(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
     module.register_async_method("network.dns_lookup", |params, ctx, _ext| async move {
-        {
-            let s = ctx.lock().await;
-            if !s.initialized {
-                return Err(not_initialized());
-            }
-        }
+        check_initialized(&ctx).await?;
 
         let p: NetworkDnsLookupParams = params
             .parse()
@@ -1185,12 +1080,7 @@ fn register_network_dns_lookup(module: &mut RpcModule<Mutex<HandlerState>>) -> a
 
 fn register_network_open_ports(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
     module.register_async_method("network.open_ports", |_params, ctx, _ext| async move {
-        {
-            let s = ctx.lock().await;
-            if !s.initialized {
-                return Err(not_initialized());
-            }
-        }
+        check_initialized(&ctx).await?;
 
         network::handle_open_ports()
             .map(|r| serde_json::to_value(r).unwrap())
@@ -1201,12 +1091,7 @@ fn register_network_open_ports(module: &mut RpcModule<Mutex<HandlerState>>) -> a
 
 fn register_network_traceroute(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
     module.register_async_method("network.traceroute", |params, ctx, _ext| async move {
-        {
-            let s = ctx.lock().await;
-            if !s.initialized {
-                return Err(not_initialized());
-            }
-        }
+        check_initialized(&ctx).await?;
 
         let p: NetworkTracerouteParams = params
             .parse()
@@ -1222,12 +1107,7 @@ fn register_network_traceroute(module: &mut RpcModule<Mutex<HandlerState>>) -> a
 
 fn register_network_wol(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
     module.register_async_method("network.wol", |params, ctx, _ext| async move {
-        {
-            let s = ctx.lock().await;
-            if !s.initialized {
-                return Err(not_initialized());
-            }
-        }
+        check_initialized(&ctx).await?;
 
         let p: NetworkWolParams = params
             .parse()
@@ -1301,12 +1181,10 @@ fn register_agent_settings_update(
     module: &mut RpcModule<Mutex<HandlerState>>,
 ) -> anyhow::Result<()> {
     module.register_async_method("agent.settingsUpdate", |params, ctx, _ext| async move {
-        {
-            let s = ctx.lock().await;
-            if !s.initialized {
-                return Err(not_initialized());
-            }
-        }
+        // Init check before params parse (protocol: NOT_INITIALIZED takes priority).
+        // A second lock below applies the settings — initialized is monotone so
+        // there is no TOCTOU hazard.
+        check_initialized(&ctx).await?;
 
         let p: AgentSettingsUpdateParams = params
             .parse()
@@ -1318,11 +1196,10 @@ fn register_agent_settings_update(
             s.session_manager.clone()
         };
 
-        let buffer_size = (p.settings.persistent_scrollback_buffer_size_mb as usize)
-            .saturating_mul(1_048_576)
-            .max(65_536);
         session_manager
-            .set_persistent_buffer_size_bytes(buffer_size)
+            .set_persistent_buffer_size_bytes(mb_to_bytes(
+                p.settings.persistent_scrollback_buffer_size_mb,
+            ))
             .await;
 
         Ok::<_, ErrorObjectOwned>(json!({"applied": true}))
