@@ -1,14 +1,13 @@
 //! SSH monitoring provider implementing [`MonitoringProvider`].
 //!
-//! Collects system statistics from a remote host by periodically running
-//! a monitoring command over SSH and parsing the output. Uses a dedicated
-//! SSH session in blocking mode.
+//! Collects system statistics from a remote host by periodically executing
+//! the monitoring command over an SSH exec channel and parsing the output.
 
-use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use russh::ChannelMsg;
 use tracing::{debug, warn};
 
 use crate::config::SshConfig;
@@ -19,6 +18,7 @@ use crate::monitoring::{
 };
 
 use super::auth::connect_and_authenticate;
+use super::handler::SshSession;
 
 /// Polling interval for collecting system stats.
 const MONITORING_INTERVAL: Duration = Duration::from_secs(2);
@@ -39,7 +39,7 @@ impl Drop for MonitoringTask {
 
 /// SSH-based monitoring provider.
 ///
-/// Spawns a background thread that periodically runs the monitoring
+/// Spawns a background tokio task that periodically executes the monitoring
 /// command over SSH, parses the output, and sends stats through a channel.
 pub(crate) struct SshMonitoringProvider {
     config: SshConfig,
@@ -56,21 +56,30 @@ impl SshMonitoringProvider {
 }
 
 /// Execute a command over an SSH session and return stdout as a string.
-fn ssh_exec(session: &ssh2::Session, command: &str) -> Result<String, CoreError> {
+async fn ssh_exec(session: &SshSession, command: &str) -> Result<String, CoreError> {
     let mut channel = session
-        .channel_session()
+        .channel_open_session()
+        .await
         .map_err(|e| CoreError::Other(format!("Channel open failed: {e}")))?;
 
     channel
-        .exec(command)
+        .exec(false, command)
+        .await
         .map_err(|e| CoreError::Other(format!("Exec failed: {e}")))?;
 
     let mut output = String::new();
-    channel
-        .read_to_string(&mut output)
-        .map_err(|e| CoreError::Other(format!("Read failed: {e}")))?;
-
-    channel.wait_close().ok();
+    loop {
+        match channel.wait().await {
+            Some(ChannelMsg::Data { ref data }) => {
+                if let Ok(s) = std::str::from_utf8(data) {
+                    output.push_str(s);
+                }
+            }
+            Some(ChannelMsg::ExitStatus { .. }) => {}
+            Some(ChannelMsg::Eof) | None => break,
+            _ => {}
+        }
+    }
 
     Ok(output)
 }
@@ -90,56 +99,47 @@ impl MonitoringProvider for SshMonitoringProvider {
         let alive = Arc::new(AtomicBool::new(true));
         let alive_clone = alive.clone();
 
-        std::thread::Builder::new()
-            .name("ssh-monitoring".to_string())
-            .spawn(move || {
-                // Open a dedicated SSH session for monitoring.
-                let session = match connect_and_authenticate(&config) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        warn!("Monitoring SSH connection failed: {e}");
-                        return;
-                    }
-                };
-                session.set_blocking(true);
+        tokio::spawn(async move {
+            let (session, _registry) = match connect_and_authenticate(&config).await {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!("Monitoring SSH connection failed: {e}");
+                    return;
+                }
+            };
 
-                let mut cpu_tracker = CpuDeltaTracker::new();
+            let mut cpu_tracker = CpuDeltaTracker::new();
 
-                while alive_clone.load(Ordering::SeqCst) {
-                    match ssh_exec(&session, MONITORING_COMMAND) {
-                        Ok(output) => {
-                            match parse_stats(&output) {
-                                Ok((mut stats, counters)) => {
-                                    if let Some(pct) = cpu_tracker.update(counters) {
-                                        stats.cpu_usage_percent = pct;
-                                    }
-                                    if tx.blocking_send(stats).is_err() {
-                                        // Receiver dropped.
-                                        break;
-                                    }
-                                }
-                                Err(e) => {
-                                    debug!("Failed to parse monitoring output: {e}");
-                                }
+            while alive_clone.load(Ordering::SeqCst) {
+                match ssh_exec(&session, MONITORING_COMMAND).await {
+                    Ok(output) => match parse_stats(&output) {
+                        Ok((mut stats, counters)) => {
+                            if let Some(pct) = cpu_tracker.update(counters) {
+                                stats.cpu_usage_percent = pct;
+                            }
+                            if tx.send(stats).await.is_err() {
+                                break;
                             }
                         }
                         Err(e) => {
-                            debug!("Monitoring exec failed: {e}");
+                            debug!("Failed to parse monitoring output: {e}");
                         }
-                    }
-
-                    // Sleep in small increments to allow quick shutdown.
-                    let mut remaining = MONITORING_INTERVAL;
-                    let tick = Duration::from_millis(100);
-                    while remaining > Duration::ZERO && alive_clone.load(Ordering::SeqCst) {
-                        let sleep_time = remaining.min(tick);
-                        std::thread::sleep(sleep_time);
-                        remaining = remaining.saturating_sub(sleep_time);
+                    },
+                    Err(e) => {
+                        debug!("Monitoring exec failed: {e}");
                     }
                 }
-                debug!("Monitoring thread stopped");
-            })
-            .map_err(|e| CoreError::Other(format!("Failed to spawn monitoring thread: {e}")))?;
+
+                // Sleep in 100ms increments to allow quick shutdown.
+                let mut remaining = MONITORING_INTERVAL;
+                let tick = Duration::from_millis(100);
+                while remaining > Duration::ZERO && alive_clone.load(Ordering::SeqCst) {
+                    tokio::time::sleep(tick.min(remaining)).await;
+                    remaining = remaining.saturating_sub(tick);
+                }
+            }
+            debug!("Monitoring task stopped");
+        });
 
         if let Ok(mut guard) = self.task.lock() {
             *guard = Some(MonitoringTask { alive });
@@ -150,7 +150,6 @@ impl MonitoringProvider for SshMonitoringProvider {
 
     async fn unsubscribe(&self) -> Result<(), CoreError> {
         if let Ok(mut guard) = self.task.lock() {
-            // Drop the task, which sets alive=false via the Drop impl.
             *guard = None;
         }
         Ok(())

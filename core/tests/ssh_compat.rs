@@ -15,18 +15,19 @@ use termihub_core::backends::ssh::auth::connect_and_authenticate;
 
 // ── SSH-COMPAT-01: Legacy OpenSSH 7.x password auth ─────────────────
 
-#[test]
-fn ssh_compat_01_legacy_password_auth() {
+#[tokio::test]
+async fn ssh_compat_01_legacy_password_auth() {
     require_docker!(PORT_SSH_LEGACY);
 
     let config = ssh_password_config(PORT_SSH_LEGACY);
-    let session = connect_and_authenticate(&config)
+    let (session, _) = connect_and_authenticate(&config)
+        .await
         .expect("SSH-COMPAT-01: Legacy SSH password auth should succeed");
 
-    assert!(session.authenticated());
-
     // Verify we can execute commands on the legacy server.
-    let output = ssh_exec(&session, "whoami").expect("whoami should succeed");
+    let output = ssh_exec(&session, "whoami")
+        .await
+        .expect("whoami should succeed");
     assert!(
         output.trim().contains("testuser"),
         "Expected 'testuser', got: {output}"
@@ -35,17 +36,18 @@ fn ssh_compat_01_legacy_password_auth() {
 
 // ── SSH-COMPAT-02: Legacy OpenSSH 7.x key auth ──────────────────────
 
-#[test]
-fn ssh_compat_02_legacy_key_auth() {
+#[tokio::test]
+async fn ssh_compat_02_legacy_key_auth() {
     require_docker!(PORT_SSH_LEGACY);
 
     let config = ssh_key_config(PORT_SSH_LEGACY, "ed25519");
-    let session = connect_and_authenticate(&config)
+    let (session, _) = connect_and_authenticate(&config)
+        .await
         .expect("SSH-COMPAT-02: Legacy SSH key auth should succeed");
 
-    assert!(session.authenticated());
-
-    let output = ssh_exec(&session, "whoami").expect("whoami should succeed");
+    let output = ssh_exec(&session, "whoami")
+        .await
+        .expect("whoami should succeed");
     assert!(
         output.trim().contains("testuser"),
         "Expected 'testuser', got: {output}"

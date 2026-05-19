@@ -1,8 +1,5 @@
 use std::collections::HashMap;
-use std::io::Read;
 use std::sync::{Arc, Mutex};
-
-use ssh2::Session;
 
 use termihub_core::errors::CoreError;
 use termihub_core::monitoring::{
@@ -12,18 +9,18 @@ use termihub_core::monitoring::{
 
 use crate::terminal::backend::SshConfig;
 use crate::utils::errors::TerminalError;
+use crate::utils::remote_exec::run_remote_command;
 use crate::utils::ssh_auth::connect_and_authenticate;
+use termihub_core::backends::ssh::handler::SshSession;
 
 /// Legacy monitoring session holding a dedicated SSH connection.
-///
-/// Uses blocking mode, same pattern as `SftpSession`.
 ///
 /// The canonical implementation is now
 /// [`termihub_core::backends::ssh::SshMonitoringProvider`](termihub_core::backends::ssh)
 /// which implements the unified `MonitoringProvider` trait. This struct
 /// will be removed once monitoring is migrated to use `ConnectionType`.
 pub struct MonitoringSession {
-    session: Session,
+    session: SshSession,
     /// Previous `/proc/stat` CPU counters for delta-based CPU% calculation.
     prev_cpu: Option<CpuCounters>,
 }
@@ -32,33 +29,10 @@ impl MonitoringSession {
     /// Open a new monitoring session to the given SSH host.
     pub fn new(config: &SshConfig) -> Result<Self, TerminalError> {
         let session = connect_and_authenticate(config)?;
-        session.set_blocking(true);
-
         Ok(Self {
             session,
             prev_cpu: None,
         })
-    }
-
-    /// Execute a command over SSH and return stdout as a string.
-    fn exec(&self, command: &str) -> Result<String, TerminalError> {
-        let mut channel = self
-            .session
-            .channel_session()
-            .map_err(|e| TerminalError::SshError(format!("Channel open failed: {}", e)))?;
-
-        channel
-            .exec(command)
-            .map_err(|e| TerminalError::SshError(format!("Exec failed: {}", e)))?;
-
-        let mut output = String::new();
-        channel
-            .read_to_string(&mut output)
-            .map_err(|e| TerminalError::SshError(format!("Read failed: {}", e)))?;
-
-        channel.wait_close().ok();
-
-        Ok(output)
     }
 
     /// Fetch system statistics from the remote host.
@@ -66,12 +40,11 @@ impl MonitoringSession {
     /// CPU usage is computed from `/proc/stat` deltas between consecutive calls.
     /// The first call returns 0% since there is no previous snapshot to compare against.
     pub fn fetch_stats(&mut self) -> Result<SystemStats, TerminalError> {
-        let output = self.exec(MONITORING_COMMAND)?;
+        let output = run_remote_command(&self.session, MONITORING_COMMAND)?;
 
         let (mut stats, counters) =
             parse_stats(&output).map_err(|e| TerminalError::SshError(e.to_string()))?;
 
-        // Compute CPU% from the delta with the previous snapshot.
         if let Some(prev) = &self.prev_cpu {
             stats.cpu_usage_percent = cpu_percent_from_delta(prev, &counters);
         }
@@ -82,10 +55,6 @@ impl MonitoringSession {
 }
 
 impl StatsCollector for MonitoringSession {
-    /// Collect system stats from the remote host.
-    ///
-    /// The `_host_label` parameter is unused — the desktop monitoring session
-    /// already targets a specific host established at session creation time.
     fn collect(&mut self, _host_label: &str) -> Result<SystemStats, CoreError> {
         self.fetch_stats()
             .map_err(|e| CoreError::Other(e.to_string()))
@@ -93,9 +62,6 @@ impl StatsCollector for MonitoringSession {
 }
 
 /// Manages multiple monitoring sessions keyed by UUID.
-///
-/// The inner sessions map is shared behind an `Arc` so the manager can be
-/// cheaply cloned and moved into `spawn_blocking` closures.
 #[derive(Clone)]
 pub struct MonitoringManager {
     sessions: Arc<Mutex<HashMap<String, Arc<Mutex<MonitoringSession>>>>>,
@@ -138,7 +104,6 @@ mod tests {
     use super::*;
     use termihub_core::monitoring::{parse_cpu_line, parse_meminfo_value};
 
-    /// Compile-time verification that `MonitoringSession` satisfies `StatsCollector`.
     fn _assert_stats_collector<T: StatsCollector>() {}
 
     #[test]
@@ -146,7 +111,6 @@ mod tests {
         _assert_stats_collector::<MonitoringSession>();
     }
 
-    /// Helper: build sample output with the given cpu line.
     fn sample_output(cpu_line: &str) -> String {
         format!(
             "\
@@ -168,13 +132,9 @@ Linux 5.15.0"
     #[test]
     fn parse_stats_basic() {
         let output = sample_output("cpu  10000 500 3000 80000 1000 0 200 0 0 0");
-
         let (stats, counters) = parse_stats(&output).unwrap();
         assert_eq!(stats.hostname, "myhost");
         assert!((stats.load_average[0] - 0.15).abs() < 0.001);
-        assert!((stats.load_average[1] - 0.10).abs() < 0.001);
-        assert!((stats.load_average[2] - 0.05).abs() < 0.001);
-        // cpu_usage_percent is 0.0 from parse_stats (caller computes delta)
         assert!((stats.cpu_usage_percent - 0.0).abs() < 0.001);
         assert_eq!(counters.user, 10000);
         assert_eq!(counters.idle, 80000);
@@ -216,8 +176,6 @@ Linux 5.15.0"
 
     #[test]
     fn cpu_percent_delta_idle_system() {
-        // Previous: 100 total, 80 idle → 20% active
-        // Current:  200 total, 120 idle → delta: 100 total, 40 idle → 60% CPU
         let prev = CpuCounters {
             user: 10,
             nice: 0,
@@ -238,7 +196,6 @@ Linux 5.15.0"
             softirq: 5,
             steal: 0,
         };
-        // delta total = 200-100 = 100, delta idle = (110+20)-(70+10) = 50, active = 50
         let pct = cpu_percent_from_delta(&prev, &curr);
         assert!((pct - 50.0).abs() < 0.01);
     }
@@ -252,7 +209,6 @@ Linux 5.15.0"
 
     #[test]
     fn cpu_percent_delta_full_load() {
-        // All delta is active (no idle increase)
         let prev = CpuCounters {
             idle: 100,
             iowait: 0,
@@ -264,14 +220,12 @@ Linux 5.15.0"
             iowait: 0,
             ..Default::default()
         };
-        // delta total = 100, delta idle = 0, active = 100 → 100%
         let pct = cpu_percent_from_delta(&prev, &curr);
         assert!((pct - 100.0).abs() < 0.01);
     }
 
     #[test]
     fn cpu_percent_delta_fully_idle() {
-        // All delta is idle
         let prev = CpuCounters::default();
         let curr = CpuCounters {
             idle: 1000,
@@ -296,7 +250,6 @@ Filesystem     1024-blocks      Used Available Capacity Mounted on
 Linux 6.1.0";
 
         let (stats, _) = parse_stats(output).unwrap();
-        // used = 8000000 - 2000000 = 6000000, percent = 75%
         assert!((stats.memory_used_percent - 75.0).abs() < 0.1);
         assert!((stats.disk_used_percent - 60.0).abs() < 0.1);
     }

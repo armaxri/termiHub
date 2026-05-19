@@ -194,12 +194,17 @@ async fn mon_04_stats_under_load() {
 
     // Generate CPU load in the container via a separate SSH session.
     let config = common::ssh_password_config(PORT_SSH_PASSWORD);
-    let load_session = termihub_core::backends::ssh::auth::connect_and_authenticate(&config)
+    let (load_session, _) = termihub_core::backends::ssh::auth::connect_and_authenticate(&config)
+        .await
         .expect("Load session should connect");
-    let mut load_channel = load_session.channel_session().expect("Channel should open");
+    let load_channel = load_session
+        .channel_open_session()
+        .await
+        .expect("Channel should open");
     // Run a busy loop for 5 seconds in the background.
     load_channel
-        .exec("timeout 5 sh -c 'while true; do :; done' &")
+        .exec(false, "timeout 5 sh -c 'while true; do :; done' &")
+        .await
         .expect("Load command should start");
 
     // Collect multiple stats samples — they should arrive without timeout.
