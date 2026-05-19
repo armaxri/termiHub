@@ -12,7 +12,7 @@ use std::sync::mpsc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::utils::expand::{expand_env_placeholders, expand_tilde};
+use crate::utils::expand::expand_config_value;
 
 pub use termihub_core::config::SshConfig;
 
@@ -95,14 +95,14 @@ impl RemoteAgentConfig {
 
     #[allow(dead_code)]
     pub fn expand(mut self) -> Self {
-        self.host = expand_env_placeholders(&self.host);
-        self.username = expand_env_placeholders(&self.username);
+        self.host = expand_config_value(&self.host);
+        self.username = expand_config_value(&self.username);
         self.key_path = self.key_path.map(|s| {
             // Strip surrounding quotes — users often paste paths like "C:\...\key"
             let stripped = s.trim().trim_matches('"').trim_matches('\'');
-            expand_tilde(&expand_env_placeholders(stripped))
+            expand_config_value(stripped)
         });
-        self.password = self.password.map(|s| expand_env_placeholders(&s));
+        self.password = self.password.map(|s| expand_config_value(&s));
         self
     }
 
@@ -184,26 +184,54 @@ mod tests {
 
     #[test]
     fn remote_agent_config_expand_replaces_placeholders() {
-        std::env::set_var("TERMIHUB_TEST_AGENT_HOST", "10.0.0.99");
-        std::env::set_var("TERMIHUB_TEST_AGENT_USER", "deploy");
+        temp_env::with_vars(
+            [
+                ("TERMIHUB_TEST_AGENT_HOST", Some("10.0.0.99")),
+                ("TERMIHUB_TEST_AGENT_USER", Some("deploy")),
+            ],
+            || {
+                let config = RemoteAgentConfig {
+                    host: "${TERMIHUB_TEST_AGENT_HOST}".to_string(),
+                    port: 22,
+                    username: "${TERMIHUB_TEST_AGENT_USER}".to_string(),
+                    auth_method: "key".to_string(),
+                    password: None,
+                    key_path: Some("${HOME}/.ssh/id_rsa".to_string()),
+                    save_password: None,
+                    agent_path: None,
+                    external_connection_files: vec![],
+                };
+                let expanded = config.expand();
+                assert_eq!(expanded.host, "10.0.0.99");
+                assert_eq!(expanded.username, "deploy");
+            },
+        );
+    }
 
-        let config = RemoteAgentConfig {
-            host: "${env:TERMIHUB_TEST_AGENT_HOST}".to_string(),
-            port: 22,
-            username: "${env:TERMIHUB_TEST_AGENT_USER}".to_string(),
-            auth_method: "key".to_string(),
-            password: None,
-            key_path: Some("${env:HOME}/.ssh/id_rsa".to_string()),
-            save_password: None,
-            agent_path: None,
-            external_connection_files: vec![],
-        };
-        let expanded = config.expand();
-        assert_eq!(expanded.host, "10.0.0.99");
-        assert_eq!(expanded.username, "deploy");
-
-        std::env::remove_var("TERMIHUB_TEST_AGENT_HOST");
-        std::env::remove_var("TERMIHUB_TEST_AGENT_USER");
+    #[test]
+    fn remote_agent_config_expand_supports_dollar_brace_syntax() {
+        temp_env::with_vars(
+            [
+                ("TERMIHUB_NEW_AGENT_HOST", Some("10.20.30.40")),
+                ("TERMIHUB_NEW_AGENT_USER", Some("ops")),
+            ],
+            || {
+                let config = RemoteAgentConfig {
+                    host: "${TERMIHUB_NEW_AGENT_HOST}".to_string(),
+                    port: 22,
+                    username: "${TERMIHUB_NEW_AGENT_USER}".to_string(),
+                    auth_method: "password".to_string(),
+                    password: None,
+                    key_path: None,
+                    save_password: None,
+                    agent_path: None,
+                    external_connection_files: vec![],
+                };
+                let expanded = config.expand();
+                assert_eq!(expanded.host, "10.20.30.40");
+                assert_eq!(expanded.username, "ops");
+            },
+        );
     }
 
     #[test]

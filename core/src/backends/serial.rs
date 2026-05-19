@@ -304,7 +304,7 @@ impl ConnectionType for Serial {
             flow_control,
         };
 
-        // Expand ${env:VAR} placeholders in port name.
+        // Expand ${VAR} placeholders in port name.
         let config = config.expand();
 
         let parsed = parse_serial_config(&config)?;

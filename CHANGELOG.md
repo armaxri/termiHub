@@ -10,8 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Embedded servers: the hand-rolled ~490-line RFC 959 FTP server has been replaced by [`libunftp`](https://crates.io/crates/libunftp) 0.20 backed by [`unftp-sbe-fs`](https://crates.io/crates/unftp-sbe-fs) 0.2. The new implementation is async/tokio-based (using a per-thread runtime to stay compatible with the existing `EmbeddedServerManager` thread model), preserves all existing config options (root directory, optional credentials, read-only mode, bind address, port), and tracks connection and transfer stats via libunftp's notification hooks. Passive mode, authentication, and path sandboxing are handled by the library. Closes #728.
+- **Breaking — Connection config placeholders**: environment-variable placeholders in connection fields have changed from `${env:VAR}` to standard shell syntax `${VAR}` (also `$VAR`), now backed by the [`shellexpand`](https://crates.io/crates/shellexpand) crate. Unknown variables now expand to an empty string instead of being left as the literal placeholder. Existing connections that used `${env:VAR}` must be edited to use `${VAR}`. Tilde expansion (`~` / `~/...`) is unchanged. Closes #726.
 - Agent: the hand-rolled JSON-RPC 2.0 dispatch layer (~5 k LOC) has been replaced by [`jsonrpsee`](https://crates.io/crates/jsonrpsee) 0.24. All 35 protocol methods are now registered via `RpcModule`; routing, error formatting, and response serialisation are handled by the library. Custom request/response/error structs in `core/src/protocol/` have been removed; only `JsonRpcNotification` (agent → desktop push) remains. Closes #727.
-- Core: the internal `RingBuffer` (1 MiB capture buffer used by serial sessions and the agent daemon) is now backed by the [`ringbuf`](https://crates.io/crates/ringbuf) crate (`HeapRb<u8>`) instead of a custom circular-byte-buffer implementation. Public API is unchanged.
+- Core: the internal `RingBuffer` (1 MiB capture buffer used by serial sessions and the agent daemon) is now backed by the [`ringbuf`](https://crates.io/crates/ringbuf) crate (`HeapRb<u8>`) instead of a custom circular-byte-buffer implementation. Public API is unchanged. The wrapper now uses `HeapRb` directly (no producer/consumer split) and delegates `write()` to `push_slice_overwrite`, reducing the implementation from ~60 to ~40 lines.
 
 ### Added
 
@@ -675,7 +676,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Manual test plan document (`docs/manual-testing.md`) for features requiring hardware or live connections
 - User documentation: user guide, build instructions, serial setup, SSH configuration, and contributing guide
 - X11 forwarding for SSH connections: forward remote GUI applications to local X server
-- Environment variable placeholders in connection settings: use `${env:VAR}` syntax for shared configs
+- Environment variable placeholders in connection settings: use `${VAR}` syntax for shared configs (originally `${env:VAR}`; updated to standard shell syntax in #726)
 - Tab coloring: assign colors to terminal tabs from the connection editor or via right-click context menu
 - Status bar shows cursor position, language, line ending, tab size, and encoding for the built-in editor
 - Double-click a file in the file browser to open it in the built-in editor
