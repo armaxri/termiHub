@@ -1,14 +1,12 @@
 //! Serial port backend implementing [`ConnectionType`](crate::connection::ConnectionType).
 //!
-//! Uses the `serialport` crate for cross-platform serial port access. This is
-//! the canonical serial implementation, used by both the desktop and agent
-//! crates (the desktop crate previously had its own implementation in
-//! `src-tauri/src/terminal/serial.rs`).
+//! Uses `serial2-tokio` for native async serial I/O. This is the canonical
+//! implementation shared by both the desktop and agent crates.
 
-use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use tokio::sync::mpsc;
 use tracing::{debug, info};
 
 use crate::config::SerialConfig;
@@ -19,12 +17,15 @@ use crate::connection::{
 use crate::errors::SessionError;
 use crate::files::FileBrowser;
 use crate::monitoring::MonitoringProvider;
-use crate::session::serial::parse_serial_config;
+use crate::session::serial::{open_serial_port, parse_serial_config};
 
-/// Channel capacity for output data from the serial reader thread.
+/// Channel capacity for output data from the serial reader task.
 const OUTPUT_CHANNEL_CAPACITY: usize = 64;
 
-/// Serial port backend using the `serialport` crate, implementing [`ConnectionType`].
+/// Channel capacity for write data sent to the serial writer task.
+const WRITE_CHANNEL_CAPACITY: usize = 256;
+
+/// Serial port backend using `serial2-tokio`, implementing [`ConnectionType`].
 ///
 /// # Lifecycle
 ///
@@ -37,14 +38,19 @@ pub struct Serial {
     /// State is `None` when disconnected, `Some` when connected.
     state: Option<ConnectedState>,
     /// The output sender is stored so `subscribe_output()` can replace
-    /// the channel. The reader thread also holds a reference and picks up
-    /// the replacement on its next iteration.
+    /// the channel. The reader task picks up the new sender on its next send.
     output_tx: Arc<Mutex<Option<OutputSender>>>,
 }
 
 /// Internal state of an active serial connection.
 struct ConnectedState {
-    writer: Arc<Mutex<Box<dyn serialport::SerialPort>>>,
+    /// Send bytes to the serial port writer task.
+    write_tx: mpsc::Sender<Vec<u8>>,
+    /// Background task reading from the serial port.
+    reader_task: tokio::task::JoinHandle<()>,
+    /// Background task writing to the serial port.
+    writer_task: tokio::task::JoinHandle<()>,
+    /// `true` while the reader task is running (i.e. port is alive).
     alive: Arc<AtomicBool>,
 }
 
@@ -64,7 +70,6 @@ impl Default for Serial {
     }
 }
 
-/// Helper to build baud rate select options.
 fn baud_rate_options() -> Vec<SelectOption> {
     ["9600", "19200", "38400", "57600", "115200"]
         .iter()
@@ -75,7 +80,6 @@ fn baud_rate_options() -> Vec<SelectOption> {
         .collect()
 }
 
-/// Helper to build data bits select options.
 fn data_bits_options() -> Vec<SelectOption> {
     ["5", "6", "7", "8"]
         .iter()
@@ -86,7 +90,6 @@ fn data_bits_options() -> Vec<SelectOption> {
         .collect()
 }
 
-/// Helper to build stop bits select options.
 fn stop_bits_options() -> Vec<SelectOption> {
     ["1", "2"]
         .iter()
@@ -97,7 +100,6 @@ fn stop_bits_options() -> Vec<SelectOption> {
         .collect()
 }
 
-/// Helper to build parity select options.
 fn parity_options() -> Vec<SelectOption> {
     vec![
         SelectOption {
@@ -115,7 +117,6 @@ fn parity_options() -> Vec<SelectOption> {
     ]
 }
 
-/// Helper to build flow control select options.
 fn flow_control_options() -> Vec<SelectOption> {
     vec![
         SelectOption {
@@ -263,7 +264,6 @@ impl ConnectionType for Serial {
             return Err(SessionError::AlreadyExists("Already connected".to_string()));
         }
 
-        // Parse settings JSON into SerialConfig.
         let port = settings
             .get("port")
             .and_then(|v| v.as_str())
@@ -303,25 +303,13 @@ impl ConnectionType for Serial {
             parity,
             flow_control,
         };
-
-        // Expand ${VAR} placeholders in port name.
         let config = config.expand();
-
         let parsed = parse_serial_config(&config)?;
 
-        info!(
-            port = %parsed.port,
-            baud_rate = parsed.baud_rate,
-            "Opening serial port"
-        );
+        info!(port = %parsed.port, baud_rate = parsed.baud_rate, "Opening serial port");
 
-        // Open the serial port.
-        let port_handle = crate::session::serial::open_serial_port(&parsed)?;
-
-        // Clone for the reader thread.
-        let mut reader = port_handle
-            .try_clone()
-            .map_err(|e| SessionError::SpawnFailed(format!("Failed to clone serial port: {e}")))?;
+        let port_handle = open_serial_port(&parsed)?;
+        let port = Arc::new(port_handle);
 
         let alive = Arc::new(AtomicBool::new(true));
 
@@ -335,37 +323,60 @@ impl ConnectionType for Serial {
             *guard = Some(tx);
         }
 
-        // Spawn reader thread: bridges sync serial reads to async tokio channel.
+        // Reader task: async reads forwarded to the output channel.
+        let port_reader = port.clone();
         let alive_clone = alive.clone();
         let output_tx_clone = self.output_tx.clone();
-        std::thread::spawn(move || {
+        let reader_task = tokio::spawn(async move {
             let mut buf = [0u8; 1024];
             loop {
-                match reader.read(&mut buf) {
+                match port_reader.read(&mut buf).await {
                     Ok(0) => break,
                     Ok(n) => {
                         let data = buf[..n].to_vec();
-                        let guard = output_tx_clone.lock().ok();
-                        if let Some(ref guard) = guard {
-                            if let Some(ref sender) = **guard {
-                                let _ = sender.blocking_send(data);
-                            } else {
-                                // No sender — disconnected.
+                        // Clone the sender out before any await — MutexGuard is not Send.
+                        let sender = {
+                            let Ok(guard) = output_tx_clone.lock() else {
                                 break;
+                            };
+                            guard.clone()
+                        };
+                        match sender {
+                            Some(s) => {
+                                if s.send(data).await.is_err() {
+                                    break;
+                                }
                             }
-                        } else {
-                            break;
+                            None => break,
                         }
                     }
-                    Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => continue,
+                    Err(e)
+                        if e.kind() == std::io::ErrorKind::TimedOut
+                            || e.kind() == std::io::ErrorKind::WouldBlock =>
+                    {
+                        continue
+                    }
                     Err(_) => break,
                 }
             }
             alive_clone.store(false, Ordering::SeqCst);
         });
 
+        // Writer task: drains the write channel and sends to the serial port.
+        let port_writer = port.clone();
+        let (write_tx, mut write_rx) = mpsc::channel::<Vec<u8>>(WRITE_CHANNEL_CAPACITY);
+        let writer_task = tokio::spawn(async move {
+            while let Some(data) = write_rx.recv().await {
+                if port_writer.write_all(&data).await.is_err() {
+                    break;
+                }
+            }
+        });
+
         self.state = Some(ConnectedState {
-            writer: Arc::new(Mutex::new(port_handle)),
+            write_tx,
+            reader_task,
+            writer_task,
             alive,
         });
 
@@ -374,8 +385,8 @@ impl ConnectionType for Serial {
 
     async fn disconnect(&mut self) -> Result<(), SessionError> {
         if let Some(state) = self.state.take() {
-            state.alive.store(false, Ordering::SeqCst);
-            // Clear the sender to signal the reader thread to stop.
+            state.reader_task.abort();
+            state.writer_task.abort();
             if let Ok(mut guard) = self.output_tx.lock() {
                 *guard = None;
             }
@@ -395,16 +406,13 @@ impl ConnectionType for Serial {
             .state
             .as_ref()
             .ok_or_else(|| SessionError::NotRunning("Not connected".to_string()))?;
-        let mut writer = state.writer.lock().map_err(|e| {
-            SessionError::Io(std::io::Error::other(format!("Failed to lock writer: {e}")))
-        })?;
-        writer.write_all(data).map_err(SessionError::Io)?;
-        writer.flush().map_err(SessionError::Io)?;
-        Ok(())
+        state
+            .write_tx
+            .try_send(data.to_vec())
+            .map_err(|e| SessionError::Io(std::io::Error::other(format!("Write failed: {e}"))))
     }
 
     fn resize(&self, _cols: u16, _rows: u16) -> Result<(), SessionError> {
-        // Serial ports don't have a terminal size concept.
         Ok(())
     }
 
@@ -612,10 +620,6 @@ mod tests {
         let serial = Serial::default();
         assert!(!serial.is_connected());
     }
-
-    // -----------------------------------------------------------------------
-    // Integration tests (no real hardware required)
-    // -----------------------------------------------------------------------
 
     #[tokio::test]
     async fn connect_invalid_port_fails() {

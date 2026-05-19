@@ -1,45 +1,39 @@
 //! Serial port session helpers shared between desktop and agent.
 //!
-//! Provides config parsing (string → `serialport` enums), port opening,
-//! port listing, and a reconnect-capable reader loop. Both the desktop
-//! backend (`src-tauri/src/terminal/serial.rs`) and the agent backend
-//! (`agent/src/serial/backend.rs`) delegate to these helpers so the
-//! logic lives in one place.
+//! Provides config parsing (string → `serial2` enums), async port opening,
+//! and port listing. The [`Serial`](crate::backends::serial::Serial) backend
+//! is the single canonical implementation used by both the desktop and agent.
 
-use std::io::Read;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use serial2_tokio::SerialPort;
 
-use crate::buffer::RingBuffer;
 use crate::config::SerialConfig;
 use crate::errors::SessionError;
 
-/// Pre-parsed serial port configuration cached for reconnection.
+/// Pre-parsed serial port configuration.
 ///
-/// Holds `serialport` enum values so they don't need to be re-parsed
-/// on every reconnect attempt. Constructed via [`parse_serial_config`].
+/// Holds `serial2` enum values so they don't need to be re-parsed on every
+/// reconnect attempt. Constructed via [`parse_serial_config`].
 #[derive(Debug, Clone)]
 pub struct ParsedSerialConfig {
     pub port: String,
     pub baud_rate: u32,
-    pub data_bits: serialport::DataBits,
-    pub stop_bits: serialport::StopBits,
-    pub parity: serialport::Parity,
-    pub flow_control: serialport::FlowControl,
+    pub char_size: serial2::CharSize,
+    pub stop_bits: serial2::StopBits,
+    pub parity: serial2::Parity,
+    pub flow_control: serial2::FlowControl,
 }
 
 /// Parse a [`SerialConfig`] into a [`ParsedSerialConfig`] with validated
-/// `serialport` enum values.
+/// `serial2` enum values.
 ///
 /// # Mapping rules
 ///
-/// | Field          | Input                      | Output                          |
-/// |----------------|----------------------------|---------------------------------|
-/// | `data_bits`    | 5, 6, 7, 8 (default 8)    | `DataBits::{Five..Eight}`       |
-/// | `stop_bits`    | 1, 2 (default 1)           | `StopBits::{One,Two}`           |
-/// | `parity`       | "none","odd","even" (def.) | `Parity::{None,Odd,Even}`       |
-/// | `flow_control` | "none","hardware","software" (def.) | `FlowControl::{None,Hardware,Software}` |
+/// | Field          | Input                        | Output                              |
+/// |----------------|------------------------------|-------------------------------------|
+/// | `data_bits`    | 5, 6, 7, 8 (default 8)      | `CharSize::{Bits5..Bits8}`          |
+/// | `stop_bits`    | 1, 2 (default 1)             | `StopBits::{One,Two}`               |
+/// | `parity`       | "none","odd","even" (def.)   | `Parity::{None,Odd,Even}`           |
+/// | `flow_control` | "none","hardware","software" | `FlowControl::{None,RtsCts,XonXoff}`|
 ///
 /// Returns [`SessionError::InvalidConfig`] if the port name is empty.
 pub fn parse_serial_config(config: &SerialConfig) -> Result<ParsedSerialConfig, SessionError> {
@@ -49,34 +43,34 @@ pub fn parse_serial_config(config: &SerialConfig) -> Result<ParsedSerialConfig, 
         ));
     }
 
-    let data_bits = match config.data_bits {
-        5 => serialport::DataBits::Five,
-        6 => serialport::DataBits::Six,
-        7 => serialport::DataBits::Seven,
-        _ => serialport::DataBits::Eight,
+    let char_size = match config.data_bits {
+        5 => serial2::CharSize::Bits5,
+        6 => serial2::CharSize::Bits6,
+        7 => serial2::CharSize::Bits7,
+        _ => serial2::CharSize::Bits8,
     };
 
     let stop_bits = match config.stop_bits {
-        2 => serialport::StopBits::Two,
-        _ => serialport::StopBits::One,
+        2 => serial2::StopBits::Two,
+        _ => serial2::StopBits::One,
     };
 
     let parity = match config.parity.as_str() {
-        "odd" => serialport::Parity::Odd,
-        "even" => serialport::Parity::Even,
-        _ => serialport::Parity::None,
+        "odd" => serial2::Parity::Odd,
+        "even" => serial2::Parity::Even,
+        _ => serial2::Parity::None,
     };
 
     let flow_control = match config.flow_control.as_str() {
-        "hardware" => serialport::FlowControl::Hardware,
-        "software" => serialport::FlowControl::Software,
-        _ => serialport::FlowControl::None,
+        "hardware" => serial2::FlowControl::RtsCts,
+        "software" => serial2::FlowControl::XonXoff,
+        _ => serial2::FlowControl::None,
     };
 
     Ok(ParsedSerialConfig {
         port: config.port.clone(),
         baud_rate: config.baud_rate,
-        data_bits,
+        char_size,
         stop_bits,
         parity,
         flow_control,
@@ -85,50 +79,57 @@ pub fn parse_serial_config(config: &SerialConfig) -> Result<ParsedSerialConfig, 
 
 /// Open a serial port using a pre-parsed configuration.
 ///
-/// The port is opened with a 100 ms read timeout, matching both
-/// the desktop and agent implementations.
-pub fn open_serial_port(
-    config: &ParsedSerialConfig,
-) -> Result<Box<dyn serialport::SerialPort>, SessionError> {
-    serialport::new(&config.port, config.baud_rate)
-        .data_bits(config.data_bits)
-        .stop_bits(config.stop_bits)
-        .parity(config.parity)
-        .flow_control(config.flow_control)
-        .timeout(Duration::from_millis(100))
-        .open()
-        .map_err(|e| {
-            let msg = match e.kind() {
-                serialport::ErrorKind::Io(std::io::ErrorKind::NotFound) => format!(
-                    "Serial port '{}' not found — check that the device is connected and the port name is correct",
-                    config.port
-                ),
-                serialport::ErrorKind::Io(std::io::ErrorKind::PermissionDenied) => format!(
-                    "Permission denied on '{}' — on Linux, add your user to the dialout group: sudo usermod -aG dialout $USER",
-                    config.port
-                ),
-                _ => {
-                    let desc = e.to_string();
-                    if desc.contains("busy") || desc.contains("in use") || desc.contains("Access is denied") {
-                        format!(
-                            "Serial port '{}' is already in use by another application",
-                            config.port
-                        )
-                    } else if desc.contains("not found") || desc.contains("cannot find") || desc.contains("No such file") {
-                        format!(
-                            "Serial port '{}' not found — check that the device is connected and the port name is correct",
-                            config.port
-                        )
-                    } else {
-                        format!("Failed to open serial port '{}': {}", config.port, e)
-                    }
+/// Returns a [`serial2_tokio::SerialPort`] ready for async I/O.
+pub fn open_serial_port(config: &ParsedSerialConfig) -> Result<SerialPort, SessionError> {
+    let baud_rate = config.baud_rate;
+    let char_size = config.char_size;
+    let stop_bits = config.stop_bits;
+    let parity = config.parity;
+    let flow_control = config.flow_control;
+
+    SerialPort::open(&config.port, |mut settings: serial2::Settings| {
+        settings.set_baud_rate(baud_rate)?;
+        settings.set_char_size(char_size);
+        settings.set_stop_bits(stop_bits);
+        settings.set_parity(parity);
+        settings.set_flow_control(flow_control);
+        Ok(settings)
+    })
+    .map_err(|e| {
+        let msg = match e.kind() {
+            std::io::ErrorKind::NotFound => format!(
+                "Serial port '{}' not found — check that the device is connected and the port name is correct",
+                config.port
+            ),
+            std::io::ErrorKind::PermissionDenied => format!(
+                "Permission denied on '{}' — on Linux, add your user to the dialout group: sudo usermod -aG dialout $USER",
+                config.port
+            ),
+            _ => {
+                let desc = e.to_string();
+                if desc.contains("busy") || desc.contains("in use") || desc.contains("Access is denied") {
+                    format!(
+                        "Serial port '{}' is already in use by another application",
+                        config.port
+                    )
+                } else if desc.contains("not found")
+                    || desc.contains("cannot find")
+                    || desc.contains("No such file")
+                {
+                    format!(
+                        "Serial port '{}' not found — check that the device is connected and the port name is correct",
+                        config.port
+                    )
+                } else {
+                    format!("Failed to open serial port '{}': {}", config.port, e)
                 }
-            };
-            SessionError::SpawnFailed(msg)
-        })
+            }
+        };
+        SessionError::SpawnFailed(msg)
+    })
 }
 
-/// All built-in Linux `/dev` prefixes scanned to supplement `serialport::available_ports()`.
+/// All built-in Linux `/dev` prefixes scanned to supplement `serial2`'s port enumeration.
 ///
 /// Covers ARM SoC UARTs (PL011/PL010), NVIDIA Tegra/Jetson, NXP i.MX/LP-UART,
 /// Xilinx Zynq, Qualcomm MSM/GENI, Amlogic, Samsung Exynos, Renesas, Marvell EBU,
@@ -198,10 +199,9 @@ pub const DEFAULT_EXTRA_LINUX_PREFIXES: &[&str] = &[
 
 /// List available serial port names using all built-in prefixes.
 ///
-/// Returns an empty vector if enumeration fails (e.g. on platforms where no
-/// serial driver is loaded). On Linux, the result is supplemented with a
-/// direct `/dev` scan using [`DEFAULT_EXTRA_LINUX_PREFIXES`] for device
-/// patterns that the `serialport` crate may not enumerate.
+/// Returns an empty vector if enumeration fails. On Linux, the result is
+/// supplemented with a direct `/dev` scan using [`DEFAULT_EXTRA_LINUX_PREFIXES`]
+/// for device patterns that `serial2` may not enumerate (e.g. ARM SoC UARTs).
 pub fn list_serial_ports() -> Vec<String> {
     list_serial_ports_with_dev_and_prefixes(
         std::path::Path::new("/dev"),
@@ -228,10 +228,10 @@ fn list_serial_ports_with_dev_and_prefixes(
     dev_dir: &std::path::Path,
     extra_prefixes: &[&str],
 ) -> Vec<String> {
-    let crate_ports: Vec<String> = serialport::available_ports()
+    let crate_ports: Vec<String> = serial2::SerialPort::available_ports()
         .unwrap_or_default()
         .into_iter()
-        .map(|p| p.port_name)
+        .map(|p| p.to_string_lossy().into_owned())
         .collect();
 
     #[cfg(target_os = "linux")]
@@ -253,10 +253,8 @@ fn list_serial_ports_with_dev_and_prefixes(
     }
 }
 
-/// Scan `dev_dir` for Linux UART devices not always enumerated by the
-/// `serialport` crate (e.g. PL011 UARTs on Raspberry Pi).
-///
-/// Matches `/dev` entries whose names start with any of the given `prefixes`.
+/// Scan `dev_dir` for Linux UART devices not always enumerated by `serial2`
+/// (e.g. PL011 UARTs on Raspberry Pi).
 #[cfg(target_os = "linux")]
 fn scan_extra_linux_serial_ports(dev_dir: &std::path::Path, prefixes: &[&str]) -> Vec<String> {
     let mut found = Vec::new();
@@ -272,191 +270,9 @@ fn scan_extra_linux_serial_ports(dev_dir: &std::path::Path, prefixes: &[&str]) -
     found
 }
 
-/// Status of a serial port connection.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SerialStatus {
-    Connected,
-    Disconnected,
-    Reconnecting,
-    Error(String),
-}
-
-/// Reconnect interval used by [`serial_reader_loop`].
-const RECONNECT_INTERVAL: Duration = Duration::from_secs(3);
-
-/// Background serial port reader loop with automatic reconnection.
-///
-/// Opens the port via [`open_serial_port`], reads data into a ring
-/// buffer, and calls `output_fn` for every chunk received. On read
-/// errors (other than timeout), enters a reconnect loop that retries
-/// every 3 seconds until the port reappears or `closed` is set.
-///
-/// # Arguments
-///
-/// * `config` — Pre-parsed serial config (used for initial open and reconnects).
-/// * `ring_buffer` — Shared ring buffer for 24/7 data capture.
-/// * `alive` — Set to `true` while the port is connected, `false`
-///   during disconnect/reconnect.
-/// * `closed` — Set to `true` by the caller to request shutdown.
-/// * `output_fn` — Called with each chunk of received bytes. Consumers
-///   decide whether to forward (e.g., only when attached).
-/// * `status_fn` — Called on connection state changes.
-pub fn serial_reader_loop(
-    config: &ParsedSerialConfig,
-    ring_buffer: Arc<Mutex<RingBuffer>>,
-    alive: Arc<AtomicBool>,
-    closed: Arc<AtomicBool>,
-    output_fn: impl Fn(&[u8]) + Send,
-    status_fn: impl Fn(SerialStatus) + Send,
-) {
-    // --- Initial open ---------------------------------------------------
-    let port = match open_serial_port(config) {
-        Ok(p) => p,
-        Err(e) => {
-            status_fn(SerialStatus::Error(e.to_string()));
-            alive.store(false, Ordering::SeqCst);
-            // Fall directly into the reconnect loop
-            reconnect_loop_inner(
-                config,
-                &ring_buffer,
-                &alive,
-                &closed,
-                &output_fn,
-                &status_fn,
-            );
-            return;
-        }
-    };
-
-    let mut reader = match port.try_clone() {
-        Ok(r) => r,
-        Err(e) => {
-            status_fn(SerialStatus::Error(format!(
-                "Failed to clone serial port: {}",
-                e
-            )));
-            alive.store(false, Ordering::SeqCst);
-            return;
-        }
-    };
-
-    alive.store(true, Ordering::SeqCst);
-    status_fn(SerialStatus::Connected);
-
-    read_loop(
-        config,
-        &mut reader,
-        &ring_buffer,
-        &alive,
-        &closed,
-        &output_fn,
-        &status_fn,
-    );
-
-    alive.store(false, Ordering::SeqCst);
-}
-
-/// Core read loop — extracted so it can be re-entered after reconnection.
-fn read_loop(
-    config: &ParsedSerialConfig,
-    reader: &mut Box<dyn serialport::SerialPort>,
-    ring_buffer: &Arc<Mutex<RingBuffer>>,
-    alive: &Arc<AtomicBool>,
-    closed: &Arc<AtomicBool>,
-    output_fn: &(impl Fn(&[u8]) + Send),
-    status_fn: &(impl Fn(SerialStatus) + Send),
-) {
-    let mut buf = [0u8; 1024];
-
-    loop {
-        if closed.load(Ordering::SeqCst) {
-            return;
-        }
-
-        match reader.read(&mut buf) {
-            Ok(0) => {
-                // EOF — port closed
-                return;
-            }
-            Ok(n) => {
-                let data = &buf[..n];
-
-                // Always store in ring buffer
-                {
-                    let mut rb = ring_buffer.lock().unwrap();
-                    rb.write(data);
-                }
-
-                output_fn(data);
-            }
-            Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                continue;
-            }
-            Err(e) => {
-                alive.store(false, Ordering::SeqCst);
-                status_fn(SerialStatus::Disconnected);
-                status_fn(SerialStatus::Error(e.to_string()));
-
-                // Attempt reconnection
-                reconnect_loop_inner(config, ring_buffer, alive, closed, output_fn, status_fn);
-                return;
-            }
-        }
-    }
-}
-
-/// Retry opening the serial port every [`RECONNECT_INTERVAL`] until
-/// success or `closed` is set. On success, enters the read loop.
-fn reconnect_loop_inner(
-    config: &ParsedSerialConfig,
-    ring_buffer: &Arc<Mutex<RingBuffer>>,
-    alive: &Arc<AtomicBool>,
-    closed: &Arc<AtomicBool>,
-    output_fn: &(impl Fn(&[u8]) + Send),
-    status_fn: &(impl Fn(SerialStatus) + Send),
-) {
-    loop {
-        if closed.load(Ordering::SeqCst) {
-            return;
-        }
-
-        std::thread::sleep(RECONNECT_INTERVAL);
-
-        if closed.load(Ordering::SeqCst) {
-            return;
-        }
-
-        status_fn(SerialStatus::Reconnecting);
-
-        match open_serial_port(config) {
-            Ok(new_port) => match new_port.try_clone() {
-                Ok(mut new_reader) => {
-                    alive.store(true, Ordering::SeqCst);
-                    status_fn(SerialStatus::Connected);
-
-                    read_loop(
-                        config,
-                        &mut new_reader,
-                        ring_buffer,
-                        alive,
-                        closed,
-                        output_fn,
-                        status_fn,
-                    );
-                    return;
-                }
-                Err(_) => continue,
-            },
-            Err(_) => continue,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // --- parse_serial_config tests ---------------------------------------
 
     fn make_config(port: &str) -> SerialConfig {
         SerialConfig {
@@ -471,10 +287,10 @@ mod tests {
         let parsed = parse_serial_config(&cfg).unwrap();
         assert_eq!(parsed.port, "/dev/ttyUSB0");
         assert_eq!(parsed.baud_rate, 115200);
-        assert_eq!(parsed.data_bits, serialport::DataBits::Eight);
-        assert_eq!(parsed.stop_bits, serialport::StopBits::One);
-        assert_eq!(parsed.parity, serialport::Parity::None);
-        assert_eq!(parsed.flow_control, serialport::FlowControl::None);
+        assert_eq!(parsed.char_size, serial2::CharSize::Bits8);
+        assert_eq!(parsed.stop_bits, serial2::StopBits::One);
+        assert_eq!(parsed.parity, serial2::Parity::None);
+        assert_eq!(parsed.flow_control, serial2::FlowControl::None);
     }
 
     #[test]
@@ -485,7 +301,7 @@ mod tests {
             ..SerialConfig::default()
         };
         let parsed = parse_serial_config(&cfg).unwrap();
-        assert_eq!(parsed.data_bits, serialport::DataBits::Five);
+        assert_eq!(parsed.char_size, serial2::CharSize::Bits5);
     }
 
     #[test]
@@ -496,7 +312,7 @@ mod tests {
             ..SerialConfig::default()
         };
         let parsed = parse_serial_config(&cfg).unwrap();
-        assert_eq!(parsed.data_bits, serialport::DataBits::Six);
+        assert_eq!(parsed.char_size, serial2::CharSize::Bits6);
     }
 
     #[test]
@@ -507,7 +323,7 @@ mod tests {
             ..SerialConfig::default()
         };
         let parsed = parse_serial_config(&cfg).unwrap();
-        assert_eq!(parsed.data_bits, serialport::DataBits::Seven);
+        assert_eq!(parsed.char_size, serial2::CharSize::Bits7);
     }
 
     #[test]
@@ -518,7 +334,7 @@ mod tests {
             ..SerialConfig::default()
         };
         let parsed = parse_serial_config(&cfg).unwrap();
-        assert_eq!(parsed.data_bits, serialport::DataBits::Eight);
+        assert_eq!(parsed.char_size, serial2::CharSize::Bits8);
     }
 
     #[test]
@@ -529,7 +345,7 @@ mod tests {
             ..SerialConfig::default()
         };
         let parsed = parse_serial_config(&cfg).unwrap();
-        assert_eq!(parsed.data_bits, serialport::DataBits::Eight);
+        assert_eq!(parsed.char_size, serial2::CharSize::Bits8);
     }
 
     #[test]
@@ -540,7 +356,7 @@ mod tests {
             ..SerialConfig::default()
         };
         let parsed = parse_serial_config(&cfg).unwrap();
-        assert_eq!(parsed.stop_bits, serialport::StopBits::One);
+        assert_eq!(parsed.stop_bits, serial2::StopBits::One);
     }
 
     #[test]
@@ -551,7 +367,7 @@ mod tests {
             ..SerialConfig::default()
         };
         let parsed = parse_serial_config(&cfg).unwrap();
-        assert_eq!(parsed.stop_bits, serialport::StopBits::Two);
+        assert_eq!(parsed.stop_bits, serial2::StopBits::Two);
     }
 
     #[test]
@@ -562,7 +378,7 @@ mod tests {
             ..SerialConfig::default()
         };
         let parsed = parse_serial_config(&cfg).unwrap();
-        assert_eq!(parsed.stop_bits, serialport::StopBits::One);
+        assert_eq!(parsed.stop_bits, serial2::StopBits::One);
     }
 
     #[test]
@@ -573,7 +389,7 @@ mod tests {
             ..SerialConfig::default()
         };
         let parsed = parse_serial_config(&cfg).unwrap();
-        assert_eq!(parsed.parity, serialport::Parity::None);
+        assert_eq!(parsed.parity, serial2::Parity::None);
     }
 
     #[test]
@@ -584,7 +400,7 @@ mod tests {
             ..SerialConfig::default()
         };
         let parsed = parse_serial_config(&cfg).unwrap();
-        assert_eq!(parsed.parity, serialport::Parity::Odd);
+        assert_eq!(parsed.parity, serial2::Parity::Odd);
     }
 
     #[test]
@@ -595,7 +411,7 @@ mod tests {
             ..SerialConfig::default()
         };
         let parsed = parse_serial_config(&cfg).unwrap();
-        assert_eq!(parsed.parity, serialport::Parity::Even);
+        assert_eq!(parsed.parity, serial2::Parity::Even);
     }
 
     #[test]
@@ -606,7 +422,7 @@ mod tests {
             ..SerialConfig::default()
         };
         let parsed = parse_serial_config(&cfg).unwrap();
-        assert_eq!(parsed.parity, serialport::Parity::None);
+        assert_eq!(parsed.parity, serial2::Parity::None);
     }
 
     #[test]
@@ -617,7 +433,7 @@ mod tests {
             ..SerialConfig::default()
         };
         let parsed = parse_serial_config(&cfg).unwrap();
-        assert_eq!(parsed.flow_control, serialport::FlowControl::None);
+        assert_eq!(parsed.flow_control, serial2::FlowControl::None);
     }
 
     #[test]
@@ -628,7 +444,7 @@ mod tests {
             ..SerialConfig::default()
         };
         let parsed = parse_serial_config(&cfg).unwrap();
-        assert_eq!(parsed.flow_control, serialport::FlowControl::Hardware);
+        assert_eq!(parsed.flow_control, serial2::FlowControl::RtsCts);
     }
 
     #[test]
@@ -639,7 +455,7 @@ mod tests {
             ..SerialConfig::default()
         };
         let parsed = parse_serial_config(&cfg).unwrap();
-        assert_eq!(parsed.flow_control, serialport::FlowControl::Software);
+        assert_eq!(parsed.flow_control, serial2::FlowControl::XonXoff);
     }
 
     #[test]
@@ -650,12 +466,12 @@ mod tests {
             ..SerialConfig::default()
         };
         let parsed = parse_serial_config(&cfg).unwrap();
-        assert_eq!(parsed.flow_control, serialport::FlowControl::None);
+        assert_eq!(parsed.flow_control, serial2::FlowControl::None);
     }
 
     #[test]
     fn parse_empty_port_returns_error() {
-        let cfg = SerialConfig::default(); // port is empty
+        let cfg = SerialConfig::default();
         let result = parse_serial_config(&cfg);
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -690,19 +506,17 @@ mod tests {
         let parsed = parse_serial_config(&cfg).unwrap();
         assert_eq!(parsed.port, "/dev/ttyS0");
         assert_eq!(parsed.baud_rate, 9600);
-        assert_eq!(parsed.data_bits, serialport::DataBits::Seven);
-        assert_eq!(parsed.stop_bits, serialport::StopBits::Two);
-        assert_eq!(parsed.parity, serialport::Parity::Even);
-        assert_eq!(parsed.flow_control, serialport::FlowControl::Hardware);
+        assert_eq!(parsed.char_size, serial2::CharSize::Bits7);
+        assert_eq!(parsed.stop_bits, serial2::StopBits::Two);
+        assert_eq!(parsed.parity, serial2::Parity::Even);
+        assert_eq!(parsed.flow_control, serial2::FlowControl::RtsCts);
     }
 
     // --- list_serial_ports tests -----------------------------------------
 
     #[test]
     fn list_serial_ports_returns_vec() {
-        // Hardware-dependent — just verify it returns without panicking.
         let ports = list_serial_ports();
-        // ports may be empty on CI; that's fine.
         assert!(ports.len() < 10_000, "sanity check on port count");
     }
 
@@ -814,10 +628,10 @@ mod tests {
         let parsed = ParsedSerialConfig {
             port: "/dev/__nonexistent_serial_port__".into(),
             baud_rate: 115200,
-            data_bits: serialport::DataBits::Eight,
-            stop_bits: serialport::StopBits::One,
-            parity: serialport::Parity::None,
-            flow_control: serialport::FlowControl::None,
+            char_size: serial2::CharSize::Bits8,
+            stop_bits: serial2::StopBits::One,
+            parity: serial2::Parity::None,
+            flow_control: serial2::FlowControl::None,
         };
         let result = open_serial_port(&parsed);
         assert!(result.is_err());
@@ -827,37 +641,5 @@ mod tests {
             "expected SpawnFailed, got: {:?}",
             err
         );
-    }
-
-    // --- SerialStatus tests ----------------------------------------------
-
-    #[test]
-    fn serial_status_equality() {
-        assert_eq!(SerialStatus::Connected, SerialStatus::Connected);
-        assert_eq!(SerialStatus::Disconnected, SerialStatus::Disconnected);
-        assert_eq!(SerialStatus::Reconnecting, SerialStatus::Reconnecting);
-        assert_eq!(
-            SerialStatus::Error("oops".into()),
-            SerialStatus::Error("oops".into())
-        );
-        assert_ne!(SerialStatus::Connected, SerialStatus::Disconnected);
-        assert_ne!(
-            SerialStatus::Error("a".into()),
-            SerialStatus::Error("b".into())
-        );
-    }
-
-    #[test]
-    fn serial_status_clone() {
-        let s = SerialStatus::Error("test".into());
-        let cloned = s.clone();
-        assert_eq!(s, cloned);
-    }
-
-    #[test]
-    fn serial_status_debug() {
-        let s = SerialStatus::Connected;
-        let debug = format!("{:?}", s);
-        assert!(debug.contains("Connected"));
     }
 }

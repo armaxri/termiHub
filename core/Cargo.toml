@@ -17,7 +17,8 @@ socket2 = { version = "0.5", features = ["all"] }
 ipnet = "2.10"
 pnet_packet = "0.35"
 rand = "0.8"
-serialport = { workspace = true, optional = true }
+serial2 = { workspace = true, optional = true }
+serial2-tokio = { workspace = true, optional = true }
 portable-pty = { version = "0.8", optional = true }
 tracing = { version = "0.1", optional = true }
 russh = { workspace = true, optional = true }
@@ -37,7 +38,7 @@ russh = { workspace = true }
 
 [features]
 default = []
-serial = ["dep:serialport", "dep:tracing"]
+serial = ["dep:serial2", "dep:serial2-tokio", "dep:tracing"]
 local-shell = ["dep:portable-pty", "dep:tracing"]
 telnet = ["dep:tracing"]
 ssh = ["dep:russh", "dep:russh-keys", "dep:russh-sftp", "dep:tracing"]
