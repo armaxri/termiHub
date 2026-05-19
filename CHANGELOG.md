@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Breaking — Connection config placeholders**: environment-variable placeholders in connection fields have changed from `${env:VAR}` to standard shell syntax `${VAR}` (also `$VAR`), now backed by the [`shellexpand`](https://crates.io/crates/shellexpand) crate. Unknown variables now expand to an empty string instead of being left as the literal placeholder. Existing connections that used `${env:VAR}` must be edited to use `${VAR}`. Tilde expansion (`~` / `~/...`) is unchanged. Closes #726.
 - Agent: the hand-rolled JSON-RPC 2.0 dispatch layer (~5 k LOC) has been replaced by [`jsonrpsee`](https://crates.io/crates/jsonrpsee) 0.24. All 35 protocol methods are now registered via `RpcModule`; routing, error formatting, and response serialisation are handled by the library. Custom request/response/error structs in `core/src/protocol/` have been removed; only `JsonRpcNotification` (agent → desktop push) remains. Closes #727.
-- Core: the internal `RingBuffer` (1 MiB capture buffer used by serial sessions and the agent daemon) is now backed by the [`ringbuf`](https://crates.io/crates/ringbuf) crate (`HeapRb<u8>`) instead of a custom circular-byte-buffer implementation. Public API is unchanged.
+- Core: the internal `RingBuffer` (1 MiB capture buffer used by serial sessions and the agent daemon) is now backed by the [`ringbuf`](https://crates.io/crates/ringbuf) crate (`HeapRb<u8>`) instead of a custom circular-byte-buffer implementation. Public API is unchanged. The wrapper now uses `HeapRb` directly (no producer/consumer split) and delegates `write()` to `push_slice_overwrite`, reducing the implementation from ~60 to ~40 lines.
 
 ### Added
 
