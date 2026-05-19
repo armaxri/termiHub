@@ -1,22 +1,23 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use ssh2::Session;
+use termihub_core::backends::ssh::handler::{ForwardedChannelRegistry, SshSession};
 
 use crate::terminal::backend::SshConfig;
 use crate::utils::errors::TerminalError;
-use crate::utils::ssh_auth::connect_and_authenticate;
+use crate::utils::ssh_auth::connect_with_registry;
 
 /// A pooled SSH session with a reference count.
 struct PooledSession {
-    session: Arc<Mutex<Session>>,
+    session: Arc<SshSession>,
+    registry: ForwardedChannelRegistry,
     ref_count: usize,
 }
 
-/// Shares SSH sessions across tunnels using the same SSH connection.
+/// Shares SSH sessions across local and dynamic forwarding tunnels on the same SSH connection.
 ///
-/// Sessions are identified by connection ID. Multiple tunnels sharing the
-/// same SSH connection will reuse a single `Session`, tracked by reference count.
+/// Sessions are wrapped in `Arc` so they can be shared across async tasks without cloning the
+/// underlying `Handle`. Remote forwarding tunnels manage their own dedicated sessions.
 pub struct SshSessionPool {
     sessions: HashMap<String, PooledSession>,
 }
@@ -31,30 +32,31 @@ impl SshSessionPool {
     /// Get or create an SSH session for the given connection.
     ///
     /// If a session already exists for this connection ID, the reference count
-    /// is incremented and the existing session is returned. Otherwise, a new
-    /// SSH connection is established.
+    /// is incremented and the `Arc` is cloned. Otherwise, a new SSH connection
+    /// is established and wrapped in `Arc`.
     pub fn get_or_create(
         &mut self,
         connection_id: &str,
         config: &SshConfig,
-    ) -> Result<Arc<Mutex<Session>>, TerminalError> {
+    ) -> Result<(Arc<SshSession>, ForwardedChannelRegistry), TerminalError> {
         if let Some(pooled) = self.sessions.get_mut(connection_id) {
             pooled.ref_count += 1;
-            return Ok(Arc::clone(&pooled.session));
+            return Ok((Arc::clone(&pooled.session), pooled.registry.clone()));
         }
 
-        let session = connect_and_authenticate(config)?;
-        let arc_session = Arc::new(Mutex::new(session));
+        let (session, registry) = connect_with_registry(config)?;
+        let arc_session = Arc::new(session);
 
         self.sessions.insert(
             connection_id.to_string(),
             PooledSession {
                 session: Arc::clone(&arc_session),
+                registry: registry.clone(),
                 ref_count: 1,
             },
         );
 
-        Ok(arc_session)
+        Ok((arc_session, registry))
     }
 
     /// Release a reference to a pooled session.

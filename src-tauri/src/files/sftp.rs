@@ -1,29 +1,27 @@
 use std::collections::HashMap;
-use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 
-use ssh2::{Session, Sftp};
+use russh_sftp::client::SftpSession as RusshSftp;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, info};
 
-use crate::terminal::backend::SshConfig;
-use crate::utils::errors::TerminalError;
-use crate::utils::ssh_auth::connect_and_authenticate;
+use termihub_core::backends::ssh::handler::SshSession;
 use termihub_core::errors::FileError;
 use termihub_core::files::utils::{chrono_from_epoch, format_permissions};
 use termihub_core::files::{FileBackend, FileEntry};
 
-/// Legacy SFTP session wrapping a dedicated SSH connection.
-///
-/// Uses blocking mode — each SFTP session opens its own SSH connection
-/// to avoid conflicts with the terminal session's non-blocking mode.
+use crate::terminal::backend::SshConfig;
+use crate::utils::errors::TerminalError;
+use crate::utils::ssh_auth::connect_and_authenticate;
+
+/// SFTP session backed by a dedicated SSH connection.
 ///
 /// The canonical implementation is now
-/// [`termihub_core::backends::ssh::SftpFileBrowser`](termihub_core::backends::ssh)
-/// which implements the unified `FileBrowser` trait. This struct will be
-/// removed once file browsing is migrated to use `ConnectionType`.
+/// [`termihub_core::backends::ssh::SftpFileBrowser`](termihub_core::backends::ssh).
+/// This struct is kept for the legacy SFTP command API used by the desktop file browser.
 pub struct SftpSession {
-    _session: Session,
-    sftp: Sftp,
+    _session: SshSession,
+    sftp: RusshSftp,
 }
 
 impl SftpSession {
@@ -31,12 +29,22 @@ impl SftpSession {
     pub fn new(config: &SshConfig) -> Result<Self, TerminalError> {
         info!(host = %config.host, port = config.port, "Opening SFTP connection");
         let session = connect_and_authenticate(config)?;
-        // Keep blocking mode for SFTP operations
-        session.set_blocking(true);
 
-        let sftp = session
-            .sftp()
-            .map_err(|e| TerminalError::SshError(format!("SFTP init failed: {}", e)))?;
+        let sftp = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                let channel = session
+                    .channel_open_session()
+                    .await
+                    .map_err(|e| TerminalError::SshError(format!("SFTP channel open: {e}")))?;
+                channel
+                    .request_subsystem(true, "sftp")
+                    .await
+                    .map_err(|e| TerminalError::SshError(format!("SFTP subsystem request: {e}")))?;
+                RusshSftp::new(channel.into_stream())
+                    .await
+                    .map_err(|e| TerminalError::SshError(format!("SFTP init: {e}")))
+            })
+        })?;
 
         Ok(Self {
             _session: session,
@@ -47,137 +55,152 @@ impl SftpSession {
     /// List directory contents, filtering out `.` and `..`.
     pub fn list_dir(&self, path: &str) -> Result<Vec<FileEntry>, TerminalError> {
         debug!(path, "SFTP listing directory");
-        let dir = std::path::Path::new(path);
-        let entries = self
-            .sftp
-            .readdir(dir)
-            .map_err(|e| TerminalError::SshError(format!("readdir failed: {}", e)))?;
+        let path = path.to_string();
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                let entries = self
+                    .sftp
+                    .read_dir(&path)
+                    .await
+                    .map_err(|e| TerminalError::SshError(format!("readdir failed: {e}")))?;
 
-        let mut result = Vec::new();
-        for (pathbuf, stat) in entries {
-            let name = pathbuf
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default();
-
-            if name == "." || name == ".." {
-                continue;
-            }
-
-            let is_directory = stat.is_dir();
-            let size = stat.size.unwrap_or(0);
-            let modified = stat.mtime.map(chrono_from_epoch).unwrap_or_default();
-            let permissions = stat.perm.map(format_permissions);
-
-            result.push(FileEntry {
-                name,
-                path: pathbuf.to_string_lossy().to_string(),
-                is_directory,
-                size,
-                modified,
-                permissions,
-            });
-        }
-
-        Ok(result)
+                let mut result = Vec::new();
+                for entry in entries {
+                    let name = entry.file_name();
+                    if name == "." || name == ".." {
+                        continue;
+                    }
+                    let meta = entry.metadata();
+                    let full_path = format!("{}/{}", path.trim_end_matches('/'), name);
+                    result.push(FileEntry {
+                        name,
+                        path: full_path,
+                        is_directory: meta.is_dir(),
+                        size: meta.size.unwrap_or(0),
+                        modified: meta
+                            .mtime
+                            .map(|t| chrono_from_epoch(t as u64))
+                            .unwrap_or_default(),
+                        permissions: meta.permissions.map(format_permissions),
+                    });
+                }
+                Ok::<Vec<FileEntry>, TerminalError>(result)
+            })
+        })
     }
 
     /// Download a remote file to a local path. Returns bytes written.
     pub fn read_file(&self, remote_path: &str, local_path: &str) -> Result<u64, TerminalError> {
-        let remote = std::path::Path::new(remote_path);
-        let mut remote_file = self
-            .sftp
-            .open(remote)
-            .map_err(|e| TerminalError::SshError(format!("open remote file failed: {}", e)))?;
+        let remote_path = remote_path.to_string();
+        let local_path = local_path.to_string();
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                let mut remote = self
+                    .sftp
+                    .open(&remote_path)
+                    .await
+                    .map_err(|e| TerminalError::SshError(format!("open remote file: {e}")))?;
 
-        let mut local_file = std::fs::File::create(local_path)
-            .map_err(|e| TerminalError::SshError(format!("create local file failed: {}", e)))?;
+                let mut data = Vec::new();
+                remote
+                    .read_to_end(&mut data)
+                    .await
+                    .map_err(|e| TerminalError::SshError(format!("read failed: {e}")))?;
 
-        let mut buf = [0u8; 32768];
-        let mut total: u64 = 0;
-        loop {
-            let n = remote_file
-                .read(&mut buf)
-                .map_err(|e| TerminalError::SshError(format!("read failed: {}", e)))?;
-            if n == 0 {
-                break;
-            }
-            local_file
-                .write_all(&buf[..n])
-                .map_err(|e| TerminalError::SshError(format!("write failed: {}", e)))?;
-            total += n as u64;
-        }
+                tokio::fs::write(&local_path, &data)
+                    .await
+                    .map_err(|e| TerminalError::SshError(format!("write local file: {e}")))?;
 
-        Ok(total)
+                Ok::<u64, TerminalError>(data.len() as u64)
+            })
+        })
     }
 
     /// Upload a local file to a remote path. Returns bytes written.
     pub fn write_file(&self, local_path: &str, remote_path: &str) -> Result<u64, TerminalError> {
-        let remote = std::path::Path::new(remote_path);
-        let mut remote_file = self
-            .sftp
-            .create(remote)
-            .map_err(|e| TerminalError::SshError(format!("create remote file failed: {}", e)))?;
+        let local_path = local_path.to_string();
+        let remote_path = remote_path.to_string();
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                let data = tokio::fs::read(&local_path)
+                    .await
+                    .map_err(|e| TerminalError::SshError(format!("open local file: {e}")))?;
 
-        let mut local_file = std::fs::File::open(local_path)
-            .map_err(|e| TerminalError::SshError(format!("open local file failed: {}", e)))?;
+                let mut remote = self
+                    .sftp
+                    .create(&remote_path)
+                    .await
+                    .map_err(|e| TerminalError::SshError(format!("create remote file: {e}")))?;
 
-        let mut buf = [0u8; 32768];
-        let mut total: u64 = 0;
-        loop {
-            let n = local_file
-                .read(&mut buf)
-                .map_err(|e| TerminalError::SshError(format!("read failed: {}", e)))?;
-            if n == 0 {
-                break;
-            }
-            remote_file
-                .write_all(&buf[..n])
-                .map_err(|e| TerminalError::SshError(format!("write failed: {}", e)))?;
-            total += n as u64;
-        }
+                remote
+                    .write_all(&data)
+                    .await
+                    .map_err(|e| TerminalError::SshError(format!("write failed: {e}")))?;
 
-        Ok(total)
+                Ok::<u64, TerminalError>(data.len() as u64)
+            })
+        })
     }
 
     /// Create a directory on the remote host.
     pub fn mkdir(&self, path: &str) -> Result<(), TerminalError> {
-        let dir = std::path::Path::new(path);
-        self.sftp
-            .mkdir(dir, 0o755)
-            .map_err(|e| TerminalError::SshError(format!("mkdir failed: {}", e)))
+        let path = path.to_string();
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                self.sftp
+                    .create_dir(&path)
+                    .await
+                    .map_err(|e| TerminalError::SshError(format!("mkdir failed: {e}")))
+            })
+        })
     }
 
     /// Remove a file on the remote host.
     pub fn remove_file(&self, path: &str) -> Result<(), TerminalError> {
-        let file = std::path::Path::new(path);
-        self.sftp
-            .unlink(file)
-            .map_err(|e| TerminalError::SshError(format!("unlink failed: {}", e)))
+        let path = path.to_string();
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                self.sftp
+                    .remove_file(&path)
+                    .await
+                    .map_err(|e| TerminalError::SshError(format!("unlink failed: {e}")))
+            })
+        })
     }
 
     /// Remove an empty directory on the remote host.
     pub fn remove_dir(&self, path: &str) -> Result<(), TerminalError> {
-        let dir = std::path::Path::new(path);
-        self.sftp
-            .rmdir(dir)
-            .map_err(|e| TerminalError::SshError(format!("rmdir failed: {}", e)))
+        let path = path.to_string();
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                self.sftp
+                    .remove_dir(&path)
+                    .await
+                    .map_err(|e| TerminalError::SshError(format!("rmdir failed: {e}")))
+            })
+        })
     }
 
     /// Read a remote file's contents as a UTF-8 string.
     pub fn read_file_content(&self, remote_path: &str) -> Result<String, TerminalError> {
-        let remote = std::path::Path::new(remote_path);
-        let mut remote_file = self
-            .sftp
-            .open(remote)
-            .map_err(|e| TerminalError::SshError(format!("open remote file failed: {}", e)))?;
+        let remote_path = remote_path.to_string();
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                let mut remote = self
+                    .sftp
+                    .open(&remote_path)
+                    .await
+                    .map_err(|e| TerminalError::SshError(format!("open remote file: {e}")))?;
 
-        let mut content = String::new();
-        remote_file
-            .read_to_string(&mut content)
-            .map_err(|e| TerminalError::SshError(format!("read failed: {}", e)))?;
+                let mut content = String::new();
+                remote
+                    .read_to_string(&mut content)
+                    .await
+                    .map_err(|e| TerminalError::SshError(format!("read failed: {e}")))?;
 
-        Ok(content)
+                Ok::<String, TerminalError>(content)
+            })
+        })
     }
 
     /// Write a string to a remote file, creating or overwriting it.
@@ -186,87 +209,97 @@ impl SftpSession {
         remote_path: &str,
         content: &str,
     ) -> Result<(), TerminalError> {
-        let remote = std::path::Path::new(remote_path);
-        let mut remote_file = self
-            .sftp
-            .create(remote)
-            .map_err(|e| TerminalError::SshError(format!("create remote file failed: {}", e)))?;
-
-        remote_file
-            .write_all(content.as_bytes())
-            .map_err(|e| TerminalError::SshError(format!("write failed: {}", e)))?;
-
-        Ok(())
+        self.write_bytes(remote_path, content.as_bytes())
     }
 
     /// Rename a file or directory on the remote host.
     pub fn rename(&self, old_path: &str, new_path: &str) -> Result<(), TerminalError> {
-        let old = std::path::Path::new(old_path);
-        let new = std::path::Path::new(new_path);
-        self.sftp
-            .rename(old, new, None)
-            .map_err(|e| TerminalError::SshError(format!("rename failed: {}", e)))
+        let old_path = old_path.to_string();
+        let new_path = new_path.to_string();
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                self.sftp
+                    .rename(&old_path, &new_path)
+                    .await
+                    .map_err(|e| TerminalError::SshError(format!("rename failed: {e}")))
+            })
+        })
     }
 
     /// Get metadata for a single file or directory.
     #[allow(dead_code)]
     pub fn stat(&self, path: &str) -> Result<FileEntry, TerminalError> {
-        let p = std::path::Path::new(path);
-        let file_stat = self
-            .sftp
-            .stat(p)
-            .map_err(|e| TerminalError::SshError(format!("stat failed: {}", e)))?;
+        let path = path.to_string();
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                let meta = self
+                    .sftp
+                    .metadata(&path)
+                    .await
+                    .map_err(|e| TerminalError::SshError(format!("stat failed: {e}")))?;
 
-        let name = p
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
-        let is_directory = file_stat.is_dir();
-        let size = file_stat.size.unwrap_or(0);
-        let modified = file_stat.mtime.map(chrono_from_epoch).unwrap_or_default();
-        let permissions = file_stat.perm.map(format_permissions);
+                let name = std::path::Path::new(&path)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
 
-        Ok(FileEntry {
-            name,
-            path: path.to_string(),
-            is_directory,
-            size,
-            modified,
-            permissions,
+                Ok::<FileEntry, TerminalError>(FileEntry {
+                    name,
+                    path,
+                    is_directory: meta.is_dir(),
+                    size: meta.size.unwrap_or(0),
+                    modified: meta
+                        .mtime
+                        .map(|t| chrono_from_epoch(t as u64))
+                        .unwrap_or_default(),
+                    permissions: meta.permissions.map(format_permissions),
+                })
+            })
         })
     }
 
     /// Read a remote file's contents as raw bytes.
     #[allow(dead_code)]
     pub fn read_bytes(&self, remote_path: &str) -> Result<Vec<u8>, TerminalError> {
-        let remote = std::path::Path::new(remote_path);
-        let mut remote_file = self
-            .sftp
-            .open(remote)
-            .map_err(|e| TerminalError::SshError(format!("open remote file failed: {}", e)))?;
+        let remote_path = remote_path.to_string();
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                let mut remote = self
+                    .sftp
+                    .open(&remote_path)
+                    .await
+                    .map_err(|e| TerminalError::SshError(format!("open remote file: {e}")))?;
 
-        let mut data = Vec::new();
-        remote_file
-            .read_to_end(&mut data)
-            .map_err(|e| TerminalError::SshError(format!("read failed: {}", e)))?;
+                let mut data = Vec::new();
+                remote
+                    .read_to_end(&mut data)
+                    .await
+                    .map_err(|e| TerminalError::SshError(format!("read failed: {e}")))?;
 
-        Ok(data)
+                Ok::<Vec<u8>, TerminalError>(data)
+            })
+        })
     }
 
     /// Write raw bytes to a remote file, creating or overwriting it.
     #[allow(dead_code)]
     pub fn write_bytes(&self, remote_path: &str, data: &[u8]) -> Result<(), TerminalError> {
-        let remote = std::path::Path::new(remote_path);
-        let mut remote_file = self
-            .sftp
-            .create(remote)
-            .map_err(|e| TerminalError::SshError(format!("create remote file failed: {}", e)))?;
+        let data = data.to_vec();
+        let remote_path = remote_path.to_string();
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                let mut remote = self
+                    .sftp
+                    .create(&remote_path)
+                    .await
+                    .map_err(|e| TerminalError::SshError(format!("create remote file: {e}")))?;
 
-        remote_file
-            .write_all(data)
-            .map_err(|e| TerminalError::SshError(format!("write failed: {}", e)))?;
-
-        Ok(())
+                remote
+                    .write_all(&data)
+                    .await
+                    .map_err(|e| TerminalError::SshError(format!("write failed: {e}")))
+            })
+        })
     }
 }
 
@@ -277,11 +310,6 @@ fn terminal_error_to_file_error(e: TerminalError) -> FileError {
 }
 
 /// Async file backend implementation backed by an SFTP session.
-///
-/// Wraps an `Arc<Mutex<SftpSession>>` and implements the core [`FileBackend`]
-/// trait. Each async method offloads the blocking SFTP call to
-/// `tauri::async_runtime::spawn_blocking` to avoid blocking the async
-/// executor.
 #[allow(dead_code)]
 pub struct SftpFileBackend {
     session: Arc<Mutex<SftpSession>>,
@@ -289,7 +317,6 @@ pub struct SftpFileBackend {
 
 #[allow(dead_code)]
 impl SftpFileBackend {
-    /// Create a new file backend from an existing SFTP session.
     pub fn new(session: Arc<Mutex<SftpSession>>) -> Self {
         Self { session }
     }

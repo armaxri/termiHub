@@ -18,12 +18,14 @@ use termihub_core::backends::ssh::auth::connect_and_authenticate;
 /// command name does NOT find it, while the `$HOME/…` full path does.
 ///
 /// This reproduces the exact failure mode of #406.
-#[test]
-fn ssh_exec_bare_name_not_in_path() {
+#[tokio::test]
+async fn ssh_exec_bare_name_not_in_path() {
     require_docker!(PORT_SSH_PASSWORD);
 
     let config = ssh_password_config(PORT_SSH_PASSWORD);
-    let session = connect_and_authenticate(&config).expect("SSH auth should succeed");
+    let (session, _) = connect_and_authenticate(&config)
+        .await
+        .expect("SSH auth should succeed");
 
     // 1. Create a dummy script at ~/.local/bin/termihub-test-probe
     let setup = ssh_exec(
@@ -33,11 +35,12 @@ fn ssh_exec_bare_name_not_in_path() {
          chmod +x \"$HOME/.local/bin/termihub-test-probe\" && \
          echo setup-done",
     )
+    .await
     .expect("setup should succeed");
     assert!(setup.trim().contains("setup-done"), "Setup failed: {setup}");
 
     // 2. Bare command name — should NOT be in PATH for non-interactive exec
-    let bare_result = ssh_exec(&session, "termihub-test-probe 2>&1 || echo BARE_FAILED");
+    let bare_result = ssh_exec(&session, "termihub-test-probe 2>&1 || echo BARE_FAILED").await;
     let bare_output = bare_result.unwrap_or_default();
     assert!(
         bare_output.contains("BARE_FAILED") || bare_output.contains("not found"),
@@ -48,7 +51,8 @@ fn ssh_exec_bare_name_not_in_path() {
     let full_result = ssh_exec(
         &session,
         "$HOME/.local/bin/termihub-test-probe 2>&1 || echo FULL_FAILED",
-    );
+    )
+    .await;
     let full_output = full_result.expect("full path exec should succeed");
     assert!(
         full_output.contains("probe-ok"),
@@ -56,5 +60,5 @@ fn ssh_exec_bare_name_not_in_path() {
     );
 
     // 4. Cleanup
-    let _ = ssh_exec(&session, "rm -f \"$HOME/.local/bin/termihub-test-probe\"");
+    let _ = ssh_exec(&session, "rm -f \"$HOME/.local/bin/termihub-test-probe\"").await;
 }

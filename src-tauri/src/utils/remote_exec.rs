@@ -1,40 +1,56 @@
 /// Shared SSH remote execution and SFTP upload utilities.
 ///
-/// Extracted from `agent_setup.rs` so that both setup and deployment
-/// modules can reuse the same functions.
+/// All functions accept a [`SshSession`] (russh `Handle`) and bridge the
+/// async russh API to synchronous callers via `block_in_place` + `block_on`.
 use std::fmt;
-use std::io::Read;
 
-use ssh2::Session;
+use russh::ChannelMsg;
+use russh_sftp::client::SftpSession;
 use tracing::debug;
+
+use termihub_core::backends::ssh::handler::SshSession;
 
 use crate::utils::errors::TerminalError;
 
 // ── Remote command execution ─────────────────────────────────────────
 
 /// Run a single command on the remote host and return trimmed stdout.
-pub fn run_remote_command(session: &Session, command: &str) -> Result<String, TerminalError> {
+pub fn run_remote_command(session: &SshSession, command: &str) -> Result<String, TerminalError> {
     debug!(command, "Executing remote command");
-    let mut channel = session
-        .channel_session()
-        .map_err(|e| TerminalError::SshError(format!("channel open failed: {}", e)))?;
-    channel
-        .exec(command)
-        .map_err(|e| TerminalError::SshError(format!("exec failed: {}", e)))?;
+    let result = tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current().block_on(async {
+            let mut channel = session
+                .channel_open_session()
+                .await
+                .map_err(|e| TerminalError::SshError(format!("channel open failed: {e}")))?;
 
-    let mut output = String::new();
-    channel
-        .read_to_string(&mut output)
-        .map_err(|e| TerminalError::SshError(format!("read failed: {}", e)))?;
-    channel.wait_close().ok();
+            channel
+                .exec(false, command)
+                .await
+                .map_err(|e| TerminalError::SshError(format!("exec failed: {e}")))?;
 
-    let result = output.trim().to_string();
+            let mut output = String::new();
+            loop {
+                match channel.wait().await {
+                    Some(ChannelMsg::Data { ref data }) => {
+                        if let Ok(s) = std::str::from_utf8(data) {
+                            output.push_str(s);
+                        }
+                    }
+                    Some(ChannelMsg::ExitStatus { .. }) => {}
+                    Some(ChannelMsg::Eof) | None => break,
+                    _ => {}
+                }
+            }
+            Ok::<String, TerminalError>(output.trim().to_string())
+        })
+    })?;
     debug!(command, result = %result, "Remote command completed");
     Ok(result)
 }
 
 /// Detect the remote OS and architecture via exec channel.
-pub fn detect_remote_info(session: &Session) -> Result<(String, String), TerminalError> {
+pub fn detect_remote_info(session: &SshSession) -> Result<(String, String), TerminalError> {
     let os = run_remote_command(session, "uname -s")?;
     let arch = run_remote_command(session, "uname -m")?;
     debug!(os, arch, "Detected remote system info");
@@ -44,61 +60,85 @@ pub fn detect_remote_info(session: &Session) -> Result<(String, String), Termina
 // ── SFTP upload ──────────────────────────────────────────────────────
 
 /// Upload a local file to a remote path via SFTP.
+///
+/// Opens a fresh SFTP subsystem on the session for the transfer. This avoids
+/// sharing a single SFTP session across threads.
 pub fn upload_via_sftp(
-    session: &Session,
+    session: &SshSession,
     local_path: &str,
     remote_path: &str,
 ) -> Result<u64, TerminalError> {
     debug!(local_path, remote_path, "Uploading file via SFTP");
-    let sftp = session
-        .sftp()
-        .map_err(|e| TerminalError::SshError(format!("SFTP init failed: {}", e)))?;
+    let local_path = local_path.to_string();
+    let remote_path = remote_path.to_string();
+    tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current().block_on(async {
+            let sftp = open_sftp(session).await?;
 
-    let remote = std::path::Path::new(remote_path);
-    let mut remote_file = sftp
-        .create(remote)
-        .map_err(|e| TerminalError::SshError(format!("create remote file failed: {}", e)))?;
+            let data = tokio::fs::read(&local_path)
+                .await
+                .map_err(|e| TerminalError::SpawnFailed(format!("open local file failed: {e}")))?;
 
-    let mut local_file = std::fs::File::open(local_path)
-        .map_err(|e| TerminalError::SpawnFailed(format!("open local file failed: {}", e)))?;
+            let mut remote = sftp
+                .create(&remote_path)
+                .await
+                .map_err(|e| TerminalError::SshError(format!("create remote file failed: {e}")))?;
 
-    let mut buf = [0u8; 32768];
-    let mut total: u64 = 0;
-    loop {
-        let n = local_file
-            .read(&mut buf)
-            .map_err(|e| TerminalError::SpawnFailed(format!("read failed: {}", e)))?;
-        if n == 0 {
-            break;
-        }
-        std::io::Write::write_all(&mut remote_file, &buf[..n])
-            .map_err(|e| TerminalError::SshError(format!("write failed: {}", e)))?;
-        total += n as u64;
-    }
+            use tokio::io::AsyncWriteExt;
+            remote
+                .write_all(&data)
+                .await
+                .map_err(|e| TerminalError::SshError(format!("write failed: {e}")))?;
 
-    Ok(total)
+            Ok::<u64, TerminalError>(data.len() as u64)
+        })
+    })
 }
 
 /// Upload in-memory bytes to a remote path via SFTP.
 pub fn upload_bytes_via_sftp(
-    session: &Session,
+    session: &SshSession,
     data: &[u8],
     remote_path: &str,
 ) -> Result<u64, TerminalError> {
     debug!(remote_path, size = data.len(), "Uploading bytes via SFTP");
-    let sftp = session
-        .sftp()
-        .map_err(|e| TerminalError::SshError(format!("SFTP init failed: {}", e)))?;
+    let data = data.to_vec();
+    let remote_path = remote_path.to_string();
+    tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current().block_on(async {
+            let sftp = open_sftp(session).await?;
 
-    let remote = std::path::Path::new(remote_path);
-    let mut remote_file = sftp
-        .create(remote)
-        .map_err(|e| TerminalError::SshError(format!("create remote file failed: {}", e)))?;
+            let mut remote = sftp
+                .create(&remote_path)
+                .await
+                .map_err(|e| TerminalError::SshError(format!("create remote file failed: {e}")))?;
 
-    std::io::Write::write_all(&mut remote_file, data)
-        .map_err(|e| TerminalError::SshError(format!("write failed: {}", e)))?;
+            use tokio::io::AsyncWriteExt;
+            remote
+                .write_all(&data)
+                .await
+                .map_err(|e| TerminalError::SshError(format!("write failed: {e}")))?;
 
-    Ok(data.len() as u64)
+            Ok::<u64, TerminalError>(data.len() as u64)
+        })
+    })
+}
+
+/// Open a fresh SFTP subsystem on the given session.
+async fn open_sftp(session: &SshSession) -> Result<SftpSession, TerminalError> {
+    let channel = session
+        .channel_open_session()
+        .await
+        .map_err(|e| TerminalError::SshError(format!("SFTP channel open failed: {e}")))?;
+
+    channel
+        .request_subsystem(true, "sftp")
+        .await
+        .map_err(|e| TerminalError::SshError(format!("SFTP subsystem request failed: {e}")))?;
+
+    SftpSession::new(channel.into_stream())
+        .await
+        .map_err(|e| TerminalError::SshError(format!("SFTP init failed: {e}")))
 }
 
 // ── ELF architecture detection ───────────────────────────────────────
@@ -130,13 +170,14 @@ const ELF_MAGIC: [u8; 4] = [0x7f, b'E', b'L', b'F'];
 
 /// Read the ELF header of a local binary and return its architecture.
 pub fn detect_binary_arch(path: &str) -> Result<ElfArch, TerminalError> {
-    let mut file = std::fs::File::open(path)
-        .map_err(|e| TerminalError::SpawnFailed(format!("open binary failed: {}", e)))?;
+    use std::io::Read;
 
-    // We need 20 bytes: 16-byte ELF ident + 2-byte e_type + 2-byte e_machine
+    let mut file = std::fs::File::open(path)
+        .map_err(|e| TerminalError::SpawnFailed(format!("open binary failed: {e}")))?;
+
     let mut header = [0u8; 20];
     file.read_exact(&mut header)
-        .map_err(|e| TerminalError::SpawnFailed(format!("read binary header failed: {}", e)))?;
+        .map_err(|e| TerminalError::SpawnFailed(format!("read binary header failed: {e}")))?;
 
     if header[0..4] != ELF_MAGIC {
         return Err(TerminalError::SpawnFailed(
@@ -146,10 +187,7 @@ pub fn detect_binary_arch(path: &str) -> Result<ElfArch, TerminalError> {
         ));
     }
 
-    // ELF ident byte 5: data encoding (1 = little-endian, 2 = big-endian)
     let little_endian = header[5] == 1;
-
-    // e_machine is at offset 18 (2 bytes)
     let e_machine = if little_endian {
         u16::from_le_bytes([header[18], header[19]])
     } else {
@@ -182,22 +220,14 @@ pub fn expected_arch_for_uname(uname_arch: &str) -> Option<ElfArch> {
 mod tests {
     use super::*;
 
-    // ── ELF architecture detection tests ─────────────────────────────
-
-    /// Helper: build a minimal ELF header with the given e_machine value.
     fn make_elf_header(e_machine: u16, little_endian: bool) -> Vec<u8> {
         let mut h = vec![0u8; 20];
-        // Magic
         h[0] = 0x7f;
         h[1] = b'E';
         h[2] = b'L';
         h[3] = b'F';
-        // EI_CLASS: 2 = 64-bit
         h[4] = 2;
-        // EI_DATA: 1 = LE, 2 = BE
         h[5] = if little_endian { 1 } else { 2 };
-        // e_type at offset 16 (don't care)
-        // e_machine at offset 18
         let machine_bytes = if little_endian {
             e_machine.to_le_bytes()
         } else {
@@ -257,7 +287,6 @@ mod tests {
     fn detect_binary_arch_not_elf() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("not-elf");
-        // Mach-O magic (macOS binary)
         std::fs::write(&path, b"\xcf\xfa\xed\xfe0000000000000000").unwrap();
         let result = detect_binary_arch(path.to_str().unwrap());
         assert!(result.is_err());

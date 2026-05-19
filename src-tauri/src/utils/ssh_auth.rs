@@ -1,140 +1,43 @@
-use std::net::TcpStream;
-#[cfg(not(target_os = "windows"))]
-use std::path::Path;
-use std::time::Duration;
-
-use ssh2::Session;
+/// SSH authentication utilities for the desktop crate.
+///
+/// This is a thin sync wrapper around the canonical russh-based implementation
+/// in [`termihub_core::backends::ssh::auth`]. All callers receive a bare
+/// [`SshSession`] (russh `Handle`); the [`ForwardedChannelRegistry`] is
+/// returned separately only when remote forwarding is needed (tunnel module).
+use termihub_core::backends::ssh::auth::{
+    check_ssh_agent_status as core_check_agent, connect_and_authenticate as core_connect,
+};
+pub use termihub_core::backends::ssh::handler::{ForwardedChannelRegistry, SshSession};
 
 use crate::terminal::backend::SshConfig;
 use crate::utils::errors::TerminalError;
 
-/// Timeout (ms) for all blocking libssh2 operations.
-const SSH_OP_TIMEOUT_MS: u32 = 30_000;
-
-/// Connect to an SSH server, perform handshake, and authenticate.
+/// Connect to an SSH server and authenticate, returning the session.
 ///
-/// Returns an authenticated `Session` in blocking mode.
-///
-/// The canonical implementation is now
-/// [`termihub_core::backends::ssh::auth::connect_and_authenticate`](termihub_core::backends::ssh).
-/// This function will be removed once all callers are migrated to use
-/// the core SSH backend.
-pub fn connect_and_authenticate(config: &SshConfig) -> Result<Session, TerminalError> {
-    let addr = format!("{}:{}", config.host, config.port);
-    let tcp = TcpStream::connect(&addr)
-        .map_err(|e| TerminalError::SshError(format!("Connection failed: {}", e)))?;
-
-    // Bound blocking time on dead connections so monitoring execs don't hold
-    // a thread for the full TCP retransmit timeout (~minutes by default).
-    tcp.set_write_timeout(Some(Duration::from_secs(10)))
-        .map_err(|e| TerminalError::SshError(format!("Write timeout setup failed: {e}")))?;
-    tcp.set_read_timeout(Some(Duration::from_secs(15)))
-        .map_err(|e| TerminalError::SshError(format!("Read timeout setup failed: {e}")))?;
-
-    let mut session = Session::new().map_err(|e| TerminalError::SshError(e.to_string()))?;
-
-    // Apply a libssh2-level deadline to all blocking operations (handshake,
-    // channel open, exec, read, sftp init). The TCP-level timeouts above only
-    // bound individual recv()/send() syscalls; libssh2's internal select() loops
-    // in blocking mode are unaffected by them and will wait forever without this
-    // call. 30 s is set to 2× the TCP read timeout, giving libssh2 room to
-    // complete one full TCP-level retry before giving up.
-    session.set_timeout(SSH_OP_TIMEOUT_MS);
-
-    session.set_tcp_stream(tcp);
-    session
-        .handshake()
-        .map_err(|e| TerminalError::SshError(format!("Handshake failed: {}", e)))?;
-
-    // Authenticate
-    match config.auth_method.as_str() {
-        "agent" => {
-            session
-                .userauth_agent(&config.username)
-                .map_err(|e| TerminalError::SshError(format!("Agent auth failed: {}", e)))?;
-        }
-        "key" => {
-            // key_path is tilde-expanded by SshConfig::expand(); apply expansion
-            // to the fallback too in case key_path was None.
-            let key_path_str = config
-                .key_path
-                .as_deref()
-                .filter(|s| !s.is_empty())
-                .unwrap_or("~/.ssh/id_rsa");
-            let expanded = crate::utils::expand::expand_tilde(key_path_str);
-            let key_path = std::path::PathBuf::from(&expanded);
-            let passphrase = config.password.as_deref();
-
-            // Convert OpenSSH-format keys (e.g. Ed25519) to PEM for libssh2
-            let prepared = crate::utils::ssh_key_convert::prepare_key(&key_path, passphrase)?;
-            match prepared {
-                crate::utils::ssh_key_convert::PreparedKey::Original => {
-                    session
-                        .userauth_pubkey_file(&config.username, None, &key_path, passphrase)
-                        .map_err(|e| TerminalError::SshError(format!("Key auth failed: {}", e)))?;
-                }
-                crate::utils::ssh_key_convert::PreparedKey::ConvertedPem(pem_bytes) => {
-                    // Use memory-based auth to avoid temp file issues on Windows.
-                    // The converted key is already decrypted, so pass None for passphrase.
-                    let pem_str = std::str::from_utf8(&pem_bytes).map_err(|e| {
-                        TerminalError::SshError(format!("Invalid PEM encoding: {}", e))
-                    })?;
-                    session
-                        .userauth_pubkey_memory(&config.username, None, pem_str, None)
-                        .map_err(|e| TerminalError::SshError(format!("Key auth failed: {}", e)))?;
-                }
-            }
-        }
-        _ => {
-            let password = config.password.as_deref().unwrap_or("");
-            session
-                .userauth_password(&config.username, password)
-                .map_err(|e| TerminalError::SshError(format!("Password auth failed: {}", e)))?;
-        }
-    }
-
-    if !session.authenticated() {
-        return Err(TerminalError::SshError("Authentication failed".to_string()));
-    }
-
-    Ok(session)
+/// Internally runs the async [`core_connect`] on the current Tokio runtime
+/// via [`tokio::task::block_in_place`], so it is safe to call from both
+/// Tokio worker threads (sync commands) and `spawn_blocking` threads
+/// (monitoring, SFTP commands).
+pub fn connect_and_authenticate(config: &SshConfig) -> Result<SshSession, TerminalError> {
+    tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(core_connect(config)))
+        .map(|(session, _registry)| session)
+        .map_err(|e| TerminalError::SshError(e.to_string()))
 }
 
-/// Check whether the SSH agent is running, stopped, or not installed.
+/// Connect and return both the session and the forwarded-channel registry.
 ///
-/// - **Windows**: tries to open the `openssh-ssh-agent` named pipe.
-///   `Path::exists()` does not work for named pipes, so we attempt
-///   an actual open — any result other than "not found" means the
-///   agent is running.
-/// - **Unix**: checks if `SSH_AUTH_SOCK` is set and the socket file exists.
-///
-/// Returns `"running"` or `"stopped"`.
-pub fn check_ssh_agent_status() -> String {
-    #[cfg(target_os = "windows")]
-    {
-        use std::fs::OpenOptions;
-        let pipe_path = r"\\.\pipe\openssh-ssh-agent";
-        match OpenOptions::new().read(true).open(pipe_path) {
-            Ok(_) => "running".to_string(),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => "stopped".to_string(),
-            // Any other error (e.g. access denied, busy) means the pipe exists
-            Err(_) => "running".to_string(),
-        }
-    }
+/// Used by the tunnel session pool so the remote-forward tunnel can receive
+/// incoming server-initiated channels.
+pub fn connect_with_registry(
+    config: &SshConfig,
+) -> Result<(SshSession, ForwardedChannelRegistry), TerminalError> {
+    tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(core_connect(config)))
+        .map_err(|e| TerminalError::SshError(e.to_string()))
+}
 
-    #[cfg(not(target_os = "windows"))]
-    {
-        match std::env::var("SSH_AUTH_SOCK") {
-            Ok(sock_path) if !sock_path.is_empty() => {
-                if Path::new(&sock_path).exists() {
-                    "running".to_string()
-                } else {
-                    "stopped".to_string()
-                }
-            }
-            _ => "stopped".to_string(),
-        }
-    }
+/// Check whether the SSH agent is running or stopped.
+pub fn check_ssh_agent_status() -> String {
+    core_check_agent()
 }
 
 #[cfg(test)]
@@ -145,7 +48,7 @@ mod tests {
     fn check_ssh_agent_status_returns_valid_value() {
         let status = check_ssh_agent_status();
         assert!(
-            status == "running" || status == "stopped" || status == "not_installed",
+            status == "running" || status == "stopped",
             "unexpected status: {status}"
         );
     }
@@ -153,16 +56,13 @@ mod tests {
     #[cfg(not(target_os = "windows"))]
     #[test]
     fn check_ssh_agent_status_stopped_when_sock_unset() {
-        // Temporarily remove SSH_AUTH_SOCK to test the "stopped" path
         let orig = std::env::var("SSH_AUTH_SOCK").ok();
-        std::env::remove_var("SSH_AUTH_SOCK");
-
+        // SAFETY: test-only
+        unsafe { std::env::remove_var("SSH_AUTH_SOCK") };
         let status = check_ssh_agent_status();
         assert_eq!(status, "stopped");
-
-        // Restore original value
         if let Some(val) = orig {
-            std::env::set_var("SSH_AUTH_SOCK", val);
+            unsafe { std::env::set_var("SSH_AUTH_SOCK", val) };
         }
     }
 }
