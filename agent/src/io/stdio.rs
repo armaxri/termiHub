@@ -4,7 +4,7 @@ use tokio::io::BufReader;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-use crate::handler::dispatch::Dispatcher;
+use crate::handler::dispatch::AgentHandler;
 use crate::io::transport::run_transport_loop;
 use crate::monitoring::{MonitoringManager, MonitoringManagerApi};
 use crate::protocol::messages::JsonRpcNotification;
@@ -36,11 +36,11 @@ pub async fn run_stdio_loop(shutdown: CancellationToken) -> anyhow::Result<()> {
     #[cfg(unix)]
     session_manager.recover_sessions().await;
 
-    let mut dispatcher = Dispatcher::new(
+    let handler = AgentHandler::new(
         session_manager.clone(),
         connection_store.clone() as Arc<dyn ConnectionStoreApi>,
         monitoring_manager.clone() as Arc<dyn MonitoringManagerApi>,
-    );
+    )?;
 
     let stdin = tokio::io::stdin();
     let mut stdout = tokio::io::stdout();
@@ -51,7 +51,7 @@ pub async fn run_stdio_loop(shutdown: CancellationToken) -> anyhow::Result<()> {
     run_transport_loop(
         &mut reader,
         &mut stdout,
-        &mut dispatcher,
+        &handler,
         &mut notification_rx,
         shutdown,
     )

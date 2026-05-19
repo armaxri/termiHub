@@ -25,6 +25,13 @@ const SOCKET_POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// How long to wait for the Ready frame after connecting.
 const READY_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Cloneable handle to the daemon's write half.
+///
+/// Extracted from a [`DaemonClient`] via [`DaemonClient::writer_handle`] so
+/// callers can write to the daemon without holding a borrow of the client
+/// itself (e.g. across an async boundary while a sessions mutex is locked).
+pub type DaemonWriterHandle = Arc<Mutex<Option<tokio::net::unix::OwnedWriteHalf>>>;
+
 /// A reusable client for communicating with a session daemon process.
 ///
 /// Handles the Unix socket connection lifecycle, background reader task,
@@ -118,13 +125,38 @@ impl DaemonClient {
             .map_err(|_| anyhow::anyhow!("Buffer reply channel closed unexpectedly"))
     }
 
-    /// Write raw input data to the daemon.
-    pub async fn write_input(&self, data: &[u8]) -> Result<(), anyhow::Error> {
-        let mut guard = self.writer.lock().await;
+    /// Clone the writer Arc so callers can write without holding a reference to
+    /// this `DaemonClient`. Useful when the caller cannot hold a borrow of the
+    /// client across an `.await` (e.g. while a sessions `Mutex` is locked).
+    pub fn writer_handle(&self) -> DaemonWriterHandle {
+        self.writer.clone()
+    }
+
+    /// Write `data` to the daemon through a previously cloned writer handle.
+    pub async fn write_via_handle(
+        handle: &DaemonWriterHandle,
+        data: &[u8],
+    ) -> Result<(), anyhow::Error> {
+        let mut guard = handle.lock().await;
         let writer = guard
             .as_mut()
             .ok_or_else(|| anyhow::anyhow!("Not connected to daemon"))?;
         protocol::write_frame_async(writer, MSG_INPUT, data).await?;
+        Ok(())
+    }
+
+    /// Resize the PTY through a previously cloned writer handle.
+    pub async fn resize_via_handle(
+        handle: &DaemonWriterHandle,
+        cols: u16,
+        rows: u16,
+    ) -> Result<(), anyhow::Error> {
+        let mut guard = handle.lock().await;
+        let writer = guard
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("Not connected to daemon"))?;
+        let payload = protocol::encode_resize(cols, rows);
+        protocol::write_frame_async(writer, MSG_RESIZE, &payload).await?;
         Ok(())
     }
 
@@ -161,17 +193,6 @@ impl DaemonClient {
         }
         self.disconnect().await;
         debug!("Detached from session {}", self.session_id);
-    }
-
-    /// Resize the PTY managed by the daemon.
-    pub async fn resize(&self, cols: u16, rows: u16) -> Result<(), anyhow::Error> {
-        let mut guard = self.writer.lock().await;
-        let writer = guard
-            .as_mut()
-            .ok_or_else(|| anyhow::anyhow!("Not connected to daemon"))?;
-        let payload = protocol::encode_resize(cols, rows);
-        protocol::write_frame_async(writer, MSG_RESIZE, &payload).await?;
-        Ok(())
     }
 
     /// Send kill frame and disconnect.
