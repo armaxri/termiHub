@@ -1,6 +1,6 @@
 use ringbuf::{
-    traits::{Consumer, Observer, Producer, Split},
-    HeapCons, HeapProd, HeapRb,
+    traits::{Consumer, Observer, RingBuffer as _},
+    HeapRb,
 };
 
 /// Default buffer capacity: 1 MiB.
@@ -14,44 +14,27 @@ pub const DEFAULT_BUFFER_CAPACITY: usize = 1_048_576;
 /// Used by: serial sessions (24/7 capture), daemon PTY (output replay),
 /// and potentially desktop sessions (reconnect replay).
 pub struct RingBuffer {
-    prod: HeapProd<u8>,
-    cons: HeapCons<u8>,
-    capacity: usize,
+    rb: HeapRb<u8>,
 }
 
 impl RingBuffer {
     /// Create a new ring buffer with the given capacity in bytes.
     pub fn new(capacity: usize) -> Self {
-        let (prod, cons) = HeapRb::<u8>::new(capacity).split();
         Self {
-            prod,
-            cons,
-            capacity,
+            rb: HeapRb::<u8>::new(capacity),
         }
     }
 
     /// Append data to the buffer, overwriting oldest data if full.
     pub fn write(&mut self, data: &[u8]) {
-        if data.is_empty() {
-            return;
+        if !data.is_empty() {
+            self.rb.push_slice_overwrite(data);
         }
-        // If data exceeds capacity, keep only the most recent bytes.
-        let data = if data.len() > self.capacity {
-            &data[data.len() - self.capacity..]
-        } else {
-            data
-        };
-        // Make room by discarding oldest bytes when needed.
-        let vacant = self.prod.vacant_len();
-        if data.len() > vacant {
-            self.cons.skip(data.len() - vacant);
-        }
-        self.prod.push_slice(data);
     }
 
     /// Read all buffered data in order (oldest to newest).
     pub fn read_all(&self) -> Vec<u8> {
-        let (head, tail) = self.cons.as_slices();
+        let (head, tail) = self.rb.as_slices();
         let mut result = Vec::with_capacity(head.len() + tail.len());
         result.extend_from_slice(head);
         result.extend_from_slice(tail);
@@ -60,22 +43,22 @@ impl RingBuffer {
 
     /// Return the number of bytes currently stored.
     pub fn len(&self) -> usize {
-        self.cons.occupied_len()
+        self.rb.occupied_len()
     }
 
     /// Return true if no data is buffered.
     pub fn is_empty(&self) -> bool {
-        self.cons.is_empty()
+        self.rb.is_empty()
     }
 
     /// Clear all buffered data.
     pub fn clear(&mut self) {
-        self.cons.clear();
+        self.rb.clear();
     }
 
     /// Return the buffer capacity in bytes.
     pub fn capacity(&self) -> usize {
-        self.capacity
+        self.rb.capacity().get()
     }
 }
 
