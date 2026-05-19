@@ -30,6 +30,7 @@ shellexpand = "3.1"
 
 [dev-dependencies]
 tempfile = "3"
+temp-env = "0.3"
 tokio = { version = "1", features = ["rt", "macros", "time", "sync", "net"] }
 serde_json = { workspace = true }
 ssh2 = { workspace = true }

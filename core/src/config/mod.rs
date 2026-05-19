@@ -489,27 +489,32 @@ mod tests {
 
     #[test]
     fn expand_value_known_variable() {
-        std::env::set_var("TERMIHUB_TEST_VAR", "hello");
-        assert_eq!(expand_config_value("${TERMIHUB_TEST_VAR}"), "hello");
-        std::env::remove_var("TERMIHUB_TEST_VAR");
+        temp_env::with_var("TERMIHUB_TEST_VAR", Some("hello"), || {
+            assert_eq!(expand_config_value("${TERMIHUB_TEST_VAR}"), "hello");
+        });
     }
 
     #[test]
     fn expand_value_unknown_variable_becomes_empty() {
-        std::env::remove_var("TERMIHUB_NONEXISTENT_VAR_XYZ");
-        assert_eq!(expand_config_value("${TERMIHUB_NONEXISTENT_VAR_XYZ}"), "");
+        temp_env::with_var_unset("TERMIHUB_NONEXISTENT_VAR_XYZ", || {
+            assert_eq!(expand_config_value("${TERMIHUB_NONEXISTENT_VAR_XYZ}"), "");
+        });
     }
 
     #[test]
     fn expand_value_multiple_placeholders() {
-        std::env::set_var("TERMIHUB_TEST_A", "foo");
-        std::env::set_var("TERMIHUB_TEST_B", "bar");
-        assert_eq!(
-            expand_config_value("${TERMIHUB_TEST_A}@${TERMIHUB_TEST_B}"),
-            "foo@bar"
+        temp_env::with_vars(
+            [
+                ("TERMIHUB_TEST_A", Some("foo")),
+                ("TERMIHUB_TEST_B", Some("bar")),
+            ],
+            || {
+                assert_eq!(
+                    expand_config_value("${TERMIHUB_TEST_A}@${TERMIHUB_TEST_B}"),
+                    "foo@bar"
+                );
+            },
         );
-        std::env::remove_var("TERMIHUB_TEST_A");
-        std::env::remove_var("TERMIHUB_TEST_B");
     }
 
     #[test]
@@ -519,12 +524,12 @@ mod tests {
 
     #[test]
     fn expand_value_mixed_env_content() {
-        std::env::set_var("TERMIHUB_TEST_USER", "alice");
-        assert_eq!(
-            expand_config_value("ssh ${TERMIHUB_TEST_USER}@host"),
-            "ssh alice@host"
-        );
-        std::env::remove_var("TERMIHUB_TEST_USER");
+        temp_env::with_var("TERMIHUB_TEST_USER", Some("alice"), || {
+            assert_eq!(
+                expand_config_value("ssh ${TERMIHUB_TEST_USER}@host"),
+                "ssh alice@host"
+            );
+        });
     }
 
     #[test]
@@ -559,14 +564,14 @@ mod tests {
 
     #[test]
     fn expand_value_env_and_tilde_combined() {
-        std::env::set_var("TERMIHUB_TEST_DIR", "projects");
-        let result = expand_config_value("~/${TERMIHUB_TEST_DIR}/app");
-        assert!(!result.starts_with('~'), "tilde should be expanded");
-        assert!(
-            result.ends_with("/projects/app") || result.ends_with(r"\projects/app"),
-            "expected path ending in /projects/app, got: {result}"
-        );
-        std::env::remove_var("TERMIHUB_TEST_DIR");
+        temp_env::with_var("TERMIHUB_TEST_DIR", Some("projects"), || {
+            let result = expand_config_value("~/${TERMIHUB_TEST_DIR}/app");
+            assert!(!result.starts_with('~'), "tilde should be expanded");
+            assert!(
+                result.ends_with("/projects/app") || result.ends_with(r"\projects/app"),
+                "expected path ending in /projects/app, got: {result}"
+            );
+        });
     }
 
     // --- Default value tests ---
@@ -1010,44 +1015,48 @@ mod tests {
 
     #[test]
     fn telnet_config_expand_replaces_host() {
-        std::env::set_var("TERMIHUB_TEST_TELNET_HOST", "10.0.0.1");
-        let cfg = TelnetConfig {
-            host: "${TERMIHUB_TEST_TELNET_HOST}".into(),
-            ..TelnetConfig::default()
-        };
-        let expanded = cfg.expand();
-        assert_eq!(expanded.host, "10.0.0.1");
-        std::env::remove_var("TERMIHUB_TEST_TELNET_HOST");
+        temp_env::with_var("TERMIHUB_TEST_TELNET_HOST", Some("10.0.0.1"), || {
+            let cfg = TelnetConfig {
+                host: "${TERMIHUB_TEST_TELNET_HOST}".into(),
+                ..TelnetConfig::default()
+            };
+            let expanded = cfg.expand();
+            assert_eq!(expanded.host, "10.0.0.1");
+        });
     }
 
     #[test]
     fn serial_config_expand_replaces_port() {
-        std::env::set_var("TERMIHUB_TEST_SERIAL_PORT", "/dev/ttyACM0");
-        let cfg = SerialConfig {
-            port: "${TERMIHUB_TEST_SERIAL_PORT}".into(),
-            ..SerialConfig::default()
-        };
-        let expanded = cfg.expand();
-        assert_eq!(expanded.port, "/dev/ttyACM0");
-        std::env::remove_var("TERMIHUB_TEST_SERIAL_PORT");
+        temp_env::with_var("TERMIHUB_TEST_SERIAL_PORT", Some("/dev/ttyACM0"), || {
+            let cfg = SerialConfig {
+                port: "${TERMIHUB_TEST_SERIAL_PORT}".into(),
+                ..SerialConfig::default()
+            };
+            let expanded = cfg.expand();
+            assert_eq!(expanded.port, "/dev/ttyACM0");
+        });
     }
 
     #[test]
     fn ssh_config_expand_replaces_placeholders() {
-        std::env::set_var("TERMIHUB_TEST_SSH_HOST", "192.168.1.100");
-        std::env::set_var("TERMIHUB_TEST_SSH_USER", "deploy");
-        let cfg = SshConfig {
-            host: "${TERMIHUB_TEST_SSH_HOST}".into(),
-            username: "${TERMIHUB_TEST_SSH_USER}".into(),
-            auth_method: "key".into(),
-            key_path: Some("${HOME}/.ssh/id_rsa".into()),
-            ..SshConfig::default()
-        };
-        let expanded = cfg.expand();
-        assert_eq!(expanded.host, "192.168.1.100");
-        assert_eq!(expanded.username, "deploy");
-        std::env::remove_var("TERMIHUB_TEST_SSH_HOST");
-        std::env::remove_var("TERMIHUB_TEST_SSH_USER");
+        temp_env::with_vars(
+            [
+                ("TERMIHUB_TEST_SSH_HOST", Some("192.168.1.100")),
+                ("TERMIHUB_TEST_SSH_USER", Some("deploy")),
+            ],
+            || {
+                let cfg = SshConfig {
+                    host: "${TERMIHUB_TEST_SSH_HOST}".into(),
+                    username: "${TERMIHUB_TEST_SSH_USER}".into(),
+                    auth_method: "key".into(),
+                    key_path: Some("${HOME}/.ssh/id_rsa".into()),
+                    ..SshConfig::default()
+                };
+                let expanded = cfg.expand();
+                assert_eq!(expanded.host, "192.168.1.100");
+                assert_eq!(expanded.username, "deploy");
+            },
+        );
     }
 
     #[test]
@@ -1091,25 +1100,29 @@ mod tests {
 
     #[test]
     fn docker_config_expand_replaces_placeholders() {
-        std::env::set_var("TERMIHUB_TEST_DOCKER_IMAGE", "myapp");
-        std::env::set_var("TERMIHUB_TEST_DOCKER_VAL", "production");
-        let cfg = DockerConfig {
-            image: "${TERMIHUB_TEST_DOCKER_IMAGE}:latest".into(),
-            shell: Some("${TERMIHUB_TEST_DOCKER_IMAGE}".into()),
-            env_vars: vec![EnvVar {
-                key: "ENV".into(),
-                value: "${TERMIHUB_TEST_DOCKER_VAL}".into(),
-            }],
-            working_directory: Some("${TERMIHUB_TEST_DOCKER_VAL}".into()),
-            ..DockerConfig::default()
-        };
-        let expanded = cfg.expand();
-        assert_eq!(expanded.image, "myapp:latest");
-        assert_eq!(expanded.shell, Some("myapp".into()));
-        assert_eq!(expanded.env_vars[0].value, "production");
-        assert_eq!(expanded.working_directory, Some("production".into()));
-        std::env::remove_var("TERMIHUB_TEST_DOCKER_IMAGE");
-        std::env::remove_var("TERMIHUB_TEST_DOCKER_VAL");
+        temp_env::with_vars(
+            [
+                ("TERMIHUB_TEST_DOCKER_IMAGE", Some("myapp")),
+                ("TERMIHUB_TEST_DOCKER_VAL", Some("production")),
+            ],
+            || {
+                let cfg = DockerConfig {
+                    image: "${TERMIHUB_TEST_DOCKER_IMAGE}:latest".into(),
+                    shell: Some("${TERMIHUB_TEST_DOCKER_IMAGE}".into()),
+                    env_vars: vec![EnvVar {
+                        key: "ENV".into(),
+                        value: "${TERMIHUB_TEST_DOCKER_VAL}".into(),
+                    }],
+                    working_directory: Some("${TERMIHUB_TEST_DOCKER_VAL}".into()),
+                    ..DockerConfig::default()
+                };
+                let expanded = cfg.expand();
+                assert_eq!(expanded.image, "myapp:latest");
+                assert_eq!(expanded.shell, Some("myapp".into()));
+                assert_eq!(expanded.env_vars[0].value, "production");
+                assert_eq!(expanded.working_directory, Some("production".into()));
+            },
+        );
     }
 
     #[test]
@@ -1142,82 +1155,91 @@ mod tests {
 
     #[test]
     fn wsl_config_expand_replaces_placeholders() {
-        std::env::set_var("TERMIHUB_TEST_WSL_DISTRO", "Ubuntu");
-        std::env::set_var("TERMIHUB_TEST_WSL_CMD", "echo hello");
-        let cfg = WslConfig {
-            distribution: "${TERMIHUB_TEST_WSL_DISTRO}".into(),
-            starting_directory: Some("~/projects".into()),
-            initial_command: Some("${TERMIHUB_TEST_WSL_CMD}".into()),
-            ..WslConfig::default()
-        };
-        let expanded = cfg.expand();
-        assert_eq!(expanded.distribution, "Ubuntu");
-        assert!(
-            !expanded
-                .starting_directory
-                .as_ref()
-                .unwrap()
-                .starts_with('~'),
-            "tilde should be expanded in starting directory"
+        temp_env::with_vars(
+            [
+                ("TERMIHUB_TEST_WSL_DISTRO", Some("Ubuntu")),
+                ("TERMIHUB_TEST_WSL_CMD", Some("echo hello")),
+            ],
+            || {
+                let cfg = WslConfig {
+                    distribution: "${TERMIHUB_TEST_WSL_DISTRO}".into(),
+                    starting_directory: Some("~/projects".into()),
+                    initial_command: Some("${TERMIHUB_TEST_WSL_CMD}".into()),
+                    ..WslConfig::default()
+                };
+                let expanded = cfg.expand();
+                assert_eq!(expanded.distribution, "Ubuntu");
+                assert!(
+                    !expanded
+                        .starting_directory
+                        .as_ref()
+                        .unwrap()
+                        .starts_with('~'),
+                    "tilde should be expanded in starting directory"
+                );
+                assert_eq!(expanded.initial_command, Some("echo hello".into()));
+            },
         );
-        assert_eq!(expanded.initial_command, Some("echo hello".into()));
-        std::env::remove_var("TERMIHUB_TEST_WSL_DISTRO");
-        std::env::remove_var("TERMIHUB_TEST_WSL_CMD");
     }
 
     // --- New ${VAR} placeholder syntax (#726) ---
 
     #[test]
     fn ssh_config_expand_supports_dollar_brace_syntax() {
-        std::env::set_var("TERMIHUB_NEW_SSH_HOST", "10.10.10.10");
-        std::env::set_var("TERMIHUB_NEW_SSH_USER", "ops");
-        let cfg = SshConfig {
-            host: "${TERMIHUB_NEW_SSH_HOST}".into(),
-            username: "${TERMIHUB_NEW_SSH_USER}".into(),
-            auth_method: "key".into(),
-            ..SshConfig::default()
-        };
-        let expanded = cfg.expand();
-        assert_eq!(expanded.host, "10.10.10.10");
-        assert_eq!(expanded.username, "ops");
-        std::env::remove_var("TERMIHUB_NEW_SSH_HOST");
-        std::env::remove_var("TERMIHUB_NEW_SSH_USER");
+        temp_env::with_vars(
+            [
+                ("TERMIHUB_NEW_SSH_HOST", Some("10.10.10.10")),
+                ("TERMIHUB_NEW_SSH_USER", Some("ops")),
+            ],
+            || {
+                let cfg = SshConfig {
+                    host: "${TERMIHUB_NEW_SSH_HOST}".into(),
+                    username: "${TERMIHUB_NEW_SSH_USER}".into(),
+                    auth_method: "key".into(),
+                    ..SshConfig::default()
+                };
+                let expanded = cfg.expand();
+                assert_eq!(expanded.host, "10.10.10.10");
+                assert_eq!(expanded.username, "ops");
+            },
+        );
     }
 
     #[test]
     fn telnet_config_expand_supports_dollar_brace_syntax() {
-        std::env::set_var("TERMIHUB_NEW_TELNET_HOST", "172.16.0.5");
-        let cfg = TelnetConfig {
-            host: "${TERMIHUB_NEW_TELNET_HOST}".into(),
-            ..TelnetConfig::default()
-        };
-        let expanded = cfg.expand();
-        assert_eq!(expanded.host, "172.16.0.5");
-        std::env::remove_var("TERMIHUB_NEW_TELNET_HOST");
+        temp_env::with_var("TERMIHUB_NEW_TELNET_HOST", Some("172.16.0.5"), || {
+            let cfg = TelnetConfig {
+                host: "${TERMIHUB_NEW_TELNET_HOST}".into(),
+                ..TelnetConfig::default()
+            };
+            let expanded = cfg.expand();
+            assert_eq!(expanded.host, "172.16.0.5");
+        });
     }
 
     #[test]
     fn ssh_config_expand_unknown_var_becomes_empty_string() {
-        std::env::remove_var("TERMIHUB_DEFINITELY_UNSET_VAR_QQ");
-        let cfg = SshConfig {
-            host: "host-${TERMIHUB_DEFINITELY_UNSET_VAR_QQ}-end".into(),
-            username: "user".into(),
-            auth_method: "password".into(),
-            ..SshConfig::default()
-        };
-        let expanded = cfg.expand();
-        assert_eq!(expanded.host, "host--end");
+        temp_env::with_var_unset("TERMIHUB_DEFINITELY_UNSET_VAR_QQ", || {
+            let cfg = SshConfig {
+                host: "host-${TERMIHUB_DEFINITELY_UNSET_VAR_QQ}-end".into(),
+                username: "user".into(),
+                auth_method: "password".into(),
+                ..SshConfig::default()
+            };
+            let expanded = cfg.expand();
+            assert_eq!(expanded.host, "host--end");
+        });
     }
 
     #[test]
     fn docker_config_expand_supports_dollar_brace_syntax() {
-        std::env::set_var("TERMIHUB_NEW_DOCKER_IMG", "alpine");
-        let cfg = DockerConfig {
-            image: "${TERMIHUB_NEW_DOCKER_IMG}:3".into(),
-            ..DockerConfig::default()
-        };
-        let expanded = cfg.expand();
-        assert_eq!(expanded.image, "alpine:3");
-        std::env::remove_var("TERMIHUB_NEW_DOCKER_IMG");
+        temp_env::with_var("TERMIHUB_NEW_DOCKER_IMG", Some("alpine"), || {
+            let cfg = DockerConfig {
+                image: "${TERMIHUB_NEW_DOCKER_IMG}:3".into(),
+                ..DockerConfig::default()
+            };
+            let expanded = cfg.expand();
+            assert_eq!(expanded.image, "alpine:3");
+        });
     }
 }
