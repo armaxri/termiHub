@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - SSH backend: replaced `ssh2` (C-backed, vendored OpenSSL) with `russh` (pure-Rust async SSH) across the core library, src-tauri desktop backend, and agent crate. All SSH authentication methods (password, RSA/Ed25519/ECDSA keys, keys with passphrase, SSH agent), SFTP, port forwarding (local, remote, dynamic SOCKS5), X11 forwarding, and monitoring continue to work; no user-visible behaviour changes.
+- Cross-compilation: agent cross-build Docker images (x86_64/aarch64/armv7 musl) no longer pre-build static OpenSSL. The `russh` switch removed the last C-crypto dependency from the agent (`openssl-sys` is gone from `Cargo.lock`); the custom images now only install `libudev-dev` (required by `serialport`). Build times for fresh image layers drop by ~2 minutes per target. `libssl-dev` has been removed from Ubuntu CI job dependencies for the same reason.
 
 ### Fixed
 
