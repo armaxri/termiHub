@@ -101,6 +101,7 @@ impl Default for EmbeddedServerStore {
 }
 
 /// Atomic counters shared between a running server and its manager entry.
+#[derive(Debug)]
 pub struct AtomicServerStats {
     pub active_connections: AtomicU64,
     pub total_connections: AtomicU64,
