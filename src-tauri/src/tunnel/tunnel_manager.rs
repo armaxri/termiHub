@@ -15,6 +15,7 @@ use super::storage::TunnelStorage;
 use crate::connection::manager::ConnectionManager;
 use crate::connection::recovery::RecoveryWarning;
 use crate::utils::errors::TerminalError;
+use crate::utils::ssh_auth::connect_with_registry;
 
 /// An active tunnel with its forwarder.
 enum ActiveForwarder {
@@ -197,30 +198,40 @@ impl TunnelManager {
         // Look up the SSH connection config
         let ssh_config = self.resolve_ssh_config(&config.ssh_connection_id)?;
 
-        // Get or create SSH session from pool
-        let session = {
-            let mut pool = self
-                .session_pool
-                .lock()
-                .map_err(|e| TerminalError::TunnelError(format!("Lock error: {}", e)))?;
-            pool.get_or_create(&config.ssh_connection_id, &ssh_config)?
-        };
-
         // Start the appropriate forwarder
         let forwarder = match &config.tunnel_type {
             TunnelType::Local(local_config) => {
+                let (session, _registry) = {
+                    let mut pool = self
+                        .session_pool
+                        .lock()
+                        .map_err(|e| TerminalError::TunnelError(format!("Lock error: {}", e)))?;
+                    pool.get_or_create(&config.ssh_connection_id, &ssh_config)?
+                };
                 let f = LocalForwarder::start(local_config, session).map_err(|e| {
                     TerminalError::TunnelError(format!("Failed to start local forwarder: {}", e))
                 })?;
                 ActiveForwarder::Local(f)
             }
             TunnelType::Remote(remote_config) => {
-                let f = RemoteForwarder::start(remote_config, session).map_err(|e| {
+                // Remote forwarding needs tcpip_forward (&mut SshSession), so it always gets
+                // a dedicated connection rather than a pooled shared Arc<SshSession>.
+                let (session, registry) = connect_with_registry(&ssh_config).map_err(|e| {
+                    TerminalError::TunnelError(format!("SSH connect failed: {}", e))
+                })?;
+                let f = RemoteForwarder::start(remote_config, session, registry).map_err(|e| {
                     TerminalError::TunnelError(format!("Failed to start remote forwarder: {}", e))
                 })?;
                 ActiveForwarder::Remote(f)
             }
             TunnelType::Dynamic(dynamic_config) => {
+                let (session, _registry) = {
+                    let mut pool = self
+                        .session_pool
+                        .lock()
+                        .map_err(|e| TerminalError::TunnelError(format!("Lock error: {}", e)))?;
+                    pool.get_or_create(&config.ssh_connection_id, &ssh_config)?
+                };
                 let f = DynamicForwarder::start(dynamic_config, session).map_err(|e| {
                     TerminalError::TunnelError(format!("Failed to start dynamic forwarder: {}", e))
                 })?;

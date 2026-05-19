@@ -18,6 +18,7 @@ use crate::utils::remote_exec::{
     upload_via_sftp,
 };
 use crate::utils::ssh_auth::connect_and_authenticate;
+use termihub_core::backends::ssh::handler::SshSession;
 
 /// Default install path for the agent binary on the remote host.
 ///
@@ -230,10 +231,7 @@ fn run_setup_background(
     );
 
     let sftp_session = match connect_and_authenticate(ssh_config) {
-        Ok(s) => {
-            s.set_blocking(true);
-            s
-        }
+        Ok(s) => s,
         Err(e) => {
             error!("Agent setup: SFTP connection failed: {}", e);
             emit_progress(
@@ -349,7 +347,7 @@ fn resolve_binary(
     setup_config: &AgentSetupConfig,
     app_handle: &AppHandle,
     agent_id: &str,
-    sftp_session: &ssh2::Session,
+    sftp_session: &SshSession,
     session_manager: &SessionManager,
     session_id: &str,
     rt_handle: &tokio::runtime::Handle,
@@ -605,7 +603,7 @@ fn inject_commands(
 /// sees the `sh /tmp/…` invocation (same pattern as the normal setup
 /// flow) followed by the styled error output.
 fn inject_error_script(
-    sftp_session: &ssh2::Session,
+    sftp_session: &SshSession,
     session_manager: &SessionManager,
     session_id: &str,
     message: &str,

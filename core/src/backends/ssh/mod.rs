@@ -7,6 +7,7 @@
 pub mod auth;
 pub mod connector;
 mod file_browser;
+pub mod handler;
 mod monitoring;
 pub mod x11;
 
@@ -27,14 +28,14 @@ use crate::monitoring::MonitoringProvider;
 use crate::session::shell::osc7_setup_command;
 use crate::session::ssh::validate_ssh_config;
 
-use self::connector::{Ssh2SshConnector, SshConnector};
+use self::connector::{RusshSshConnector, SshConnector};
 use self::file_browser::SftpFileBrowser;
 use self::monitoring::SshMonitoringProvider;
 
 /// Channel capacity for output data from the SSH reader thread.
 const OUTPUT_CHANNEL_CAPACITY: usize = 64;
 
-/// SSH backend using `ssh2`, implementing [`ConnectionType`].
+/// SSH backend using `russh`, implementing [`ConnectionType`].
 ///
 /// # Lifecycle
 ///
@@ -75,9 +76,9 @@ struct ConnectedState {
 }
 
 impl Ssh {
-    /// Create a new disconnected `Ssh` instance backed by the real libssh2 connector.
+    /// Create a new disconnected `Ssh` instance backed by the russh connector.
     pub fn new() -> Self {
-        Self::with_connector(Box::new(Ssh2SshConnector))
+        Self::with_connector(Box::new(RusshSshConnector))
     }
 
     /// Create a new disconnected `Ssh` instance with a custom connector (for testing).
@@ -423,7 +424,7 @@ impl ConnectionType for Ssh {
         );
 
         let alive = Arc::new(AtomicBool::new(true));
-        let handle = self.connector.open_shell(&config, alive.clone())?;
+        let handle = self.connector.open_shell(&config, alive.clone()).await?;
 
         // Inject OSC 7 PROMPT_COMMAND hook for CWD tracking when enabled.
         if shell_integration {
@@ -592,8 +593,9 @@ mod tests {
         }
     }
 
+    #[async_trait::async_trait]
     impl SshConnector for MockSshConnector {
-        fn open_shell(
+        async fn open_shell(
             &self,
             _config: &SshConfig,
             alive: Arc<AtomicBool>,
@@ -630,7 +632,7 @@ mod tests {
         }
     }
 
-    /// Blocks until `alive` is cleared, then returns EOF — mirrors `Ssh2SshShellReader`.
+    /// Blocks until `alive` is cleared, then returns EOF — mirrors `RusshShellReader`.
     struct MockReader {
         alive: Arc<AtomicBool>,
     }

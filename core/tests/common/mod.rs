@@ -12,6 +12,9 @@ use std::net::TcpStream;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use russh::ChannelMsg;
+use termihub_core::backends::ssh::handler::SshSession;
+
 /// Check if a TCP port is reachable on the given host.
 ///
 /// Returns `true` if a TCP connection can be established within 2 seconds.
@@ -132,19 +135,30 @@ pub fn ssh_key_passphrase_config(port: u16, key_name: &str) -> termihub_core::co
 }
 
 /// Execute a command on an authenticated SSH session and return the output.
-pub fn ssh_exec(session: &ssh2::Session, command: &str) -> Result<String, String> {
+pub async fn ssh_exec(session: &SshSession, command: &str) -> Result<String, String> {
     let mut channel = session
-        .channel_session()
+        .channel_open_session()
+        .await
         .map_err(|e| format!("Failed to open channel: {e}"))?;
+
     channel
-        .exec(command)
+        .exec(false, command)
+        .await
         .map_err(|e| format!("Failed to exec: {e}"))?;
 
     let mut output = String::new();
-    std::io::Read::read_to_string(&mut channel, &mut output)
-        .map_err(|e| format!("Failed to read output: {e}"))?;
-
-    channel.wait_close().ok();
+    loop {
+        match channel.wait().await {
+            Some(ChannelMsg::Data { ref data }) => {
+                if let Ok(s) = std::str::from_utf8(data) {
+                    output.push_str(s);
+                }
+            }
+            Some(ChannelMsg::ExitStatus { .. }) => {}
+            Some(ChannelMsg::Eof) | None => break,
+            _ => {}
+        }
+    }
     Ok(output)
 }
 
