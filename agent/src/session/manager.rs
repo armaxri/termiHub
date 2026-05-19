@@ -20,7 +20,7 @@ use termihub_core::connection::{ConnectionTypeRegistry, OutputReceiver};
 use termihub_core::session::traits::OutputSink;
 
 #[cfg(unix)]
-use crate::daemon::client::DaemonClient;
+use crate::daemon::client::{DaemonClient, DaemonWriterHandle};
 #[cfg(unix)]
 use crate::daemon::process::socket_dir;
 #[cfg(unix)]
@@ -36,7 +36,7 @@ pub const MAX_SESSIONS: u32 = 20;
 /// Implemented by [`SessionManager`] in production and by mock structs in
 /// tests. The [`Dispatcher`](crate::handler::dispatch::Dispatcher) depends on
 /// this trait so it can be unit-tested without real backends.
-#[async_trait::async_trait(?Send)]
+#[async_trait::async_trait]
 pub trait SessionManagerApi: Send + Sync + 'static {
     /// Return the registry of available connection types.
     fn registry(&self) -> &ConnectionTypeRegistry;
@@ -120,7 +120,7 @@ impl fmt::Display for SessionCreateError {
 /// connects via a Unix socket. Tests inject a mock that returns
 /// immediately without spawning a real process.
 #[cfg(unix)]
-#[async_trait::async_trait(?Send)]
+#[async_trait::async_trait]
 pub trait DaemonLauncher: Send + Sync + 'static {
     /// Spawn a daemon for the given session and return the connected backend.
     async fn launch(
@@ -138,7 +138,7 @@ pub trait DaemonLauncher: Send + Sync + 'static {
 pub struct SystemDaemonLauncher;
 
 #[cfg(unix)]
-#[async_trait::async_trait(?Send)]
+#[async_trait::async_trait]
 impl DaemonLauncher for SystemDaemonLauncher {
     async fn launch(
         &self,
@@ -479,34 +479,6 @@ impl SessionManager {
         Ok(())
     }
 
-    /// Write input data to a session's backend.
-    pub async fn write_input(&self, session_id: &str, data: &[u8]) -> Result<(), String> {
-        let mut sessions = self.sessions.lock().await;
-        let info = sessions
-            .get_mut(session_id)
-            .ok_or_else(|| "Session not found".to_string())?;
-
-        info.last_activity = Utc::now();
-
-        write_backend(&info.backend, data)
-            .await
-            .map_err(|e| e.to_string())
-    }
-
-    /// Resize a session's terminal.
-    pub async fn resize(&self, session_id: &str, cols: u16, rows: u16) -> Result<(), String> {
-        let mut sessions = self.sessions.lock().await;
-        let info = sessions
-            .get_mut(session_id)
-            .ok_or_else(|| "Session not found".to_string())?;
-
-        info.last_activity = Utc::now();
-
-        resize_backend(&info.backend, cols, rows)
-            .await
-            .map_err(|e| e.to_string())
-    }
-
     /// Recover sessions from persistent state by reconnecting to
     /// surviving daemon processes.
     #[cfg(unix)]
@@ -664,42 +636,6 @@ async fn detach_backend(backend: &mut SessionBackend) {
     }
 }
 
-async fn write_backend(backend: &SessionBackend, data: &[u8]) -> Result<(), anyhow::Error> {
-    match backend {
-        #[cfg(unix)]
-        SessionBackend::Daemon(ref client) => {
-            client.write_input(data).await?;
-        }
-        SessionBackend::InProcess { connection, .. } => {
-            connection.write(data).map_err(|e| anyhow::anyhow!("{e}"))?;
-        }
-        #[cfg(test)]
-        SessionBackend::Stub => {}
-    }
-    Ok(())
-}
-
-async fn resize_backend(
-    backend: &SessionBackend,
-    cols: u16,
-    rows: u16,
-) -> Result<(), anyhow::Error> {
-    match backend {
-        #[cfg(unix)]
-        SessionBackend::Daemon(ref client) => {
-            client.resize(cols, rows).await?;
-        }
-        SessionBackend::InProcess { connection, .. } => {
-            connection
-                .resize(cols, rows)
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
-        }
-        #[cfg(test)]
-        SessionBackend::Stub => {}
-    }
-    Ok(())
-}
-
 // ── Output forwarding ──────────────────────────────────────────────
 
 /// Spawn a background task that reads from the ConnectionType's output
@@ -729,7 +665,7 @@ fn spawn_output_forwarder(
 
 // ── SessionManagerApi impl ─────────────────────────────────────────
 
-#[async_trait::async_trait(?Send)]
+#[async_trait::async_trait]
 impl SessionManagerApi for SessionManager {
     fn registry(&self) -> &ConnectionTypeRegistry {
         &self.registry
@@ -776,12 +712,86 @@ impl SessionManagerApi for SessionManager {
         SessionManager::detach(self, session_id).await
     }
 
+    /// The sessions lock is released before any async operation so the future
+    /// is `Send` regardless of the `ConnectionType` in-process implementations.
     async fn write_input(&self, session_id: &str, data: &[u8]) -> Result<(), String> {
-        SessionManager::write_input(self, session_id, data).await
+        #[cfg(unix)]
+        let mut daemon_handle: Option<DaemonWriterHandle> = None;
+        let sync_result: Option<Result<(), String>>;
+
+        {
+            let mut sessions = self.sessions.lock().await;
+            let info = sessions
+                .get_mut(session_id)
+                .ok_or_else(|| "Session not found".to_string())?;
+            info.last_activity = Utc::now();
+            match &info.backend {
+                #[cfg(unix)]
+                SessionBackend::Daemon(client) => {
+                    daemon_handle = Some(client.writer_handle());
+                    sync_result = None;
+                }
+                SessionBackend::InProcess { connection, .. } => {
+                    sync_result = Some(connection.write(data).map_err(|e| e.to_string()));
+                }
+                #[cfg(test)]
+                SessionBackend::Stub => {
+                    sync_result = Some(Ok(()));
+                }
+            }
+        }
+
+        if let Some(result) = sync_result {
+            return result;
+        }
+        #[cfg(unix)]
+        if let Some(handle) = daemon_handle {
+            return DaemonClient::write_via_handle(&handle, data)
+                .await
+                .map_err(|e| e.to_string());
+        }
+        Ok(())
     }
 
+    /// The sessions lock is released before any async operation so the future
+    /// is `Send` regardless of the `ConnectionType` in-process implementations.
     async fn resize(&self, session_id: &str, cols: u16, rows: u16) -> Result<(), String> {
-        SessionManager::resize(self, session_id, cols, rows).await
+        #[cfg(unix)]
+        let mut daemon_handle: Option<DaemonWriterHandle> = None;
+        let sync_result: Option<Result<(), String>>;
+
+        {
+            let mut sessions = self.sessions.lock().await;
+            let info = sessions
+                .get_mut(session_id)
+                .ok_or_else(|| "Session not found".to_string())?;
+            info.last_activity = Utc::now();
+            match &info.backend {
+                #[cfg(unix)]
+                SessionBackend::Daemon(client) => {
+                    daemon_handle = Some(client.writer_handle());
+                    sync_result = None;
+                }
+                SessionBackend::InProcess { connection, .. } => {
+                    sync_result = Some(connection.resize(cols, rows).map_err(|e| e.to_string()));
+                }
+                #[cfg(test)]
+                SessionBackend::Stub => {
+                    sync_result = Some(Ok(()));
+                }
+            }
+        }
+
+        if let Some(result) = sync_result {
+            return result;
+        }
+        #[cfg(unix)]
+        if let Some(handle) = daemon_handle {
+            return DaemonClient::resize_via_handle(&handle, cols, rows)
+                .await
+                .map_err(|e| e.to_string());
+        }
+        Ok(())
     }
 
     async fn get_buffer(&self, session_id: &str) -> Result<Vec<u8>, String> {
@@ -975,7 +985,7 @@ mod tests {
             }
         }
 
-        #[async_trait::async_trait(?Send)]
+        #[async_trait::async_trait]
         impl DaemonLauncher for MockDaemonLauncher {
             async fn launch(
                 &self,
