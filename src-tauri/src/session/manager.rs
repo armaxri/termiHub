@@ -19,7 +19,7 @@ use termihub_core::connection::{
 use termihub_core::files::FileEntry;
 use termihub_core::monitoring::SystemStats;
 use termihub_core::output::coalescer::OutputCoalescer;
-use termihub_core::output::screen_clear::contains_screen_clear;
+use termihub_core::output::screen_clear::ScreenClearDetector;
 use tracing::{error, info, warn};
 
 use crate::terminal::agent_manager::AgentRpcClient;
@@ -972,6 +972,7 @@ impl SessionManager {
             let deadline = Instant::now() + CLEAR_WAIT_TIMEOUT;
 
             let mut buffer = Vec::new();
+            let mut detector = ScreenClearDetector::new();
 
             loop {
                 let remaining = deadline.saturating_duration_since(Instant::now());
@@ -980,8 +981,9 @@ impl SessionManager {
                 }
                 match tokio::time::timeout(remaining, output_rx.recv()).await {
                     Ok(Some(chunk)) => {
+                        let cleared = detector.feed(&chunk);
                         buffer.extend_from_slice(&chunk);
-                        if contains_screen_clear(&buffer) {
+                        if cleared {
                             break;
                         }
                     }
