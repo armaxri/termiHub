@@ -4,35 +4,13 @@
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
+use termihub_core::config::expand_tilde_only as expand_tilde;
 use termihub_core::files::FileEntry;
 
 use super::{FileBackend, FileError};
 use termihub_core::files::utils::chrono_from_epoch;
 #[cfg(unix)]
 use termihub_core::files::utils::format_permissions;
-
-/// Expand a leading `~` to the user's home directory.
-///
-/// Supports `"~"` (bare tilde) and `"~/..."` (tilde-slash prefix). If the
-/// home directory cannot be determined the path is returned unchanged.
-fn expand_tilde(path: &str) -> String {
-    if path == "~" || path.starts_with("~/") {
-        #[cfg(unix)]
-        let home = std::env::var("HOME").ok();
-        #[cfg(windows)]
-        let home = std::env::var("USERPROFILE").ok();
-        #[cfg(not(any(unix, windows)))]
-        let home: Option<String> = None;
-
-        if let Some(home) = home {
-            if path == "~" {
-                return home;
-            }
-            return format!("{}{}", home, &path[1..]);
-        }
-    }
-    path.to_string()
-}
 
 /// File backend that reads the agent host's local filesystem.
 pub struct LocalFileBackend;

@@ -1,21 +1,54 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::PathBuf;
+
+/// Return the user's home directory.
+///
+/// On Unix, reads `$HOME`. On Windows, reads `$USERPROFILE`.
+pub fn home_directory() -> Option<PathBuf> {
+    #[cfg(unix)]
+    {
+        std::env::var("HOME").ok().map(PathBuf::from)
+    }
+    #[cfg(windows)]
+    {
+        std::env::var("USERPROFILE").ok().map(PathBuf::from)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        None
+    }
+}
+
+/// Expand a leading `~` or `~/` to the user's home directory.
+///
+/// Returns the input unchanged if it does not start with `~/` (or is not just
+/// `~`), or if the home directory cannot be resolved. `~user` paths are left
+/// unchanged. Unlike [`expand_config_value`], this does **not** perform
+/// environment variable substitution, so it is safe for user-supplied paths
+/// where a literal `$` should not be interpreted.
+pub fn expand_tilde_only(path: &str) -> String {
+    if path != "~" && !path.starts_with("~/") && !path.starts_with(r"~\") {
+        return path.to_string();
+    }
+    let Some(home) = home_directory() else {
+        return path.to_string();
+    };
+    let home = home.to_string_lossy();
+    if path == "~" {
+        home.into_owned()
+    } else {
+        format!("{}{}", home, &path[1..])
+    }
+}
 
 /// Expand `${VAR}` / `$VAR` placeholders and a leading `~` in a config value.
 ///
 /// Backed by the `shellexpand` crate. Unknown environment variables expand to
-/// an empty string. Tilde expansion uses `$HOME` on Unix and `%USERPROFILE%`
-/// on Windows; `~user` paths are left unchanged.
+/// an empty string. Tilde expansion uses [`home_directory`]; `~user` paths
+/// are left unchanged.
 pub fn expand_config_value(value: &str) -> String {
-    let home_dir = || -> Option<String> {
-        #[cfg(unix)]
-        let h = std::env::var("HOME").ok();
-        #[cfg(windows)]
-        let h = std::env::var("USERPROFILE").ok();
-        #[cfg(not(any(unix, windows)))]
-        let h: Option<String> = None;
-        h
-    };
+    let home_dir = || home_directory().map(|p| p.to_string_lossy().into_owned());
     let lookup = |name: &str| -> Result<Option<String>, std::convert::Infallible> {
         Ok(Some(std::env::var(name).unwrap_or_default()))
     };
@@ -408,6 +441,49 @@ fn default_telnet_port() -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- home_directory / expand_tilde_only tests ---
+
+    #[test]
+    fn home_directory_returns_some() {
+        assert!(
+            home_directory().is_some(),
+            "expected a home directory to be resolved"
+        );
+    }
+
+    #[test]
+    fn expand_tilde_only_tilde_alone() {
+        let result = expand_tilde_only("~");
+        assert!(!result.starts_with('~'), "got: {result}");
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn expand_tilde_only_tilde_slash() {
+        let result = expand_tilde_only("~/work");
+        assert!(
+            result.ends_with("/work") || result.ends_with(r"\work"),
+            "got: {result}"
+        );
+        assert!(!result.starts_with('~'));
+    }
+
+    #[test]
+    fn expand_tilde_only_tilde_user_unchanged() {
+        assert_eq!(expand_tilde_only("~user/foo"), "~user/foo");
+    }
+
+    #[test]
+    fn expand_tilde_only_absolute_path_unchanged() {
+        assert_eq!(expand_tilde_only("/usr/local"), "/usr/local");
+    }
+
+    #[test]
+    fn expand_tilde_only_does_not_expand_env_vars() {
+        // ${HOME} should be returned literally — this helper is for raw paths.
+        assert_eq!(expand_tilde_only("${HOME}/foo"), "${HOME}/foo");
+    }
 
     // --- expand_config_value tests ---
 

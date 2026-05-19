@@ -67,11 +67,16 @@ fn copy_dir_recursive(src: &std::path::Path, dest: &std::path::Path) -> Result<(
 
 /// Return the current user's home directory.
 pub fn home_dir() -> Result<String, TerminalError> {
+    use termihub_core::config::home_directory;
     use termihub_core::files::utils::normalize_platform_path;
-    std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .map(|p| normalize_platform_path(&p))
-        .map_err(|e| TerminalError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, e)))
+    home_directory()
+        .map(|p| normalize_platform_path(&p.to_string_lossy()))
+        .ok_or_else(|| {
+            TerminalError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "home directory not found (HOME / USERPROFILE not set)",
+            ))
+        })
 }
 
 /// Read a file's contents as a UTF-8 string.
