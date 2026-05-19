@@ -669,7 +669,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Manual test plan document (`docs/manual-testing.md`) for features requiring hardware or live connections
 - User documentation: user guide, build instructions, serial setup, SSH configuration, and contributing guide
 - X11 forwarding for SSH connections: forward remote GUI applications to local X server
-- Environment variable placeholders in connection settings: use `${env:VAR}` syntax for shared configs
+- Environment variable placeholders in connection settings: use `${VAR}` syntax for shared configs (originally `${env:VAR}`; updated to standard shell syntax in #726)
 - Tab coloring: assign colors to terminal tabs from the connection editor or via right-click context menu
 - Status bar shows cursor position, language, line ending, tab size, and encoding for the built-in editor
 - Double-click a file in the file browser to open it in the built-in editor
