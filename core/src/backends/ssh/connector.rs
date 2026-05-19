@@ -240,10 +240,10 @@ impl SshConnector for RusshSshConnector {
                     // Incoming data from the server.
                     msg = channel.wait() => {
                         match msg {
-                            Some(ChannelMsg::Data { ref data }) => {
-                                if data_tx.send(data.to_vec()).is_err() {
-                                    break;
-                                }
+                            Some(ChannelMsg::Data { ref data })
+                                if data_tx.send(data.to_vec()).is_err() =>
+                            {
+                                break;
                             }
                             Some(ChannelMsg::Eof) | None => {
                                 // Signal EOF to the reader.
