@@ -100,7 +100,7 @@ termiHub uses a VS Code-inspired three-column layout:
 
 **External Connection Files** — Load shared connection configs from external JSON files (e.g., from a git repo). Add them in Settings > External Connection Files. External connections appear read-only with a git-folder icon.
 
-**Environment Variable Placeholders** — Use `${env:VAR}` syntax in any connection field to substitute environment variables at connect time (e.g., `${env:HOME}/.ssh/id_rsa`).
+**Environment Variable Placeholders** — Use `${VAR}` syntax in any connection field to substitute environment variables at connect time (e.g., `${HOME}/.ssh/id_rsa`). Unknown variables expand to an empty string. A leading `~` is also expanded to the user's home directory.
 
 ### Connection Types
 
@@ -180,7 +180,7 @@ TERMIHUB_CONFIG_DIR=./my-project/termihub-config pnpm tauri dev
 - **Organize by project** — Use folders to group connections by project or environment
 - **Color-code tabs** — Assign colors to distinguish production, staging, and dev
 - **Share configs** — Use external connection files in a git repo for team-wide connection lists
-- **Env var placeholders** — Use `${env:VAR}` so shared configs work across machines
+- **Env var placeholders** — Use `${VAR}` so shared configs work across machines
 - **Split for comparison** — Split the view to compare output from two sessions side by side
 - **Auto-SFTP** — The file browser auto-connects to SFTP when you click an SSH tab
 

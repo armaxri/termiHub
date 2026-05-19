@@ -54,7 +54,7 @@ pub struct SettingsField {
     /// Placeholder text shown in empty inputs.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub placeholder: Option<String>,
-    /// Whether `${env:VAR}` placeholders are expanded at connect time.
+    /// Whether `${VAR}` placeholders are expanded at connect time.
     #[serde(default)]
     pub supports_env_expansion: bool,
     /// Whether `~` is expanded to the home directory at connect time.

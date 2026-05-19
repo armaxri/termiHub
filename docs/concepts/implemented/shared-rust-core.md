@@ -732,7 +732,7 @@ pub struct EnvVar { pub key: String, pub value: String }
 pub struct VolumeMount { pub host_path: String, pub container_path: String, pub read_only: bool }
 pub struct PtySize { pub cols: u16, pub rows: u16 }
 
-/// Config expansion — replace ${env:VAR} placeholders, expand ~ to home.
+/// Config expansion — replace ${VAR} placeholders, expand ~ to home.
 pub fn expand_config_value(value: &str) -> String { ... }
 ```
 
@@ -1070,8 +1070,8 @@ core/                         # NEW — shared backend engine
   src/
     lib.rs                    # Re-exports all modules
     config/
-      mod.rs                  # ShellConfig, SerialConfig, DockerConfig, SshConfig
-      expand.rs               # Config value expansion (${env:VAR}, ~)
+      mod.rs                  # ShellConfig, SerialConfig, DockerConfig, SshConfig,
+                              # expand_config_value (${VAR}, ~) — backed by shellexpand
     session/
       mod.rs                  # OutputSink, ProcessSpawner, ProcessHandle traits
       shell.rs                # ShellCommand builder, OSC7, initial command strategy

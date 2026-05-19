@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking — Connection config placeholders**: environment-variable placeholders in connection fields have changed from `${env:VAR}` to standard shell syntax `${VAR}` (also `$VAR`), now backed by the [`shellexpand`](https://crates.io/crates/shellexpand) crate. Unknown variables now expand to an empty string instead of being left as the literal placeholder. Existing connections that used `${env:VAR}` must be edited to use `${VAR}`. Tilde expansion (`~` / `~/...`) is unchanged. Closes #726.
 - Agent: the hand-rolled JSON-RPC 2.0 dispatch layer (~5 k LOC) has been replaced by [`jsonrpsee`](https://crates.io/crates/jsonrpsee) 0.24. All 35 protocol methods are now registered via `RpcModule`; routing, error formatting, and response serialisation are handled by the library. Custom request/response/error structs in `core/src/protocol/` have been removed; only `JsonRpcNotification` (agent → desktop push) remains. Closes #727.
 - Core: the internal `RingBuffer` (1 MiB capture buffer used by serial sessions and the agent daemon) is now backed by the [`ringbuf`](https://crates.io/crates/ringbuf) crate (`HeapRb<u8>`) instead of a custom circular-byte-buffer implementation. Public API is unchanged.
 
@@ -674,7 +675,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Manual test plan document (`docs/manual-testing.md`) for features requiring hardware or live connections
 - User documentation: user guide, build instructions, serial setup, SSH configuration, and contributing guide
 - X11 forwarding for SSH connections: forward remote GUI applications to local X server
-- Environment variable placeholders in connection settings: use `${env:VAR}` syntax for shared configs
+- Environment variable placeholders in connection settings: use `${VAR}` syntax for shared configs (originally `${env:VAR}`; updated to standard shell syntax in #726)
 - Tab coloring: assign colors to terminal tabs from the connection editor or via right-click context menu
 - Status bar shows cursor position, language, line ending, tab size, and encoding for the built-in editor
 - Double-click a file in the file browser to open it in the built-in editor

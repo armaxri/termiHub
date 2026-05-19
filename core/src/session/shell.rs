@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::config::ShellConfig;
+use crate::config::{home_directory, ShellConfig};
 
 /// Well-known Git Bash installation paths on Windows.
 #[cfg(windows)]
@@ -113,20 +113,6 @@ pub fn shell_to_command(shell: &str) -> (String, Vec<String>) {
                 (other.into(), vec![])
             }
         }
-    }
-}
-
-/// Return the user's home directory.
-///
-/// On Unix, reads `$HOME`. On Windows, reads `$USERPROFILE`.
-pub fn home_directory() -> Option<PathBuf> {
-    #[cfg(unix)]
-    {
-        std::env::var("HOME").ok().map(PathBuf::from)
-    }
-    #[cfg(windows)]
-    {
-        std::env::var("USERPROFILE").ok().map(PathBuf::from)
     }
 }
 
@@ -635,16 +621,6 @@ mod tests {
         let (cmd, args) = shell_to_command("wsl:Ubuntu-22.04");
         assert!(cmd.ends_with("wsl.exe"), "expected wsl.exe, got: {cmd}");
         assert_eq!(args, vec!["-d", "Ubuntu-22.04"]);
-    }
-
-    // -----------------------------------------------------------------------
-    // home_directory
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn home_directory_returns_some() {
-        let home = home_directory();
-        assert!(home.is_some(), "expected a home directory to be resolved");
     }
 
     // -----------------------------------------------------------------------

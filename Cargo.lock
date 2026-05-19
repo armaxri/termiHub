@@ -6056,6 +6056,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "temp-env"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96374855068f47402c3121c6eed88d29cb1de8f3ab27090e273e420bdabcf050"
+dependencies = [
+ "parking_lot",
+]
+
+[[package]]
 name = "tempfile"
 version = "3.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6109,6 +6118,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-fs",
  "tauri-plugin-opener",
+ "temp-env",
  "tempfile",
  "termihub-core",
  "thiserror 2.0.18",
@@ -6169,8 +6179,10 @@ dependencies = [
  "serde",
  "serde_json",
  "serialport",
+ "shellexpand",
  "socket2 0.5.10",
  "surge-ping",
+ "temp-env",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",

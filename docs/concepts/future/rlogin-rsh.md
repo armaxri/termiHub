@@ -629,7 +629,7 @@ pub struct RshConfig {
 }
 ```
 
-Both configs implement the `.expand()` method for `${env:...}` variable expansion, following the existing pattern.
+Both configs implement the `.expand()` method for `${VAR}` placeholder expansion, following the existing pattern.
 
 #### Privileged Port Binding Helper
 
