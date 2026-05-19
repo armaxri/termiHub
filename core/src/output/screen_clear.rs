@@ -96,4 +96,24 @@ mod tests {
         data.extend_from_slice(b"\x1b[2J\x1b[H");
         assert!(contains_screen_clear(&data));
     }
+
+    // --- Regression tests for behavior the substring scanner gets wrong.
+    // These currently fail and will pass once the detector is replaced with a
+    // real VT parser (see #729).
+
+    #[test]
+    fn detects_clear_plus_scrollback_param_3() {
+        // CSI 3 J — xterm extension that erases display and scrollback. The
+        // user sees a fully cleared terminal, so we should treat it as a clear.
+        assert!(contains_screen_clear(b"\x1b[3J"));
+    }
+
+    #[test]
+    fn does_not_false_positive_inside_osc_payload() {
+        // The bytes \x1b[2J appearing inside an OSC string (e.g. a window title)
+        // must not be treated as a CSI clear. A real VT parser stays in OSC
+        // state until ST/BEL and never dispatches the inner bytes as CSI.
+        let payload = b"\x1b]0;title \x1b[2J fake\x07rest";
+        assert!(!contains_screen_clear(payload));
+    }
 }
