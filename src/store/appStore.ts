@@ -139,7 +139,6 @@ import {
   getFirstTabsetId,
   getFirstTabsetIdFromJson,
   createInitialModelJson,
-  addTabToModelJson,
   addTabToLiveModel,
   removeTabFromLiveModel,
   selectTabInLiveModel,
@@ -1268,80 +1267,71 @@ export const useAppStore = create<AppState>((set, get) => {
       sessionId,
       persistentConnectionId
     ) => {
-      let createdTabId = "";
-      set((state) => {
-        const activeGroup = state.tabGroups.find((g) => g.id === state.activeTabGroupId);
-        if (!activeGroup) return state;
+      const state = get();
+      const activeGroup = state.tabGroups.find((g) => g.id === state.activeTabGroupId);
+      if (!activeGroup) return "";
 
-        const targetTabSetId =
-          panelId ??
-          state.activeTabSetId ??
-          getFirstTabsetId(getModel(state.activeTabGroupId)!) ??
-          getFirstTabsetIdFromJson(activeGroup.modelJson);
-        if (!targetTabSetId) return state;
+      const liveModel = getModel(state.activeTabGroupId);
+      const targetTabSetId =
+        panelId ??
+        state.activeTabSetId ??
+        (liveModel ? getFirstTabsetId(liveModel) : null) ??
+        getFirstTabsetIdFromJson(activeGroup.modelJson);
+      if (!targetTabSetId) return "";
 
-        const defaultConfig: ConnectionConfig = config ?? {
-          type: "local",
-          config: { shell: state.defaultShell },
-        };
-        const newTab = createTab(
-          title,
-          connectionType,
-          defaultConfig,
-          targetTabSetId,
-          contentType,
-          sessionId ?? null,
-          persistentConnectionId
-        );
-        createdTabId = newTab.id;
+      const defaultConfig: ConnectionConfig = config ?? {
+        type: "local",
+        config: { shell: state.defaultShell },
+      };
+      const newTab = createTab(
+        title,
+        connectionType,
+        defaultConfig,
+        targetTabSetId,
+        contentType,
+        sessionId ?? null,
+        persistentConnectionId
+      );
 
-        addTabToLiveModel(state.activeTabGroupId, targetTabSetId, {
-          id: newTab.id,
-          name: newTab.title,
-        });
-        const updatedModelJson =
-          getModel(state.activeTabGroupId)?.toJson() ??
-          addTabToModelJson(activeGroup.modelJson, targetTabSetId, {
-            id: newTab.id,
-            name: newTab.title,
-          });
+      const hsEnabled =
+        terminalOptions?.horizontalScrolling ?? state.settings.defaultHorizontalScrolling ?? false;
+      const tabColor = terminalOptions?.color;
+      const tabOpts: TerminalOptions = {};
+      if (terminalOptions?.fontFamily) tabOpts.fontFamily = terminalOptions.fontFamily;
+      if (terminalOptions?.fontSize != null) tabOpts.fontSize = terminalOptions.fontSize;
+      if (terminalOptions?.scrollbackBuffer != null)
+        tabOpts.scrollbackBuffer = terminalOptions.scrollbackBuffer;
+      if (terminalOptions?.cursorStyle) tabOpts.cursorStyle = terminalOptions.cursorStyle;
+      if (terminalOptions?.cursorBlink != null) tabOpts.cursorBlink = terminalOptions.cursorBlink;
+      const hasTabOpts = Object.keys(tabOpts).length > 0;
 
-        const hsEnabled =
-          terminalOptions?.horizontalScrolling ??
-          get().settings.defaultHorizontalScrolling ??
-          false;
-        const tabColor = terminalOptions?.color;
-        // Store per-tab terminal options (excluding horizontalScrolling and color which are tracked separately)
-        const tabOpts: TerminalOptions = {};
-        if (terminalOptions?.fontFamily) tabOpts.fontFamily = terminalOptions.fontFamily;
-        if (terminalOptions?.fontSize != null) tabOpts.fontSize = terminalOptions.fontSize;
-        if (terminalOptions?.scrollbackBuffer != null)
-          tabOpts.scrollbackBuffer = terminalOptions.scrollbackBuffer;
-        if (terminalOptions?.cursorStyle) tabOpts.cursorStyle = terminalOptions.cursorStyle;
-        if (terminalOptions?.cursorBlink != null) tabOpts.cursorBlink = terminalOptions.cursorBlink;
-        const hasTabOpts = Object.keys(tabOpts).length > 0;
+      // Update Zustand state first so factory() sees the new tab when flexlayout renders
+      set((s) => ({
+        tabGroups: s.tabGroups.map((g) =>
+          g.id === state.activeTabGroupId
+            ? {
+                ...g,
+                tabs: [...g.tabs.map((t) => ({ ...t, isActive: false })), newTab],
+                activeTabId: newTab.id,
+                activeTabSetId: targetTabSetId,
+              }
+            : g
+        ),
+        activeTabSetId: targetTabSetId,
+        tabHorizontalScrolling: { ...s.tabHorizontalScrolling, [newTab.id]: hsEnabled },
+        ...(tabColor ? { tabColors: { ...s.tabColors, [newTab.id]: tabColor } } : {}),
+        ...(hasTabOpts
+          ? { tabTerminalOptions: { ...s.tabTerminalOptions, [newTab.id]: tabOpts } }
+          : {}),
+      }));
 
-        return {
-          tabGroups: state.tabGroups.map((g) =>
-            g.id === state.activeTabGroupId
-              ? {
-                  ...g,
-                  modelJson: updatedModelJson,
-                  tabs: [...g.tabs.map((t) => ({ ...t, isActive: false })), newTab],
-                  activeTabId: newTab.id,
-                  activeTabSetId: targetTabSetId,
-                }
-              : g
-          ),
-          activeTabSetId: targetTabSetId,
-          tabHorizontalScrolling: { ...state.tabHorizontalScrolling, [newTab.id]: hsEnabled },
-          ...(tabColor ? { tabColors: { ...state.tabColors, [newTab.id]: tabColor } } : {}),
-          ...(hasTabOpts
-            ? { tabTerminalOptions: { ...state.tabTerminalOptions, [newTab.id]: tabOpts } }
-            : {}),
-        };
+      // Add to the live model after state update — onModelChange will sync modelJson back
+      addTabToLiveModel(state.activeTabGroupId, targetTabSetId, {
+        id: newTab.id,
+        name: newTab.title,
       });
-      return createdTabId;
+
+      return newTab.id;
     },
 
     openSettingsTab: () => {
