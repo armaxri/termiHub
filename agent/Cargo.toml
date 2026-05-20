@@ -30,9 +30,6 @@ base64 = "0.22"
 async-trait = { workspace = true }
 tokio-util = { version = "0.7", features = ["rt"] }
 jsonrpsee = { version = "0.24", default-features = false, features = ["server"] }
-# Used by monitoring/collector.rs (SshCollector) and capability detection.
-# Will be removed when monitoring is fully delegated to ConnectionType.
-serialport = { workspace = true }
 russh = { workspace = true }
 russh-keys = { workspace = true }
 shellexpand = "3"

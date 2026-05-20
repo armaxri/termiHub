@@ -1,8 +1,9 @@
 # Cross.toml — cross-rs configuration for agent cross-compilation.
 #
 # Each target uses a locally pre-built image (see agent/docker/) that extends
-# the official cross-rs base image with the libudev-dev package required by the
-# `serialport` crate.  Run `scripts/setup-agent-cross.sh` (Linux/macOS) or
+# the official cross-rs base image with the system LLD linker (needed on
+# Windows/Podman where DrvFs strips execute bits from the bundled rust-lld).
+# Run `scripts/setup-agent-cross.sh` (Linux/macOS) or
 # `scripts/setup-agent-cross.cmd` (Windows) once to build these images before
 # running build-agents.sh / build-agents.cmd.
 #

@@ -2,13 +2,7 @@ FROM --platform=$BUILDPLATFORM ghcr.io/cross-rs/aarch64-unknown-linux-musl:main
 
 # lld: system LLD linker fallback for when Rust's bundled rust-lld lacks execute
 # permission after being copied from Windows via podman cp (DrvFs strips +x bits).
-# pkg-config wrapper: lets serialport's build script locate libudev-dev:arm64.
-RUN dpkg --add-architecture arm64 \
-    && apt-get update \
-    && apt-get install -y libudev-dev:arm64 lld \
-    && printf '#!/bin/sh\nPKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig PKG_CONFIG_ALLOW_SYSTEM_LIBS=1 exec pkg-config "$@"\n' \
-       > /usr/local/bin/aarch64-linux-gnu-pkg-config \
-    && chmod +x /usr/local/bin/aarch64-linux-gnu-pkg-config
+RUN apt-get update && apt-get install -y lld
 
 # Podman+Windows fix: cross-rs copies the Rust toolchain from the Windows
 # filesystem via `podman cp`, which strips execute bits from ELF binaries
