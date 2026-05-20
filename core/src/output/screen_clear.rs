@@ -1,99 +1,166 @@
-/// The standard screen-clear sequence: ESC[2J (erase entire display) followed by
-/// ESC[H (cursor home).
-const SCREEN_CLEAR_SEQ: &[u8] = b"\x1b[2J\x1b[H";
+use vte::{Params, Parser, Perform};
 
-/// The erase-display sequence alone: ESC[2J.
-const ERASE_DISPLAY_SEQ: &[u8] = b"\x1b[2J";
-
-/// Detect whether `data` contains an ANSI screen-clear sequence.
+/// Detects ANSI screen-clear sequences in a stream of terminal output.
 ///
-/// Checks for both the full `ESC[2J ESC[H` (erase display + cursor home) and
-/// the standalone `ESC[2J` (erase display). The sequence can appear anywhere
-/// in the data — it does not need to be at the start.
-pub fn contains_screen_clear(data: &[u8]) -> bool {
-    contains_subsequence(data, SCREEN_CLEAR_SEQ) || contains_subsequence(data, ERASE_DISPLAY_SEQ)
+/// Parser state is retained across `feed` calls, so escape sequences that span
+/// chunk boundaries are detected correctly. Recognized as a screen clear:
+///
+/// - `CSI 2 J` — erase entire display
+/// - `CSI 3 J` — erase display + scrollback (xterm extension)
+///
+/// Other `CSI n J` variants (`0`, `1`, default) are not treated as a clear.
+pub struct ScreenClearDetector {
+    parser: Parser,
 }
 
-/// Check whether `haystack` contains `needle` as a contiguous subsequence.
-fn contains_subsequence(haystack: &[u8], needle: &[u8]) -> bool {
-    haystack.windows(needle.len()).any(|w| w == needle)
+impl ScreenClearDetector {
+    pub fn new() -> Self {
+        Self {
+            parser: Parser::new(),
+        }
+    }
+
+    /// Feed a chunk of output bytes. Returns `true` if a full screen-clear
+    /// was dispatched anywhere within this chunk.
+    pub fn feed(&mut self, data: &[u8]) -> bool {
+        let mut hit = Hit(false);
+        for &byte in data {
+            self.parser.advance(&mut hit, byte);
+        }
+        hit.0
+    }
+}
+
+impl Default for ScreenClearDetector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+struct Hit(bool);
+
+impl Perform for Hit {
+    fn csi_dispatch(&mut self, params: &Params, _intermediates: &[u8], _ignore: bool, c: char) {
+        if c != 'J' {
+            return;
+        }
+        let n = params
+            .iter()
+            .next()
+            .and_then(|p| p.first().copied())
+            .unwrap_or(0);
+        if n == 2 || n == 3 {
+            self.0 = true;
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn feed_once(data: &[u8]) -> bool {
+        ScreenClearDetector::new().feed(data)
+    }
+
     #[test]
     fn detects_full_clear_sequence() {
-        let data = b"\x1b[2J\x1b[H";
-        assert!(contains_screen_clear(data));
+        assert!(feed_once(b"\x1b[2J\x1b[H"));
     }
 
     #[test]
     fn detects_erase_display_alone() {
-        let data = b"\x1b[2J";
-        assert!(contains_screen_clear(data));
+        assert!(feed_once(b"\x1b[2J"));
     }
 
     #[test]
     fn detects_clear_embedded_in_data() {
-        let mut data = Vec::new();
-        data.extend_from_slice(b"some output before ");
-        data.extend_from_slice(b"\x1b[2J\x1b[H");
-        data.extend_from_slice(b" and after");
-        assert!(contains_screen_clear(&data));
+        assert!(feed_once(b"some output before \x1b[2J\x1b[H and after"));
     }
 
     #[test]
     fn detects_erase_display_embedded_in_data() {
-        let mut data = Vec::new();
-        data.extend_from_slice(b"prefix ");
-        data.extend_from_slice(b"\x1b[2J");
-        data.extend_from_slice(b" suffix");
-        assert!(contains_screen_clear(&data));
+        assert!(feed_once(b"prefix \x1b[2J suffix"));
     }
 
     #[test]
     fn no_match_on_empty_data() {
-        assert!(!contains_screen_clear(b""));
+        assert!(!feed_once(b""));
     }
 
     #[test]
     fn no_match_on_plain_text() {
-        assert!(!contains_screen_clear(b"hello world"));
+        assert!(!feed_once(b"hello world"));
     }
 
     #[test]
     fn no_match_on_partial_escape() {
-        // Just ESC[ without the rest
-        assert!(!contains_screen_clear(b"\x1b["));
+        assert!(!feed_once(b"\x1b["));
     }
 
     #[test]
     fn no_match_on_incomplete_sequence() {
-        // ESC[2 without J
-        assert!(!contains_screen_clear(b"\x1b[2"));
+        assert!(!feed_once(b"\x1b[2"));
     }
 
     #[test]
-    fn no_match_on_wrong_escape() {
-        // ESC[1J is erase from cursor to beginning, not erase all
-        assert!(!contains_screen_clear(b"\x1b[1J\x1b[H"));
+    fn no_match_on_erase_above_cursor() {
+        assert!(!feed_once(b"\x1b[1J\x1b[H"));
+    }
+
+    #[test]
+    fn no_match_on_erase_below_cursor() {
+        assert!(!feed_once(b"\x1b[0J"));
+    }
+
+    #[test]
+    fn no_match_on_default_param() {
+        // CSI J with no param defaults to 0 — erase below cursor, not a clear.
+        assert!(!feed_once(b"\x1b[J"));
     }
 
     #[test]
     fn detects_clear_at_start() {
-        let mut data = Vec::new();
-        data.extend_from_slice(b"\x1b[2J\x1b[H");
-        data.extend_from_slice(b"welcome to the shell");
-        assert!(contains_screen_clear(&data));
+        assert!(feed_once(b"\x1b[2J\x1b[Hwelcome to the shell"));
     }
 
     #[test]
     fn detects_clear_at_end() {
-        let mut data = Vec::new();
-        data.extend_from_slice(b"initializing...");
-        data.extend_from_slice(b"\x1b[2J\x1b[H");
-        assert!(contains_screen_clear(&data));
+        assert!(feed_once(b"initializing...\x1b[2J\x1b[H"));
+    }
+
+    #[test]
+    fn detects_clear_plus_scrollback_param_3() {
+        // CSI 3 J — xterm extension that erases display and scrollback.
+        assert!(feed_once(b"\x1b[3J"));
+    }
+
+    #[test]
+    fn detects_sequence_split_across_chunks() {
+        let mut d = ScreenClearDetector::new();
+        assert!(!d.feed(b"\x1b["));
+        assert!(d.feed(b"2J"));
+    }
+
+    #[test]
+    fn detects_sequence_split_after_esc() {
+        let mut d = ScreenClearDetector::new();
+        assert!(!d.feed(b"\x1b"));
+        assert!(d.feed(b"[2J"));
+    }
+
+    #[test]
+    fn detects_sequence_split_before_final_byte() {
+        let mut d = ScreenClearDetector::new();
+        assert!(!d.feed(b"\x1b[2"));
+        assert!(d.feed(b"J"));
+    }
+
+    #[test]
+    fn state_persists_across_multiple_feeds_without_clear() {
+        let mut d = ScreenClearDetector::new();
+        assert!(!d.feed(b"hello "));
+        assert!(!d.feed(b"world"));
+        assert!(d.feed(b"\x1b[2J"));
     }
 }
