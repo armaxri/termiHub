@@ -15,7 +15,7 @@ All platforms:
   - cross-rs (via cargo install) for all targets
   - Verifies Docker or Podman is available
   - Rust targets for both architectures
-  - Builds custom cross-rs Docker images with libudev-dev
+  - Builds custom cross-rs Docker images with the system LLD linker
 
 Prerequisites:
   - Rust toolchain (rustup)
@@ -87,7 +87,7 @@ fi
 if [ -n "$CONTAINER_CMD" ]; then
     echo ""
     echo "--- Building custom cross-rs images ---"
-    echo "  Images extend ghcr.io/cross-rs/<target>:main with libudev-dev for serialport."
+    echo "  Images extend ghcr.io/cross-rs/<target>:main with the system LLD linker."
     echo ""
 
     build_failed=0

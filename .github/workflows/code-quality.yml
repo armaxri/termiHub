@@ -30,8 +30,7 @@ jobs:
             wget \
             libgtk-3-dev \
             libayatana-appindicator3-dev \
-            librsvg2-dev \
-            libudev-dev
+            librsvg2-dev
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -120,8 +119,7 @@ jobs:
             wget \
             libgtk-3-dev \
             libayatana-appindicator3-dev \
-            librsvg2-dev \
-            libudev-dev
+            librsvg2-dev
 
       - name: Run Rust tests
         run: cargo test --workspace --all-features
