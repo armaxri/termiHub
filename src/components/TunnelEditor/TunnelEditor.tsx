@@ -53,7 +53,6 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   const saveTunnel = useAppStore((s) => s.saveTunnel);
   const startTunnel = useAppStore((s) => s.startTunnel);
   const closeTab = useAppStore((s) => s.closeTab);
-  const rootPanel = useAppStore((s) => s.rootPanel);
 
   // Find existing tunnel if editing
   const existingTunnel = meta.tunnelId ? tunnels.find((t) => t.id === meta.tunnelId) : undefined;
@@ -122,12 +121,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
             console.error("Failed to start tunnel after save:", err)
           );
         }
-        // Find panelId for this tab and close it
-        const { findLeafByTab } = await import("@/utils/panelTree");
-        const leaf = findLeafByTab(rootPanel, tabId);
-        if (leaf) {
-          closeTab(tabId, leaf.id);
-        }
+        closeTab(tabId, tabId);
       } catch (err) {
         console.error("Failed to save tunnel:", err);
       }
@@ -142,18 +136,13 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
       saveTunnel,
       startTunnel,
       closeTab,
-      rootPanel,
       tabId,
     ]
   );
 
-  const handleCancel = useCallback(async () => {
-    const { findLeafByTab } = await import("@/utils/panelTree");
-    const leaf = findLeafByTab(rootPanel, tabId);
-    if (leaf) {
-      closeTab(tabId, leaf.id);
-    }
-  }, [rootPanel, tabId, closeTab]);
+  const handleCancel = useCallback(() => {
+    closeTab(tabId, tabId);
+  }, [tabId, closeTab]);
 
   return (
     <div

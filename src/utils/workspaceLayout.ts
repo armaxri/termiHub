@@ -9,14 +9,16 @@ import {
   WorkspaceTabDef,
   WorkspaceTabGroupDef,
 } from "@/types/workspace";
-import {
-  PanelNode,
-  ConnectionConfig,
-  TerminalTab,
-  TabGroup,
-  AgentErrorMeta,
-} from "@/types/terminal";
+import { ConnectionConfig, TerminalTab, TabGroup, AgentErrorMeta } from "@/types/terminal";
 import { SavedConnection } from "@/types/connection";
+import {
+  Model,
+  type IJsonModel,
+  type IJsonTabSetNode,
+  type IJsonRowNode,
+  type IJsonTabNode,
+} from "flexlayout-react";
+import { registerModel } from "@/utils/layoutModels";
 
 /** Minimal agent state passed in during workspace launch to resolve agentRef tabs. */
 export interface AgentContext {
@@ -393,14 +395,7 @@ export function updateSplitSizes(
   };
 }
 
-// --- Panel tree building/capture for workspace launch ---
-
-let panelIdCounter = 0;
-
-function generatePanelId(): string {
-  panelIdCounter++;
-  return `ws-panel-${panelIdCounter}`;
-}
+// --- Tab group building/capture for workspace launch ---
 
 let tabIdCounter = 0;
 
@@ -423,75 +418,6 @@ type ResolvedTab =
       agentErrorMeta: AgentErrorMeta;
       workspaceAgentRef: { agentId: string; definitionId: string };
     };
-
-/**
- * Build a PanelNode tree from a workspace layout definition.
- * Resolves connection refs to saved connections, falling back to inline configs.
- * When agentContext is provided, agentRef tabs are resolved to terminal or agent-error tabs.
- */
-export function buildPanelTreeFromWorkspace(
-  layout: WorkspaceLayoutNode,
-  savedConnections: SavedConnection[],
-  defaultShell: string,
-  agentContext?: AgentContext
-): PanelNode {
-  if (layout.type === "leaf") {
-    const panelId = generatePanelId();
-    const tabs: TerminalTab[] = layout.tabs.map((tabDef) => {
-      const tabId = generateTabId();
-      const resolved = resolveTabConfig(tabDef, savedConnections, defaultShell, agentContext);
-      if (resolved.kind === "agent-error") {
-        return {
-          id: tabId,
-          sessionId: null,
-          title: resolved.title,
-          connectionType: "remote-session",
-          contentType: "agent-error" as const,
-          config: { type: "remote-session", config: {} },
-          panelId,
-          isActive: false,
-          agentErrorMeta: resolved.agentErrorMeta,
-          workspaceAgentRef: resolved.workspaceAgentRef,
-          initialCommand: resolved.agentErrorMeta.initialCommand,
-        };
-      }
-      return {
-        id: tabId,
-        sessionId: null,
-        title: resolved.title,
-        connectionType: resolved.connectionType,
-        contentType: "terminal" as const,
-        config: resolved.config,
-        panelId,
-        isActive: false,
-        workspaceAgentRef: resolved.workspaceAgentRef,
-        initialCommand: tabDef.initialCommand,
-      };
-    });
-
-    // Mark first tab as active
-    if (tabs.length > 0) {
-      tabs[0].isActive = true;
-    }
-
-    return {
-      type: "leaf",
-      id: panelId,
-      tabs,
-      activeTabId: tabs[0]?.id ?? null,
-    };
-  }
-
-  return {
-    type: "split",
-    id: generatePanelId(),
-    direction: layout.direction,
-    children: layout.children.map((child) =>
-      buildPanelTreeFromWorkspace(child, savedConnections, defaultShell, agentContext)
-    ),
-    ...(layout.sizes ? { sizes: [...layout.sizes] } : {}),
-  };
-}
 
 function resolveTabConfig(
   tabDef: WorkspaceTabDef,
@@ -595,32 +521,6 @@ function resolveTabConfig(
   };
 }
 
-/**
- * Capture the current live panel tree as a workspace layout definition.
- * Matches tabs to saved connection IDs where possible.
- * Agent-error tabs are preserved as agentRef entries so they survive workspace save/reload.
- */
-export function captureCurrentLayout(
-  rootPanel: PanelNode,
-  savedConnections: SavedConnection[]
-): WorkspaceLayoutNode {
-  if (rootPanel.type === "leaf") {
-    return {
-      type: "leaf",
-      tabs: rootPanel.tabs
-        .filter((tab) => tab.contentType === "terminal" || tab.contentType === "agent-error")
-        .map((tab) => captureTab(tab, savedConnections)),
-    };
-  }
-
-  return {
-    type: "split",
-    direction: rootPanel.direction,
-    children: rootPanel.children.map((child) => captureCurrentLayout(child, savedConnections)),
-    ...(rootPanel.sizes ? { sizes: [...rootPanel.sizes] } : {}),
-  };
-}
-
 function captureTab(tab: TerminalTab, savedConnections: SavedConnection[]): WorkspaceTabDef {
   // Agent-error tabs and workspace-launched agent terminal tabs capture as agentRef
   if (tab.workspaceAgentRef) {
@@ -653,6 +553,81 @@ function captureTab(tab: TerminalTab, savedConnections: SavedConnection[]): Work
   };
 }
 
+/**
+ * Capture the current flexlayout model JSON as a workspace layout definition.
+ * Walks the model JSON rows/tabsets to build a WorkspaceLayoutNode tree.
+ * Matches tabs to saved connection IDs where possible.
+ * Agent-error tabs are preserved as agentRef entries so they survive workspace save/reload.
+ */
+export function captureCurrentLayout(
+  modelJson: IJsonModel,
+  tabs: TerminalTab[],
+  savedConnections: SavedConnection[]
+): WorkspaceLayoutNode {
+  const tabMap = new Map(tabs.map((t) => [t.id, t]));
+  return captureRow(modelJson.layout, tabMap, savedConnections);
+}
+
+function captureRow(
+  row: IJsonRowNode,
+  tabMap: Map<string, TerminalTab>,
+  savedConnections: SavedConnection[]
+): WorkspaceLayoutNode {
+  const children = row.children ?? [];
+
+  // If this row has a single tabset child, return a leaf
+  if (children.length === 1 && (children[0] as IJsonTabSetNode).type === "tabset") {
+    return captureTabset(children[0] as IJsonTabSetNode, tabMap, savedConnections);
+  }
+
+  // Mixed or multiple children: map each child recursively
+  const mappedChildren = children.map((child) => {
+    if ((child as IJsonTabSetNode).type === "tabset") {
+      return captureTabset(child as IJsonTabSetNode, tabMap, savedConnections);
+    }
+    return captureRow(child as IJsonRowNode, tabMap, savedConnections);
+  });
+
+  if (mappedChildren.length === 1) {
+    return mappedChildren[0];
+  }
+
+  // flexlayout root row = horizontal splits; nested rows = vertical splits
+  // We use a simple heuristic: top-level row children side-by-side → horizontal
+  // A row that is a child of a row has the opposite direction.
+  // Since we don't have depth here, we default to horizontal at the root row level.
+  // Nested rows within tabsets are always vertical.
+  const direction: "horizontal" | "vertical" = row.type === "row" ? "horizontal" : "vertical";
+
+  return {
+    type: "split",
+    direction,
+    children: mappedChildren,
+  };
+}
+
+function captureTabset(
+  tabset: IJsonTabSetNode,
+  tabMap: Map<string, TerminalTab>,
+  savedConnections: SavedConnection[]
+): WorkspaceLeafNode {
+  const tabDefs = (tabset.children ?? [])
+    .map((child) => {
+      const tabNode = child as IJsonTabNode;
+      const tab = tabId(tabNode) ? tabMap.get(tabId(tabNode)!) : undefined;
+      if (!tab) return null;
+      if (tab.contentType !== "terminal" && tab.contentType !== "agent-error") return null;
+      return captureTab(tab, savedConnections);
+    })
+    .filter((t): t is WorkspaceTabDef => t !== null);
+
+  return { type: "leaf", tabs: tabDefs };
+}
+
+function tabId(node: IJsonTabNode): string | undefined {
+  return node.id as string | undefined;
+}
+
 let groupIdCounter = 0;
 
 function generateWorkspaceGroupId(): string {
@@ -662,7 +637,7 @@ function generateWorkspaceGroupId(): string {
 
 /**
  * Build an array of TabGroup objects from workspace tab group definitions.
- * Each group gets a fresh ID and a newly-built PanelNode tree.
+ * Each group gets a fresh ID, a newly-built IJsonModel, and a flat TerminalTab[].
  * Pass agentContext to resolve agentRef tabs into terminal or agent-error tabs.
  */
 export function buildTabGroupsFromWorkspace(
@@ -672,47 +647,149 @@ export function buildTabGroupsFromWorkspace(
   agentContext?: AgentContext
 ): TabGroup[] {
   return tabGroupDefs.map((def) => {
-    const rootPanel = buildPanelTreeFromWorkspace(
+    const groupId = generateWorkspaceGroupId();
+
+    // Collect all leaves and assign tabset IDs upfront
+    const leaves = getWorkspaceLeaves(def.layout);
+    let tsCounter = 0;
+    const leafTabsetIds: string[] = leaves.map(() => {
+      tsCounter++;
+      return `ws-ts-${Date.now()}-${groupId}-${tsCounter}`;
+    });
+
+    // Build flat tabs array: for each leaf, resolve tabs with panelId = leafTabsetIds[i]
+    const allTabs: TerminalTab[] = [];
+    leaves.forEach((leaf, i) => {
+      const tabsetId = leafTabsetIds[i];
+      leaf.tabs.forEach((tabDef) => {
+        const tabId = generateTabId();
+        const resolved = resolveTabConfig(tabDef, savedConnections, defaultShell, agentContext);
+        if (resolved.kind === "agent-error") {
+          allTabs.push({
+            id: tabId,
+            sessionId: null,
+            title: resolved.title,
+            connectionType: "remote-session",
+            contentType: "agent-error" as const,
+            config: { type: "remote-session", config: {} },
+            panelId: tabsetId,
+            isActive: false,
+            agentErrorMeta: resolved.agentErrorMeta,
+            workspaceAgentRef: resolved.workspaceAgentRef,
+            initialCommand: resolved.agentErrorMeta.initialCommand,
+          });
+        } else {
+          allTabs.push({
+            id: tabId,
+            sessionId: null,
+            title: resolved.title,
+            connectionType: resolved.connectionType,
+            contentType: "terminal" as const,
+            config: resolved.config,
+            panelId: tabsetId,
+            isActive: false,
+            workspaceAgentRef: resolved.workspaceAgentRef,
+            initialCommand: tabDef.initialCommand,
+          });
+        }
+      });
+    });
+
+    // Build model JSON from the layout, inserting tabs into their tabsets
+    const { modelJson, firstTabsetId } = buildModelJsonFromLayoutWithIds(
       def.layout,
-      savedConnections,
-      defaultShell,
-      agentContext
+      allTabs,
+      leafTabsetIds
     );
-    const firstLeaf =
-      rootPanel.type === "leaf" ? rootPanel : getAllWorkspaceLeafPanels(rootPanel)[0];
+
+    // Register the model
+    registerModel(groupId, Model.fromJson(modelJson));
+
+    const firstTabsetActiveTabId = allTabs.find((t) => t.panelId === firstTabsetId)?.id ?? null;
+
     return {
-      id: generateWorkspaceGroupId(),
+      id: groupId,
       name: def.name,
       color: def.color,
-      rootPanel,
-      activePanelId: firstLeaf?.id ?? null,
+      modelJson,
+      tabs: allTabs,
+      activeTabSetId: firstTabsetId || null,
+      activeTabId: firstTabsetActiveTabId,
     };
   });
 }
 
-/** Collect all leaf panels from a PanelNode tree (used internally). */
-function getAllWorkspaceLeafPanels(node: PanelNode): Extract<PanelNode, { type: "leaf" }>[] {
-  if (node.type === "leaf") return [node];
-  return node.children.flatMap(getAllWorkspaceLeafPanels);
+/**
+ * Build a flexlayout IJsonModel from a WorkspaceLayoutNode tree,
+ * using pre-assigned tabset IDs (matching the order of leaves in the tree).
+ */
+function buildModelJsonFromLayoutWithIds(
+  layout: WorkspaceLayoutNode,
+  tabs: TerminalTab[],
+  leafTabsetIds: string[]
+): { modelJson: IJsonModel; firstTabsetId: string } {
+  let leafIndex = 0;
+  const firstTabsetId = leafTabsetIds[0] ?? `ws-ts-${Date.now()}-fallback`;
+
+  function buildRow(node: WorkspaceLayoutNode): IJsonRowNode | IJsonTabSetNode {
+    if (node.type === "leaf") {
+      const tsId = leafTabsetIds[leafIndex++] ?? `ws-ts-${Date.now()}-${leafIndex}`;
+      const tabChildren: IJsonTabNode[] = tabs
+        .filter((t) => t.panelId === tsId)
+        .map((t) => ({ id: t.id, name: t.title }));
+      return {
+        type: "tabset",
+        id: tsId,
+        children: tabChildren,
+      } as IJsonTabSetNode;
+    }
+
+    const children = node.children.map(buildRow);
+
+    if (node.direction === "horizontal") {
+      return { type: "row", children } as IJsonRowNode;
+    } else {
+      // Vertical: wrap each child in a row if it's a tabset
+      const wrappedChildren = children.map((child) =>
+        (child as { type: string }).type === "tabset"
+          ? ({ type: "row", children: [child] } as IJsonRowNode)
+          : (child as IJsonRowNode)
+      );
+      return { type: "row", children: wrappedChildren } as IJsonRowNode;
+    }
+  }
+
+  const root = buildRow(layout);
+  const rootRow: IJsonRowNode =
+    (root as { type: string }).type === "row"
+      ? (root as IJsonRowNode)
+      : { type: "row", children: [root] };
+
+  const modelJson: IJsonModel = {
+    global: {
+      tabEnableRename: false,
+      tabEnableRenderOnDemand: false,
+      tabSetEnableDeleteWhenEmpty: false,
+      tabSetEnableMaximize: false,
+      tabSetEnableTabScrollbar: false,
+    },
+    layout: rootRow,
+  };
+
+  return { modelJson, firstTabsetId };
 }
 
 /**
  * Capture all live tab groups as WorkspaceTabGroupDef[].
- * The active group uses the provided live rootPanel; inactive groups use their
- * saved rootPanel from the tabGroups array.
+ * All data is read directly from the TabGroup objects (modelJson + flat tabs).
  */
 export function captureAllTabGroups(
   tabGroups: TabGroup[],
-  activeTabGroupId: string,
-  liveRootPanel: PanelNode,
   savedConnections: SavedConnection[]
 ): WorkspaceTabGroupDef[] {
-  return tabGroups.map((group) => {
-    const panelTree = group.id === activeTabGroupId ? liveRootPanel : group.rootPanel;
-    return {
-      name: group.name,
-      color: group.color,
-      layout: captureCurrentLayout(panelTree, savedConnections),
-    };
-  });
+  return tabGroups.map((group) => ({
+    name: group.name,
+    color: group.color,
+    layout: captureCurrentLayout(group.modelJson, group.tabs, savedConnections),
+  }));
 }

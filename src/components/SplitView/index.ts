@@ -1,1 +1,1 @@
-export { SplitView } from "./SplitView";
+export { FlexSplitView as SplitView } from "./FlexSplitView";

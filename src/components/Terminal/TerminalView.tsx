@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useRef, useCallback } from "react";
-import { Plus, Columns2, Rows2, X, PanelLeft, FileInput } from "lucide-react";
+import { Plus, Columns2, Rows2, PanelLeft, FileInput } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import { TerminalTab } from "@/types/terminal";
-import { getAllLeaves } from "@/utils/panelTree";
 import { TerminalPortalProvider } from "./TerminalRegistry";
 import { TerminalCommandBridge } from "./TerminalCommandBridge";
 import { Terminal } from "./Terminal";
@@ -43,10 +42,7 @@ export function TerminalView() {
       if (state === "disconnected") {
         // Find the tab that owns this session and show the disconnect overlay.
         const store = useAppStore.getState();
-        const allTabs = [
-          ...getAllLeaves(store.rootPanel).flatMap((l) => l.tabs),
-          ...store.tabGroups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((l) => l.tabs)),
-        ];
+        const allTabs = store.tabGroups.flatMap((g) => g.tabs);
         const tab = allTabs.find((t) => t.sessionId === session_id);
         if (tab) {
           frontendLog("disconnect", `remote-state-change: marking tab=${tab.id} as exited`);
@@ -78,10 +74,7 @@ export function TerminalView() {
         );
 
         // Build the full tab list once and reuse across all branches.
-        const allTabs = [
-          ...getAllLeaves(store.rootPanel).flatMap((l) => l.tabs),
-          ...store.tabGroups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((l) => l.tabs)),
-        ];
+        const allTabs = store.tabGroups.flatMap((g) => g.tabs);
 
         // Find all terminal tabs that belong to this agent via their connection
         // config. This is more reliable than cross-referencing through
@@ -225,9 +218,6 @@ export function TerminalView() {
 
   const addTab = useAppStore((s) => s.addTab);
   const splitPanel = useAppStore((s) => s.splitPanel);
-  const rootPanel = useAppStore((s) => s.rootPanel);
-  const activePanelId = useAppStore((s) => s.activePanelId);
-  const removePanel = useAppStore((s) => s.removePanel);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
   const isMac = navigator.platform.toUpperCase().includes("MAC");
@@ -247,8 +237,6 @@ export function TerminalView() {
 
   const { isDragOver: isTerminalDragOver } = useOsFileDrop(terminalContentRef, handleTerminalDrop);
 
-  const allLeaves = getAllLeaves(rootPanel);
-
   const handleNewTerminal = () => {
     addTab("Terminal", "local");
   };
@@ -259,12 +247,6 @@ export function TerminalView() {
 
   const handleSplitVertical = () => {
     splitPanel("vertical");
-  };
-
-  const handleClosePanel = () => {
-    if (activePanelId && allLeaves.length > 1) {
-      removePanel(activePanelId);
-    }
   };
 
   return (
@@ -298,16 +280,6 @@ export function TerminalView() {
             >
               <Rows2 size={16} />
             </button>
-            {allLeaves.length > 1 && (
-              <button
-                className="terminal-view__toolbar-btn"
-                onClick={handleClosePanel}
-                title="Close Panel"
-                data-testid="terminal-view-close-panel"
-              >
-                <X size={16} />
-              </button>
-            )}
             <button
               className={`terminal-view__toolbar-btn${!sidebarCollapsed ? " terminal-view__toolbar-btn--active" : ""}`}
               onClick={toggleSidebar}
@@ -341,24 +313,11 @@ export function TerminalView() {
  * sessions and terminal content.
  */
 function TerminalHost() {
-  const rootPanel = useAppStore((s) => s.rootPanel);
   const tabGroups = useAppStore((s) => s.tabGroups);
-  const activeTabGroupId = useAppStore((s) => s.activeTabGroupId);
 
   const allTabs: TerminalTab[] = useMemo(() => {
-    // Active group: use live rootPanel (always up-to-date)
-    const activeTabs = getAllLeaves(rootPanel)
-      .flatMap((leaf) => leaf.tabs)
-      .filter((tab) => tab.contentType === "terminal");
-
-    // Inactive groups: use saved rootPanel from tabGroups store
-    const inactiveTabs = tabGroups
-      .filter((g) => g.id !== activeTabGroupId)
-      .flatMap((g) => getAllLeaves(g.rootPanel).flatMap((leaf) => leaf.tabs))
-      .filter((tab) => tab.contentType === "terminal");
-
-    return [...activeTabs, ...inactiveTabs];
-  }, [rootPanel, tabGroups, activeTabGroupId]);
+    return tabGroups.flatMap((g) => g.tabs).filter((tab) => tab.contentType === "terminal");
+  }, [tabGroups]);
 
   return (
     <>

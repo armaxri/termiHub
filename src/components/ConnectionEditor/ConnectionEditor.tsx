@@ -33,7 +33,6 @@ import { ConnectionAppearanceSettings } from "./ConnectionAppearanceSettings";
 import { AgentExternalFilesSettings } from "./AgentExternalFilesSettings";
 import { AgentSettingsForm } from "./AgentSettingsForm";
 import { UnsavedChangesDialog } from "./UnsavedChangesDialog";
-import { findLeafByTab } from "@/utils/panelTree";
 import "./ConnectionEditor.css";
 
 type EditorCategory = "connection" | "terminal" | "appearance" | "agent";
@@ -152,7 +151,6 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const closeTab = useAppStore((s) => s.closeTab);
   const addTab = useAppStore((s) => s.addTab);
   const requestPassword = useAppStore((s) => s.requestPassword);
-  const rootPanel = useAppStore((s) => s.rootPanel);
   const remoteAgents = useAppStore((s) => s.remoteAgents);
   const addRemoteAgent = useAppStore((s) => s.addRemoteAgent);
   const updateRemoteAgent = useAppStore((s) => s.updateRemoteAgent);
@@ -462,11 +460,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   );
 
   const closeThisTab = useCallback(() => {
-    const leaf = findLeafByTab(rootPanel, tabId);
-    if (leaf) {
-      closeTab(tabId, leaf.id);
-    }
-  }, [rootPanel, tabId, closeTab]);
+    closeTab(tabId, tabId);
+  }, [tabId, closeTab]);
 
   /** Save agent definition to the remote agent. Returns true on success. */
   const saveAgentDefinition = useCallback(async (): Promise<boolean> => {

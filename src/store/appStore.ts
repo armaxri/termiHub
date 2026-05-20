@@ -1,11 +1,8 @@
 import { create } from "zustand";
 import {
   TerminalTab,
-  LeafPanel,
-  PanelNode,
   ConnectionConfig,
   ShellType,
-  DropEdge,
   TabContentType,
   TerminalOptions,
   EditorTabMeta,
@@ -18,6 +15,7 @@ import {
   NetworkTool,
   TabGroup,
 } from "@/types/terminal";
+import type { IJsonModel } from "flexlayout-react";
 import type { HttpMonitorState } from "@/types/network";
 import {
   SavedConnection,
@@ -135,17 +133,19 @@ import {
 } from "@/utils/monacoCustomLanguages";
 import { frontendLog } from "@/utils/frontendLog";
 import {
-  createLeafPanel,
-  findLeaf,
-  findLeafByTab,
-  getAllLeaves,
-  updateLeaf,
-  removeLeaf,
-  splitLeaf,
-  simplifyTree,
-  edgeToSplit,
-  markActiveLeaf,
-} from "@/utils/panelTree";
+  registerModel,
+  getModel,
+  deleteModel,
+  getFirstTabsetId,
+  getFirstTabsetIdFromJson,
+  createInitialModelJson,
+  addTabToModelJson,
+  addTabToLiveModel,
+  removeTabFromLiveModel,
+  selectTabInLiveModel,
+  splitActiveTabset,
+} from "@/utils/layoutModels";
+import { Model } from "flexlayout-react";
 
 export type SidebarView =
   | "connections"
@@ -245,8 +245,15 @@ interface AppState {
   setDraggingTabId: (id: string | null) => void;
 
   // Panels & Tabs
-  rootPanel: PanelNode;
-  activePanelId: string | null;
+  /** ID of the focused tabset in the active tab group. */
+  activeTabSetId: string | null;
+  /** Sync layout JSON + active tabset/tab after flexlayout model changes. */
+  updateGroupModel: (
+    groupId: string,
+    json: IJsonModel,
+    activeTabSetId?: string | null,
+    activeTabId?: string | null
+  ) => void;
   addTab: (
     title: string,
     connectionType: string,
@@ -300,19 +307,12 @@ interface AppState {
   pendingCloseRequest: { tabId: string; panelId: string } | null;
   setPendingCloseRequest: (req: { tabId: string; panelId: string } | null) => void;
   closeTab: (tabId: string, panelId: string) => void;
+  /** Remove a tab from the store's data only (no model mutation — used from the layout's onAction). */
+  closeTabData: (tabId: string) => void;
   setActiveTab: (tabId: string, panelId: string) => void;
-  moveTab: (tabId: string, fromPanelId: string, toPanelId: string, newIndex: number) => void;
-  reorderTabs: (panelId: string, oldIndex: number, newIndex: number) => void;
   splitPanel: (direction?: "horizontal" | "vertical") => void;
-  removePanel: (panelId: string) => void;
   setActivePanel: (panelId: string) => void;
-  splitPanelWithTab: (
-    tabId: string,
-    fromPanelId: string,
-    targetPanelId: string,
-    edge: DropEdge
-  ) => void;
-  getAllPanels: () => LeafPanel[];
+  getAllTabs: () => TerminalTab[];
   /** Update the backend session ID on a tab (called after the terminal session is created). */
   setTabSessionId: (tabId: string, sessionId: string | null) => void;
 
@@ -665,30 +665,6 @@ function createTab(
   };
 }
 
-/**
- * Remove a tab from a leaf panel, choosing a new active tab if needed.
- * Returns the updated leaf (may have empty tabs).
- */
-function removeTabFromLeaf(leaf: LeafPanel, tabId: string): LeafPanel {
-  const idx = leaf.tabs.findIndex((t) => t.id === tabId);
-  if (idx === -1) return leaf;
-
-  const tabs = leaf.tabs.filter((t) => t.id !== tabId);
-  let activeTabId = leaf.activeTabId;
-  if (activeTabId === tabId) {
-    const newIdx = Math.min(idx, tabs.length - 1);
-    activeTabId = tabs[newIdx]?.id ?? null;
-  }
-  if (activeTabId) {
-    return {
-      ...leaf,
-      tabs: tabs.map((t) => ({ ...t, isActive: t.id === activeTabId })),
-      activeTabId,
-    };
-  }
-  return { ...leaf, tabs, activeTabId: null };
-}
-
 let groupCounter = 0;
 
 /** Generate a unique tab group ID. */
@@ -709,6 +685,30 @@ let _connAppliedSeq = 0;
 export function _resetConnectionReloadSeq(): void {
   _connReloadSeq = 0;
   _connAppliedSeq = 0;
+}
+
+/** Collect all per-tab auxiliary records to remove when a tab is closed. */
+function buildTabCleanupState(state: AppState, tabId: string): Partial<AppState> {
+  return {
+    tabCwds: omitKey(state.tabCwds, tabId),
+    tabHorizontalScrolling: omitKey(state.tabHorizontalScrolling, tabId),
+    tabColors: omitKey(state.tabColors, tabId),
+    tabTerminalOptions: omitKey(state.tabTerminalOptions, tabId),
+    editorDirtyTabs: omitKey(state.editorDirtyTabs, tabId),
+    terminalSearchVisible: omitKey(state.terminalSearchVisible, tabId),
+    terminalSpawnErrors: omitKey(state.terminalSpawnErrors, tabId),
+    terminalRetryCounters: omitKey(state.terminalRetryCounters, tabId),
+    terminalConnecting: omitKey(state.terminalConnecting, tabId),
+    terminalAutoRetryCount: omitKey(state.terminalAutoRetryCount, tabId),
+    terminalWaitingForAgent: omitKey(state.terminalWaitingForAgent, tabId),
+    terminalExitedTabs: omitKey(state.terminalExitedTabs, tabId),
+    terminalDisconnectErrors: omitKey(state.terminalDisconnectErrors, tabId),
+    terminalViewMode: omitKey(state.terminalViewMode, tabId),
+    terminalReconnectingTabs: omitKey(state.terminalReconnectingTabs, tabId),
+    terminalReattaching: omitKey(state.terminalReattaching, tabId),
+    terminalReconnectPrompt: omitKey(state.terminalReconnectPrompt, tabId),
+    terminalReconnectTriggerErrors: omitKey(state.terminalReconnectTriggerErrors, tabId),
+  };
 }
 
 export const useAppStore = create<AppState>((set, get) => {
@@ -734,14 +734,19 @@ export const useAppStore = create<AppState>((set, get) => {
     });
   }
 
-  const initialPanel = createLeafPanel();
   const initialGroupId = generateGroupId();
+  const initialTabSetId = `ts-${Date.now()}-initial`;
+  const initialModelJson = createInitialModelJson(initialTabSetId);
   const initialGroup: TabGroup = {
     id: initialGroupId,
     name: "Main",
-    rootPanel: initialPanel,
-    activePanelId: initialPanel.id,
+    modelJson: initialModelJson,
+    tabs: [],
+    activeTabSetId: initialTabSetId,
+    activeTabId: null,
   };
+  // Register the initial model so the store can use it before the component mounts.
+  registerModel(initialGroupId, Model.fromJson(initialModelJson));
 
   return {
     // Connection type registry — updated by loadFromBackend()
@@ -822,53 +827,46 @@ export const useAppStore = create<AppState>((set, get) => {
 
     addTabGroup: (name) => {
       const newGroupId = generateGroupId();
-      const newPanel = createLeafPanel();
+      const newTabSetId = `ts-${Date.now()}-${newGroupId}`;
+      const modelJson = createInitialModelJson(newTabSetId);
+      registerModel(newGroupId, Model.fromJson(modelJson));
       set((state) => {
         const groupCount = state.tabGroups.length + 1;
         const newGroup: TabGroup = {
           id: newGroupId,
           name: name ?? `Group ${groupCount}`,
-          rootPanel: newPanel,
-          activePanelId: newPanel.id,
+          modelJson,
+          tabs: [],
+          activeTabSetId: newTabSetId,
+          activeTabId: null,
         };
-        // Save current live state into the active group before switching
-        const savedGroups = state.tabGroups.map((g) =>
-          g.id === state.activeTabGroupId
-            ? { ...g, rootPanel: state.rootPanel, activePanelId: state.activePanelId }
-            : g
-        );
         return {
-          tabGroups: [...savedGroups, newGroup],
+          tabGroups: [...state.tabGroups, newGroup],
           activeTabGroupId: newGroupId,
-          rootPanel: newPanel,
-          activePanelId: newPanel.id,
+          activeTabSetId: newTabSetId,
         };
       });
       return newGroupId;
     },
 
-    closeTabGroup: (groupId) =>
+    closeTabGroup: (groupId) => {
+      deleteModel(groupId);
       set((state) => {
         if (state.tabGroups.length <= 1) return state;
-
         const newGroups = state.tabGroups.filter((g) => g.id !== groupId);
-
         if (groupId !== state.activeTabGroupId) {
-          // Closing an inactive group — straightforward removal
           return { tabGroups: newGroups };
         }
-
-        // Closing the active group — pick adjacent group
         const currentIdx = state.tabGroups.findIndex((g) => g.id === groupId);
         const newActiveIdx = Math.max(0, currentIdx - 1);
         const newActiveGroup = newGroups[newActiveIdx];
         return {
           tabGroups: newGroups,
           activeTabGroupId: newActiveGroup.id,
-          rootPanel: newActiveGroup.rootPanel,
-          activePanelId: newActiveGroup.activePanelId,
+          activeTabSetId: newActiveGroup.activeTabSetId,
         };
-      }),
+      });
+    },
 
     renameTabGroup: (groupId, name) =>
       set((state) => ({
@@ -887,25 +885,12 @@ export const useAppStore = create<AppState>((set, get) => {
         if (groupId === state.activeTabGroupId) return state;
         const targetGroup = state.tabGroups.find((g) => g.id === groupId);
         if (!targetGroup) return state;
-        // Save current live state into the currently active group
-        const savedGroups = state.tabGroups.map((g) =>
-          g.id === state.activeTabGroupId
-            ? { ...g, rootPanel: state.rootPanel, activePanelId: state.activePanelId }
-            : g
-        );
         // Follow zoom to the new group's active tab so the overlay never goes stale
-        let newZoomedTabId = state.zoomedTabId;
-        if (state.zoomedTabId !== null) {
-          const newActivePanel = targetGroup.activePanelId
-            ? findLeaf(targetGroup.rootPanel, targetGroup.activePanelId)
-            : null;
-          newZoomedTabId = newActivePanel?.activeTabId ?? null;
-        }
+        const newZoomedTabId =
+          state.zoomedTabId !== null ? (targetGroup.activeTabId ?? null) : null;
         return {
-          tabGroups: savedGroups,
           activeTabGroupId: groupId,
-          rootPanel: targetGroup.rootPanel,
-          activePanelId: targetGroup.activePanelId,
+          activeTabSetId: targetGroup.activeTabSetId,
           zoomedTabId: newZoomedTabId,
         };
       }),
@@ -918,119 +903,103 @@ export const useAppStore = create<AppState>((set, get) => {
         return { tabGroups: groups };
       }),
 
-    moveTabToGroup: (tabId, fromPanelId, targetGroupId) =>
-      set((state) => {
-        if (targetGroupId === state.activeTabGroupId) return state;
+    moveTabToGroup: (tabId, _fromPanelId, targetGroupId) => {
+      const state = get();
+      if (targetGroupId === state.activeTabGroupId) return;
+      const activeGroupId = state.activeTabGroupId;
+      const activeGroup = state.tabGroups.find((g) => g.id === activeGroupId);
+      if (!activeGroup) return;
+      const tab = activeGroup.tabs.find((t) => t.id === tabId);
+      if (!tab) return;
 
-        // Find the tab in the active group's live rootPanel
-        const sourceLeaf = getAllLeaves(state.rootPanel).find((l) => l.id === fromPanelId);
-        if (!sourceLeaf) return state;
-        const tab = sourceLeaf.tabs.find((t) => t.id === tabId);
-        if (!tab) return state;
+      const targetGroup = state.tabGroups.find((g) => g.id === targetGroupId);
+      if (!targetGroup) return;
+      const targetModel = getModel(targetGroupId);
+      const targetTabSetId =
+        (targetModel ? getFirstTabsetId(targetModel) : null) ??
+        getFirstTabsetIdFromJson(targetGroup.modelJson) ??
+        null;
+      if (!targetTabSetId) return;
 
-        // Remove tab from active group's live rootPanel
-        let newRootPanel = updateLeaf(state.rootPanel, fromPanelId, (leaf) =>
-          removeTabFromLeaf(leaf, tabId)
-        );
+      // Remove from source model
+      const newSourceModelJson = removeTabFromLiveModel(activeGroupId, tabId);
+      // Add to target model
+      const tabJson = { id: tabId, name: tab.title };
+      addTabToLiveModel(targetGroupId, targetTabSetId, tabJson);
+      const newTargetModelJson = getModel(targetGroupId)?.toJson() ?? targetGroup.modelJson;
 
-        // Clean up empty source panel (if not the sole leaf)
-        const updatedSource = findLeaf(newRootPanel, fromPanelId);
-        const allLeaves = getAllLeaves(newRootPanel);
-        if (updatedSource && updatedSource.tabs.length === 0 && allLeaves.length > 1) {
-          const removed = removeLeaf(newRootPanel, fromPanelId);
-          newRootPanel = removed ? simplifyTree(removed) : newRootPanel;
-        }
+      const movedTab: TerminalTab = { ...tab, panelId: targetTabSetId, isActive: true };
+      set((s) => ({
+        tabGroups: s.tabGroups.map((g) => {
+          if (g.id === activeGroupId) {
+            return {
+              ...g,
+              tabs: g.tabs.filter((t) => t.id !== tabId),
+              ...(newSourceModelJson ? { modelJson: newSourceModelJson } : {}),
+            };
+          }
+          if (g.id === targetGroupId) {
+            return {
+              ...g,
+              tabs: [...g.tabs, movedTab],
+              modelJson: newTargetModelJson,
+              activeTabId: movedTab.id,
+            };
+          }
+          return g;
+        }),
+      }));
+    },
 
-        // Find target group and add tab to its first leaf
-        const targetGroupIndex = state.tabGroups.findIndex((g) => g.id === targetGroupId);
-        if (targetGroupIndex === -1) return state;
-        const targetGroup = state.tabGroups[targetGroupIndex];
-        const targetLeaves = getAllLeaves(targetGroup.rootPanel);
-        const targetLeaf = targetLeaves[0];
-        if (!targetLeaf) return state;
+    addTabGroupWithTab: (tabId, _fromPanelId) => {
+      const state = get();
+      const activeGroupId = state.activeTabGroupId;
+      const activeGroup = state.tabGroups.find((g) => g.id === activeGroupId);
+      if (!activeGroup) return;
+      const tab = activeGroup.tabs.find((t) => t.id === tabId);
+      if (!tab) return;
 
-        const movedTab: TerminalTab = { ...tab, panelId: targetLeaf.id, isActive: true };
-        const newTargetRootPanel = updateLeaf(targetGroup.rootPanel, targetLeaf.id, (leaf) => ({
-          ...leaf,
-          tabs: [...leaf.tabs.map((t) => ({ ...t, isActive: false })), movedTab],
-          activeTabId: movedTab.id,
-        }));
+      // Remove tab from source model
+      const newSourceModelJson = removeTabFromLiveModel(activeGroupId, tabId);
 
-        const newTabGroups = state.tabGroups.map((g, i) =>
-          i === targetGroupIndex ? { ...g, rootPanel: newTargetRootPanel } : g
-        );
+      // Create new group
+      const newGroupId = generateGroupId();
+      const newTabSetId = `ts-${Date.now()}-${newGroupId}`;
+      const newModelJson = createInitialModelJson(newTabSetId);
+      registerModel(newGroupId, Model.fromJson(newModelJson));
 
-        // Update active panel if the source panel was removed
-        const newActivePanelId =
-          state.activePanelId === fromPanelId
-            ? (getAllLeaves(newRootPanel)[0]?.id ?? null)
-            : state.activePanelId;
+      const movedTab: TerminalTab = { ...tab, panelId: newTabSetId, isActive: true };
+      const tabJson = { id: tabId, name: tab.title };
+      addTabToLiveModel(newGroupId, newTabSetId, tabJson);
+      const populatedModelJson = getModel(newGroupId)?.toJson() ?? newModelJson;
 
-        return {
-          rootPanel: newRootPanel,
-          tabGroups: newTabGroups,
-          activePanelId: newActivePanelId,
-        };
-      }),
+      const groupCount = state.tabGroups.length + 1;
+      const newGroup: TabGroup = {
+        id: newGroupId,
+        name: `Group ${groupCount}`,
+        modelJson: populatedModelJson,
+        tabs: [movedTab],
+        activeTabSetId: newTabSetId,
+        activeTabId: movedTab.id,
+      };
 
-    addTabGroupWithTab: (tabId, fromPanelId) =>
-      set((state) => {
-        // Find the tab in the active group's live rootPanel
-        const sourceLeaf = getAllLeaves(state.rootPanel).find((l) => l.id === fromPanelId);
-        if (!sourceLeaf) return state;
-        const tab = sourceLeaf.tabs.find((t) => t.id === tabId);
-        if (!tab) return state;
-
-        // Remove tab from active group's live rootPanel
-        let newSourceRootPanel = updateLeaf(state.rootPanel, fromPanelId, (leaf) =>
-          removeTabFromLeaf(leaf, tabId)
-        );
-
-        // Clean up empty source panel (if not the sole leaf)
-        const updatedSource = findLeaf(newSourceRootPanel, fromPanelId);
-        const allSourceLeaves = getAllLeaves(newSourceRootPanel);
-        if (updatedSource && updatedSource.tabs.length === 0 && allSourceLeaves.length > 1) {
-          const removed = removeLeaf(newSourceRootPanel, fromPanelId);
-          newSourceRootPanel = removed ? simplifyTree(removed) : newSourceRootPanel;
-        }
-
-        // Update active panel if the source panel was removed
-        const newActivePanelId =
-          state.activePanelId === fromPanelId
-            ? (getAllLeaves(newSourceRootPanel)[0]?.id ?? null)
-            : state.activePanelId;
-
-        // Save the updated source group state
-        const savedGroups = state.tabGroups.map((g) =>
-          g.id === state.activeTabGroupId
-            ? { ...g, rootPanel: newSourceRootPanel, activePanelId: newActivePanelId }
-            : g
-        );
-
-        // Create the new group with the moved tab
-        const newGroupId = generateGroupId();
-        const newPanel = createLeafPanel();
-        const movedTab: TerminalTab = { ...tab, panelId: newPanel.id, isActive: true };
-        const newGroupRootPanel = updateLeaf(newPanel, newPanel.id, (leaf) => ({
-          ...leaf,
-          tabs: [movedTab],
-          activeTabId: movedTab.id,
-        }));
-        const groupCount = state.tabGroups.length + 1;
-        const newGroup: TabGroup = {
-          id: newGroupId,
-          name: `Group ${groupCount}`,
-          rootPanel: newGroupRootPanel,
-          activePanelId: newPanel.id,
-        };
-
-        return {
-          tabGroups: [...savedGroups, newGroup],
-          activeTabGroupId: newGroupId,
-          rootPanel: newGroupRootPanel,
-          activePanelId: newPanel.id,
-        };
-      }),
+      set((s) => ({
+        tabGroups: [
+          ...s.tabGroups.map((g) =>
+            g.id === activeGroupId
+              ? {
+                  ...g,
+                  tabs: g.tabs.filter((t) => t.id !== tabId),
+                  ...(newSourceModelJson ? { modelJson: newSourceModelJson } : {}),
+                }
+              : g
+          ),
+          newGroup,
+        ],
+        activeTabGroupId: newGroupId,
+        activeTabSetId: newTabSetId,
+      }));
+    },
 
     draggingTabId: null,
     setDraggingTabId: (id) => set({ draggingTabId: id }),
@@ -1207,8 +1176,10 @@ export const useAppStore = create<AppState>((set, get) => {
         entry.sessionId,
         connectionId
       );
-      // Resolve the actual panel the tab landed in so we can close it on failure.
-      const actualPanelId = findLeafByTab(get().rootPanel, tabId)?.id;
+      const actualPanelId =
+        get()
+          .tabGroups.flatMap((g) => g.tabs)
+          .find((t) => t.id === tabId)?.panelId ?? null;
       try {
         await apiAttachPersistentTab(connectionId, tabId);
         set((state) => {
@@ -1230,25 +1201,41 @@ export const useAppStore = create<AppState>((set, get) => {
           `attach_persistent_tab failed for ${connectionId}: ${err instanceof Error ? err.message : String(err)}`
         );
         // Session is gone — remove the tab so the user does not see a blank terminal.
-        if (actualPanelId) {
-          get().closeTab(tabId, actualPanelId);
-        }
+        get().closeTab(tabId, actualPanelId ?? tabId);
       }
     },
 
     // Panels & Tabs
-    rootPanel: initialPanel,
-    activePanelId: initialPanel.id,
+    activeTabSetId: initialTabSetId,
 
-    getAllPanels: () => getAllLeaves(get().rootPanel),
+    getAllTabs: () => {
+      const { tabGroups, activeTabGroupId } = get();
+      return tabGroups.find((g) => g.id === activeTabGroupId)?.tabs ?? [];
+    },
+
+    updateGroupModel: (groupId, json, newActiveTabSetId, newActiveTabId) =>
+      set((state) => ({
+        tabGroups: state.tabGroups.map((g) =>
+          g.id === groupId
+            ? {
+                ...g,
+                modelJson: json,
+                ...(newActiveTabSetId !== undefined ? { activeTabSetId: newActiveTabSetId } : {}),
+                ...(newActiveTabId !== undefined ? { activeTabId: newActiveTabId } : {}),
+              }
+            : g
+        ),
+        ...(groupId === state.activeTabGroupId && newActiveTabSetId !== undefined
+          ? { activeTabSetId: newActiveTabSetId }
+          : {}),
+      })),
 
     setTabSessionId: (tabId, sessionId) => {
       // For remote-session tabs gaining a session ID, fetch capabilities so
       // monitoring knows whether this session supports stats collection.
       if (sessionId) {
-        const tab = getAllLeaves(get().rootPanel)
-          .flatMap((l) => l.tabs)
-          .find((t) => t.id === tabId);
+        const activeGroup = get().tabGroups.find((g) => g.id === get().activeTabGroupId);
+        const tab = activeGroup?.tabs.find((t) => t.id === tabId);
         if (tab?.connectionType === "remote-session") {
           sessionGetCapabilities(sessionId)
             .then((caps) => get().setSessionCapabilities(sessionId, caps))
@@ -1256,13 +1243,17 @@ export const useAppStore = create<AppState>((set, get) => {
         }
       }
       set((state) => {
-        const leaf = findLeafByTab(state.rootPanel, tabId);
-        if (!leaf) return state;
+        const activeGroup = state.tabGroups.find((g) => g.id === state.activeTabGroupId);
+        if (!activeGroup) return state;
         return {
-          rootPanel: updateLeaf(state.rootPanel, leaf.id, (l) => ({
-            ...l,
-            tabs: l.tabs.map((t) => (t.id === tabId ? { ...t, sessionId } : t)),
-          })),
+          tabGroups: state.tabGroups.map((g) =>
+            g.id === state.activeTabGroupId
+              ? {
+                  ...g,
+                  tabs: g.tabs.map((t) => (t.id === tabId ? { ...t, sessionId } : t)),
+                }
+              : g
+          ),
         };
       });
     },
@@ -1279,9 +1270,15 @@ export const useAppStore = create<AppState>((set, get) => {
     ) => {
       let createdTabId = "";
       set((state) => {
-        const allLeaves = getAllLeaves(state.rootPanel);
-        const targetPanelId = panelId ?? state.activePanelId ?? allLeaves[0]?.id;
-        if (!targetPanelId) return state;
+        const activeGroup = state.tabGroups.find((g) => g.id === state.activeTabGroupId);
+        if (!activeGroup) return state;
+
+        const targetTabSetId =
+          panelId ??
+          state.activeTabSetId ??
+          getFirstTabsetId(getModel(state.activeTabGroupId)!) ??
+          getFirstTabsetIdFromJson(activeGroup.modelJson);
+        if (!targetTabSetId) return state;
 
         const defaultConfig: ConnectionConfig = config ?? {
           type: "local",
@@ -1291,17 +1288,24 @@ export const useAppStore = create<AppState>((set, get) => {
           title,
           connectionType,
           defaultConfig,
-          targetPanelId,
+          targetTabSetId,
           contentType,
           sessionId ?? null,
           persistentConnectionId
         );
         createdTabId = newTab.id;
-        const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
-          const tabs = leaf.tabs.map((t) => ({ ...t, isActive: false }));
-          tabs.push(newTab);
-          return { ...leaf, tabs, activeTabId: newTab.id };
+
+        addTabToLiveModel(state.activeTabGroupId, targetTabSetId, {
+          id: newTab.id,
+          name: newTab.title,
         });
+        const updatedModelJson =
+          getModel(state.activeTabGroupId)?.toJson() ??
+          addTabToModelJson(activeGroup.modelJson, targetTabSetId, {
+            id: newTab.id,
+            name: newTab.title,
+          });
+
         const hsEnabled =
           terminalOptions?.horizontalScrolling ??
           get().settings.defaultHorizontalScrolling ??
@@ -1316,9 +1320,20 @@ export const useAppStore = create<AppState>((set, get) => {
         if (terminalOptions?.cursorStyle) tabOpts.cursorStyle = terminalOptions.cursorStyle;
         if (terminalOptions?.cursorBlink != null) tabOpts.cursorBlink = terminalOptions.cursorBlink;
         const hasTabOpts = Object.keys(tabOpts).length > 0;
+
         return {
-          rootPanel,
-          activePanelId: targetPanelId,
+          tabGroups: state.tabGroups.map((g) =>
+            g.id === state.activeTabGroupId
+              ? {
+                  ...g,
+                  modelJson: updatedModelJson,
+                  tabs: [...g.tabs.map((t) => ({ ...t, isActive: false })), newTab],
+                  activeTabId: newTab.id,
+                  activeTabSetId: targetTabSetId,
+                }
+              : g
+          ),
+          activeTabSetId: targetTabSetId,
           tabHorizontalScrolling: { ...state.tabHorizontalScrolling, [newTab.id]: hsEnabled },
           ...(tabColor ? { tabColors: { ...state.tabColors, [newTab.id]: tabColor } } : {}),
           ...(hasTabOpts
@@ -1329,249 +1344,306 @@ export const useAppStore = create<AppState>((set, get) => {
       return createdTabId;
     },
 
-    openSettingsTab: () =>
-      set((state) => {
-        const allLeaves = getAllLeaves(state.rootPanel);
+    openSettingsTab: () => {
+      const { tabGroups, activeTabGroupId, activeTabSetId } = get();
+      const activeGroup = tabGroups.find((g) => g.id === activeTabGroupId);
+      if (!activeGroup) return;
+      const existing = activeGroup.tabs.find((t) => t.contentType === "settings");
+      if (existing) {
+        const newModelJson = selectTabInLiveModel(activeTabGroupId, existing.id);
+        set((s) => ({
+          tabGroups: s.tabGroups.map((g) =>
+            g.id === activeTabGroupId
+              ? {
+                  ...g,
+                  activeTabId: existing.id,
+                  ...(newModelJson ? { modelJson: newModelJson } : {}),
+                }
+              : g
+          ),
+        }));
+        return;
+      }
+      const targetTabSetId =
+        activeTabSetId ??
+        getFirstTabsetId(getModel(activeTabGroupId)!) ??
+        getFirstTabsetIdFromJson(activeGroup.modelJson);
+      if (!targetTabSetId) return;
+      const dummyConfig: ConnectionConfig = { type: "local", config: { shell: "zsh" } };
+      const newTab = createTab("Settings", "local", dummyConfig, targetTabSetId, "settings");
+      addTabToLiveModel(activeTabGroupId, targetTabSetId, { id: newTab.id, name: newTab.title });
+      const updatedModelJson = getModel(activeTabGroupId)?.toJson() ?? activeGroup.modelJson;
+      set((s) => ({
+        tabGroups: s.tabGroups.map((g) =>
+          g.id === activeTabGroupId
+            ? {
+                ...g,
+                modelJson: updatedModelJson,
+                tabs: [...g.tabs, newTab],
+                activeTabId: newTab.id,
+              }
+            : g
+        ),
+      }));
+    },
 
-        // Look for an existing settings tab
-        for (const leaf of allLeaves) {
-          const existing = leaf.tabs.find((t) => t.contentType === "settings");
-          if (existing) {
-            // Activate the existing settings tab
-            const rootPanel = updateLeaf(state.rootPanel, leaf.id, (l) => ({
-              ...l,
-              tabs: l.tabs.map((t) => ({ ...t, isActive: t.id === existing.id })),
-              activeTabId: existing.id,
-            }));
-            return { rootPanel, activePanelId: leaf.id };
-          }
-        }
+    openLogViewerTab: () => {
+      const { tabGroups, activeTabGroupId, activeTabSetId } = get();
+      const activeGroup = tabGroups.find((g) => g.id === activeTabGroupId);
+      if (!activeGroup) return;
+      const existing = activeGroup.tabs.find((t) => t.contentType === "log-viewer");
+      if (existing) {
+        const newModelJson = selectTabInLiveModel(activeTabGroupId, existing.id);
+        set((s) => ({
+          tabGroups: s.tabGroups.map((g) =>
+            g.id === activeTabGroupId
+              ? {
+                  ...g,
+                  activeTabId: existing.id,
+                  ...(newModelJson ? { modelJson: newModelJson } : {}),
+                }
+              : g
+          ),
+        }));
+        return;
+      }
+      const targetTabSetId =
+        activeTabSetId ??
+        getFirstTabsetId(getModel(activeTabGroupId)!) ??
+        getFirstTabsetIdFromJson(activeGroup.modelJson);
+      if (!targetTabSetId) return;
+      const dummyConfig: ConnectionConfig = { type: "local", config: { shell: "zsh" } };
+      const newTab = createTab("Logs", "local", dummyConfig, targetTabSetId, "log-viewer");
+      addTabToLiveModel(activeTabGroupId, targetTabSetId, { id: newTab.id, name: newTab.title });
+      const updatedModelJson = getModel(activeTabGroupId)?.toJson() ?? activeGroup.modelJson;
+      set((s) => ({
+        tabGroups: s.tabGroups.map((g) =>
+          g.id === activeTabGroupId
+            ? {
+                ...g,
+                modelJson: updatedModelJson,
+                tabs: [...g.tabs, newTab],
+                activeTabId: newTab.id,
+              }
+            : g
+        ),
+      }));
+    },
 
-        // No existing settings tab — create one in the active panel
-        const targetPanelId = state.activePanelId ?? allLeaves[0]?.id;
-        if (!targetPanelId) return state;
+    openNetworkDiagnosticTab: (tool, prefillHost, connectionId) => {
+      const { tabGroups, activeTabGroupId, activeTabSetId } = get();
+      const activeGroup = tabGroups.find((g) => g.id === activeTabGroupId);
+      if (!activeGroup) return;
+      const targetTabSetId =
+        activeTabSetId ??
+        getFirstTabsetId(getModel(activeTabGroupId)!) ??
+        getFirstTabsetIdFromJson(activeGroup.modelJson);
+      if (!targetTabSetId) return;
+      const meta: NetworkDiagnosticMeta = { tool, prefillHost, connectionId };
+      const dummyConfig: ConnectionConfig = { type: "local", config: {} };
+      const toolLabel: Record<NetworkTool, string> = {
+        "port-scanner": "Port Scanner",
+        ping: "Ping",
+        "dns-lookup": "DNS Lookup",
+        "http-monitor": "HTTP Monitor",
+        traceroute: "Traceroute",
+        wol: "Wake-on-LAN",
+        "open-ports": "Open Ports",
+      };
+      const title = prefillHost ? `${toolLabel[tool]}: ${prefillHost}` : toolLabel[tool];
+      const newTab = createTab(title, "local", dummyConfig, targetTabSetId, "network-diagnostic");
+      (
+        newTab as TerminalTab & { networkDiagnosticMeta: NetworkDiagnosticMeta }
+      ).networkDiagnosticMeta = meta;
+      addTabToLiveModel(activeTabGroupId, targetTabSetId, { id: newTab.id, name: newTab.title });
+      const updatedModelJson = getModel(activeTabGroupId)?.toJson() ?? activeGroup.modelJson;
+      set((s) => ({
+        tabGroups: s.tabGroups.map((g) =>
+          g.id === activeTabGroupId
+            ? {
+                ...g,
+                modelJson: updatedModelJson,
+                tabs: [...g.tabs, newTab],
+                activeTabId: newTab.id,
+              }
+            : g
+        ),
+      }));
+    },
 
-        const dummyConfig: ConnectionConfig = { type: "local", config: { shell: "zsh" } };
-        const newTab = createTab("Settings", "local", dummyConfig, targetPanelId, "settings");
-        const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
-          const tabs = leaf.tabs.map((t) => ({ ...t, isActive: false }));
-          tabs.push(newTab);
-          return { ...leaf, tabs, activeTabId: newTab.id };
-        });
-        return { rootPanel, activePanelId: targetPanelId };
-      }),
+    openEditorTab: (filePath, isRemote, sftpSessionId) => {
+      const { tabGroups, activeTabGroupId, activeTabSetId } = get();
+      const activeGroup = tabGroups.find((g) => g.id === activeTabGroupId);
+      if (!activeGroup) return;
+      const existing = activeGroup.tabs.find(
+        (t) =>
+          t.contentType === "editor" &&
+          t.editorMeta?.filePath === filePath &&
+          t.editorMeta?.isRemote === isRemote
+      );
+      if (existing) {
+        const updatedMeta =
+          isRemote && sftpSessionId && existing.editorMeta
+            ? { ...existing.editorMeta, sftpSessionId }
+            : existing.editorMeta;
+        const newModelJson = selectTabInLiveModel(activeTabGroupId, existing.id);
+        set((s) => ({
+          tabGroups: s.tabGroups.map((g) =>
+            g.id === activeTabGroupId
+              ? {
+                  ...g,
+                  activeTabId: existing.id,
+                  tabs: g.tabs.map((t) =>
+                    t.id === existing.id ? { ...t, editorMeta: updatedMeta } : t
+                  ),
+                  ...(newModelJson ? { modelJson: newModelJson } : {}),
+                }
+              : g
+          ),
+        }));
+        return;
+      }
+      const targetTabSetId =
+        activeTabSetId ??
+        getFirstTabsetId(getModel(activeTabGroupId)!) ??
+        getFirstTabsetIdFromJson(activeGroup.modelJson);
+      if (!targetTabSetId) return;
+      const fileName = filePath.split("/").pop() ?? filePath;
+      const dummyConfig: ConnectionConfig = { type: "local", config: { shell: "zsh" } };
+      const editorMeta: EditorTabMeta = { filePath, isRemote, sftpSessionId };
+      const newTab = createTab(fileName, "local", dummyConfig, targetTabSetId, "editor");
+      newTab.editorMeta = editorMeta;
+      addTabToLiveModel(activeTabGroupId, targetTabSetId, { id: newTab.id, name: newTab.title });
+      const updatedModelJson = getModel(activeTabGroupId)?.toJson() ?? activeGroup.modelJson;
+      set((s) => ({
+        tabGroups: s.tabGroups.map((g) =>
+          g.id === activeTabGroupId
+            ? {
+                ...g,
+                modelJson: updatedModelJson,
+                tabs: [...g.tabs, newTab],
+                activeTabId: newTab.id,
+              }
+            : g
+        ),
+      }));
+    },
 
-    openLogViewerTab: () =>
-      set((state) => {
-        const allLeaves = getAllLeaves(state.rootPanel);
+    openConnectionEditorTab: (connectionId, folderId) => {
+      const { tabGroups, activeTabGroupId, activeTabSetId, connections } = get();
+      const activeGroup = tabGroups.find((g) => g.id === activeTabGroupId);
+      if (!activeGroup) return;
+      const existing = activeGroup.tabs.find(
+        (t) =>
+          t.contentType === "connection-editor" &&
+          t.connectionEditorMeta?.connectionId === connectionId
+      );
+      if (existing) {
+        const newModelJson = selectTabInLiveModel(activeTabGroupId, existing.id);
+        set((s) => ({
+          tabGroups: s.tabGroups.map((g) =>
+            g.id === activeTabGroupId
+              ? {
+                  ...g,
+                  activeTabId: existing.id,
+                  ...(newModelJson ? { modelJson: newModelJson } : {}),
+                }
+              : g
+          ),
+        }));
+        return;
+      }
+      const targetTabSetId =
+        activeTabSetId ??
+        getFirstTabsetId(getModel(activeTabGroupId)!) ??
+        getFirstTabsetIdFromJson(activeGroup.modelJson);
+      if (!targetTabSetId) return;
+      let title = "New Connection";
+      if (connectionId === "new-remote-agent") {
+        title = "New Remote Agent";
+      } else if (connectionId !== "new") {
+        const conn = connections.find((c) => c.id === connectionId);
+        if (conn) title = `Edit: ${conn.name}`;
+      }
+      const dummyConfig: ConnectionConfig = { type: "local", config: { shell: "zsh" } };
+      const meta: ConnectionEditorMeta = { connectionId, folderId: folderId ?? null };
+      const newTab = createTab(title, "local", dummyConfig, targetTabSetId, "connection-editor");
+      newTab.connectionEditorMeta = meta;
+      addTabToLiveModel(activeTabGroupId, targetTabSetId, { id: newTab.id, name: newTab.title });
+      const updatedModelJson = getModel(activeTabGroupId)?.toJson() ?? activeGroup.modelJson;
+      set((s) => ({
+        tabGroups: s.tabGroups.map((g) =>
+          g.id === activeTabGroupId
+            ? {
+                ...g,
+                modelJson: updatedModelJson,
+                tabs: [...g.tabs, newTab],
+                activeTabId: newTab.id,
+              }
+            : g
+        ),
+      }));
+    },
 
-        // Look for an existing log-viewer tab
-        for (const leaf of allLeaves) {
-          const existing = leaf.tabs.find((t) => t.contentType === "log-viewer");
-          if (existing) {
-            const rootPanel = updateLeaf(state.rootPanel, leaf.id, (l) => ({
-              ...l,
-              tabs: l.tabs.map((t) => ({ ...t, isActive: t.id === existing.id })),
-              activeTabId: existing.id,
-            }));
-            return { rootPanel, activePanelId: leaf.id };
-          }
-        }
-
-        // No existing log-viewer tab — create one in the active panel
-        const targetPanelId = state.activePanelId ?? allLeaves[0]?.id;
-        if (!targetPanelId) return state;
-
-        const dummyConfig: ConnectionConfig = { type: "local", config: { shell: "zsh" } };
-        const newTab = createTab("Logs", "local", dummyConfig, targetPanelId, "log-viewer");
-        const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
-          const tabs = leaf.tabs.map((t) => ({ ...t, isActive: false }));
-          tabs.push(newTab);
-          return { ...leaf, tabs, activeTabId: newTab.id };
-        });
-        return { rootPanel, activePanelId: targetPanelId };
-      }),
-
-    openNetworkDiagnosticTab: (tool, prefillHost, connectionId) =>
-      set((state) => {
-        const allLeaves = getAllLeaves(state.rootPanel);
-        const targetPanelId = state.activePanelId ?? allLeaves[0]?.id;
-        if (!targetPanelId) return state;
-
-        const meta: NetworkDiagnosticMeta = { tool, prefillHost, connectionId };
-        const dummyConfig: ConnectionConfig = { type: "local", config: {} };
-        const toolLabel: Record<NetworkTool, string> = {
-          "port-scanner": "Port Scanner",
-          ping: "Ping",
-          "dns-lookup": "DNS Lookup",
-          "http-monitor": "HTTP Monitor",
-          traceroute: "Traceroute",
-          wol: "Wake-on-LAN",
-          "open-ports": "Open Ports",
-        };
-        const title = prefillHost ? `${toolLabel[tool]}: ${prefillHost}` : toolLabel[tool];
-        const newTab = createTab(title, "local", dummyConfig, targetPanelId, "network-diagnostic");
-        (
-          newTab as TerminalTab & { networkDiagnosticMeta: NetworkDiagnosticMeta }
-        ).networkDiagnosticMeta = meta;
-        const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
-          const tabs = leaf.tabs.map((t) => ({ ...t, isActive: false }));
-          tabs.push(newTab);
-          return { ...leaf, tabs, activeTabId: newTab.id };
-        });
-        return { rootPanel, activePanelId: targetPanelId };
-      }),
-
-    openEditorTab: (filePath, isRemote, sftpSessionId) =>
-      set((state) => {
-        const allLeaves = getAllLeaves(state.rootPanel);
-
-        // Look for an existing editor tab for this file
-        for (const leaf of allLeaves) {
-          const existing = leaf.tabs.find(
-            (t) =>
-              t.contentType === "editor" &&
-              t.editorMeta?.filePath === filePath &&
-              t.editorMeta?.isRemote === isRemote
-          );
-          if (existing) {
-            const rootPanel = updateLeaf(state.rootPanel, leaf.id, (l) => ({
-              ...l,
-              tabs: l.tabs.map((t) => {
-                if (t.id !== existing.id) return { ...t, isActive: false };
-                // Refresh the SFTP session ID so a reconnected session works.
-                const updatedMeta =
-                  isRemote && sftpSessionId && t.editorMeta
-                    ? { ...t.editorMeta, sftpSessionId }
-                    : t.editorMeta;
-                return { ...t, isActive: true, editorMeta: updatedMeta };
-              }),
-              activeTabId: existing.id,
-            }));
-            return { rootPanel, activePanelId: leaf.id };
-          }
-        }
-
-        // Create new editor tab in the active panel
-        const targetPanelId = state.activePanelId ?? allLeaves[0]?.id;
-        if (!targetPanelId) return state;
-
-        const fileName = filePath.split("/").pop() ?? filePath;
-        const dummyConfig: ConnectionConfig = { type: "local", config: { shell: "zsh" } };
-        const editorMeta: EditorTabMeta = { filePath, isRemote, sftpSessionId };
-        const newTab = createTab(fileName, "local", dummyConfig, targetPanelId, "editor");
-        newTab.editorMeta = editorMeta;
-
-        const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
-          const tabs = leaf.tabs.map((t) => ({ ...t, isActive: false }));
-          tabs.push(newTab);
-          return { ...leaf, tabs, activeTabId: newTab.id };
-        });
-        return { rootPanel, activePanelId: targetPanelId };
-      }),
-
-    openConnectionEditorTab: (connectionId, folderId) =>
-      set((state) => {
-        const allLeaves = getAllLeaves(state.rootPanel);
-
-        // Look for an existing connection-editor tab for this connection
-        for (const leaf of allLeaves) {
-          const existing = leaf.tabs.find(
-            (t) =>
-              t.contentType === "connection-editor" &&
-              t.connectionEditorMeta?.connectionId === connectionId
-          );
-          if (existing) {
-            const rootPanel = updateLeaf(state.rootPanel, leaf.id, (l) => ({
-              ...l,
-              tabs: l.tabs.map((t) => ({ ...t, isActive: t.id === existing.id })),
-              activeTabId: existing.id,
-            }));
-            return { rootPanel, activePanelId: leaf.id };
-          }
-        }
-
-        // Create new connection-editor tab in the active panel
-        const targetPanelId = state.activePanelId ?? allLeaves[0]?.id;
-        if (!targetPanelId) return state;
-
-        // Determine tab title
-        let title = "New Connection";
-        if (connectionId === "new-remote-agent") {
-          title = "New Remote Agent";
-        } else if (connectionId !== "new") {
-          const conn = state.connections.find((c) => c.id === connectionId);
-          if (conn) {
-            title = `Edit: ${conn.name}`;
-          }
-        }
-
-        const dummyConfig: ConnectionConfig = { type: "local", config: { shell: "zsh" } };
-        const meta: ConnectionEditorMeta = {
-          connectionId,
-          folderId: folderId ?? null,
-        };
-        const newTab = createTab(title, "local", dummyConfig, targetPanelId, "connection-editor");
-        newTab.connectionEditorMeta = meta;
-
-        const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
-          const tabs = leaf.tabs.map((t) => ({ ...t, isActive: false }));
-          tabs.push(newTab);
-          return { ...leaf, tabs, activeTabId: newTab.id };
-        });
-        return { rootPanel, activePanelId: targetPanelId };
-      }),
-
-    openAgentDefinitionEditorTab: (agentId, definitionId, folderId) =>
-      set((state) => {
-        const allLeaves = getAllLeaves(state.rootPanel);
-
-        // Look for an existing editor tab for this agent definition
-        for (const leaf of allLeaves) {
-          const existing = leaf.tabs.find(
-            (t) =>
-              t.contentType === "connection-editor" &&
-              t.connectionEditorMeta?.connectionId === agentId &&
-              t.connectionEditorMeta?.agentDefinitionId === definitionId
-          );
-          if (existing) {
-            const rootPanel = updateLeaf(state.rootPanel, leaf.id, (l) => ({
-              ...l,
-              tabs: l.tabs.map((t) => ({ ...t, isActive: t.id === existing.id })),
-              activeTabId: existing.id,
-            }));
-            return { rootPanel, activePanelId: leaf.id };
-          }
-        }
-
-        const targetPanelId = state.activePanelId ?? allLeaves[0]?.id;
-        if (!targetPanelId) return state;
-
-        // Determine title
-        let title = "New Agent Connection";
-        if (definitionId !== "new") {
-          const defs = state.agentDefinitions[agentId] ?? [];
-          const def = defs.find((d) => d.id === definitionId);
-          if (def) title = `Edit: ${def.name}`;
-        }
-
-        const dummyConfig: ConnectionConfig = { type: "local", config: { shell: "zsh" } };
-        const meta: ConnectionEditorMeta = {
-          connectionId: agentId,
-          folderId: null,
-          agentDefinitionId: definitionId,
-          agentFolderId: folderId ?? null,
-        };
-        const newTab = createTab(title, "local", dummyConfig, targetPanelId, "connection-editor");
-        newTab.connectionEditorMeta = meta;
-
-        const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
-          const tabs = leaf.tabs.map((t) => ({ ...t, isActive: false }));
-          tabs.push(newTab);
-          return { ...leaf, tabs, activeTabId: newTab.id };
-        });
-        return { rootPanel, activePanelId: targetPanelId };
-      }),
+    openAgentDefinitionEditorTab: (agentId, definitionId, folderId) => {
+      const { tabGroups, activeTabGroupId, activeTabSetId, agentDefinitions } = get();
+      const activeGroup = tabGroups.find((g) => g.id === activeTabGroupId);
+      if (!activeGroup) return;
+      const existing = activeGroup.tabs.find(
+        (t) =>
+          t.contentType === "connection-editor" &&
+          t.connectionEditorMeta?.connectionId === agentId &&
+          t.connectionEditorMeta?.agentDefinitionId === definitionId
+      );
+      if (existing) {
+        const newModelJson = selectTabInLiveModel(activeTabGroupId, existing.id);
+        set((s) => ({
+          tabGroups: s.tabGroups.map((g) =>
+            g.id === activeTabGroupId
+              ? {
+                  ...g,
+                  activeTabId: existing.id,
+                  ...(newModelJson ? { modelJson: newModelJson } : {}),
+                }
+              : g
+          ),
+        }));
+        return;
+      }
+      const targetTabSetId =
+        activeTabSetId ??
+        getFirstTabsetId(getModel(activeTabGroupId)!) ??
+        getFirstTabsetIdFromJson(activeGroup.modelJson);
+      if (!targetTabSetId) return;
+      let title = "New Agent Connection";
+      if (definitionId !== "new") {
+        const def = (agentDefinitions[agentId] ?? []).find((d) => d.id === definitionId);
+        if (def) title = `Edit: ${def.name}`;
+      }
+      const dummyConfig: ConnectionConfig = { type: "local", config: { shell: "zsh" } };
+      const meta: ConnectionEditorMeta = {
+        connectionId: agentId,
+        folderId: null,
+        agentDefinitionId: definitionId,
+        agentFolderId: folderId ?? null,
+      };
+      const newTab = createTab(title, "local", dummyConfig, targetTabSetId, "connection-editor");
+      newTab.connectionEditorMeta = meta;
+      addTabToLiveModel(activeTabGroupId, targetTabSetId, { id: newTab.id, name: newTab.title });
+      const updatedModelJson = getModel(activeTabGroupId)?.toJson() ?? activeGroup.modelJson;
+      set((s) => ({
+        tabGroups: s.tabGroups.map((g) =>
+          g.id === activeTabGroupId
+            ? {
+                ...g,
+                modelJson: updatedModelJson,
+                tabs: [...g.tabs, newTab],
+                activeTabId: newTab.id,
+              }
+            : g
+        ),
+      }));
+    },
 
     editorDirtyTabs: {},
     setEditorDirty: (tabId, dirty) =>
@@ -1580,280 +1652,101 @@ export const useAppStore = create<AppState>((set, get) => {
     pendingCloseRequest: null,
     setPendingCloseRequest: (req) => set({ pendingCloseRequest: req }),
 
-    closeTab: (tabId, panelId) =>
-      set((state) => {
-        // Clean up per-tab state for the closed tab
-        const remainingCwds = omitKey(state.tabCwds, tabId);
-        const remainingHs = omitKey(state.tabHorizontalScrolling, tabId);
-        const remainingDirty = omitKey(state.editorDirtyTabs, tabId);
-        const remainingColors = omitKey(state.tabColors, tabId);
-        const remainingOpts = omitKey(state.tabTerminalOptions, tabId);
-        const remainingSearch = omitKey(state.terminalSearchVisible, tabId);
-        const remainingSpawnErrors = omitKey(state.terminalSpawnErrors, tabId);
-        const remainingRetryCounters = omitKey(state.terminalRetryCounters, tabId);
-        const remainingConnecting = omitKey(state.terminalConnecting, tabId);
-        const remainingExited = omitKey(state.terminalExitedTabs, tabId);
-        const remainingDiscErr = omitKey(state.terminalDisconnectErrors, tabId);
-        const remainingView = omitKey(state.terminalViewMode, tabId);
-        const remainingReconn = omitKey(state.terminalReconnectingTabs, tabId);
-        const remainingReattach = omitKey(state.terminalReattaching, tabId);
-        const remainingPrompt = omitKey(state.terminalReconnectPrompt, tabId);
-        const remainingAutoRetry = omitKey(state.terminalAutoRetryCount, tabId);
-        const remainingWaiting = omitKey(state.terminalWaitingForAgent, tabId);
+    closeTab: (tabId, _panelId) => {
+      const state = get();
+      const activeGroupId = state.activeTabGroupId;
+      const cleanupState = buildTabCleanupState(state, tabId);
+      const newModelJson = removeTabFromLiveModel(activeGroupId, tabId);
+      set((s) => ({
+        tabGroups: s.tabGroups.map((g) =>
+          g.id === activeGroupId
+            ? {
+                ...g,
+                tabs: g.tabs.filter((t) => t.id !== tabId),
+                ...(newModelJson ? { modelJson: newModelJson } : {}),
+              }
+            : g
+        ),
+        ...cleanupState,
+      }));
+    },
 
-        // Remove this tab from any persistent session's attachedTabIds
-        const persistentSessions = { ...state.persistentSessions };
-        for (const [connId, entry] of Object.entries(persistentSessions)) {
-          if (entry.attachedTabIds.includes(tabId)) {
-            persistentSessions[connId] = {
-              ...entry,
-              attachedTabIds: entry.attachedTabIds.filter((id) => id !== tabId),
-            };
-          }
-        }
+    closeTabData: (tabId) => {
+      const state = get();
+      const activeGroupId = state.activeTabGroupId;
+      const cleanupState = buildTabCleanupState(state, tabId);
+      set((s) => ({
+        tabGroups: s.tabGroups.map((g) =>
+          g.id === activeGroupId ? { ...g, tabs: g.tabs.filter((t) => t.id !== tabId) } : g
+        ),
+        ...cleanupState,
+      }));
+    },
 
-        let rootPanel = updateLeaf(state.rootPanel, panelId, (leaf) =>
-          removeTabFromLeaf(leaf, tabId)
-        );
+    setActiveTab: (tabId, panelId) => {
+      const { activeTabGroupId, tabGroups, zoomedTabId } = get();
+      const activeGroup = tabGroups.find((g) => g.id === activeTabGroupId);
+      if (!activeGroup) return;
+      const newModelJson = selectTabInLiveModel(activeTabGroupId, tabId);
+      const newZoomedTabId = zoomedTabId !== null ? tabId : null;
+      set((s) => ({
+        tabGroups: s.tabGroups.map((g) =>
+          g.id === activeTabGroupId
+            ? {
+                ...g,
+                tabs: g.tabs.map((t) => ({ ...t, isActive: t.id === tabId })),
+                activeTabId: tabId,
+                activeTabSetId: panelId,
+                ...(newModelJson ? { modelJson: newModelJson } : {}),
+              }
+            : g
+        ),
+        activeTabSetId: panelId,
+        zoomedTabId: newZoomedTabId,
+      }));
+    },
 
-        // Dismiss zoom overlay if the zoomed tab is being closed
-        const zoomedTabId = state.zoomedTabId === tabId ? null : state.zoomedTabId;
+    splitPanel: (direction) => {
+      const { activeTabGroupId, tabGroups, defaultShell } = get();
+      const activeGroup = tabGroups.find((g) => g.id === activeTabGroupId);
+      if (!activeGroup) return;
+      tabCounter++;
+      const newTabId = `tab-${tabCounter}`;
+      const dir = direction ?? "horizontal";
+      const result = splitActiveTabset(activeTabGroupId, newTabId, "Terminal", dir);
+      if (!result) return;
+      const { newTabSetId, modelJson: newModelJson } = result;
+      const defaultConfig: ConnectionConfig = {
+        type: "local",
+        config: { shell: defaultShell },
+      };
+      const newTab = createTab("Terminal", "local", defaultConfig, newTabSetId);
+      newTab.id = newTabId;
+      set((s) => ({
+        tabGroups: s.tabGroups.map((g) =>
+          g.id === activeTabGroupId
+            ? {
+                ...g,
+                modelJson: newModelJson,
+                tabs: [...g.tabs, newTab],
+                activeTabSetId: newTabSetId,
+                activeTabId: newTab.id,
+              }
+            : g
+        ),
+        activeTabSetId: newTabSetId,
+      }));
+    },
 
-        // If leaf is now empty and not the sole leaf, remove it
-        const allLeaves = getAllLeaves(rootPanel);
-        const updatedLeaf = findLeaf(rootPanel, panelId);
-        if (updatedLeaf && updatedLeaf.tabs.length === 0 && allLeaves.length > 1) {
-          const removed = removeLeaf(rootPanel, panelId);
-          rootPanel = removed ? simplifyTree(removed) : rootPanel;
-          const newLeaves = getAllLeaves(rootPanel);
-          const activePanelId =
-            state.activePanelId === panelId ? (newLeaves[0]?.id ?? null) : state.activePanelId;
-          return {
-            rootPanel,
-            activePanelId,
-            zoomedTabId,
-            persistentSessions,
-            tabCwds: remainingCwds,
-            tabHorizontalScrolling: remainingHs,
-            editorDirtyTabs: remainingDirty,
-            tabColors: remainingColors,
-            tabTerminalOptions: remainingOpts,
-            terminalSearchVisible: remainingSearch,
-            terminalSpawnErrors: remainingSpawnErrors,
-            terminalRetryCounters: remainingRetryCounters,
-            terminalConnecting: remainingConnecting,
-            terminalExitedTabs: remainingExited,
-            terminalDisconnectErrors: remainingDiscErr,
-            terminalViewMode: remainingView,
-            terminalReconnectingTabs: remainingReconn,
-            terminalReattaching: remainingReattach,
-            terminalReconnectPrompt: remainingPrompt,
-            terminalAutoRetryCount: remainingAutoRetry,
-            terminalWaitingForAgent: remainingWaiting,
-          };
-        }
+    setActivePanel: (panelId) => {
+      const { zoomedTabId, tabGroups, activeTabGroupId } = get();
+      const activeGroup = tabGroups.find((g) => g.id === activeTabGroupId);
+      const newZoomedTabId = zoomedTabId !== null ? (activeGroup?.activeTabId ?? null) : null;
+      set({ activeTabSetId: panelId, zoomedTabId: newZoomedTabId });
+    },
 
-        return {
-          rootPanel,
-          zoomedTabId,
-          persistentSessions,
-          tabCwds: remainingCwds,
-          tabHorizontalScrolling: remainingHs,
-          editorDirtyTabs: remainingDirty,
-          tabColors: remainingColors,
-          tabTerminalOptions: remainingOpts,
-          terminalSearchVisible: remainingSearch,
-          terminalSpawnErrors: remainingSpawnErrors,
-          terminalRetryCounters: remainingRetryCounters,
-          terminalConnecting: remainingConnecting,
-          terminalExitedTabs: remainingExited,
-          terminalDisconnectErrors: remainingDiscErr,
-          terminalViewMode: remainingView,
-          terminalReconnectingTabs: remainingReconn,
-          terminalReattaching: remainingReattach,
-          terminalReconnectPrompt: remainingPrompt,
-          terminalAutoRetryCount: remainingAutoRetry,
-          terminalWaitingForAgent: remainingWaiting,
-        };
-      }),
-
-    setActiveTab: (tabId, panelId) =>
-      set((state) => {
-        const newRootPanel = updateLeaf(state.rootPanel, panelId, (leaf) => ({
-          ...leaf,
-          tabs: leaf.tabs.map((t) => ({ ...t, isActive: t.id === tabId })),
-          activeTabId: tabId,
-        }));
-
-        // If the zoom overlay is showing a tab from the same panel, follow the switch
-        let newZoomedTabId = state.zoomedTabId;
-        if (state.zoomedTabId !== null) {
-          const panelLeaf = findLeaf(state.rootPanel, panelId);
-          if (panelLeaf?.tabs.some((t) => t.id === state.zoomedTabId)) {
-            newZoomedTabId = tabId;
-          }
-        }
-
-        return {
-          rootPanel: newRootPanel,
-          activePanelId: panelId,
-          zoomedTabId: newZoomedTabId,
-        };
-      }),
-
-    moveTab: (tabId, fromPanelId, toPanelId, newIndex) =>
-      set((state) => {
-        if (fromPanelId === toPanelId) return state;
-
-        // Find and remove tab from source
-        const sourceLeaf = findLeaf(state.rootPanel, fromPanelId);
-        if (!sourceLeaf) return state;
-        const tab = sourceLeaf.tabs.find((t) => t.id === tabId);
-        if (!tab) return state;
-
-        const movedTab: TerminalTab = { ...tab, panelId: toPanelId, isActive: true };
-
-        // Remove from source
-        let rootPanel = updateLeaf(state.rootPanel, fromPanelId, (leaf) =>
-          removeTabFromLeaf(leaf, tabId)
-        );
-
-        // Add to destination
-        rootPanel = updateLeaf(rootPanel, toPanelId, (leaf) => {
-          const tabs = [...leaf.tabs.map((t) => ({ ...t, isActive: false }))];
-          const idx = newIndex < 0 ? tabs.length : Math.min(newIndex, tabs.length);
-          tabs.splice(idx, 0, movedTab);
-          return { ...leaf, tabs, activeTabId: movedTab.id };
-        });
-
-        // Clean up empty source panel
-        const updatedSource = findLeaf(rootPanel, fromPanelId);
-        const allLeaves = getAllLeaves(rootPanel);
-        if (updatedSource && updatedSource.tabs.length === 0 && allLeaves.length > 1) {
-          const removed = removeLeaf(rootPanel, fromPanelId);
-          rootPanel = removed ? simplifyTree(removed) : rootPanel;
-        }
-
-        return { rootPanel, activePanelId: toPanelId };
-      }),
-
-    reorderTabs: (panelId, oldIndex, newIndex) =>
-      set((state) => ({
-        rootPanel: updateLeaf(state.rootPanel, panelId, (leaf) => {
-          const tabs = [...leaf.tabs];
-          const [moved] = tabs.splice(oldIndex, 1);
-          tabs.splice(newIndex, 0, moved);
-          return { ...leaf, tabs };
-        }),
-      })),
-
-    splitPanel: (direction) =>
-      set((state) => {
-        const dir = direction ?? "horizontal";
-        const targetId = state.activePanelId;
-        if (!targetId) return state;
-
-        const newLeaf = createLeafPanel();
-        let rootPanel = splitLeaf(state.rootPanel, targetId, newLeaf, dir, "after");
-        rootPanel = simplifyTree(rootPanel);
-        return { rootPanel, activePanelId: newLeaf.id };
-      }),
-
-    removePanel: (panelId) =>
-      set((state) => {
-        const allLeaves = getAllLeaves(state.rootPanel);
-        if (allLeaves.length <= 1) return state;
-
-        const removed = removeLeaf(state.rootPanel, panelId);
-        if (!removed) return state;
-        const rootPanel = simplifyTree(removed);
-        const newLeaves = getAllLeaves(rootPanel);
-        const activePanelId =
-          state.activePanelId === panelId ? (newLeaves[0]?.id ?? null) : state.activePanelId;
-        return { rootPanel, activePanelId };
-      }),
-
-    setActivePanel: (panelId) =>
-      set((state) => {
-        let newZoomedTabId = state.zoomedTabId;
-        if (state.zoomedTabId !== null) {
-          const newPanel = findLeaf(state.rootPanel, panelId);
-          newZoomedTabId = newPanel?.activeTabId ?? null;
-        }
-        return { activePanelId: panelId, zoomedTabId: newZoomedTabId };
-      }),
-
-    splitPanelWithTab: (tabId, fromPanelId, targetPanelId, edge) =>
-      set((state) => {
-        const splitInfo = edgeToSplit(edge);
-
-        // Center drop: move tab to existing panel
-        if (!splitInfo) {
-          const sourceLeaf = findLeaf(state.rootPanel, fromPanelId);
-          if (!sourceLeaf) return state;
-          const tab = sourceLeaf.tabs.find((t) => t.id === tabId);
-          if (!tab) return state;
-
-          const movedTab: TerminalTab = { ...tab, panelId: targetPanelId, isActive: true };
-
-          let rootPanel = updateLeaf(state.rootPanel, fromPanelId, (leaf) =>
-            removeTabFromLeaf(leaf, tabId)
-          );
-          rootPanel = updateLeaf(rootPanel, targetPanelId, (leaf) => ({
-            ...leaf,
-            tabs: [...leaf.tabs.map((t) => ({ ...t, isActive: false })), movedTab],
-            activeTabId: movedTab.id,
-          }));
-
-          // Clean up empty source
-          const updatedSource = findLeaf(rootPanel, fromPanelId);
-          const allLeaves = getAllLeaves(rootPanel);
-          if (updatedSource && updatedSource.tabs.length === 0 && allLeaves.length > 1) {
-            const removed = removeLeaf(rootPanel, fromPanelId);
-            rootPanel = removed ? simplifyTree(removed) : rootPanel;
-          }
-
-          return { rootPanel, activePanelId: targetPanelId };
-        }
-
-        // Edge drop: create new panel via split
-        const sourceLeaf = findLeaf(state.rootPanel, fromPanelId);
-        if (!sourceLeaf) return state;
-        const tab = sourceLeaf.tabs.find((t) => t.id === tabId);
-        if (!tab) return state;
-
-        const newLeaf = createLeafPanel();
-        const movedTab: TerminalTab = { ...tab, panelId: newLeaf.id, isActive: true };
-        newLeaf.tabs = [movedTab];
-        newLeaf.activeTabId = movedTab.id;
-
-        // Remove tab from source
-        let rootPanel = updateLeaf(state.rootPanel, fromPanelId, (leaf) =>
-          removeTabFromLeaf(leaf, tabId)
-        );
-
-        // Clean up empty source before splitting (unless source IS the target)
-        if (fromPanelId !== targetPanelId) {
-          const updatedSource = findLeaf(rootPanel, fromPanelId);
-          const allLeaves = getAllLeaves(rootPanel);
-          if (updatedSource && updatedSource.tabs.length === 0 && allLeaves.length > 1) {
-            const removed = removeLeaf(rootPanel, fromPanelId);
-            rootPanel = removed ? simplifyTree(removed) : rootPanel;
-          }
-        }
-
-        // Split the target
-        rootPanel = splitLeaf(
-          rootPanel,
-          targetPanelId,
-          newLeaf,
-          splitInfo.direction,
-          splitInfo.position
-        );
-        rootPanel = simplifyTree(rootPanel);
-
-        return { rootPanel, activePanelId: newLeaf.id };
-      }),
+    // flexlayout handles cross-panel DnD internally via onAction
+    splitPanelWithTab: () => {},
 
     // Connections — initialized empty, loaded from backend on mount
     folders: [],
@@ -1890,15 +1783,14 @@ export const useAppStore = create<AppState>((set, get) => {
     zoomedTabId: null,
     setZoomedTabId: (tabId) => set({ zoomedTabId: tabId }),
     toggleZoomActiveTab: () => {
-      const { activePanelId, rootPanel, zoomedTabId } = get();
+      const { tabGroups, activeTabGroupId, zoomedTabId } = get();
       if (zoomedTabId !== null) {
         set({ zoomedTabId: null });
         return;
       }
-      const leaves = getAllLeaves(rootPanel);
-      const panel = leaves.find((p) => p.id === activePanelId) ?? leaves[0];
-      if (panel?.activeTabId) {
-        set({ zoomedTabId: panel.activeTabId });
+      const activeGroup = tabGroups.find((g) => g.id === activeTabGroupId);
+      if (activeGroup?.activeTabId) {
+        set({ zoomedTabId: activeGroup.activeTabId });
       }
     },
 
@@ -2443,16 +2335,12 @@ export const useAppStore = create<AppState>((set, get) => {
 
     // Rename tab
     renameTab: (tabId, newTitle) =>
-      set((state) => {
-        const leaf = findLeafByTab(state.rootPanel, tabId);
-        if (!leaf) return state;
-        return {
-          rootPanel: updateLeaf(state.rootPanel, leaf.id, (l) => ({
-            ...l,
-            tabs: l.tabs.map((t) => (t.id === tabId ? { ...t, title: newTitle } : t)),
-          })),
-        };
-      }),
+      set((state) => ({
+        tabGroups: state.tabGroups.map((g) => ({
+          ...g,
+          tabs: g.tabs.map((t) => (t.id === tabId ? { ...t, title: newTitle } : t)),
+        })),
+      })),
 
     // Per-tab color
     tabColors: {},
@@ -2920,44 +2808,37 @@ export const useAppStore = create<AppState>((set, get) => {
 
     resolveAgentErrorTabs: (agentId) => {
       const defs = get().agentDefinitions[agentId] ?? [];
-
-      const convertPanel = (panel: PanelNode): PanelNode => {
-        if (panel.type === "split") {
-          return { ...panel, children: panel.children.map(convertPanel) };
-        }
-        const updatedTabs = panel.tabs.map((tab) => {
-          if (tab.contentType !== "agent-error" || tab.agentErrorMeta?.agentId !== agentId) {
-            return tab;
-          }
-          const def = defs.find((d) => d.id === tab.agentErrorMeta!.definitionId);
-          if (!def) return tab; // definition still missing — keep error tab
-          const config: ConnectionConfig = {
-            type: "remote-session",
-            config: {
-              agentId,
-              sessionType: def.sessionType,
-              shell: def.config["shell"] as string | undefined,
-              serialPort: def.config["port"] as string | undefined,
-              persistent: def.persistent,
-              title: def.name,
-            },
-          };
-          return {
-            ...tab,
-            contentType: "terminal" as const,
-            connectionType: "remote-session" as const,
-            config,
-            sessionId: null,
-            agentErrorMeta: undefined,
-            initialCommand: tab.agentErrorMeta!.initialCommand,
-          };
-        });
-        return { ...panel, tabs: updatedTabs };
-      };
-
       set((s) => ({
-        rootPanel: convertPanel(s.rootPanel),
-        tabGroups: s.tabGroups.map((g) => ({ ...g, rootPanel: convertPanel(g.rootPanel) })),
+        tabGroups: s.tabGroups.map((g) => ({
+          ...g,
+          tabs: g.tabs.map((tab) => {
+            if (tab.contentType !== "agent-error" || tab.agentErrorMeta?.agentId !== agentId) {
+              return tab;
+            }
+            const def = defs.find((d) => d.id === tab.agentErrorMeta!.definitionId);
+            if (!def) return tab;
+            const config: ConnectionConfig = {
+              type: "remote-session",
+              config: {
+                agentId,
+                sessionType: def.sessionType,
+                shell: def.config["shell"] as string | undefined,
+                serialPort: def.config["port"] as string | undefined,
+                persistent: def.persistent,
+                title: def.name,
+              },
+            };
+            return {
+              ...tab,
+              contentType: "terminal" as const,
+              connectionType: "remote-session" as const,
+              config,
+              sessionId: null,
+              agentErrorMeta: undefined,
+              initialCommand: tab.agentErrorMeta!.initialCommand,
+            };
+          }),
+        })),
       }));
     },
 
@@ -3273,49 +3154,57 @@ export const useAppStore = create<AppState>((set, get) => {
       }));
     },
 
-    openTunnelEditorTab: (tunnelId) =>
-      set((state) => {
-        const allLeaves = getAllLeaves(state.rootPanel);
-
-        // Look for an existing tunnel-editor tab for this tunnel
-        for (const leaf of allLeaves) {
-          const existing = leaf.tabs.find(
-            (t) => t.contentType === "tunnel-editor" && t.tunnelEditorMeta?.tunnelId === tunnelId
-          );
-          if (existing) {
-            const rootPanel = updateLeaf(state.rootPanel, leaf.id, (l) => ({
-              ...l,
-              tabs: l.tabs.map((t) => ({ ...t, isActive: t.id === existing.id })),
-              activeTabId: existing.id,
-            }));
-            return { rootPanel, activePanelId: leaf.id };
-          }
-        }
-
-        // Create new tunnel-editor tab in the active panel
-        const targetPanelId = state.activePanelId ?? allLeaves[0]?.id;
-        if (!targetPanelId) return state;
-
-        let title = "New Tunnel";
-        if (tunnelId) {
-          const tunnel = state.tunnels.find((t) => t.id === tunnelId);
-          if (tunnel) {
-            title = `Edit: ${tunnel.name}`;
-          }
-        }
-
-        const dummyConfig: ConnectionConfig = { type: "local", config: { shell: "zsh" } };
-        const meta: TunnelEditorMeta = { tunnelId };
-        const newTab = createTab(title, "local", dummyConfig, targetPanelId, "tunnel-editor");
-        newTab.tunnelEditorMeta = meta;
-
-        const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
-          const tabs = leaf.tabs.map((t) => ({ ...t, isActive: false }));
-          tabs.push(newTab);
-          return { ...leaf, tabs, activeTabId: newTab.id };
-        });
-        return { rootPanel, activePanelId: targetPanelId };
-      }),
+    openTunnelEditorTab: (tunnelId) => {
+      const { tabGroups, activeTabGroupId, activeTabSetId } = get();
+      const activeGroup = tabGroups.find((g) => g.id === activeTabGroupId);
+      if (!activeGroup) return;
+      const existing = activeGroup.tabs.find(
+        (t) => t.contentType === "tunnel-editor" && t.tunnelEditorMeta?.tunnelId === tunnelId
+      );
+      if (existing) {
+        const newModelJson = selectTabInLiveModel(activeTabGroupId, existing.id);
+        set((s) => ({
+          tabGroups: s.tabGroups.map((g) =>
+            g.id === activeTabGroupId
+              ? {
+                  ...g,
+                  activeTabId: existing.id,
+                  ...(newModelJson ? { modelJson: newModelJson } : {}),
+                }
+              : g
+          ),
+        }));
+        return;
+      }
+      const targetTabSetId =
+        activeTabSetId ??
+        getFirstTabsetId(getModel(activeTabGroupId)!) ??
+        getFirstTabsetIdFromJson(activeGroup.modelJson);
+      if (!targetTabSetId) return;
+      let title = "New Tunnel";
+      if (tunnelId) {
+        const tunnel = get().tunnels.find((t) => t.id === tunnelId);
+        if (tunnel) title = `Edit: ${tunnel.name}`;
+      }
+      const dummyConfig: ConnectionConfig = { type: "local", config: { shell: "zsh" } };
+      const meta: TunnelEditorMeta = { tunnelId };
+      const newTab = createTab(title, "local", dummyConfig, targetTabSetId, "tunnel-editor");
+      newTab.tunnelEditorMeta = meta;
+      addTabToLiveModel(activeTabGroupId, targetTabSetId, { id: newTab.id, name: newTab.title });
+      const updatedModelJson = getModel(activeTabGroupId)?.toJson() ?? activeGroup.modelJson;
+      set((s) => ({
+        tabGroups: s.tabGroups.map((g) =>
+          g.id === activeTabGroupId
+            ? {
+                ...g,
+                modelJson: updatedModelJson,
+                tabs: [...g.tabs, newTab],
+                activeTabId: newTab.id,
+              }
+            : g
+        ),
+      }));
+    },
 
     // Embedded Servers
     embeddedServers: [],
@@ -3450,51 +3339,58 @@ export const useAppStore = create<AppState>((set, get) => {
       }
     },
 
-    openWorkspaceEditorTab: (workspaceId) =>
-      set((state) => {
-        const allLeaves = getAllLeaves(state.rootPanel);
-
-        // Look for an existing workspace-editor tab for this workspace
-        for (const leaf of allLeaves) {
-          const existing = leaf.tabs.find(
-            (t) =>
-              t.contentType === "workspace-editor" &&
-              t.workspaceEditorMeta?.workspaceId === workspaceId
-          );
-          if (existing) {
-            const rootPanel = updateLeaf(state.rootPanel, leaf.id, (l) => ({
-              ...l,
-              tabs: l.tabs.map((t) => ({ ...t, isActive: t.id === existing.id })),
-              activeTabId: existing.id,
-            }));
-            return { rootPanel, activePanelId: leaf.id };
-          }
-        }
-
-        // Create new workspace-editor tab in the active panel
-        const targetPanelId = state.activePanelId ?? allLeaves[0]?.id;
-        if (!targetPanelId) return state;
-
-        let title = "New Workspace";
-        if (workspaceId) {
-          const ws = state.workspaces.find((w) => w.id === workspaceId);
-          if (ws) {
-            title = `Edit: ${ws.name}`;
-          }
-        }
-
-        const dummyConfig: ConnectionConfig = { type: "local", config: { shell: "zsh" } };
-        const meta: WorkspaceEditorMeta = { workspaceId };
-        const newTab = createTab(title, "local", dummyConfig, targetPanelId, "workspace-editor");
-        newTab.workspaceEditorMeta = meta;
-
-        const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
-          const tabs = leaf.tabs.map((t) => ({ ...t, isActive: false }));
-          tabs.push(newTab);
-          return { ...leaf, tabs, activeTabId: newTab.id };
-        });
-        return { rootPanel, activePanelId: targetPanelId };
-      }),
+    openWorkspaceEditorTab: (workspaceId) => {
+      const { tabGroups, activeTabGroupId, activeTabSetId } = get();
+      const activeGroup = tabGroups.find((g) => g.id === activeTabGroupId);
+      if (!activeGroup) return;
+      const existing = activeGroup.tabs.find(
+        (t) =>
+          t.contentType === "workspace-editor" && t.workspaceEditorMeta?.workspaceId === workspaceId
+      );
+      if (existing) {
+        const newModelJson = selectTabInLiveModel(activeTabGroupId, existing.id);
+        set((s) => ({
+          tabGroups: s.tabGroups.map((g) =>
+            g.id === activeTabGroupId
+              ? {
+                  ...g,
+                  activeTabId: existing.id,
+                  ...(newModelJson ? { modelJson: newModelJson } : {}),
+                }
+              : g
+          ),
+        }));
+        return;
+      }
+      const targetTabSetId =
+        activeTabSetId ??
+        getFirstTabsetId(getModel(activeTabGroupId)!) ??
+        getFirstTabsetIdFromJson(activeGroup.modelJson);
+      if (!targetTabSetId) return;
+      let title = "New Workspace";
+      if (workspaceId) {
+        const ws = get().workspaces.find((w) => w.id === workspaceId);
+        if (ws) title = `Edit: ${ws.name}`;
+      }
+      const dummyConfig: ConnectionConfig = { type: "local", config: { shell: "zsh" } };
+      const meta: WorkspaceEditorMeta = { workspaceId };
+      const newTab = createTab(title, "local", dummyConfig, targetTabSetId, "workspace-editor");
+      newTab.workspaceEditorMeta = meta;
+      addTabToLiveModel(activeTabGroupId, targetTabSetId, { id: newTab.id, name: newTab.title });
+      const updatedModelJson = getModel(activeTabGroupId)?.toJson() ?? activeGroup.modelJson;
+      set((s) => ({
+        tabGroups: s.tabGroups.map((g) =>
+          g.id === activeTabGroupId
+            ? {
+                ...g,
+                modelJson: updatedModelJson,
+                tabs: [...g.tabs, newTab],
+                activeTabId: newTab.id,
+              }
+            : g
+        ),
+      }));
+    },
 
     launchWorkspace: async (workspaceId) => {
       try {
@@ -3612,8 +3508,7 @@ export const useAppStore = create<AppState>((set, get) => {
         set({
           tabGroups: builtGroups,
           activeTabGroupId: firstGroup.id,
-          rootPanel: firstGroup.rootPanel,
-          activePanelId: firstGroup.activePanelId,
+          activeTabSetId: firstGroup.activeTabSetId,
           activeWorkspaceName: definition.name,
         });
       } catch (err) {
@@ -3627,18 +3522,8 @@ export const useAppStore = create<AppState>((set, get) => {
         const activeGroup = state.tabGroups.find((g) => g.id === state.activeTabGroupId);
         const tabGroups =
           scope === "active" && activeGroup
-            ? captureAllTabGroups(
-                [activeGroup],
-                state.activeTabGroupId,
-                state.rootPanel,
-                state.connections
-              )
-            : captureAllTabGroups(
-                state.tabGroups,
-                state.activeTabGroupId,
-                state.rootPanel,
-                state.connections
-              );
+            ? captureAllTabGroups([activeGroup], state.connections)
+            : captureAllTabGroups(state.tabGroups, state.connections);
         const id = `ws-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
         await apiSaveWorkspace({ id, name, description, tabGroups });
         await get().loadWorkspaces();
@@ -3759,25 +3644,11 @@ export const useAppStore = create<AppState>((set, get) => {
   };
 });
 
-// Track last-focused leaf in split containers for directional navigation (#448).
-// When activePanelId changes, mark all ancestor SplitContainers so that
-// navigating back into a subtree restores the last-focused panel.
-useAppStore.subscribe((state, prev) => {
-  if (state.activePanelId && state.activePanelId !== prev.activePanelId) {
-    const updated = markActiveLeaf(state.rootPanel, state.activePanelId);
-    if (updated !== state.rootPanel) {
-      useAppStore.setState({ rootPanel: updated });
-    }
-  }
-});
-
 /**
  * Get the active tab from the current store state.
  */
 export function getActiveTab(state: AppState): TerminalTab | null {
-  const { activePanelId, rootPanel } = state;
-  if (!activePanelId) return null;
-  const leaf = findLeaf(rootPanel, activePanelId);
-  if (!leaf || !leaf.activeTabId) return null;
-  return leaf.tabs.find((t) => t.id === leaf.activeTabId) ?? null;
+  const activeGroup = state.tabGroups.find((g) => g.id === state.activeTabGroupId);
+  if (!activeGroup?.activeTabId) return null;
+  return activeGroup.tabs.find((t) => t.id === activeGroup.activeTabId) ?? null;
 }

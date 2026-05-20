@@ -24,7 +24,6 @@ const DEFAULT_GROUP_NAME = "Main";
 export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps) {
   const saveWorkspace = useAppStore((s) => s.saveWorkspaceToBackend);
   const closeTab = useAppStore((s) => s.closeTab);
-  const rootPanel = useAppStore((s) => s.rootPanel);
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -116,32 +115,15 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
 
     try {
       await saveWorkspace(definition);
-      const { findLeafByTab } = await import("@/utils/panelTree");
-      const leaf = findLeafByTab(rootPanel, tabId);
-      if (leaf) {
-        closeTab(tabId, leaf.id);
-      }
+      closeTab(tabId, tabId);
     } catch {
       // Save failed — stay open
     }
-  }, [
-    meta.workspaceId,
-    name,
-    description,
-    tabGroupDefs,
-    saveWorkspace,
-    closeTab,
-    rootPanel,
-    tabId,
-  ]);
+  }, [meta.workspaceId, name, description, tabGroupDefs, saveWorkspace, closeTab, tabId]);
 
-  const handleCancel = useCallback(async () => {
-    const { findLeafByTab } = await import("@/utils/panelTree");
-    const leaf = findLeafByTab(rootPanel, tabId);
-    if (leaf) {
-      closeTab(tabId, leaf.id);
-    }
-  }, [rootPanel, tabId, closeTab]);
+  const handleCancel = useCallback(() => {
+    closeTab(tabId, tabId);
+  }, [tabId, closeTab]);
 
   if (!isVisible) return null;
 

@@ -14,7 +14,6 @@ interface TabBarProps {
 }
 
 export function TabBar({ panelId, tabs }: TabBarProps) {
-  const isFocused = useAppStore((s) => s.activePanelId === panelId);
   const setActiveTab = useAppStore((s) => s.setActiveTab);
   const closeTab = useAppStore((s) => s.closeTab);
   const tabHorizontalScrolling = useAppStore((s) => s.tabHorizontalScrolling);
@@ -53,7 +52,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   const renameTabData = renameTabId ? tabs.find((t) => t.id === renameTabId) : null;
 
   return (
-    <div className={`tab-bar${isFocused ? " tab-bar--focused" : ""}`}>
+    <div className="tab-bar">
       <SortableContext items={tabs.map((t) => t.id)} strategy={horizontalListSortingStrategy}>
         <div className="tab-bar__tabs">
           {tabs.map((tab) => (

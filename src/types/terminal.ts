@@ -166,27 +166,6 @@ export interface TerminalTab {
   persistentConnectionId?: string;
 }
 
-export interface LeafPanel {
-  type: "leaf";
-  id: string;
-  tabs: TerminalTab[];
-  activeTabId: string | null;
-}
-
-export interface SplitContainer {
-  type: "split";
-  id: string;
-  direction: "horizontal" | "vertical";
-  children: PanelNode[];
-  /** Optional percentage sizes for each child (must sum to 100, length must match children). */
-  sizes?: number[];
-  /** The last leaf that was focused within this subtree. Used by directional navigation. */
-  lastActiveLeafId?: string;
-}
-
-export type PanelNode = LeafPanel | SplitContainer;
-export type DropEdge = "left" | "right" | "top" | "bottom" | "center";
-
 export interface LanguageInfo {
   id: string;
   name: string;
@@ -216,12 +195,20 @@ export interface LogEntry {
   message: string;
 }
 
-/** A named workspace-level tab group with its own independent panel tree. */
+import type { IJsonModel } from "flexlayout-react";
+
+/** A named workspace-level tab group with its own independent layout. */
 export interface TabGroup {
   id: string;
   name: string;
   /** Optional accent color shown as a dot on the chip. */
   color?: string;
-  rootPanel: PanelNode;
-  activePanelId: string | null;
+  /** flexlayout-react model JSON — the layout structure (splits, tabsets, tab order, sizes). */
+  modelJson: IJsonModel;
+  /** All terminal tabs in this group (flat list, keyed by tab ID for content lookups). */
+  tabs: TerminalTab[];
+  /** ID of the currently focused tabset within this group. */
+  activeTabSetId: string | null;
+  /** ID of the currently active tab within this group. */
+  activeTabId: string | null;
 }

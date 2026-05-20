@@ -1,6 +1,5 @@
 import { useEffect } from "react";
 import { useAppStore } from "@/store/appStore";
-import { getAllLeaves, findAdjacentLeaf, FocusDirection } from "@/utils/panelTree";
 import { processKeyEvent, onChordStateChange, cancelChord } from "@/services/keybindings";
 
 /**
@@ -24,13 +23,6 @@ export function useKeyboardShortcuts() {
     return () => window.removeEventListener("keydown", handleZoomCapture, { capture: true });
   }, []);
 
-  const addTab = useAppStore((s) => s.addTab);
-  const rootPanel = useAppStore((s) => s.rootPanel);
-  const activePanelId = useAppStore((s) => s.activePanelId);
-  const closeTab = useAppStore((s) => s.closeTab);
-  const setActiveTab = useAppStore((s) => s.setActiveTab);
-  const toggleSidebar = useAppStore((s) => s.toggleSidebar);
-
   useEffect(() => {
     // Wire chord state changes to the store for StatusBar display
     onChordStateChange((pending) => {
@@ -47,45 +39,46 @@ export function useKeyboardShortcuts() {
         return;
       }
 
-      const allLeaves = getAllLeaves(rootPanel);
-
       switch (action) {
         case "toggle-sidebar":
           e.preventDefault();
-          toggleSidebar();
+          useAppStore.getState().toggleSidebar();
           break;
 
         case "new-terminal":
           e.preventDefault();
-          addTab("Terminal", "local");
+          useAppStore.getState().addTab("Terminal", "local");
           break;
 
         case "close-tab": {
           e.preventDefault();
-          const panel = allLeaves.find((p) => p.id === activePanelId);
-          if (panel?.activeTabId) {
-            closeTab(panel.activeTabId, panel.id);
+          const { tabGroups, activeTabGroupId } = useAppStore.getState();
+          const activeGroup = tabGroups.find((g) => g.id === activeTabGroupId);
+          if (activeGroup?.activeTabId) {
+            useAppStore.getState().closeTab(activeGroup.activeTabId, activeGroup.activeTabId);
           }
           break;
         }
 
         case "next-tab": {
           e.preventDefault();
-          const panel = allLeaves.find((p) => p.id === activePanelId);
-          if (!panel || panel.tabs.length < 2) break;
-          const currentIdx = panel.tabs.findIndex((t) => t.id === panel.activeTabId);
-          const nextIdx = (currentIdx + 1) % panel.tabs.length;
-          setActiveTab(panel.tabs[nextIdx].id, panel.id);
+          const { tabGroups, activeTabGroupId } = useAppStore.getState();
+          const activeGroup = tabGroups.find((g) => g.id === activeTabGroupId);
+          if (!activeGroup || activeGroup.tabs.length < 2) break;
+          const currentIdx = activeGroup.tabs.findIndex((t) => t.id === activeGroup.activeTabId);
+          const nextIdx = (currentIdx + 1) % activeGroup.tabs.length;
+          useAppStore.getState().setActiveTab(activeGroup.tabs[nextIdx].id, activeGroup.id);
           break;
         }
 
         case "prev-tab": {
           e.preventDefault();
-          const panel = allLeaves.find((p) => p.id === activePanelId);
-          if (!panel || panel.tabs.length < 2) break;
-          const currentIdx = panel.tabs.findIndex((t) => t.id === panel.activeTabId);
-          const prevIdx = (currentIdx - 1 + panel.tabs.length) % panel.tabs.length;
-          setActiveTab(panel.tabs[prevIdx].id, panel.id);
+          const { tabGroups, activeTabGroupId } = useAppStore.getState();
+          const activeGroup = tabGroups.find((g) => g.id === activeTabGroupId);
+          if (!activeGroup || activeGroup.tabs.length < 2) break;
+          const currentIdx = activeGroup.tabs.findIndex((t) => t.id === activeGroup.activeTabId);
+          const prevIdx = (currentIdx - 1 + activeGroup.tabs.length) % activeGroup.tabs.length;
+          useAppStore.getState().setActiveTab(activeGroup.tabs[prevIdx].id, activeGroup.id);
           break;
         }
 
@@ -101,8 +94,9 @@ export function useKeyboardShortcuts() {
 
         case "clear-terminal": {
           e.preventDefault();
-          const panel = allLeaves.find((p) => p.id === activePanelId);
-          const tabId = panel?.activeTabId;
+          const { tabGroups, activeTabGroupId } = useAppStore.getState();
+          const activeGroup = tabGroups.find((g) => g.id === activeTabGroupId);
+          const tabId = activeGroup?.activeTabId;
           if (tabId) {
             window.dispatchEvent(new CustomEvent("termihub:clear-terminal", { detail: { tabId } }));
           }
@@ -142,29 +136,16 @@ export function useKeyboardShortcuts() {
         case "focus-up":
         case "focus-down":
         case "focus-left":
-        case "focus-right": {
+        case "focus-right":
+          // directional focus not available in flexlayout; use mouse
           e.preventDefault();
-          const dir = action.replace("focus-", "") as FocusDirection;
-          const currentPanel = allLeaves.find((p) => p.id === activePanelId);
-          if (!currentPanel) break;
-          const target = findAdjacentLeaf(rootPanel, currentPanel.id, dir);
-          if (target) {
-            useAppStore.getState().setActivePanel(target.id);
-            if (target.activeTabId) {
-              window.dispatchEvent(
-                new CustomEvent("termihub:focus-terminal", {
-                  detail: { tabId: target.activeTabId },
-                })
-              );
-            }
-          }
           break;
-        }
 
         case "find-in-terminal": {
           e.preventDefault();
-          const panel = allLeaves.find((p) => p.id === activePanelId);
-          const activeTab = panel?.tabs.find((t) => t.id === panel.activeTabId);
+          const { tabGroups, activeTabGroupId } = useAppStore.getState();
+          const activeGroup = tabGroups.find((g) => g.id === activeTabGroupId);
+          const activeTab = activeGroup?.tabs.find((t) => t.id === activeGroup.activeTabId);
           if (activeTab?.contentType === "terminal") {
             useAppStore.getState().toggleTerminalSearch(activeTab.id);
           }
@@ -212,5 +193,5 @@ export function useKeyboardShortcuts() {
       window.removeEventListener("keydown", handleKeyDown);
       cancelChord();
     };
-  }, [addTab, rootPanel, activePanelId, closeTab, setActiveTab, toggleSidebar]);
+  }, []);
 }
