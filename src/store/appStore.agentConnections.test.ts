@@ -285,10 +285,9 @@ describe("appStore — agent connection management", () => {
     it("creates a connection-editor tab with agent definition meta", () => {
       useAppStore.getState().openAgentDefinitionEditorTab(AGENT_ID, "new", "folder-1");
 
-      const { rootPanel } = useAppStore.getState();
-      const leaf = rootPanel.type === "leaf" ? rootPanel : null;
-      expect(leaf).toBeTruthy();
-      const editorTab = leaf!.tabs.find((t) => t.contentType === "connection-editor");
+      const allTabs = useAppStore.getState().tabGroups.flatMap((g) => g.tabs);
+      expect(allTabs.length).toBeGreaterThan(0);
+      const editorTab = allTabs.find((t) => t.contentType === "connection-editor");
       expect(editorTab).toBeTruthy();
       expect(editorTab!.connectionEditorMeta).toEqual({
         connectionId: AGENT_ID,
@@ -302,9 +301,8 @@ describe("appStore — agent connection management", () => {
       useAppStore.getState().openAgentDefinitionEditorTab(AGENT_ID, "def-1");
       useAppStore.getState().openAgentDefinitionEditorTab(AGENT_ID, "def-1");
 
-      const { rootPanel } = useAppStore.getState();
-      const leaf = rootPanel.type === "leaf" ? rootPanel : null;
-      const editorTabs = leaf!.tabs.filter(
+      const allTabs = useAppStore.getState().tabGroups.flatMap((g) => g.tabs);
+      const editorTabs = allTabs.filter(
         (t) =>
           t.contentType === "connection-editor" &&
           t.connectionEditorMeta?.agentDefinitionId === "def-1"
@@ -320,9 +318,8 @@ describe("appStore — agent connection management", () => {
 
       useAppStore.getState().openAgentDefinitionEditorTab(AGENT_ID, "def-title");
 
-      const { rootPanel } = useAppStore.getState();
-      const leaf = rootPanel.type === "leaf" ? rootPanel : null;
-      const editorTab = leaf!.tabs.find(
+      const allTabs = useAppStore.getState().tabGroups.flatMap((g) => g.tabs);
+      const editorTab = allTabs.find(
         (t) => t.connectionEditorMeta?.agentDefinitionId === "def-title"
       );
       expect(editorTab!.title).toBe("Edit: My Shell");

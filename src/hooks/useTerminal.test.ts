@@ -31,7 +31,12 @@ vi.mock("@/services/api", () => ({
 }));
 
 import { useAppStore } from "@/store/appStore";
-import { getAllLeaves } from "@/utils/panelTree";
+
+/** Get the active group from current store state. */
+function getActiveGroup() {
+  const state = useAppStore.getState();
+  return state.tabGroups.find((g) => g.id === state.activeTabGroupId)!;
+}
 
 describe("useTerminal logic (via store)", () => {
   beforeEach(() => {
@@ -39,23 +44,20 @@ describe("useTerminal logic (via store)", () => {
   });
 
   describe("openTerminal (addTab)", () => {
-    it("adds a new tab to the active panel", () => {
-      const { addTab, rootPanel } = useAppStore.getState();
-      const leaves = getAllLeaves(rootPanel);
-      expect(leaves[0].tabs).toHaveLength(0);
+    it("adds a new tab to the active group", () => {
+      const { addTab } = useAppStore.getState();
+      expect(getActiveGroup().tabs).toHaveLength(0);
 
       addTab("SSH - pi.local", "ssh");
 
-      const updatedLeaves = getAllLeaves(useAppStore.getState().rootPanel);
-      expect(updatedLeaves[0].tabs).toHaveLength(1);
-      expect(updatedLeaves[0].tabs[0].title).toBe("SSH - pi.local");
+      expect(getActiveGroup().tabs).toHaveLength(1);
+      expect(getActiveGroup().tabs[0].title).toBe("SSH - pi.local");
     });
 
     it("tab has the correct connection type", () => {
       useAppStore.getState().addTab("Local Shell", "local");
 
-      const leaves = getAllLeaves(useAppStore.getState().rootPanel);
-      const tab = leaves[0].tabs[0];
+      const tab = getActiveGroup().tabs[0];
       expect(tab.connectionType).toBe("local");
     });
 
@@ -64,57 +66,54 @@ describe("useTerminal logic (via store)", () => {
       useAppStore.getState().addTab("Tab 2", "local");
       useAppStore.getState().addTab("Tab 3", "ssh");
 
-      const leaves = getAllLeaves(useAppStore.getState().rootPanel);
-      expect(leaves[0].tabs).toHaveLength(3);
+      expect(getActiveGroup().tabs).toHaveLength(3);
     });
   });
 
   describe("closeTerminal (closeTab)", () => {
-    it("removes the specified tab from the panel", () => {
+    it("removes the specified tab from the group", () => {
       const { addTab } = useAppStore.getState();
       addTab("To Close", "local");
 
-      const leaves1 = getAllLeaves(useAppStore.getState().rootPanel);
-      const tabId = leaves1[0].tabs[0].id;
-      const panelId = leaves1[0].id;
+      const group = getActiveGroup();
+      const tabId = group.tabs[0].id;
+      const panelId = group.activeTabSetId ?? "";
 
       useAppStore.getState().closeTab(tabId, panelId);
 
-      const leaves2 = getAllLeaves(useAppStore.getState().rootPanel);
-      expect(leaves2[0].tabs).toHaveLength(0);
+      expect(getActiveGroup().tabs).toHaveLength(0);
     });
 
     it("does not affect other tabs when closing one", () => {
       useAppStore.getState().addTab("Keep", "local");
       useAppStore.getState().addTab("Close", "local");
 
-      const leaves = getAllLeaves(useAppStore.getState().rootPanel);
-      const closeTab = leaves[0].tabs[1];
+      const group = getActiveGroup();
+      const closeTab = group.tabs[1];
 
-      useAppStore.getState().closeTab(closeTab.id, leaves[0].id);
+      useAppStore.getState().closeTab(closeTab.id, group.activeTabSetId ?? "");
 
-      const remaining = getAllLeaves(useAppStore.getState().rootPanel);
-      expect(remaining[0].tabs).toHaveLength(1);
-      expect(remaining[0].tabs[0].title).toBe("Keep");
+      const remaining = getActiveGroup();
+      expect(remaining.tabs).toHaveLength(1);
+      expect(remaining.tabs[0].title).toBe("Keep");
     });
   });
 
   describe("activateTerminal (setActiveTab)", () => {
-    it("sets the active tab in the panel", () => {
+    it("sets the active tab in the group", () => {
       useAppStore.getState().addTab("Tab A", "local");
       useAppStore.getState().addTab("Tab B", "local");
 
-      const leaves = getAllLeaves(useAppStore.getState().rootPanel);
-      const tabA = leaves[0].tabs[0];
-      const tabB = leaves[0].tabs[1];
+      const group = getActiveGroup();
+      const tabA = group.tabs[0];
+      const tabB = group.tabs[1];
 
       // Tab B is active by default (last added)
-      expect(leaves[0].activeTabId).toBe(tabB.id);
+      expect(group.activeTabId).toBe(tabB.id);
 
-      useAppStore.getState().setActiveTab(tabA.id, leaves[0].id);
+      useAppStore.getState().setActiveTab(tabA.id, group.activeTabSetId ?? "");
 
-      const updatedLeaves = getAllLeaves(useAppStore.getState().rootPanel);
-      expect(updatedLeaves[0].activeTabId).toBe(tabA.id);
+      expect(getActiveGroup().activeTabId).toBe(tabA.id);
     });
   });
 });

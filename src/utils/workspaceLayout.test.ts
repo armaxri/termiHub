@@ -7,7 +7,8 @@ import {
   WorkspaceTabGroupDef,
 } from "@/types/workspace";
 import { SavedConnection } from "@/types/connection";
-import { PanelNode, TabGroup, LeafPanel } from "@/types/terminal";
+import type { IJsonModel } from "flexlayout-react";
+import { TabGroup, TerminalTab } from "@/types/terminal";
 import {
   getWorkspaceLeaves,
   countWorkspaceTabs,
@@ -18,7 +19,6 @@ import {
   updateTabInLeaf,
   addLeafToSplit,
   wrapSplitInNewDirection,
-  buildPanelTreeFromWorkspace,
   buildTabGroupsFromWorkspace,
   captureAllTabGroups,
   captureCurrentLayout,
@@ -387,94 +387,107 @@ const savedConnections: SavedConnection[] = [
   },
 ];
 
-describe("buildPanelTreeFromWorkspace", () => {
-  it("builds a single leaf panel", () => {
-    const layout: WorkspaceLayoutNode = leaf({ connectionRef: "conn-1" });
-    const result = buildPanelTreeFromWorkspace(layout, savedConnections, "bash");
-    expect(result.type).toBe("leaf");
-    if (result.type === "leaf") {
-      expect(result.tabs).toHaveLength(1);
-      expect(result.tabs[0].config.type).toBe("ssh");
-      expect(result.tabs[0].title).toBe("Dev Server");
-      expect(result.tabs[0].isActive).toBe(true);
-    }
-  });
-
-  it("builds a split panel tree", () => {
-    const layout: WorkspaceLayoutNode = hsplit(
-      leaf({ connectionRef: "conn-1" }),
-      leaf({ connectionRef: "conn-2" })
+describe("buildTabGroupsFromWorkspace (tab resolution)", () => {
+  it("builds tabs from a connection ref", () => {
+    const groups = buildTabGroupsFromWorkspace(
+      [{ name: "T", layout: leaf({ connectionRef: "conn-1" }) }],
+      savedConnections,
+      "bash"
     );
-    const result = buildPanelTreeFromWorkspace(layout, savedConnections, "bash");
-    expect(result.type).toBe("split");
-    if (result.type === "split") {
-      expect(result.direction).toBe("horizontal");
-      expect(result.children).toHaveLength(2);
-    }
+    const t = groups[0].tabs[0];
+    expect(t.config.type).toBe("ssh");
+    expect(t.title).toBe("Dev Server");
   });
 
-  it("uses title override from tab def", () => {
-    const layout: WorkspaceLayoutNode = leaf({ connectionRef: "conn-1", title: "Custom Title" });
-    const result = buildPanelTreeFromWorkspace(layout, savedConnections, "bash");
-    if (result.type === "leaf") {
-      expect(result.tabs[0].title).toBe("Custom Title");
-    }
+  it("builds tabs from a split layout", () => {
+    const groups = buildTabGroupsFromWorkspace(
+      [
+        {
+          name: "T",
+          layout: hsplit(leaf({ connectionRef: "conn-1" }), leaf({ connectionRef: "conn-2" })),
+        },
+      ],
+      savedConnections,
+      "bash"
+    );
+    expect(groups[0].tabs).toHaveLength(2);
   });
 
-  it("falls back to inline config when ref not found", () => {
-    const layout: WorkspaceLayoutNode = leaf({
-      connectionRef: "nonexistent",
-      inlineConfig: { type: "local", config: { shell: "zsh" } },
-      title: "Fallback",
-    });
-    const result = buildPanelTreeFromWorkspace(layout, savedConnections, "bash");
-    if (result.type === "leaf") {
-      expect(result.tabs[0].config.type).toBe("local");
-      expect(result.tabs[0].title).toBe("Fallback");
-    }
+  it("uses title override", () => {
+    const groups = buildTabGroupsFromWorkspace(
+      [{ name: "T", layout: leaf({ connectionRef: "conn-1", title: "Custom Title" }) }],
+      savedConnections,
+      "bash"
+    );
+    expect(groups[0].tabs[0].title).toBe("Custom Title");
   });
 
-  it("falls back to default shell when no ref or inline", () => {
-    const layout: WorkspaceLayoutNode = leaf({});
-    const result = buildPanelTreeFromWorkspace(layout, savedConnections, "zsh");
-    if (result.type === "leaf") {
-      expect(result.tabs[0].config.type).toBe("local");
-      expect((result.tabs[0].config.config as Record<string, unknown>).shell).toBe("zsh");
-    }
+  it("falls back to inline config", () => {
+    const groups = buildTabGroupsFromWorkspace(
+      [
+        {
+          name: "T",
+          layout: leaf({
+            connectionRef: "nonexistent",
+            inlineConfig: { type: "local", config: { shell: "zsh" } },
+            title: "Fallback",
+          }),
+        },
+      ],
+      savedConnections,
+      "bash"
+    );
+    expect(groups[0].tabs[0].config.type).toBe("local");
+    expect(groups[0].tabs[0].title).toBe("Fallback");
+  });
+
+  it("falls back to default shell", () => {
+    const groups = buildTabGroupsFromWorkspace(
+      [{ name: "T", layout: leaf({}) }],
+      savedConnections,
+      "zsh"
+    );
+    expect(groups[0].tabs[0].config.type).toBe("local");
+    expect((groups[0].tabs[0].config.config as Record<string, unknown>).shell).toBe("zsh");
   });
 
   it("preserves initial command", () => {
-    const layout: WorkspaceLayoutNode = leaf({
-      connectionRef: "conn-1",
-      initialCommand: "npm start",
-    });
-    const result = buildPanelTreeFromWorkspace(layout, savedConnections, "bash");
-    if (result.type === "leaf") {
-      expect(result.tabs[0].initialCommand).toBe("npm start");
-    }
+    const groups = buildTabGroupsFromWorkspace(
+      [
+        {
+          name: "T",
+          layout: leaf({ connectionRef: "conn-1", initialCommand: "npm start" }),
+        },
+      ],
+      savedConnections,
+      "bash"
+    );
+    expect(groups[0].tabs[0].initialCommand).toBe("npm start");
   });
 });
 
 describe("captureCurrentLayout", () => {
   it("captures a single leaf panel", () => {
-    const panel: PanelNode = {
-      type: "leaf",
-      id: "p1",
-      tabs: [
-        {
-          id: "t1",
-          sessionId: "s1",
-          title: "Dev Server",
-          connectionType: "ssh",
-          contentType: "terminal",
-          config: { type: "ssh", config: { host: "dev.example.com" } },
-          panelId: "p1",
-          isActive: true,
-        },
-      ],
-      activeTabId: "t1",
+    const modelJson: IJsonModel = {
+      global: {},
+      layout: {
+        type: "row",
+        children: [{ type: "tabset", id: "ts1", children: [{ id: "t1", name: "Dev Server" }] }],
+      },
     };
-    const result = captureCurrentLayout(panel, savedConnections);
+    const tabs: TerminalTab[] = [
+      {
+        id: "t1",
+        sessionId: null,
+        title: "Dev Server",
+        connectionType: "ssh",
+        contentType: "terminal",
+        config: { type: "ssh", config: { host: "dev.example.com" } },
+        panelId: "ts1",
+        isActive: true,
+      },
+    ];
+    const result = captureCurrentLayout(modelJson, tabs, savedConnections);
     expect(result.type).toBe("leaf");
     if (result.type === "leaf") {
       expect(result.tabs).toHaveLength(1);
@@ -483,48 +496,39 @@ describe("captureCurrentLayout", () => {
   });
 
   it("captures a split layout", () => {
-    const panel: PanelNode = {
-      type: "split",
-      id: "s1",
-      direction: "horizontal",
-      children: [
-        {
-          type: "leaf",
-          id: "p1",
-          tabs: [
-            {
-              id: "t1",
-              sessionId: null,
-              title: "Dev Server",
-              connectionType: "ssh",
-              contentType: "terminal",
-              config: { type: "ssh", config: { host: "dev.example.com" } },
-              panelId: "p1",
-              isActive: true,
-            },
-          ],
-          activeTabId: "t1",
-        },
-        {
-          type: "leaf",
-          id: "p2",
-          tabs: [
-            {
-              id: "t2",
-              sessionId: null,
-              title: "Local Shell",
-              connectionType: "local",
-              contentType: "terminal",
-              config: { type: "local", config: { shell: "bash" } },
-              panelId: "p2",
-              isActive: true,
-            },
-          ],
-          activeTabId: "t2",
-        },
-      ],
+    const modelJson: IJsonModel = {
+      global: {},
+      layout: {
+        type: "row",
+        children: [
+          { type: "tabset", id: "ts1", children: [{ id: "t1", name: "Dev Server" }] },
+          { type: "tabset", id: "ts2", children: [{ id: "t2", name: "Local Shell" }] },
+        ],
+      },
     };
-    const result = captureCurrentLayout(panel, savedConnections);
+    const tabs: TerminalTab[] = [
+      {
+        id: "t1",
+        sessionId: null,
+        title: "Dev Server",
+        connectionType: "ssh",
+        contentType: "terminal",
+        config: { type: "ssh", config: { host: "dev.example.com" } },
+        panelId: "ts1",
+        isActive: true,
+      },
+      {
+        id: "t2",
+        sessionId: null,
+        title: "Local Shell",
+        connectionType: "local",
+        contentType: "terminal",
+        config: { type: "local", config: { shell: "bash" } },
+        panelId: "ts2",
+        isActive: true,
+      },
+    ];
+    const result = captureCurrentLayout(modelJson, tabs, savedConnections);
     expect(result.type).toBe("split");
     if (result.type === "split") {
       expect(result.direction).toBe("horizontal");
@@ -533,24 +537,26 @@ describe("captureCurrentLayout", () => {
   });
 
   it("uses inline config for unmatched connections", () => {
-    const panel: PanelNode = {
-      type: "leaf",
-      id: "p1",
-      tabs: [
-        {
-          id: "t1",
-          sessionId: null,
-          title: "Custom",
-          connectionType: "telnet",
-          contentType: "terminal",
-          config: { type: "telnet", config: { host: "some.host", port: 23 } },
-          panelId: "p1",
-          isActive: true,
-        },
-      ],
-      activeTabId: "t1",
+    const modelJson: IJsonModel = {
+      global: {},
+      layout: {
+        type: "row",
+        children: [{ type: "tabset", id: "ts1", children: [{ id: "t1", name: "Custom" }] }],
+      },
     };
-    const result = captureCurrentLayout(panel, savedConnections);
+    const tabs: TerminalTab[] = [
+      {
+        id: "t1",
+        sessionId: null,
+        title: "Custom",
+        connectionType: "telnet",
+        contentType: "terminal",
+        config: { type: "telnet", config: { host: "some.host", port: 23 } },
+        panelId: "ts1",
+        isActive: true,
+      },
+    ];
+    const result = captureCurrentLayout(modelJson, tabs, savedConnections);
     if (result.type === "leaf") {
       expect(result.tabs[0].connectionRef).toBeUndefined();
       expect(result.tabs[0].inlineConfig).toBeDefined();
@@ -559,34 +565,45 @@ describe("captureCurrentLayout", () => {
   });
 
   it("skips non-terminal tabs", () => {
-    const panel: PanelNode = {
-      type: "leaf",
-      id: "p1",
-      tabs: [
-        {
-          id: "t1",
-          sessionId: null,
-          title: "Settings",
-          connectionType: "local",
-          contentType: "settings",
-          config: { type: "local", config: {} },
-          panelId: "p1",
-          isActive: true,
-        },
-        {
-          id: "t2",
-          sessionId: null,
-          title: "Terminal",
-          connectionType: "local",
-          contentType: "terminal",
-          config: { type: "local", config: { shell: "bash" } },
-          panelId: "p1",
-          isActive: false,
-        },
-      ],
-      activeTabId: "t1",
+    const modelJson: IJsonModel = {
+      global: {},
+      layout: {
+        type: "row",
+        children: [
+          {
+            type: "tabset",
+            id: "ts1",
+            children: [
+              { id: "t1", name: "Settings" },
+              { id: "t2", name: "Terminal" },
+            ],
+          },
+        ],
+      },
     };
-    const result = captureCurrentLayout(panel, savedConnections);
+    const tabs: TerminalTab[] = [
+      {
+        id: "t1",
+        sessionId: null,
+        title: "Settings",
+        connectionType: "local",
+        contentType: "settings",
+        config: { type: "local", config: {} },
+        panelId: "ts1",
+        isActive: true,
+      },
+      {
+        id: "t2",
+        sessionId: null,
+        title: "Terminal",
+        connectionType: "local",
+        contentType: "terminal",
+        config: { type: "local", config: { shell: "bash" } },
+        panelId: "ts1",
+        isActive: false,
+      },
+    ];
+    const result = captureCurrentLayout(modelJson, tabs, savedConnections);
     if (result.type === "leaf") {
       expect(result.tabs).toHaveLength(1);
     }
@@ -594,129 +611,6 @@ describe("captureCurrentLayout", () => {
 });
 
 // --- Sizes propagation and manipulation tests ---
-
-describe("sizes propagation in buildPanelTreeFromWorkspace", () => {
-  it("propagates sizes from workspace split to runtime split", () => {
-    const layout = hsplitSized(
-      [60, 40],
-      leaf({ connectionRef: "conn-1" }),
-      leaf({ connectionRef: "conn-2" })
-    );
-    const result = buildPanelTreeFromWorkspace(layout, savedConnections, "bash");
-    expect(result.type).toBe("split");
-    if (result.type === "split") {
-      expect(result.sizes).toEqual([60, 40]);
-    }
-  });
-
-  it("does not add sizes when absent", () => {
-    const layout = hsplit(leaf({ connectionRef: "conn-1" }), leaf({ connectionRef: "conn-2" }));
-    const result = buildPanelTreeFromWorkspace(layout, savedConnections, "bash");
-    if (result.type === "split") {
-      expect(result.sizes).toBeUndefined();
-    }
-  });
-});
-
-describe("sizes propagation in captureCurrentLayout", () => {
-  it("propagates sizes from runtime split to workspace split", () => {
-    const panel: PanelNode = {
-      type: "split",
-      id: "s1",
-      direction: "horizontal",
-      sizes: [70, 30],
-      children: [
-        {
-          type: "leaf",
-          id: "p1",
-          tabs: [
-            {
-              id: "t1",
-              sessionId: null,
-              title: "Dev Server",
-              connectionType: "ssh",
-              contentType: "terminal",
-              config: { type: "ssh", config: { host: "dev.example.com" } },
-              panelId: "p1",
-              isActive: true,
-            },
-          ],
-          activeTabId: "t1",
-        },
-        {
-          type: "leaf",
-          id: "p2",
-          tabs: [
-            {
-              id: "t2",
-              sessionId: null,
-              title: "Local Shell",
-              connectionType: "local",
-              contentType: "terminal",
-              config: { type: "local", config: { shell: "bash" } },
-              panelId: "p2",
-              isActive: true,
-            },
-          ],
-          activeTabId: "t2",
-        },
-      ],
-    };
-    const result = captureCurrentLayout(panel, savedConnections);
-    expect(result.type).toBe("split");
-    if (result.type === "split") {
-      expect(result.sizes).toEqual([70, 30]);
-    }
-  });
-
-  it("does not add sizes when runtime split has no sizes", () => {
-    const panel: PanelNode = {
-      type: "split",
-      id: "s1",
-      direction: "horizontal",
-      children: [
-        {
-          type: "leaf",
-          id: "p1",
-          tabs: [
-            {
-              id: "t1",
-              sessionId: null,
-              title: "Dev Server",
-              connectionType: "ssh",
-              contentType: "terminal",
-              config: { type: "ssh", config: { host: "dev.example.com" } },
-              panelId: "p1",
-              isActive: true,
-            },
-          ],
-          activeTabId: "t1",
-        },
-        {
-          type: "leaf",
-          id: "p2",
-          tabs: [
-            {
-              id: "t2",
-              sessionId: null,
-              title: "Local Shell",
-              connectionType: "local",
-              contentType: "terminal",
-              config: { type: "local", config: { shell: "bash" } },
-              panelId: "p2",
-              isActive: true,
-            },
-          ],
-          activeTabId: "t2",
-        },
-      ],
-    };
-    const result = captureCurrentLayout(panel, savedConnections);
-    if (result.type === "split") {
-      expect(result.sizes).toBeUndefined();
-    }
-  });
-});
 
 describe("removeWorkspaceLeaf with sizes", () => {
   it("redistributes sizes when removing a child from a sized split", () => {
@@ -848,11 +742,12 @@ describe("buildTabGroupsFromWorkspace", () => {
     expect(groups[0].color).toBe("#ff6b6b");
   });
 
-  it("sets activePanelId to first leaf panel id", () => {
+  it("sets activeTabSetId to first leaf tabset id", () => {
     const defs: WorkspaceTabGroupDef[] = [{ name: "Main", layout: leaf(tab("conn-1")) }];
     const groups = buildTabGroupsFromWorkspace(defs, savedConnections, "bash");
-    const panel = groups[0].rootPanel;
-    expect(groups[0].activePanelId).toBe(panel.id);
+    expect(groups[0].activeTabSetId).not.toBeNull();
+    const activeTabSetId = groups[0].activeTabSetId!;
+    expect(groups[0].tabs.some((t) => t.panelId === activeTabSetId)).toBe(true);
   });
 
   it("builds correct panel tree (split layout)", () => {
@@ -860,10 +755,7 @@ describe("buildTabGroupsFromWorkspace", () => {
       { name: "Main", layout: hsplit(leaf(tab("conn-1")), leaf(tab("conn-2"))) },
     ];
     const groups = buildTabGroupsFromWorkspace(defs, savedConnections, "bash");
-    expect(groups[0].rootPanel.type).toBe("split");
-    if (groups[0].rootPanel.type === "split") {
-      expect(groups[0].rootPanel.children).toHaveLength(2);
-    }
+    expect(groups[0].tabs).toHaveLength(2);
   });
 
   it("returns empty array for empty defs", () => {
@@ -873,81 +765,74 @@ describe("buildTabGroupsFromWorkspace", () => {
 });
 
 describe("captureAllTabGroups", () => {
-  function makeLeafPanel(tabTitle: string): LeafPanel {
+  function makeTabGroup(id: string, name: string, tabTitle: string): TabGroup {
+    const tabId = `tab-${tabTitle}`;
+    const tsId = `ts-${tabTitle}`;
     return {
-      type: "leaf",
-      id: `panel-${tabTitle}`,
+      id,
+      name,
       tabs: [
         {
-          id: `tab-${tabTitle}`,
+          id: tabId,
           sessionId: null,
           title: tabTitle,
           connectionType: "local",
           contentType: "terminal",
           config: { type: "local", config: { shell: "bash" } },
-          panelId: `panel-${tabTitle}`,
+          panelId: tsId,
           isActive: true,
         },
       ],
-      activeTabId: `tab-${tabTitle}`,
+      activeTabId: tabId,
+      activeTabSetId: tsId,
+      modelJson: {
+        global: {},
+        layout: {
+          type: "row",
+          children: [{ type: "tabset", id: tsId, children: [{ id: tabId, name: tabTitle }] }],
+        },
+      },
     };
   }
 
   const savedConnections: SavedConnection[] = [];
 
   it("captures one def per group", () => {
-    const panel1 = makeLeafPanel("alpha");
-    const panel2 = makeLeafPanel("beta");
+    const g1 = makeTabGroup("g1", "Dev", "alpha");
+    const g2 = makeTabGroup("g2", "Deploy", "beta");
 
-    const groups: TabGroup[] = [
-      { id: "g1", name: "Dev", rootPanel: panel1, activePanelId: panel1.id },
-      { id: "g2", name: "Deploy", rootPanel: panel2, activePanelId: panel2.id },
-    ];
-
-    const defs = captureAllTabGroups(groups, "g1", panel1, savedConnections);
+    const defs = captureAllTabGroups([g1, g2], savedConnections);
     expect(defs).toHaveLength(2);
     expect(defs[0].name).toBe("Dev");
     expect(defs[1].name).toBe("Deploy");
   });
 
-  it("uses liveRootPanel for active group", () => {
-    const savedPanel = makeLeafPanel("old");
-    const livePanel = makeLeafPanel("live");
+  it("captures correct tab title from active group", () => {
+    const g1 = makeTabGroup("g1", "Main", "live-tab");
 
-    const groups: TabGroup[] = [
-      { id: "g1", name: "Main", rootPanel: savedPanel, activePanelId: savedPanel.id },
-    ];
-
-    const defs = captureAllTabGroups(groups, "g1", livePanel, savedConnections);
+    const defs = captureAllTabGroups([g1], savedConnections);
     expect(defs[0].layout.type).toBe("leaf");
     if (defs[0].layout.type === "leaf") {
-      // livePanel has tab titled "live"
-      expect(defs[0].layout.tabs[0].title).toBe("live");
+      // The tab from the group's own modelJson and tabs
+      expect(defs[0].layout.tabs[0].title).toBe("live-tab");
     }
   });
 
-  it("uses saved rootPanel for inactive groups", () => {
-    const activePanel = makeLeafPanel("active");
-    const inactivePanel = makeLeafPanel("inactive");
+  it("captures correct tab title from inactive group", () => {
+    const g1 = makeTabGroup("g1", "Active", "active-tab");
+    const g2 = makeTabGroup("g2", "Inactive", "inactive-tab");
 
-    const groups: TabGroup[] = [
-      { id: "g1", name: "Active", rootPanel: activePanel, activePanelId: activePanel.id },
-      { id: "g2", name: "Inactive", rootPanel: inactivePanel, activePanelId: inactivePanel.id },
-    ];
-
-    const defs = captureAllTabGroups(groups, "g1", activePanel, savedConnections);
+    const defs = captureAllTabGroups([g1, g2], savedConnections);
     expect(defs[1].name).toBe("Inactive");
     if (defs[1].layout.type === "leaf") {
-      expect(defs[1].layout.tabs[0].title).toBe("inactive");
+      expect(defs[1].layout.tabs[0].title).toBe("inactive-tab");
     }
   });
 
   it("propagates group color", () => {
-    const panel = makeLeafPanel("x");
-    const groups: TabGroup[] = [
-      { id: "g1", name: "Dev", color: "#abc", rootPanel: panel, activePanelId: panel.id },
-    ];
-    const defs = captureAllTabGroups(groups, "g1", panel, savedConnections);
+    const g1 = makeTabGroup("g1", "Dev", "x");
+    const colorGroup: TabGroup = { ...g1, color: "#abc" };
+    const defs = captureAllTabGroups([colorGroup], savedConnections);
     expect(defs[0].color).toBe("#abc");
   });
 });
@@ -978,16 +863,13 @@ describe("agentRef workspace tab resolution", () => {
       type: "leaf",
       tabs: [{ agentRef: { agentId: "agent-1", definitionId: "def-shell" } }],
     };
-    const panel = buildPanelTreeFromWorkspace(layout, [], "zsh", agentContext);
-    expect(panel.type).toBe("leaf");
-    if (panel.type === "leaf") {
-      const tab = panel.tabs[0];
-      expect(tab.contentType).toBe("terminal");
-      expect(tab.connectionType).toBe("remote-session");
-      expect(tab.config.config).toMatchObject({ agentId: "agent-1", sessionType: "shell" });
-      expect(tab.workspaceAgentRef).toEqual({ agentId: "agent-1", definitionId: "def-shell" });
-      expect(tab.agentErrorMeta).toBeUndefined();
-    }
+    const groups = buildTabGroupsFromWorkspace([{ name: "T", layout }], [], "zsh", agentContext);
+    const t = groups[0].tabs[0];
+    expect(t.contentType).toBe("terminal");
+    expect(t.connectionType).toBe("remote-session");
+    expect(t.config.config).toMatchObject({ agentId: "agent-1", sessionType: "shell" });
+    expect(t.workspaceAgentRef).toEqual({ agentId: "agent-1", definitionId: "def-shell" });
+    expect(t.agentErrorMeta).toBeUndefined();
   });
 
   it("resolves agentRef to agent-error tab when agent is disconnected", () => {
@@ -995,15 +877,12 @@ describe("agentRef workspace tab resolution", () => {
       type: "leaf",
       tabs: [{ agentRef: { agentId: "agent-2", definitionId: "def-shell" } }],
     };
-    const panel = buildPanelTreeFromWorkspace(layout, [], "zsh", agentContext);
-    expect(panel.type).toBe("leaf");
-    if (panel.type === "leaf") {
-      const tab = panel.tabs[0];
-      expect(tab.contentType).toBe("agent-error");
-      expect(tab.agentErrorMeta?.agentId).toBe("agent-2");
-      expect(tab.agentErrorMeta?.error).toContain("not connected");
-      expect(tab.workspaceAgentRef).toEqual({ agentId: "agent-2", definitionId: "def-shell" });
-    }
+    const groups = buildTabGroupsFromWorkspace([{ name: "T", layout }], [], "zsh", agentContext);
+    const t = groups[0].tabs[0];
+    expect(t.contentType).toBe("agent-error");
+    expect(t.agentErrorMeta?.agentId).toBe("agent-2");
+    expect(t.agentErrorMeta?.error).toContain("not connected");
+    expect(t.workspaceAgentRef).toEqual({ agentId: "agent-2", definitionId: "def-shell" });
   });
 
   it("resolves agentRef to agent-error tab when definition is not found", () => {
@@ -1011,13 +890,10 @@ describe("agentRef workspace tab resolution", () => {
       type: "leaf",
       tabs: [{ agentRef: { agentId: "agent-1", definitionId: "missing-def" } }],
     };
-    const panel = buildPanelTreeFromWorkspace(layout, [], "zsh", agentContext);
-    expect(panel.type).toBe("leaf");
-    if (panel.type === "leaf") {
-      const tab = panel.tabs[0];
-      expect(tab.contentType).toBe("agent-error");
-      expect(tab.agentErrorMeta?.error).toContain("not found");
-    }
+    const groups = buildTabGroupsFromWorkspace([{ name: "T", layout }], [], "zsh", agentContext);
+    const t = groups[0].tabs[0];
+    expect(t.contentType).toBe("agent-error");
+    expect(t.agentErrorMeta?.error).toContain("not found");
   });
 
   it("resolves agentRef to agent-error tab when agent context is absent", () => {
@@ -1025,11 +901,8 @@ describe("agentRef workspace tab resolution", () => {
       type: "leaf",
       tabs: [{ agentRef: { agentId: "agent-1", definitionId: "def-shell" } }],
     };
-    const panel = buildPanelTreeFromWorkspace(layout, [], "zsh");
-    expect(panel.type).toBe("leaf");
-    if (panel.type === "leaf") {
-      expect(panel.tabs[0].contentType).toBe("agent-error");
-    }
+    const groups = buildTabGroupsFromWorkspace([{ name: "T", layout }], [], "zsh");
+    expect(groups[0].tabs[0].contentType).toBe("agent-error");
   });
 
   it("captures agent-error tab back as agentRef", () => {
@@ -1043,8 +916,8 @@ describe("agentRef workspace tab resolution", () => {
         },
       ],
     };
-    const panel = buildPanelTreeFromWorkspace(layout, [], "zsh", agentContext);
-    const captured = captureCurrentLayout(panel, []);
+    const groups = buildTabGroupsFromWorkspace([{ name: "T", layout }], [], "zsh", agentContext);
+    const captured = captureCurrentLayout(groups[0].modelJson, groups[0].tabs, []);
     expect(captured.type).toBe("leaf");
     if (captured.type === "leaf") {
       const tabDef = captured.tabs[0];

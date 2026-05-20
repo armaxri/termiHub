@@ -100,18 +100,16 @@ describe("terminal spawn error state", () => {
   it("closeTab removes spawn error and retry counter", () => {
     const store = useAppStore.getState();
     // Add a terminal tab via addTab so we have a valid panelId
-    const panelId = store.activePanelId!;
     store.addTab("Test", "local");
-    const rootPanel = useAppStore.getState().rootPanel;
-    const leafTabs = rootPanel.type === "leaf" ? rootPanel.tabs : [];
-    const tab = leafTabs.length > 0 ? leafTabs[leafTabs.length - 1] : null;
+    const allTabs = useAppStore.getState().tabGroups.flatMap((g) => g.tabs);
+    const tab = allTabs.length > 0 ? allTabs[allTabs.length - 1] : null;
     expect(tab).not.toBeNull();
 
     useAppStore.getState().setTerminalSpawnError(tab!.id, "error");
     useAppStore.getState().retryTerminalSpawn(tab!.id);
     useAppStore.getState().setTerminalSpawnError(tab!.id, "error again");
 
-    useAppStore.getState().closeTab(tab!.id, panelId);
+    useAppStore.getState().closeTab(tab!.id, tab!.panelId);
 
     expect(useAppStore.getState().terminalSpawnErrors[tab!.id]).toBeUndefined();
     expect(useAppStore.getState().terminalRetryCounters[tab!.id]).toBeUndefined();

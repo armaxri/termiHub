@@ -12,8 +12,8 @@
  * tab.config.config.agentId, which is always set for remote-session tabs.
  */
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
-import { getAllLeaves } from "@/utils/panelTree";
 import { useAppStore } from "@/store/appStore";
+import type { TerminalTab } from "@/types/terminal";
 
 vi.mock("@/services/storage", () => ({
   loadConnections: vi.fn(() =>
@@ -68,13 +68,9 @@ vi.mock("@/themes", () => ({
   onThemeChange: vi.fn(() => vi.fn()),
 }));
 
-/** Helper: collect all terminal tabs from all panels in the current store state. */
+/** Helper: collect all terminal tabs from all groups in the current store state. */
 function getAllTerminalTabs() {
-  const store = useAppStore.getState();
-  return [
-    ...getAllLeaves(store.rootPanel).flatMap((l) => l.tabs),
-    ...store.tabGroups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((l) => l.tabs)),
-  ];
+  return useAppStore.getState().tabGroups.flatMap((g) => g.tabs);
 }
 
 /** Helper: filter tabs that belong to a given agent (same filter as TerminalView). */
@@ -137,21 +133,23 @@ describe("agent-state-change tab discovery — regression for empty agentSession
       type: "remote-session",
       config: { agentId: "agent-1", sessionType: "shell" },
     });
+
     // Directly inject a non-terminal tab that coincidentally has agentId in meta.
     // (In practice non-terminal tabs don't have agentId, but guard against it anyway.)
-    const allPanels = useAppStore.getState().getAllPanels();
-    const panel = allPanels[0];
+    const nonTerminalTab: TerminalTab = {
+      id: "non-terminal-tab",
+      title: "Settings",
+      contentType: "settings",
+      connectionType: "local",
+      sessionId: null,
+      panelId: "",
+      isActive: false,
+      config: { type: "settings", config: { agentId: "agent-1" } as Record<string, unknown> },
+    };
     useAppStore.setState((s) => ({
-      rootPanel: injectTabIntoPanel(s.rootPanel, panel.id, {
-        id: "non-terminal-tab",
-        title: "Settings",
-        contentType: "settings",
-        connectionType: "local",
-        sessionId: null,
-        panelId: panel.id,
-        isActive: false,
-        config: { type: "settings", config: { agentId: "agent-1" } },
-      }),
+      tabGroups: s.tabGroups.map((g) =>
+        g.id === s.activeTabGroupId ? { ...g, tabs: [...g.tabs, nonTerminalTab] } : g
+      ),
     }));
 
     // Only the terminal tab should be found.
@@ -335,10 +333,7 @@ describe("agent-state-change 'connected': session recovery after power cycle", (
   /** Simulate the fixed 'connected' handler with a given recovered-sessions list. */
   async function simulateConnectedHandler(agentId: string, recoveredSessionIds: string[]) {
     const store = useAppStore.getState();
-    const allTabs = [
-      ...getAllLeaves(store.rootPanel).flatMap((l) => l.tabs),
-      ...store.tabGroups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((l) => l.tabs)),
-    ];
+    const allTabs = store.tabGroups.flatMap((g) => g.tabs);
     const agentTerminalTabs = allTabs.filter((tab) => {
       if (tab.contentType !== "terminal") return false;
       const cfg = tab.config.config as { agentId?: string };
@@ -362,7 +357,7 @@ describe("agent-state-change 'connected': session recovery after power cycle", (
       type: "remote-session",
       config: { agentId: "agent-1", sessionType: "shell" },
     });
-    const tab = getAllTerminalTabs()[0];
+    const tab = useAppStore.getState().tabGroups.flatMap((g) => g.tabs)[0];
     useAppStore.getState().setTabSessionId(tab.id, "session-123");
     useAppStore.getState().setTerminalReconnecting(tab.id, true);
 
@@ -381,7 +376,7 @@ describe("agent-state-change 'connected': session recovery after power cycle", (
       type: "remote-session",
       config: { agentId: "agent-1", sessionType: "shell" },
     });
-    const tab = getAllTerminalTabs()[0];
+    const tab = useAppStore.getState().tabGroups.flatMap((g) => g.tabs)[0];
     useAppStore.getState().setTabSessionId(tab.id, "session-123");
     useAppStore.getState().setTerminalReconnecting(tab.id, true);
 
@@ -402,7 +397,8 @@ describe("agent-state-change 'connected': session recovery after power cycle", (
       type: "remote-session",
       config: { agentId: "agent-1", sessionType: "shell" },
     });
-    const [tabA, tabB] = getAllTerminalTabs();
+    const allTabs = useAppStore.getState().tabGroups.flatMap((g) => g.tabs);
+    const [tabA, tabB] = allTabs;
     useAppStore.getState().setTabSessionId(tabA.id, "session-aaa");
     useAppStore.getState().setTabSessionId(tabB.id, "session-bbb");
     useAppStore.getState().setTerminalReconnecting(tabA.id, true);
@@ -423,7 +419,7 @@ describe("agent-state-change 'connected': session recovery after power cycle", (
       type: "remote-session",
       config: { agentId: "agent-1", sessionType: "shell" },
     });
-    const tab = getAllTerminalTabs()[0];
+    const tab = useAppStore.getState().tabGroups.flatMap((g) => g.tabs)[0];
     useAppStore.getState().setTabSessionId(tab.id, "session-123");
     useAppStore.getState().setTerminalReconnecting(tab.id, true);
 
@@ -440,7 +436,7 @@ describe("agent-state-change 'connected': session recovery after power cycle", (
       type: "remote-session",
       config: { agentId: "agent-1", sessionType: "shell" },
     });
-    const tab = getAllTerminalTabs()[0];
+    const tab = useAppStore.getState().tabGroups.flatMap((g) => g.tabs)[0];
     useAppStore.getState().setTabSessionId(tab.id, "session-123");
     // Tab is NOT in reconnecting state (newly opened tab, not affected by the outage).
 
@@ -474,10 +470,7 @@ describe("agent-state-change 'connected': restart tabs in auto-retry/failure sta
   /** Simulate the new loop added for auto-retry tab restart. */
   function simulateRetryRestartLoop(agentId: string) {
     const store = useAppStore.getState();
-    const allTabs = [
-      ...getAllLeaves(store.rootPanel).flatMap((l) => l.tabs),
-      ...store.tabGroups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((l) => l.tabs)),
-    ];
+    const allTabs = store.tabGroups.flatMap((g) => g.tabs);
     const agentTerminalTabs = allTabs.filter((tab) => {
       if (tab.contentType !== "terminal") return false;
       const cfg = tab.config.config as { agentId?: string };
@@ -501,7 +494,7 @@ describe("agent-state-change 'connected': restart tabs in auto-retry/failure sta
       type: "remote-session",
       config: { agentId: "agent-1", sessionType: "shell" },
     });
-    const tab = getAllTerminalTabs()[0];
+    const tab = useAppStore.getState().tabGroups.flatMap((g) => g.tabs)[0];
     // Simulate: user clicked Reconnect, now in auto-retry loop.
     store.setTerminalAutoRetrying(tab.id, 2);
 
@@ -519,7 +512,7 @@ describe("agent-state-change 'connected': restart tabs in auto-retry/failure sta
       type: "remote-session",
       config: { agentId: "agent-1", sessionType: "shell" },
     });
-    const tab = getAllTerminalTabs()[0];
+    const tab = useAppStore.getState().tabGroups.flatMap((g) => g.tabs)[0];
     // Simulate: showing "Connection failed" between retries.
     store.setTerminalSpawnError(tab.id, "Connection refused");
 
@@ -537,7 +530,7 @@ describe("agent-state-change 'connected': restart tabs in auto-retry/failure sta
       type: "remote-session",
       config: { agentId: "agent-1", sessionType: "shell" },
     });
-    const tab = getAllTerminalTabs()[0];
+    const tab = useAppStore.getState().tabGroups.flatMap((g) => g.tabs)[0];
     // Simulate: createTerminal is in-flight.
     store.setTerminalAutoRetrying(tab.id, 1);
     store.setTerminalConnecting(tab.id, true);
@@ -556,7 +549,7 @@ describe("agent-state-change 'connected': restart tabs in auto-retry/failure sta
       type: "remote-session",
       config: { agentId: "agent-1", sessionType: "shell" },
     });
-    const tab = getAllTerminalTabs()[0];
+    const tab = useAppStore.getState().tabGroups.flatMap((g) => g.tabs)[0];
     // Simulate: tab is parked via setTerminalWaitingForAgent, but autoRetryCount
     // was not cleared (setTerminalWaitingForAgent only clears terminalConnecting).
     store.setTerminalAutoRetrying(tab.id, 1);
@@ -575,7 +568,7 @@ describe("agent-state-change 'connected': restart tabs in auto-retry/failure sta
       type: "remote-session",
       config: { agentId: "agent-1", sessionType: "shell" },
     });
-    const tab = getAllTerminalTabs()[0];
+    const tab = useAppStore.getState().tabGroups.flatMap((g) => g.tabs)[0];
     // Tab is connected normally — no overlay state set.
 
     simulateRetryRestartLoop("agent-1");
@@ -585,24 +578,3 @@ describe("agent-state-change 'connected': restart tabs in auto-retry/failure sta
     expect(state.terminalAutoRetryCount[tab.id]).toBeUndefined();
   });
 });
-
-// ── Utility ─────────────────────────────────────────────────────────────────
-
-/** Inject a tab into a named leaf panel (used only in tests). */
-function injectTabIntoPanel(
-  node: ReturnType<typeof useAppStore.getState>["rootPanel"],
-  panelId: string,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  tab: any
-): ReturnType<typeof useAppStore.getState>["rootPanel"] {
-  if (node.type === "leaf") {
-    if (node.id === panelId) {
-      return { ...node, tabs: [...node.tabs, tab] };
-    }
-    return node;
-  }
-  return {
-    ...node,
-    children: node.children.map((child) => injectTabIntoPanel(child, panelId, tab)),
-  };
-}

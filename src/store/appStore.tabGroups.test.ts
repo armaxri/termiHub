@@ -32,7 +32,12 @@ vi.mock("@/services/api", () => ({
 }));
 
 import { useAppStore } from "./appStore";
-import { getAllLeaves } from "@/utils/panelTree";
+
+/** Get the active group from current store state. */
+function getActiveGroup() {
+  const state = useAppStore.getState();
+  return state.tabGroups.find((g) => g.id === state.activeTabGroupId)!;
+}
 
 describe("appStore — tab groups", () => {
   beforeEach(() => {
@@ -51,10 +56,10 @@ describe("appStore — tab groups", () => {
       expect(activeTabGroupId).toBe(tabGroups[0].id);
     });
 
-    it("rootPanel matches the initial group's rootPanel", () => {
-      const { tabGroups, activeTabGroupId, rootPanel } = useAppStore.getState();
+    it("active group has modelJson", () => {
+      const { tabGroups, activeTabGroupId } = useAppStore.getState();
       const activeGroup = tabGroups.find((g) => g.id === activeTabGroupId)!;
-      expect(rootPanel.id).toBe(activeGroup.rootPanel.id);
+      expect(activeGroup.modelJson).toBeDefined();
     });
   });
 
@@ -83,25 +88,23 @@ describe("appStore — tab groups", () => {
       expect(useAppStore.getState().activeTabGroupId).toBe(newId);
     });
 
-    it("new group starts with an empty panel tree", () => {
+    it("new group starts with empty tabs", () => {
       useAppStore.getState().addTabGroup();
-      const { rootPanel } = useAppStore.getState();
-      expect(rootPanel.type).toBe("leaf");
-      expect(getAllLeaves(rootPanel)[0].tabs).toHaveLength(0);
+      const activeGroup = getActiveGroup();
+      expect(activeGroup.tabs).toHaveLength(0);
     });
 
-    it("saves previous group rootPanel into tabGroups before switching", () => {
+    it("saves previous group's tabs into tabGroups before switching", () => {
       // Add a tab to the initial group
       useAppStore.getState().addTab("bash", "local");
-      const initialRootId = useAppStore.getState().rootPanel.id;
+      const group1Id = useAppStore.getState().tabGroups[0].id;
 
-      // Create a new group (should save current rootPanel into tabGroups[0])
+      // Create a new group (should preserve tabGroups[0].tabs)
       useAppStore.getState().addTabGroup();
 
       const { tabGroups } = useAppStore.getState();
-      const savedGroup = tabGroups[0];
-      expect(savedGroup.rootPanel.id).toBe(initialRootId);
-      expect(getAllLeaves(savedGroup.rootPanel)[0].tabs).toHaveLength(1);
+      const savedGroup = tabGroups.find((g) => g.id === group1Id)!;
+      expect(savedGroup.tabs).toHaveLength(1);
     });
   });
 
@@ -113,35 +116,35 @@ describe("appStore — tab groups", () => {
       expect(useAppStore.getState().activeTabGroupId).toBe(firstId);
     });
 
-    it("restores rootPanel and activePanelId of the target group", () => {
-      const firstGroupRootId = useAppStore.getState().rootPanel.id;
+    it("restores tabs of the target group", () => {
+      // Add a tab to first group
+      useAppStore.getState().addTab("bash", "local");
       const firstGroupId = useAppStore.getState().tabGroups[0].id;
 
-      useAppStore.getState().addTabGroup(); // now active is group 2
-      expect(useAppStore.getState().rootPanel.id).not.toBe(firstGroupRootId);
+      // Switch to second group (no tabs)
+      useAppStore.getState().addTabGroup();
+      expect(getActiveGroup().tabs).toHaveLength(0);
 
+      // Switch back — should restore the tab
       useAppStore.getState().setActiveTabGroup(firstGroupId);
-      expect(useAppStore.getState().rootPanel.id).toBe(firstGroupRootId);
+      expect(getActiveGroup().tabs).toHaveLength(1);
     });
 
-    it("saves current rootPanel into tabGroups before switching away", () => {
+    it("saves current group's tabs into tabGroups before switching away", () => {
       const initialGroupId = useAppStore.getState().tabGroups[0].id;
-      useAppStore.getState().addTabGroup();
+      const secondGroupId = useAppStore.getState().addTabGroup();
       useAppStore.getState().addTab("bash", "local");
-      const activeRootBeforeSwitch = useAppStore.getState().rootPanel;
 
       useAppStore.getState().setActiveTabGroup(initialGroupId);
 
       const { tabGroups } = useAppStore.getState();
-      const savedGroup = tabGroups.find((g) => g.id !== initialGroupId)!;
-      expect(savedGroup.rootPanel.id).toBe(activeRootBeforeSwitch.id);
+      const savedGroup = tabGroups.find((g) => g.id === secondGroupId)!;
+      expect(savedGroup.tabs).toHaveLength(1);
     });
 
     it("is a no-op when switching to the already active group", () => {
       const { activeTabGroupId, tabGroups } = useAppStore.getState();
-      const rootId = useAppStore.getState().rootPanel.id;
       useAppStore.getState().setActiveTabGroup(activeTabGroupId);
-      expect(useAppStore.getState().rootPanel.id).toBe(rootId);
       expect(useAppStore.getState().tabGroups).toEqual(tabGroups);
     });
   });
@@ -179,13 +182,13 @@ describe("appStore — tab groups", () => {
       expect(useAppStore.getState().activeTabGroupId).toBe(tabGroups[0].id);
     });
 
-    it("updates rootPanel after closing the active group", () => {
-      const firstRootId = useAppStore.getState().rootPanel.id;
+    it("restores adjacent group's modelJson after closing the active group", () => {
+      const firstGroupModelJson = useAppStore.getState().tabGroups[0].modelJson;
       const newId = useAppStore.getState().addTabGroup();
-      // Active is now new group with different rootPanel
+      // Active is now new group with different modelJson
       useAppStore.getState().closeTabGroup(newId);
-      // Should restore first group's rootPanel
-      expect(useAppStore.getState().rootPanel.id).toBe(firstRootId);
+      // Should restore first group's modelJson
+      expect(useAppStore.getState().tabGroups[0].modelJson).toEqual(firstGroupModelJson);
     });
   });
 
@@ -243,9 +246,8 @@ describe("appStore — tab groups", () => {
       // Set up: add a tab to the initial group
       useAppStore.getState().addTab("bash", "local");
       const group1Id = useAppStore.getState().tabGroups[0].id;
-      const group1Leaf = getAllLeaves(useAppStore.getState().rootPanel)[0];
-      const tabId = group1Leaf.tabs[0].id;
-      const panelId = group1Leaf.id;
+      const activeGroup = getActiveGroup();
+      const tabId = activeGroup.tabs[0].id;
 
       // Create a second group
       const group2Id = useAppStore.getState().addTabGroup("Group 2");
@@ -253,93 +255,75 @@ describe("appStore — tab groups", () => {
       useAppStore.getState().setActiveTabGroup(group1Id);
 
       // Move the tab to group 2
-      useAppStore.getState().moveTabToGroup(tabId, panelId, group2Id);
+      useAppStore.getState().moveTabToGroup(tabId, activeGroup.activeTabSetId ?? "", group2Id);
 
       // Tab should be gone from active group
-      const activeTabs = getAllLeaves(useAppStore.getState().rootPanel).flatMap((l) => l.tabs);
-      expect(activeTabs).toHaveLength(0);
+      const updatedActiveGroup = getActiveGroup();
+      expect(updatedActiveGroup.tabs).toHaveLength(0);
 
-      // Tab should be in group 2's saved rootPanel
+      // Tab should be in group 2's saved tabs
       const { tabGroups } = useAppStore.getState();
       const group2 = tabGroups.find((g) => g.id === group2Id)!;
-      const group2Tabs = getAllLeaves(group2.rootPanel).flatMap((l) => l.tabs);
-      expect(group2Tabs).toHaveLength(1);
-      expect(group2Tabs[0].id).toBe(tabId);
+      expect(group2.tabs).toHaveLength(1);
+      expect(group2.tabs[0].id).toBe(tabId);
     });
 
     it("is a no-op when target group is the active group", () => {
       useAppStore.getState().addTab("bash", "local");
-      const { activeTabGroupId, rootPanel } = useAppStore.getState();
-      const leaf = getAllLeaves(rootPanel)[0];
-      const tabId = leaf.tabs[0].id;
-      const before = useAppStore.getState().rootPanel;
+      const { activeTabGroupId } = useAppStore.getState();
+      const activeGroup = getActiveGroup();
+      const tabId = activeGroup.tabs[0].id;
+      const tabsBefore = activeGroup.tabs.length;
 
-      useAppStore.getState().moveTabToGroup(tabId, leaf.id, activeTabGroupId);
+      useAppStore
+        .getState()
+        .moveTabToGroup(tabId, activeGroup.activeTabSetId ?? "", activeTabGroupId);
 
-      expect(useAppStore.getState().rootPanel).toBe(before);
+      expect(getActiveGroup().tabs.length).toBe(tabsBefore);
     });
 
     it("does not switch the active group", () => {
       useAppStore.getState().addTab("bash", "local");
       const group1Id = useAppStore.getState().tabGroups[0].id;
-      const leaf = getAllLeaves(useAppStore.getState().rootPanel)[0];
-      const tabId = leaf.tabs[0].id;
+      const activeGroup = getActiveGroup();
+      const tabId = activeGroup.tabs[0].id;
       const group2Id = useAppStore.getState().addTabGroup("Group 2");
       useAppStore.getState().setActiveTabGroup(group1Id);
 
-      useAppStore.getState().moveTabToGroup(tabId, leaf.id, group2Id);
+      useAppStore.getState().moveTabToGroup(tabId, activeGroup.activeTabSetId ?? "", group2Id);
 
       expect(useAppStore.getState().activeTabGroupId).toBe(group1Id);
-    });
-
-    it("updates panelId of the moved tab to the target group's first leaf", () => {
-      useAppStore.getState().addTab("bash", "local");
-      const group1Id = useAppStore.getState().tabGroups[0].id;
-      const leaf = getAllLeaves(useAppStore.getState().rootPanel)[0];
-      const tabId = leaf.tabs[0].id;
-      const group2Id = useAppStore.getState().addTabGroup("Group 2");
-      const group2Leaf = getAllLeaves(useAppStore.getState().rootPanel)[0];
-      useAppStore.getState().setActiveTabGroup(group1Id);
-
-      useAppStore.getState().moveTabToGroup(tabId, leaf.id, group2Id);
-
-      const { tabGroups } = useAppStore.getState();
-      const group2 = tabGroups.find((g) => g.id === group2Id)!;
-      const movedTab = getAllLeaves(group2.rootPanel).flatMap((l) => l.tabs)[0];
-      expect(movedTab.panelId).toBe(group2Leaf.id);
     });
   });
 
   describe("addTabGroupWithTab", () => {
     it("creates a new group and moves the tab into it atomically", () => {
       useAppStore.getState().addTab("bash", "local");
-      const leaf = getAllLeaves(useAppStore.getState().rootPanel)[0];
-      const tabId = leaf.tabs[0].id;
+      const activeGroup = getActiveGroup();
+      const tabId = activeGroup.tabs[0].id;
 
-      useAppStore.getState().addTabGroupWithTab(tabId, leaf.id);
+      useAppStore.getState().addTabGroupWithTab(tabId, activeGroup.activeTabSetId ?? "");
 
       const state = useAppStore.getState();
       // New group should be active
       expect(state.tabGroups).toHaveLength(2);
       const newGroup = state.tabGroups.find((g) => g.id === state.activeTabGroupId)!;
-      const newGroupTabs = getAllLeaves(newGroup.rootPanel).flatMap((l) => l.tabs);
-      expect(newGroupTabs).toHaveLength(1);
-      expect(newGroupTabs[0].id).toBe(tabId);
+      expect(newGroup.tabs).toHaveLength(1);
+      expect(newGroup.tabs[0].id).toBe(tabId);
     });
 
     it("removes the tab from the source group", () => {
       useAppStore.getState().addTab("bash", "local");
       useAppStore.getState().addTab("zsh", "local");
-      const leaf = getAllLeaves(useAppStore.getState().rootPanel)[0];
-      const tabId = leaf.tabs[0].id;
+      const activeGroup = getActiveGroup();
+      const tabId = activeGroup.tabs[0].id;
       const group1Id = useAppStore.getState().tabGroups[0].id;
 
-      useAppStore.getState().addTabGroupWithTab(tabId, leaf.id);
+      useAppStore.getState().addTabGroupWithTab(tabId, activeGroup.activeTabSetId ?? "");
 
       const state = useAppStore.getState();
       const group1 = state.tabGroups.find((g) => g.id === group1Id)!;
-      const group1Tabs = getAllLeaves(group1.rootPanel).flatMap((l) => l.tabs);
-      expect(group1Tabs.every((t) => t.id !== tabId)).toBe(true);
+      expect(group1.tabs.every((t) => t.id !== tabId)).toBe(true);
     });
 
     it("is a no-op when the tab does not exist", () => {
@@ -354,13 +338,11 @@ describe("appStore — tab groups", () => {
       // Add tabs to group 1
       useAppStore.getState().addTab("bash", "local");
       useAppStore.getState().addTab("zsh", "local");
-      const group1Tabs = getAllLeaves(useAppStore.getState().rootPanel).flatMap((l) => l.tabs);
-      expect(group1Tabs).toHaveLength(2);
+      expect(getActiveGroup().tabs).toHaveLength(2);
 
       // Switch to a new group
       useAppStore.getState().addTabGroup("group2");
-      const group2Tabs = getAllLeaves(useAppStore.getState().rootPanel).flatMap((l) => l.tabs);
-      expect(group2Tabs).toHaveLength(0);
+      expect(getActiveGroup().tabs).toHaveLength(0);
     });
 
     it("tabs are restored when switching back to a group", () => {
@@ -370,7 +352,7 @@ describe("appStore — tab groups", () => {
       useAppStore.getState().addTabGroup("group2");
       useAppStore.getState().setActiveTabGroup(group1Id);
 
-      const tabs = getAllLeaves(useAppStore.getState().rootPanel).flatMap((l) => l.tabs);
+      const tabs = getActiveGroup().tabs;
       expect(tabs).toHaveLength(1);
       expect(tabs[0].title).toBe("bash");
     });

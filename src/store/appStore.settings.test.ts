@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { TerminalTab, LeafPanel } from "@/types/terminal";
+import { TerminalTab } from "@/types/terminal";
 
 // Mock service modules before importing the store
 vi.mock("@/services/storage", () => ({
@@ -163,11 +163,8 @@ describe("appStore — settings toggles", () => {
     expect(mockSftpClose).not.toHaveBeenCalled();
   });
 
-  /** Helper: create a panel with an SSH tab that has per-connection overrides. */
-  function sshTabPanel(overrides: { enableMonitoring?: boolean; enableFileBrowser?: boolean }): {
-    rootPanel: LeafPanel;
-    activePanelId: string;
-  } {
+  /** Helper: create a tab group with an SSH tab that has per-connection overrides. */
+  function sshTabPanel(overrides: { enableMonitoring?: boolean; enableFileBrowser?: boolean }) {
     const tab: TerminalTab = {
       id: "tab-1",
       sessionId: "sess-1",
@@ -187,13 +184,13 @@ describe("appStore — settings toggles", () => {
       panelId: "panel-1",
       isActive: true,
     };
-    const panel: LeafPanel = {
-      type: "leaf",
-      id: "panel-1",
-      tabs: [tab],
-      activeTabId: "tab-1",
+    const state = useAppStore.getState();
+    const activeGroupId = state.activeTabGroupId;
+    return {
+      tabGroups: state.tabGroups.map((g) =>
+        g.id === activeGroupId ? { ...g, tabs: [tab], activeTabId: tab.id } : g
+      ),
     };
-    return { rootPanel: panel, activePanelId: "panel-1" };
   }
 
   it("disabling global monitoring keeps session when active tab has explicit enableMonitoring=true", async () => {

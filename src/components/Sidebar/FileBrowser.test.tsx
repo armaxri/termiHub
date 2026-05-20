@@ -4,7 +4,7 @@ import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
 import { FileBrowser, FileMenuItems, MultiSelectMenuItems } from "./FileBrowser";
-import type { TerminalTab, LeafPanel } from "@/types/terminal";
+import type { TerminalTab } from "@/types/terminal";
 import { DEFAULT_AGENT_SETTINGS, type FileEntry } from "@/types/connection";
 
 vi.mock("@tauri-apps/api/window", () => ({
@@ -59,15 +59,12 @@ function makeTab(overrides: Partial<TerminalTab>): TerminalTab {
 
 /** Set up the store so `getActiveTab` returns the given tab. */
 function setActiveTab(tab: TerminalTab) {
-  const panel: LeafPanel = {
-    type: "leaf",
-    id: tab.panelId,
-    tabs: [tab],
-    activeTabId: tab.id,
-  };
+  const state = useAppStore.getState();
+  const activeGroupId = state.activeTabGroupId;
   useAppStore.setState({
-    activePanelId: tab.panelId,
-    rootPanel: panel,
+    tabGroups: state.tabGroups.map((g) =>
+      g.id === activeGroupId ? { ...g, tabs: [tab], activeTabId: tab.id } : g
+    ),
   });
 }
 

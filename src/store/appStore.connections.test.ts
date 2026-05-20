@@ -38,8 +38,6 @@ import {
   removeConnection,
   persistFolder,
 } from "@/services/storage";
-import type { LeafPanel } from "@/types/terminal";
-import { findLeaf, getAllLeaves } from "@/utils/panelTree";
 import type { SavedConnection, ConnectionFolder } from "@/types/connection";
 
 function makeConnection(overrides: Partial<SavedConnection> = {}): SavedConnection {
@@ -60,6 +58,17 @@ function makeFolder(overrides: Partial<ConnectionFolder> = {}): ConnectionFolder
     isExpanded: true,
     ...overrides,
   };
+}
+
+/** Get the active group from current store state. */
+function getActiveGroup() {
+  const state = useAppStore.getState();
+  return state.tabGroups.find((g) => g.id === state.activeTabGroupId)!;
+}
+
+/** Get all tabs across all groups. */
+function getAllTabs() {
+  return useAppStore.getState().tabGroups.flatMap((g) => g.tabs);
 }
 
 describe("appStore — connections, folders, and special tabs", () => {
@@ -542,21 +551,19 @@ describe("appStore — connections, folders, and special tabs", () => {
     it("creates a connection-editor tab for new connection", () => {
       useAppStore.getState().openConnectionEditorTab("new");
 
-      const state = useAppStore.getState();
-      const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
-      expect(leaf.tabs).toHaveLength(1);
-      expect(leaf.tabs[0].contentType).toBe("connection-editor");
-      expect(leaf.tabs[0].title).toBe("New Connection");
-      expect(leaf.tabs[0].connectionEditorMeta?.connectionId).toBe("new");
-      expect(leaf.tabs[0].connectionEditorMeta?.folderId).toBeNull();
+      const activeGroup = getActiveGroup();
+      expect(activeGroup.tabs).toHaveLength(1);
+      expect(activeGroup.tabs[0].contentType).toBe("connection-editor");
+      expect(activeGroup.tabs[0].title).toBe("New Connection");
+      expect(activeGroup.tabs[0].connectionEditorMeta?.connectionId).toBe("new");
+      expect(activeGroup.tabs[0].connectionEditorMeta?.folderId).toBeNull();
     });
 
     it("creates a connection-editor tab with folder ID", () => {
       useAppStore.getState().openConnectionEditorTab("new", "f-1");
 
-      const state = useAppStore.getState();
-      const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
-      expect(leaf.tabs[0].connectionEditorMeta?.folderId).toBe("f-1");
+      const activeGroup = getActiveGroup();
+      expect(activeGroup.tabs[0].connectionEditorMeta?.folderId).toBe("f-1");
     });
 
     it("creates a tab titled 'Edit: <name>' for existing connections", () => {
@@ -565,10 +572,9 @@ describe("appStore — connections, folders, and special tabs", () => {
 
       useAppStore.getState().openConnectionEditorTab("c-1");
 
-      const state = useAppStore.getState();
-      const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
-      expect(leaf.tabs[0].title).toBe("Edit: My SSH");
-      expect(leaf.tabs[0].connectionEditorMeta?.connectionId).toBe("c-1");
+      const activeGroup = getActiveGroup();
+      expect(activeGroup.tabs[0].title).toBe("Edit: My SSH");
+      expect(activeGroup.tabs[0].connectionEditorMeta?.connectionId).toBe("c-1");
     });
 
     it("reuses existing connection-editor tab for same connection", () => {
@@ -576,11 +582,7 @@ describe("appStore — connections, folders, and special tabs", () => {
       useAppStore.getState().addTab("Shell", "local");
       useAppStore.getState().openConnectionEditorTab("new");
 
-      const state = useAppStore.getState();
-      const allLeaves = getAllLeaves(state.rootPanel);
-      const editorTabs = allLeaves.flatMap((l) =>
-        l.tabs.filter((t) => t.contentType === "connection-editor")
-      );
+      const editorTabs = getAllTabs().filter((t) => t.contentType === "connection-editor");
       expect(editorTabs).toHaveLength(1);
     });
 
@@ -591,20 +593,18 @@ describe("appStore — connections, folders, and special tabs", () => {
       useAppStore.getState().openConnectionEditorTab("new");
       useAppStore.getState().openConnectionEditorTab("c-1");
 
-      const state = useAppStore.getState();
-      const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
-      expect(leaf.tabs).toHaveLength(2);
+      const activeGroup = getActiveGroup();
+      expect(activeGroup.tabs).toHaveLength(2);
     });
 
     it("creates a 'New Remote Agent' tab for the new-remote-agent sentinel", () => {
       useAppStore.getState().openConnectionEditorTab("new-remote-agent");
 
-      const state = useAppStore.getState();
-      const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
-      expect(leaf.tabs).toHaveLength(1);
-      expect(leaf.tabs[0].contentType).toBe("connection-editor");
-      expect(leaf.tabs[0].title).toBe("New Remote Agent");
-      expect(leaf.tabs[0].connectionEditorMeta?.connectionId).toBe("new-remote-agent");
+      const activeGroup = getActiveGroup();
+      expect(activeGroup.tabs).toHaveLength(1);
+      expect(activeGroup.tabs[0].contentType).toBe("connection-editor");
+      expect(activeGroup.tabs[0].title).toBe("New Remote Agent");
+      expect(activeGroup.tabs[0].connectionEditorMeta?.connectionId).toBe("new-remote-agent");
     });
 
     it("reuses the new-remote-agent tab when opened twice", () => {
@@ -612,35 +612,26 @@ describe("appStore — connections, folders, and special tabs", () => {
       useAppStore.getState().addTab("Shell", "local");
       useAppStore.getState().openConnectionEditorTab("new-remote-agent");
 
-      const state = useAppStore.getState();
-      const allLeaves = getAllLeaves(state.rootPanel);
-      const editorTabs = allLeaves.flatMap((l) =>
-        l.tabs.filter((t) => t.contentType === "connection-editor")
-      );
+      const editorTabs = getAllTabs().filter((t) => t.contentType === "connection-editor");
       expect(editorTabs).toHaveLength(1);
     });
   });
 
   describe("openSettingsTab", () => {
-    it("creates a settings tab in the active panel", () => {
+    it("creates a settings tab in the active group", () => {
       useAppStore.getState().openSettingsTab();
 
-      const state = useAppStore.getState();
-      const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
-      expect(leaf.tabs).toHaveLength(1);
-      expect(leaf.tabs[0].contentType).toBe("settings");
-      expect(leaf.tabs[0].title).toBe("Settings");
+      const activeGroup = getActiveGroup();
+      expect(activeGroup.tabs).toHaveLength(1);
+      expect(activeGroup.tabs[0].contentType).toBe("settings");
+      expect(activeGroup.tabs[0].title).toBe("Settings");
     });
 
     it("reuses existing settings tab instead of creating another", () => {
       useAppStore.getState().openSettingsTab();
       useAppStore.getState().openSettingsTab();
 
-      const state = useAppStore.getState();
-      const allLeaves = getAllLeaves(state.rootPanel);
-      const settingsTabs = allLeaves.flatMap((l) =>
-        l.tabs.filter((t) => t.contentType === "settings")
-      );
+      const settingsTabs = getAllTabs().filter((t) => t.contentType === "settings");
       expect(settingsTabs).toHaveLength(1);
     });
 
@@ -652,9 +643,10 @@ describe("appStore — connections, folders, and special tabs", () => {
       // Open settings again
       useAppStore.getState().openSettingsTab();
 
-      const state = useAppStore.getState();
-      const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
-      expect(leaf.activeTabId).toBe(leaf.tabs.find((t) => t.contentType === "settings")?.id);
+      const activeGroup = getActiveGroup();
+      expect(activeGroup.activeTabId).toBe(
+        activeGroup.tabs.find((t) => t.contentType === "settings")?.id
+      );
     });
   });
 
@@ -662,31 +654,27 @@ describe("appStore — connections, folders, and special tabs", () => {
     it("creates an editor tab with file metadata", () => {
       useAppStore.getState().openEditorTab("/home/test.txt", false);
 
-      const state = useAppStore.getState();
-      const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
-      expect(leaf.tabs).toHaveLength(1);
-      expect(leaf.tabs[0].contentType).toBe("editor");
-      expect(leaf.tabs[0].title).toBe("test.txt");
-      expect(leaf.tabs[0].editorMeta?.filePath).toBe("/home/test.txt");
-      expect(leaf.tabs[0].editorMeta?.isRemote).toBe(false);
+      const activeGroup = getActiveGroup();
+      expect(activeGroup.tabs).toHaveLength(1);
+      expect(activeGroup.tabs[0].contentType).toBe("editor");
+      expect(activeGroup.tabs[0].title).toBe("test.txt");
+      expect(activeGroup.tabs[0].editorMeta?.filePath).toBe("/home/test.txt");
+      expect(activeGroup.tabs[0].editorMeta?.isRemote).toBe(false);
     });
 
     it("creates an editor tab for remote file with SFTP session", () => {
       useAppStore.getState().openEditorTab("/remote/config.json", true, "sftp-1");
 
-      const state = useAppStore.getState();
-      const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
-      expect(leaf.tabs[0].editorMeta?.isRemote).toBe(true);
-      expect(leaf.tabs[0].editorMeta?.sftpSessionId).toBe("sftp-1");
+      const activeGroup = getActiveGroup();
+      expect(activeGroup.tabs[0].editorMeta?.isRemote).toBe(true);
+      expect(activeGroup.tabs[0].editorMeta?.sftpSessionId).toBe("sftp-1");
     });
 
     it("reuses existing editor tab for the same file", () => {
       useAppStore.getState().openEditorTab("/home/test.txt", false);
       useAppStore.getState().openEditorTab("/home/test.txt", false);
 
-      const state = useAppStore.getState();
-      const allLeaves = getAllLeaves(state.rootPanel);
-      const editorTabs = allLeaves.flatMap((l) => l.tabs.filter((t) => t.contentType === "editor"));
+      const editorTabs = getAllTabs().filter((t) => t.contentType === "editor");
       expect(editorTabs).toHaveLength(1);
     });
 
@@ -694,18 +682,16 @@ describe("appStore — connections, folders, and special tabs", () => {
       useAppStore.getState().openEditorTab("/home/file1.txt", false);
       useAppStore.getState().openEditorTab("/home/file2.txt", false);
 
-      const state = useAppStore.getState();
-      const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
-      expect(leaf.tabs).toHaveLength(2);
+      const activeGroup = getActiveGroup();
+      expect(activeGroup.tabs).toHaveLength(2);
     });
 
     it("creates separate tabs for same path but different remote status", () => {
       useAppStore.getState().openEditorTab("/home/test.txt", false);
       useAppStore.getState().openEditorTab("/home/test.txt", true, "sftp-1");
 
-      const state = useAppStore.getState();
-      const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
-      expect(leaf.tabs).toHaveLength(2);
+      const activeGroup = getActiveGroup();
+      expect(activeGroup.tabs).toHaveLength(2);
     });
   });
 

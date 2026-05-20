@@ -284,12 +284,10 @@ describe("launchWorkspace — credential store pre-unlock", () => {
 
     await useAppStore.getState().launchWorkspace("ws-1");
 
-    const rootPanel = useAppStore.getState().rootPanel;
-    expect(rootPanel.type).toBe("leaf");
-    if (rootPanel.type === "leaf") {
-      const cfg = rootPanel.tabs[0].config.config as Record<string, unknown>;
-      expect(cfg.password).toBe("stored-secret");
-    }
+    const allTabs = useAppStore.getState().tabGroups.flatMap((g) => g.tabs);
+    expect(allTabs.length).toBeGreaterThan(0);
+    const cfg = allTabs[0].config.config as Record<string, unknown>;
+    expect(cfg.password).toBe("stored-secret");
   });
 
   it("also prompts for unlock when connection uses SSH key with savePassword=true", async () => {

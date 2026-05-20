@@ -62,18 +62,16 @@ describe("terminalReattaching state", () => {
 
   it("closeTab removes terminalReattaching flag for the closed tab", () => {
     const store = useAppStore.getState();
-    const panelId = store.activePanelId!;
     store.addTab("Test", "local");
 
-    const rootPanel = useAppStore.getState().rootPanel;
-    const leafTabs = rootPanel.type === "leaf" ? rootPanel.tabs : [];
-    const tab = leafTabs[leafTabs.length - 1];
+    const allTabs = useAppStore.getState().tabGroups.flatMap((g) => g.tabs);
+    const tab = allTabs[allTabs.length - 1];
     expect(tab).toBeDefined();
 
     useAppStore.getState().setTerminalReattaching(tab.id, true);
     expect(useAppStore.getState().terminalReattaching[tab.id]).toBe(true);
 
-    useAppStore.getState().closeTab(tab.id, panelId);
+    useAppStore.getState().closeTab(tab.id, tab.panelId);
     expect(useAppStore.getState().terminalReattaching[tab.id]).toBeUndefined();
   });
 });

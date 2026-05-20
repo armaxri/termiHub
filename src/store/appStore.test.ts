@@ -33,8 +33,6 @@ vi.mock("@/services/api", () => ({
 }));
 
 import { useAppStore, _resetConnectionReloadSeq } from "./appStore";
-import type { LeafPanel } from "@/types/terminal";
-import { findLeaf, getAllLeaves } from "@/utils/panelTree";
 import * as api from "@/services/api";
 import * as storage from "@/services/storage";
 import type { AgentDefinitionInfo } from "@/services/api";
@@ -42,6 +40,12 @@ import type { AgentDefinitionInfo } from "@/services/api";
 /** Flush all pending microtasks so `void promise` side-effects settle. */
 function flushPromises(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/** Get the active group from current store state. */
+function getActiveGroup() {
+  const state = useAppStore.getState();
+  return state.tabGroups.find((g) => g.id === state.activeTabGroupId)!;
 }
 
 describe("appStore", () => {
@@ -53,15 +57,14 @@ describe("appStore", () => {
   });
 
   describe("addTab", () => {
-    it("adds a tab to the active panel", () => {
-      const { addTab, activePanelId } = useAppStore.getState();
+    it("adds a tab to the active group", () => {
+      const { addTab } = useAppStore.getState();
       addTab("Test Shell", "local", { type: "local", config: { shell: "zsh" } });
 
-      const state = useAppStore.getState();
-      const leaf = findLeaf(state.rootPanel, activePanelId!) as LeafPanel;
-      expect(leaf.tabs).toHaveLength(1);
-      expect(leaf.tabs[0].title).toBe("Test Shell");
-      expect(leaf.activeTabId).toBe(leaf.tabs[0].id);
+      const activeGroup = getActiveGroup();
+      expect(activeGroup.tabs).toHaveLength(1);
+      expect(activeGroup.tabs[0].title).toBe("Test Shell");
+      expect(activeGroup.activeTabId).toBe(activeGroup.tabs[0].id);
     });
 
     it("sets new tab as active", () => {
@@ -69,18 +72,17 @@ describe("appStore", () => {
       addTab("Tab 1", "local");
       addTab("Tab 2", "local");
 
-      const state = useAppStore.getState();
-      const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
-      expect(leaf.tabs).toHaveLength(2);
-      expect(leaf.activeTabId).toBe(leaf.tabs[1].id);
-      expect(leaf.tabs[0].isActive).toBe(false);
-      expect(leaf.tabs[1].isActive).toBe(true);
+      const activeGroup = getActiveGroup();
+      expect(activeGroup.tabs).toHaveLength(2);
+      expect(activeGroup.activeTabId).toBe(activeGroup.tabs[1].id);
+      expect(activeGroup.tabs[0].isActive).toBe(false);
+      expect(activeGroup.tabs[1].isActive).toBe(true);
     });
   });
 
   describe("addTab with sessionId", () => {
     it("creates a tab with a pre-existing sessionId", () => {
-      const { addTab, activePanelId } = useAppStore.getState();
+      const { addTab } = useAppStore.getState();
       addTab(
         "Setup: Pi",
         "ssh",
@@ -100,20 +102,18 @@ describe("appStore", () => {
         "existing-session-123"
       );
 
-      const state = useAppStore.getState();
-      const leaf = findLeaf(state.rootPanel, activePanelId!) as LeafPanel;
-      expect(leaf.tabs).toHaveLength(1);
-      expect(leaf.tabs[0].sessionId).toBe("existing-session-123");
-      expect(leaf.tabs[0].title).toBe("Setup: Pi");
+      const activeGroup = getActiveGroup();
+      expect(activeGroup.tabs).toHaveLength(1);
+      expect(activeGroup.tabs[0].sessionId).toBe("existing-session-123");
+      expect(activeGroup.tabs[0].title).toBe("Setup: Pi");
     });
 
     it("defaults sessionId to null when not provided", () => {
-      const { addTab, activePanelId } = useAppStore.getState();
+      const { addTab } = useAppStore.getState();
       addTab("Terminal", "local");
 
-      const state = useAppStore.getState();
-      const leaf = findLeaf(state.rootPanel, activePanelId!) as LeafPanel;
-      expect(leaf.tabs[0].sessionId).toBeNull();
+      const activeGroup = getActiveGroup();
+      expect(activeGroup.tabs[0].sessionId).toBeNull();
     });
   });
 
@@ -123,19 +123,14 @@ describe("appStore", () => {
       addTab("Tab 1", "local");
       addTab("Tab 2", "local");
 
-      const stateAfterAdd = useAppStore.getState();
-      const leaf = findLeaf(stateAfterAdd.rootPanel, stateAfterAdd.activePanelId!) as LeafPanel;
-      const tabToClose = leaf.tabs[0].id;
+      const groupBefore = getActiveGroup();
+      const tabToClose = groupBefore.tabs[0].id;
+      // closeTab requires a panelId; pass the activeTabSetId as the panel identifier
+      useAppStore.getState().closeTab(tabToClose, groupBefore.activeTabSetId ?? "");
 
-      useAppStore.getState().closeTab(tabToClose, stateAfterAdd.activePanelId!);
-
-      const stateAfterClose = useAppStore.getState();
-      const updatedLeaf = findLeaf(
-        stateAfterClose.rootPanel,
-        stateAfterClose.activePanelId!
-      ) as LeafPanel;
-      expect(updatedLeaf.tabs).toHaveLength(1);
-      expect(updatedLeaf.tabs[0].title).toBe("Tab 2");
+      const groupAfter = getActiveGroup();
+      expect(groupAfter.tabs).toHaveLength(1);
+      expect(groupAfter.tabs[0].title).toBe("Tab 2");
     });
   });
 
@@ -145,59 +140,49 @@ describe("appStore", () => {
       addTab("Tab 1", "local");
       addTab("Tab 2", "local");
 
-      const state = useAppStore.getState();
-      const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
-      const firstTabId = leaf.tabs[0].id;
+      const group = getActiveGroup();
+      const firstTabId = group.tabs[0].id;
+      useAppStore.getState().setActiveTab(firstTabId, group.activeTabSetId ?? "");
 
-      useAppStore.getState().setActiveTab(firstTabId, state.activePanelId!);
-
-      const updated = useAppStore.getState();
-      const updatedLeaf = findLeaf(updated.rootPanel, updated.activePanelId!) as LeafPanel;
-      expect(updatedLeaf.activeTabId).toBe(firstTabId);
-      expect(updatedLeaf.tabs[0].isActive).toBe(true);
-      expect(updatedLeaf.tabs[1].isActive).toBe(false);
+      const updated = getActiveGroup();
+      expect(updated.activeTabId).toBe(firstTabId);
+      expect(updated.tabs[0].isActive).toBe(true);
+      expect(updated.tabs[1].isActive).toBe(false);
     });
   });
 
   describe("splitPanel", () => {
-    it("creates a new panel via split", () => {
-      const { splitPanel } = useAppStore.getState();
-      splitPanel("horizontal");
-
-      const state = useAppStore.getState();
-      const leaves = getAllLeaves(state.rootPanel);
-      expect(leaves).toHaveLength(2);
+    it("splitPanel smoke test — does not throw without a live model", () => {
+      // splitPanel requires a live flexlayout Model registered via registerModel.
+      // In unit tests there is no live model, so the call is a no-op; we only
+      // verify it does not throw.
+      expect(() => useAppStore.getState().splitPanel("horizontal")).not.toThrow();
     });
   });
 
-  describe("moveTab", () => {
-    it("moves tab between panels", () => {
-      // Add a tab then split
-      const { addTab, splitPanel } = useAppStore.getState();
+  describe("moveTabToGroup", () => {
+    it("moves a tab between groups", () => {
+      const { addTab } = useAppStore.getState();
       addTab("Tab 1", "local");
-      addTab("Tab 2", "local");
 
-      const stateBeforeSplit = useAppStore.getState();
-      const originalPanelId = stateBeforeSplit.activePanelId!;
-      splitPanel("horizontal");
+      const group1Id = useAppStore.getState().activeTabGroupId;
+      const group = getActiveGroup();
+      const tabId = group.tabs[0].id;
 
-      const stateAfterSplit = useAppStore.getState();
-      const newPanelId = stateAfterSplit.activePanelId!;
-      expect(newPanelId).not.toBe(originalPanelId);
+      // Create a second group to move the tab into.
+      const group2Id = useAppStore.getState().addTabGroup("Group 2");
+      // Switch back to group 1 so it is the active source.
+      useAppStore.getState().setActiveTabGroup(group1Id);
 
-      // Get the first tab from the original panel
-      const originalLeaf = findLeaf(stateAfterSplit.rootPanel, originalPanelId) as LeafPanel;
-      const tabToMove = originalLeaf.tabs[0].id;
+      useAppStore.getState().moveTabToGroup(tabId, group.activeTabSetId ?? "", group2Id);
 
-      // Move tab to new panel
-      useAppStore.getState().moveTab(tabToMove, originalPanelId, newPanelId, 0);
+      // Tab should be gone from the source group.
+      expect(getActiveGroup().tabs).toHaveLength(0);
 
-      const finalState = useAppStore.getState();
-      const sourceLeaf = findLeaf(finalState.rootPanel, originalPanelId) as LeafPanel;
-      const targetLeaf = findLeaf(finalState.rootPanel, newPanelId) as LeafPanel;
-      expect(sourceLeaf.tabs).toHaveLength(1);
-      expect(targetLeaf.tabs).toHaveLength(1);
-      expect(targetLeaf.tabs[0].title).toBe("Tab 1");
+      // Tab should be in the target group.
+      const targetGroup = useAppStore.getState().tabGroups.find((g) => g.id === group2Id)!;
+      expect(targetGroup.tabs).toHaveLength(1);
+      expect(targetGroup.tabs[0].id).toBe(tabId);
     });
   });
 
@@ -271,9 +256,8 @@ describe("appStore", () => {
   describe("toggleZoomActiveTab", () => {
     it("zooms a terminal tab", () => {
       useAppStore.getState().addTab("Shell", "local");
-      const state = useAppStore.getState();
-      const leaves = getAllLeaves(state.rootPanel);
-      const tabId = leaves[0].activeTabId!;
+      const activeGroup = getActiveGroup();
+      const tabId = activeGroup.activeTabId!;
 
       useAppStore.getState().toggleZoomActiveTab();
 
@@ -282,9 +266,8 @@ describe("appStore", () => {
 
     it("zooms a non-terminal (editor) tab", () => {
       useAppStore.getState().openEditorTab("/some/file.txt", false);
-      const state = useAppStore.getState();
-      const leaves = getAllLeaves(state.rootPanel);
-      const tabId = leaves[0].activeTabId!;
+      const activeGroup = getActiveGroup();
+      const tabId = activeGroup.activeTabId!;
 
       useAppStore.getState().toggleZoomActiveTab();
 
@@ -302,62 +285,20 @@ describe("appStore", () => {
     });
   });
 
-  describe("setActivePanel zoom follow", () => {
-    it("follows zoom to the new panel's active tab when switching panels", () => {
-      useAppStore.getState().addTab("Shell", "local");
-      const state0 = useAppStore.getState();
-      const panel1Id = state0.activePanelId!;
-      const tab1Id = getAllLeaves(state0.rootPanel)[0].activeTabId!;
-
-      useAppStore.getState().splitPanel("horizontal");
-      useAppStore.getState().addTab("Shell 2", "local");
-      const state1 = useAppStore.getState();
-      const panel2Id = state1.activePanelId!;
-      const tab2Id = getAllLeaves(state1.rootPanel).find((l) => l.id === panel2Id)!.activeTabId!;
-
-      // Zoom the first panel's tab, then switch focus to the second panel
-      useAppStore.getState().setActivePanel(panel1Id);
-      useAppStore.getState().toggleZoomActiveTab();
-      expect(useAppStore.getState().zoomedTabId).toBe(tab1Id);
-
-      useAppStore.getState().setActivePanel(panel2Id);
-
-      expect(useAppStore.getState().zoomedTabId).toBe(tab2Id);
-    });
-
-    it("clears zoom when switching to a panel with no active tab", () => {
-      useAppStore.getState().addTab("Shell", "local");
-      const state0 = useAppStore.getState();
-      const panel1Id = state0.activePanelId!;
-      useAppStore.getState().splitPanel("horizontal");
-      const panel2Id = useAppStore.getState().activePanelId!;
-
-      useAppStore.getState().setActivePanel(panel1Id);
-      useAppStore.getState().toggleZoomActiveTab();
-      expect(useAppStore.getState().zoomedTabId).not.toBeNull();
-
-      // Close all tabs in panel 2 so it has no active tab, then switch
-      useAppStore.getState().setActivePanel(panel2Id);
-      // panel2 has no tabs → activeTabId is null → zoom clears
-      expect(useAppStore.getState().zoomedTabId).toBeNull();
-    });
-  });
-
   describe("setActiveTab zoom follow", () => {
-    it("follows zoom to any tab type when switching in the same panel", () => {
+    it("follows zoom to any tab type when switching in the same group", () => {
       useAppStore.getState().addTab("Shell", "local");
       useAppStore.getState().openEditorTab("/file.txt", false);
-      const state = useAppStore.getState();
-      const leaves = getAllLeaves(state.rootPanel);
-      const terminalTabId = leaves[0].tabs.find((t) => t.contentType === "terminal")!.id;
-      const editorTabId = leaves[0].tabs.find((t) => t.contentType === "editor")!.id;
+      const group = getActiveGroup();
+      const terminalTabId = group.tabs.find((t) => t.contentType === "terminal")!.id;
+      const editorTabId = group.tabs.find((t) => t.contentType === "editor")!.id;
 
       // Zoom the terminal tab, then switch to the editor tab
-      useAppStore.getState().setActiveTab(terminalTabId, leaves[0].id);
+      useAppStore.getState().setActiveTab(terminalTabId, group.activeTabSetId ?? "");
       useAppStore.getState().toggleZoomActiveTab();
       expect(useAppStore.getState().zoomedTabId).toBe(terminalTabId);
 
-      useAppStore.getState().setActiveTab(editorTabId, leaves[0].id);
+      useAppStore.getState().setActiveTab(editorTabId, group.activeTabSetId ?? "");
 
       expect(useAppStore.getState().zoomedTabId).toBe(editorTabId);
     });
@@ -367,9 +308,8 @@ describe("appStore", () => {
     it("creates a new editor tab with the given session ID", () => {
       useAppStore.getState().openEditorTab("/remote/file.txt", true, "session-abc");
 
-      const state = useAppStore.getState();
-      const leaves = getAllLeaves(state.rootPanel);
-      const tab = leaves.flatMap((l) => l.tabs).find((t) => t.contentType === "editor");
+      const activeGroup = getActiveGroup();
+      const tab = activeGroup.tabs.find((t) => t.contentType === "editor");
       expect(tab).toBeDefined();
       expect(tab!.editorMeta?.filePath).toBe("/remote/file.txt");
       expect(tab!.editorMeta?.isRemote).toBe(true);
@@ -383,9 +323,8 @@ describe("appStore", () => {
       // Simulate reconnect: open the same file again with "new-session"
       useAppStore.getState().openEditorTab("/remote/file.txt", true, "new-session");
 
-      const state = useAppStore.getState();
-      const leaves = getAllLeaves(state.rootPanel);
-      const tabs = leaves.flatMap((l) => l.tabs).filter((t) => t.contentType === "editor");
+      const activeGroup = getActiveGroup();
+      const tabs = activeGroup.tabs.filter((t) => t.contentType === "editor");
       // Still only one tab
       expect(tabs).toHaveLength(1);
       // Session ID must be updated to the new one
@@ -396,9 +335,8 @@ describe("appStore", () => {
       useAppStore.getState().openEditorTab("/remote/file.txt", true, "session-1");
       useAppStore.getState().openEditorTab("/remote/file.txt", true, "session-2");
 
-      const state = useAppStore.getState();
-      const leaves = getAllLeaves(state.rootPanel);
-      const tabs = leaves.flatMap((l) => l.tabs).filter((t) => t.contentType === "editor");
+      const activeGroup = getActiveGroup();
+      const tabs = activeGroup.tabs.filter((t) => t.contentType === "editor");
       expect(tabs).toHaveLength(1);
     });
   });
@@ -407,9 +345,8 @@ describe("appStore", () => {
     it("creates a log-viewer tab", () => {
       useAppStore.getState().openLogViewerTab();
 
-      const state = useAppStore.getState();
-      const leaves = getAllLeaves(state.rootPanel);
-      const logTab = leaves.flatMap((l) => l.tabs).find((t) => t.contentType === "log-viewer");
+      const activeGroup = getActiveGroup();
+      const logTab = activeGroup.tabs.find((t) => t.contentType === "log-viewer");
       expect(logTab).toBeDefined();
       expect(logTab!.title).toBe("Logs");
     });
@@ -418,9 +355,8 @@ describe("appStore", () => {
       useAppStore.getState().openLogViewerTab();
       useAppStore.getState().openLogViewerTab();
 
-      const state = useAppStore.getState();
-      const leaves = getAllLeaves(state.rootPanel);
-      const logTabs = leaves.flatMap((l) => l.tabs).filter((t) => t.contentType === "log-viewer");
+      const activeGroup = getActiveGroup();
+      const logTabs = activeGroup.tabs.filter((t) => t.contentType === "log-viewer");
       expect(logTabs).toHaveLength(1);
     });
   });
@@ -454,15 +390,11 @@ describe("appStore", () => {
         new Error("Session no longer alive")
       );
 
-      const tabsBefore = getAllLeaves(useAppStore.getState().rootPanel).flatMap(
-        (l) => l.tabs
-      ).length;
+      const tabsBefore = getActiveGroup().tabs.length;
 
       await useAppStore.getState().attachAgentPersistentSession("agent1", def);
 
-      const tabsAfter = getAllLeaves(useAppStore.getState().rootPanel).flatMap(
-        (l) => l.tabs
-      ).length;
+      const tabsAfter = getActiveGroup().tabs.length;
       // The broken tab must have been removed — net tab count unchanged.
       expect(tabsAfter).toBe(tabsBefore);
     });
@@ -470,15 +402,11 @@ describe("appStore", () => {
     it("keeps the tab when attach_persistent_tab succeeds", async () => {
       vi.mocked(api.attachPersistentTab).mockResolvedValueOnce(1);
 
-      const tabsBefore = getAllLeaves(useAppStore.getState().rootPanel).flatMap(
-        (l) => l.tabs
-      ).length;
+      const tabsBefore = getActiveGroup().tabs.length;
 
       await useAppStore.getState().attachAgentPersistentSession("agent1", def);
 
-      const tabsAfter = getAllLeaves(useAppStore.getState().rootPanel).flatMap(
-        (l) => l.tabs
-      ).length;
+      const tabsAfter = getActiveGroup().tabs.length;
       expect(tabsAfter).toBe(tabsBefore + 1);
     });
   });

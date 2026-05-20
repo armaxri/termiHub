@@ -322,14 +322,16 @@ describe("appStore — setTabSessionId", () => {
       config: { agentId: "agent-1", sessionType: "local" },
     });
 
-    const leaf = store.getAllPanels()[0];
-    const tab = leaf.tabs[0];
+    const allTabs = useAppStore.getState().tabGroups.flatMap((g) => g.tabs);
+    const tab = allTabs[0];
     expect(tab.sessionId).toBeNull();
 
     useAppStore.getState().setTabSessionId(tab.id, "session-abc");
 
-    const updatedLeaf = useAppStore.getState().getAllPanels()[0];
-    const updatedTab = updatedLeaf.tabs.find((t) => t.id === tab.id);
+    const updatedTab = useAppStore
+      .getState()
+      .tabGroups.flatMap((g) => g.tabs)
+      .find((t) => t.id === tab.id);
     expect(updatedTab?.sessionId).toBe("session-abc");
   });
 
@@ -340,21 +342,23 @@ describe("appStore — setTabSessionId", () => {
       config: { agentId: "agent-1", sessionType: "local" },
     });
 
-    const leaf = store.getAllPanels()[0];
-    const tab = leaf.tabs[0];
+    const allTabs = useAppStore.getState().tabGroups.flatMap((g) => g.tabs);
+    const tab = allTabs[0];
 
     useAppStore.getState().setTabSessionId(tab.id, "session-xyz");
     useAppStore.getState().setTabSessionId(tab.id, null);
 
-    const updatedLeaf = useAppStore.getState().getAllPanels()[0];
-    const updatedTab = updatedLeaf.tabs.find((t) => t.id === tab.id);
+    const updatedTab = useAppStore
+      .getState()
+      .tabGroups.flatMap((g) => g.tabs)
+      .find((t) => t.id === tab.id);
     expect(updatedTab?.sessionId).toBeNull();
   });
 
   it("is a no-op for an unknown tabId", () => {
-    const before = useAppStore.getState().rootPanel;
+    const before = useAppStore.getState().tabGroups;
     useAppStore.getState().setTabSessionId("nonexistent-tab", "session-xyz");
-    expect(useAppStore.getState().rootPanel).toBe(before);
+    expect(useAppStore.getState().tabGroups).toStrictEqual(before);
   });
 });
 

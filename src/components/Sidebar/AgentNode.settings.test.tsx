@@ -144,9 +144,8 @@ describe("AgentNode — definition settings forwarding (bug #633)", () => {
       defButton.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     });
 
-    const { rootPanel } = useAppStore.getState();
-    const leaf = rootPanel.type === "leaf" ? rootPanel : null;
-    const tab = leaf?.tabs[0];
+    const allTabs = useAppStore.getState().tabGroups.flatMap((g) => g.tabs);
+    const tab = allTabs[0];
     expect(tab).toBeDefined();
 
     const cfg = tab!.config.config as Record<string, unknown>;
@@ -179,9 +178,9 @@ describe("AgentNode — definition settings forwarding (bug #633)", () => {
       defButton.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     });
 
-    const { rootPanel, tabColors } = useAppStore.getState();
-    const leaf = rootPanel.type === "leaf" ? rootPanel : null;
-    const tabId = leaf?.tabs[0]?.id;
+    const { tabColors } = useAppStore.getState();
+    const allTabs = useAppStore.getState().tabGroups.flatMap((g) => g.tabs);
+    const tabId = allTabs[0]?.id;
     expect(tabId).toBeDefined();
     expect(tabColors[tabId!]).toBe("#c0ffee");
   });
@@ -212,9 +211,8 @@ describe("AgentNode — definition settings forwarding (bug #633)", () => {
       defButton.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     });
 
-    const { rootPanel } = useAppStore.getState();
-    const leaf = rootPanel.type === "leaf" ? rootPanel : null;
-    const cfg = leaf?.tabs[0]?.config.config as Record<string, unknown>;
+    const allTabs = useAppStore.getState().tabGroups.flatMap((g) => g.tabs);
+    const cfg = allTabs[0]?.config.config as Record<string, unknown>;
 
     expect(cfg.port).toBe("/dev/ttyUSB0");
     expect(cfg.baudRate).toBe(115200);
