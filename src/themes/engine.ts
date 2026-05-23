@@ -167,6 +167,11 @@ export function getXtermTheme(): Record<string, string> {
     brightMagenta: c.ansiBrightMagenta,
     brightCyan: c.ansiBrightCyan,
     brightWhite: c.ansiBrightWhite,
+    // xterm.js 6 draws its own scrollbar via the built-in scrollable element;
+    // mirror the rest of the UI by reusing the global scrollbar tokens.
+    scrollbarSliderBackground: c.scrollbarThumb,
+    scrollbarSliderHoverBackground: c.scrollbarThumbHover,
+    scrollbarSliderActiveBackground: c.scrollbarThumbHover,
   };
 }
 
