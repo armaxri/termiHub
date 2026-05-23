@@ -38,3 +38,32 @@
 .terminal-horizontal-scroll .xterm-screen {
   overflow: hidden;
 }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   xterm.js 6 built-in scrollable element polish.
+
+   xterm.js 6 replaces the native overflow scrollbar with a Monaco-derived
+   ScrollableElement that draws its own slider in the DOM. We pass colors via
+   theme.scrollbarSlider*Background, but the slider geometry / drop shadows /
+   square corner artifacts are not exposed through the API — they have to be
+   styled here.
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* Round the slider so it reads as an overlay scrollbar instead of a flat block. */
+.xterm .xterm-scrollable-element > .scrollbar > .slider {
+  border-radius: 4px;
+}
+
+/* Inset the vertical slider slightly so it doesn't sit flush against the right
+   edge — closer to how macOS/Win11 native overlay scrollbars present. */
+.xterm .xterm-scrollable-element > .scrollbar.vertical > .slider {
+  margin-right: 1px;
+  width: calc(100% - 2px) !important;
+}
+
+/* Drop the inset shadow artifacts (the dark "square" that appears at the
+   top-left corner and the shadow stripes along the top/left when scrolled).
+   They are styled for VS Code's editor and look out of place in a terminal. */
+.xterm .xterm-scrollable-element > .shadow {
+  display: none !important;
+}
