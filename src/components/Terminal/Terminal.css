@@ -64,17 +64,11 @@
    ────────────────────────────────────────────────────────────────────────── */
 
 /* Pill-shaped overlay slider — matches the look of macOS / Win11 overlay
-   scrollbars more closely than the default flat block. We only style
-   width/right/border-radius; the slider's vertical `top` and `height` are
-   set imperatively by Monaco's ScrollableElement based on scroll ratio and
-   must not be overridden, otherwise the slider stops tracking content.
-
-   The default Monaco track is 10 px wide; FitAddon reserves 14 px on the
-   right for the scrollbar, leaving a ~4 px gap between the last column
-   and the slider. Slimming the visible slider to 5 px (right-aligned with
-   a 2 px inset) widens that gap to ~7 px, so the slider stops sitting on
-   top of the rightmost character even when the cell width and FitAddon's
-   floor-rounding work against us. */
+   scrollbars more closely than the default flat block. We override
+   width/right/border-radius/min-height; the slider's `top` and `height`
+   are set imperatively by Monaco's ScrollableElement based on scroll ratio
+   and must keep their inline values (we use `min-height` rather than
+   `height` so the proportional tracking still works on shorter buffers). */
 .xterm .xterm-scrollable-element > .scrollbar > .slider {
   border-radius: 999px;
 }
@@ -83,6 +77,23 @@
   width: 5px !important;
   left: auto !important;
   right: 2px;
+  /* With 10 000 lines of scrollback the slider's natural height shrinks to
+     Monaco's minimum (~20 px) and reads as a small square at the bottom of
+     the track. Bump the floor so it always presents as a clearly vertical
+     bar, regardless of buffer size. */
+  min-height: 48px !important;
+}
+
+/* Reserve extra clearance on the right so the slider can never sit over the
+   last character column. FitAddon subtracts `.xterm`'s padding-right from
+   the available width before computing the column count, so content
+   physically stops short of the slider area. The horizontal-scroll layout
+   sets `.xterm` width imperatively (`xterm.style.width = targetWidth`),
+   so under box-sizing: border-box this padding eats slightly into the
+   visible content width in horizontal-scroll mode — an acceptable trade
+   for guaranteed slider clearance in the default vertical mode. */
+.xterm {
+  padding-right: 6px;
 }
 
 /* Hide the VS Code-inherited inset shadow artifacts (top stripe, left
