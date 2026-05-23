@@ -47,23 +47,46 @@
    theme.scrollbarSlider*Background, but the slider geometry / drop shadows /
    square corner artifacts are not exposed through the API — they have to be
    styled here.
+
+   Two problems we are fixing:
+
+   1. The default 10 px-wide square slider looks blocky and overlaps the
+      rightmost character column. FitAddon reserves 14 px on the right
+      (`options.overviewRuler?.width || 14`), but in horizontal-scroll mode
+      the `.xterm` element's width is set explicitly, which can defeat that
+      reservation. We add explicit right padding on `.xterm` so FitAddon
+      subtracts it from the available width, guaranteeing a gap.
+
+   2. The Monaco scrollable element renders inset drop shadows
+      (`.shadow.top`, `.shadow.left`, `.shadow.top-left-corner` — a 3 × 3 px
+      square) when scrolled. These are styled for VS Code's editor and read
+      as the "little square" artifacts in a terminal.
    ────────────────────────────────────────────────────────────────────────── */
 
-/* Round the slider so it reads as an overlay scrollbar instead of a flat block. */
+/* Pill-shaped overlay slider — matches the look of macOS / Win11 overlay
+   scrollbars more closely than the default flat block. We only style
+   width/right/border-radius; the slider's vertical `top` and `height` are
+   set imperatively by Monaco's ScrollableElement based on scroll ratio and
+   must not be overridden, otherwise the slider stops tracking content.
+
+   The default Monaco track is 10 px wide; FitAddon reserves 14 px on the
+   right for the scrollbar, leaving a ~4 px gap between the last column
+   and the slider. Slimming the visible slider to 5 px (right-aligned with
+   a 2 px inset) widens that gap to ~7 px, so the slider stops sitting on
+   top of the rightmost character even when the cell width and FitAddon's
+   floor-rounding work against us. */
 .xterm .xterm-scrollable-element > .scrollbar > .slider {
-  border-radius: 4px;
+  border-radius: 999px;
 }
 
-/* Inset the vertical slider slightly so it doesn't sit flush against the right
-   edge — closer to how macOS/Win11 native overlay scrollbars present. */
 .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider {
-  margin-right: 1px;
-  width: calc(100% - 2px) !important;
+  width: 5px !important;
+  left: auto !important;
+  right: 2px;
 }
 
-/* Drop the inset shadow artifacts (the dark "square" that appears at the
-   top-left corner and the shadow stripes along the top/left when scrolled).
-   They are styled for VS Code's editor and look out of place in a terminal. */
+/* Hide the VS Code-inherited inset shadow artifacts (top stripe, left
+   stripe, and the 3 × 3 px top-left corner square). */
 .xterm .xterm-scrollable-element > .shadow {
   display: none !important;
 }
