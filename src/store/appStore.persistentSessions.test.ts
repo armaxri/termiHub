@@ -206,6 +206,49 @@ describe("appStore — persistent sessions", () => {
     });
   });
 
+  // ── startAndAttachAgentPersistentSession ───────────────────────────
+
+  describe("startAndAttachAgentPersistentSession", () => {
+    it("starts a new persistent session and attaches a tab when entry does not exist", async () => {
+      await useAppStore.getState().startAndAttachAgentPersistentSession(AGENT_ID, makeDef());
+
+      expect(mockStartPersistentSession).toHaveBeenCalledWith(
+        CONNECTION_ID,
+        "shell",
+        { shell: "/bin/bash", title: "Persistent Shell" },
+        AGENT_ID
+      );
+      expect(mockAttachPersistentTab).toHaveBeenCalledWith(CONNECTION_ID, expect.any(String));
+
+      const entry = useAppStore.getState().persistentSessions[CONNECTION_ID];
+      // Regression: double-click on a stopped persistent agent shell must register
+      // the session in the store (so the sidebar state dot turns green) — not just
+      // open a non-persistent tab through createTerminal.
+      expect(entry).toBeDefined();
+      expect(entry.sessionId).toBe("mock-session-id");
+      expect(entry.attachedTabIds).toHaveLength(1);
+    });
+
+    it("attaches without starting when the session is already running", async () => {
+      seedRunningEntry();
+
+      await useAppStore.getState().startAndAttachAgentPersistentSession(AGENT_ID, makeDef());
+
+      expect(mockStartPersistentSession).not.toHaveBeenCalled();
+      expect(mockAttachPersistentTab).toHaveBeenCalledWith(CONNECTION_ID, expect.any(String));
+    });
+
+    it("does not attach when the start API fails", async () => {
+      mockStartPersistentSession.mockRejectedValueOnce(new Error("agent offline"));
+
+      await useAppStore.getState().startAndAttachAgentPersistentSession(AGENT_ID, makeDef());
+
+      expect(mockAttachPersistentTab).not.toHaveBeenCalled();
+      const entry = useAppStore.getState().persistentSessions[CONNECTION_ID];
+      expect(entry?.state).toBe("error");
+    });
+  });
+
   // ── stopPersistentSession ──────────────────────────────────────────
 
   describe("stopPersistentSession", () => {
