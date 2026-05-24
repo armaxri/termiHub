@@ -691,11 +691,18 @@ impl SessionManager {
                     // Re-create the RemoteProxy for the daemon that survived the disconnect.
                     // This calls register_session_output + attach_session synchronously, so
                     // buffer replay will be in-flight before subscribe_output() bridges it.
-                    let proxy = RemoteProxy::reconnect_existing(
-                        agent_id.clone(),
-                        remote_sid.clone(),
-                        self.agent_manager.clone(),
-                    )
+                    //
+                    // `attach_session` internally uses `oneshot::Receiver::blocking_recv`,
+                    // which parks the calling thread; run on the blocking thread pool so the
+                    // tokio worker stays free to drive `agent_io_task` and deliver the reply.
+                    let agent_mgr = self.agent_manager.clone();
+                    let agent_id_clone = agent_id.clone();
+                    let remote_sid_clone = remote_sid.clone();
+                    let proxy = tokio::task::spawn_blocking(move || {
+                        RemoteProxy::reconnect_existing(agent_id_clone, remote_sid_clone, agent_mgr)
+                    })
+                    .await
+                    .map_err(|e| TerminalError::SpawnFailed(format!("spawn_blocking join: {e}")))?
                     .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?;
 
                     let output_rx = proxy.subscribe_output();
@@ -849,14 +856,19 @@ impl SessionManager {
             (agent_id, remote_sid)
         };
 
-        let result = self
-            .agent_manager
-            .send_request(
+        // Run the sync RPC on the blocking thread pool — its internal
+        // `oneshot::Receiver::blocking_recv` would otherwise park a tokio worker.
+        let mgr = self.agent_manager.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            mgr.send_request(
                 &agent_id,
                 "session.getBuffer",
                 serde_json::json!({ "session_id": remote_sid }),
             )
-            .map_err(|e| TerminalError::RemoteError(e.to_string()))?;
+        })
+        .await
+        .map_err(|e| TerminalError::RemoteError(format!("spawn_blocking join: {e}")))?
+        .map_err(|e| TerminalError::RemoteError(e.to_string()))?;
 
         let b64 = result.get("data").and_then(|v| v.as_str()).unwrap_or("");
         if b64.is_empty() {

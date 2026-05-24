@@ -194,10 +194,28 @@ impl ConnectionType for RemoteProxy {
         }
 
         // Create the session on the agent.
-        let session_info = self
-            .agent_manager
-            .create_session(self.agent_id(), &session_type, config, title.as_deref())
-            .map_err(|e| SessionError::SpawnFailed(e.to_string()))?;
+        //
+        // The agent_manager helpers internally call `oneshot::Receiver::blocking_recv`,
+        // which parks the calling thread until the io task delivers the response.
+        // When called directly from an async task (Tauri's `create_connection` command),
+        // the parked tokio worker never wakes from the cross-task `tx.send`, so we run
+        // the blocking calls on the dedicated blocking thread pool via `spawn_blocking`.
+        let mgr = self.agent_manager.clone();
+        let agent_id_owned = self.agent_id.clone();
+        let session_type_owned = session_type.clone();
+        let title_owned = title.clone();
+        let config_owned = config.clone();
+        let session_info = tokio::task::spawn_blocking(move || {
+            mgr.create_session(
+                &agent_id_owned,
+                &session_type_owned,
+                config_owned,
+                title_owned.as_deref(),
+            )
+        })
+        .await
+        .map_err(|e| SessionError::SpawnFailed(format!("spawn_blocking join: {e}")))?
+        .map_err(|e| SessionError::SpawnFailed(e.to_string()))?;
 
         let remote_sid = session_info.session_id.clone();
 
@@ -206,13 +224,20 @@ impl ConnectionType for RemoteProxy {
         let (std_tx, std_rx) = mpsc::sync_channel::<Vec<u8>>(OUTPUT_CHANNEL_CAPACITY);
 
         // Register the output sender with the agent manager.
+        // `register_session_output` does not block on a response — just pushes a
+        // command into the io task's channel — so it's safe to call directly here.
         self.agent_manager
             .register_session_output(self.agent_id(), &remote_sid, std_tx)
             .map_err(|e| SessionError::SpawnFailed(e.to_string()))?;
 
-        // Attach to the session to start receiving output.
-        self.agent_manager
-            .attach_session(self.agent_id(), &remote_sid)
+        // Attach to the session to start receiving output. Same reasoning as
+        // `create_session` above: must run on the blocking thread pool.
+        let mgr = self.agent_manager.clone();
+        let agent_id_owned = self.agent_id.clone();
+        let remote_sid_owned = remote_sid.clone();
+        tokio::task::spawn_blocking(move || mgr.attach_session(&agent_id_owned, &remote_sid_owned))
+            .await
+            .map_err(|e| SessionError::SpawnFailed(format!("spawn_blocking join: {e}")))?
             .map_err(|e| SessionError::SpawnFailed(e.to_string()))?;
 
         // Store state.
@@ -224,11 +249,14 @@ impl ConnectionType for RemoteProxy {
         }
 
         // Query capabilities from the agent for this session type.
-        if let Ok(caps_result) = self.agent_manager.send_request(
-            self.agent_id(),
-            "connection.types",
-            serde_json::json!({}),
-        ) {
+        let mgr = self.agent_manager.clone();
+        let agent_id_owned = self.agent_id.clone();
+        let caps_result = tokio::task::spawn_blocking(move || {
+            mgr.send_request(&agent_id_owned, "connection.types", serde_json::json!({}))
+        })
+        .await
+        .map_err(|e| SessionError::SpawnFailed(format!("spawn_blocking join: {e}")))?;
+        if let Ok(caps_result) = caps_result {
             if let Some(types) = caps_result.get("types").and_then(|v| v.as_array()) {
                 for type_info in types {
                     if type_info.get("typeId").and_then(|v| v.as_str()) == Some(&session_type) {
@@ -282,21 +310,25 @@ impl ConnectionType for RemoteProxy {
     async fn disconnect(&mut self) -> Result<(), SessionError> {
         let remote_sid = self.remote_session_id();
 
-        if let Some(ref sid) = remote_sid {
+        if let Some(sid) = remote_sid {
             // Unregister monitoring channel if monitoring was active.
             if self.monitoring_proxy.is_some() {
                 let _ = self
                     .agent_manager
-                    .unregister_monitoring_output(self.agent_id(), sid);
+                    .unregister_monitoring_output(self.agent_id(), &sid);
             }
 
             // Detach from output.
             let _ = self
                 .agent_manager
-                .unregister_session_output(self.agent_id(), sid);
+                .unregister_session_output(self.agent_id(), &sid);
 
-            // Close the session on the agent.
-            let _ = self.agent_manager.close_session(self.agent_id(), sid);
+            // Close the session on the agent. Runs on the blocking thread pool
+            // to keep `oneshot::Receiver::blocking_recv` off a tokio worker.
+            let mgr = self.agent_manager.clone();
+            let agent_id_owned = self.agent_id.clone();
+            let _ =
+                tokio::task::spawn_blocking(move || mgr.close_session(&agent_id_owned, &sid)).await;
         }
 
         // Clear local state.
@@ -377,20 +409,31 @@ pub struct RemoteFileBrowserProxy {
     agent_manager: Arc<dyn AgentRpcClient>,
 }
 
+impl RemoteFileBrowserProxy {
+    /// Run a sync `send_request` on the blocking thread pool so its internal
+    /// `oneshot::Receiver::blocking_recv` does not park a tokio worker thread.
+    async fn rpc(&self, method: &'static str, params: Value) -> Result<Value, FileError> {
+        let mgr = self.agent_manager.clone();
+        let agent_id = self.agent_id.clone();
+        tokio::task::spawn_blocking(move || mgr.send_request(&agent_id, method, params))
+            .await
+            .map_err(|e| FileError::OperationFailed(format!("spawn_blocking join: {e}")))?
+            .map_err(|e| FileError::OperationFailed(e.to_string()))
+    }
+}
+
 #[async_trait::async_trait]
 impl FileBrowser for RemoteFileBrowserProxy {
     async fn list_dir(&self, path: &str) -> Result<Vec<FileEntry>, FileError> {
         let result = self
-            .agent_manager
-            .send_request(
-                &self.agent_id,
+            .rpc(
                 "connection.files.list",
                 serde_json::json!({
                     "connection_id": self.remote_session_id,
                     "path": path,
                 }),
             )
-            .map_err(|e| FileError::OperationFailed(e.to_string()))?;
+            .await?;
 
         let entries = result
             .get("entries")
@@ -401,16 +444,14 @@ impl FileBrowser for RemoteFileBrowserProxy {
 
     async fn read_file(&self, path: &str) -> Result<Vec<u8>, FileError> {
         let result = self
-            .agent_manager
-            .send_request(
-                &self.agent_id,
+            .rpc(
                 "connection.files.read",
                 serde_json::json!({
                     "connection_id": self.remote_session_id,
                     "path": path,
                 }),
             )
-            .map_err(|e| FileError::OperationFailed(e.to_string()))?;
+            .await?;
 
         let data_b64 = result.get("data").and_then(|v| v.as_str()).unwrap_or("");
         base64_decode(data_b64)
@@ -419,76 +460,66 @@ impl FileBrowser for RemoteFileBrowserProxy {
     async fn write_file(&self, path: &str, data: &[u8]) -> Result<(), FileError> {
         use base64::Engine;
         let encoded = base64::engine::general_purpose::STANDARD.encode(data);
-        self.agent_manager
-            .send_request(
-                &self.agent_id,
-                "connection.files.write",
-                serde_json::json!({
-                    "connection_id": self.remote_session_id,
-                    "path": path,
-                    "data": encoded,
-                }),
-            )
-            .map_err(|e| FileError::OperationFailed(e.to_string()))?;
+        self.rpc(
+            "connection.files.write",
+            serde_json::json!({
+                "connection_id": self.remote_session_id,
+                "path": path,
+                "data": encoded,
+            }),
+        )
+        .await?;
         Ok(())
     }
 
     async fn delete(&self, path: &str) -> Result<(), FileError> {
-        self.agent_manager
-            .send_request(
-                &self.agent_id,
-                "connection.files.delete",
-                serde_json::json!({
-                    "connection_id": self.remote_session_id,
-                    "path": path,
-                }),
-            )
-            .map_err(|e| FileError::OperationFailed(e.to_string()))?;
+        self.rpc(
+            "connection.files.delete",
+            serde_json::json!({
+                "connection_id": self.remote_session_id,
+                "path": path,
+            }),
+        )
+        .await?;
         Ok(())
     }
 
     async fn rename(&self, from: &str, to: &str) -> Result<(), FileError> {
-        self.agent_manager
-            .send_request(
-                &self.agent_id,
-                "connection.files.rename",
-                serde_json::json!({
-                    "connection_id": self.remote_session_id,
-                    "from": from,
-                    "to": to,
-                }),
-            )
-            .map_err(|e| FileError::OperationFailed(e.to_string()))?;
+        self.rpc(
+            "connection.files.rename",
+            serde_json::json!({
+                "connection_id": self.remote_session_id,
+                "from": from,
+                "to": to,
+            }),
+        )
+        .await?;
         Ok(())
     }
 
     async fn stat(&self, path: &str) -> Result<FileEntry, FileError> {
         let result = self
-            .agent_manager
-            .send_request(
-                &self.agent_id,
+            .rpc(
                 "connection.files.stat",
                 serde_json::json!({
                     "connection_id": self.remote_session_id,
                     "path": path,
                 }),
             )
-            .map_err(|e| FileError::OperationFailed(e.to_string()))?;
+            .await?;
 
         serde_json::from_value(result).map_err(|e| FileError::OperationFailed(e.to_string()))
     }
 
     async fn mkdir(&self, path: &str) -> Result<(), FileError> {
-        self.agent_manager
-            .send_request(
-                &self.agent_id,
-                "connection.files.mkdir",
-                serde_json::json!({
-                    "connection_id": self.remote_session_id,
-                    "path": path,
-                }),
-            )
-            .map_err(|e| FileError::OperationFailed(e.to_string()))?;
+        self.rpc(
+            "connection.files.mkdir",
+            serde_json::json!({
+                "connection_id": self.remote_session_id,
+                "path": path,
+            }),
+        )
+        .await?;
         Ok(())
     }
 }
@@ -502,6 +533,19 @@ pub struct RemoteMonitoringProxy {
     agent_manager: Arc<dyn AgentRpcClient>,
 }
 
+impl RemoteMonitoringProxy {
+    /// Run a sync `send_request` on the blocking thread pool so its internal
+    /// `oneshot::Receiver::blocking_recv` does not park a tokio worker thread.
+    async fn rpc(&self, method: &'static str, params: Value) -> Result<Value, CoreError> {
+        let mgr = self.agent_manager.clone();
+        let agent_id = self.agent_id.clone();
+        tokio::task::spawn_blocking(move || mgr.send_request(&agent_id, method, params))
+            .await
+            .map_err(|e| CoreError::Other(format!("spawn_blocking join: {e}")))?
+            .map_err(|e| CoreError::Other(e.to_string()))
+    }
+}
+
 #[async_trait::async_trait]
 impl MonitoringProvider for RemoteMonitoringProxy {
     async fn subscribe(&self) -> Result<MonitoringReceiver, CoreError> {
@@ -513,16 +557,14 @@ impl MonitoringProvider for RemoteMonitoringProxy {
             .map_err(|e| CoreError::Other(e.to_string()))?;
 
         // Send subscribe request to agent.
-        self.agent_manager
-            .send_request(
-                &self.agent_id,
-                "connection.monitoring.subscribe",
-                serde_json::json!({
-                    "host": self.monitoring_host,
-                    "interval_ms": 2000,
-                }),
-            )
-            .map_err(|e| CoreError::Other(e.to_string()))?;
+        self.rpc(
+            "connection.monitoring.subscribe",
+            serde_json::json!({
+                "host": self.monitoring_host,
+                "interval_ms": 2000,
+            }),
+        )
+        .await?;
 
         Ok(rx)
     }
@@ -533,15 +575,13 @@ impl MonitoringProvider for RemoteMonitoringProxy {
             .agent_manager
             .unregister_monitoring_output(&self.agent_id, &self.monitoring_host);
 
-        self.agent_manager
-            .send_request(
-                &self.agent_id,
-                "connection.monitoring.unsubscribe",
-                serde_json::json!({
-                    "host": self.monitoring_host,
-                }),
-            )
-            .map_err(|e| CoreError::Other(e.to_string()))?;
+        self.rpc(
+            "connection.monitoring.unsubscribe",
+            serde_json::json!({
+                "host": self.monitoring_host,
+            }),
+        )
+        .await?;
         Ok(())
     }
 }
