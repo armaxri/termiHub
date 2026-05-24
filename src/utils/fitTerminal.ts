@@ -1,9 +1,11 @@
 import type { Terminal as XTerm } from "@xterm/xterm";
 
 /**
- * Pixels we want FitAddon to reserve on the right of the viewport for the
- * scrollbar slider. Must match the visible slider geometry in Terminal.css
- * (slider width 5 + right inset 2 = 7).
+ * Pixels we reserve on the right of the viewport for the scrollbar slider.
+ * Must match the visible slider geometry in Terminal.css — the slider sits
+ * flush against the right edge at this width (`width: 5px; right: 0`), so
+ * the reservation and the slider exactly coincide and there is no empty
+ * strip beside the rendered text.
  *
  * The upstream FitAddon hardcodes a 14 px reservation
  * (`options.overviewRuler?.width || 14`), which is right for VS Code's
@@ -13,8 +15,14 @@ import type { Terminal as XTerm } from "@xterm/xterm";
  * activates xterm's decoration-ruler renderer, which in practice paints
  * over our slider. So instead we replicate FitAddon's algorithm with our
  * own reservation here, and call this helper in place of `fitAddon.fit()`.
+ *
+ * Why 5 and not 6/7: `cols = floor((parentW - reserve) / cellWidth)`. With
+ * a typical cell width around 8.5 px, every column we want to reclaim
+ * needs the reserve to be ≥ 8.5 px smaller. Going below 6 buys us the
+ * extra column at common window widths; anything ≥ 7 produces the same
+ * column count as the upstream 14 px reservation under floor rounding.
  */
-export const SCROLLBAR_RESERVE_PX = 7;
+export const SCROLLBAR_RESERVE_PX = 5;
 
 /**
  * Compute the column / row count that fits in the terminal's parent

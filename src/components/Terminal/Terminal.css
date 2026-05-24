@@ -65,10 +65,13 @@
   border-radius: 999px;
 }
 
+/* Slider sits flush at the right edge so the reserved 5 px (see
+   SCROLLBAR_RESERVE_PX in src/utils/fitTerminal.ts) is fully occupied —
+   no empty strip beside the rendered content. */
 .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider {
   width: 5px !important;
   left: auto !important;
-  right: 2px;
+  right: 0;
   min-height: 48px !important;
 }
 

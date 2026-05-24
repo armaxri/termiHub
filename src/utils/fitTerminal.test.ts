@@ -49,14 +49,12 @@ function makeXterm(opts: {
 }
 
 describe("fitTerminal", () => {
-  it("reserves only SCROLLBAR_RESERVE_PX on the right (not FitAddon's hardcoded 14)", () => {
-    // With width=967 and cellWidth=8.5, FitAddon's 14 px reservation gives
-    // floor((967-14)/8.5) = 112. Our 7 px reservation gives
-    // floor((967-7)/8.5) = 112 too — same cols at this exact width.
-    // Bump width so the difference is observable: at width=973,
-    // FitAddon 14: floor((973-14)/8.5) = floor(112.82) = 112
-    // ours 7: floor((973-7)/8.5)  = floor(113.65) = 113 → +1 column.
-    const x = makeXterm({ parentWidth: 973, parentHeight: 400, cellWidth: 8.5, cellHeight: 16 });
+  it("reclaims the extra column FitAddon's 14 px reservation hides", () => {
+    // Real ground-truth measurement from the user's app:
+    //   parentWidth = 967, cellWidth = 8.5
+    //   FitAddon 14: floor((967-14)/8.5) = floor(112.12) = 112 cols
+    //   ours     5:  floor((967-5)/8.5)  = floor(113.18) = 113 cols  → +1 column.
+    const x = makeXterm({ parentWidth: 967, parentHeight: 400, cellWidth: 8.5, cellHeight: 16 });
     fitTerminal(x as unknown as XTerm);
     expect(x.resize).toHaveBeenCalledTimes(1);
     const [cols] = x.resize.mock.calls[0];
@@ -86,7 +84,7 @@ describe("fitTerminal", () => {
     });
     fitTerminal(x as unknown as XTerm);
     const [cols] = x.resize.mock.calls[0];
-    // (800 - 12 padding - 7 reserve) / 10 = 78.1 → 78
+    // (800 - 12 padding - 5 reserve) / 10 = 78.3 → 78
     expect(cols).toBe(78);
   });
 
