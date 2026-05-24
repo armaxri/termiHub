@@ -9,7 +9,6 @@ import { sendInput } from "@/services/api";
 import { SessionId } from "@/types/terminal";
 import { useAppStore } from "@/store/appStore";
 import { frontendLog } from "@/utils/frontendLog";
-import { fitTerminal } from "@/utils/fitTerminal";
 
 const LARGE_PASTE_THRESHOLD = 5000;
 
@@ -103,26 +102,29 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const fitTerminalCb = useCallback((tabId: string) => {
+  const fitTerminal = useCallback((tabId: string) => {
+    const fitAddon = fitAddonRegistryRef.current.get(tabId);
     const xterm = xtermRegistryRef.current.get(tabId);
-    if (!xterm) return;
+    if (!fitAddon) return;
     const el = registryRef.current.get(tabId);
     const w = el?.offsetWidth ?? -1;
     const h = el?.offsetHeight ?? -1;
     frontendLog(
       "terminal_registry",
-      `fitTerminal tab=${tabId} el=${w}×${h} xterm=${xterm.cols}×${xterm.rows}`
+      `fitTerminal tab=${tabId} el=${w}×${h} xterm=${xterm?.cols}×${xterm?.rows}`
     );
     try {
-      fitTerminal(xterm);
+      fitAddon.fit();
       frontendLog(
         "terminal_registry",
-        `fitTerminal after fit tab=${tabId} xterm=${xterm.cols}×${xterm.rows}`
+        `fitTerminal after fit tab=${tabId} xterm=${xterm?.cols}×${xterm?.rows}`
       );
     } catch (err) {
       frontendLog("terminal_registry", `fitTerminal fit error tab=${tabId}: ${err}`);
     }
-    requestAnimationFrame(() => xterm.scrollToBottom());
+    if (xterm) {
+      requestAnimationFrame(() => xterm.scrollToBottom());
+    }
   }, []);
 
   const clearTerminal = useCallback((tabId: string) => {
@@ -280,7 +282,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       unregister,
       getElement,
       focusTerminal,
-      fitTerminal: fitTerminalCb,
+      fitTerminal,
       clearTerminal,
       saveTerminalToFile,
       copyTerminalToClipboard,
@@ -301,7 +303,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       unregister,
       getElement,
       focusTerminal,
-      fitTerminalCb,
+      fitTerminal,
       clearTerminal,
       saveTerminalToFile,
       copyTerminalToClipboard,
