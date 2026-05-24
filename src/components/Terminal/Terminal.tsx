@@ -20,6 +20,7 @@ import { useAppStore } from "@/store/appStore";
 import { getXtermTheme } from "@/themes";
 import { processKeyEvent, isAppShortcut, isChordPending } from "@/services/keybindings";
 import { frontendLog } from "@/utils/frontendLog";
+import { fitTerminal } from "@/utils/fitTerminal";
 
 const HORIZONTAL_SCROLL_COLS = 500;
 
@@ -102,7 +103,7 @@ function applyHorizontalScrollResize(xterm: XTerm, fitAddon: FitAddon, container
 /**
  * Remove horizontal scrolling layout and restore normal fit.
  */
-function removeHorizontalScrollResize(xterm: XTerm, fitAddon: FitAddon) {
+function removeHorizontalScrollResize(xterm: XTerm, _fitAddon: FitAddon) {
   const xtermEl = xterm.element;
   if (xtermEl) {
     xtermEl.style.width = "";
@@ -111,7 +112,7 @@ function removeHorizontalScrollResize(xterm: XTerm, fitAddon: FitAddon) {
       screen.style.width = "";
     }
   }
-  fitAddon.fit();
+  fitTerminal(xterm);
 }
 
 interface TerminalProps {
@@ -179,7 +180,7 @@ export function Terminal({
   }, [tabId]);
 
   const setupTerminal = useCallback(
-    async (xterm: XTerm, fitAddon: FitAddon, isCanceled: () => boolean) => {
+    async (xterm: XTerm, isCanceled: () => boolean) => {
       // Cancel any pending session close from a StrictMode unmount cycle
       if (pendingCloseTimerRef.current !== null) {
         clearTimeout(pendingCloseTimerRef.current);
@@ -202,7 +203,7 @@ export function Terminal({
         // so the backend uses it for PTY sizing and the OSC 7 erase
         // calculation, which must know how many lines the echo occupies.
         try {
-          fitAddon.fit();
+          fitTerminal(xterm);
         } catch {
           // Container not yet sized; fall back to current xterm dimensions
         }
@@ -447,7 +448,7 @@ export function Terminal({
         // PTY was created with (or for workspace-restore where we don't
         // know the PTY's current state and must always sync).
         try {
-          fitAddon.fit();
+          fitTerminal(xterm);
         } catch {
           // Container might not have dimensions yet
         }
@@ -648,7 +649,7 @@ export function Terminal({
 
     // Initial fit (may fail since element starts in parking)
     try {
-      fitAddon.fit();
+      fitTerminal(xterm);
     } catch {
       // Container might not have dimensions yet
     }
@@ -657,7 +658,7 @@ export function Terminal({
     fitAddonRef.current = fitAddon;
 
     // Wire to backend
-    setupTerminal(xterm, fitAddon, () => canceled);
+    setupTerminal(xterm, () => canceled);
 
     // Forward wheel events from the gap below the canvas to xterm.
     // FitAddon rounds rows down, so there is almost always a small gap
@@ -711,7 +712,7 @@ export function Terminal({
             updateHorizontalScrollWidth(xterm, fitAddon, el);
           }
         } else {
-          fitAddon.fit();
+          fitTerminal(xterm);
         }
         // Force SmoothScrollableElement to refresh its layout after the
         // viewport dimensions change.  Without this, the first output
@@ -762,7 +763,7 @@ export function Terminal({
         if (horizontalScrollingRef.current) {
           applyHorizontalScrollResize(xtermRef.current, fitAddonRef.current, terminalElRef.current);
         } else {
-          fitAddonRef.current.fit();
+          fitTerminal(xtermRef.current);
         }
       } catch {
         // Ignore
@@ -849,7 +850,7 @@ export function Terminal({
     if (fitAddon) {
       try {
         if (!horizontalScrollingRef.current) {
-          fitAddon.fit();
+          fitTerminal(xterm);
         }
       } catch {
         // Ignore fit errors
