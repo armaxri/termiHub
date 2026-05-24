@@ -23,6 +23,14 @@ import { frontendLog } from "@/utils/frontendLog";
 
 const HORIZONTAL_SCROLL_COLS = 500;
 
+/**
+ * Pixels reserved on the right of the terminal viewport for the scrollbar
+ * slider. Must match the visible slider geometry in Terminal.css (slider
+ * width + right inset). FitAddon subtracts this from the available width
+ * before computing the column count.
+ */
+const SCROLLBAR_RESERVE_PX = 7;
+
 const DEFAULT_FONT_FAMILY =
   "'MesloLGS Nerd Font Mono', 'MesloLGS NF', 'CaskaydiaCove Nerd Font', 'FiraCode Nerd Font', 'Hack Nerd Font', 'Cascadia Code', 'Fira Code', Menlo, Monaco, 'Courier New', monospace";
 const DEFAULT_FONT_SIZE = 14;
@@ -539,6 +547,14 @@ export function Terminal({
       scrollback: tabOpts?.scrollbackBuffer ?? appSettings.scrollbackBuffer ?? DEFAULT_SCROLLBACK,
       cursorBlink: tabOpts?.cursorBlink ?? appSettings.cursorBlink ?? DEFAULT_CURSOR_BLINK,
       cursorStyle: tabOpts?.cursorStyle ?? appSettings.cursorStyle ?? DEFAULT_CURSOR_STYLE,
+      // FitAddon reserves `overviewRuler?.width || 14` pixels on the right
+      // for the scrollbar when computing the column count. The default 14 px
+      // leaves ~one character column of empty space because our slim slider
+      // (5 px wide with a 2 px inset, see Terminal.css) only needs 7 px.
+      // Pinning the ruler width to 7 reclaims that column without affecting
+      // anything else (we don't render any overview-ruler decorations, so the
+      // ruler element stays an empty transparent overlay).
+      overviewRuler: { width: SCROLLBAR_RESERVE_PX },
       allowProposedApi: true,
     });
 
