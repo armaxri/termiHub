@@ -20,7 +20,6 @@ import { useAppStore } from "@/store/appStore";
 import { getXtermTheme } from "@/themes";
 import { processKeyEvent, isAppShortcut, isChordPending } from "@/services/keybindings";
 import { frontendLog } from "@/utils/frontendLog";
-import { refitWhenFontsReady } from "@/utils/fontReadyRefit";
 
 const HORIZONTAL_SCROLL_COLS = 500;
 
@@ -659,24 +658,6 @@ export function Terminal({
 
     // Wire to backend
     setupTerminal(xterm, fitAddon, () => canceled);
-
-    // Our terminal font (`MesloLGS Nerd Font Mono`) is loaded via @font-face
-    // with `font-display: swap`. xterm measures cell width once against
-    // whichever font is currently rendering (the fallback monospace on
-    // first paint) and caches the result, so FitAddon ends up reserving the
-    // viewport based on the fallback's metrics. When the real font swaps in
-    // the rendered glyphs use the new metrics but the cached cell grid stays
-    // put, so the rightmost column slips under the scrollbar slider until a
-    // manual window resize triggers a fresh fit. `refitWhenFontsReady`
-    // explicitly requests the real font, forces xterm to re-measure, and
-    // re-fits.
-    refitWhenFontsReady(
-      xterm,
-      fitAddon,
-      tabOpts?.fontFamily || appSettings.fontFamily || DEFAULT_FONT_FAMILY,
-      baseFontSize,
-      () => canceled
-    );
 
     // Forward wheel events from the gap below the canvas to xterm.
     // FitAddon rounds rows down, so there is almost always a small gap
