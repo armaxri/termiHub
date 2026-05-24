@@ -116,3 +116,22 @@ tests:
       - "The dialog does not hang indefinitely — after ~30 seconds it displays an error message (SSH timeout or similar)"
       - "The UI remains responsive; no restart of the app is required"
     verification: manual
+
+  # --- Persistent shell double-click on stopped state (bugfix/agent-persistent-shell-doubleclick-icon) ---
+
+  - id: MT-AGENT-13
+    name: "Double-clicking a stopped persistent agent shell turns the state dot green"
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Connect to a remote agent that has at least one persistent shell connection definition"
+      - "Ensure the persistent shell is stopped (state dot is grey)"
+      - "Double-click the persistent shell entry in the sidebar"
+    expected:
+      - "A new terminal tab opens and connects to the shell"
+      - "The state dot next to the sidebar entry transitions from grey to green (running/attached)"
+      - "The persistent badge (∞) and Stop/Attach action icons appear, confirming the session is registered with the persistent-session machinery"
+      - "Closing the tab leaves the background session running and the dot stays green"
+    verification: manual

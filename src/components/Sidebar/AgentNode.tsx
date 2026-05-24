@@ -159,11 +159,17 @@ function AgentConnectionItem({
           className={className}
           style={{ paddingLeft: `${depth * 16 + 8}px` }}
           onClick={(e) => onConnectionClick(definition.id, e)}
-          onDoubleClick={() =>
-            definition.persistent && isRunning
-              ? onAttachPersistent(agentId, definition)
-              : onOpen(definition)
-          }
+          onDoubleClick={() => {
+            if (definition.persistent) {
+              // Persistent shells must always go through the persistent-session
+              // machinery so the sidebar state dot reflects the real state.
+              // Routing a stopped shell through onOpen would create an unmanaged
+              // tab via createTerminal and leave the dot grey.
+              onAttachPersistent(agentId, definition);
+            } else {
+              onOpen(definition);
+            }
+          }}
           title={`${definition.name} (${definition.sessionType}${definition.persistent ? ", persistent" : ""})`}
           {...attributes}
           {...listeners}
@@ -771,7 +777,9 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
   );
 
   const startAgentPersistentSession = useAppStore((s) => s.startAgentPersistentSession);
-  const attachAgentPersistentSession = useAppStore((s) => s.attachAgentPersistentSession);
+  const startAndAttachAgentPersistentSession = useAppStore(
+    (s) => s.startAndAttachAgentPersistentSession
+  );
   const stopPersistentSession = useAppStore((s) => s.stopPersistentSession);
 
   const handleStartPersistent = useCallback(
@@ -783,9 +791,11 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
 
   const handleAttachPersistent = useCallback(
     (_agentId: string, def: AgentDefinitionInfo) => {
-      attachAgentPersistentSession(agent.id, def);
+      // Starts the persistent session first if it is not running yet, so a
+      // double-click on a stopped shell turns the sidebar dot green.
+      startAndAttachAgentPersistentSession(agent.id, def);
     },
-    [agent.id, attachAgentPersistentSession]
+    [agent.id, startAndAttachAgentPersistentSession]
   );
 
   const handleStopPersistent = useCallback(
