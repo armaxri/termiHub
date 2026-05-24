@@ -79,10 +79,10 @@ impl StatsCollector for LocalCollector {
         let cpu_usage_percent = self.sys.global_cpu_usage() as f64;
 
         let mem_total_kb = self.sys.total_memory() / 1024;
-        let mem_available_kb = self.sys.available_memory() / 1024;
+        let mem_used_kb = self.sys.used_memory() / 1024;
+        let mem_available_kb = mem_total_kb.saturating_sub(mem_used_kb);
         let memory_used_percent = if mem_total_kb > 0 {
-            let used = mem_total_kb.saturating_sub(mem_available_kb);
-            used as f64 / mem_total_kb as f64 * 100.0
+            mem_used_kb as f64 / mem_total_kb as f64 * 100.0
         } else {
             0.0
         };

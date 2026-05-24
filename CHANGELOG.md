@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Monitoring: macOS memory usage was reported as ~100% due to a bug in `sysinfo` 0.33 where `available_memory()` incorrectly subtracted compressed pages. Upgraded `sysinfo` from 0.33 to 0.38 which uses Apple's XNU-documented formula and matches Activity Monitor within ~4%.
+
 ### Changed
 
 - Serial: replaced the `serialport` crate with [`serial2`](https://crates.io/crates/serial2) / [`serial2-tokio`](https://crates.io/crates/serial2-tokio). Serial I/O is now fully async (no `std::thread` bridge, no `Arc<Mutex<Box<dyn SerialPort>>>`); a dedicated writer task drains a channel so the sync `write()` trait method stays non-blocking. Agent musl cross-compilation targets (x86_64/aarch64/armv7) no longer require `libudev`. Removes ~15 transitive dependencies.
