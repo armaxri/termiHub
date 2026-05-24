@@ -61,6 +61,19 @@
    values, otherwise proportional tracking stops working.
    ────────────────────────────────────────────────────────────────────────── */
 
+/* Clamp the scrollbar TRACK to the same 5 px the slider sits in. By default
+   Monaco renders a ~14 px-wide track for the vertical scrollbar, which sits
+   on top of content (z-index 11) and visually obscures the rightmost ~1.5
+   characters whenever our SCROLLBAR_RESERVE_PX-based column count puts
+   text past the 953 px-from-left mark. Shrinking the track removes that
+   overlap; the slider inside it is already 5 px wide, so we don't lose
+   any visible slider area — just the empty padding to its left. */
+.xterm .xterm-scrollable-element > .scrollbar.vertical {
+  width: 5px !important;
+  left: auto !important;
+  right: 0;
+}
+
 .xterm .xterm-scrollable-element > .scrollbar > .slider {
   border-radius: 999px;
 }
