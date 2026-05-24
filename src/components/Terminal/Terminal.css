@@ -43,32 +43,24 @@
    xterm.js 6 built-in scrollable element polish.
 
    xterm.js 6 replaces the native overflow scrollbar with a Monaco-derived
-   ScrollableElement that draws its own slider in the DOM. We pass colors via
-   theme.scrollbarSlider*Background, but the slider geometry / drop shadows /
-   square corner artifacts are not exposed through the API — they have to be
-   styled here.
+   ScrollableElement that draws its own slider in the DOM. Colors come from
+   `theme.scrollbarSlider*Background` (set in `src/themes/engine.ts`); the
+   slider geometry, drop shadows, and square-corner artifacts are not
+   exposed through the API and have to be styled here.
 
-   Two problems we are fixing:
+   Slim the slider down to a pill-shaped overlay (matching the macOS /
+   Win11 overlay-scrollbar look), give it a `min-height` so a deep
+   scrollback buffer doesn't shrink it to Monaco's ~20 px minimum (which
+   reads as a small square at the bottom of the track), and hide the
+   VS Code-inherited inset shadow artifacts (top stripe, left stripe, and
+   the 3 × 3 px top-left corner square).
 
-   1. The default 10 px-wide square slider looks blocky and overlaps the
-      rightmost character column. FitAddon reserves 14 px on the right
-      (`options.overviewRuler?.width || 14`), but in horizontal-scroll mode
-      the `.xterm` element's width is set explicitly, which can defeat that
-      reservation. We add explicit right padding on `.xterm` so FitAddon
-      subtracts it from the available width, guaranteeing a gap.
-
-   2. The Monaco scrollable element renders inset drop shadows
-      (`.shadow.top`, `.shadow.left`, `.shadow.top-left-corner` — a 3 × 3 px
-      square) when scrolled. These are styled for VS Code's editor and read
-      as the "little square" artifacts in a terminal.
+   We only override width / right / border-radius / min-height — the
+   slider's inline `top` and `height` are set imperatively by Monaco's
+   ScrollableElement based on the scroll ratio and must keep their inline
+   values, otherwise proportional tracking stops working.
    ────────────────────────────────────────────────────────────────────────── */
 
-/* Pill-shaped overlay slider — matches the look of macOS / Win11 overlay
-   scrollbars more closely than the default flat block. We override
-   width/right/border-radius/min-height; the slider's `top` and `height`
-   are set imperatively by Monaco's ScrollableElement based on scroll ratio
-   and must keep their inline values (we use `min-height` rather than
-   `height` so the proportional tracking still works on shorter buffers). */
 .xterm .xterm-scrollable-element > .scrollbar > .slider {
   border-radius: 999px;
 }
@@ -77,27 +69,9 @@
   width: 5px !important;
   left: auto !important;
   right: 2px;
-  /* With 10 000 lines of scrollback the slider's natural height shrinks to
-     Monaco's minimum (~20 px) and reads as a small square at the bottom of
-     the track. Bump the floor so it always presents as a clearly vertical
-     bar, regardless of buffer size. */
   min-height: 48px !important;
 }
 
-/* Reserve extra clearance on the right so the slider can never sit over the
-   last character column. FitAddon subtracts `.xterm`'s padding-right from
-   the available width before computing the column count, so content
-   physically stops short of the slider area. The horizontal-scroll layout
-   sets `.xterm` width imperatively (`xterm.style.width = targetWidth`),
-   so under box-sizing: border-box this padding eats slightly into the
-   visible content width in horizontal-scroll mode — an acceptable trade
-   for guaranteed slider clearance in the default vertical mode. */
-.xterm {
-  padding-right: 6px;
-}
-
-/* Hide the VS Code-inherited inset shadow artifacts (top stripe, left
-   stripe, and the 3 × 3 px top-left corner square). */
 .xterm .xterm-scrollable-element > .shadow {
   display: none !important;
 }
