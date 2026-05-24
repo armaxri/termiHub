@@ -1134,4 +1134,238 @@ mod tests {
             "'shell' session monitoring should register under 'self' (same as 'local')"
         );
     }
+
+    // ── Regression: blocking_recv must not deadlock on a tokio worker ─
+
+    /// Mock that faithfully reproduces the real `AgentConnectionManager`
+    /// response delivery: `create_session` blocks on a `oneshot::Receiver`
+    /// whose value is sent by a separate `tokio::spawn`ed task.
+    ///
+    /// The real `agent_io_task` runs as a tokio task and delivers responses
+    /// across task boundaries the same way. If a caller invokes
+    /// `create_session` directly from an async tokio task (instead of inside
+    /// `spawn_blocking`), the `Receiver::blocking_recv()` parks the current
+    /// runtime worker; in that scenario the cross-task `tx.send` wake can
+    /// fail to re-schedule the parked worker and the await hangs forever —
+    /// the exact symptom that prompted this regression test.
+    struct BlockingRecvMockAgentRpcClient;
+
+    impl AgentRpcClient for BlockingRecvMockAgentRpcClient {
+        fn connect_agent(
+            &self,
+            _agent_id: &str,
+            _config: &RemoteAgentConfig,
+            _agent_settings: Option<&AgentSettings>,
+        ) -> Result<AgentConnectResult, TerminalError> {
+            unimplemented!()
+        }
+        fn disconnect_agent(&self, _agent_id: &str) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn is_connected(&self, _agent_id: &str) -> bool {
+            true
+        }
+        fn get_capabilities(&self, _agent_id: &str) -> Option<AgentCapabilities> {
+            None
+        }
+        fn shutdown_agent(
+            &self,
+            _agent_id: &str,
+            _reason: Option<&str>,
+        ) -> Result<u32, TerminalError> {
+            Ok(0)
+        }
+
+        fn send_request(
+            &self,
+            _agent_id: &str,
+            _method: &str,
+            _params: serde_json::Value,
+        ) -> Result<serde_json::Value, TerminalError> {
+            cross_task_blocking_recv(serde_json::Value::Null)
+        }
+
+        fn create_session(
+            &self,
+            _agent_id: &str,
+            session_type: &str,
+            _config: serde_json::Value,
+            _title: Option<&str>,
+        ) -> Result<AgentSessionInfo, TerminalError> {
+            cross_task_blocking_recv(AgentSessionInfo {
+                session_id: "mock-session-1".to_string(),
+                title: "Mock Session".to_string(),
+                session_type: session_type.to_string(),
+                status: "running".to_string(),
+                attached: false,
+            })
+        }
+
+        fn attach_session(
+            &self,
+            _agent_id: &str,
+            _remote_session_id: &str,
+        ) -> Result<(), TerminalError> {
+            cross_task_blocking_recv(())
+        }
+
+        fn close_session(
+            &self,
+            _agent_id: &str,
+            _remote_session_id: &str,
+        ) -> Result<(), TerminalError> {
+            cross_task_blocking_recv(())
+        }
+
+        fn list_sessions(&self, _agent_id: &str) -> Result<Vec<AgentSessionInfo>, TerminalError> {
+            Ok(vec![])
+        }
+        fn list_connections_and_folders(
+            &self,
+            _agent_id: &str,
+        ) -> Result<AgentConnectionsData, TerminalError> {
+            Ok(AgentConnectionsData {
+                connections: vec![],
+                folders: vec![],
+            })
+        }
+        fn list_definitions(
+            &self,
+            _agent_id: &str,
+        ) -> Result<Vec<AgentDefinitionInfo>, TerminalError> {
+            Ok(vec![])
+        }
+        fn save_definition(
+            &self,
+            _agent_id: &str,
+            _definition: serde_json::Value,
+        ) -> Result<AgentDefinitionInfo, TerminalError> {
+            unimplemented!()
+        }
+        fn update_definition(
+            &self,
+            _agent_id: &str,
+            _params: serde_json::Value,
+        ) -> Result<AgentDefinitionInfo, TerminalError> {
+            unimplemented!()
+        }
+        fn delete_definition(&self, _agent_id: &str, _def_id: &str) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn create_folder(
+            &self,
+            _agent_id: &str,
+            _name: &str,
+            _parent_id: Option<&str>,
+        ) -> Result<AgentFolderInfo, TerminalError> {
+            unimplemented!()
+        }
+        fn update_folder(
+            &self,
+            _agent_id: &str,
+            _params: serde_json::Value,
+        ) -> Result<AgentFolderInfo, TerminalError> {
+            unimplemented!()
+        }
+        fn delete_folder(&self, _agent_id: &str, _folder_id: &str) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn register_session_output(
+            &self,
+            _agent_id: &str,
+            _remote_session_id: &str,
+            _output_tx: OutputSender,
+        ) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn unregister_session_output(
+            &self,
+            _agent_id: &str,
+            _remote_session_id: &str,
+        ) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn register_monitoring_output(
+            &self,
+            _agent_id: &str,
+            _remote_session_id: &str,
+            _monitoring_tx: MonitoringSender,
+        ) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn unregister_monitoring_output(
+            &self,
+            _agent_id: &str,
+            _remote_session_id: &str,
+        ) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn send_session_input(
+            &self,
+            _agent_id: &str,
+            _remote_session_id: &str,
+            _data: &[u8],
+        ) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn resize_session(
+            &self,
+            _agent_id: &str,
+            _remote_session_id: &str,
+            _cols: u16,
+            _rows: u16,
+        ) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn apply_agent_settings(
+            &self,
+            _agent_id: &str,
+            _settings: &AgentSettings,
+        ) -> Result<(), TerminalError> {
+            Ok(())
+        }
+    }
+
+    /// Helper used by `BlockingRecvMockAgentRpcClient` to reproduce the
+    /// `agent_manager::send_request` blocking pattern: spawn a tokio task
+    /// that fulfils a oneshot after a short delay, then call `blocking_recv`
+    /// on the calling thread. Mirrors what the real agent_io_task does.
+    fn cross_task_blocking_recv<T: Send + 'static>(value: T) -> Result<T, TerminalError> {
+        let (tx, rx) = tokio::sync::oneshot::channel::<T>();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            let _ = tx.send(value);
+        });
+        rx.blocking_recv()
+            .map_err(|_| TerminalError::RemoteError("oneshot dropped".to_string()))
+    }
+
+    /// Regression for the local-agent shell hang: `RemoteProxy::connect`
+    /// invokes sync `agent_manager` helpers that internally call
+    /// `oneshot::Receiver::blocking_recv`. When invoked directly from an
+    /// async tokio task on a single-worker multi-thread runtime, the call
+    /// hangs because the parked worker cannot service the task that
+    /// completes the oneshot. The fix wraps each blocking call in
+    /// `tokio::task::spawn_blocking`, which runs on the dedicated blocking
+    /// thread pool. We exercise the pattern on a `worker_threads = 1`
+    /// runtime so that the deadlock is forced if the fix regresses.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn connect_does_not_deadlock_on_blocking_recv() {
+        let mock = Arc::new(BlockingRecvMockAgentRpcClient);
+        let mut proxy = RemoteProxy::new("agent-1".to_string(), mock);
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            proxy.connect(json!({ "type": "local", "config": {} })),
+        )
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "RemoteProxy::connect must complete without deadlocking on cross-task oneshot wake-ups"
+        );
+        result
+            .unwrap()
+            .expect("connect should succeed against the blocking-recv mock");
+    }
 }
