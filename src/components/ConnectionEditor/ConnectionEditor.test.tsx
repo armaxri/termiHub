@@ -7,7 +7,9 @@ import { useAppStore } from "@/store/appStore";
 import { resetRuntimeCache } from "@/hooks/useAvailableRuntimes";
 import { ConnectionEditor } from "./ConnectionEditor";
 import type { ConnectionTypeInfo } from "@/types/connection";
-import type { SavedConnection } from "@/types/connection";
+import type { SavedConnection, RemoteAgentDefinition } from "@/types/connection";
+import { DEFAULT_AGENT_SETTINGS } from "@/types/connection";
+import type { AgentDefinitionInfo } from "@/services/api";
 
 vi.mock("@/themes", () => ({
   applyTheme: vi.fn(),
@@ -599,5 +601,306 @@ describe("ConnectionEditor — unsaved-changes dirty state", () => {
       checkbox.click();
     });
     expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Mode-aware name conflict validation
+//
+// Regression: the editor previously checked the name against BOTH the
+// `connections` list AND the `remoteAgents` list regardless of which kind of
+// entity was being edited. This produced spurious "remote agent with this
+// name already exists" errors when creating a local connection whose name
+// happened to match an unrelated agent. Connections and agents live in
+// separate namespaces and must be validated independently.
+// ---------------------------------------------------------------------------
+
+const NAME_LOCAL_TYPE: ConnectionTypeInfo = {
+  typeId: "local",
+  displayName: "Local Shell",
+  icon: "local",
+  schema: {
+    groups: [
+      {
+        key: "general",
+        label: "General",
+        fields: [{ key: "shell", label: "Shell", fieldType: { type: "text" }, required: false }],
+      },
+    ],
+  },
+  capabilities: { monitoring: false, fileBrowser: false, resize: true, persistent: false },
+};
+
+function makeAgent(overrides: Partial<RemoteAgentDefinition> = {}): RemoteAgentDefinition {
+  return {
+    id: "agent-1",
+    name: "Production Server",
+    config: {
+      host: "host.example.com",
+      port: 22,
+      username: "user",
+      authMethod: "password",
+    },
+    connectionState: "connected",
+    isExpanded: true,
+    agentSettings: DEFAULT_AGENT_SETTINGS,
+    capabilities: {
+      connectionTypes: [
+        {
+          typeId: "shell",
+          displayName: "Shell",
+          icon: "shell",
+          schema: {
+            groups: [
+              {
+                key: "general",
+                label: "General",
+                fields: [
+                  { key: "shell", label: "Shell", fieldType: { type: "text" }, required: false },
+                ],
+              },
+            ],
+          },
+          capabilities: { monitoring: false, fileBrowser: false, resize: true, persistent: true },
+        },
+      ],
+      maxSessions: 10,
+      availableShells: ["bash"],
+      availableSerialPorts: [],
+      availableDockerImages: [],
+    },
+    ...overrides,
+  };
+}
+
+function changeNameInput(value: string): void {
+  const input = container.querySelector(
+    '[data-testid="connection-editor-name-input"]'
+  ) as HTMLInputElement;
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+  setter.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function nameErrorText(): string | null {
+  return (
+    container.querySelector('[data-testid="connection-editor-name-error"]')?.textContent ?? null
+  );
+}
+
+describe("ConnectionEditor — name conflict validation namespaces", () => {
+  const TAB_ID = "tab-name-1";
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    resetRuntimeCache();
+    mockedInvoke.mockImplementation((cmd) => {
+      if (cmd === "check_docker_available") return Promise.resolve(false);
+      if (cmd === "check_podman_available") return Promise.resolve(false);
+      if (cmd === "resolve_credential") return Promise.resolve(null);
+      return Promise.resolve(undefined);
+    });
+  });
+
+  afterEach(() => {
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+    vi.clearAllMocks();
+  });
+
+  function renderLocal(connectionId: string, folderId: string | null = null) {
+    act(() => {
+      root.render(
+        <ConnectionEditor tabId={TAB_ID} meta={{ connectionId, folderId }} isVisible={true} />
+      );
+    });
+  }
+
+  function renderAgentDefinition(agentId: string) {
+    act(() => {
+      root.render(
+        <ConnectionEditor
+          tabId={TAB_ID}
+          meta={{ connectionId: agentId, folderId: null, agentDefinitionId: "new" }}
+          isVisible={true}
+        />
+      );
+    });
+  }
+
+  async function flush() {
+    await act(async () => {
+      await Promise.resolve();
+    });
+  }
+
+  it("does NOT flag a new connection whose name matches a remote agent (separate namespaces)", async () => {
+    useAppStore.setState({
+      ...useAppStore.getInitialState(),
+      connections: [],
+      connectionTypes: [NAME_LOCAL_TYPE],
+      remoteAgents: [makeAgent({ name: "Shared Name" })],
+    });
+
+    renderLocal("new");
+    await flush();
+
+    await act(async () => {
+      changeNameInput("Shared Name");
+    });
+
+    expect(nameErrorText()).toBeNull();
+  });
+
+  it("still flags a new connection that duplicates another connection in the same folder", async () => {
+    useAppStore.setState({
+      ...useAppStore.getInitialState(),
+      connections: [
+        {
+          id: "existing-1",
+          name: "Duplicate",
+          config: { type: "local", config: { shell: "bash" } },
+          folderId: null,
+        },
+      ],
+      connectionTypes: [NAME_LOCAL_TYPE],
+      remoteAgents: [],
+    });
+
+    renderLocal("new");
+    await flush();
+
+    await act(async () => {
+      changeNameInput("Duplicate");
+    });
+
+    expect(nameErrorText()).toMatch(/connection with this name already exists/i);
+  });
+
+  it("does NOT flag a new connection that duplicates a connection in a DIFFERENT folder", async () => {
+    useAppStore.setState({
+      ...useAppStore.getInitialState(),
+      connections: [
+        {
+          id: "existing-other-folder",
+          name: "Shared Name",
+          config: { type: "local", config: { shell: "bash" } },
+          folderId: "folder-A",
+        },
+      ],
+      connectionTypes: [NAME_LOCAL_TYPE],
+      remoteAgents: [],
+    });
+
+    renderLocal("new", "folder-B");
+    await flush();
+
+    await act(async () => {
+      changeNameInput("Shared Name");
+    });
+
+    expect(nameErrorText()).toBeNull();
+  });
+
+  it("does NOT flag a new remote agent whose name matches a local connection", async () => {
+    useAppStore.setState({
+      ...useAppStore.getInitialState(),
+      connections: [
+        {
+          id: "existing-conn",
+          name: "Shared Name",
+          config: { type: "local", config: { shell: "bash" } },
+          folderId: null,
+        },
+      ],
+      connectionTypes: [NAME_LOCAL_TYPE],
+      remoteAgents: [],
+    });
+
+    renderLocal("new-remote-agent");
+    await flush();
+
+    await act(async () => {
+      changeNameInput("Shared Name");
+    });
+
+    expect(nameErrorText()).toBeNull();
+  });
+
+  it("still flags a new remote agent that duplicates another agent's name", async () => {
+    useAppStore.setState({
+      ...useAppStore.getInitialState(),
+      connections: [],
+      connectionTypes: [NAME_LOCAL_TYPE],
+      remoteAgents: [makeAgent({ id: "agent-existing", name: "Duplicate Agent" })],
+    });
+
+    renderLocal("new-remote-agent");
+    await flush();
+
+    await act(async () => {
+      changeNameInput("Duplicate Agent");
+    });
+
+    expect(nameErrorText()).toMatch(/remote agent with this name already exists/i);
+  });
+
+  it("does NOT flag an agent definition whose name matches a local connection", async () => {
+    const agent = makeAgent({ id: "agent-with-defs" });
+    useAppStore.setState({
+      ...useAppStore.getInitialState(),
+      connections: [
+        {
+          id: "existing-conn",
+          name: "Shared Name",
+          config: { type: "local", config: { shell: "bash" } },
+          folderId: null,
+        },
+      ],
+      connectionTypes: [NAME_LOCAL_TYPE],
+      remoteAgents: [agent],
+      agentDefinitions: { [agent.id]: [] },
+    });
+
+    renderAgentDefinition(agent.id);
+    await flush();
+
+    await act(async () => {
+      changeNameInput("Shared Name");
+    });
+
+    expect(nameErrorText()).toBeNull();
+  });
+
+  it("flags an agent definition that duplicates another definition on the same agent", async () => {
+    const agent = makeAgent({ id: "agent-with-defs" });
+    const existingDef: AgentDefinitionInfo = {
+      id: "def-1",
+      name: "Duplicate Def",
+      sessionType: "shell",
+      config: { shell: "bash" },
+      persistent: false,
+      folderId: null,
+    };
+    useAppStore.setState({
+      ...useAppStore.getInitialState(),
+      connections: [],
+      connectionTypes: [NAME_LOCAL_TYPE],
+      remoteAgents: [agent],
+      agentDefinitions: { [agent.id]: [existingDef] },
+    });
+
+    renderAgentDefinition(agent.id);
+    await flush();
+
+    await act(async () => {
+      changeNameInput("Duplicate Def");
+    });
+
+    expect(nameErrorText()).toMatch(/definition with this name already exists/i);
   });
 });
