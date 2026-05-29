@@ -194,6 +194,12 @@ export interface AppSettings {
   cursorBlink?: boolean;
   powerMonitoringEnabled: boolean;
   fileBrowserEnabled: boolean;
+  /**
+   * Show a confirmation dialog when the user closes a tab via the
+   * close-tab or close-tab-group keyboard shortcut. Defaults to true.
+   * The X-button on tabs always closes immediately and is unaffected by this setting.
+   */
+  confirmCloseTabOnShortcut?: boolean;
   defaultShellIntegration?: boolean;
   defaultX11Forwarding?: boolean;
   layout?: LayoutConfig;

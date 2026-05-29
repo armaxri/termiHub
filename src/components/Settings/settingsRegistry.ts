@@ -199,6 +199,23 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     ],
   },
   {
+    id: "confirmCloseTabOnShortcut",
+    label: "Confirm Close Tab on Shortcut",
+    description: "Ask for confirmation when closing a tab via keyboard shortcut",
+    category: "general",
+    keywords: [
+      "confirm",
+      "close",
+      "tab",
+      "shortcut",
+      "keyboard",
+      "dialog",
+      "ctrl+w",
+      "cmd+w",
+      "prompt",
+    ],
+  },
+  {
     id: "experimentalFeaturesEnabled",
     label: "Allow Experimental Features",
     description:
