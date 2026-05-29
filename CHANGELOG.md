@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Connection Editor: name conflict validation no longer crosses entity types. Connections, remote agents, and agent session definitions now each validate uniqueness only against their own peers (connections vs. other connections in the same folder, agents vs. other agents, definitions vs. other definitions on the same agent). Previously, naming a connection the same as an existing remote agent (or vice-versa) raised a spurious "already exists" error even though the two are stored independently.
 - Monitoring: macOS memory usage was reported as ~100% due to a bug in `sysinfo` 0.33 where `available_memory()` incorrectly subtracted compressed pages. Upgraded `sysinfo` from 0.33 to 0.38 which uses Apple's XNU-documented formula and matches Activity Monitor within ~4%.
 
 ### Changed
