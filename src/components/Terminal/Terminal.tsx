@@ -659,6 +659,30 @@ export function Terminal({
     // Wire to backend
     setupTerminal(xterm, fitAddon, () => canceled);
 
+    // Re-fit once web fonts finish loading. The terminal font (Nerd Font
+    // Mono) ships via @font-face with `font-display: swap`, so xterm's
+    // initial cell-width measurement is taken against the fallback
+    // monospace and FitAddon then computes one column fewer than the real
+    // font would fit. Without this extra fit, the last column never
+    // appears until the user manually resizes the window. Verified via
+    // DOM measurement: FitAddon's stale 8.5 px fallback cell width
+    // produced cols=112 at parent width 967, while the real Nerd Font at
+    // 8.43 px / col yields cols=113 with no slider overlap.
+    if (typeof document !== "undefined" && document.fonts) {
+      void document.fonts
+        .load(`${baseFontSize}px "MesloLGS Nerd Font Mono"`)
+        .catch(() => undefined)
+        .then(() => document.fonts.ready)
+        .then(() => {
+          if (canceled) return;
+          try {
+            fitAddon.fit();
+          } catch {
+            // Container not sized yet; the next ResizeObserver fit will catch it.
+          }
+        });
+    }
+
     // Forward wheel events from the gap below the canvas to xterm.
     // FitAddon rounds rows down, so there is almost always a small gap
     // between the canvas bottom and the container edge.  The scrollable
