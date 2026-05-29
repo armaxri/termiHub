@@ -124,6 +124,21 @@ describe("getXtermTheme", () => {
       expect(xt).toHaveProperty(key);
     }
   });
+
+  it("passes scrollbar slider colors so xterm's built-in scrollbar matches the theme", () => {
+    applyTheme("dark");
+    const xt = getXtermTheme();
+    expect(xt.scrollbarSliderBackground).toBe(darkTheme.colors.scrollbarThumb);
+    expect(xt.scrollbarSliderHoverBackground).toBe(darkTheme.colors.scrollbarThumbHover);
+    expect(xt.scrollbarSliderActiveBackground).toBeTruthy();
+  });
+
+  it("updates scrollbar slider colors when switching themes", () => {
+    applyTheme("light");
+    const xt = getXtermTheme();
+    expect(xt.scrollbarSliderBackground).toBe(lightTheme.colors.scrollbarThumb);
+    expect(xt.scrollbarSliderHoverBackground).toBe(lightTheme.colors.scrollbarThumbHover);
+  });
 });
 
 describe("onThemeChange", () => {
