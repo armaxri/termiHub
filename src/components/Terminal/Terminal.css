@@ -38,3 +38,16 @@
 .terminal-horizontal-scroll .xterm-screen {
   overflow: hidden;
 }
+
+/* xterm.js measures cell width with `font-kerning: none` and assumes a
+   tight cell — but the rendered DOM glyphs inherit `letter-spacing` from
+   the UI-wide `--letter-spacing-ui` rule on body. That extra ~0.11 px per
+   character snowballs across a 113-column line into ~13 px of overhang,
+   which xterm doesn't know about; the rightmost 1–2 columns visually
+   slide off the right edge while xterm thinks they fit. Force
+   letter-spacing back to 0 inside the terminal so the rendered glyphs
+   actually match xterm's cell-width measurement. */
+.xterm,
+.xterm * {
+  letter-spacing: 0;
+}

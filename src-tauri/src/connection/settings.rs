@@ -164,6 +164,11 @@ pub struct AppSettings {
     /// User-customized keybinding overrides.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub keybinding_overrides: Option<Vec<KeybindingOverrideEntry>>,
+    /// When `true` (default), application shortcuts that collide with standard
+    /// shell, tmux, vim, or SSH-to-remote keys are suppressed while the
+    /// terminal pane is focused so the keystroke reaches the PTY.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_key_passthrough: Option<bool>,
     /// User-defined file extension / filename → language ID mappings.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file_language_mappings: Option<std::collections::HashMap<String, String>>,
@@ -210,6 +215,7 @@ impl Default for AppSettings {
             credential_auto_lock_minutes: None,
             right_click_behavior: None,
             keybinding_overrides: None,
+            terminal_key_passthrough: None,
             file_language_mappings: None,
             installed_language_packages: None,
             custom_language_grammars: None,

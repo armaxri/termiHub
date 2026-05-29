@@ -138,10 +138,89 @@ tests:
       - terminal: true
     instructions:
       - "On macOS: press Cmd+B to toggle sidebar"
-      - "On Windows/Linux: press Ctrl+B to toggle sidebar"
+      - "On Windows/Linux: press Ctrl+Shift+B to toggle sidebar"
       - "Verify that the non-platform modifier does not trigger the shortcut"
     expected:
       - "macOS: Cmd+B toggles sidebar, Ctrl+B sends control character to terminal"
-      - "Windows/Linux: Ctrl+B toggles sidebar"
+      - "Windows/Linux: Ctrl+Shift+B toggles sidebar; Ctrl+B is sent to the terminal (tmux prefix passes through)"
     verification: manual
     tags: [platform]
+
+  # --- Shell-conflict avoidance & pass-through (PR feature/keybindings-conflict-avoidance) ---
+
+  - id: MT-KB-09
+    name: "Windows/Linux: Ctrl+W in shell deletes a word (not Close Tab)"
+    platforms: [windows, linux]
+    prerequisites:
+      - app: true
+      - terminal: true
+    instructions:
+      - "Open a local terminal and type 'echo foo bar baz' without pressing Enter"
+      - "Press Ctrl+W (readline delete-word-backward)"
+      - "Verify the last word ('baz') is deleted from the command line"
+      - "Press Ctrl+Shift+W"
+      - "Verify the tab closes"
+    expected:
+      - "Ctrl+W deletes the word; tab is NOT closed"
+      - "Ctrl+Shift+W closes the tab"
+    verification: manual
+    tags: [passthrough, shell-conflict]
+
+  - id: MT-KB-10
+    name: "Windows/Linux: Ctrl+B reaches tmux prefix on remote SSH session"
+    platforms: [windows, linux]
+    prerequisites:
+      - app: true
+      - terminal: true
+      - ssh_server: true
+    instructions:
+      - "SSH into a remote machine that has tmux installed"
+      - "Run 'tmux' on the remote host"
+      - "Press Ctrl+B followed by C (tmux prefix + new window)"
+      - "Verify a new tmux window is created (status bar shows two windows)"
+      - "Press Ctrl+Shift+B"
+      - "Verify the local sidebar toggles"
+    expected:
+      - "Ctrl+B reaches tmux on the remote host (passes through, no sidebar toggle)"
+      - "Ctrl+Shift+B toggles the local termiHub sidebar"
+    verification: manual
+    tags: [passthrough, ssh, tmux]
+
+  - id: MT-KB-11
+    name: "Windows/Linux: Ctrl+\\ sends SIGQUIT (does not split panel)"
+    platforms: [windows, linux]
+    prerequisites:
+      - app: true
+      - terminal: true
+    instructions:
+      - "Open a local terminal and run 'sleep 60'"
+      - "Press Ctrl+\\"
+      - "Verify the sleep process is killed by SIGQUIT (terminal returns to prompt, may print 'Quit (core dumped)')"
+      - "Press Alt+Shift+\\"
+      - "Verify the panel splits to the right"
+    expected:
+      - "Ctrl+\\ kills the foreground process via SIGQUIT (no split)"
+      - "Alt+Shift+\\ splits the panel"
+    verification: manual
+    tags: [passthrough, signals]
+
+  - id: MT-KB-12
+    name: "Pass-through toggle in Settings disables shell-key forwarding"
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - terminal: true
+    instructions:
+      - "Rebind 'Close Tab' to Ctrl+W via Settings → Keyboard Shortcuts (Win/Linux) or Ctrl+W (mac)"
+      - "Focus a terminal tab and press Ctrl+W"
+      - "Verify the tab is NOT closed (pass-through suppresses the rebound shortcut)"
+      - "Disable 'Pass through shell keys when terminal is focused'"
+      - "Press Ctrl+W again"
+      - "Verify the tab IS closed"
+      - "Re-enable pass-through and click Reset to Safer Defaults"
+    expected:
+      - "While pass-through is on, Ctrl+W in a focused terminal reaches the PTY"
+      - "Disabling pass-through makes the rebound shortcut fire instead"
+      - "Reset to Safer Defaults restores the conflict-avoiding bindings"
+    verification: manual
+    tags: [passthrough, settings]

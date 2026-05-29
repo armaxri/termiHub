@@ -1,7 +1,13 @@
 import { useEffect } from "react";
 import { useAppStore } from "@/store/appStore";
 import { getAllLeaves, findAdjacentLeaf, FocusDirection } from "@/utils/panelTree";
-import { processKeyEvent, onChordStateChange, cancelChord } from "@/services/keybindings";
+import {
+  processKeyEvent,
+  onChordStateChange,
+  cancelChord,
+  isShellReservedKey,
+  isEventFromTerminal,
+} from "@/services/keybindings";
 
 /**
  * Global keyboard shortcuts for the application.
@@ -38,6 +44,14 @@ export function useKeyboardShortcuts() {
     });
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Pass-through: when the terminal pane is focused, let standard shell /
+      // tmux / vim / SSH-to-remote keys reach the PTY instead of firing any
+      // matching app shortcut. Users can disable this in Settings.
+      const passthroughEnabled = useAppStore.getState().settings.terminalKeyPassthrough !== false;
+      if (passthroughEnabled && isEventFromTerminal(e) && isShellReservedKey(e)) {
+        return;
+      }
+
       const action = processKeyEvent(e);
       if (!action) return;
 

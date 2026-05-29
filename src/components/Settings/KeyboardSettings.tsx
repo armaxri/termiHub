@@ -61,6 +61,14 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
     persistOverrides();
   }, [persistOverrides]);
 
+  const passthroughEnabled = settings.terminalKeyPassthrough !== false;
+  const handleTogglePassthrough = useCallback(() => {
+    updateSettings({
+      ...settings,
+      terminalKeyPassthrough: !passthroughEnabled,
+    });
+  }, [settings, passthroughEnabled, updateSettings]);
+
   const handleResetOne = useCallback(
     (action: string) => {
       setOverride(action, null);
@@ -134,6 +142,25 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
         />
       </div>
 
+      <label
+        className="keyboard-settings__passthrough"
+        data-testid="keyboard-settings-passthrough-label"
+      >
+        <input
+          type="checkbox"
+          checked={passthroughEnabled}
+          onChange={handleTogglePassthrough}
+          data-testid="keyboard-settings-passthrough"
+        />
+        <span>
+          Pass through shell keys when terminal is focused
+          <small>
+            Common shell, tmux, vim, and SSH keys (Ctrl+letter, Ctrl+\, Alt+letter) are sent to the
+            terminal instead of triggering an app shortcut while a terminal pane has focus.
+          </small>
+        </span>
+      </label>
+
       {conflictWarning && (
         <div className="keyboard-settings__conflict" data-testid="keyboard-settings-conflict">
           {conflictWarning}
@@ -179,9 +206,10 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
           className="keyboard-settings__reset-all"
           onClick={handleResetAll}
           data-testid="keyboard-settings-reset-all"
+          title="Restore the built-in defaults, which are chosen to avoid common shell, tmux, vim, and SSH conflicts on Windows and Linux."
         >
           <RotateCcw size={14} />
-          Reset All to Defaults
+          Reset to Safer Defaults
         </button>
         <button
           className="keyboard-settings__export-pdf"
