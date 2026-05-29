@@ -63,8 +63,19 @@ export function useKeyboardShortcuts() {
         case "close-tab": {
           e.preventDefault();
           const panel = allLeaves.find((p) => p.id === activePanelId);
-          if (panel?.activeTabId) {
-            closeTab(panel.activeTabId, panel.id);
+          if (!panel?.activeTabId) break;
+          const tabId = panel.activeTabId;
+          const confirmEnabled = useAppStore.getState().settings.confirmCloseTabOnShortcut ?? true;
+          if (confirmEnabled) {
+            const activeTab = panel.tabs.find((t) => t.id === tabId);
+            useAppStore.getState().setPendingShortcutCloseConfirm({
+              kind: "tab",
+              tabId,
+              panelId: panel.id,
+              label: activeTab?.title ?? "this tab",
+            });
+          } else {
+            closeTab(tabId, panel.id);
           }
           break;
         }
@@ -178,8 +189,17 @@ export function useKeyboardShortcuts() {
 
         case "close-tab-group": {
           e.preventDefault();
-          const { tabGroups, activeTabGroupId } = useAppStore.getState();
-          if (tabGroups.length > 1) {
+          const { tabGroups, activeTabGroupId, settings } = useAppStore.getState();
+          if (tabGroups.length <= 1) break;
+          const confirmEnabled = settings.confirmCloseTabOnShortcut ?? true;
+          if (confirmEnabled) {
+            const activeGroup = tabGroups.find((g) => g.id === activeTabGroupId);
+            useAppStore.getState().setPendingShortcutCloseConfirm({
+              kind: "tab-group",
+              tabGroupId: activeTabGroupId,
+              label: activeGroup?.name ?? "this tab group",
+            });
+          } else {
             useAppStore.getState().closeTabGroup(activeTabGroupId);
           }
           break;

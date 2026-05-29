@@ -157,10 +157,37 @@ describe("useKeyboardShortcuts", () => {
   });
 
   describe("close-tab", () => {
-    it("closes the active tab in the active panel", () => {
+    it("opens the confirmation dialog instead of closing immediately when the setting is enabled (default)", () => {
+      useAppStore.getState().addTab("Tab A", "local");
+      const panel = getAllLeaves(useAppStore.getState().rootPanel)[0];
+      useAppStore.getState().setActivePanel(panel.id);
+
+      act(() => {
+        root.render(createElement(KeyboardHarness));
+      });
+      mockProcessKeyEvent.mockReturnValue("close-tab");
+
+      fireKey("w");
+
+      // The tab must NOT be closed yet — the dialog should be open instead.
+      expect(getAllLeaves(useAppStore.getState().rootPanel)[0].tabs).toHaveLength(1);
+      const confirm = useAppStore.getState().pendingShortcutCloseConfirm;
+      expect(confirm).not.toBeNull();
+      expect(confirm?.kind).toBe("tab");
+      if (confirm?.kind === "tab") {
+        expect(confirm.tabId).toBe(panel.activeTabId);
+        expect(confirm.panelId).toBe(panel.id);
+        expect(confirm.label).toBe("Tab A");
+      }
+    });
+
+    it("closes the active tab immediately when the confirm setting is disabled", () => {
       useAppStore.getState().addTab("Tab A", "local");
       const panelId = getAllLeaves(useAppStore.getState().rootPanel)[0].id;
       useAppStore.getState().setActivePanel(panelId);
+      useAppStore.setState((state) => ({
+        settings: { ...state.settings, confirmCloseTabOnShortcut: false },
+      }));
 
       act(() => {
         root.render(createElement(KeyboardHarness));
@@ -170,6 +197,50 @@ describe("useKeyboardShortcuts", () => {
       fireKey("w");
 
       expect(getAllLeaves(useAppStore.getState().rootPanel)[0].tabs).toHaveLength(0);
+      expect(useAppStore.getState().pendingShortcutCloseConfirm).toBeNull();
+    });
+  });
+
+  describe("close-tab-group", () => {
+    it("opens the confirmation dialog instead of closing immediately when the setting is enabled (default)", () => {
+      useAppStore.getState().addTabGroup();
+      const groups = useAppStore.getState().tabGroups;
+      const activeId = useAppStore.getState().activeTabGroupId;
+      const activeGroup = groups.find((g) => g.id === activeId)!;
+
+      act(() => {
+        root.render(createElement(KeyboardHarness));
+      });
+      mockProcessKeyEvent.mockReturnValue("close-tab-group");
+
+      const groupsBefore = useAppStore.getState().tabGroups.length;
+      fireKey("F4");
+
+      expect(useAppStore.getState().tabGroups).toHaveLength(groupsBefore);
+      const confirm = useAppStore.getState().pendingShortcutCloseConfirm;
+      expect(confirm).not.toBeNull();
+      expect(confirm?.kind).toBe("tab-group");
+      if (confirm?.kind === "tab-group") {
+        expect(confirm.tabGroupId).toBe(activeGroup.id);
+      }
+    });
+
+    it("closes the tab group immediately when the confirm setting is disabled", () => {
+      useAppStore.getState().addTabGroup();
+      const groupsBefore = useAppStore.getState().tabGroups.length;
+      useAppStore.setState((state) => ({
+        settings: { ...state.settings, confirmCloseTabOnShortcut: false },
+      }));
+
+      act(() => {
+        root.render(createElement(KeyboardHarness));
+      });
+      mockProcessKeyEvent.mockReturnValue("close-tab-group");
+
+      fireKey("F4");
+
+      expect(useAppStore.getState().tabGroups).toHaveLength(groupsBefore - 1);
+      expect(useAppStore.getState().pendingShortcutCloseConfirm).toBeNull();
     });
   });
 

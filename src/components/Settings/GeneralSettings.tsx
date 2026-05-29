@@ -106,6 +106,27 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
           </label>
         )}
 
+        {show("confirmCloseTabOnShortcut") && (
+          <div className="settings-form__field">
+            <span className="settings-form__label">Confirm Close Tab on Shortcut</span>
+            <label className="settings-panel__toggle">
+              <input
+                type="checkbox"
+                checked={settings.confirmCloseTabOnShortcut ?? true}
+                onChange={(e) =>
+                  onChange({ ...settings, confirmCloseTabOnShortcut: e.target.checked })
+                }
+                data-testid="settings-confirm-close-tab-on-shortcut"
+              />
+              <span className="settings-panel__toggle-slider" />
+            </label>
+            <span className="settings-form__hint">
+              Ask for confirmation when closing a tab or tab group via keyboard shortcut. The X
+              button on tabs is unaffected.
+            </span>
+          </div>
+        )}
+
         {show("experimentalFeaturesEnabled") && (
           <div className="settings-form__field">
             <span className="settings-form__label">Allow Experimental Features</span>

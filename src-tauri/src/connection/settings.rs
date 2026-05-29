@@ -140,6 +140,10 @@ pub struct AppSettings {
     pub power_monitoring_enabled: bool,
     #[serde(default = "default_true")]
     pub file_browser_enabled: bool,
+    /// Show a confirmation dialog when the user presses the close-tab or
+    /// close-tab-group keyboard shortcut. The X-button on a tab is not affected.
+    #[serde(default = "default_true")]
+    pub confirm_close_tab_on_shortcut: bool,
     /// Default value for Shell Integration toggle in new SSH connections.
     #[serde(default = "default_true")]
     pub default_shell_integration: bool,
@@ -198,6 +202,7 @@ impl Default for AppSettings {
             cursor_blink: None,
             power_monitoring_enabled: true,
             file_browser_enabled: true,
+            confirm_close_tab_on_shortcut: true,
             default_shell_integration: true,
             default_x11_forwarding: true,
             layout: None,

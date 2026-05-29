@@ -317,6 +317,21 @@ interface AppState {
   setEditorDirty: (tabId: string, dirty: boolean) => void;
   pendingCloseRequest: { tabId: string; panelId: string } | null;
   setPendingCloseRequest: (req: { tabId: string; panelId: string } | null) => void;
+  /**
+   * Confirmation request shown when the user closes a tab (or tab group) via
+   * keyboard shortcut while `settings.confirmCloseTabOnShortcut` is enabled.
+   * Null when no dialog is open.
+   */
+  pendingShortcutCloseConfirm:
+    | { kind: "tab"; tabId: string; panelId: string; label: string }
+    | { kind: "tab-group"; tabGroupId: string; label: string }
+    | null;
+  setPendingShortcutCloseConfirm: (
+    req:
+      | { kind: "tab"; tabId: string; panelId: string; label: string }
+      | { kind: "tab-group"; tabGroupId: string; label: string }
+      | null
+  ) => void;
   closeTab: (tabId: string, panelId: string) => void;
   setActiveTab: (tabId: string, panelId: string) => void;
   moveTab: (tabId: string, fromPanelId: string, toPanelId: string, newIndex: number) => void;
@@ -1625,6 +1640,9 @@ export const useAppStore = create<AppState>((set, get) => {
     pendingCloseRequest: null,
     setPendingCloseRequest: (req) => set({ pendingCloseRequest: req }),
 
+    pendingShortcutCloseConfirm: null,
+    setPendingShortcutCloseConfirm: (req) => set({ pendingShortcutCloseConfirm: req }),
+
     closeTab: (tabId, panelId) =>
       set((state) => {
         // Clean up per-tab state for the closed tab
@@ -1908,12 +1926,14 @@ export const useAppStore = create<AppState>((set, get) => {
       externalConnectionFiles: [],
       powerMonitoringEnabled: true,
       fileBrowserEnabled: true,
+      confirmCloseTabOnShortcut: true,
     },
     savedSettings: {
       version: "1",
       externalConnectionFiles: [],
       powerMonitoringEnabled: true,
       fileBrowserEnabled: true,
+      confirmCloseTabOnShortcut: true,
     },
 
     // Layout

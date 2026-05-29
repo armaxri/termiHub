@@ -13,6 +13,7 @@ import { RecoveryDialog } from "@/components/Settings/RecoveryDialog";
 import { ShortcutsOverlay } from "@/components/KeyboardShortcuts/ShortcutsOverlay";
 import { OverlayViewPanel } from "@/components/Settings/OverlayViewPanel";
 import { LargePasteDialog } from "@/components/Terminal/LargePasteDialog";
+import { ConfirmCloseTabDialog } from "@/components/Terminal/ConfirmCloseTabDialog";
 import { UpdateNotification } from "@/components/UpdateNotification/UpdateNotification";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useTunnelEvents } from "@/hooks/useTunnelEvents";
@@ -247,6 +248,7 @@ function App() {
           onCancel={closeLargePasteDialog}
         />
         <UpdateNotification />
+        <ConfirmCloseTabDialog />
       </div>
     </ErrorBoundary>
   );

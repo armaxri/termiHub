@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- UI: confirmation dialog when closing a tab or tab group via keyboard shortcut (`close-tab` / `close-tab-group`). Default Cancel button focus protects against accidental Enter. The X-button on tabs is unaffected. A new "Confirm Close Tab on Shortcut" toggle in **Settings → General** disables the dialog. Closes #750.
 - Network tools: the Port Scanner now accepts CIDR ranges (e.g. `192.168.0.0/24`), single IP/host names, or a comma-separated mix of the two as its target. Results are grouped per host when multiple targets are scanned. Backed by the `ipnet` crate; capped at 65 536 expanded hosts per scan to prevent runaway internet-scale scans. Closes #732.
 - Connection Editor: the dynamic connection form now uses `react-hook-form` for field state management and `zod` for client-side validation. Invalid port values (out of 1–65535), empty required text fields, and out-of-range numbers now show inline error messages next to the relevant field without requiring a connection attempt.
 - Network tools: `pnet_packet` is now used to validate ICMP/ICMPv6 reply types in traceroute. Only Time Exceeded and Destination Unreachable packets are accepted as valid hop replies; unrelated ICMP packets received on the raw socket are silently ignored. Improves correctness and lays the groundwork for better Windows raw-socket support.
