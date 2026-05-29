@@ -6,7 +6,15 @@ import {
 } from "@/types/keybindings";
 import { isMac } from "@/utils/platform";
 
-/** All default keybindings for the application. */
+/**
+ * All default keybindings for the application.
+ *
+ * Windows/Linux defaults deliberately avoid common shell, tmux, and readline
+ * shortcuts so that termiHub does not silently intercept keystrokes the user
+ * intended for the terminal (locally or via SSH). The macOS defaults use the
+ * Cmd modifier, which does not collide with shell keybindings, so they keep
+ * the more conventional single-modifier form.
+ */
 export const DEFAULT_BINDINGS: KeyBinding[] = [
   // General
   {
@@ -14,7 +22,8 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     label: "Toggle Sidebar",
     category: "general",
     macDefault: { key: "b", meta: true },
-    winLinuxDefault: { key: "b", ctrl: true },
+    // Avoid Ctrl+B: tmux default prefix key.
+    winLinuxDefault: { key: "B", ctrl: true, shift: true },
     configurable: true,
   },
   {
@@ -33,10 +42,9 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
       { key: "k", meta: true },
       { key: "s", meta: true },
     ],
-    winLinuxDefault: [
-      { key: "k", ctrl: true },
-      { key: "s", ctrl: true },
-    ],
+    // Avoid Ctrl+K chord leader: readline "kill-to-end-of-line". F1 is unbound
+    // in virtually every shell and is the long-standing "help" affordance.
+    winLinuxDefault: { key: "F1" },
     configurable: true,
   },
 
@@ -54,7 +62,8 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     label: "Close Tab",
     category: "terminal",
     macDefault: { key: "w", meta: true },
-    winLinuxDefault: { key: "w", ctrl: true },
+    // Avoid Ctrl+W: readline "delete-word-backward" and vim window-command prefix.
+    winLinuxDefault: { key: "W", ctrl: true, shift: true },
     configurable: true,
   },
   {
@@ -122,7 +131,8 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     label: "Split Right",
     category: "navigation",
     macDefault: { key: "\\", meta: true },
-    winLinuxDefault: { key: "\\", ctrl: true },
+    // Avoid Ctrl+\: sends SIGQUIT (force-kill) to foreground process.
+    winLinuxDefault: { key: "\\", alt: true, shift: true },
     configurable: true,
   },
   {
@@ -130,7 +140,8 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     label: "Split Down",
     category: "navigation",
     macDefault: { key: "\\", meta: true, shift: true },
-    winLinuxDefault: { key: "\\", ctrl: true, shift: true },
+    // Sibling to split-right; "-" reads as a horizontal divider for a downward split.
+    winLinuxDefault: { key: "-", alt: true, shift: true },
     configurable: true,
   },
   {
@@ -138,7 +149,8 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     label: "Focus Panel Above",
     category: "navigation",
     macDefault: { key: "ArrowUp", meta: true, alt: true },
-    winLinuxDefault: { key: "ArrowUp", ctrl: true, alt: true },
+    // Avoid Ctrl+Alt+Arrow: GNOME/KDE workspace switching and Intel-driver screen rotation.
+    winLinuxDefault: { key: "ArrowUp", alt: true, shift: true },
     configurable: true,
   },
   {
@@ -146,7 +158,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     label: "Focus Panel Below",
     category: "navigation",
     macDefault: { key: "ArrowDown", meta: true, alt: true },
-    winLinuxDefault: { key: "ArrowDown", ctrl: true, alt: true },
+    winLinuxDefault: { key: "ArrowDown", alt: true, shift: true },
     configurable: true,
   },
   {
@@ -154,7 +166,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     label: "Focus Panel Left",
     category: "navigation",
     macDefault: { key: "ArrowLeft", meta: true, alt: true },
-    winLinuxDefault: { key: "ArrowLeft", ctrl: true, alt: true },
+    winLinuxDefault: { key: "ArrowLeft", alt: true, shift: true },
     configurable: true,
   },
   {
@@ -162,7 +174,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     label: "Focus Panel Right",
     category: "navigation",
     macDefault: { key: "ArrowRight", meta: true, alt: true },
-    winLinuxDefault: { key: "ArrowRight", ctrl: true, alt: true },
+    winLinuxDefault: { key: "ArrowRight", alt: true, shift: true },
     configurable: true,
   },
   {
@@ -212,7 +224,8 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     label: "Close Tab Group",
     category: "tab-groups",
     macDefault: { key: "w", meta: true, shift: true },
-    winLinuxDefault: { key: "w", ctrl: true, shift: true },
+    // Ctrl+Shift+W is now Close Tab on Win/Linux — relocate Close Tab Group to Ctrl+Shift+Q.
+    winLinuxDefault: { key: "Q", ctrl: true, shift: true },
     configurable: true,
   },
   {
@@ -508,4 +521,57 @@ export function processKeyEvent(event: KeyboardEvent): string | null {
 /** Check if a chord is currently pending (for testing). */
 export function isChordPending(): boolean {
   return pendingChordCombo !== null;
+}
+
+// --- Terminal pass-through ---
+
+/**
+ * Whether a key event should be passed through to the focused terminal instead
+ * of being matched as an application shortcut. This protects shell/readline,
+ * tmux, vim, and SSH-to-remote workflows from accidental interception when a
+ * user (or a custom override) binds an action to a key the shell already owns.
+ *
+ * Covered:
+ * - `Ctrl+<single letter>` — readline / emacs / tmux / vim ranges
+ * - `Ctrl+\` (SIGQUIT), `Ctrl+[` (Esc), `Ctrl+]` (telnet/screen escape)
+ * - `Alt+<single letter>` — readline word-motion commands (Alt+b, Alt+f, …)
+ *
+ * Not covered: combos that include Shift, Meta/Cmd, or Tab/Arrow keys, since
+ * those do not collide with the standard shell key map.
+ */
+export function isShellReservedKey(event: KeyboardEvent): boolean {
+  if (event.metaKey) return false;
+  if (event.shiftKey) return false;
+
+  if (event.ctrlKey && !event.altKey) {
+    if (event.key.length === 1) {
+      if (/^[a-zA-Z]$/.test(event.key)) return true;
+      if (event.key === "\\" || event.key === "[" || event.key === "]") return true;
+    }
+    return false;
+  }
+
+  if (event.altKey && !event.ctrlKey) {
+    if (event.key.length === 1 && /^[a-zA-Z]$/.test(event.key)) return true;
+    return false;
+  }
+
+  return false;
+}
+
+/**
+ * Whether the given keyboard event originated from a focused xterm instance.
+ * Used together with `isShellReservedKey` to decide whether to pass the key
+ * through to the terminal instead of dispatching an application shortcut.
+ */
+export function isEventFromTerminal(event: KeyboardEvent): boolean {
+  const target = event.target as Element | null;
+  if (target && typeof target.closest === "function") {
+    if (target.closest(".xterm")) return true;
+  }
+  const active = typeof document !== "undefined" ? document.activeElement : null;
+  if (active && typeof active.closest === "function") {
+    return !!active.closest(".xterm");
+  }
+  return false;
 }

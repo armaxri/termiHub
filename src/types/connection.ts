@@ -208,6 +208,13 @@ export interface AppSettings {
   rightClickBehavior?: "contextMenu" | "quickAction";
   keybindingOverrides?: KeybindingOverrideEntry[];
   /**
+   * When true (default), application shortcuts that collide with standard
+   * shell, tmux, vim, or SSH-to-remote keys are suppressed while the terminal
+   * pane is focused so the keystroke reaches the PTY. Toggle off to make
+   * every shortcut fire regardless of focus.
+   */
+  terminalKeyPassthrough?: boolean;
+  /**
    * User-defined file-type overrides for the built-in language mapping.
    * Keys are exact filenames (e.g. `"Jenkinsfile"`) or extensions (e.g. `".conf"`).
    * Values are Monaco language IDs (e.g. `"groovy"`, `"ini"`).

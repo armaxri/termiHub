@@ -18,7 +18,12 @@ import { terminalDispatcher } from "@/services/events";
 import { useTerminalRegistry } from "./TerminalRegistry";
 import { useAppStore } from "@/store/appStore";
 import { getXtermTheme } from "@/themes";
-import { processKeyEvent, isAppShortcut, isChordPending } from "@/services/keybindings";
+import {
+  processKeyEvent,
+  isAppShortcut,
+  isChordPending,
+  isShellReservedKey,
+} from "@/services/keybindings";
 import { frontendLog } from "@/utils/frontendLog";
 
 const HORIZONTAL_SCROLL_COLS = 500;
@@ -563,6 +568,14 @@ export function Terminal({
       if (e.key === "Enter" && !sessionIdRef.current && isViewModeRef.current) {
         useAppStore.getState().showTerminalReconnectPrompt(tabId);
         return false;
+      }
+
+      // Pass-through: keys reserved by the shell/tmux/vim/SSH-to-remote bypass
+      // shortcut matching entirely so they reach the PTY untouched. Users can
+      // turn this off in Settings → Keyboard Shortcuts.
+      const passthroughEnabled = useAppStore.getState().settings.terminalKeyPassthrough !== false;
+      if (passthroughEnabled && isShellReservedKey(e)) {
+        return true;
       }
 
       // If a chord is pending, block the key from xterm
