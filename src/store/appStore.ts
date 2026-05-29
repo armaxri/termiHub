@@ -271,10 +271,28 @@ interface AppState {
   setPersistentSessionEntry: (connectionId: string, patch: Partial<PersistentSessionEntry>) => void;
   /** Transition a persistent session to the error state (called when process dies unexpectedly). */
   setPersistentSessionError: (connectionId: string, errorMessage: string) => void;
-  /** Start a persistent background session for an agent-hosted connection definition. */
-  startAgentPersistentSession: (agentId: string, def: AgentDefinitionInfo) => Promise<void>;
+  /**
+   * Start a persistent background session for an agent-hosted connection definition.
+   * Resolves with the backend session ID on success, or `null` if the API call failed
+   * (in which case the entry is left in the `error` state).
+   */
+  startAgentPersistentSession: (
+    agentId: string,
+    def: AgentDefinitionInfo
+  ) => Promise<string | null>;
   /** Attach a new terminal tab to a running agent-hosted persistent session. */
   attachAgentPersistentSession: (
+    agentId: string,
+    def: AgentDefinitionInfo,
+    panelId?: string
+  ) => Promise<void>;
+  /**
+   * Start a persistent agent session if not already running, then attach a tab.
+   * Used by the sidebar double-click handler so the session is registered with
+   * the persistent-session machinery (sidebar state dot turns green) rather than
+   * opening an unmanaged tab through `createTerminal`.
+   */
+  startAndAttachAgentPersistentSession: (
     agentId: string,
     def: AgentDefinitionInfo,
     panelId?: string
@@ -299,6 +317,21 @@ interface AppState {
   setEditorDirty: (tabId: string, dirty: boolean) => void;
   pendingCloseRequest: { tabId: string; panelId: string } | null;
   setPendingCloseRequest: (req: { tabId: string; panelId: string } | null) => void;
+  /**
+   * Confirmation request shown when the user closes a tab (or tab group) via
+   * keyboard shortcut while `settings.confirmCloseTabOnShortcut` is enabled.
+   * Null when no dialog is open.
+   */
+  pendingShortcutCloseConfirm:
+    | { kind: "tab"; tabId: string; panelId: string; label: string }
+    | { kind: "tab-group"; tabGroupId: string; label: string }
+    | null;
+  setPendingShortcutCloseConfirm: (
+    req:
+      | { kind: "tab"; tabId: string; panelId: string; label: string }
+      | { kind: "tab-group"; tabGroupId: string; label: string }
+      | null
+  ) => void;
   closeTab: (tabId: string, panelId: string) => void;
   setActiveTab: (tabId: string, panelId: string) => void;
   moveTab: (tabId: string, fromPanelId: string, toPanelId: string, newIndex: number) => void;
@@ -1164,12 +1197,26 @@ export const useAppStore = create<AppState>((set, get) => {
         },
       }));
       try {
-        await apiStartPersistentSession(
+        const sessionId = await apiStartPersistentSession(
           connectionId,
           def.sessionType,
           { ...def.config, title: def.name },
           agentId
         );
+        // Record the session ID immediately so callers can attach without
+        // racing the persistent-session-state-changed event. The state
+        // transition to "running" remains driven by that event.
+        set((state) => {
+          const existing = state.persistentSessions[connectionId];
+          if (!existing) return state;
+          return {
+            persistentSessions: {
+              ...state.persistentSessions,
+              [connectionId]: { ...existing, sessionId },
+            },
+          };
+        });
+        return sessionId;
       } catch (err) {
         set((state) => ({
           persistentSessions: {
@@ -1181,6 +1228,7 @@ export const useAppStore = create<AppState>((set, get) => {
             },
           },
         }));
+        return null;
       }
     },
 
@@ -1234,6 +1282,18 @@ export const useAppStore = create<AppState>((set, get) => {
           get().closeTab(tabId, actualPanelId);
         }
       }
+    },
+
+    startAndAttachAgentPersistentSession: async (agentId, def, panelId) => {
+      const connectionId = `${agentId}:${def.id}`;
+      const existing = get().persistentSessions[connectionId];
+      if (existing?.sessionId && (existing.state === "running" || existing.state === "attached")) {
+        await get().attachAgentPersistentSession(agentId, def, panelId);
+        return;
+      }
+      const sessionId = await get().startAgentPersistentSession(agentId, def);
+      if (!sessionId) return;
+      await get().attachAgentPersistentSession(agentId, def, panelId);
     },
 
     // Panels & Tabs
@@ -1580,6 +1640,9 @@ export const useAppStore = create<AppState>((set, get) => {
     pendingCloseRequest: null,
     setPendingCloseRequest: (req) => set({ pendingCloseRequest: req }),
 
+    pendingShortcutCloseConfirm: null,
+    setPendingShortcutCloseConfirm: (req) => set({ pendingShortcutCloseConfirm: req }),
+
     closeTab: (tabId, panelId) =>
       set((state) => {
         // Clean up per-tab state for the closed tab
@@ -1863,12 +1926,14 @@ export const useAppStore = create<AppState>((set, get) => {
       externalConnectionFiles: [],
       powerMonitoringEnabled: true,
       fileBrowserEnabled: true,
+      confirmCloseTabOnShortcut: true,
     },
     savedSettings: {
       version: "1",
       externalConnectionFiles: [],
       powerMonitoringEnabled: true,
       fileBrowserEnabled: true,
+      confirmCloseTabOnShortcut: true,
     },
 
     // Layout
