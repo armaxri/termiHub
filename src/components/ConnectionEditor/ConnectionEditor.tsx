@@ -346,23 +346,48 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     setEditorDirty,
   ]);
 
-  /** Check if the trimmed name collides with any connection in the same folder or any agent. */
+  // Connections, remote agents, and per-agent definitions occupy independent
+  // namespaces — a connection named "Foo" must not collide with an agent
+  // named "Foo". Validate only against peers in the entity being edited.
   const nameError = useMemo((): string | null => {
-    const trimmed = name.trim();
+    const trimmed = name.trim().toLowerCase();
     if (!trimmed) return null;
-    const isDuplicate = connections.some(
+
+    if (isAgentDefinitionMode && existingAgent) {
+      const siblings = agentDefinitions[existingAgent.id] ?? [];
+      const editingDefId = existingAgentDef?.id;
+      const clash = siblings.some(
+        (d) => d.name.trim().toLowerCase() === trimmed && d.id !== editingDefId
+      );
+      return clash ? "A definition with this name already exists on this agent." : null;
+    }
+
+    if (isAgentTransportMode) {
+      const clash = remoteAgents.some(
+        (a) => a.name.trim().toLowerCase() === trimmed && a.id !== editingConnectionId
+      );
+      return clash ? "A remote agent with this name already exists." : null;
+    }
+
+    const clash = connections.some(
       (c) =>
-        c.name.trim().toLowerCase() === trimmed.toLowerCase() &&
+        c.name.trim().toLowerCase() === trimmed &&
         c.id !== editingConnectionId &&
         c.folderId === folderId
     );
-    if (isDuplicate) return "A connection with this name already exists in this folder.";
-    const isDuplicateAgent = remoteAgents.some(
-      (a) => a.name.trim().toLowerCase() === trimmed.toLowerCase() && a.id !== editingConnectionId
-    );
-    if (isDuplicateAgent) return "A remote agent with this name already exists.";
-    return null;
-  }, [name, connections, remoteAgents, editingConnectionId, folderId]);
+    return clash ? "A connection with this name already exists in this folder." : null;
+  }, [
+    name,
+    connections,
+    remoteAgents,
+    agentDefinitions,
+    existingAgent,
+    existingAgentDef,
+    isAgentDefinitionMode,
+    isAgentTransportMode,
+    editingConnectionId,
+    folderId,
+  ]);
 
   // Category navigation
   const [activeCategory, setActiveCategory] = useState<EditorCategory>("connection");
