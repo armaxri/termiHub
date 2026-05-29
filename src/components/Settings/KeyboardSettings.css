@@ -2,6 +2,36 @@
   margin-bottom: var(--spacing-md);
 }
 
+.keyboard-settings__passthrough {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-md);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background-color: var(--bg-secondary, transparent);
+  border: 1px solid var(--border-subtle, var(--border-primary));
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.keyboard-settings__passthrough input[type="checkbox"] {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.keyboard-settings__passthrough span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.keyboard-settings__passthrough small {
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
 .keyboard-settings__search-input {
   width: 100%;
   height: 28px;

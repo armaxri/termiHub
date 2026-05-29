@@ -16,6 +16,8 @@ import {
   processKeyEvent,
   cancelChord,
   isChordPending,
+  isShellReservedKey,
+  isEventFromTerminal,
   DEFAULT_BINDINGS,
 } from "./keybindings";
 import { KeyCombo } from "@/types/keybindings";
@@ -134,14 +136,24 @@ describe("findMatchingAction (Linux/Win context)", () => {
     clearOverrides();
   });
 
-  it("finds toggle-sidebar for Ctrl+B", () => {
-    const event = makeKeyEvent("b", { ctrl: true });
+  it("finds toggle-sidebar for Ctrl+Shift+B (relocated to avoid tmux prefix)", () => {
+    const event = makeKeyEvent("B", { ctrl: true, shift: true });
     expect(findMatchingAction(event)).toBe("toggle-sidebar");
   });
 
-  it("finds close-tab for Ctrl+W", () => {
-    const event = makeKeyEvent("w", { ctrl: true });
+  it("does not match toggle-sidebar for Ctrl+B (tmux prefix passes through)", () => {
+    const event = makeKeyEvent("b", { ctrl: true });
+    expect(findMatchingAction(event)).toBeNull();
+  });
+
+  it("finds close-tab for Ctrl+Shift+W (relocated to avoid readline delete-word)", () => {
+    const event = makeKeyEvent("W", { ctrl: true, shift: true });
     expect(findMatchingAction(event)).toBe("close-tab");
+  });
+
+  it("does not match close-tab for Ctrl+W (readline delete-word passes through)", () => {
+    const event = makeKeyEvent("w", { ctrl: true });
+    expect(findMatchingAction(event)).toBeNull();
   });
 
   it("finds copy for Ctrl+Shift+C", () => {
@@ -149,13 +161,18 @@ describe("findMatchingAction (Linux/Win context)", () => {
     expect(findMatchingAction(event)).toBe("copy");
   });
 
-  it("finds split-right for Ctrl+\\", () => {
-    const event = makeKeyEvent("\\", { ctrl: true });
+  it("finds split-right for Alt+Shift+\\ (relocated off Ctrl+\\ SIGQUIT)", () => {
+    const event = makeKeyEvent("\\", { alt: true, shift: true });
     expect(findMatchingAction(event)).toBe("split-right");
   });
 
-  it("finds split-down for Ctrl+Shift+\\", () => {
-    const event = makeKeyEvent("\\", { ctrl: true, shift: true });
+  it("does not match split-right for Ctrl+\\ (SIGQUIT passes through)", () => {
+    const event = makeKeyEvent("\\", { ctrl: true });
+    expect(findMatchingAction(event)).toBeNull();
+  });
+
+  it("finds split-down for Alt+Shift+-", () => {
+    const event = makeKeyEvent("-", { alt: true, shift: true });
     expect(findMatchingAction(event)).toBe("split-down");
   });
 
@@ -174,23 +191,35 @@ describe("findMatchingAction (Linux/Win context)", () => {
     expect(findMatchingAction(event)).toBe("zoom-in");
   });
 
-  it("returns null for unrecognized keys", () => {
-    const event = makeKeyEvent("z", { ctrl: true });
+  it("finds show-shortcuts for F1 (relocated off Ctrl+K Ctrl+S chord)", () => {
+    const event = makeKeyEvent("F1");
+    expect(findMatchingAction(event)).toBe("show-shortcuts");
+  });
+
+  it("finds focus-up for Alt+Shift+ArrowUp (relocated off Ctrl+Alt+Arrow)", () => {
+    const event = makeKeyEvent("ArrowUp", { alt: true, shift: true });
+    expect(findMatchingAction(event)).toBe("focus-up");
+  });
+
+  it("does not match focus-up for Ctrl+Alt+ArrowUp (workspace switch passes through)", () => {
+    const event = makeKeyEvent("ArrowUp", { ctrl: true, alt: true });
     expect(findMatchingAction(event)).toBeNull();
   });
 
-  it("skips chord bindings (show-shortcuts)", () => {
-    // show-shortcuts has a chord default, should not match a single keypress
-    const event = makeKeyEvent("k", { ctrl: true });
-    // clear-terminal on macOS is Cmd+K, but on win/linux it's Ctrl+Shift+K
-    // Ctrl+K alone should not match any single-combo binding
+  it("finds close-tab-group for Ctrl+Shift+Q (relocated to free Ctrl+Shift+W for Close Tab)", () => {
+    const event = makeKeyEvent("Q", { ctrl: true, shift: true });
+    expect(findMatchingAction(event)).toBe("close-tab-group");
+  });
+
+  it("returns null for unrecognized keys", () => {
+    const event = makeKeyEvent("z", { ctrl: true });
     expect(findMatchingAction(event)).toBeNull();
   });
 });
 
 describe("isAppShortcut", () => {
   it("returns true for known shortcuts", () => {
-    expect(isAppShortcut(makeKeyEvent("b", { ctrl: true }))).toBe(true);
+    expect(isAppShortcut(makeKeyEvent("B", { ctrl: true, shift: true }))).toBe(true);
   });
 
   it("returns false for unknown keys", () => {
@@ -221,15 +250,24 @@ describe("overrides", () => {
     setOverride("close-tab", { key: "q", ctrl: true });
     setOverride("close-tab", null);
     const combo = getEffectiveCombo("close-tab") as KeyCombo;
-    // Should be back to default (Ctrl+W on Linux)
-    expect(combo.key).toBe("w");
+    // Should be back to default (Ctrl+Shift+W on Linux)
+    expect(combo.key).toBe("W");
+    expect(combo.ctrl).toBe(true);
+    expect(combo.shift).toBe(true);
   });
 
   it("clearOverrides resets all", () => {
-    setOverrides([{ action: "toggle-sidebar", key: "Ctrl+Shift+b" }]);
+    // Override to a binding distinct from the new default (which is Ctrl+Shift+B).
+    setOverrides([{ action: "toggle-sidebar", key: "Ctrl+Alt+b" }]);
+    const overridden = getEffectiveCombo("toggle-sidebar") as KeyCombo;
+    expect(overridden.alt).toBe(true);
+
     clearOverrides();
-    const combo = getEffectiveCombo("toggle-sidebar") as KeyCombo;
-    expect(combo.shift).toBeUndefined();
+    const restored = getEffectiveCombo("toggle-sidebar") as KeyCombo;
+    expect(restored.alt).toBeUndefined();
+    expect(restored.ctrl).toBe(true);
+    expect(restored.shift).toBe(true);
+    expect(restored.key).toBe("B");
   });
 });
 
@@ -239,13 +277,13 @@ describe("checkConflict", () => {
   });
 
   it("detects conflict with existing binding", () => {
-    // Ctrl+W is used by close-tab
-    const conflict = checkConflict({ key: "w", ctrl: true }, "toggle-sidebar");
+    // Ctrl+Shift+W is used by close-tab
+    const conflict = checkConflict({ key: "W", ctrl: true, shift: true }, "toggle-sidebar");
     expect(conflict).toBe("close-tab");
   });
 
   it("excludes the specified action from conflict check", () => {
-    const conflict = checkConflict({ key: "w", ctrl: true }, "close-tab");
+    const conflict = checkConflict({ key: "W", ctrl: true, shift: true }, "close-tab");
     expect(conflict).toBeNull();
   });
 
@@ -286,17 +324,40 @@ describe("getDefaultBindings", () => {
     expect(actions).toContain("split-down");
   });
 
-  it("split-down uses Shift modifier to distinguish from split-right", () => {
+  it("split-down is distinct from split-right on every platform", () => {
     const binding = DEFAULT_BINDINGS.find((b) => b.action === "split-down");
     expect(binding).toBeDefined();
     const macCombo = binding!.macDefault as KeyCombo;
     expect(macCombo.meta).toBe(true);
     expect(macCombo.shift).toBe(true);
     expect(macCombo.key).toBe("\\");
+    // Win/Linux: Alt+Shift+- avoids the SIGQUIT-firing Ctrl+\ family entirely.
     const winCombo = binding!.winLinuxDefault as KeyCombo;
-    expect(winCombo.ctrl).toBe(true);
+    expect(winCombo.ctrl).toBeFalsy();
+    expect(winCombo.alt).toBe(true);
     expect(winCombo.shift).toBe(true);
-    expect(winCombo.key).toBe("\\");
+    expect(winCombo.key).toBe("-");
+  });
+
+  it("does not bind any Win/Linux default to a shell-reserved combo", () => {
+    // Defaults must not collide with readline / tmux / vim / SSH-to-remote keys.
+    // (Custom user overrides are protected separately by pass-through.)
+    for (const binding of DEFAULT_BINDINGS) {
+      const combo = binding.winLinuxDefault;
+      const single = Array.isArray(combo) ? combo[0] : combo;
+      // Simulate the modifier state that a key event would carry for this combo.
+      const fakeEvent = {
+        key: single.key,
+        ctrlKey: !!single.ctrl,
+        shiftKey: !!single.shift,
+        altKey: !!single.alt,
+        metaKey: !!single.meta,
+      } as KeyboardEvent;
+      expect(
+        isShellReservedKey(fakeEvent),
+        `${binding.action} default ${serializeBinding(combo)} collides with a shell-reserved key`
+      ).toBe(false);
+    }
   });
 
   it("does not have focus-next-panel or focus-prev-panel", () => {
@@ -348,52 +409,68 @@ describe("getEffectiveCombo (macOS context)", () => {
   });
 });
 
-describe("processKeyEvent (chord support)", () => {
+describe("processKeyEvent (chord support, macOS context)", () => {
+  // The Cmd+K Cmd+S chord for "Keyboard Shortcuts" is retained on macOS where
+  // Cmd does not collide with shell readline. Win/Linux uses a non-chord F1.
+  let originalAgent: PropertyDescriptor | undefined;
+
   beforeEach(() => {
     clearOverrides();
     cancelChord();
     vi.useFakeTimers();
+    originalAgent = Object.getOwnPropertyDescriptor(navigator, "userAgent");
+    Object.defineProperty(navigator, "userAgent", {
+      value: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+      configurable: true,
+    });
   });
 
   afterEach(() => {
     cancelChord();
     vi.useRealTimers();
+    if (originalAgent) {
+      Object.defineProperty(navigator, "userAgent", originalAgent);
+    } else {
+      Object.defineProperty(navigator, "userAgent", {
+        value: "Mozilla/5.0 (jsdom)",
+        configurable: true,
+      });
+    }
   });
 
   it("returns single-combo action for non-chord bindings", () => {
-    const event = makeKeyEvent("b", { ctrl: true });
+    const event = makeKeyEvent("b", { meta: true });
     expect(processKeyEvent(event)).toBe("toggle-sidebar");
   });
 
   it("returns chord-pending on first key of a chord", () => {
-    // Ctrl+K is the first key of show-shortcuts chord on Win/Linux
-    const event = makeKeyEvent("k", { ctrl: true });
+    const event = makeKeyEvent("k", { meta: true });
     expect(processKeyEvent(event)).toBe("chord-pending");
     expect(isChordPending()).toBe(true);
   });
 
   it("completes chord on second key", () => {
-    const first = makeKeyEvent("k", { ctrl: true });
+    const first = makeKeyEvent("k", { meta: true });
     processKeyEvent(first);
 
-    const second = makeKeyEvent("s", { ctrl: true });
+    const second = makeKeyEvent("s", { meta: true });
     expect(processKeyEvent(second)).toBe("show-shortcuts");
     expect(isChordPending()).toBe(false);
   });
 
   it("cancels chord on wrong second key", () => {
-    const first = makeKeyEvent("k", { ctrl: true });
+    const first = makeKeyEvent("k", { meta: true });
     processKeyEvent(first);
 
     // Wrong second key — should cancel chord and try single-combo match
-    const second = makeKeyEvent("b", { ctrl: true });
+    const second = makeKeyEvent("b", { meta: true });
     const result = processKeyEvent(second);
     expect(result).toBe("toggle-sidebar"); // Falls through to single-combo match
     expect(isChordPending()).toBe(false);
   });
 
   it("cancels chord after timeout", () => {
-    const first = makeKeyEvent("k", { ctrl: true });
+    const first = makeKeyEvent("k", { meta: true });
     processKeyEvent(first);
     expect(isChordPending()).toBe(true);
 
@@ -402,11 +479,82 @@ describe("processKeyEvent (chord support)", () => {
   });
 
   it("cancelChord clears pending state", () => {
-    const first = makeKeyEvent("k", { ctrl: true });
+    const first = makeKeyEvent("k", { meta: true });
     processKeyEvent(first);
     expect(isChordPending()).toBe(true);
 
     cancelChord();
     expect(isChordPending()).toBe(false);
+  });
+});
+
+describe("isShellReservedKey", () => {
+  it("matches Ctrl+letter combinations (readline/emacs/tmux range)", () => {
+    for (const letter of ["a", "b", "c", "k", "l", "w", "z"]) {
+      expect(isShellReservedKey(makeKeyEvent(letter, { ctrl: true }))).toBe(true);
+    }
+  });
+
+  it("matches Ctrl+\\ (SIGQUIT), Ctrl+[ (Esc), Ctrl+] (telnet escape)", () => {
+    expect(isShellReservedKey(makeKeyEvent("\\", { ctrl: true }))).toBe(true);
+    expect(isShellReservedKey(makeKeyEvent("[", { ctrl: true }))).toBe(true);
+    expect(isShellReservedKey(makeKeyEvent("]", { ctrl: true }))).toBe(true);
+  });
+
+  it("matches Alt+letter combinations (readline word-motion)", () => {
+    expect(isShellReservedKey(makeKeyEvent("b", { alt: true }))).toBe(true);
+    expect(isShellReservedKey(makeKeyEvent("f", { alt: true }))).toBe(true);
+  });
+
+  it("does not match Ctrl+Shift+letter (those are app/terminal-emulator shortcuts)", () => {
+    expect(isShellReservedKey(makeKeyEvent("W", { ctrl: true, shift: true }))).toBe(false);
+    expect(isShellReservedKey(makeKeyEvent("C", { ctrl: true, shift: true }))).toBe(false);
+  });
+
+  it("does not match Alt+Shift+letter or Alt+Shift+key", () => {
+    expect(isShellReservedKey(makeKeyEvent("\\", { alt: true, shift: true }))).toBe(false);
+    expect(isShellReservedKey(makeKeyEvent("-", { alt: true, shift: true }))).toBe(false);
+    expect(isShellReservedKey(makeKeyEvent("ArrowUp", { alt: true, shift: true }))).toBe(false);
+  });
+
+  it("does not match Cmd-based combos (macOS shortcuts never collide with shell)", () => {
+    expect(isShellReservedKey(makeKeyEvent("w", { meta: true }))).toBe(false);
+    expect(isShellReservedKey(makeKeyEvent("b", { meta: true }))).toBe(false);
+  });
+
+  it("does not match plain letters or function keys", () => {
+    expect(isShellReservedKey(makeKeyEvent("a"))).toBe(false);
+    expect(isShellReservedKey(makeKeyEvent("F1"))).toBe(false);
+  });
+
+  it("does not match Ctrl+Alt (modifier doubled, used by app focus shortcuts elsewhere)", () => {
+    expect(isShellReservedKey(makeKeyEvent("ArrowUp", { ctrl: true, alt: true }))).toBe(false);
+  });
+});
+
+describe("isEventFromTerminal", () => {
+  it("returns true when the event target is inside an .xterm element", () => {
+    const xtermRoot = document.createElement("div");
+    xtermRoot.className = "xterm";
+    const inner = document.createElement("textarea");
+    xtermRoot.appendChild(inner);
+    document.body.appendChild(xtermRoot);
+
+    const event = new KeyboardEvent("keydown", { key: "w" });
+    Object.defineProperty(event, "target", { value: inner, configurable: true });
+    expect(isEventFromTerminal(event)).toBe(true);
+
+    document.body.removeChild(xtermRoot);
+  });
+
+  it("returns false when the event target is outside any .xterm element", () => {
+    const outside = document.createElement("input");
+    document.body.appendChild(outside);
+
+    const event = new KeyboardEvent("keydown", { key: "w" });
+    Object.defineProperty(event, "target", { value: outside, configurable: true });
+    expect(isEventFromTerminal(event)).toBe(false);
+
+    document.body.removeChild(outside);
   });
 });
