@@ -6,6 +6,8 @@ vi.mock("@/services/keybindings", () => ({
   processKeyEvent: vi.fn(),
   onChordStateChange: vi.fn(),
   cancelChord: vi.fn(),
+  isShellReservedKey: vi.fn(() => false),
+  isEventFromTerminal: vi.fn(() => false),
 }));
 
 vi.mock("@/services/storage", () => ({
@@ -38,13 +40,20 @@ vi.mock("@/services/api", () => ({
   vscodeAvailable: vi.fn(() => Promise.resolve(false)),
 }));
 
-import { processKeyEvent, cancelChord } from "@/services/keybindings";
+import {
+  processKeyEvent,
+  cancelChord,
+  isShellReservedKey,
+  isEventFromTerminal,
+} from "@/services/keybindings";
 import { useAppStore } from "@/store/appStore";
 import { getAllLeaves } from "@/utils/panelTree";
 import { useKeyboardShortcuts } from "./useKeyboardShortcuts";
 
 const mockProcessKeyEvent = vi.mocked(processKeyEvent);
 const mockCancelChord = vi.mocked(cancelChord);
+const mockIsShellReservedKey = vi.mocked(isShellReservedKey);
+const mockIsEventFromTerminal = vi.mocked(isEventFromTerminal);
 
 function KeyboardHarness() {
   useKeyboardShortcuts();
@@ -64,6 +73,10 @@ describe("useKeyboardShortcuts", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Reset implementations: pass-through mocks default to "do nothing" so
+    // each test starts with shortcuts dispatched normally.
+    mockIsEventFromTerminal.mockReturnValue(false);
+    mockIsShellReservedKey.mockReturnValue(false);
     useAppStore.setState(useAppStore.getInitialState());
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -125,6 +138,63 @@ describe("useKeyboardShortcuts", () => {
       const prevented = fireKey("ctrl");
 
       expect(prevented).toBe(true);
+    });
+  });
+
+  describe("terminal-focus pass-through", () => {
+    it("skips dispatch when terminal focused, key is shell-reserved, and passthrough enabled (default)", () => {
+      act(() => {
+        root.render(createElement(KeyboardHarness));
+      });
+      mockIsEventFromTerminal.mockReturnValue(true);
+      mockIsShellReservedKey.mockReturnValue(true);
+
+      fireKey("w", { ctrlKey: true });
+
+      // processKeyEvent must NOT be called when we pass the key through.
+      expect(mockProcessKeyEvent).not.toHaveBeenCalled();
+    });
+
+    it("dispatches normally when terminal is not focused", () => {
+      act(() => {
+        root.render(createElement(KeyboardHarness));
+      });
+      mockIsEventFromTerminal.mockReturnValue(false);
+      mockIsShellReservedKey.mockReturnValue(true);
+      mockProcessKeyEvent.mockReturnValue(null);
+
+      fireKey("w", { ctrlKey: true });
+
+      expect(mockProcessKeyEvent).toHaveBeenCalled();
+    });
+
+    it("dispatches normally when key is not shell-reserved", () => {
+      act(() => {
+        root.render(createElement(KeyboardHarness));
+      });
+      mockIsEventFromTerminal.mockReturnValue(true);
+      mockIsShellReservedKey.mockReturnValue(false);
+      mockProcessKeyEvent.mockReturnValue(null);
+
+      fireKey("W", { ctrlKey: true, shiftKey: true });
+
+      expect(mockProcessKeyEvent).toHaveBeenCalled();
+    });
+
+    it("dispatches normally when passthrough is explicitly disabled in settings", () => {
+      useAppStore.setState((s) => ({
+        settings: { ...s.settings, terminalKeyPassthrough: false },
+      }));
+      act(() => {
+        root.render(createElement(KeyboardHarness));
+      });
+      mockIsEventFromTerminal.mockReturnValue(true);
+      mockIsShellReservedKey.mockReturnValue(true);
+      mockProcessKeyEvent.mockReturnValue(null);
+
+      fireKey("w", { ctrlKey: true });
+
+      expect(mockProcessKeyEvent).toHaveBeenCalled();
     });
   });
 
