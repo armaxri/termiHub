@@ -389,6 +389,7 @@ pub fn run() {
             commands::session::session_monitoring_close,
             // Persistent session management
             commands::session::start_persistent_session,
+            commands::session::adopt_persistent_session,
             commands::session::stop_persistent_session,
             commands::session::attach_persistent_tab,
             commands::session::detach_persistent_tab,

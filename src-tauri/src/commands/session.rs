@@ -311,6 +311,26 @@ pub async fn start_persistent_session(
         .await
 }
 
+/// Adopt an already-running agent session into the persistent registry.
+///
+/// Use when the frontend discovers a surviving agent session (e.g. via the
+/// sidebar's Active Sessions list) and wants to re-attach to it with
+/// scrollback replay. The agent's session is linked to the desktop's
+/// `connectionId` without spawning a new backend session.
+#[tauri::command]
+pub async fn adopt_persistent_session(
+    connection_id: String,
+    agent_id: String,
+    agent_session_id: String,
+    app_handle: tauri::AppHandle,
+    manager: State<'_, SessionManager>,
+) -> Result<String, TerminalError> {
+    info!(connection_id, agent_id, agent_session_id, "Adopting persistent session");
+    manager
+        .adopt_persistent_session(&connection_id, &agent_id, &agent_session_id, app_handle)
+        .await
+}
+
 /// Stop a persistent session for a saved connection.
 ///
 /// Closes the backend process and removes the persistent registry entry.
