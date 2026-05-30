@@ -88,6 +88,7 @@ import {
   startPersistentSession as apiStartPersistentSession,
   stopPersistentSession as apiStopPersistentSession,
   attachPersistentTab as apiAttachPersistentTab,
+  adoptPersistentSession as apiAdoptPersistentSession,
 } from "@/services/api";
 import type { ConnectionTypeInfo } from "@/services/api";
 import { RemoteAgentConfig } from "@/types/terminal";
@@ -295,6 +296,22 @@ interface AppState {
   startAndAttachAgentPersistentSession: (
     agentId: string,
     def: AgentDefinitionInfo,
+    panelId?: string
+  ) => Promise<void>;
+  /**
+   * Adopt a surviving agent session into the desktop's persistent registry and
+   * attach a new terminal tab to it with full scrollback replay.
+   *
+   * Used by the sidebar's Active Sessions double-click handler: when the user
+   * reopens a session that the desktop is not yet tracking (e.g. after a tab
+   * close, or after a desktop restart that discovered the session via
+   * `listAgentSessions`), the agent's session ID is linked to the desktop's
+   * `${agentId}:${def.id}` connection ID and a tab is attached.
+   */
+  adoptAndAttachAgentPersistentSession: (
+    agentId: string,
+    def: AgentDefinitionInfo,
+    agentSessionId: string,
     panelId?: string
   ) => Promise<void>;
   openSettingsTab: () => void;
@@ -1200,7 +1217,7 @@ export const useAppStore = create<AppState>((set, get) => {
         const sessionId = await apiStartPersistentSession(
           connectionId,
           def.sessionType,
-          { ...def.config, title: def.name },
+          { ...def.config, title: def.name, definitionId: def.id },
           agentId
         );
         // Record the session ID immediately so callers can attach without
@@ -1282,6 +1299,57 @@ export const useAppStore = create<AppState>((set, get) => {
           get().closeTab(tabId, actualPanelId);
         }
       }
+    },
+
+    adoptAndAttachAgentPersistentSession: async (agentId, def, agentSessionId, panelId) => {
+      const connectionId = `${agentId}:${def.id}`;
+      const existing = get().persistentSessions[connectionId];
+
+      // If we already track this connection and it points at the same agent
+      // session, fall through to the normal attach path — no adoption needed.
+      if (existing?.sessionId === agentSessionId) {
+        await get().attachAgentPersistentSession(agentId, def, panelId);
+        return;
+      }
+
+      // If we track a *different* session ID for this connection (e.g. a stale
+      // entry from before the agent restart), warn and skip — the user can stop
+      // the old persistent record explicitly if they want to overwrite it.
+      if (existing?.sessionId && existing.sessionId !== agentSessionId) {
+        frontendLog(
+          "app_store",
+          `adopt skipped for ${connectionId}: already mapped to ${existing.sessionId}`
+        );
+        return;
+      }
+
+      try {
+        await apiAdoptPersistentSession(connectionId, agentId, agentSessionId);
+      } catch (err) {
+        frontendLog(
+          "app_store",
+          `adopt_persistent_session failed for ${connectionId}: ${err instanceof Error ? err.message : String(err)}`
+        );
+        return;
+      }
+
+      // Seed the desktop's persistentSessions map so attachAgentPersistentSession
+      // finds the entry. The backend will emit a persistent-state event that may
+      // re-set this asynchronously; mirroring it here avoids a race in the
+      // attach call that follows.
+      set((state) => ({
+        persistentSessions: {
+          ...state.persistentSessions,
+          [connectionId]: {
+            connectionId,
+            sessionId: agentSessionId,
+            state: "running",
+            attachedTabIds: [],
+          },
+        },
+      }));
+
+      await get().attachAgentPersistentSession(agentId, def, panelId);
     },
 
     startAndAttachAgentPersistentSession: async (agentId, def, panelId) => {

@@ -125,6 +125,27 @@ export async function stopPersistentSession(connectionId: string): Promise<void>
 }
 
 /**
+ * Adopt an already-running agent session into the desktop's persistent registry.
+ *
+ * Used when the sidebar's Active Sessions list surfaces a session the desktop
+ * does not yet track (e.g. discovered after a tab close or app restart). After
+ * adoption, `attachPersistentTab` can re-attach to it with scrollback replay.
+ *
+ * Returns the agent session ID (echoed back on success).
+ */
+export async function adoptPersistentSession(
+  connectionId: string,
+  agentId: string,
+  agentSessionId: string
+): Promise<SessionId> {
+  return await invoke<string>("adopt_persistent_session", {
+    connectionId,
+    agentId,
+    agentSessionId,
+  });
+}
+
+/**
  * Register `tabId` as attached to the persistent session for `connectionId`.
  * Returns the new attached-tab count.
  */
@@ -549,6 +570,13 @@ export interface AgentSessionInfo {
   type: string;
   status: string;
   attached: boolean;
+  /**
+   * ID of the saved connection definition this session was created from,
+   * when known. Lets the UI re-link an active session to its source
+   * definition (e.g. to derive the persistent connectionId for reattach
+   * via the existing scrollback-replay path).
+   */
+  definitionId?: string;
 }
 
 /** Info about a saved connection definition on an agent. */
