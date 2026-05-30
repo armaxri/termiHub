@@ -190,8 +190,14 @@ impl ConnectionType for RemoteProxy {
 
         // Optional: link this session to a saved connection definition so it
         // can be re-attached after tab close, agent restart, or desktop restart.
-        let definition_id = settings
+        // The frontend places `definitionId` inside the connection settings
+        // (which the desktop's `SessionManager::create_connection` wraps under
+        // a `config` key before reaching us), so look there first; fall back
+        // to the top level for callers that pass it alongside `type`.
+        let definition_id = config
             .get("definitionId")
+            .or_else(|| config.get("definition_id"))
+            .or_else(|| settings.get("definitionId"))
             .or_else(|| settings.get("definition_id"))
             .and_then(|v| v.as_str())
             .map(String::from);
@@ -629,6 +635,8 @@ mod tests {
     /// `true` once at least one `create_session` call has been recorded.
     struct MockAgentRpcClient {
         created_sessions: Mutex<Vec<(String, String, serde_json::Value)>>,
+        /// Records the definition_id passed to each create_session call, in order.
+        created_definition_ids: Mutex<Vec<Option<String>>>,
         send_request_result: Option<serde_json::Value>,
         /// Records (method, params) for every send_request call.
         sent_requests: Mutex<Vec<(String, serde_json::Value)>>,
@@ -640,6 +648,7 @@ mod tests {
         fn new() -> Self {
             Self {
                 created_sessions: Mutex::new(Vec::new()),
+                created_definition_ids: Mutex::new(Vec::new()),
                 send_request_result: None,
                 sent_requests: Mutex::new(Vec::new()),
                 registered_monitoring_hosts: Mutex::new(Vec::new()),
@@ -649,6 +658,7 @@ mod tests {
         fn with_capabilities(capabilities_result: serde_json::Value) -> Self {
             Self {
                 created_sessions: Mutex::new(Vec::new()),
+                created_definition_ids: Mutex::new(Vec::new()),
                 send_request_result: Some(capabilities_result),
                 sent_requests: Mutex::new(Vec::new()),
                 registered_monitoring_hosts: Mutex::new(Vec::new()),
@@ -721,20 +731,24 @@ mod tests {
             session_type: &str,
             config: serde_json::Value,
             _title: Option<&str>,
-            _definition_id: Option<&str>,
+            definition_id: Option<&str>,
         ) -> Result<AgentSessionInfo, TerminalError> {
             self.created_sessions.lock().unwrap().push((
                 agent_id.to_string(),
                 session_type.to_string(),
                 config,
             ));
+            self.created_definition_ids
+                .lock()
+                .unwrap()
+                .push(definition_id.map(String::from));
             Ok(AgentSessionInfo {
                 session_id: "mock-session-1".to_string(),
                 title: "Mock Session".to_string(),
                 session_type: session_type.to_string(),
                 status: "running".to_string(),
                 attached: false,
-                definition_id: None,
+                definition_id: definition_id.map(String::from),
             })
         }
 
@@ -963,6 +977,49 @@ mod tests {
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].0, "agent-1");
         assert_eq!(sessions[0].1, "local");
+    }
+
+    /// `SessionManager::create_connection` wraps the frontend's settings under a
+    /// `config` key before calling `RemoteProxy::connect`, so `definitionId` (set
+    /// by the frontend alongside `title` and the connection's own settings) lives
+    /// at `settings.config.definitionId`, not at the top level. This regression
+    /// test pins the lookup so the agent reattach path (which depends on the
+    /// agent storing definition_id) stays wired up.
+    #[tokio::test]
+    async fn connect_forwards_definition_id_from_wrapped_settings() {
+        let mock = Arc::new(MockAgentRpcClient::new());
+        let mut proxy = RemoteProxy::new("agent-1".to_string(), mock.clone());
+
+        let settings = json!({
+            "type": "local",
+            "config": {
+                "shell": "/bin/zsh",
+                "title": "Build Shell",
+                "definitionId": "def-42",
+            },
+        });
+        proxy
+            .connect(settings)
+            .await
+            .expect("connect should succeed");
+
+        let ids = mock.created_definition_ids.lock().unwrap();
+        assert_eq!(ids.as_slice(), &[Some("def-42".to_string())]);
+    }
+
+    #[tokio::test]
+    async fn connect_forwards_no_definition_id_when_absent() {
+        let mock = Arc::new(MockAgentRpcClient::new());
+        let mut proxy = RemoteProxy::new("agent-1".to_string(), mock.clone());
+
+        let settings = json!({ "type": "local", "config": { "shell": "/bin/zsh" } });
+        proxy
+            .connect(settings)
+            .await
+            .expect("connect should succeed");
+
+        let ids = mock.created_definition_ids.lock().unwrap();
+        assert_eq!(ids.as_slice(), &[None]);
     }
 
     #[tokio::test]
