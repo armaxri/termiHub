@@ -28,7 +28,7 @@ use network::NetworkManager;
 use session::manager::SessionManager;
 use session::registry::build_desktop_registry;
 use terminal::agent_manager::{AgentConnectionManager, AgentRpcClient};
-use utils::log_capture::{create_log_buffer, LogCaptureLayer};
+use utils::log_capture::{create_log_buffer, default_env_filter, LogCaptureLayer};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -37,6 +37,7 @@ pub fn run() {
     let app_handle_slot = capture_layer.app_handle_slot();
 
     tracing_subscriber::registry()
+        .with(default_env_filter())
         .with(tracing_subscriber::fmt::layer())
         .with(capture_layer)
         .init();

@@ -6,10 +6,26 @@ use tauri::{AppHandle, Emitter};
 use tracing::field::{Field, Visit};
 use tracing::Level;
 use tracing_subscriber::layer::Context;
-use tracing_subscriber::Layer;
+use tracing_subscriber::{EnvFilter, Layer};
 
 /// Maximum number of log entries retained in the ring buffer.
 const MAX_BUFFER_SIZE: usize = 2000;
+
+/// Default tracing filter directive.
+///
+/// Keeps termiHub's own crates (and `frontend::*` events bridged from the UI)
+/// at `DEBUG` so the LogViewer stays useful, while silencing noisy third-party
+/// dependencies — most notably `russh`, which emits per-packet `DEBUG`/`TRACE`
+/// cipher logs that otherwise flood the log even while the app is idle.
+const DEFAULT_LOG_DIRECTIVE: &str = "info,termihub=debug,termihub_lib=debug,termihub_core=debug,termihub_agent=debug,frontend=debug,russh=warn";
+
+/// Build the tracing [`EnvFilter`] used by the application.
+///
+/// Honors the `RUST_LOG` environment variable when set; otherwise falls back to
+/// [`DEFAULT_LOG_DIRECTIVE`].
+pub fn default_env_filter() -> EnvFilter {
+    EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(DEFAULT_LOG_DIRECTIVE))
+}
 
 /// A single captured log entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -245,5 +261,32 @@ mod tests {
         assert_eq!(entries[0].level, "INFO");
         assert_eq!(entries[0].target, "test_target");
         assert!(entries[0].message.contains("hello from tracing"));
+    }
+
+    #[test]
+    fn default_filter_silences_russh_but_keeps_app_debug() {
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let buffer = create_log_buffer();
+        let layer = LogCaptureLayer::new(buffer.clone());
+
+        let subscriber = tracing_subscriber::registry()
+            .with(default_env_filter())
+            .with(layer);
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        // Noisy dependency spam (the bug): must be filtered out.
+        tracing::debug!(target: "russh::cipher", "reading, seqn = 603");
+        tracing::trace!(target: "russh::client::encrypted", "process_packet");
+        // Application-level debug (frontend bridge): must be kept.
+        tracing::debug!(target: "frontend::terminal", "frontend debug message");
+
+        let entries = buffer.lock().unwrap().get_recent(10);
+        assert_eq!(
+            entries.len(),
+            1,
+            "only the frontend debug entry should survive the filter, got: {entries:?}"
+        );
+        assert_eq!(entries[0].target, "frontend::terminal");
     }
 }
