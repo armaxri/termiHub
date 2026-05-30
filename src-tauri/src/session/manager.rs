@@ -1520,6 +1520,7 @@ mod tests {
             _: &str,
             _: Value,
             _: Option<&str>,
+            _: Option<&str>,
         ) -> Result<AgentSessionInfo, TerminalError> {
             unimplemented!()
         }
@@ -1963,6 +1964,7 @@ mod tests {
             _: &str,
             _: &str,
             _: Value,
+            _: Option<&str>,
             _: Option<&str>,
         ) -> Result<AgentSessionInfo, TerminalError> {
             unimplemented!()

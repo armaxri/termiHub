@@ -188,6 +188,14 @@ impl ConnectionType for RemoteProxy {
             .and_then(|v| v.as_str())
             .map(String::from);
 
+        // Optional: link this session to a saved connection definition so it
+        // can be re-attached after tab close, agent restart, or desktop restart.
+        let definition_id = settings
+            .get("definitionId")
+            .or_else(|| settings.get("definition_id"))
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
         // Store the remote type for metadata.
         if let Ok(mut t) = self.remote_type_id.lock() {
             *t = session_type.clone();
@@ -205,12 +213,14 @@ impl ConnectionType for RemoteProxy {
         let session_type_owned = session_type.clone();
         let title_owned = title.clone();
         let config_owned = config.clone();
+        let definition_id_owned = definition_id.clone();
         let session_info = tokio::task::spawn_blocking(move || {
             mgr.create_session(
                 &agent_id_owned,
                 &session_type_owned,
                 config_owned,
                 title_owned.as_deref(),
+                definition_id_owned.as_deref(),
             )
         })
         .await
@@ -711,6 +721,7 @@ mod tests {
             session_type: &str,
             config: serde_json::Value,
             _title: Option<&str>,
+            _definition_id: Option<&str>,
         ) -> Result<AgentSessionInfo, TerminalError> {
             self.created_sessions.lock().unwrap().push((
                 agent_id.to_string(),
@@ -723,6 +734,7 @@ mod tests {
                 session_type: session_type.to_string(),
                 status: "running".to_string(),
                 attached: false,
+                definition_id: None,
             })
         }
 
@@ -1231,6 +1243,7 @@ mod tests {
             session_type: &str,
             _config: serde_json::Value,
             _title: Option<&str>,
+            _definition_id: Option<&str>,
         ) -> Result<AgentSessionInfo, TerminalError> {
             cross_task_blocking_recv(AgentSessionInfo {
                 session_id: "mock-session-1".to_string(),
@@ -1238,6 +1251,7 @@ mod tests {
                 session_type: session_type.to_string(),
                 status: "running".to_string(),
                 attached: false,
+                definition_id: None,
             })
         }
 

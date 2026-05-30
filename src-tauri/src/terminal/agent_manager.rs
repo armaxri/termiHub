@@ -64,8 +64,12 @@ pub struct AgentConnectResult {
 }
 
 /// Info about a remote session on the agent.
+///
+/// Deserialised from the agent's snake_case wire format (see `docs/remote-protocol.md`)
+/// and re-serialised to camelCase for the Tauri IPC layer that ferries it to
+/// the React frontend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all(serialize = "camelCase"))]
 pub struct AgentSessionInfo {
     pub session_id: String,
     pub title: String,
@@ -73,6 +77,11 @@ pub struct AgentSessionInfo {
     pub session_type: String,
     pub status: String,
     pub attached: bool,
+    /// ID of the saved connection definition this session was created from,
+    /// when known. Lets the desktop re-link an active agent session to its
+    /// source definition (e.g. to derive the persistent connectionId for reattach).
+    #[serde(default)]
+    pub definition_id: Option<String>,
 }
 
 /// Info about a saved connection definition on the agent.
@@ -229,12 +238,17 @@ pub trait AgentRpcClient: Send + Sync + 'static {
     ) -> Result<Value, TerminalError>;
 
     /// Create a session on the agent.
+    ///
+    /// `definition_id` records which saved connection definition this session
+    /// came from, so it can be re-linked after restart. Pass `None` for
+    /// ad-hoc sessions not derived from a saved definition.
     fn create_session(
         &self,
         agent_id: &str,
         session_type: &str,
         config: Value,
         title: Option<&str>,
+        definition_id: Option<&str>,
     ) -> Result<AgentSessionInfo, TerminalError>;
 
     /// Attach to a session on the agent.
@@ -661,6 +675,7 @@ impl AgentConnectionManager {
         session_type: &str,
         config: Value,
         title: Option<&str>,
+        definition_id: Option<&str>,
     ) -> Result<AgentSessionInfo, TerminalError> {
         let mut params = serde_json::json!({
             "type": session_type,
@@ -668,6 +683,9 @@ impl AgentConnectionManager {
         });
         if let Some(t) = title {
             params["title"] = Value::String(t.to_string());
+        }
+        if let Some(d) = definition_id {
+            params["definition_id"] = Value::String(d.to_string());
         }
 
         let result = self.send_request(agent_id, "connection.create", params)?;
@@ -677,6 +695,7 @@ impl AgentConnectionManager {
             session_type: result["type"].as_str().unwrap_or(session_type).to_string(),
             status: result["status"].as_str().unwrap_or("running").to_string(),
             attached: false,
+            definition_id: result["definition_id"].as_str().map(String::from),
         })
     }
 
@@ -1024,8 +1043,16 @@ impl AgentRpcClient for AgentConnectionManager {
         session_type: &str,
         config: Value,
         title: Option<&str>,
+        definition_id: Option<&str>,
     ) -> Result<AgentSessionInfo, TerminalError> {
-        AgentConnectionManager::create_session(self, agent_id, session_type, config, title)
+        AgentConnectionManager::create_session(
+            self,
+            agent_id,
+            session_type,
+            config,
+            title,
+            definition_id,
+        )
     }
 
     fn attach_session(&self, agent_id: &str, remote_session_id: &str) -> Result<(), TerminalError> {
@@ -1695,6 +1722,61 @@ async fn reconnect_agent(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// Verify the desktop deserializes the agent's `connection.list` entry
+    /// (snake_case, with optional `definition_id`). Without correct serde
+    /// settings the entry would parse as empty and the Active Sessions list
+    /// would be silently dropped.
+    #[test]
+    fn parse_agent_session_info_from_snake_case_with_definition_id() {
+        let entry = json!({
+            "session_id": "abc-123",
+            "title": "Build",
+            "type": "shell",
+            "status": "running",
+            "created_at": "2026-02-14T10:30:00Z",
+            "last_activity": "2026-02-14T10:30:00Z",
+            "attached": false,
+            "definition_id": "def-42",
+        });
+        let info: AgentSessionInfo = serde_json::from_value(entry).unwrap();
+        assert_eq!(info.session_id, "abc-123");
+        assert_eq!(info.session_type, "shell");
+        assert_eq!(info.definition_id.as_deref(), Some("def-42"));
+    }
+
+    #[test]
+    fn agent_session_info_serializes_to_camel_case_for_frontend() {
+        let info = AgentSessionInfo {
+            session_id: "abc".to_string(),
+            title: "T".to_string(),
+            session_type: "shell".to_string(),
+            status: "running".to_string(),
+            attached: false,
+            definition_id: Some("def-1".to_string()),
+        };
+        let v = serde_json::to_value(&info).unwrap();
+        assert_eq!(v["sessionId"], "abc");
+        assert_eq!(v["type"], "shell");
+        assert_eq!(v["definitionId"], "def-1");
+        assert!(v.get("session_id").is_none());
+        assert!(v.get("definition_id").is_none());
+    }
+
+    #[test]
+    fn parse_agent_session_info_without_definition_id() {
+        let entry = json!({
+            "session_id": "abc-123",
+            "title": "Ad hoc",
+            "type": "shell",
+            "status": "running",
+            "created_at": "2026-02-14T10:30:00Z",
+            "last_activity": "2026-02-14T10:30:00Z",
+            "attached": false,
+        });
+        let info: AgentSessionInfo = serde_json::from_value(entry).unwrap();
+        assert!(info.definition_id.is_none());
+    }
 
     /// Regression test for #412: the agent sends `connection_types` as an array
     /// of full `ConnectionTypeInfo` objects, not plain strings. The desktop must
