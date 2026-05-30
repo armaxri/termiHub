@@ -63,6 +63,10 @@ pub struct SessionInfo {
     pub last_activity: DateTime<Utc>,
     pub attached: bool,
     pub backend: SessionBackend,
+    /// ID of the saved connection definition this session was created from.
+    /// Lets clients re-link an active session to its source definition
+    /// (e.g. to derive the persistent connection ID for reattach).
+    pub definition_id: Option<String>,
 }
 
 /// Read-only snapshot of session state, returned from list/create.
@@ -75,6 +79,7 @@ pub struct SessionSnapshot {
     pub created_at: DateTime<Utc>,
     pub last_activity: DateTime<Utc>,
     pub attached: bool,
+    pub definition_id: Option<String>,
 }
 
 impl SessionInfo {
@@ -88,6 +93,7 @@ impl SessionInfo {
             created_at: self.created_at,
             last_activity: self.last_activity,
             attached: self.attached,
+            definition_id: self.definition_id.clone(),
         }
     }
 }
