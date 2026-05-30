@@ -325,7 +325,10 @@ pub async fn adopt_persistent_session(
     app_handle: tauri::AppHandle,
     manager: State<'_, SessionManager>,
 ) -> Result<String, TerminalError> {
-    info!(connection_id, agent_id, agent_session_id, "Adopting persistent session");
+    info!(
+        connection_id,
+        agent_id, agent_session_id, "Adopting persistent session"
+    );
     manager
         .adopt_persistent_session(&connection_id, &agent_id, &agent_session_id, app_handle)
         .await
