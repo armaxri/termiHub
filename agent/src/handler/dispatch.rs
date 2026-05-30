@@ -16,7 +16,7 @@ use jsonrpsee::core::server::RpcModule;
 use jsonrpsee::types::ErrorObjectOwned;
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::files::local::LocalFileBackend;
 use crate::files::{FileBackend, FileError};
@@ -354,6 +354,14 @@ fn register_connection_create(module: &mut RpcModule<Mutex<HandlerState>>) -> an
             .parse()
             .map_err(|e| invalid_params("connection.create", e))?;
 
+        // DEBUG/reattach
+        info!(
+            session_type = %p.session_type,
+            definition_id = ?p.definition_id,
+            title = ?p.title,
+            "DEBUG/reattach connection.create params received"
+        );
+
         let type_id = normalize_type_id(&p.session_type);
 
         if !session_manager.registry().has_type(type_id) {
@@ -414,6 +422,12 @@ fn register_connection_list(module: &mut RpcModule<Mutex<HandlerState>>) -> anyh
                 definition_id: s.definition_id,
             })
             .collect();
+        // DEBUG/reattach
+        info!(
+            entries_count = entries.len(),
+            entries = ?entries.iter().map(|e| (e.session_id.clone(), e.definition_id.clone())).collect::<Vec<_>>(),
+            "DEBUG/reattach connection.list response"
+        );
 
         Ok::<_, ErrorObjectOwned>(
             serde_json::to_value(SessionListResult { sessions: entries }).unwrap(),
@@ -568,10 +582,16 @@ fn register_session_get_buffer(module: &mut RpcModule<Mutex<HandlerState>>) -> a
             .parse()
             .map_err(|e| invalid_params("session.getBuffer", e))?;
 
+        // DEBUG/reattach
+        info!(session_id = %p.session_id, "DEBUG/reattach session.getBuffer request");
+
         let data = session_manager
             .get_buffer(&p.session_id)
             .await
             .map_err(|e| rpc_err(errors::SESSION_NOT_FOUND, e))?;
+
+        // DEBUG/reattach
+        info!(session_id = %p.session_id, data_len = data.len(), "DEBUG/reattach session.getBuffer returning bytes");
 
         let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
         Ok::<_, ErrorObjectOwned>(

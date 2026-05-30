@@ -641,8 +641,18 @@ impl SessionManager {
         let session_id = agent_session_id.to_string();
 
         let mut ps = self.persistent_sessions.lock().await;
+        // DEBUG/reattach
+        info!(
+            connection_id,
+            agent_id,
+            agent_session_id,
+            existing = ?ps.get(connection_id).map(|r| (r.session_id.clone(), r.remote_session_id.clone())),
+            "DEBUG/reattach adopt_persistent_session entry"
+        );
         if let Some(existing) = ps.get(connection_id) {
             if existing.remote_session_id.as_deref() == Some(agent_session_id) {
+                // DEBUG/reattach
+                info!(connection_id, "DEBUG/reattach adopt_persistent_session: already adopted, returning existing");
                 return Ok(existing.session_id.clone());
             }
             return Err(TerminalError::SpawnFailed(format!(
@@ -661,6 +671,8 @@ impl SessionManager {
             },
         );
         drop(ps);
+        // DEBUG/reattach
+        info!(connection_id, agent_id, agent_session_id, "DEBUG/reattach adopt_persistent_session: inserted PersistentRecord");
 
         emitter.emit_persistent_state(&PersistentSessionStateEvent {
             connection_id: connection_id.to_string(),
@@ -746,6 +758,16 @@ impl SessionManager {
         // Phase 2: Check if the backend session is alive. If not, try to re-create
         // the RemoteProxy by reconnecting to the surviving daemon on the agent.
         let session_alive = self.sessions.lock().await.contains_key(&session_id);
+        // DEBUG/reattach
+        info!(
+            connection_id,
+            tab_id,
+            %session_id,
+            session_alive,
+            opt_agent_id = ?opt_agent_id,
+            opt_remote_sid = ?opt_remote_sid,
+            "DEBUG/reattach attach_persistent_tab phase 2"
+        );
         if !session_alive {
             match (opt_agent_id, opt_remote_sid) {
                 (Some(agent_id), Some(remote_sid)) => {
@@ -902,6 +924,8 @@ impl SessionManager {
         &self,
         session_id: &str,
     ) -> Result<Vec<u8>, TerminalError> {
+        // DEBUG/reattach
+        info!(%session_id, "DEBUG/reattach get_remote_session_buffer entry");
         let (agent_id, remote_sid) = {
             let sessions = self.sessions.lock().await;
             let entry = sessions
@@ -916,10 +940,14 @@ impl SessionManager {
             })?;
             (agent_id, remote_sid)
         };
+        // DEBUG/reattach
+        info!(%session_id, %agent_id, %remote_sid, "DEBUG/reattach get_remote_session_buffer sending session.getBuffer");
 
         // Run the sync RPC on the blocking thread pool — its internal
         // `oneshot::Receiver::blocking_recv` would otherwise park a tokio worker.
         let mgr = self.agent_manager.clone();
+        let agent_id_log = agent_id.clone();
+        let remote_sid_log = remote_sid.clone();
         let result = tokio::task::spawn_blocking(move || {
             mgr.send_request(
                 &agent_id,
@@ -932,6 +960,14 @@ impl SessionManager {
         .map_err(|e| TerminalError::RemoteError(e.to_string()))?;
 
         let b64 = result.get("data").and_then(|v| v.as_str()).unwrap_or("");
+        // DEBUG/reattach
+        info!(
+            %session_id,
+            agent_id = %agent_id_log,
+            remote_sid = %remote_sid_log,
+            b64_len = b64.len(),
+            "DEBUG/reattach get_remote_session_buffer got base64 reply"
+        );
         if b64.is_empty() {
             return Ok(Vec::new());
         }

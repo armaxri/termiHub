@@ -722,12 +722,27 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
       const def = session.definitionId
         ? agentDefinitions.find((d) => d.id === session.definitionId)
         : undefined;
+      // DEBUG/reattach
+      frontendLog(
+        "agent_node",
+        `DEBUG/reattach handleAttachSession sessionId=${session.sessionId} definitionId=${session.definitionId ?? "<none>"} defLookup=${def ? "hit" : "miss"} defCount=${agentDefinitions.length}`
+      );
       if (def && session.definitionId) {
+        // DEBUG/reattach
+        frontendLog(
+          "agent_node",
+          `DEBUG/reattach taking adopt path agentId=${agent.id} defId=${def.id} sessionId=${session.sessionId}`
+        );
         useAppStore
           .getState()
           .adoptAndAttachAgentPersistentSession(agent.id, def, session.sessionId);
         return;
       }
+      // DEBUG/reattach
+      frontendLog(
+        "agent_node",
+        `DEBUG/reattach taking fallback addTab path (no def match) — buffer replay will be SKIPPED`
+      );
       addTab(session.title || `Session: ${session.sessionId}`, "remote-session", {
         type: "remote-session",
         config: {

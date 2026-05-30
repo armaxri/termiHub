@@ -119,10 +119,18 @@ impl DaemonClient {
             protocol::write_frame_async(writer, MSG_QUERY_BUFFER, &[]).await?;
         }
 
-        tokio::time::timeout(std::time::Duration::from_secs(10), rx)
+        // DEBUG/reattach
+        info!("DEBUG/reattach DaemonClient::query_buffer sent MSG_QUERY_BUFFER, awaiting reply");
+        let res = tokio::time::timeout(std::time::Duration::from_secs(10), rx)
             .await
             .map_err(|_| anyhow::anyhow!("Timeout waiting for buffer reply from daemon"))?
-            .map_err(|_| anyhow::anyhow!("Buffer reply channel closed unexpectedly"))
+            .map_err(|_| anyhow::anyhow!("Buffer reply channel closed unexpectedly"));
+        // DEBUG/reattach
+        match &res {
+            Ok(bytes) => info!(len = bytes.len(), "DEBUG/reattach DaemonClient::query_buffer got reply"),
+            Err(e) => info!(err = %e, "DEBUG/reattach DaemonClient::query_buffer error"),
+        }
+        res
     }
 
     /// Clone the writer Arc so callers can write without holding a reference to

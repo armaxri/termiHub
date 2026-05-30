@@ -1304,10 +1304,20 @@ export const useAppStore = create<AppState>((set, get) => {
     adoptAndAttachAgentPersistentSession: async (agentId, def, agentSessionId, panelId) => {
       const connectionId = `${agentId}:${def.id}`;
       const existing = get().persistentSessions[connectionId];
+      // DEBUG/reattach
+      frontendLog(
+        "app_store",
+        `DEBUG/reattach adoptAndAttach entry connectionId=${connectionId} agentSessionId=${agentSessionId} existing.sessionId=${existing?.sessionId ?? "<none>"} existing.state=${existing?.state ?? "<none>"}`
+      );
 
       // If we already track this connection and it points at the same agent
       // session, fall through to the normal attach path — no adoption needed.
       if (existing?.sessionId === agentSessionId) {
+        // DEBUG/reattach
+        frontendLog(
+          "app_store",
+          `DEBUG/reattach already adopted — calling attachAgentPersistentSession directly`
+        );
         await get().attachAgentPersistentSession(agentId, def, panelId);
         return;
       }
@@ -1324,7 +1334,11 @@ export const useAppStore = create<AppState>((set, get) => {
       }
 
       try {
+        // DEBUG/reattach
+        frontendLog("app_store", `DEBUG/reattach calling backend adopt_persistent_session`);
         await apiAdoptPersistentSession(connectionId, agentId, agentSessionId);
+        // DEBUG/reattach
+        frontendLog("app_store", `DEBUG/reattach backend adopt_persistent_session returned OK`);
       } catch (err) {
         frontendLog(
           "app_store",
@@ -1349,7 +1363,14 @@ export const useAppStore = create<AppState>((set, get) => {
         },
       }));
 
+      // DEBUG/reattach
+      frontendLog(
+        "app_store",
+        `DEBUG/reattach seeded persistentSessions, calling attachAgentPersistentSession`
+      );
       await get().attachAgentPersistentSession(agentId, def, panelId);
+      // DEBUG/reattach
+      frontendLog("app_store", `DEBUG/reattach attachAgentPersistentSession returned`);
     },
 
     startAndAttachAgentPersistentSession: async (agentId, def, panelId) => {

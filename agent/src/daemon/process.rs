@@ -300,6 +300,12 @@ async fn daemon_loop(
                     Some(AgentCommand::QueryBuffer) => {
                         if let Some(ref mut writer) = agent_writer {
                             let buffered = ring_buffer.read_all();
+                            // DEBUG/reattach
+                            info!(
+                                buffered_len = buffered.len(),
+                                ring_len = ring_buffer.len(),
+                                "DEBUG/reattach daemon QueryBuffer: replying with ring buffer snapshot"
+                            );
                             if protocol::write_frame_async(writer, MSG_BUFFER_REPLAY, &buffered)
                                 .await
                                 .is_err()
@@ -308,6 +314,9 @@ async fn daemon_loop(
                                 agent_writer = None;
                                 abort_reader(&mut reader_task);
                             }
+                        } else {
+                            // DEBUG/reattach
+                            info!("DEBUG/reattach daemon QueryBuffer: no agent_writer, skipping reply");
                         }
                     }
                     Some(AgentCommand::Disconnected(gen)) => {
