@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { quotePath } from "@/utils/quotePath";
 
 /**
  * Pure position-hit-test logic extracted from useOsFileDrop.
@@ -45,16 +46,6 @@ describe("useOsFileDrop — hit-test logic", () => {
     expect(isPhysicalPosOver({ x: 301, y: 200 }, rect, 1)).toBe(false);
   });
 });
-
-/**
- * Shell-safe quoting logic — mirrors quotePath() in TerminalView.tsx.
- */
-function quotePath(path: string): string {
-  if (/^[A-Za-z]:/.test(path) || path.includes("\\")) {
-    return `"${path.replace(/"/g, '\\"')}"`;
-  }
-  return `'${path.replace(/'/g, "'\\''")}'`;
-}
 
 describe("quotePath — terminal path insertion", () => {
   it("wraps a simple unix path in single quotes", () => {

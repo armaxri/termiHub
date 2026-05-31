@@ -46,6 +46,19 @@ export function findLeafByTab(root: PanelNode, tabId: string): LeafPanel | null 
   return null;
 }
 
+/**
+ * Resolve the session ID of the terminal tab currently shown in a leaf panel.
+ *
+ * Returns null when the panel is empty, its active tab is not a terminal, or the
+ * terminal has not connected yet. Used to route OS file drops to the session of the
+ * pane under the cursor so each pane is its own drop target.
+ */
+export function getPanelActiveSessionId(panel: LeafPanel): string | null {
+  const activeTab = panel.tabs.find((t) => t.id === panel.activeTabId);
+  if (!activeTab || activeTab.contentType !== "terminal") return null;
+  return activeTab.sessionId ?? null;
+}
+
 /** Get a flat list of all leaves in the tree. */
 export function getAllLeaves(root: PanelNode): LeafPanel[] {
   if (root.type === "leaf") return [root];
