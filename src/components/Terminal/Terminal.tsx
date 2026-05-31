@@ -241,11 +241,6 @@ export function Terminal({
         let ptyCols = 0;
         let ptyRows = 0;
         let sessionId: string;
-        // DEBUG/reattach
-        frontendLog(
-          "terminal",
-          `DEBUG/reattach setupTerminal entry tabId=${tabId} initialSessionId=${initialSessionIdRef.current ?? "<none>"} persistentConnectionId=${persistentConnectionId ?? "<none>"}`
-        );
         if (initialSessionIdRef.current) {
           sessionId = initialSessionIdRef.current;
           if (persistentConnectionId) {
@@ -260,11 +255,6 @@ export function Terminal({
             frontendLog("terminal", `Reattaching persistent session ${sessionId}, fetching buffer`);
             try {
               const buffer = await getAgentSessionBuffer(sessionId);
-              // DEBUG/reattach
-              frontendLog(
-                "terminal",
-                `DEBUG/reattach getAgentSessionBuffer returned ${buffer.length} bytes for session=${sessionId}`
-              );
               if (isCanceled()) return;
               if (buffer.length > 0) {
                 // Discard any buffered live output that arrived before we subscribed —
@@ -272,14 +262,6 @@ export function Terminal({
                 terminalDispatcher.clearPendingOutput(sessionId);
                 xterm.reset();
                 await new Promise<void>((resolve) => xterm.write(buffer, resolve));
-                // DEBUG/reattach
-                frontendLog(
-                  "terminal",
-                  `DEBUG/reattach wrote ${buffer.length} buffer bytes to xterm`
-                );
-              } else {
-                // DEBUG/reattach
-                frontendLog("terminal", `DEBUG/reattach buffer was EMPTY — nothing to replay`);
               }
             } catch (err) {
               frontendLog("terminal", `Failed to fetch reattach buffer: ${err}`);
