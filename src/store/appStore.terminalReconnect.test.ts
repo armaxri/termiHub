@@ -58,6 +58,7 @@ vi.mock("@/services/api", () => ({
   vscodeAvailable: vi.fn(() => Promise.resolve(false)),
   removeCredential: vi.fn(() => Promise.resolve()),
   getConnectionTypes: vi.fn(() => Promise.resolve([])),
+  sessionGetCapabilities: vi.fn(() => Promise.resolve({})),
 }));
 
 import { useAppStore } from "./appStore";
