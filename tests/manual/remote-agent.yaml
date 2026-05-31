@@ -135,3 +135,38 @@ tests:
       - "The persistent badge (∞) and Stop/Attach action icons appear, confirming the session is registered with the persistent-session machinery"
       - "Closing the tab leaves the background session running and the dot stays green"
     verification: manual
+
+  # --- Reconnect restarts the connection instead of looping (bugfix/agent-reconnect-endless-loop) ---
+
+  - id: MT-AGENT-14
+    name: "Reconnecting a destroyed persistent session restarts it (no endless loop)"
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Connect to a remote agent and open a persistent shell session in a tab"
+      - "Open the Open Connections panel (Settings wheel → Open Connections) and kill that persistent session, OR stop it from the sidebar"
+      - "On the tab's disconnect overlay, click 'Reconnect'"
+    expected:
+      - "The tab does NOT get stuck retrying forever (no endless 'Connecting… / Connection failed' cycling)"
+      - "A brand-new persistent session is started and the tab attaches to it (fresh prompt)"
+      - "The sidebar state dot for the persistent shell returns to green (running/attached)"
+    verification: manual
+
+  - id: MT-AGENT-15
+    name: "Reconnecting after the agent connection is destroyed re-establishes the agent"
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Connect to a remote agent and open a session tab through it"
+      - "Open the Open Connections panel and kill the agent connection (or use 'Kill All' agents)"
+      - "On the tab's disconnect overlay, click 'Reconnect'"
+    expected:
+      - "The reconnect does not spin endlessly with 'Agent not connected' failures"
+      - "The agent connection is automatically re-established (sidebar agent dot returns to green)"
+      - "Once the agent is back, a fresh session starts in the tab automatically"
+      - "If the agent cannot be reached (e.g. host offline), the retry stops after a few attempts and a disconnect error is shown rather than looping forever"
+    verification: manual
