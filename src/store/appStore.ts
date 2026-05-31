@@ -297,6 +297,14 @@ interface AppState {
     def: AgentDefinitionInfo,
     panelId?: string
   ) => Promise<void>;
+  /**
+   * Restart (or reattach to) the persistent session backing `tabId` and write
+   * the resulting live session id onto the tab. Used by the terminal reconnect
+   * path so a persistent tab whose session was destroyed gets a fresh live
+   * session instead of reattaching to a dead one. Resolves with the new session
+   * id, or `null` if the tab is not persistent or the restart failed.
+   */
+  restartPersistentSessionForTab: (tabId: string) => Promise<string | null>;
   openSettingsTab: () => void;
   openLogViewerTab: () => void;
   openNetworkDiagnosticTab: (
@@ -1294,6 +1302,86 @@ export const useAppStore = create<AppState>((set, get) => {
       const sessionId = await get().startAgentPersistentSession(agentId, def);
       if (!sessionId) return;
       await get().attachAgentPersistentSession(agentId, def, panelId);
+    },
+
+    restartPersistentSessionForTab: async (tabId) => {
+      const state = get();
+      const tab = [
+        ...getAllLeaves(state.rootPanel).flatMap((l) => l.tabs),
+        ...state.tabGroups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((l) => l.tabs)),
+      ].find((t) => t.id === tabId);
+      const connectionId = tab?.persistentConnectionId;
+      if (!tab || !connectionId) return null;
+
+      const cfg = tab.config.config as {
+        agentId?: string;
+        sessionType?: string;
+        title?: string;
+        [key: string]: unknown;
+      };
+      const agentId = cfg.agentId;
+      if (!agentId || !connectionId.startsWith(`${agentId}:`)) return null;
+      const defId = connectionId.slice(agentId.length + 1);
+
+      // Reuse a session that is already live (e.g. the agent transport simply
+      // dropped and recovered) rather than spawning a duplicate.
+      const existing = state.persistentSessions[connectionId];
+      if (existing?.sessionId && (existing.state === "running" || existing.state === "attached")) {
+        get().setTabSessionId(tabId, existing.sessionId);
+        try {
+          await apiAttachPersistentTab(connectionId, tabId);
+        } catch (err) {
+          frontendLog(
+            "app_store",
+            `restart_persistent reattach failed for ${connectionId}: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+        return existing.sessionId;
+      }
+
+      // The session is gone — clear the dead id so the terminal never reattaches
+      // to a corpse, then start a fresh persistent session.
+      get().setTabSessionId(tabId, null);
+
+      // Reconstruct the connection definition from the tab config (agent
+      // definitions may not be loaded, e.g. after an agent disconnect).
+      const { agentId: _a, sessionType, title, persistent: _p, ...connConfig } = cfg;
+      const def: AgentDefinitionInfo = {
+        id: defId,
+        name: title ?? tab.title,
+        sessionType: sessionType ?? "shell",
+        config: connConfig,
+        persistent: true,
+        folderId: null,
+      };
+
+      const sessionId = await get().startAgentPersistentSession(agentId, def);
+      if (!sessionId) return null;
+      try {
+        await apiAttachPersistentTab(connectionId, tabId);
+        set((s) => {
+          const entry = s.persistentSessions[connectionId];
+          if (!entry) return s;
+          return {
+            persistentSessions: {
+              ...s.persistentSessions,
+              [connectionId]: {
+                ...entry,
+                attachedTabIds: entry.attachedTabIds.includes(tabId)
+                  ? entry.attachedTabIds
+                  : [...entry.attachedTabIds, tabId],
+              },
+            },
+          };
+        });
+      } catch (err) {
+        frontendLog(
+          "app_store",
+          `restart_persistent attach failed for ${connectionId}: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+      get().setTabSessionId(tabId, sessionId);
+      return sessionId;
     },
 
     // Panels & Tabs
