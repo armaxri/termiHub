@@ -115,6 +115,11 @@ pub struct SessionCreateParams {
     #[serde(default)]
     pub config: serde_json::Value,
     pub title: Option<String>,
+    /// ID of the saved connection definition this session was created from, if any.
+    /// Lets clients re-link an active session to its source definition after
+    /// tab close, agent restart, or desktop restart.
+    #[serde(default)]
+    pub definition_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -125,6 +130,8 @@ pub struct SessionCreateResult {
     pub session_type: String,
     pub status: String,
     pub created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub definition_id: Option<String>,
 }
 
 // ── session.list ────────────────────────────────────────────────────
@@ -144,6 +151,8 @@ pub struct SessionListEntry {
     pub created_at: String,
     pub last_activity: String,
     pub attached: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub definition_id: Option<String>,
 }
 
 // ── session.close ───────────────────────────────────────────────────
@@ -630,11 +639,62 @@ mod tests {
             session_type: "shell".to_string(),
             status: "running".to_string(),
             created_at: "2026-02-14T10:30:00Z".to_string(),
+            definition_id: None,
         };
         let v = serde_json::to_value(&result).unwrap();
         assert_eq!(v["session_id"], "abc-123");
         assert_eq!(v["type"], "shell");
         assert_eq!(v["status"], "running");
+        assert!(v.get("definition_id").is_none());
+    }
+
+    #[test]
+    fn session_create_params_with_definition_id() {
+        let json = json!({
+            "type": "shell",
+            "config": {"shell": "/bin/bash"},
+            "title": "Build",
+            "definition_id": "def-42"
+        });
+        let params: SessionCreateParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.definition_id.as_deref(), Some("def-42"));
+    }
+
+    #[test]
+    fn session_create_params_definition_id_absent() {
+        let json = json!({"type": "shell"});
+        let params: SessionCreateParams = serde_json::from_value(json).unwrap();
+        assert!(params.definition_id.is_none());
+    }
+
+    #[test]
+    fn session_create_result_with_definition_id_serializes() {
+        let result = SessionCreateResult {
+            session_id: "abc-123".to_string(),
+            title: "Build session".to_string(),
+            session_type: "shell".to_string(),
+            status: "running".to_string(),
+            created_at: "2026-02-14T10:30:00Z".to_string(),
+            definition_id: Some("def-42".to_string()),
+        };
+        let v = serde_json::to_value(&result).unwrap();
+        assert_eq!(v["definition_id"], "def-42");
+    }
+
+    #[test]
+    fn session_list_entry_with_definition_id_serializes() {
+        let entry = SessionListEntry {
+            session_id: "s1".to_string(),
+            title: "T".to_string(),
+            session_type: "shell".to_string(),
+            status: "running".to_string(),
+            created_at: "2026-02-14T10:30:00Z".to_string(),
+            last_activity: "2026-02-14T10:30:00Z".to_string(),
+            attached: false,
+            definition_id: Some("def-7".to_string()),
+        };
+        let v = serde_json::to_value(&entry).unwrap();
+        assert_eq!(v["definition_id"], "def-7");
     }
 
     #[test]
@@ -648,6 +708,7 @@ mod tests {
                 created_at: "2026-02-14T10:30:00Z".to_string(),
                 last_activity: "2026-02-14T12:00:00Z".to_string(),
                 attached: false,
+                definition_id: None,
             }],
         };
         let v = serde_json::to_value(&result).unwrap();

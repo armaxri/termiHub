@@ -117,7 +117,7 @@ describe("appStore — persistent sessions", () => {
       expect(mockStartPersistentSession).toHaveBeenCalledWith(
         CONNECTION_ID,
         "shell",
-        { shell: "/bin/bash", title: "Persistent Shell" },
+        { shell: "/bin/bash", title: "Persistent Shell", definitionId: "def-1" },
         AGENT_ID
       );
     });
@@ -215,7 +215,7 @@ describe("appStore — persistent sessions", () => {
       expect(mockStartPersistentSession).toHaveBeenCalledWith(
         CONNECTION_ID,
         "shell",
-        { shell: "/bin/bash", title: "Persistent Shell" },
+        { shell: "/bin/bash", title: "Persistent Shell", definitionId: "def-1" },
         AGENT_ID
       );
       expect(mockAttachPersistentTab).toHaveBeenCalledWith(CONNECTION_ID, expect.any(String));
