@@ -344,3 +344,24 @@ tests:
       - "The terminal content of the new tab is fully visible"
     verification: manual
     tags: [terminal, zoom, tabs]
+
+  # --- Per-pane OS file drop (PR #755) ---
+
+  - id: MT-UI-34
+    name: "OS file drop targets the individual pane under the cursor"
+    pr: 755
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - "Open a split view with two terminal panes, each running a local shell"
+    instructions:
+      - "From the OS file manager (Finder/Explorer), start dragging a file over the app"
+      - "Hover over the LEFT pane and observe the highlight"
+      - "Hover over the RIGHT pane and observe the highlight"
+      - "Drop the file onto the RIGHT pane (which is NOT the globally active pane)"
+    expected:
+      - "Only the pane under the cursor shows the dashed 'Drop to insert path' highlight, not the whole terminal area"
+      - "The highlight moves from one pane to the other as the cursor crosses the divider"
+      - "The quoted file path is inserted into the RIGHT pane's shell, not the active pane"
+    verification: manual
+    tags: [drag-drop, split-view]
