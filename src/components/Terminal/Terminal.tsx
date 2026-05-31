@@ -257,11 +257,29 @@ export function Terminal({
               const buffer = await getAgentSessionBuffer(sessionId);
               if (isCanceled()) return;
               if (buffer.length > 0) {
-                // Discard any buffered live output that arrived before we subscribed —
-                // the full buffer already contains it.
-                terminalDispatcher.clearPendingOutput(sessionId);
+                // DEBUG/reattach: log the tail of the buffer so any unexpected
+                // control sequences (e.g. a resize CSI right before the prompt)
+                // are visible in the LogViewer.  Remove once the reattach
+                // rendering quirks are fully understood.
+                const tail = buffer.slice(Math.max(0, buffer.length - 80));
+                const tailHex = Array.from(tail)
+                  .map((b) => b.toString(16).padStart(2, "0"))
+                  .join(" ");
+                frontendLog(
+                  "terminal",
+                  `DEBUG/reattach buffer=${buffer.length}B xterm=${xterm.cols}x${xterm.rows} tail80=${tailHex}`
+                );
                 xterm.reset();
                 await new Promise<void>((resolve) => xterm.write(buffer, resolve));
+                // NOTE: clearPendingOutput is intentionally deferred to right
+                // before subscribeOutput below.  `attach_session` on the agent
+                // (called via reconnect_existing during apiAttachPersistentTab)
+                // triggers the daemon to forward its ring buffer as live
+                // `connection.output` notifications — and those chunks keep
+                // arriving while `xterm.write(buffer)` is still running.
+                // Clearing here would miss the in-flight chunks; they would
+                // accumulate in pendingOutput and get re-drained by
+                // subscribeOutput, duplicating every byte of scrollback.
               }
             } catch (err) {
               frontendLog("terminal", `Failed to fetch reattach buffer: ${err}`);
@@ -404,6 +422,18 @@ export function Terminal({
           }
           outputBuffer.length = 0;
         };
+
+        // Discard any output that landed in pendingOutput while we were
+        // fetching + writing the scrollback buffer.  For persistent reattach,
+        // those chunks are the daemon's MSG_BUFFER_REPLAY (forwarded as live
+        // `connection.output` by the agent in response to attach_session) and
+        // duplicate bytes we just rendered from getAgentSessionBuffer.  Doing
+        // this synchronously immediately before subscribeOutput ensures no
+        // additional chunks slip into pendingOutput between the clear and
+        // the subscription registration.
+        if (persistentConnectionId) {
+          terminalDispatcher.clearPendingOutput(sessionId);
+        }
 
         // Subscribe to output events via singleton dispatcher (O(1) routing)
         const unsubOutput = terminalDispatcher.subscribeOutput(sessionId, (data) => {
