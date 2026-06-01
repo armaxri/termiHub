@@ -300,16 +300,18 @@ export function Terminal({
               const buffer = await getAgentSessionBuffer(sessionId);
               if (isCanceled()) return;
               if (buffer.length > 0) {
-                // The xterm instance may still be parked in the registry's
-                // hidden container at this point (the outer effect kicks off
-                // setupTerminal synchronously, before the portal places the
-                // element in its real slot). Writing the buffer while xterm is
-                // at parking dimensions (e.g. 2x1) renders the scrollback
-                // character-by-character; the later resize cannot rewrap the
-                // trailing zsh prompt because it contains per-character
-                // cursor-positioning sequences. Wait for the portal to
-                // complete + a fit() that returns sane dimensions before
-                // writing.
+                // Drop the reattaching flag BEFORE writing the buffer.
+                // SplitView swaps TerminalSlot for TerminalConnectionOverlay
+                // while the flag is true (see SplitView.tsx ~660), which
+                // unmounts the slot and parks the xterm element in the 1x1
+                // hidden container.  Writing the buffer then renders the
+                // scrollback at parking dimensions (e.g. 2x1), and xterm.js's
+                // later reflow cannot recover the trailing prompt because zsh
+                // emits per-character cursor-positioning sequences.  Clearing
+                // the flag now lets the slot remount and re-adopt the element
+                // back into its real container; the wait below blocks until
+                // that has happened.
+                useAppStore.getState().setTerminalReattaching(tabId, false);
                 await waitForUsableDimensions(xterm, fitAddon, terminalElRef.current, isCanceled);
                 if (isCanceled()) return;
                 // DEBUG/reattach: confirm dimensions + container size after the wait.
@@ -332,6 +334,8 @@ export function Terminal({
             } catch (err) {
               frontendLog("terminal", `Failed to fetch reattach buffer: ${err}`);
             } finally {
+              // Idempotent: clears the flag in the empty-buffer + error paths
+              // where the early clear above did not run.
               if (!isCanceled()) {
                 useAppStore.getState().setTerminalReattaching(tabId, false);
               }
