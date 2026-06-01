@@ -714,6 +714,20 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
 
   const handleAttachSession = useCallback(
     (session: AgentSessionInfo) => {
+      // If the agent reported which saved-connection definition this session
+      // was created from, route through the adopt+attach path so the new tab
+      // re-attaches to the existing session (with scrollback replay) instead
+      // of spawning a fresh one. Falls back to the simple addTab path for
+      // legacy sessions created before the agent learned about definition_id.
+      const def = session.definitionId
+        ? agentDefinitions.find((d) => d.id === session.definitionId)
+        : undefined;
+      if (def && session.definitionId) {
+        useAppStore
+          .getState()
+          .adoptAndAttachAgentPersistentSession(agent.id, def, session.sessionId);
+        return;
+      }
       addTab(session.title || `Session: ${session.sessionId}`, "remote-session", {
         type: "remote-session",
         config: {
@@ -724,7 +738,7 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
         },
       });
     },
-    [agent.id, addTab]
+    [agent.id, addTab, agentDefinitions]
   );
 
   const handleOpenDefinition = useCallback(
@@ -740,6 +754,9 @@ export function AgentNode({ agent, style, sectionRef }: AgentNodeProps) {
             ...(def.config as Record<string, unknown>),
             persistent: def.persistent,
             title: def.name,
+            // Link the session to its source definition so reattach can
+            // recover the persistent connectionId from listAgentSessions.
+            definitionId: def.id,
           },
         },
         undefined,

@@ -46,6 +46,49 @@ const DEFAULT_CURSOR_BLINK = true;
 const MAX_AGENT_SPAWN_ATTEMPTS = 5;
 
 /**
+ * Wait until the xterm element is sitting in a real slot (large parent
+ * container) AND xterm has at least `MIN_REATTACH_COLS` columns.
+ *
+ * The xterm DOM element is shared across slot remounts: TerminalSlot moves
+ * it from a 1×1 hidden parking area into a real container and back. If a
+ * state update (e.g. persistent-session-state → "attached") fires during
+ * reattach setup, the slot can remount and stash the element back into
+ * parking for a few hundred milliseconds. Calling fitAddon.fit() while the
+ * element is parked resizes xterm to 2×1, and then `xterm.write(buffer)`
+ * renders the scrollback at that doll-house width.
+ *
+ * Strategy: only call fit() once `el.offsetWidth` looks like a real slot;
+ * skip fits against parking entirely so xterm's current cols are not
+ * clobbered. Bounded by ~3 s so a misbehaving slot doesn't hang the
+ * reattach indefinitely; the buffer is then written at whatever
+ * dimensions xterm has, and the normal resize path still attempts to
+ * rewrap.
+ */
+const MIN_REATTACH_COLS = 20;
+const MIN_REATTACH_ELEMENT_PX = 50;
+const MAX_REATTACH_FIT_FRAMES = 180;
+async function waitForUsableDimensions(
+  xterm: XTerm,
+  fitAddon: FitAddon,
+  terminalEl: HTMLDivElement | null,
+  isCanceled: () => boolean
+): Promise<void> {
+  for (let i = 0; i < MAX_REATTACH_FIT_FRAMES; i++) {
+    const elWidth = terminalEl?.offsetWidth ?? 0;
+    if (elWidth >= MIN_REATTACH_ELEMENT_PX) {
+      try {
+        fitAddon.fit();
+      } catch {
+        // Container not measurable yet — retry on the next frame.
+      }
+      if (xterm.cols >= MIN_REATTACH_COLS) return;
+    }
+    if (isCanceled()) return;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  }
+}
+
+/**
  * Scan the terminal buffer and return the rightmost occupied cell index.
  * Efficiently skips lines shorter than the current maximum.
  */
@@ -284,15 +327,42 @@ export function Terminal({
               const buffer = await getAgentSessionBuffer(sessionId);
               if (isCanceled()) return;
               if (buffer.length > 0) {
-                // Discard any buffered live output that arrived before we subscribed —
-                // the full buffer already contains it.
-                terminalDispatcher.clearPendingOutput(sessionId);
+                // Drop the reattaching flag BEFORE writing the buffer.
+                // SplitView swaps TerminalSlot for TerminalConnectionOverlay
+                // while the flag is true (see SplitView.tsx ~660), which
+                // unmounts the slot and parks the xterm element in the 1x1
+                // hidden container.  Writing the buffer then renders the
+                // scrollback at parking dimensions (e.g. 2x1), and xterm.js's
+                // later reflow cannot recover the trailing prompt because zsh
+                // emits per-character cursor-positioning sequences.  Clearing
+                // the flag now lets the slot remount and re-adopt the element
+                // back into its real container; the wait below blocks until
+                // that has happened.
+                useAppStore.getState().setTerminalReattaching(tabId, false);
+                await waitForUsableDimensions(xterm, fitAddon, terminalElRef.current, isCanceled);
+                if (isCanceled()) return;
+                // DEBUG/reattach: confirm dimensions + container size after the wait.
+                frontendLog(
+                  "terminal",
+                  `DEBUG/reattach buffer=${buffer.length}B writing at xterm=${xterm.cols}x${xterm.rows} el=${terminalElRef.current?.offsetWidth ?? 0}x${terminalElRef.current?.offsetHeight ?? 0}`
+                );
                 xterm.reset();
                 await new Promise<void>((resolve) => xterm.write(buffer, resolve));
+                // NOTE: clearPendingOutput is intentionally deferred to right
+                // before subscribeOutput below.  `attach_session` on the agent
+                // (called via reconnect_existing during apiAttachPersistentTab)
+                // triggers the daemon to forward its ring buffer as live
+                // `connection.output` notifications — and those chunks keep
+                // arriving while `xterm.write(buffer)` is still running.
+                // Clearing here would miss the in-flight chunks; they would
+                // accumulate in pendingOutput and get re-drained by
+                // subscribeOutput, duplicating every byte of scrollback.
               }
             } catch (err) {
               frontendLog("terminal", `Failed to fetch reattach buffer: ${err}`);
             } finally {
+              // Idempotent: clears the flag in the empty-buffer + error paths
+              // where the early clear above did not run.
               if (!isCanceled()) {
                 useAppStore.getState().setTerminalReattaching(tabId, false);
               }
@@ -466,6 +536,18 @@ export function Terminal({
           }
           outputBuffer.length = 0;
         };
+
+        // Discard any output that landed in pendingOutput while we were
+        // fetching + writing the scrollback buffer.  For persistent reattach,
+        // those chunks are the daemon's MSG_BUFFER_REPLAY (forwarded as live
+        // `connection.output` by the agent in response to attach_session) and
+        // duplicate bytes we just rendered from getAgentSessionBuffer.  Doing
+        // this synchronously immediately before subscribeOutput ensures no
+        // additional chunks slip into pendingOutput between the clear and
+        // the subscription registration.
+        if (persistentConnectionId) {
+          terminalDispatcher.clearPendingOutput(sessionId);
+        }
 
         // Subscribe to output events via singleton dispatcher (O(1) routing)
         const unsubOutput = terminalDispatcher.subscribeOutput(sessionId, (data) => {

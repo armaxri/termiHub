@@ -366,7 +366,7 @@ fn register_connection_create(module: &mut RpcModule<Mutex<HandlerState>>) -> an
         let title = p.title.unwrap_or_else(|| format!("{type_id} session"));
 
         let snapshot = session_manager
-            .create(type_id, title, p.config)
+            .create(type_id, title, p.config, p.definition_id)
             .await
             .map_err(|e| match e {
                 SessionCreateError::LimitReached => rpc_err(
@@ -388,6 +388,7 @@ fn register_connection_create(module: &mut RpcModule<Mutex<HandlerState>>) -> an
                 session_type: snapshot.type_id,
                 status: snapshot.status.as_str().to_string(),
                 created_at: snapshot.created_at.to_rfc3339(),
+                definition_id: snapshot.definition_id,
             })
             .unwrap(),
         )
@@ -410,6 +411,7 @@ fn register_connection_list(module: &mut RpcModule<Mutex<HandlerState>>) -> anyh
                 created_at: s.created_at.to_rfc3339(),
                 last_activity: s.last_activity.to_rfc3339(),
                 attached: s.attached,
+                definition_id: s.definition_id,
             })
             .collect();
 
@@ -2730,6 +2732,7 @@ mod tests {
             type_id: &str,
             title: String,
             _settings: serde_json::Value,
+            definition_id: Option<String>,
         ) -> Result<SessionSnapshot, SessionCreateError> {
             if let Some(ref e) = self.create_error {
                 return Err(match e {
@@ -2750,6 +2753,7 @@ mod tests {
                 created_at: chrono::Utc::now(),
                 last_activity: chrono::Utc::now(),
                 attached: false,
+                definition_id,
             };
             self.sessions.lock().await.push(snapshot.clone());
             Ok(snapshot)

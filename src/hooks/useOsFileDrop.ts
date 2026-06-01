@@ -35,7 +35,11 @@ export function useOsFileDrop(
       .onDragDropEvent((event) => {
         const payload = event.payload;
         if (payload.type === "enter" || payload.type === "over") {
-          setIsDragOver(isOver(payload.position));
+          // Drag "over" fires continuously while the cursor moves; only re-render
+          // when this element's hover state actually flips. With one listener per
+          // pane this avoids redundant updates across every pane on every event.
+          const over = isOver(payload.position);
+          setIsDragOver((prev) => (prev === over ? prev : over));
         } else if (payload.type === "drop") {
           if (isOver(payload.position)) {
             setIsDragOver(false);
