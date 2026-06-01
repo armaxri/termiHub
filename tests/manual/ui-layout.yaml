@@ -354,6 +354,7 @@ tests:
     prerequisites:
       - app: true
       - "Open a split view with two terminal panes, each running a local shell"
+      - "IMPORTANT: close the Web Inspector / DevTools before testing — an open inspector distorts Tauri drag-drop coordinates on macOS (tauri#11141), making the highlight appear offset from the cursor. This is a dev-tooling artifact only."
     instructions:
       - "From the OS file manager (Finder/Explorer), start dragging a file over the app"
       - "Hover over the LEFT pane and observe the highlight"
