@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Terminal: added a small horizontal inset (8 px) inside the terminal viewport so the first and last characters of each line are no longer flush against the container edge or the vertical scrollbar. This makes it easier to drag-select characters at the line edges. xterm's FitAddon reads the padding so column counts remain accurate; horizontal-scroll mode keeps zero padding to avoid clipping the imperatively sized canvas.
+
 ### Fixed
 
 - Terminal: dragging a file from the OS file manager onto a split terminal view now targets the individual pane under the cursor instead of treating the whole terminal area as a single drop zone. The dropped path is inserted into the session of the tab shown in that pane, and the drag highlight is confined to that pane.
