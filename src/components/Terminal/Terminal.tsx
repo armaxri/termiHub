@@ -38,27 +38,43 @@ const DEFAULT_CURSOR_STYLE = "block" as const;
 const DEFAULT_CURSOR_BLINK = true;
 
 /**
- * Wait until xterm has at least `MIN_REATTACH_COLS` columns, retrying a fit
- * each animation frame. Bounded by 32 frames (~530ms at 60Hz) so a slot that
- * never sizes up doesn't hang the reattach indefinitely — the buffer is then
- * written at whatever dimensions xterm currently has, and a later resize
- * still attempts to rewrap. Resolves once usable dims are seen or the budget
- * is exhausted.
+ * Wait until the xterm element is sitting in a real slot (large parent
+ * container) AND xterm has at least `MIN_REATTACH_COLS` columns.
+ *
+ * The xterm DOM element is shared across slot remounts: TerminalSlot moves
+ * it from a 1×1 hidden parking area into a real container and back. If a
+ * state update (e.g. persistent-session-state → "attached") fires during
+ * reattach setup, the slot can remount and stash the element back into
+ * parking for a few hundred milliseconds. Calling fitAddon.fit() while the
+ * element is parked resizes xterm to 2×1, and then `xterm.write(buffer)`
+ * renders the scrollback at that doll-house width.
+ *
+ * Strategy: only call fit() once `el.offsetWidth` looks like a real slot;
+ * skip fits against parking entirely so xterm's current cols are not
+ * clobbered. Bounded by ~3 s so a misbehaving slot doesn't hang the
+ * reattach indefinitely; the buffer is then written at whatever
+ * dimensions xterm has, and the normal resize path still attempts to
+ * rewrap.
  */
 const MIN_REATTACH_COLS = 20;
-const MAX_REATTACH_FIT_FRAMES = 32;
+const MIN_REATTACH_ELEMENT_PX = 50;
+const MAX_REATTACH_FIT_FRAMES = 180;
 async function waitForUsableDimensions(
   xterm: XTerm,
   fitAddon: FitAddon,
+  terminalEl: HTMLDivElement | null,
   isCanceled: () => boolean
 ): Promise<void> {
   for (let i = 0; i < MAX_REATTACH_FIT_FRAMES; i++) {
-    try {
-      fitAddon.fit();
-    } catch {
-      // Container not ready yet — retry on the next frame.
+    const elWidth = terminalEl?.offsetWidth ?? 0;
+    if (elWidth >= MIN_REATTACH_ELEMENT_PX) {
+      try {
+        fitAddon.fit();
+      } catch {
+        // Container not measurable yet — retry on the next frame.
+      }
+      if (xterm.cols >= MIN_REATTACH_COLS) return;
     }
-    if (xterm.cols >= MIN_REATTACH_COLS) return;
     if (isCanceled()) return;
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
   }
@@ -294,12 +310,12 @@ export function Terminal({
                 // cursor-positioning sequences. Wait for the portal to
                 // complete + a fit() that returns sane dimensions before
                 // writing.
-                await waitForUsableDimensions(xterm, fitAddon, isCanceled);
+                await waitForUsableDimensions(xterm, fitAddon, terminalElRef.current, isCanceled);
                 if (isCanceled()) return;
-                // DEBUG/reattach: confirm dimensions are sane after the wait.
+                // DEBUG/reattach: confirm dimensions + container size after the wait.
                 frontendLog(
                   "terminal",
-                  `DEBUG/reattach buffer=${buffer.length}B writing at xterm=${xterm.cols}x${xterm.rows}`
+                  `DEBUG/reattach buffer=${buffer.length}B writing at xterm=${xterm.cols}x${xterm.rows} el=${terminalElRef.current?.offsetWidth ?? 0}x${terminalElRef.current?.offsetHeight ?? 0}`
                 );
                 xterm.reset();
                 await new Promise<void>((resolve) => xterm.write(buffer, resolve));
