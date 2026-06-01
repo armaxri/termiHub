@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Terminal: added a small horizontal inset (8 px) inside the terminal viewport so the first and last characters of each line are no longer flush against the container edge or the vertical scrollbar. This makes it easier to drag-select characters at the line edges. xterm's FitAddon reads the padding so column counts remain accurate; horizontal-scroll mode keeps zero padding to avoid clipping the imperatively sized canvas.
+
 ### Fixed
 
 - Agent persistent shells: re-attaching to a session via the sidebar's **Active Sessions** double-click no longer spawns a fresh shell on the agent — the desktop now adopts the existing agent session and replays its scrollback buffer into the new tab. Previously the handler called `addTab` without the agent's `sessionId` or the persistent connection ID, so `createTerminal` spawned a new session and the original daemon-side ring buffer was orphaned. A new agent protocol field (`definition_id`) lets the desktop recover the persistent connection ID from a discovered session after both agent and desktop restarts; a new `adopt_persistent_session` backend command and `adoptAndAttachAgentPersistentSession` store action wire this into the existing scrollback-replay path. Sessions created before this version (without `definition_id` on the wire) fall back to the previous behaviour (reattach without buffer replay) until the next restart.
