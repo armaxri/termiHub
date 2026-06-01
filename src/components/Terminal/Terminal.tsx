@@ -369,6 +369,15 @@ export function Terminal({
             }
             if (isCanceled()) return;
           }
+          // Reattach established the session — clear the pre-connect overlay
+          // state. reconnectTerminal sets terminalConnecting=true to show the
+          // overlay immediately, and only the createTerminal path below clears
+          // it. Without this, a reconnect that reattaches (persistent tab, or
+          // workspace restore) leaves the "Connecting…" overlay up forever,
+          // which keeps SplitView parking the xterm element (stuck spinner).
+          useAppStore.getState().setTerminalConnecting(tabId, false);
+          useAppStore.getState().setTerminalAutoRetrying(tabId, 0);
+          useAppStore.getState().setTerminalSpawnError(tabId, null);
         } else {
           let attempt = 0;
           let resolved: string | null = null;
