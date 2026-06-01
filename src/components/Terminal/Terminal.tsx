@@ -38,6 +38,33 @@ const DEFAULT_CURSOR_STYLE = "block" as const;
 const DEFAULT_CURSOR_BLINK = true;
 
 /**
+ * Wait until xterm has at least `MIN_REATTACH_COLS` columns, retrying a fit
+ * each animation frame. Bounded by 32 frames (~530ms at 60Hz) so a slot that
+ * never sizes up doesn't hang the reattach indefinitely — the buffer is then
+ * written at whatever dimensions xterm currently has, and a later resize
+ * still attempts to rewrap. Resolves once usable dims are seen or the budget
+ * is exhausted.
+ */
+const MIN_REATTACH_COLS = 20;
+const MAX_REATTACH_FIT_FRAMES = 32;
+async function waitForUsableDimensions(
+  xterm: XTerm,
+  fitAddon: FitAddon,
+  isCanceled: () => boolean
+): Promise<void> {
+  for (let i = 0; i < MAX_REATTACH_FIT_FRAMES; i++) {
+    try {
+      fitAddon.fit();
+    } catch {
+      // Container not ready yet — retry on the next frame.
+    }
+    if (xterm.cols >= MIN_REATTACH_COLS) return;
+    if (isCanceled()) return;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  }
+}
+
+/**
  * Scan the terminal buffer and return the rightmost occupied cell index.
  * Efficiently skips lines shorter than the current maximum.
  */
@@ -257,17 +284,22 @@ export function Terminal({
               const buffer = await getAgentSessionBuffer(sessionId);
               if (isCanceled()) return;
               if (buffer.length > 0) {
-                // DEBUG/reattach: log the tail of the buffer so any unexpected
-                // control sequences (e.g. a resize CSI right before the prompt)
-                // are visible in the LogViewer.  Remove once the reattach
-                // rendering quirks are fully understood.
-                const tail = buffer.slice(Math.max(0, buffer.length - 80));
-                const tailHex = Array.from(tail)
-                  .map((b) => b.toString(16).padStart(2, "0"))
-                  .join(" ");
+                // The xterm instance may still be parked in the registry's
+                // hidden container at this point (the outer effect kicks off
+                // setupTerminal synchronously, before the portal places the
+                // element in its real slot). Writing the buffer while xterm is
+                // at parking dimensions (e.g. 2x1) renders the scrollback
+                // character-by-character; the later resize cannot rewrap the
+                // trailing zsh prompt because it contains per-character
+                // cursor-positioning sequences. Wait for the portal to
+                // complete + a fit() that returns sane dimensions before
+                // writing.
+                await waitForUsableDimensions(xterm, fitAddon, isCanceled);
+                if (isCanceled()) return;
+                // DEBUG/reattach: confirm dimensions are sane after the wait.
                 frontendLog(
                   "terminal",
-                  `DEBUG/reattach buffer=${buffer.length}B xterm=${xterm.cols}x${xterm.rows} tail80=${tailHex}`
+                  `DEBUG/reattach buffer=${buffer.length}B writing at xterm=${xterm.cols}x${xterm.rows}`
                 );
                 xterm.reset();
                 await new Promise<void>((resolve) => xterm.write(buffer, resolve));
