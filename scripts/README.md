@@ -14,9 +14,9 @@ Helper scripts for common development tasks. Each script has a `.sh` (Unix/macOS
 | `test-system`         | Start Docker infra + virtual serial ports and run system-level E2E tests                                                   |
 | `test-system-mac`     | macOS system test orchestration: Docker containers, unit tests, Rust integration tests (no E2E)                            |
 | `test-system-linux`   | Linux system test orchestration: Docker containers, unit tests, integration tests, E2E tests                               |
-| `test-system-windows` | Windows system test orchestration via WSL/Git Bash: Docker or Podman, unit tests, integration tests, E2E                  |
+| `test-system-windows` | Windows system test orchestration via WSL/Git Bash: Docker or Podman, unit tests, integration tests, E2E                   |
 | `setup-agent-cross`   | Install cross-compilation toolchains for building the agent for 2 Linux targets (musl)                                     |
-| `build-agents`        | Cross-compile the remote agent for Linux targets (x64/ARM64, static musl binaries)                                         |
+| `build-agents`        | Build the remote agent: Linux targets via cross-rs (musl), or macOS/Windows targets natively (`--native`)                  |
 | `release-check`       | Validate release readiness — version consistency, changelog, tests, quality checks, git state, branch, and code markers    |
 | `smoke-test`          | Post-install smoke test — launches the built app, verifies basic UI functionality, and confirms clean shutdown             |
 | `test-manual.py`      | Guided manual test runner — walks through manual tests from `tests/manual/*.yaml` with platform filtering and JSON reports |
@@ -69,6 +69,7 @@ scripts\test-system.cmd                                                  REM Del
 ./scripts/setup-agent-cross.sh        # Install cross-compilation toolchains
 ./scripts/build-agents.sh             # Build agent for all Linux targets
 ./scripts/build-agents.sh --targets aarch64-unknown-linux-musl  # Build specific target
+./scripts/build-agents.sh --native --targets x86_64-pc-windows-msvc  # Windows x64 (run on Windows)
 
 # Guided manual tests
 python scripts/test-manual.py                     # Run all manual tests for current platform
