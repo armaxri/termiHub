@@ -35,6 +35,7 @@ vi.mock("@xterm/xterm", () => {
       return { dispose: vi.fn() };
     });
     onScroll = vi.fn(() => ({ dispose: vi.fn() }));
+    onCursorMove = vi.fn(() => ({ dispose: vi.fn() }));
     onWriteParsed = vi.fn(() => ({ dispose: vi.fn() }));
     write = vi.fn();
     writeln = vi.fn();

@@ -733,7 +733,23 @@ export function Terminal({
     const onScrollDisposable = xterm.onScroll(() => {
       const buf = xterm.buffer.active;
       userScrolledUpRef.current = buf.viewportY < buf.baseY;
+      updateScrollbackClass();
     });
+
+    // Toggle a class on the xterm element reflecting whether the buffer
+    // actually exceeds the viewport.  xterm's SmoothScrollableElement can
+    // report stale "needs scroll" state on tabs whose xterm was first
+    // measured while parked at 1×1 px — the scrollbar then shows a useless
+    // tiny slider until real content is written.  Gating the slider on this
+    // class (see Terminal.css) suppresses that artifact.
+    const updateScrollbackClass = () => {
+      const buf = xterm.buffer.active;
+      const hasScrollback = buf.length > xterm.rows;
+      el.classList.toggle("xterm--has-scrollback", hasScrollback);
+    };
+    const onCursorMoveDisposable = xterm.onCursorMove(updateScrollbackClass);
+    const onResizeDisposable = xterm.onResize(updateScrollbackClass);
+    updateScrollbackClass();
 
     // Expose xterm instance on the DOM element for E2E test access
     (el as HTMLDivElement & { _xtermInstance?: XTerm })._xtermInstance = xterm;
@@ -849,6 +865,8 @@ export function Terminal({
       resizeObserver.disconnect();
       el.removeEventListener("wheel", handleGapWheel);
       onScrollDisposable.dispose();
+      onCursorMoveDisposable.dispose();
+      onResizeDisposable.dispose();
       osc7Disposable.dispose();
       osc9Disposable.dispose();
       unregister(tabId);
