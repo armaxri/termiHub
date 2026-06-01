@@ -242,24 +242,19 @@ if [ "$NATIVE" = false ]; then
         exit 1
     fi
     unset _container_cmd _missing_images _t _img
-
-    # --- Ensure Rust targets are installed (before any parallel work starts) ---
-    for target in "${SELECTED_TARGETS[@]}"; do
-        if ! rustup target list --installed | grep -q "^${target}$"; then
-            echo "  Adding Rust target $target..."
-            rustup target add "$target"
-        fi
-    done
-else
-    # --- Native mode: ensure the Rust std for each requested target is present ---
-    # (e.g. cross-compiling aarch64-pc-windows-msvc from an x64 Windows host).
-    for target in "${SELECTED_TARGETS[@]}"; do
-        if ! rustup target list --installed | grep -q "^${target}$"; then
-            echo "  Adding Rust target $target..."
-            rustup target add "$target"
-        fi
-    done
 fi
+
+# --- Ensure the Rust std for each requested target is installed ---
+# Needed in both modes: cross-rs Linux targets and native macOS/Windows targets
+# (e.g. cross-compiling aarch64-pc-windows-msvc from an x64 Windows host).
+_installed_targets=$(rustup target list --installed)
+for target in "${SELECTED_TARGETS[@]}"; do
+    if ! grep -q "^${target}$" <<<"$_installed_targets"; then
+        echo "  Adding Rust target $target..."
+        rustup target add "$target"
+    fi
+done
+unset _installed_targets
 
 # --- Build ---
 built=0
