@@ -313,6 +313,17 @@ export function Terminal({
 
         if (reattachSessionId) {
           sessionId = reattachSessionId;
+          // Clear the pre-connect overlay state that reconnectTerminal set
+          // (terminalConnecting=true to show the overlay immediately). Only the
+          // createTerminal path below clears these otherwise. This must happen
+          // BEFORE the reattach buffer replay: SplitView keeps the xterm element
+          // parked while terminalConnecting is set, which would starve
+          // waitForUsableDimensions of a real width and render the scrollback at
+          // ~2 columns. The terminalReattaching flag set below still shows the
+          // overlay during the fetch.
+          useAppStore.getState().setTerminalConnecting(tabId, false);
+          useAppStore.getState().setTerminalAutoRetrying(tabId, 0);
+          useAppStore.getState().setTerminalSpawnError(tabId, null);
           if (persistentConnectionId) {
             // Show the reattaching overlay while we fetch and replay the scrollback buffer.
             useAppStore.getState().setTerminalReattaching(tabId, true);
@@ -369,15 +380,6 @@ export function Terminal({
             }
             if (isCanceled()) return;
           }
-          // Reattach established the session — clear the pre-connect overlay
-          // state. reconnectTerminal sets terminalConnecting=true to show the
-          // overlay immediately, and only the createTerminal path below clears
-          // it. Without this, a reconnect that reattaches (persistent tab, or
-          // workspace restore) leaves the "Connecting…" overlay up forever,
-          // which keeps SplitView parking the xterm element (stuck spinner).
-          useAppStore.getState().setTerminalConnecting(tabId, false);
-          useAppStore.getState().setTerminalAutoRetrying(tabId, 0);
-          useAppStore.getState().setTerminalSpawnError(tabId, null);
         } else {
           let attempt = 0;
           let resolved: string | null = null;
