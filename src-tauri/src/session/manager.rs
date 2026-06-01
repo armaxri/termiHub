@@ -616,6 +616,67 @@ impl SessionManager {
         Ok(session_id)
     }
 
+    /// Adopt an already-running agent session into the persistent registry.
+    ///
+    /// Used when the desktop discovers a surviving agent session (e.g. via
+    /// the sidebar's Active Sessions list after a tab close) and wants to
+    /// re-attach to it with full scrollback replay. Inserts a
+    /// [`PersistentRecord`] pointing at the existing agent session without
+    /// spawning a new one. The desktop's `sessions` map is intentionally
+    /// left untouched — the next `attach_persistent_tab` call detects the
+    /// missing entry and re-creates the `RemoteProxy` via
+    /// [`RemoteProxy::reconnect_existing`].
+    ///
+    /// Idempotent: if a record already exists for `connection_id` and points
+    /// at the same agent session, this is a no-op. If it points at a
+    /// different session id, returns an error so callers can decide whether
+    /// to stop the old one first.
+    pub async fn adopt_persistent_session<E: EventEmitter>(
+        &self,
+        connection_id: &str,
+        agent_id: &str,
+        agent_session_id: &str,
+        emitter: E,
+    ) -> Result<String, TerminalError> {
+        let session_id = agent_session_id.to_string();
+
+        let mut ps = self.persistent_sessions.lock().await;
+        if let Some(existing) = ps.get(connection_id) {
+            if existing.remote_session_id.as_deref() == Some(agent_session_id) {
+                return Ok(existing.session_id.clone());
+            }
+            return Err(TerminalError::SpawnFailed(format!(
+                "Persistent session {connection_id} already adopted with a different agent session"
+            )));
+        }
+
+        ps.insert(
+            connection_id.to_string(),
+            PersistentRecord {
+                connection_id: connection_id.to_string(),
+                session_id: session_id.clone(),
+                attached_tabs: HashSet::new(),
+                remote_session_id: Some(session_id.clone()),
+                agent_id: Some(agent_id.to_string()),
+            },
+        );
+        drop(ps);
+
+        emitter.emit_persistent_state(&PersistentSessionStateEvent {
+            connection_id: connection_id.to_string(),
+            session_id: Some(session_id.clone()),
+            state: "running".to_string(),
+            attached_tab_count: 0,
+            error_message: None,
+        });
+
+        info!(
+            connection_id,
+            agent_id, agent_session_id, "Adopted existing agent persistent session"
+        );
+        Ok(session_id)
+    }
+
     /// Stop a persistent session for `connection_id`.
     ///
     /// Closes the backend session and removes the persistent registry entry.
@@ -1520,6 +1581,7 @@ mod tests {
             _: &str,
             _: Value,
             _: Option<&str>,
+            _: Option<&str>,
         ) -> Result<AgentSessionInfo, TerminalError> {
             unimplemented!()
         }
@@ -1794,6 +1856,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn adopt_persistent_session_registers_record_and_emits_running() {
+        let manager = make_test_manager();
+        let emitter = MockPersistentEmitter::new();
+
+        let returned = manager
+            .adopt_persistent_session("conn-adopt", "agent-A", "agent-sess-1", emitter.clone())
+            .await
+            .unwrap();
+        assert_eq!(returned, "agent-sess-1");
+
+        let ps = manager.persistent_sessions.lock().await;
+        let record = ps.get("conn-adopt").expect("record registered");
+        assert_eq!(record.session_id, "agent-sess-1");
+        assert_eq!(record.agent_id.as_deref(), Some("agent-A"));
+        assert_eq!(record.remote_session_id.as_deref(), Some("agent-sess-1"));
+        assert!(record.attached_tabs.is_empty());
+        drop(ps);
+
+        let last = emitter.events().last().cloned().expect("event emitted");
+        assert_eq!(last.connection_id, "conn-adopt");
+        assert_eq!(last.state, "running");
+        assert_eq!(last.session_id.as_deref(), Some("agent-sess-1"));
+    }
+
+    #[tokio::test]
+    async fn adopt_persistent_session_is_idempotent_for_same_agent_session() {
+        let manager = make_test_manager();
+        let emitter = MockPersistentEmitter::new();
+
+        manager
+            .adopt_persistent_session("conn-adopt", "agent-A", "agent-sess-1", emitter.clone())
+            .await
+            .unwrap();
+        // Second adopt with same args returns Ok with the same session_id.
+        let returned = manager
+            .adopt_persistent_session("conn-adopt", "agent-A", "agent-sess-1", emitter.clone())
+            .await
+            .unwrap();
+        assert_eq!(returned, "agent-sess-1");
+    }
+
+    #[tokio::test]
+    async fn adopt_persistent_session_rejects_conflicting_agent_session() {
+        let manager = make_test_manager();
+        let emitter = MockPersistentEmitter::new();
+
+        manager
+            .adopt_persistent_session("conn-adopt", "agent-A", "agent-sess-1", emitter.clone())
+            .await
+            .unwrap();
+        let err = manager
+            .adopt_persistent_session("conn-adopt", "agent-A", "agent-sess-2", emitter.clone())
+            .await;
+        assert!(matches!(err, Err(TerminalError::SpawnFailed(_))));
+    }
+
+    #[tokio::test]
     async fn attach_persistent_tab_emits_attached_with_tab_count() {
         let manager = make_test_manager();
         let emitter = MockPersistentEmitter::new();
@@ -1963,6 +2082,7 @@ mod tests {
             _: &str,
             _: &str,
             _: Value,
+            _: Option<&str>,
             _: Option<&str>,
         ) -> Result<AgentSessionInfo, TerminalError> {
             unimplemented!()

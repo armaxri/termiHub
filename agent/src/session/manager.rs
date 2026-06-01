@@ -42,11 +42,17 @@ pub trait SessionManagerApi: Send + Sync + 'static {
     fn registry(&self) -> &ConnectionTypeRegistry;
 
     /// Create a new session.
+    ///
+    /// `definition_id` records which saved connection definition this session
+    /// originated from, so clients can re-link an active session to its source
+    /// definition after the original tab is closed or the desktop restarts.
+    /// Pass `None` for ad-hoc sessions not derived from a saved definition.
     async fn create(
         &self,
         type_id: &str,
         title: String,
         settings: serde_json::Value,
+        definition_id: Option<String>,
     ) -> Result<SessionSnapshot, SessionCreateError>;
 
     /// List all sessions as snapshots.
@@ -234,6 +240,7 @@ impl SessionManager {
         type_id: &str,
         title: String,
         settings: serde_json::Value,
+        definition_id: Option<String>,
     ) -> Result<SessionSnapshot, SessionCreateError> {
         let mut sessions = self.sessions.lock().await;
 
@@ -271,6 +278,7 @@ impl SessionManager {
                         created_at: now.to_rfc3339(),
                         daemon_socket: Some(client.socket_path().to_string_lossy().to_string()),
                         settings: settings.clone(),
+                        definition_id: definition_id.clone(),
                     },
                 );
             }
@@ -286,6 +294,7 @@ impl SessionManager {
             last_activity: now,
             attached: false,
             backend,
+            definition_id,
         };
 
         let snapshot = info.snapshot();
@@ -524,6 +533,7 @@ impl SessionManager {
                         last_activity: Utc::now(),
                         attached: false,
                         backend: SessionBackend::Daemon(client),
+                        definition_id: session.definition_id.clone(),
                     };
 
                     let mut sessions = self.sessions.lock().await;
@@ -676,8 +686,9 @@ impl SessionManagerApi for SessionManager {
         type_id: &str,
         title: String,
         settings: serde_json::Value,
+        definition_id: Option<String>,
     ) -> Result<SessionSnapshot, SessionCreateError> {
-        SessionManager::create(self, type_id, title, settings).await
+        SessionManager::create(self, type_id, title, settings, definition_id).await
     }
 
     async fn list(&self) -> Vec<SessionSnapshot> {
@@ -851,6 +862,7 @@ mod tests {
                 last_activity: now,
                 attached: false,
                 backend: SessionBackend::Stub,
+                definition_id: None,
             };
 
             let snapshot = info.snapshot();
@@ -912,7 +924,7 @@ mod tests {
     async fn create_unknown_type_fails() {
         let mgr = SessionManager::new(test_notification_tx(), test_registry());
         let result = mgr
-            .create("nonexistent-type", "test".to_string(), json!({}))
+            .create("nonexistent-type", "test".to_string(), json!({}), None)
             .await;
         assert!(matches!(result, Err(SessionCreateError::InvalidConfig(_))));
     }
@@ -1031,6 +1043,7 @@ mod tests {
                         "username": "user",
                         "authMethod": "password",
                     }),
+                    None,
                 )
                 .await;
             assert!(
@@ -1055,6 +1068,7 @@ mod tests {
                         "host": "127.0.0.1",
                         "port": 9999,
                     }),
+                    None,
                 )
                 .await;
             let log = launched.lock().await;
@@ -1077,6 +1091,7 @@ mod tests {
                         "username": "user",
                         "authMethod": "password",
                     }),
+                    None,
                 )
                 .await;
             assert!(
@@ -1097,6 +1112,7 @@ mod tests {
                         "username": "user",
                         "authMethod": "password",
                     }),
+                    None,
                 )
                 .await
                 .unwrap();
@@ -1119,6 +1135,7 @@ mod tests {
                     "username": "user",
                     "authMethod": "password",
                 }),
+                None,
             )
             .await
             .unwrap();

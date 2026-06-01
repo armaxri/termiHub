@@ -307,7 +307,13 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
             monitoring: false,
             file_browser: true,
             resize: true,
-            persistent: false,
+            // Persistent so the agent spawns this backend inside the daemon
+            // subprocess, giving each local-shell session a ring buffer that
+            // survives tab detach/reattach (scrollback replay) and agent
+            // restart. Matches SSH/Docker/Serial/WSL. On Windows the daemon
+            // path is `#[cfg(unix)]`-gated, so SessionManager::create_backend
+            // falls back to the in-process backend transparently.
+            persistent: true,
         }
     }
 
@@ -674,7 +680,10 @@ mod tests {
         assert!(caps.resize);
         assert!(!caps.monitoring);
         assert!(caps.file_browser);
-        assert!(!caps.persistent);
+        // Persistent so the agent runs local shells inside the daemon
+        // subprocess on Unix, giving each session a ring buffer for
+        // scrollback replay across detach/reattach.
+        assert!(caps.persistent);
     }
 
     #[test]

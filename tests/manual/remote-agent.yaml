@@ -135,3 +135,25 @@ tests:
       - "The persistent badge (∞) and Stop/Attach action icons appear, confirming the session is registered with the persistent-session machinery"
       - "Closing the tab leaves the background session running and the dot stays green"
     verification: manual
+
+  # --- Active Sessions reattach preserves scrollback (bugfix/agent-persistent-reattach-buffer-loss) ---
+
+  - id: MT-AGENT-14
+    name: "Reattaching via Active Sessions preserves scrollback buffer"
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Connect to a remote agent that has a persistent shell definition"
+      - "Double-click the persistent shell to open a tab"
+      - "Run several commands so there is visible scrollback (e.g. `ls -la /etc`, `seq 1 50`)"
+      - "Close the tab (the background session must stay running — verify the state dot is still green)"
+      - "Expand the agent in the sidebar and locate the running session under the 'Active Sessions' section"
+      - "Double-click the session under 'Active Sessions' to reattach"
+    expected:
+      - "A new tab opens with a 'Restoring session…' overlay during the buffer fetch"
+      - "The previous scrollback (the `ls -la /etc` output and the `seq` numbers) appears in the new tab"
+      - "Subsequent input continues in the same shell (e.g. `pwd` reports the same cwd as before)"
+      - "The state dot stays green throughout — no duplicate session is created on the agent"
+    verification: manual

@@ -29,6 +29,11 @@ pub struct PersistedSession {
     pub daemon_socket: Option<String>,
     /// Full connection settings for reconnection.
     pub settings: serde_json::Value,
+    /// ID of the saved connection definition this session was created from.
+    /// Survives agent restart so clients can re-link a recovered session
+    /// to its source definition.
+    #[serde(default)]
+    pub definition_id: Option<String>,
 }
 
 impl AgentState {
@@ -142,6 +147,7 @@ mod tests {
             created_at: "2026-02-20T10:00:00Z".to_string(),
             daemon_socket: socket.map(|s| s.to_string()),
             settings: json!({}),
+            definition_id: None,
         }
     }
 
@@ -202,6 +208,7 @@ mod tests {
                 created_at: "2026-02-20T10:00:00Z".to_string(),
                 daemon_socket: Some("/tmp/docker.sock".to_string()),
                 settings: json!({"image": "ubuntu:22.04", "shell": "/bin/bash"}),
+                definition_id: None,
             },
         );
         state.save_to(&path);
@@ -213,6 +220,59 @@ mod tests {
         assert_eq!(s.type_id, "docker");
         assert_eq!(s.daemon_socket.as_deref(), Some("/tmp/docker.sock"));
         assert_eq!(s.settings["image"], "ubuntu:22.04");
+    }
+
+    #[test]
+    fn definition_id_round_trips() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("state.json");
+
+        let mut state = AgentState::default();
+        state.sessions.insert(
+            "sess-1".to_string(),
+            PersistedSession {
+                type_id: "shell".to_string(),
+                title: "Build".to_string(),
+                created_at: "2026-02-20T10:00:00Z".to_string(),
+                daemon_socket: Some("/tmp/s.sock".to_string()),
+                settings: json!({}),
+                definition_id: Some("def-42".to_string()),
+            },
+        );
+        state.save_to(&path);
+
+        let loaded = AgentState::load_from(&path);
+        assert_eq!(
+            loaded.sessions["sess-1"].definition_id.as_deref(),
+            Some("def-42")
+        );
+    }
+
+    #[test]
+    fn legacy_state_without_definition_id_loads() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("state.json");
+        // Pre-existing state.json from an earlier agent version that did not
+        // know about definition_id — must still load (default to None).
+        std::fs::write(
+            &path,
+            r#"{
+              "sessions": {
+                "sess-1": {
+                  "type_id": "shell",
+                  "title": "Legacy",
+                  "created_at": "2026-02-20T10:00:00Z",
+                  "daemon_socket": "/tmp/legacy.sock",
+                  "settings": {}
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let loaded = AgentState::load_from(&path);
+        assert_eq!(loaded.sessions.len(), 1);
+        assert!(loaded.sessions["sess-1"].definition_id.is_none());
     }
 
     #[test]
