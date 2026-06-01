@@ -405,6 +405,85 @@ mod tests {
     }
 
     #[test]
+    fn artifact_name_windows_x64() {
+        // `%PROCESSOR_ARCHITECTURE%` reports "AMD64"; `uname -m` reports "x86_64".
+        assert_eq!(
+            artifact_name_for_os_arch("Windows_NT", "AMD64"),
+            Some("windows-x64")
+        );
+        assert_eq!(
+            artifact_name_for_os_arch("Windows_NT", "x86_64"),
+            Some("windows-x64")
+        );
+        assert_eq!(
+            artifact_name_for_os_arch("Windows", "amd64"),
+            Some("windows-x64")
+        );
+    }
+
+    #[test]
+    fn artifact_name_windows_arm64() {
+        assert_eq!(
+            artifact_name_for_os_arch("Windows_NT", "ARM64"),
+            Some("windows-arm64")
+        );
+        assert_eq!(
+            artifact_name_for_os_arch("Windows_NT", "aarch64"),
+            Some("windows-arm64")
+        );
+        assert_eq!(
+            artifact_name_for_os_arch("Windows_NT", "arm64"),
+            Some("windows-arm64")
+        );
+    }
+
+    #[test]
+    fn artifact_name_windows_mingw_uname_not_linux() {
+        // `uname -s` on MinGW/MSYS/Cygwin shells reports these — must resolve to
+        // Windows artifacts, never the Linux fallback.
+        assert_eq!(
+            artifact_name_for_os_arch("MINGW64_NT-10.0-19045", "x86_64"),
+            Some("windows-x64")
+        );
+        assert_eq!(
+            artifact_name_for_os_arch("MSYS_NT-10.0-19045", "x86_64"),
+            Some("windows-x64")
+        );
+        assert_eq!(
+            artifact_name_for_os_arch("CYGWIN_NT-10.0-19045", "x86_64"),
+            Some("windows-x64")
+        );
+        assert_eq!(
+            artifact_name_for_os_arch("MINGW64_NT-10.0", "aarch64"),
+            Some("windows-arm64")
+        );
+    }
+
+    #[test]
+    fn artifact_name_windows_unknown_arch() {
+        assert_eq!(artifact_name_for_os_arch("Windows_NT", "mips"), None);
+        assert_eq!(artifact_name_for_os_arch("Windows_NT", ""), None);
+        // 32-bit x86 Windows has no published artifact.
+        assert_eq!(artifact_name_for_os_arch("Windows_NT", "x86"), None);
+    }
+
+    #[test]
+    fn is_windows_os_recognizes_windows_markers() {
+        assert!(is_windows_os("Windows_NT"));
+        assert!(is_windows_os("Windows"));
+        assert!(is_windows_os("MINGW64_NT-10.0-19045"));
+        assert!(is_windows_os("MSYS_NT-10.0"));
+        assert!(is_windows_os("CYGWIN_NT-10.0"));
+    }
+
+    #[test]
+    fn is_windows_os_rejects_posix() {
+        assert!(!is_windows_os("Linux"));
+        assert!(!is_windows_os("Darwin"));
+        assert!(!is_windows_os(""));
+    }
+
+    #[test]
     fn artifact_name_unknown_falls_back_to_linux() {
         assert_eq!(
             artifact_name_for_os_arch("FreeBSD", "x86_64"),

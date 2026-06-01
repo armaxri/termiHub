@@ -310,6 +310,46 @@ mod tests {
     }
 
     #[test]
+    fn is_recognized_uname_os_accepts_known() {
+        assert!(is_recognized_uname_os("Linux"));
+        assert!(is_recognized_uname_os("Darwin"));
+        assert!(is_recognized_uname_os("MINGW64_NT-10.0-19045"));
+        assert!(is_recognized_uname_os("MSYS_NT-10.0"));
+        assert!(is_recognized_uname_os("CYGWIN_NT-10.0"));
+    }
+
+    #[test]
+    fn is_recognized_uname_os_rejects_missing_uname() {
+        // cmd.exe / PowerShell error text when `uname` is not installed.
+        assert!(!is_recognized_uname_os(
+            "'uname' is not recognized as an internal or external command,"
+        ));
+        assert!(!is_recognized_uname_os(
+            "uname : The term 'uname' is not recognized as the name of a cmdlet"
+        ));
+        assert!(!is_recognized_uname_os(""));
+    }
+
+    #[test]
+    fn is_windows_arch_accepts_processor_architecture_values() {
+        assert!(is_windows_arch("AMD64"));
+        assert!(is_windows_arch("amd64"));
+        assert!(is_windows_arch("ARM64"));
+        assert!(is_windows_arch("x86_64"));
+        assert!(is_windows_arch("aarch64"));
+        assert!(is_windows_arch("x86"));
+    }
+
+    #[test]
+    fn is_windows_arch_rejects_unexpanded_or_empty() {
+        // PowerShell echoes a cmd-style `%VAR%` literally; cmd echoes `$env:VAR`
+        // literally — neither is a real architecture.
+        assert!(!is_windows_arch("%PROCESSOR_ARCHITECTURE%"));
+        assert!(!is_windows_arch("$env:PROCESSOR_ARCHITECTURE"));
+        assert!(!is_windows_arch(""));
+    }
+
+    #[test]
     fn expected_arch_for_uname_known_values() {
         assert_eq!(expected_arch_for_uname("x86_64"), Some(ElfArch::X86_64));
         assert_eq!(expected_arch_for_uname("amd64"), Some(ElfArch::X86_64));
