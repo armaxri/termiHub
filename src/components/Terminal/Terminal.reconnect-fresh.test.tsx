@@ -237,4 +237,53 @@ describe("Terminal — fresh session on reconnect", () => {
     expect(restartSpy).toHaveBeenCalledWith("tab-2");
     expect(mockCreateTerminal).not.toHaveBeenCalled();
   });
+
+  it("clears the connecting overlay after a persistent reconnect reattaches", async () => {
+    const restartSpy = vi.fn().mockResolvedValue("restarted-session");
+    useAppStore.setState({
+      restartPersistentSessionForTab: restartSpy as never,
+      remoteAgents: [
+        {
+          id: "agent-1",
+          name: "Agent 1",
+          config: {} as never,
+          agentSettings: {} as never,
+          connectionState: "connected",
+          isExpanded: true,
+        } as never,
+      ],
+    });
+
+    act(() => {
+      root.render(
+        <TerminalPortalProvider>
+          <Terminal
+            tabId="tab-3"
+            config={AGENT_CONFIG}
+            isVisible={true}
+            existingSessionId="dead-persistent"
+            persistentConnectionId="agent-1:def-1"
+          />
+        </TerminalPortalProvider>
+      );
+    });
+    await act(async () => {
+      await wait(50);
+    });
+
+    // reconnectTerminal sets terminalConnecting=true to show the overlay at once.
+    act(() => {
+      useAppStore.getState().reconnectTerminal("tab-3");
+    });
+    expect(useAppStore.getState().terminalConnecting["tab-3"]).toBe(true);
+
+    await act(async () => {
+      await wait(80);
+    });
+
+    // Once the persistent session is restarted and reattached, the connecting
+    // overlay must be cleared — otherwise SplitView keeps the overlay up, parks
+    // the xterm element, and the tab is stuck on a "reconnecting" spinner.
+    expect(useAppStore.getState().terminalConnecting["tab-3"]).toBeFalsy();
+  });
 });
