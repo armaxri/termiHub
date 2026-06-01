@@ -17,10 +17,25 @@ use tracing::{debug, info, warn};
 /// GitHub repository for release downloads.
 const GITHUB_REPO: &str = "armaxri/termiHub";
 
-/// Map a `uname -s` OS string and `uname -m` architecture string to the artifact suffix we use.
+/// Map a remote OS string and architecture string to the artifact suffix we use.
+///
+/// The OS string may come from `uname -s` (Linux, macOS, or a MinGW/MSYS/Cygwin
+/// shell on Windows) or from Windows environment probing (`%OS%` → `Windows_NT`).
+/// The architecture string may come from `uname -m` (e.g. `"x86_64"`) or from
+/// `%PROCESSOR_ARCHITECTURE%` (e.g. `"AMD64"`), so the Windows branch matches
+/// case-insensitively.
 ///
 /// Returns `None` for unsupported OS/architecture combinations.
 pub fn artifact_name_for_os_arch(uname_os: &str, uname_arch: &str) -> Option<&'static str> {
+    // Windows must be checked before the Linux fallback so a MinGW/MSYS/Cygwin
+    // host (whose `uname -s` is e.g. `"MINGW64_NT-10.0"`) is not misdetected.
+    if is_windows_os(uname_os) {
+        return match uname_arch.to_ascii_lowercase().as_str() {
+            "x86_64" | "amd64" => Some("windows-x64"),
+            "aarch64" | "arm64" => Some("windows-arm64"),
+            _ => None,
+        };
+    }
     match uname_os {
         "Darwin" => match uname_arch {
             "x86_64" | "amd64" => Some("macos-x64"),
@@ -34,6 +49,19 @@ pub fn artifact_name_for_os_arch(uname_os: &str, uname_arch: &str) -> Option<&'s
             _ => None,
         },
     }
+}
+
+/// Returns `true` if an OS string identifies a Windows host.
+///
+/// Recognizes the `uname -s` output of MinGW/MSYS/Cygwin shells
+/// (e.g. `"MINGW64_NT-10.0"`, `"MSYS_NT-..."`, `"CYGWIN_NT-..."`) as well as the
+/// `%OS%` value `"Windows_NT"` reported by `cmd.exe`/PowerShell probing.
+pub fn is_windows_os(os: &str) -> bool {
+    let upper = os.to_ascii_uppercase();
+    upper.starts_with("MINGW")
+        || upper.starts_with("MSYS")
+        || upper.starts_with("CYGWIN")
+        || upper.starts_with("WINDOWS")
 }
 
 /// Return the cache directory for agent binaries.

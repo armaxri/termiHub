@@ -50,11 +50,75 @@ pub fn run_remote_command(session: &SshSession, command: &str) -> Result<String,
 }
 
 /// Detect the remote OS and architecture via exec channel.
+///
+/// Tries POSIX `uname` first — it works on Linux, macOS, and MinGW/MSYS/Cygwin
+/// shells on Windows. When `uname` is unavailable (the typical case for a
+/// Windows host whose default OpenSSH shell is `cmd.exe` or PowerShell), falls
+/// back to probing Windows environment variables. Probing `uname` first and
+/// only treating recognized output as authoritative ensures a Windows host is
+/// never misdetected as Linux by the caller's artifact lookup.
 pub fn detect_remote_info(session: &SshSession) -> Result<(String, String), TerminalError> {
-    let os = run_remote_command(session, "uname -s")?;
-    let arch = run_remote_command(session, "uname -m")?;
-    debug!(os, arch, "Detected remote system info");
-    Ok((os, arch))
+    let uname_os = run_remote_command(session, "uname -s").unwrap_or_default();
+    if is_recognized_uname_os(&uname_os) {
+        let arch = run_remote_command(session, "uname -m")?;
+        debug!(os = %uname_os, arch, "Detected remote system info via uname");
+        return Ok((uname_os, arch));
+    }
+
+    // No usable `uname` output — probe for a Windows host (cmd.exe / PowerShell).
+    if let Some((os, arch)) = detect_windows_info(session) {
+        debug!(os, arch, "Detected remote Windows system info");
+        return Ok((os, arch));
+    }
+
+    // Host undetermined: surface the raw `uname` output (which may be empty or
+    // an error string) so the caller maps it to an unsupported artifact rather
+    // than silently treating it as Linux.
+    let arch = run_remote_command(session, "uname -m").unwrap_or_default();
+    debug!(os = %uname_os, arch, "Remote system info undetermined");
+    Ok((uname_os, arch))
+}
+
+/// Probe a remote Windows host for its CPU architecture.
+///
+/// Works whether the default OpenSSH shell is `cmd.exe` (which expands
+/// `%PROCESSOR_ARCHITECTURE%`) or PowerShell (which expands
+/// `$env:PROCESSOR_ARCHITECTURE`). Returns `("Windows_NT", arch)` on success.
+fn detect_windows_info(session: &SshSession) -> Option<(String, String)> {
+    // cmd.exe expands `%VAR%`; PowerShell leaves it literal.
+    let cmd_arch = run_remote_command(session, "echo %PROCESSOR_ARCHITECTURE%").unwrap_or_default();
+    if is_windows_arch(&cmd_arch) {
+        return Some(("Windows_NT".to_string(), cmd_arch));
+    }
+    // PowerShell expands `$env:VAR`; cmd.exe leaves it literal.
+    let ps_arch =
+        run_remote_command(session, "echo $env:PROCESSOR_ARCHITECTURE").unwrap_or_default();
+    if is_windows_arch(&ps_arch) {
+        return Some(("Windows_NT".to_string(), ps_arch));
+    }
+    None
+}
+
+/// Returns `true` if a `uname -s` result identifies an OS we recognize: Linux,
+/// macOS, or a MinGW/MSYS/Cygwin shell on Windows.
+///
+/// Rejects the error text a Windows `cmd.exe`/PowerShell host prints when
+/// `uname` is absent, so detection can fall through to Windows env probing.
+pub fn is_recognized_uname_os(os: &str) -> bool {
+    os == "Linux" || os == "Darwin" || crate::terminal::agent_binary::is_windows_os(os)
+}
+
+/// Returns `true` if the string looks like a Windows `PROCESSOR_ARCHITECTURE`
+/// value (e.g. `AMD64`, `ARM64`, `x86`).
+///
+/// Used to confirm a Windows host and to reject an unexpanded
+/// `%PROCESSOR_ARCHITECTURE%` / `$env:PROCESSOR_ARCHITECTURE` literal echoed
+/// back by the wrong shell.
+pub fn is_windows_arch(arch: &str) -> bool {
+    matches!(
+        arch.to_ascii_lowercase().as_str(),
+        "amd64" | "x86_64" | "arm64" | "aarch64" | "x86" | "ia64"
+    )
 }
 
 // ── SFTP upload ──────────────────────────────────────────────────────
