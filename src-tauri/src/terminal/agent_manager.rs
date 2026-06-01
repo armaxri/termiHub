@@ -462,7 +462,8 @@ impl AgentConnectionManager {
                 let mut line_buf = String::new();
                 let (capabilities, agent_version, protocol_version) = loop {
                     let resp_line =
-                        match read_handshake_line(&mut channel, &agent_id_str, &mut line_buf).await {
+                        match read_handshake_line(&mut channel, &agent_id_str, &mut line_buf).await
+                        {
                             Some(line) => line,
                             None => {
                                 emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
@@ -516,11 +517,7 @@ impl AgentConnectionManager {
                         jsonrpc::HandshakeOutcome::Skip => {
                             skipped += 1;
                             if skipped > MAX_PRE_INIT_MESSAGES {
-                                emit_agent_state(
-                                    &app_handle_clone,
-                                    &agent_id_str,
-                                    "disconnected",
-                                );
+                                emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
                                 return Err(TerminalError::RemoteError(
                                     "Agent sent too many messages before the initialize response"
                                         .into(),
