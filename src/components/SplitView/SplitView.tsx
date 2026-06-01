@@ -13,6 +13,7 @@ import * as ContextMenu from "@radix-ui/react-context-menu";
 import {
   Settings as SettingsIcon,
   FileEdit,
+  FileInput,
   SquarePen,
   ScrollText,
   ArrowLeftRight,
@@ -34,6 +35,7 @@ import { useAppStore } from "@/store/appStore";
 import { PanelNode, LeafPanel, TerminalTab, DropEdge } from "@/types/terminal";
 import { getAllLeaves, findLeafByTab } from "@/utils/panelTree";
 import { isWindows, isMac } from "@/utils/platform";
+import { usePaneFileDrop } from "@/hooks/usePaneFileDrop";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import { ConnectionIcon } from "@/utils/connectionIcons";
 import { useTerminalRegistry } from "@/components/Terminal/TerminalRegistry";
@@ -560,6 +562,11 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
   const [renameTabId, setRenameTabId] = useState<string | null>(null);
   const [contextMenuTabSelection, setContextMenuTabSelection] = useState<string | null>(null);
 
+  // OS file drop is scoped per pane: a path dropped onto this panel is inserted
+  // into the session of the tab shown here, so each open connection is its own
+  // drop target rather than the whole terminal area being a single zone.
+  const { terminalAreaRef, isFileDragOver, panelSessionId } = usePaneFileDrop(panel);
+
   // Capture selection BEFORE right-click modifies it (xterm auto-selects word on right-click)
   const preRightClickSelectionRef = useRef<string | null>(null);
 
@@ -593,7 +600,13 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
   return (
     <div className="split-view__panel-content" onClick={() => setActivePanel(panel.id)}>
       <TabBar panelId={panel.id} tabs={panel.tabs} />
-      <div className="split-view__terminal-area">
+      <div className="split-view__terminal-area" ref={terminalAreaRef}>
+        {isFileDragOver && panelSessionId && (
+          <div className="split-view__file-drag-overlay">
+            <FileInput size={24} />
+            <span>Drop to insert path</span>
+          </div>
+        )}
         {panel.tabs.length === 0 && (
           <div className="split-view__empty">
             No terminals open. Use the toolbar or double-click a connection.
