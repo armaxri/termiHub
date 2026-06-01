@@ -2,6 +2,11 @@
 # Install toolchains needed to cross-compile the remote agent for Linux
 # targets (static musl binaries). Run once before using build-agents.sh.
 #
+# Native targets (macOS *-apple-darwin, Windows *-pc-windows-msvc) do NOT use
+# this script: they are built with native cargo (build-agents.sh --native) and
+# only need the platform's own toolchain — Xcode CLT on macOS, the MSVC build
+# tools (Visual Studio Build Tools) on Windows.
+#
 # Usage: ./scripts/setup-agent-cross.sh [--help]
 set -euo pipefail
 
@@ -10,6 +15,10 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
 Usage: setup-agent-cross.sh
 
 Installs the cross-compilation toolchains required by build-agents.sh.
+
+Not needed for native targets: macOS (*-apple-darwin) and Windows
+(*-pc-windows-msvc) agents are built with `build-agents.sh --native` and only
+require the platform's native toolchain (Xcode CLT / MSVC build tools).
 
 All platforms:
   - cross-rs (via cargo install) for all targets

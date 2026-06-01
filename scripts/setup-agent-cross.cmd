@@ -3,6 +3,10 @@ REM Install toolchains and build custom cross-rs images needed to cross-compile
 REM the remote agent for Linux targets (static musl binaries) on Windows.
 REM Run once before using build-agents.cmd.
 REM
+REM Not needed for the native Windows agent: build-agents.cmd --native builds the
+REM *-pc-windows-msvc target with cargo and only needs the MSVC build tools
+REM (Visual Studio Build Tools) - no cross-rs / container runtime required.
+REM
 REM Usage: scripts\setup-agent-cross.cmd [--help]
 REM
 REM Prerequisites: Rust toolchain (rustup), Docker Desktop or Podman Desktop
@@ -16,6 +20,9 @@ echo Usage: setup-agent-cross.cmd
 echo.
 echo Installs the cross-compilation toolchains required by build-agents.cmd
 echo and builds the custom cross-rs Docker images needed for each target.
+echo.
+echo Not needed for the native Windows agent: build-agents.cmd --native builds
+echo the *-pc-windows-msvc target with cargo and only needs the MSVC build tools.
 echo.
 echo Windows:
 echo   - cross-rs (via cargo install) for all targets

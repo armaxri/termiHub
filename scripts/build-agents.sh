@@ -1,16 +1,53 @@
 #!/usr/bin/env bash
-# Build the remote agent (termihub-agent) for Linux and macOS targets.
-# Linux targets use cross-rs (static musl). macOS targets use native cargo.
-# Multiple targets are built in parallel by default, each in its own
+# Build the remote agent (termihub-agent) for Linux, macOS, and Windows targets.
+# Linux targets use cross-rs (static musl). macOS and Windows targets use native
+# cargo. Multiple targets are built in parallel by default, each in its own
 # CARGO_TARGET_DIR to avoid cargo's workspace build lock.
+#
+# Build-host strategy
+# -------------------
+# - Linux musl targets: cross-rs (Docker/Podman) from any host.
+# - macOS targets: native cargo, must run on a Mac (--native).
+# - Windows MSVC targets (*-pc-windows-msvc): native cargo, must run on a Windows
+#   host with the MSVC toolchain (Visual Studio Build Tools) installed. cross-rs
+#   does NOT support the MSVC ABI, so these cannot be built via Docker/Podman.
+#   Requesting a Windows target on a non-Windows host (or without --native) fails
+#   fast with a clear message. Windows binaries are emitted as `termihub-agent.exe`
+#   (CI renames artifacts to termihub-agent-windows-x64 / -windows-arm64).
 #
 # Usage: ./scripts/build-agents.sh [--targets <list>] [--sequential] [--native] [--dev] [--help]
 #
 # Run ./scripts/setup-agent-cross.sh first for Linux cross-compilation
-# (not needed for --native or for macOS native builds).
+# (not needed for --native, macOS, or Windows native builds).
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
+
+# --- Helpers ---
+# True if the target triple is a Windows MSVC target.
+is_windows_target() {
+    case "$1" in
+    *-pc-windows-msvc) return 0 ;;
+    *) return 1 ;;
+    esac
+}
+
+# Binary file name cargo emits for a target (Windows appends .exe).
+agent_binary_name() {
+    if is_windows_target "$1"; then
+        echo "termihub-agent.exe"
+    else
+        echo "termihub-agent"
+    fi
+}
+
+# True if the current host is Windows (Git Bash / MSYS / Cygwin).
+host_is_windows() {
+    case "$(uname -s)" in
+    MINGW* | MSYS* | CYGWIN*) return 0 ;;
+    *) return 1 ;;
+    esac
+}
 
 # --- Defaults ---
 ALL_TARGETS=(
@@ -47,8 +84,8 @@ while [[ $# -gt 0 ]]; do
             cat <<'USAGE'
 Usage: build-agents.sh [OPTIONS]
 
-Build the remote agent for Linux and macOS targets.
-Linux builds use cross-rs (static musl). macOS uses native cargo.
+Build the remote agent for Linux, macOS, and Windows targets.
+Linux builds use cross-rs (static musl). macOS and Windows use native cargo.
 Multiple targets are built in parallel by default.
 
 Options:
@@ -57,7 +94,7 @@ Options:
   --sequential       Build targets one at a time (useful for debugging)
   --native           Build using the local cargo toolchain instead of cross-rs/Docker.
                      Defaults to the host target triple. Faster for local development;
-                     no container runtime required. Required for macOS targets.
+                     no container runtime required. Required for macOS and Windows targets.
   --dev              Build in debug profile (omits --release). Much faster to compile;
                      binary lands in target/<triple>/debug/ instead of release/.
   --help, -h         Show this help message
@@ -71,12 +108,18 @@ macOS targets (--native only, build on a Mac):
   aarch64-apple-darwin            Apple Silicon (M1/M2/M3/M4)
   x86_64-apple-darwin             Intel Mac
 
+Windows targets (--native only, build on a Windows host with MSVC tools):
+  x86_64-pc-windows-msvc          Windows x64 (emits termihub-agent.exe)
+  aarch64-pc-windows-msvc         Windows ARM64 (best effort — requires the
+                                  ARM64 MSVC build tools to be installed)
+
 Examples:
   ./scripts/build-agents.sh                                   # all Linux targets
   ./scripts/build-agents.sh --targets aarch64-unknown-linux-musl
   ./scripts/build-agents.sh --sequential
   ./scripts/build-agents.sh --native --dev                    # current host (fast)
   ./scripts/build-agents.sh --native --targets aarch64-apple-darwin  # macOS ARM64
+  ./scripts/build-agents.sh --native --targets x86_64-pc-windows-msvc  # Windows x64
 USAGE
             exit 0
             ;;
@@ -100,6 +143,25 @@ if [ ${#SELECTED_TARGETS[@]} -eq 0 ]; then
         SELECTED_TARGETS=("${ALL_TARGETS[@]}")
     fi
 fi
+
+# --- Windows target validation ---
+# MSVC targets cannot be built via cross-rs (no MSVC ABI support) and require a
+# Windows host with the MSVC toolchain. Fail fast with a clear message instead of
+# letting cargo/cross emit a confusing linker error.
+for target in "${SELECTED_TARGETS[@]}"; do
+    if is_windows_target "$target"; then
+        if [ "$NATIVE" = false ]; then
+            echo "ERROR: Windows target '$target' requires --native."
+            echo "  cross-rs cannot build MSVC targets. Re-run on a Windows host with --native."
+            exit 1
+        fi
+        if ! host_is_windows; then
+            echo "ERROR: Windows target '$target' can only be built on a Windows host."
+            echo "  Current host: $(uname -s). Build Windows agents on a Windows runner."
+            exit 1
+        fi
+    fi
+done
 
 # --- Profile setup ---
 if [ "$DEV" = true ]; then
@@ -188,6 +250,15 @@ if [ "$NATIVE" = false ]; then
             rustup target add "$target"
         fi
     done
+else
+    # --- Native mode: ensure the Rust std for each requested target is present ---
+    # (e.g. cross-compiling aarch64-pc-windows-msvc from an x64 Windows host).
+    for target in "${SELECTED_TARGETS[@]}"; do
+        if ! rustup target list --installed | grep -q "^${target}$"; then
+            echo "  Adding Rust target $target..."
+            rustup target add "$target"
+        fi
+    done
 fi
 
 # --- Build ---
@@ -221,7 +292,7 @@ if [ "$SEQUENTIAL" = true ] || [ "${#SELECTED_TARGETS[@]}" -le 1 ]; then
         fi
 
         if [ "$build_exit" -eq 0 ]; then
-            binary="target/$target/$PROFILE_DIR/termihub-agent"
+            binary="target/$target/$PROFILE_DIR/$(agent_binary_name "$target")"
             if [ -f "$binary" ]; then
                 size=$(du -h "$binary" | cut -f1)
                 results+=("  OK    $target  ($size)")
@@ -330,9 +401,10 @@ else
 
         if [ "${_exit_codes[$i]}" -eq 0 ]; then
             cross_dir="${_cross_dirs[$i]}"
-            src_binary="$cross_dir/$target/$PROFILE_DIR/termihub-agent"
+            binary_name="$(agent_binary_name "$target")"
+            src_binary="$cross_dir/$target/$PROFILE_DIR/$binary_name"
             dst_dir="target/$target/$PROFILE_DIR"
-            dst_binary="$dst_dir/termihub-agent"
+            dst_binary="$dst_dir/$binary_name"
 
             if [ -f "$src_binary" ]; then
                 mkdir -p "$dst_dir"
