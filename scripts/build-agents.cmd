@@ -1,30 +1,93 @@
 @echo off
-REM Cross-compile the remote agent (termihub-agent) for Linux targets (musl, static).
-REM Uses cross-rs exclusively.
+REM Build the remote agent (termihub-agent) for Linux and Windows targets.
 REM
-REM Usage: scripts\build-agents.cmd [--help]
+REM Default mode cross-compiles the Linux musl targets via cross-rs.
+REM --native builds the Windows MSVC targets natively with cargo:
+REM   - x86_64-pc-windows-msvc (required)  -> termihub-agent.exe
+REM   - aarch64-pc-windows-msvc (best effort, needs the ARM64 MSVC build tools)
+REM cross-rs cannot build the MSVC ABI, so Windows agents must be built natively
+REM on a Windows host with the MSVC toolchain (Visual Studio Build Tools).
 REM
-REM Prerequisites: Rust, Docker Desktop or Podman Desktop (running), cross-rs
+REM Usage: scripts\build-agents.cmd [--native] [--help]
+REM
+REM Prerequisites (default Linux mode): Rust, Docker/Podman (running), cross-rs.
 REM Run scripts\setup-agent-cross.cmd first to install required toolchains.
+REM Prerequisites (--native Windows mode): Rust + MSVC toolchain only.
 
 if "%~1"=="--help" goto :usage
 if "%~1"=="-h" goto :usage
+if "%~1"=="--native" goto :native_start
 goto :start
 
 :usage
-echo Usage: build-agents.cmd
+echo Usage: build-agents.cmd [--native]
 echo.
-echo Cross-compile the remote agent for Linux targets using cross-rs (static musl binaries).
+echo Default: cross-compile the agent for Linux targets via cross-rs (static musl).
+echo --native: build the Windows MSVC agent (.exe) natively with cargo.
 echo.
-echo Targets:
+echo Linux targets (default, cross-rs):
 echo   x86_64-unknown-linux-musl       Static x64 binaries (musl)
 echo   aarch64-unknown-linux-musl      Static ARM64 binaries (musl)
 echo   armv7-unknown-linux-musleabihf  Static ARMv7 binaries (musl, older Raspberry Pi)
 echo.
-echo Prerequisites:
+echo Windows targets (--native, build on a Windows host with MSVC tools):
+echo   x86_64-pc-windows-msvc          Windows x64 (emits termihub-agent.exe)
+echo   aarch64-pc-windows-msvc         Windows ARM64 (best effort - needs ARM64 MSVC tools)
+echo.
+echo Prerequisites (Linux mode):
 echo   - Rust toolchain (rustup)
 echo   - Docker Desktop or Podman Desktop (must be running)
 echo   - cross-rs (install via scripts\setup-agent-cross.cmd)
+echo.
+echo Prerequisites (--native Windows mode):
+echo   - Rust toolchain (rustup)
+echo   - MSVC toolchain (Visual Studio Build Tools); ARM64 tools for aarch64
+exit /b 0
+
+REM ------------------------------------------------------------------ REM
+REM Native Windows MSVC build (cargo, no cross-rs / container runtime)    REM
+REM ------------------------------------------------------------------ REM
+:native_start
+cd /d "%~dp0\.."
+
+echo === Building Windows agent natively (MSVC) ===
+echo.
+
+set BUILT=0
+set FAILED=0
+
+REM x64 is required; arm64 is best effort (warns instead of failing if the
+REM ARM64 MSVC build tools are not installed).
+call :build_native x86_64-pc-windows-msvc required
+call :build_native aarch64-pc-windows-msvc besteffort
+
+echo.
+echo === Summary ===
+echo Built: %BUILT%  Failed: %FAILED%
+
+if %FAILED% gtr 0 exit /b 1
+exit /b 0
+
+:build_native
+echo --- %1 ---
+
+REM Ensure the Rust std for the target is installed
+rustup target add %1 >nul 2>&1
+
+echo   Building with cargo (native)...
+cargo build --release --target %1 -p termihub-agent
+if errorlevel 1 (
+    if "%2"=="besteffort" (
+        echo   WARNING: %1 build failed ^(best effort^) - skipping. Install the ARM64 MSVC build tools to enable it.
+        exit /b 0
+    )
+    echo   FAILED: %1
+    set /a FAILED+=1
+    exit /b 0
+)
+
+echo   -^> target\%1\release\termihub-agent.exe
+set /a BUILT+=1
 exit /b 0
 
 :start

@@ -157,3 +157,22 @@ tests:
       - "Subsequent input continues in the same shell (e.g. `pwd` reports the same cwd as before)"
       - "The state dot stays green throughout — no duplicate session is created on the agent"
     verification: manual
+
+  # --- Windows agent binary build (#761) ---
+
+  - id: MT-AGENT-15
+    name: "Build the Windows agent binary natively (MSVC)"
+    pr: 761
+    platforms: [windows]
+    prerequisites:
+      - app: false
+    instructions:
+      - "On a Windows host with the Rust toolchain and the MSVC build tools (Visual Studio Build Tools) installed"
+      - "Run `scripts\\build-agents.cmd --native` (or `bash scripts/build-agents.sh --native --targets x86_64-pc-windows-msvc` from Git Bash)"
+      - "Optionally also build ARM64: `bash scripts/build-agents.sh --native --targets aarch64-pc-windows-msvc` (requires the ARM64 MSVC build tools)"
+    expected:
+      - "`target/x86_64-pc-windows-msvc/release/termihub-agent.exe` is produced and the summary reports `Built: 1`"
+      - "The script never invokes cross-rs / Docker for the Windows target (native cargo only)"
+      - "Requesting a Windows target without `--native`, or on a non-Windows host, fails fast with a clear error message"
+      - "ARM64 is best effort — if the ARM64 MSVC tools are missing, `.cmd --native` prints a WARNING and skips it without failing the run"
+    verification: manual
