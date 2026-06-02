@@ -617,11 +617,18 @@ fn detect_default_shell() -> String {
 
 /// Platform user-config directory used as the parent for `termihub-agent/`.
 ///
-/// Backed by the `dirs` crate: `$XDG_CONFIG_HOME` (or `$HOME/.config`) on
-/// Linux, `~/Library/Application Support` on macOS, and `%APPDATA%`
-/// (Roaming) on Windows. Falls back to relative `.config` only if the
-/// platform has no resolvable user-config directory.
+/// Honors `XDG_CONFIG_HOME` first on every platform (used by integration
+/// tests and portable setups to redirect the agent's state to a sandbox).
+/// Otherwise delegates to the `dirs` crate: `$HOME/.config` on Linux,
+/// `~/Library/Application Support` on macOS, and `%APPDATA%` (Roaming) on
+/// Windows. Falls back to relative `.config` only if the platform has no
+/// resolvable user-config directory.
 fn dirs_config_dir() -> PathBuf {
+    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+        if !xdg.is_empty() {
+            return PathBuf::from(xdg);
+        }
+    }
     dirs::config_dir().unwrap_or_else(|| PathBuf::from(".config"))
 }
 

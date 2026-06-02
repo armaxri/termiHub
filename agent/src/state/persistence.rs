@@ -123,11 +123,18 @@ impl AgentState {
 
 /// Platform config directory for the agent.
 ///
-/// Backed by the `dirs` crate so Windows resolves to `%APPDATA%` (Roaming)
-/// instead of falling through to a relative path. Falls back to a relative
-/// `.config/termihub-agent` only as a last resort if `dirs` cannot resolve
-/// a user config directory at all.
+/// Honors `XDG_CONFIG_HOME` first on every platform (used by integration
+/// tests and portable setups to redirect the agent's state to a sandbox).
+/// Otherwise delegates to the `dirs` crate, which resolves `$HOME/.config`
+/// on Linux, `~/Library/Application Support` on macOS, and `%APPDATA%`
+/// (Roaming) on Windows. Falls back to a relative `.config/termihub-agent`
+/// only as a last resort if `dirs` cannot resolve a user config directory.
 fn config_dir() -> PathBuf {
+    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+        if !xdg.is_empty() {
+            return PathBuf::from(xdg).join("termihub-agent");
+        }
+    }
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from(".config"))
         .join("termihub-agent")
