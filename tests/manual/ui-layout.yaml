@@ -366,3 +366,24 @@ tests:
       - "The quoted file path is inserted into the RIGHT pane's shell, not the active pane"
     verification: manual
     tags: [drag-drop, split-view]
+
+  # --- Terminal scrollbar artifact (PR #774) ---
+
+  - id: MT-UI-35
+    name: "Terminal right-edge scrollbar shows only when scrollback exceeds viewport"
+    pr: 774
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - "Open at least three terminal tabs in a split layout (so multiple xterm instances coexist, some of them initialised while parked off-screen)"
+    instructions:
+      - "Inspect the right edge of every terminal pane while each shell is freshly started with only a prompt visible"
+      - "Run `seq 1 200` in one of the panes so its buffer exceeds the viewport"
+      - "Scroll back to the bottom of that pane (Ctrl/Cmd+End or wheel)"
+      - "Switch focus between panes and re-check each pane's right edge"
+    expected:
+      - "With nothing to scroll, no scrollbar, slider square, or grey bar floats in the right padding strip of any pane (including freshly-switched-to panes)"
+      - "Once the buffer exceeds the viewport, the slider appears flush against the container's right edge (not inset by 8 px into the dark padding strip)"
+      - "Scrolling back to the bottom fades the slider out again on idle; no stray thumb remains"
+    verification: manual
+    tags: [terminal, scrollbar]
