@@ -621,7 +621,7 @@ fn detect_default_shell() -> String {
 /// Linux, `~/Library/Application Support` on macOS, and `%APPDATA%`
 /// (Roaming) on Windows. Falls back to relative `.config` only if the
 /// platform has no resolvable user-config directory.
-pub(crate) fn dirs_config_dir() -> PathBuf {
+fn dirs_config_dir() -> PathBuf {
     dirs::config_dir().unwrap_or_else(|| PathBuf::from(".config"))
 }
 
