@@ -111,27 +111,33 @@ impl AgentState {
         self.save();
     }
 
-    /// Get the default state file path: `~/.config/termihub-agent/state.json`.
+    /// Get the default state file path under the platform config dir.
+    ///
+    /// Resolves to `$XDG_CONFIG_HOME/termihub-agent/state.json` on Linux,
+    /// `~/Library/Application Support/termihub-agent/state.json` on macOS,
+    /// and `%APPDATA%\termihub-agent\state.json` on Windows.
     fn state_path() -> PathBuf {
         config_dir().join("state.json")
     }
 }
 
-/// Get the platform config directory for the agent.
+/// Platform config directory for the agent.
+///
+/// Honors `XDG_CONFIG_HOME` first on every platform (used by integration
+/// tests and portable setups to redirect the agent's state to a sandbox).
+/// Otherwise delegates to the `dirs` crate, which resolves `$HOME/.config`
+/// on Linux, `~/Library/Application Support` on macOS, and `%APPDATA%`
+/// (Roaming) on Windows. Falls back to a relative `.config/termihub-agent`
+/// only as a last resort if `dirs` cannot resolve a user config directory.
 fn config_dir() -> PathBuf {
     if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-        return PathBuf::from(xdg).join("termihub-agent");
+        if !xdg.is_empty() {
+            return PathBuf::from(xdg).join("termihub-agent");
+        }
     }
-    if let Ok(home) = std::env::var("HOME") {
-        #[cfg(target_os = "macos")]
-        return PathBuf::from(&home)
-            .join("Library")
-            .join("Application Support")
-            .join("termihub-agent");
-        #[cfg(not(target_os = "macos"))]
-        return PathBuf::from(&home).join(".config").join("termihub-agent");
-    }
-    PathBuf::from(".config").join("termihub-agent")
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from(".config"))
+        .join("termihub-agent")
 }
 
 #[cfg(test)]
@@ -273,6 +279,39 @@ mod tests {
         let loaded = AgentState::load_from(&path);
         assert_eq!(loaded.sessions.len(), 1);
         assert!(loaded.sessions["sess-1"].definition_id.is_none());
+    }
+
+    #[test]
+    fn config_dir_returns_absolute_path_under_termihub_agent() {
+        // Regression test for #764: on every supported platform (including
+        // Windows) the agent's config directory must be an absolute path
+        // rooted under the OS's user config location, not a relative
+        // working-directory path.
+        let dir = config_dir();
+        assert!(
+            dir.is_absolute(),
+            "config_dir must be absolute, got {}",
+            dir.display()
+        );
+        assert!(
+            dir.ends_with("termihub-agent"),
+            "config_dir must end with 'termihub-agent', got {}",
+            dir.display()
+        );
+    }
+
+    #[test]
+    fn state_path_lives_inside_config_dir() {
+        let path = AgentState::state_path();
+        assert_eq!(
+            path.file_name().and_then(|s| s.to_str()),
+            Some("state.json")
+        );
+        assert!(
+            path.is_absolute(),
+            "state_path must be absolute, got {}",
+            path.display()
+        );
     }
 
     #[test]
