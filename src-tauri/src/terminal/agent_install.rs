@@ -98,41 +98,38 @@ pub fn posix_install_plan(remote_path: &str) -> InstallPlan {
 /// Always installs to `%LOCALAPPDATA%\termiHub\agent\termihub-agent.exe`, using
 /// `cmd.exe` or PowerShell syntax depending on `shell`. No `chmod` is issued.
 pub fn windows_install_plan(shell: WindowsShell) -> InstallPlan {
-    match shell {
-        WindowsShell::Cmd => {
-            let dir = format!(r"%LOCALAPPDATA%\{WINDOWS_INSTALL_SUBDIR}");
-            let dst = format!(r"{dir}\{WINDOWS_AGENT_EXE}");
-            let src = format!(r"%USERPROFILE%\{WINDOWS_UPLOAD_NAME}");
-            InstallPlan {
-                upload_path: WINDOWS_UPLOAD_NAME.to_string(),
-                install_path: dst.clone(),
-                install_command: format!(
-                    r#"(if not exist "{dir}" md "{dir}") & move /Y "{src}" "{dst}""#
-                ),
-                verify_command: format!(r#""{dst}" --version"#),
-            }
-        }
-        WindowsShell::PowerShell => {
-            let dir = format!(r"$env:LOCALAPPDATA\{WINDOWS_INSTALL_SUBDIR}");
-            let dst = format!(r"{dir}\{WINDOWS_AGENT_EXE}");
-            let src = format!(r"$env:USERPROFILE\{WINDOWS_UPLOAD_NAME}");
-            InstallPlan {
-                upload_path: WINDOWS_UPLOAD_NAME.to_string(),
-                install_path: dst.clone(),
-                install_command: format!(
-                    r#"New-Item -ItemType Directory -Force -Path "{dir}" | Out-Null; Move-Item -Force -Path "{src}" -Destination "{dst}""#
-                ),
-                verify_command: format!(r#"& "{dst}" --version"#),
-            }
-        }
+    // Install dir, destination exe, and uploaded-binary source, expressed with
+    // the shell's own environment-variable syntax.
+    let (app_data, user_profile) = match shell {
+        WindowsShell::Cmd => ("%LOCALAPPDATA%", "%USERPROFILE%"),
+        WindowsShell::PowerShell => ("$env:LOCALAPPDATA", "$env:USERPROFILE"),
+    };
+    let dir = format!(r"{app_data}\{WINDOWS_INSTALL_SUBDIR}");
+    let dst = format!(r"{dir}\{WINDOWS_AGENT_EXE}");
+    let src = format!(r"{user_profile}\{WINDOWS_UPLOAD_NAME}");
+
+    let (install_command, verify_command) = match shell {
+        WindowsShell::Cmd => (
+            format!(r#"(if not exist "{dir}" md "{dir}") & move /Y "{src}" "{dst}""#),
+            format!(r#""{dst}" --version"#),
+        ),
+        WindowsShell::PowerShell => (
+            format!(
+                r#"New-Item -ItemType Directory -Force -Path "{dir}" | Out-Null; Move-Item -Force -Path "{src}" -Destination "{dst}""#
+            ),
+            // PowerShell needs the call operator to launch a quoted path.
+            format!(r#"& "{dst}" --version"#),
+        ),
+    };
+
+    InstallPlan {
+        upload_path: WINDOWS_UPLOAD_NAME.to_string(),
+        install_path: dst,
+        install_command,
+        verify_command,
     }
 }
 
-/// Detect whether the remote Windows host runs commands in `cmd.exe` or PowerShell.
-///
-/// Probes `echo %PROCESSOR_ARCHITECTURE%`: `cmd.exe` expands it to a real
-/// architecture string, while PowerShell echoes the literal `%…%`. Defaults to
-/// [`WindowsShell::PowerShell`] when the `cmd`-style expansion does not occur.
 /// Build a command that prints the absolute install path on a Windows host.
 ///
 /// Running this through the remote shell expands `%LOCALAPPDATA%` /
@@ -152,6 +149,11 @@ pub fn windows_resolve_command(shell: WindowsShell) -> String {
     }
 }
 
+/// Detect whether the remote Windows host runs commands in `cmd.exe` or PowerShell.
+///
+/// Probes `echo %PROCESSOR_ARCHITECTURE%`: `cmd.exe` expands it to a real
+/// architecture string, while PowerShell echoes the literal `%…%`. Defaults to
+/// [`WindowsShell::PowerShell`] when the `cmd`-style expansion does not occur.
 pub fn detect_windows_shell(session: &SshSession) -> WindowsShell {
     // cmd.exe expands `%PROCESSOR_ARCHITECTURE%` to e.g. `AMD64`; PowerShell
     // echoes the literal `%PROCESSOR_ARCHITECTURE%`.
