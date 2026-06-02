@@ -797,6 +797,12 @@ export interface AgentDeployConfig {
 export interface AgentDeployResult {
   success: boolean;
   installedVersion: string | null;
+  /**
+   * Absolute path the agent was installed to on the remote host. On Windows
+   * this is the resolved `%LOCALAPPDATA%\termiHub\agent\termihub-agent.exe`
+   * location, which differs from the POSIX default. May be omitted.
+   */
+  installedPath?: string | null;
 }
 
 /** Probe a remote host for an existing agent binary. */

@@ -13,6 +13,10 @@ use tauri::{AppHandle, Emitter};
 use tracing::{debug, info, warn};
 
 use crate::terminal::agent_binary;
+use crate::terminal::agent_install::{
+    self, detect_windows_shell, posix_install_plan, windows_install_plan, windows_resolve_command,
+    InstallPlan,
+};
 use crate::terminal::backend::RemoteAgentConfig;
 use crate::utils::errors::TerminalError;
 use crate::utils::remote_exec::{
@@ -23,10 +27,7 @@ use crate::utils::ssh_auth::connect_and_authenticate;
 use crate::utils::version;
 
 /// Default install path on the remote host.
-const DEFAULT_REMOTE_PATH: &str = ".local/bin/termihub-agent";
-
-/// Temporary upload path (writable without sudo).
-const TEMP_UPLOAD_PATH: &str = "/tmp/termihub-agent-upload";
+const DEFAULT_REMOTE_PATH: &str = agent_install::POSIX_DEFAULT_INSTALL_PATH;
 
 // ── Probe ──────────────────────────────────────────────────────────────
 
@@ -128,6 +129,13 @@ pub struct AgentDeployProgress {
 pub struct AgentDeployResult {
     pub success: bool,
     pub installed_version: Option<String>,
+    /// Absolute path the agent was installed to on the remote host.
+    ///
+    /// Useful for Windows hosts, where the install location
+    /// (`%LOCALAPPDATA%\termiHub\agent\termihub-agent.exe`) differs from the
+    /// POSIX default and should be stored as the connection's agent path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installed_path: Option<String>,
 }
 
 /// Deploy the agent binary to a remote host.
@@ -223,7 +231,19 @@ pub fn deploy_agent(
         }
     }
 
-    // 5. Read binary and upload via SFTP
+    // 5. Determine the platform-specific install plan. Windows hosts need
+    //    PowerShell/cmd commands and a different upload/install location; no
+    //    POSIX-only commands (`mkdir -p`, `mv -f`, `chmod`, `/tmp`) are issued.
+    let (plan, windows_shell): (InstallPlan, Option<agent_install::WindowsShell>) =
+        if agent_binary::is_windows_os(&remote_os) {
+            let shell = detect_windows_shell(&session);
+            info!("Remote host is Windows; using {shell:?} install commands");
+            (windows_install_plan(shell), Some(shell))
+        } else {
+            (posix_install_plan(remote_path), None)
+        };
+
+    // 6. Read binary and upload via SFTP
     emit_progress(
         app_handle,
         agent_id,
@@ -233,14 +253,14 @@ pub fn deploy_agent(
     );
     let binary_bytes = std::fs::read(&binary_path)
         .map_err(|e| TerminalError::RemoteError(format!("Failed to read binary: {e}")))?;
-    upload_bytes_via_sftp(&session, &binary_bytes, TEMP_UPLOAD_PATH)?;
+    upload_bytes_via_sftp(&session, &binary_bytes, &plan.upload_path)?;
     info!(
         "Uploaded {} bytes to {}",
         binary_bytes.len(),
-        TEMP_UPLOAD_PATH
+        plan.upload_path
     );
 
-    // 6. Install: create dir, move binary, set permissions
+    // 7. Install: create dir + move binary into place (POSIX also sets +x).
     emit_progress(
         app_handle,
         agent_id,
@@ -248,15 +268,10 @@ pub fn deploy_agent(
         "Installing agent binary…",
         0.7,
     );
-    let install_cmd = format!(
-        "mkdir -p \"$(dirname {remote_path})\" && \
-         mv -f {TEMP_UPLOAD_PATH} {remote_path} && \
-         chmod +x {remote_path}"
-    );
-    run_remote_command(&session, &install_cmd)
+    run_remote_command(&session, &plan.install_command)
         .map_err(|e| TerminalError::RemoteError(format!("Install command failed: {e}")))?;
 
-    // 7. Verify
+    // 8. Verify
     emit_progress(
         app_handle,
         agent_id,
@@ -264,8 +279,7 @@ pub fn deploy_agent(
         "Verifying installation…",
         0.9,
     );
-    let verify_output =
-        run_remote_command(&session, &format!("{remote_path} --version 2>/dev/null"));
+    let verify_output = run_remote_command(&session, &plan.verify_command);
 
     let installed_version = match verify_output {
         Ok(output) if !output.is_empty() => {
@@ -287,6 +301,16 @@ pub fn deploy_agent(
         }
     };
 
+    // Resolve the concrete install path. On Windows this expands
+    // `%LOCALAPPDATA%`/`$env:LOCALAPPDATA` to an absolute, shell-agnostic path.
+    let installed_path = match windows_shell {
+        Some(shell) => run_remote_command(&session, &windows_resolve_command(shell))
+            .ok()
+            .filter(|p| !p.is_empty())
+            .or_else(|| Some(plan.install_path.clone())),
+        None => Some(plan.install_path.clone()),
+    };
+
     let success = installed_version.is_some();
     emit_progress(
         app_handle,
@@ -303,6 +327,7 @@ pub fn deploy_agent(
     Ok(AgentDeployResult {
         success,
         installed_version,
+        installed_path,
     })
 }
 
@@ -419,11 +444,16 @@ mod tests {
         let result = AgentDeployResult {
             success: true,
             installed_version: Some("0.1.0".to_string()),
+            installed_path: Some("/home/user/.local/bin/termihub-agent".to_string()),
         };
         let json = serde_json::to_string(&result).unwrap();
         let parsed: AgentDeployResult = serde_json::from_str(&json).unwrap();
         assert!(parsed.success);
         assert_eq!(parsed.installed_version.as_deref(), Some("0.1.0"));
+        assert_eq!(
+            parsed.installed_path.as_deref(),
+            Some("/home/user/.local/bin/termihub-agent")
+        );
     }
 
     #[test]
@@ -431,11 +461,15 @@ mod tests {
         let result = AgentDeployResult {
             success: false,
             installed_version: None,
+            installed_path: None,
         };
         let json = serde_json::to_string(&result).unwrap();
+        // installed_path is omitted from JSON when None.
+        assert!(!json.contains("installedPath"));
         let parsed: AgentDeployResult = serde_json::from_str(&json).unwrap();
         assert!(!parsed.success);
         assert!(parsed.installed_version.is_none());
+        assert!(parsed.installed_path.is_none());
     }
 
     #[test]

@@ -1,5 +1,6 @@
 pub mod agent_binary;
 pub mod agent_deploy;
+pub mod agent_install;
 pub mod agent_manager;
 pub mod agent_setup;
 pub mod backend;
