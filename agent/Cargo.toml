@@ -33,6 +33,7 @@ jsonrpsee = { version = "0.24", default-features = false, features = ["server"] 
 russh = { workspace = true }
 shellexpand = "3"
 sysinfo = "0.38"
+dirs = "6"
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.29", features = ["signal", "process", "term", "poll", "fs"] }

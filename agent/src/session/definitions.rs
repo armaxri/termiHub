@@ -615,20 +615,14 @@ fn detect_default_shell() -> String {
     "/bin/sh".to_string()
 }
 
-/// Get the platform config directory (~/.config on Linux, ~/Library/Application Support on macOS).
+/// Platform user-config directory used as the parent for `termihub-agent/`.
+///
+/// Backed by the `dirs` crate: `$XDG_CONFIG_HOME` (or `$HOME/.config`) on
+/// Linux, `~/Library/Application Support` on macOS, and `%APPDATA%`
+/// (Roaming) on Windows. Falls back to relative `.config` only if the
+/// platform has no resolvable user-config directory.
 pub(crate) fn dirs_config_dir() -> PathBuf {
-    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-        return PathBuf::from(xdg);
-    }
-    if let Ok(home) = std::env::var("HOME") {
-        #[cfg(target_os = "macos")]
-        return PathBuf::from(&home)
-            .join("Library")
-            .join("Application Support");
-        #[cfg(not(target_os = "macos"))]
-        return PathBuf::from(&home).join(".config");
-    }
-    PathBuf::from(".config")
+    dirs::config_dir().unwrap_or_else(|| PathBuf::from(".config"))
 }
 
 #[cfg(test)]

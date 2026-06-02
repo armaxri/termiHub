@@ -111,27 +111,26 @@ impl AgentState {
         self.save();
     }
 
-    /// Get the default state file path: `~/.config/termihub-agent/state.json`.
+    /// Get the default state file path under the platform config dir.
+    ///
+    /// Resolves to `$XDG_CONFIG_HOME/termihub-agent/state.json` on Linux,
+    /// `~/Library/Application Support/termihub-agent/state.json` on macOS,
+    /// and `%APPDATA%\termihub-agent\state.json` on Windows.
     fn state_path() -> PathBuf {
         config_dir().join("state.json")
     }
 }
 
-/// Get the platform config directory for the agent.
+/// Platform config directory for the agent.
+///
+/// Backed by the `dirs` crate so Windows resolves to `%APPDATA%` (Roaming)
+/// instead of falling through to a relative path. Falls back to a relative
+/// `.config/termihub-agent` only as a last resort if `dirs` cannot resolve
+/// a user config directory at all.
 fn config_dir() -> PathBuf {
-    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-        return PathBuf::from(xdg).join("termihub-agent");
-    }
-    if let Ok(home) = std::env::var("HOME") {
-        #[cfg(target_os = "macos")]
-        return PathBuf::from(&home)
-            .join("Library")
-            .join("Application Support")
-            .join("termihub-agent");
-        #[cfg(not(target_os = "macos"))]
-        return PathBuf::from(&home).join(".config").join("termihub-agent");
-    }
-    PathBuf::from(".config").join("termihub-agent")
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from(".config"))
+        .join("termihub-agent")
 }
 
 #[cfg(test)]
