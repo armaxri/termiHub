@@ -60,6 +60,21 @@ fn default_auth_method() -> String {
     "password".to_string()
 }
 
+/// Build a Windows agent invocation: `<path> <args>`.
+///
+/// A path containing a space is double-quoted (required by `cmd.exe`). A
+/// space-free path is left unquoted so it runs as a command in both `cmd.exe`
+/// and PowerShell (a quoted leading token in PowerShell is a string literal,
+/// not a command). The default `%LOCALAPPDATA%` install path and resolved
+/// space-free absolute paths therefore work regardless of the remote shell.
+fn windows_agent_command(path: &str, args: &str) -> String {
+    if path.contains(' ') {
+        format!("\"{path}\" {args}")
+    } else {
+        format!("{path} {args}")
+    }
+}
+
 impl RemoteAgentConfig {
     /// Return the agent binary path, defaulting to `~/.local/bin/termihub-agent`.
     pub fn agent_path(&self) -> &str {
@@ -68,10 +83,15 @@ impl RemoteAgentConfig {
 
     /// Build the shell command to launch the agent over SSH exec.
     ///
-    /// Expands a leading `~/` to `$HOME/` so the command works in
-    /// non-interactive SSH sessions where `~/.local/bin` is not on PATH.
+    /// On POSIX hosts, expands a leading `~/` to `$HOME/` so the command works
+    /// in non-interactive SSH sessions where `~/.local/bin` is not on PATH.
+    /// Windows paths are launched without `$HOME` expansion (see
+    /// [`windows_agent_command`]).
     pub fn agent_exec_command(&self) -> String {
         let path = self.agent_path();
+        if crate::terminal::agent_install::is_windows_path(path) {
+            return windows_agent_command(path, "--stdio");
+        }
         let resolved = if let Some(rest) = path.strip_prefix("~/") {
             format!("$HOME/{rest}")
         } else {
@@ -82,9 +102,14 @@ impl RemoteAgentConfig {
 
     /// Build the shell command to check the agent version on a remote host.
     ///
-    /// Same `~/` → `$HOME/` expansion as [`agent_exec_command`].
+    /// POSIX hosts get the same `~/` → `$HOME/` expansion as
+    /// [`agent_exec_command`] plus a `2>/dev/null` redirect. Windows hosts get
+    /// a plain `--version` invocation with no POSIX redirect.
     pub fn agent_version_command(&self) -> String {
         let path = self.agent_path();
+        if crate::terminal::agent_install::is_windows_path(path) {
+            return windows_agent_command(path, "--version");
+        }
         let resolved = if let Some(rest) = path.strip_prefix("~/") {
             format!("$HOME/{rest}")
         } else {
