@@ -276,6 +276,39 @@ mod tests {
     }
 
     #[test]
+    fn config_dir_returns_absolute_path_under_termihub_agent() {
+        // Regression test for #764: on every supported platform (including
+        // Windows) the agent's config directory must be an absolute path
+        // rooted under the OS's user config location, not a relative
+        // working-directory path.
+        let dir = config_dir();
+        assert!(
+            dir.is_absolute(),
+            "config_dir must be absolute, got {}",
+            dir.display()
+        );
+        assert!(
+            dir.ends_with("termihub-agent"),
+            "config_dir must end with 'termihub-agent', got {}",
+            dir.display()
+        );
+    }
+
+    #[test]
+    fn state_path_lives_inside_config_dir() {
+        let path = AgentState::state_path();
+        assert_eq!(
+            path.file_name().and_then(|s| s.to_str()),
+            Some("state.json")
+        );
+        assert!(
+            path.is_absolute(),
+            "state_path must be absolute, got {}",
+            path.display()
+        );
+    }
+
+    #[test]
     fn add_and_remove_session() {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("state.json");
