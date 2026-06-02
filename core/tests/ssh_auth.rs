@@ -292,14 +292,22 @@ async fn ssh_auth_11_wrong_password_rejected() {
 async fn ssh_auth_12_wrong_key_rejected() {
     require_docker!(PORT_SSH_KEYS);
 
-    // Generate a temporary key that is not in the container's authorized_keys.
+    // A throwaway Ed25519 key that is intentionally NOT in the container's
+    // authorized_keys (those come from tests/fixtures/ssh-keys). Embedded as a
+    // static fixture so the test does not depend on a key-generation RNG.
+    const WRONG_KEY: &str = "\
+-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+QyNTUxOQAAACAP6eRqfIpS5mPIXbpAxb9+kNbkhdwFQbpnwmmLYQ5VFgAAAKB5NZAVeTWQ
+FQAAAAtzc2gtZWQyNTUxOQAAACAP6eRqfIpS5mPIXbpAxb9+kNbkhdwFQbpnwmmLYQ5VFg
+AAAEAcqb4xWsO2YRZ6lRZ8Z1J403c449E7SmzTqLAlTN97zg/p5Gp8ilLmY8hdukDFv36Q
+1uSF3AVBumfCaYthDlUWAAAAF3Rlcm1paHViLXRlc3QtdGhyb3dhd2F5AQIDBAUG
+-----END OPENSSH PRIVATE KEY-----
+";
+
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
     let key_path = temp_dir.path().join("wrong_key");
-
-    // Generate a throwaway Ed25519 key using russh_keys.
-    let key = russh_keys::key::KeyPair::generate_ed25519();
-    let key_file = std::fs::File::create(&key_path).expect("Failed to create temp key file");
-    russh_keys::encode_pkcs8_pem(&key, key_file).expect("Failed to encode key");
+    std::fs::write(&key_path, WRONG_KEY).expect("Failed to write temp key file");
 
     // Set permissions on Unix.
     #[cfg(unix)]

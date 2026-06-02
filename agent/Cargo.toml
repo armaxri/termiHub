@@ -31,7 +31,6 @@ async-trait = { workspace = true }
 tokio-util = { version = "0.7", features = ["rt"] }
 jsonrpsee = { version = "0.24", default-features = false, features = ["server"] }
 russh = { workspace = true }
-russh-keys = { workspace = true }
 shellexpand = "3"
 sysinfo = "0.38"
 

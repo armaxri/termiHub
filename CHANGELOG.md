@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- SSH: upgraded `russh` from 0.46 to 0.61 and `russh-sftp` from 2.0 to 2.3 to resolve two advisories in the SSH transport — `RUSTSEC-2026-0154` (`russh`: unbounded 32-bit allocation) and `RUSTSEC-2026-0153` (`russh-cryptovec`: unchecked allocation/growth), both fixed in `russh >= 0.60.3`. The `russh-keys` crate was merged into `russh::keys` upstream, so the separate dependency was dropped. SSH key/password/agent authentication and SFTP were migrated to the new API (`PrivateKeyWithHashAlg`, `AuthResult`, agent `Signer`-based auth); behaviour is unchanged.
+
 ### Changed
 
 - Terminal: added a small horizontal inset (8 px) inside the terminal viewport so the first and last characters of each line are no longer flush against the container edge or the vertical scrollbar. This makes it easier to drag-select characters at the line edges. xterm's FitAddon reads the padding so column counts remain accurate; horizontal-scroll mode keeps zero padding to avoid clipping the imperatively sized canvas.
@@ -33,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Remote agents: Windows remote hosts are now detected for agent deployment. The desktop probes `uname` first (covering Linux, macOS, and MinGW/MSYS/Cygwin shells) and falls back to `%PROCESSOR_ARCHITECTURE%` (cmd.exe) / `$env:PROCESSOR_ARCHITECTURE` (PowerShell) when `uname` is absent, so a Windows host whose default OpenSSH shell is cmd.exe or PowerShell is recognized as Windows instead of being misdetected as Linux. x64 and ARM64 Windows hosts resolve to the `windows-x64` / `windows-arm64` agent binaries. Part of #771 (Closes #762).
 - Build tooling: the remote-agent build pipeline can now produce Windows agent binaries. `scripts/build-agents.sh --native --targets x86_64-pc-windows-msvc` (and the new `scripts/build-agents.cmd --native`) build `termihub-agent.exe` for `x86_64-pc-windows-msvc`, with best-effort `aarch64-pc-windows-msvc` support. Because cross-rs cannot target the MSVC ABI, Windows agents are built natively on a Windows host with the MSVC toolchain; the scripts fail fast with a clear message when a Windows target is requested without `--native` or on a non-Windows host. Part of #771 (Closes #761).
 - Keyboard shortcuts: terminal-focus pass-through. When a terminal pane has focus, common shell, tmux, vim, and SSH-to-remote keys (`Ctrl+<letter>`, `Ctrl+\`, `Ctrl+[`, `Ctrl+]`, `Alt+<letter>`) are sent to the PTY instead of triggering an app shortcut, even if the user has rebound an action to one of those combos. Toggle in Settings → Keyboard Shortcuts → "Pass through shell keys when terminal is focused" (on by default).
 - Keyboard shortcuts: "Reset to Safer Defaults" button in Settings → Keyboard Shortcuts clears all user overrides and re-applies the new conflict-avoiding defaults.
