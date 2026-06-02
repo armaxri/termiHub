@@ -468,6 +468,54 @@ mod tests {
         );
     }
 
+    /// Helper to build a config with a specific agent path for command tests.
+    fn config_with_path(path: Option<&str>) -> RemoteAgentConfig {
+        RemoteAgentConfig {
+            host: "win.local".to_string(),
+            port: 22,
+            username: "user".to_string(),
+            auth_method: "password".to_string(),
+            password: None,
+            key_path: None,
+            save_password: None,
+            agent_path: path.map(str::to_string),
+            external_connection_files: vec![],
+        }
+    }
+
+    #[test]
+    fn agent_exec_command_windows_env_path_unquoted() {
+        // A `%LOCALAPPDATA%` path has no spaces — emit it unquoted so it runs in
+        // both cmd.exe and PowerShell, with no POSIX `$HOME` expansion.
+        let config = config_with_path(Some(r"%LOCALAPPDATA%\termiHub\agent\termihub-agent.exe"));
+        assert_eq!(
+            config.agent_exec_command(),
+            r"%LOCALAPPDATA%\termiHub\agent\termihub-agent.exe --stdio"
+        );
+        assert!(!config.agent_exec_command().contains("$HOME"));
+    }
+
+    #[test]
+    fn agent_exec_command_windows_absolute_path_with_space_is_quoted() {
+        let config = config_with_path(Some(r"C:\Program Files\termiHub\termihub-agent.exe"));
+        assert_eq!(
+            config.agent_exec_command(),
+            r#""C:\Program Files\termiHub\termihub-agent.exe" --stdio"#
+        );
+    }
+
+    #[test]
+    fn agent_version_command_windows_no_posix_redirect() {
+        let config = config_with_path(Some(r"%LOCALAPPDATA%\termiHub\agent\termihub-agent.exe"));
+        let cmd = config.agent_version_command();
+        assert_eq!(
+            cmd,
+            r"%LOCALAPPDATA%\termiHub\agent\termihub-agent.exe --version"
+        );
+        assert!(!cmd.contains("2>/dev/null"));
+        assert!(!cmd.contains("$HOME"));
+    }
+
     /// Regression: configs saved without `authMethod` (e.g. created by an old
     /// version) must deserialize successfully and default to "password".
     #[test]
