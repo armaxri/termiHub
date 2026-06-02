@@ -176,3 +176,52 @@ tests:
       - "Requesting a Windows target without `--native`, or on a non-Windows host, fails fast with a clear error message"
       - "ARM64 is best effort — if the ARM64 MSVC tools are missing, `.cmd --native` prints a WARNING and skips it without failing the run"
     verification: manual
+
+  # --- Windows agent deploy + install over SSH (#763) ---
+
+  - id: MT-AGENT-16
+    name: "Deploy + install agent to a Windows host (cmd.exe default shell)"
+    pr: 763
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Have a Windows host reachable over SSH (OpenSSH server) with its DefaultShell left at the default cmd.exe"
+      - "Create a Remote Agent for the host and open the Setup Agent dialog"
+      - "Confirm the detected target shows Windows and a windows-x64 / windows-arm64 binary is selected"
+      - "Note the Remote Install Path field is read-only and the 'Install systemd service' option is hidden"
+      - "Start the setup and watch the injected commands in the visible SSH terminal"
+    expected:
+      - "Only Windows commands are issued — `md`/`move` (no `mkdir -p`, `mv -f`, `chmod`, or `/tmp`)"
+      - "The binary is uploaded to the SFTP home and moved to `%LOCALAPPDATA%\\termiHub\\agent\\termihub-agent.exe`"
+      - "The verify step prints `termihub-agent <version>`"
+    verification: manual
+
+  - id: MT-AGENT-17
+    name: "Deploy + install agent to a Windows host (PowerShell default shell)"
+    pr: 763
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Set the Windows host's OpenSSH DefaultShell to PowerShell (registry key `HKLM\\SOFTWARE\\OpenSSH\\DefaultShell`)"
+      - "Create a Remote Agent for the host and run the Setup Agent flow as in MT-AGENT-16"
+    expected:
+      - "PowerShell commands are issued — `New-Item -ItemType Directory -Force` and `Move-Item -Force` (no `md`/`move`, no POSIX commands)"
+      - "The binary installs to `%LOCALAPPDATA%\\termiHub\\agent\\termihub-agent.exe`"
+      - "The verify step (`& \"...termihub-agent.exe\" --version`) prints the version"
+    verification: manual
+
+  - id: MT-AGENT-18
+    name: "Connect (--stdio) to a freshly installed Windows agent"
+    pr: 763
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "After MT-AGENT-16 or MT-AGENT-17, set the Remote Agent's agent path to the resolved install location (e.g. `C:\\Users\\<user>\\AppData\\Local\\termiHub\\agent\\termihub-agent.exe`)"
+      - "Right-click the agent and choose Connect"
+    expected:
+      - "The agent launches over SSH exec via `--stdio` and the connection reaches the connected state"
+      - "A shell session can be opened through the agent and echoes input/output normally"
+    verification: manual
