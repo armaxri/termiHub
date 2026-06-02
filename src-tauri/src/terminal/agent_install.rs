@@ -81,8 +81,16 @@ pub fn is_windows_path(path: &str) -> bool {
 /// Preserves the existing `mkdir -p`/`mv -f`/`chmod +x` behavior. `remote_path`
 /// is used verbatim (relative to the SSH home for the default `.local/bin` path).
 pub fn posix_install_plan(remote_path: &str) -> InstallPlan {
-    let _ = remote_path;
-    unimplemented!()
+    InstallPlan {
+        upload_path: POSIX_UPLOAD_PATH.to_string(),
+        install_path: remote_path.to_string(),
+        install_command: format!(
+            "mkdir -p \"$(dirname {remote_path})\" && \
+             mv -f {POSIX_UPLOAD_PATH} {remote_path} && \
+             chmod +x {remote_path}"
+        ),
+        verify_command: format!("{remote_path} --version 2>/dev/null"),
+    }
 }
 
 /// Build the install plan for a Windows remote host.
@@ -90,8 +98,34 @@ pub fn posix_install_plan(remote_path: &str) -> InstallPlan {
 /// Always installs to `%LOCALAPPDATA%\termiHub\agent\termihub-agent.exe`, using
 /// `cmd.exe` or PowerShell syntax depending on `shell`. No `chmod` is issued.
 pub fn windows_install_plan(shell: WindowsShell) -> InstallPlan {
-    let _ = shell;
-    unimplemented!()
+    match shell {
+        WindowsShell::Cmd => {
+            let dir = format!(r"%LOCALAPPDATA%\{WINDOWS_INSTALL_SUBDIR}");
+            let dst = format!(r"{dir}\{WINDOWS_AGENT_EXE}");
+            let src = format!(r"%USERPROFILE%\{WINDOWS_UPLOAD_NAME}");
+            InstallPlan {
+                upload_path: WINDOWS_UPLOAD_NAME.to_string(),
+                install_path: dst.clone(),
+                install_command: format!(
+                    r#"(if not exist "{dir}" md "{dir}") & move /Y "{src}" "{dst}""#
+                ),
+                verify_command: format!(r#""{dst}" --version"#),
+            }
+        }
+        WindowsShell::PowerShell => {
+            let dir = format!(r"$env:LOCALAPPDATA\{WINDOWS_INSTALL_SUBDIR}");
+            let dst = format!(r"{dir}\{WINDOWS_AGENT_EXE}");
+            let src = format!(r"$env:USERPROFILE\{WINDOWS_UPLOAD_NAME}");
+            InstallPlan {
+                upload_path: WINDOWS_UPLOAD_NAME.to_string(),
+                install_path: dst.clone(),
+                install_command: format!(
+                    r#"New-Item -ItemType Directory -Force -Path "{dir}" | Out-Null; Move-Item -Force -Path "{src}" -Destination "{dst}""#
+                ),
+                verify_command: format!(r#"& "{dst}" --version"#),
+            }
+        }
+    }
 }
 
 /// Detect whether the remote Windows host runs commands in `cmd.exe` or PowerShell.
@@ -100,8 +134,16 @@ pub fn windows_install_plan(shell: WindowsShell) -> InstallPlan {
 /// architecture string, while PowerShell echoes the literal `%…%`. Defaults to
 /// [`WindowsShell::PowerShell`] when the `cmd`-style expansion does not occur.
 pub fn detect_windows_shell(session: &SshSession) -> WindowsShell {
-    let _ = session;
-    unimplemented!()
+    // cmd.exe expands `%PROCESSOR_ARCHITECTURE%` to e.g. `AMD64`; PowerShell
+    // echoes the literal `%PROCESSOR_ARCHITECTURE%`.
+    let probe = run_remote_command(session, "echo %PROCESSOR_ARCHITECTURE%").unwrap_or_default();
+    if is_windows_arch(&probe) {
+        debug!("Detected remote Windows shell: cmd.exe");
+        WindowsShell::Cmd
+    } else {
+        debug!("Detected remote Windows shell: PowerShell (cmd expansion failed)");
+        WindowsShell::PowerShell
+    }
 }
 
 #[cfg(test)]
