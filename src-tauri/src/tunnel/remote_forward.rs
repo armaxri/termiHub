@@ -27,7 +27,7 @@ impl RemoteForwarder {
     /// via the `registry` and forwarded to `config.local_host:config.local_port`.
     pub fn start(
         config: &RemoteForwardConfig,
-        mut session: SshSession,
+        session: SshSession,
         registry: ForwardedChannelRegistry,
     ) -> Result<Self, std::io::Error> {
         let remote_host = config.remote_host.clone();

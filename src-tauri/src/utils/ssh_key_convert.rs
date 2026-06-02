@@ -1,7 +1,7 @@
 //! SSH key utilities — retained for API compatibility.
 //!
 //! Key format detection and conversion previously required `openssl` and
-//! `ssh-key`. Since the migration to `russh`, [`russh_keys::load_secret_key`]
+//! `ssh-key`. Since the migration to `russh`, `russh::keys::load_secret_key`
 //! natively handles all OpenSSH, PEM, and PKCS#8 key formats, so this module
 //! has no remaining responsibilities.
 //!
