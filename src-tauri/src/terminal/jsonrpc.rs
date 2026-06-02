@@ -79,6 +79,37 @@ pub fn parse_message(line: &str) -> Result<JsonRpcMessage, String> {
     Ok(JsonRpcMessage::Notification { method, params })
 }
 
+/// Outcome of inspecting a message received while waiting for the response to
+/// a specific request id (used during the `initialize` handshake).
+#[derive(Debug, PartialEq)]
+pub enum HandshakeOutcome {
+    /// The successful response to our request — carries the `result` value.
+    Response(Value),
+    /// An error response to our request — carries the error message.
+    Rejected(String),
+    /// Some other message (a notification, or a reply for a different id) that
+    /// arrived before our response. Skip it and keep waiting.
+    Skip,
+}
+
+/// Decide how to handle `msg` while waiting for the response to `request_id`.
+///
+/// The agent may emit notifications before it answers `initialize` — for
+/// example, output from a session it recovered on startup. Those must be
+/// skipped rather than mistaken for the initialize response (which previously
+/// surfaced as "Unexpected response to initialize" and failed the connection).
+pub fn classify_handshake_message(msg: JsonRpcMessage, request_id: u64) -> HandshakeOutcome {
+    match msg {
+        JsonRpcMessage::Response { id, result } if id == request_id => {
+            HandshakeOutcome::Response(result)
+        }
+        JsonRpcMessage::Error { id, message, .. } if id == request_id => {
+            HandshakeOutcome::Rejected(message)
+        }
+        _ => HandshakeOutcome::Skip,
+    }
+}
+
 /// Serialize and write a JSON-RPC request as a single NDJSON line.
 pub fn write_request(
     writer: &mut impl Write,
@@ -183,6 +214,53 @@ mod tests {
     fn parse_invalid_json() {
         let result = parse_message("not json");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn classify_accepts_matching_response() {
+        let msg = JsonRpcMessage::Response {
+            id: 1,
+            result: serde_json::json!({"ok": true}),
+        };
+        match classify_handshake_message(msg, 1) {
+            HandshakeOutcome::Response(result) => assert_eq!(result["ok"], true),
+            other => panic!("Expected Response, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_rejects_matching_error() {
+        let msg = JsonRpcMessage::Error {
+            id: 1,
+            code: -32602,
+            message: "bad params".into(),
+            data: None,
+        };
+        assert_eq!(
+            classify_handshake_message(msg, 1),
+            HandshakeOutcome::Rejected("bad params".to_string())
+        );
+    }
+
+    #[test]
+    fn classify_skips_notification_before_response() {
+        // A session the agent recovered on startup may emit output before the
+        // agent answers `initialize`; that notification must be skipped, not
+        // mistaken for the initialize response.
+        let msg = JsonRpcMessage::Notification {
+            method: "connection.output".into(),
+            params: serde_json::json!({"sessionId": "abc"}),
+        };
+        assert_eq!(classify_handshake_message(msg, 1), HandshakeOutcome::Skip);
+    }
+
+    #[test]
+    fn classify_skips_reply_for_other_id() {
+        let msg = JsonRpcMessage::Response {
+            id: 2,
+            result: Value::Null,
+        };
+        assert_eq!(classify_handshake_message(msg, 1), HandshakeOutcome::Skip);
     }
 
     #[test]

@@ -38,6 +38,14 @@ const DEFAULT_CURSOR_STYLE = "block" as const;
 const DEFAULT_CURSOR_BLINK = true;
 
 /**
+ * Maximum number of consecutive failed session-spawn attempts for an
+ * agent-mediated tab before giving up and surfacing a disconnect error. This
+ * bounds the auto-retry loop so a session that can never be created (e.g. the
+ * remote command is gone) does not retry forever.
+ */
+const MAX_AGENT_SPAWN_ATTEMPTS = 5;
+
+/**
  * Wait until the xterm element is sitting in a real slot (large parent
  * container) AND xterm has at least `MIN_REATTACH_COLS` columns.
  *
@@ -284,8 +292,38 @@ export function Terminal({
         let ptyCols = 0;
         let ptyRows = 0;
         let sessionId: string;
-        if (initialSessionIdRef.current) {
-          sessionId = initialSessionIdRef.current;
+
+        // Decide whether to reattach to an existing session or start fresh.
+        // On the initial mount we reattach to the session captured at mount
+        // time (workspace restore / persistent attach). On a reconnect
+        // (retryCount > 0) that session is dead — reattaching to it would wire
+        // the tab to a corpse and the reconnect would spin forever. So instead
+        // we start fresh: a persistent tab restarts its background session and
+        // reattaches to the new live id; any other tab creates a new session.
+        const isReconnect = (useAppStore.getState().terminalRetryCounters[tabId] ?? 0) > 0;
+        let reattachSessionId: string | null;
+        if (isReconnect) {
+          reattachSessionId = persistentConnectionId
+            ? await useAppStore.getState().restartPersistentSessionForTab(tabId)
+            : null;
+          if (isCanceled()) return;
+        } else {
+          reattachSessionId = initialSessionIdRef.current ?? null;
+        }
+
+        if (reattachSessionId) {
+          sessionId = reattachSessionId;
+          // Clear the pre-connect overlay state that reconnectTerminal set
+          // (terminalConnecting=true to show the overlay immediately). Only the
+          // createTerminal path below clears these otherwise. This must happen
+          // BEFORE the reattach buffer replay: SplitView keeps the xterm element
+          // parked while terminalConnecting is set, which would starve
+          // waitForUsableDimensions of a real width and render the scrollback at
+          // ~2 columns. The terminalReattaching flag set below still shows the
+          // overlay during the fetch.
+          useAppStore.getState().setTerminalConnecting(tabId, false);
+          useAppStore.getState().setTerminalAutoRetrying(tabId, 0);
+          useAppStore.getState().setTerminalSpawnError(tabId, null);
           if (persistentConnectionId) {
             // Show the reattaching overlay while we fetch and replay the scrollback buffer.
             useAppStore.getState().setTerminalReattaching(tabId, true);
@@ -383,7 +421,43 @@ export function Terminal({
                   return;
                 }
 
-                // Agent is up but the session creation failed.
+                if (agentState === "disconnected") {
+                  // The agent transport itself is gone — retrying createTerminal
+                  // would fail with "Agent not connected" forever. Re-establish
+                  // the agent connection and park the tab; TerminalView wakes it
+                  // (retryTerminalSpawn) once the agent emits "connected", at
+                  // which point a fresh session is created. This is what makes
+                  // reconnect actually restart the connection instead of looping.
+                  useAppStore.getState().setTerminalWaitingForAgent(tabId, agentId);
+                  void useAppStore
+                    .getState()
+                    .connectRemoteAgent(agentId)
+                    .catch((e) => {
+                      const s = useAppStore.getState();
+                      // Only surface the failure if this tab is still parked on
+                      // this agent (avoid clobbering a state another path set).
+                      if (s.terminalWaitingForAgent[tabId] === agentId) {
+                        s.setTerminalWaitingForAgent(tabId, null);
+                        s.setTerminalDisconnectWithError(
+                          tabId,
+                          `Could not reconnect to agent: ${e instanceof Error ? e.message : String(e)}`
+                        );
+                      }
+                    });
+                  return;
+                }
+
+                // Agent is up but the session creation failed. Bound the retries
+                // so a session that can never be created surfaces an error
+                // instead of spinning forever.
+                attempt++;
+                if (attempt > MAX_AGENT_SPAWN_ATTEMPTS) {
+                  useAppStore.getState().setTerminalAutoRetrying(tabId, 0);
+                  useAppStore.getState().setTerminalSpawnError(tabId, null);
+                  useAppStore.getState().setTerminalDisconnectWithError(tabId, String(err));
+                  return;
+                }
+
                 // Show a brief "Connection failed" state so the user can see
                 // each attempt's outcome, then auto-retry.  Clear the retry
                 // counter first so the failure state is not hidden by the
@@ -399,7 +473,6 @@ export function Terminal({
                 }
                 if (isCanceled()) return;
 
-                attempt++;
                 // Transition to "Connecting… (attempt N)" for the retry countdown.
                 // setTerminalAutoRetrying also clears terminalConnecting.
                 useAppStore.getState().setTerminalAutoRetrying(tabId, attempt);

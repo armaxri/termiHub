@@ -464,56 +464,85 @@ impl AgentConnectionManager {
                     TerminalError::RemoteError(format!("Write initialize failed: {}", e))
                 })?;
 
-                // Read the initialize response line-by-line from the channel
-                let resp_line =
-                    read_channel_line(&mut channel, &agent_id_str, &app_handle_clone).await?;
+                // Read the initialize response from the channel, skipping any
+                // notifications the agent emits before it answers (e.g. output
+                // from a session it recovered on startup). We loop until we see
+                // the message whose id matches our initialize request; otherwise
+                // a pre-initialize notification would be misread as the response
+                // ("Unexpected response to initialize"). A generous cap guards
+                // against a runaway agent that never sends the response.
+                const MAX_PRE_INIT_MESSAGES: u32 = 1000;
+                let mut skipped: u32 = 0;
+                let mut line_buf = String::new();
+                let (capabilities, agent_version, protocol_version) = loop {
+                    let resp_line =
+                        match read_handshake_line(&mut channel, &agent_id_str, &mut line_buf).await
+                        {
+                            Some(line) => line,
+                            None => {
+                                emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
+                                return Err(TerminalError::RemoteError(
+                                    "Channel closed before initialize response".into(),
+                                ));
+                            }
+                        };
 
-                let msg = jsonrpc::parse_message(&resp_line).map_err(|e| {
-                    emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
-                    TerminalError::RemoteError(format!("Parse initialize response: {}", e))
-                })?;
+                    let msg = jsonrpc::parse_message(&resp_line).map_err(|e| {
+                        emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
+                        TerminalError::RemoteError(format!("Parse initialize response: {}", e))
+                    })?;
 
-                let (capabilities, agent_version, protocol_version) = match msg {
-                    jsonrpc::JsonRpcMessage::Response { result, .. } => {
-                        let caps = result.get("capabilities").ok_or_else(|| {
-                            emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
-                            TerminalError::RemoteError(
-                                "Missing capabilities in initialize response".into(),
+                    match jsonrpc::classify_handshake_message(msg, request_id) {
+                        jsonrpc::HandshakeOutcome::Response(result) => {
+                            let caps = result.get("capabilities").ok_or_else(|| {
+                                emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
+                                TerminalError::RemoteError(
+                                    "Missing capabilities in initialize response".into(),
+                                )
+                            })?;
+                            let mut capabilities = serde_json::from_value::<AgentCapabilities>(
+                                caps.clone(),
                             )
-                        })?;
-                        let mut capabilities = serde_json::from_value::<AgentCapabilities>(
-                            caps.clone(),
-                        )
-                        .map_err(|e| {
+                            .map_err(|e| {
+                                emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
+                                TerminalError::RemoteError(format!("Parse capabilities: {}", e))
+                            })?;
+                            let agent_version = result
+                                .get("agent_version")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown")
+                                .to_string();
+                            let protocol_version = result
+                                .get("protocol_version")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown")
+                                .to_string();
+                            // Copy agent_version into capabilities so the UI can read it.
+                            capabilities.agent_version = agent_version.clone();
+                            break (capabilities, agent_version, protocol_version);
+                        }
+                        jsonrpc::HandshakeOutcome::Rejected(message) => {
                             emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
-                            TerminalError::RemoteError(format!("Parse capabilities: {}", e))
-                        })?;
-                        let agent_version = result
-                            .get("agent_version")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("unknown")
-                            .to_string();
-                        let protocol_version = result
-                            .get("protocol_version")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("unknown")
-                            .to_string();
-                        // Copy agent_version into capabilities so the UI can read it.
-                        capabilities.agent_version = agent_version.clone();
-                        (capabilities, agent_version, protocol_version)
-                    }
-                    jsonrpc::JsonRpcMessage::Error { message, .. } => {
-                        emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
-                        return Err(TerminalError::RemoteError(format!(
-                            "Initialize rejected: {}",
-                            message
-                        )));
-                    }
-                    _ => {
-                        emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
-                        return Err(TerminalError::RemoteError(
-                            "Unexpected response to initialize".into(),
-                        ));
+                            return Err(TerminalError::RemoteError(format!(
+                                "Initialize rejected: {}",
+                                message
+                            )));
+                        }
+                        jsonrpc::HandshakeOutcome::Skip => {
+                            skipped += 1;
+                            if skipped > MAX_PRE_INIT_MESSAGES {
+                                emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
+                                return Err(TerminalError::RemoteError(
+                                    "Agent sent too many messages before the initialize response"
+                                        .into(),
+                                ));
+                            }
+                            warn!(
+                                "Agent {}: skipping pre-initialize message during handshake",
+                                agent_id_str
+                            );
+                            continue;
+                        }
                     }
                 };
 
@@ -1223,20 +1252,30 @@ fn serialize_request(id: u64, method: &str, params: Value) -> Result<String, Str
 /// Read a single newline-terminated JSON-RPC line from a russh channel during
 /// the handshake phase. Accumulates `ChannelMsg::Data` chunks until a `\n`
 /// is encountered, then returns the trimmed line.
-async fn read_channel_line(
+/// Read a single newline-terminated JSON-RPC line from a russh channel during
+/// the handshake phase. Accumulates `ChannelMsg::Data` chunks into `buf` and,
+/// once a `\n` is present, returns the trimmed line while **retaining any bytes
+/// after the newline in `buf`** for the next call. Preserving the leftover is
+/// essential when the caller skips pre-initialize notifications: a notification
+/// and the initialize response can arrive in the same data chunk, and dropping
+/// the remainder would lose the response.
+///
+/// Returns `None` when the channel closes or the agent process exits (stderr is
+/// logged, not returned). The caller decides how to treat closure.
+async fn read_handshake_line(
     channel: &mut russh::Channel<russh::client::Msg>,
     agent_id: &str,
-    app_handle: &AppHandle,
-) -> Result<String, TerminalError> {
-    let mut buf = String::new();
+    buf: &mut String,
+) -> Option<String> {
     loop {
+        if let Some(pos) = buf.find('\n') {
+            let line = buf[..pos].trim().to_string();
+            buf.drain(..=pos);
+            return Some(line);
+        }
         match channel.wait().await {
             Some(ChannelMsg::Data { ref data }) => {
                 buf.push_str(&String::from_utf8_lossy(data));
-                if let Some(pos) = buf.find('\n') {
-                    let line = buf[..pos].trim().to_string();
-                    return Ok(line);
-                }
             }
             Some(ChannelMsg::ExtendedData { ref data, ext: 1 }) => {
                 // stderr — log but don't fail
@@ -1246,18 +1285,13 @@ async fn read_channel_line(
                     String::from_utf8_lossy(data)
                 );
             }
-            Some(ChannelMsg::Eof) | None => {
-                emit_agent_state(app_handle, agent_id, "disconnected");
-                return Err(TerminalError::RemoteError(
-                    "Channel closed before initialize response".into(),
-                ));
-            }
+            Some(ChannelMsg::Eof) | None => return None,
             Some(ChannelMsg::ExitStatus { exit_status }) => {
-                emit_agent_state(app_handle, agent_id, "disconnected");
-                return Err(TerminalError::RemoteError(format!(
-                    "Agent process exited with status {} before initialize response",
-                    exit_status
-                )));
+                warn!(
+                    "Agent {}: process exited with status {} during handshake",
+                    agent_id, exit_status
+                );
+                return None;
             }
             _ => {}
         }
@@ -1650,60 +1684,62 @@ async fn reconnect_agent(
             continue;
         }
 
-        // 4. Read initialize response
+        // 4. Read the initialize response, skipping any notifications the agent
+        // emits before answering (e.g. output from a session it recovered on
+        // startup). Loop until the message whose id matches our request arrives.
+        const MAX_PRE_INIT_MESSAGES: u32 = 1000;
         let mut line_buf = String::new();
+        let mut skipped: u32 = 0;
         let mut success = false;
-        let resp_line = loop {
-            match channel.wait().await {
-                Some(ChannelMsg::Data { ref data }) => {
-                    line_buf.push_str(&String::from_utf8_lossy(data));
-                    if let Some(pos) = line_buf.find('\n') {
-                        let line = line_buf[..pos].trim().to_string();
-                        break Some(line);
+        loop {
+            let resp_line =
+                match read_handshake_line(&mut channel, &config.host, &mut line_buf).await {
+                    Some(line) => line,
+                    None => {
+                        warn!(
+                            "Reconnect attempt {} failed (channel closed during init read)",
+                            attempt + 1
+                        );
+                        break;
                     }
-                }
-                Some(ChannelMsg::Eof) | None => {
-                    break None;
-                }
-                Some(ChannelMsg::ExitStatus { exit_status }) => {
+                };
+
+            let msg = match jsonrpc::parse_message(&resp_line) {
+                Ok(m) => m,
+                Err(e) => {
                     warn!(
-                        "Reconnect attempt {} failed (agent exited {})",
+                        "Reconnect attempt {} failed (parse init response): {}",
                         attempt + 1,
-                        exit_status
+                        e
                     );
-                    break None;
+                    break;
                 }
-                _ => {}
-            }
-        };
+            };
 
-        let resp_line = match resp_line {
-            Some(l) => l,
-            None => {
-                warn!(
-                    "Reconnect attempt {} failed (channel closed during init read)",
-                    attempt + 1
-                );
-                continue;
-            }
-        };
-
-        match jsonrpc::parse_message(&resp_line) {
-            Ok(jsonrpc::JsonRpcMessage::Response { .. }) => {
-                success = true;
-            }
-            Ok(jsonrpc::JsonRpcMessage::Error { message, .. }) => {
-                warn!(
-                    "Reconnect attempt {} failed (init rejected): {}",
-                    attempt + 1,
-                    message
-                );
-            }
-            _ => {
-                warn!(
-                    "Reconnect attempt {} failed (unexpected init response)",
-                    attempt + 1
-                );
+            match jsonrpc::classify_handshake_message(msg, *request_id) {
+                jsonrpc::HandshakeOutcome::Response(_) => {
+                    success = true;
+                    break;
+                }
+                jsonrpc::HandshakeOutcome::Rejected(message) => {
+                    warn!(
+                        "Reconnect attempt {} failed (init rejected): {}",
+                        attempt + 1,
+                        message
+                    );
+                    break;
+                }
+                jsonrpc::HandshakeOutcome::Skip => {
+                    skipped += 1;
+                    if skipped > MAX_PRE_INIT_MESSAGES {
+                        warn!(
+                            "Reconnect attempt {} failed (too many messages before init response)",
+                            attempt + 1
+                        );
+                        break;
+                    }
+                    continue;
+                }
             }
         }
 
