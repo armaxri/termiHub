@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Agent (Windows): the session daemon's IPC transport is now cross-platform. A new `DaemonTransport` abstraction (`agent/src/daemon/transport.rs`) drives the daemon over a Unix domain socket on unix and a **Windows named pipe** on windows, behind erased `AsyncRead`/`AsyncWrite` halves. The named pipe is secured with a per-user DACL (`GENERIC_ALL` to the current user's SID and `LocalSystem` only) — the direct security analog of the Unix socket's `0o700` permissions, with no exposed TCP port. The session daemon (`--daemon` mode) and its binary frame protocol now compile and run on Windows. Persistent sessions on Windows agents are not yet wired end-to-end (the Windows daemon launcher follows separately); non-persistent Windows agent sessions continue to run in-process.
+
 ### Security
 
 - SSH: upgraded `russh` from 0.46 to 0.61 and `russh-sftp` from 2.0 to 2.3 to resolve two advisories in the SSH transport — `RUSTSEC-2026-0154` (`russh`: unbounded 32-bit allocation) and `RUSTSEC-2026-0153` (`russh-cryptovec`: unchecked allocation/growth), both fixed in `russh >= 0.60.3`. The `russh-keys` crate was merged into `russh::keys` upstream, so the separate dependency was dropped. SSH key/password/agent authentication and SFTP were migrated to the new API (`PrivateKeyWithHashAlg`, `AuthResult`, agent `Signer`-based auth); behaviour is unchanged.
