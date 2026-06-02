@@ -133,6 +133,25 @@ pub fn windows_install_plan(shell: WindowsShell) -> InstallPlan {
 /// Probes `echo %PROCESSOR_ARCHITECTURE%`: `cmd.exe` expands it to a real
 /// architecture string, while PowerShell echoes the literal `%…%`. Defaults to
 /// [`WindowsShell::PowerShell`] when the `cmd`-style expansion does not occur.
+/// Build a command that prints the absolute install path on a Windows host.
+///
+/// Running this through the remote shell expands `%LOCALAPPDATA%` /
+/// `$env:LOCALAPPDATA` to a concrete path (e.g.
+/// `C:\Users\me\AppData\Local\termiHub\agent\termihub-agent.exe`) which is
+/// shell-agnostic and can be stored as the connection's agent path.
+pub fn windows_resolve_command(shell: WindowsShell) -> String {
+    match shell {
+        WindowsShell::Cmd => {
+            format!(r"echo %LOCALAPPDATA%\{WINDOWS_INSTALL_SUBDIR}\{WINDOWS_AGENT_EXE}")
+        }
+        WindowsShell::PowerShell => {
+            format!(
+                r#"Write-Output "$env:LOCALAPPDATA\{WINDOWS_INSTALL_SUBDIR}\{WINDOWS_AGENT_EXE}""#
+            )
+        }
+    }
+}
+
 pub fn detect_windows_shell(session: &SshSession) -> WindowsShell {
     // cmd.exe expands `%PROCESSOR_ARCHITECTURE%` to e.g. `AMD64`; PowerShell
     // echoes the literal `%PROCESSOR_ARCHITECTURE%`.
@@ -254,6 +273,18 @@ mod tests {
         assert_eq!(
             plan.verify_command,
             r#"& "$env:LOCALAPPDATA\termiHub\agent\termihub-agent.exe" --version"#
+        );
+    }
+
+    #[test]
+    fn windows_resolve_command_per_shell() {
+        assert_eq!(
+            windows_resolve_command(WindowsShell::Cmd),
+            r"echo %LOCALAPPDATA%\termiHub\agent\termihub-agent.exe"
+        );
+        assert_eq!(
+            windows_resolve_command(WindowsShell::PowerShell),
+            r#"Write-Output "$env:LOCALAPPDATA\termiHub\agent\termihub-agent.exe""#
         );
     }
 
