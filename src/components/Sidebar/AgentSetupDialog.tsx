@@ -34,12 +34,29 @@ const ARCH_OPTIONS = [
   { suffix: "linux-armv7", uname: "armv7l", os: "Linux", label: "linux-armv7 (armv7l)" },
   { suffix: "macos-x64", uname: "x86_64", os: "Darwin", label: "macos-x64 (x86_64)" },
   { suffix: "macos-arm64", uname: "arm64", os: "Darwin", label: "macos-arm64 (arm64)" },
+  { suffix: "windows-x64", uname: "x86_64", os: "Windows_NT", label: "windows-x64 (x86_64)" },
+  { suffix: "windows-arm64", uname: "arm64", os: "Windows_NT", label: "windows-arm64 (aarch64)" },
 ] as const;
 
 type ArchSuffix = (typeof ARCH_OPTIONS)[number]["suffix"];
 
+/** Default POSIX install path. */
+const POSIX_INSTALL_PATH = "~/.local/bin/termihub-agent";
+
+/**
+ * Fixed Windows install location. The backend always installs the agent under
+ * `%LOCALAPPDATA%\termiHub\agent\` on Windows, so this path is informational
+ * (the backend ignores a custom path on Windows for Phase 1).
+ */
+const WINDOWS_INSTALL_PATH = "%LOCALAPPDATA%\\termiHub\\agent\\termihub-agent.exe";
+
 function isKnownSuffix(s: string | null): s is ArchSuffix {
   return ARCH_OPTIONS.some((o) => o.suffix === s);
+}
+
+/** Returns true if the given arch suffix targets a Windows host. */
+function isWindowsSuffix(s: ArchSuffix): boolean {
+  return ARCH_OPTIONS.find((o) => o.suffix === s)?.os === "Windows_NT";
 }
 
 export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSetupDialogProps) {
@@ -56,6 +73,8 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
   const configRef = useRef<RemoteAgentConfig | null>(null);
   const addTab = useAppStore((s) => s.addTab);
   const requestPassword = useAppStore((s) => s.requestPassword);
+
+  const isWindows = isWindowsSuffix(selectedArch);
 
   const runDetection = useCallback(async () => {
     setPhase({ kind: "detecting" });
@@ -89,9 +108,16 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
     }
   }, [agent, requestPassword, onOpenChange]);
 
+  // Keep the install-path field in sync with the selected target OS: Windows
+  // installs to a fixed `%LOCALAPPDATA%` location, POSIX to `~/.local/bin`.
+  useEffect(() => {
+    setRemotePath(isWindows ? WINDOWS_INSTALL_PATH : POSIX_INSTALL_PATH);
+    if (isWindows) setInstallService(false);
+  }, [isWindows]);
+
   useEffect(() => {
     if (!isOpen) return;
-    setRemotePath("~/.local/bin/termihub-agent");
+    setRemotePath(POSIX_INSTALL_PATH);
     setInstallService(false);
     setBinarySource("github");
     setBranchName("");
@@ -363,20 +389,28 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
                   type="text"
                   value={remotePath}
                   onChange={(e) => setRemotePath(e.target.value)}
+                  readOnly={isWindows}
                   data-testid="agent-setup-remote-path"
                 />
+                {isWindows && (
+                  <span className="agent-setup-dialog__arch-hint">
+                    On Windows the agent is always installed under %LOCALAPPDATA%\termiHub\agent.
+                  </span>
+                )}
               </div>
 
-              <div className="agent-setup-dialog__checkbox-row">
-                <input
-                  type="checkbox"
-                  id="install-service"
-                  checked={installService}
-                  onChange={(e) => setInstallService(e.target.checked)}
-                  data-testid="agent-setup-install-service"
-                />
-                <label htmlFor="install-service">Install systemd service</label>
-              </div>
+              {!isWindows && (
+                <div className="agent-setup-dialog__checkbox-row">
+                  <input
+                    type="checkbox"
+                    id="install-service"
+                    checked={installService}
+                    onChange={(e) => setInstallService(e.target.checked)}
+                    data-testid="agent-setup-install-service"
+                  />
+                  <label htmlFor="install-service">Install systemd service</label>
+                </div>
+              )}
             </>
           )}
 
