@@ -22,7 +22,6 @@ serial2-tokio = { workspace = true, optional = true }
 portable-pty = { version = "0.8", optional = true }
 tracing = { version = "0.1", optional = true }
 russh = { workspace = true, optional = true }
-russh-keys = { workspace = true, optional = true }
 russh-sftp = { workspace = true, optional = true }
 bollard = { workspace = true, optional = true }
 futures-util = { version = "0.3", optional = true }
@@ -42,6 +41,6 @@ default = []
 serial = ["dep:serial2", "dep:serial2-tokio", "dep:tracing"]
 local-shell = ["dep:portable-pty", "dep:tracing"]
 telnet = ["dep:tracing"]
-ssh = ["dep:russh", "dep:russh-keys", "dep:russh-sftp", "dep:tracing"]
+ssh = ["dep:russh", "dep:russh-sftp", "dep:tracing"]
 docker = ["dep:bollard", "dep:futures-util", "dep:tracing"]
 wsl = ["dep:portable-pty", "dep:tracing"]

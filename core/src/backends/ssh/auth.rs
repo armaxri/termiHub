@@ -86,13 +86,25 @@ async fn authenticate(session: &mut SshSession, config: &SshConfig) -> Result<()
             let key_path = PathBuf::from(&expanded);
             let passphrase = config.password.as_deref();
 
-            let key_pair = russh_keys::load_secret_key(&key_path, passphrase)
+            let key_pair = russh::keys::load_secret_key(&key_path, passphrase)
                 .map_err(|e| SessionError::SpawnFailed(format!("Failed to load key: {e}")))?;
 
-            session
-                .authenticate_publickey(&config.username, Arc::new(key_pair))
+            // For RSA keys, negotiate the strongest hash the server accepts
+            // (rsa-sha2-512/256); the choice is ignored for ed25519/ecdsa keys.
+            let hash_alg = session
+                .best_supported_rsa_hash()
                 .await
                 .map_err(|e| SessionError::SpawnFailed(format!("Key auth failed: {e}")))?
+                .flatten();
+
+            session
+                .authenticate_publickey(
+                    &config.username,
+                    russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key_pair), hash_alg),
+                )
+                .await
+                .map_err(|e| SessionError::SpawnFailed(format!("Key auth failed: {e}")))?
+                .success()
         }
 
         _ => {
@@ -102,6 +114,7 @@ async fn authenticate(session: &mut SshSession, config: &SshConfig) -> Result<()
                 .authenticate_password(&config.username, password)
                 .await
                 .map_err(|e| SessionError::SpawnFailed(format!("Password auth failed: {e}")))?
+                .success()
         }
     };
 
@@ -120,23 +133,10 @@ async fn authenticate_with_agent(
     session: &mut SshSession,
     username: &str,
 ) -> Result<bool, SessionError> {
-    let mut agent = russh_keys::agent::client::AgentClient::connect_env()
+    let agent = russh::keys::agent::client::AgentClient::connect_env()
         .await
         .map_err(|e| SessionError::SpawnFailed(format!("SSH agent connect failed: {e}")))?;
-    let keys = agent
-        .request_identities()
-        .await
-        .map_err(|e| SessionError::SpawnFailed(format!("SSH agent list keys failed: {e}")))?;
-    for key in keys {
-        let (returned, result) = session.authenticate_future(username, key, agent).await;
-        agent = returned;
-        match result {
-            Ok(true) => return Ok(true),
-            Ok(false) => continue,
-            Err(e) => return Err(SessionError::SpawnFailed(format!("Agent auth failed: {e}"))),
-        }
-    }
-    Ok(false)
+    authenticate_with_agent_client(session, username, agent).await
 }
 
 /// Try each identity offered by the SSH agent until one succeeds (Windows OpenSSH named pipe).
@@ -145,21 +145,52 @@ async fn authenticate_with_agent(
     session: &mut SshSession,
     username: &str,
 ) -> Result<bool, SessionError> {
-    let mut agent =
-        russh_keys::agent::client::AgentClient::connect_named_pipe(r"\\.\pipe\openssh-ssh-agent")
+    let agent =
+        russh::keys::agent::client::AgentClient::connect_named_pipe(r"\\.\pipe\openssh-ssh-agent")
             .await
             .map_err(|e| SessionError::SpawnFailed(format!("SSH agent connect failed: {e}")))?;
-    let keys = agent
+    authenticate_with_agent_client(session, username, agent).await
+}
+
+/// Drive public-key authentication using the keys held by a connected SSH agent.
+///
+/// `russh` 0.61 drives agent auth through [`authenticate_publickey_with`], which
+/// signs each challenge via the agent (which implements `Signer`). Certificate
+/// identities are skipped — termiHub only authenticates with plain public keys.
+#[cfg(any(unix, windows))]
+async fn authenticate_with_agent_client<S>(
+    session: &mut SshSession,
+    username: &str,
+    mut agent: russh::keys::agent::client::AgentClient<S>,
+) -> Result<bool, SessionError>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    use russh::keys::agent::AgentIdentity;
+
+    let identities = agent
         .request_identities()
         .await
         .map_err(|e| SessionError::SpawnFailed(format!("SSH agent list keys failed: {e}")))?;
-    for key in keys {
-        let (returned, result) = session.authenticate_future(username, key, agent).await;
-        agent = returned;
-        match result {
-            Ok(true) => return Ok(true),
-            Ok(false) => continue,
-            Err(e) => return Err(SessionError::SpawnFailed(format!("Agent auth failed: {e}"))),
+
+    // Negotiate the RSA hash once; ignored for ed25519/ecdsa agent keys.
+    let hash_alg = session
+        .best_supported_rsa_hash()
+        .await
+        .map_err(|e| SessionError::SpawnFailed(format!("Agent auth failed: {e}")))?
+        .flatten();
+
+    for identity in identities {
+        let public_key = match identity {
+            AgentIdentity::PublicKey { key, .. } => key,
+            _ => continue,
+        };
+        let result = session
+            .authenticate_publickey_with(username, public_key, hash_alg, &mut agent)
+            .await
+            .map_err(|e| SessionError::SpawnFailed(format!("Agent auth failed: {e}")))?;
+        if result.success() {
+            return Ok(true);
         }
     }
     Ok(false)

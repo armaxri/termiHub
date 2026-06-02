@@ -54,7 +54,6 @@ impl Default for TermiHubHandler {
     }
 }
 
-#[async_trait::async_trait]
 impl russh::client::Handler for TermiHubHandler {
     type Error = russh::Error;
 
@@ -67,7 +66,7 @@ impl russh::client::Handler for TermiHubHandler {
     /// which also did not verify host keys.
     async fn check_server_key(
         &mut self,
-        _server_public_key: &russh_keys::key::PublicKey,
+        _server_public_key: &russh::keys::PublicKey,
     ) -> Result<bool, Self::Error> {
         Ok(true)
     }

@@ -30,7 +30,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 portable-pty = "0.8"
 russh = { workspace = true }
-russh-keys = { workspace = true }
 russh-sftp = { workspace = true }
 tempfile = "3"
 uuid = { version = "1", features = ["v4", "serde"] }
