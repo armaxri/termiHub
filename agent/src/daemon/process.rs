@@ -1,21 +1,20 @@
 //! Session daemon process — hosts a [`ConnectionType`] instance.
 //!
 //! Invoked as `termihub-agent --daemon <session-id>` by the agent.
-//! Communicates with the agent via a Unix domain socket using the
-//! length-prefixed binary frame protocol defined in `protocol.rs`.
+//! Communicates with the agent over a local IPC channel — a Unix domain
+//! socket on unix, a Windows named pipe on windows (see
+//! [`crate::daemon::transport`]) — using the length-prefixed binary frame
+//! protocol defined in `protocol.rs`.
 //!
 //! The daemon keeps the connection alive independently of the agent
 //! process. When the agent disconnects and reconnects, the daemon
 //! replays the ring buffer to bring the agent up to date.
 
-use std::path::{Path, PathBuf};
-
-use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
-use tokio::net::UnixListener;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
 use crate::daemon::protocol::{self, *};
+use crate::daemon::transport::{self, BoxedReader, BoxedWriter, DaemonListener};
 use termihub_core::buffer::RingBuffer;
 use termihub_core::connection::{ConnectionType, OutputReceiver};
 
@@ -26,7 +25,8 @@ const DEFAULT_BUFFER_SIZE: usize = 1_048_576;
 #[derive(Debug)]
 struct DaemonConfig {
     session_id: String,
-    socket_path: PathBuf,
+    /// Transport endpoint: a socket path on unix, a pipe name on windows.
+    endpoint: String,
     type_id: String,
     settings: serde_json::Value,
     buffer_size: usize,
@@ -40,12 +40,12 @@ impl DaemonConfig {
     /// - `TERMIHUB_SETTINGS` — JSON settings for `ConnectionType::connect()`
     ///
     /// Optional env vars:
-    /// - `TERMIHUB_SOCKET_PATH` — Unix socket path (default: auto-generated)
+    /// - `TERMIHUB_SOCKET_PATH` — transport endpoint (socket path on unix,
+    ///   pipe name on windows; default: auto-generated)
     /// - `TERMIHUB_BUFFER_SIZE` — ring buffer size in bytes (default: 1 MiB)
     fn from_env(session_id: &str) -> anyhow::Result<Self> {
-        let socket_path = std::env::var("TERMIHUB_SOCKET_PATH")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| socket_dir().join(format!("session-{session_id}.sock")));
+        let endpoint = std::env::var("TERMIHUB_SOCKET_PATH")
+            .unwrap_or_else(|_| transport::session_endpoint(session_id));
 
         let type_id = std::env::var("TERMIHUB_TYPE_ID")
             .map_err(|_| anyhow::anyhow!("TERMIHUB_TYPE_ID env var is required"))?;
@@ -62,26 +62,12 @@ impl DaemonConfig {
 
         Ok(Self {
             session_id: session_id.to_string(),
-            socket_path,
+            endpoint,
             type_id,
             settings,
             buffer_size,
         })
     }
-}
-
-/// Get the socket directory for the current user.
-pub fn socket_dir() -> PathBuf {
-    let user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-    PathBuf::from("/tmp/termihub").join(user)
-}
-
-/// Ensure the socket directory exists with mode 0700.
-fn ensure_socket_dir(dir: &Path) -> anyhow::Result<()> {
-    std::fs::create_dir_all(dir)?;
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
-    Ok(())
 }
 
 /// Entry point for the session daemon process.
@@ -113,32 +99,21 @@ pub async fn run_daemon(session_id: &str) -> anyhow::Result<()> {
 
     info!("Connection established: type={}", config.type_id);
 
-    // Ensure socket directory exists
-    if let Some(parent) = config.socket_path.parent() {
-        ensure_socket_dir(parent)?;
-    }
+    // Bind the transport listener — this creates the endpoint (socket file on
+    // unix, named pipe on windows), restricted to the current user, signalling
+    // to callers that the daemon is ready to accept connections.
+    let mut listener = DaemonListener::bind(&config.endpoint)?;
 
-    // Remove stale socket file
-    let _ = std::fs::remove_file(&config.socket_path);
-
-    // Bind the Unix listener — this creates the socket file, signalling
-    // to callers that the daemon is ready.
-    let listener = UnixListener::bind(&config.socket_path)?;
-
-    // Set socket file permissions to 0700
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&config.socket_path, std::fs::Permissions::from_mode(0o700))?;
-
-    info!("Listening on socket: {}", config.socket_path.display());
+    info!("Listening on endpoint: {}", config.endpoint);
 
     // Subscribe to output
     let output_rx = connection.subscribe_output();
 
     // Run the main event loop
-    let result = daemon_loop(connection, output_rx, &listener, config.buffer_size).await;
+    let result = daemon_loop(connection, output_rx, &mut listener, config.buffer_size).await;
 
-    // Cleanup socket file
-    let _ = std::fs::remove_file(&config.socket_path);
+    // Cleanup the endpoint
+    listener.cleanup();
 
     info!("Session daemon exiting: {}", config.session_id);
     result
@@ -171,11 +146,11 @@ enum AgentCommand {
 async fn daemon_loop(
     mut connection: Box<dyn ConnectionType>,
     mut output_rx: OutputReceiver,
-    listener: &UnixListener,
+    listener: &mut DaemonListener,
     buffer_size: usize,
 ) -> anyhow::Result<()> {
     let mut ring_buffer = RingBuffer::new(buffer_size);
-    let mut agent_writer: Option<OwnedWriteHalf> = None;
+    let mut agent_writer: Option<BoxedWriter> = None;
     let mut reader_task: Option<tokio::task::JoinHandle<()>> = None;
     // Monotonically increasing counter bumped on every new agent connection.
     // Passed into each reader task so that a stale Disconnected from an old
@@ -218,7 +193,7 @@ async fn daemon_loop(
             // New agent connection
             conn = listener.accept() => {
                 match conn {
-                    Ok((stream, _)) => {
+                    Ok((read_half, mut write_half)) => {
                         info!("Agent connected");
 
                         // Bump the generation so any in-flight Disconnected from
@@ -230,8 +205,6 @@ async fn daemon_loop(
                         agent_writer = None;
                         abort_reader(&mut reader_task);
                         while agent_cmd_rx.try_recv().is_ok() {}
-
-                        let (read_half, mut write_half) = stream.into_split();
 
                         // Send buffer replay
                         let buffered = ring_buffer.read_all();
@@ -337,7 +310,7 @@ async fn daemon_loop(
 /// `gen` is the connection generation assigned when this connection was
 /// accepted; it is included in `Disconnected` so the main loop can ignore
 /// stale disconnects from previous connections.
-async fn agent_reader_loop(mut reader: OwnedReadHalf, tx: mpsc::Sender<AgentCommand>, gen: u64) {
+async fn agent_reader_loop(mut reader: BoxedReader, tx: mpsc::Sender<AgentCommand>, gen: u64) {
     loop {
         match protocol::read_frame_async(&mut reader).await {
             Ok(Some(frame)) => {
@@ -385,7 +358,7 @@ fn abort_reader(task: &mut Option<tokio::task::JoinHandle<()>>) {
 }
 
 /// Send an Exited frame to the agent if connected.
-async fn send_exited_async(writer: &mut Option<OwnedWriteHalf>, code: i32) {
+async fn send_exited_async(writer: &mut Option<BoxedWriter>, code: i32) {
     if let Some(ref mut w) = writer {
         let payload = protocol::encode_exit_code(code);
         let _ = protocol::write_frame_async(w, MSG_EXITED, &payload).await;
@@ -399,13 +372,6 @@ mod tests {
 
     /// Env var tests mutate the process environment and must run serially.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    #[test]
-    fn socket_dir_contains_user() {
-        let dir = socket_dir();
-        let dir_str = dir.to_string_lossy();
-        assert!(dir_str.starts_with("/tmp/termihub/"));
-    }
 
     #[test]
     fn daemon_config_requires_type_id() {
@@ -435,7 +401,7 @@ mod tests {
         assert_eq!(config.type_id, "ssh");
         assert_eq!(config.settings["host"], "192.168.1.1");
         assert_eq!(config.settings["port"], 22);
-        assert_eq!(config.socket_path, PathBuf::from("/tmp/test-daemon.sock"));
+        assert_eq!(config.endpoint, "/tmp/test-daemon.sock");
         assert_eq!(config.buffer_size, 2097152);
 
         // Clean up
@@ -458,10 +424,13 @@ mod tests {
         assert_eq!(config.type_id, "local");
         assert_eq!(config.settings, serde_json::json!({}));
         assert_eq!(config.buffer_size, DEFAULT_BUFFER_SIZE);
-        assert!(config
-            .socket_path
-            .to_string_lossy()
-            .contains("session-test-789.sock"));
+        // The default endpoint embeds the session id (socket path on unix,
+        // pipe name on windows).
+        assert!(
+            config.endpoint.contains("test-789"),
+            "got {}",
+            config.endpoint
+        );
 
         // Clean up
         std::env::remove_var("TERMIHUB_TYPE_ID");
@@ -474,7 +443,6 @@ mod tests {
 
     /// A stale Disconnected (gen < current) must be silently ignored so that
     /// the newly accepted connection remains intact.
-    #[cfg(unix)]
     #[tokio::test]
     async fn stale_disconnected_does_not_destroy_new_connection() {
         use tokio::sync::mpsc;
@@ -505,7 +473,6 @@ mod tests {
 
     /// A Disconnected whose generation matches the current connection must be
     /// processed and clear the writer.
-    #[cfg(unix)]
     #[tokio::test]
     async fn current_disconnected_clears_writer() {
         use tokio::sync::mpsc;

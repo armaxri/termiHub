@@ -10,10 +10,7 @@ use std::io;
 #[cfg(test)]
 use std::io::{Read, Write};
 
-#[cfg(unix)]
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-#[cfg(unix)]
-use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 // ── Message type constants ──────────────────────────────────────────
 
@@ -102,13 +99,18 @@ pub fn write_frame(writer: &mut impl Write, msg_type: u8, payload: &[u8]) -> io:
     Ok(())
 }
 
-// ── Async I/O (used by the agent's ShellBackend, Unix only) ─────────
+// ── Async I/O (used by the daemon process and agent client) ─────────
 
-/// Read a single frame from an async Unix socket read half.
+/// Read a single frame from any async reader.
+///
+/// Generic over [`AsyncRead`] so the same code drives a Unix domain socket
+/// on unix and a Windows named pipe on windows (see [`crate::daemon::transport`]).
 ///
 /// Returns `Ok(None)` on clean EOF.
-#[cfg(unix)]
-pub async fn read_frame_async(reader: &mut OwnedReadHalf) -> io::Result<Option<Frame>> {
+pub async fn read_frame_async<R>(reader: &mut R) -> io::Result<Option<Frame>>
+where
+    R: AsyncRead + Unpin + ?Sized,
+{
     let mut header = [0u8; HEADER_SIZE];
     match reader.read_exact(&mut header).await {
         Ok(_) => {}
@@ -140,13 +142,14 @@ pub async fn read_frame_async(reader: &mut OwnedReadHalf) -> io::Result<Option<F
     Ok(Some(Frame { msg_type, payload }))
 }
 
-/// Write a single frame to an async Unix socket write half.
-#[cfg(unix)]
-pub async fn write_frame_async(
-    writer: &mut OwnedWriteHalf,
-    msg_type: u8,
-    payload: &[u8],
-) -> io::Result<()> {
+/// Write a single frame to any async writer.
+///
+/// Generic over [`AsyncWrite`] so the same code drives a Unix domain socket
+/// on unix and a Windows named pipe on windows (see [`crate::daemon::transport`]).
+pub async fn write_frame_async<W>(writer: &mut W, msg_type: u8, payload: &[u8]) -> io::Result<()>
+where
+    W: AsyncWrite + Unpin + ?Sized,
+{
     let length = payload.len() as u32;
     let mut header = [0u8; HEADER_SIZE];
     header[0] = msg_type;
