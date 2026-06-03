@@ -424,6 +424,7 @@ mod tests {
         assert!(settings.file_browser_enabled);
         assert!(settings.default_shell_integration);
         assert!(settings.default_x11_forwarding);
+        assert!(settings.ask_open_saved_file_in_tab);
     }
 
     #[test]
@@ -434,6 +435,7 @@ mod tests {
         assert!(settings.file_browser_enabled);
         assert!(settings.default_shell_integration);
         assert!(settings.default_x11_forwarding);
+        assert!(settings.ask_open_saved_file_in_tab);
     }
 
     #[test]
