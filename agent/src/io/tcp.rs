@@ -39,7 +39,6 @@ pub async fn run_tcp_listener(addr: &str, shutdown: CancellationToken) -> anyhow
     connection_store.ensure_default_shell().await;
 
     // Recover sessions from previous agent run
-    #[cfg(unix)]
     session_manager.recover_sessions().await;
 
     loop {

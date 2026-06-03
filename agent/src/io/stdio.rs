@@ -33,7 +33,6 @@ pub async fn run_stdio_loop(shutdown: CancellationToken) -> anyhow::Result<()> {
     connection_store.ensure_default_shell().await;
 
     // Recover sessions from previous agent run
-    #[cfg(unix)]
     session_manager.recover_sessions().await;
 
     let handler = AgentHandler::new(
