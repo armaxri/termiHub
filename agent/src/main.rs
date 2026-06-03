@@ -1,4 +1,3 @@
-#[cfg(unix)]
 mod daemon;
 mod files;
 mod handler;
@@ -76,7 +75,6 @@ async fn main() -> anyhow::Result<()> {
             );
             io::tcp::run_tcp_listener(addr, shutdown).await
         }
-        #[cfg(unix)]
         "--daemon" => {
             init_tracing();
 

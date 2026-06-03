@@ -403,6 +403,15 @@ jobs:
       - run: npm run test:e2e:ci
 ```
 
+### Windows Agent CI Coverage
+
+The remote agent (`agent/`) is built and tested on Windows via dedicated CI jobs:
+
+- **Build + test** ([`agent.yml`](../.github/workflows/agent.yml)): the `build-windows` job runs on `windows-latest`, builds the agent for `x86_64-pc-windows-msvc` (native MSVC — cross-rs cannot build the MSVC ABI), and runs `cargo test -p termihub-agent -p termihub-core --all-features`. The full workspace test suite also runs on `windows-latest` via the [`code-quality.yml`](../.github/workflows/code-quality.yml) `tests` matrix.
+- **Release artifact** ([`release.yml`](../.github/workflows/release.yml)): the `agent-binaries-windows` job ships `termihub-agent-windows-x64.exe` alongside the Linux and macOS agent binaries on every tagged release.
+
+> **Platform caveat (ADR-5):** System/E2E tests (`tauri-driver` + Docker) remain **Linux-only** — `tauri-driver` has no macOS WKWebView driver, and the Docker E2E suite targets Linux. Windows **agent** verification is therefore limited to unit/integration tests (the jobs above) plus the manual tests in [`tests/manual/remote-agent.yaml`](../tests/manual/remote-agent.yaml). There is no automated end-to-end coverage of the Windows agent over a live SSH connection.
+
 ## Coverage Goals
 
 Target coverage levels:
@@ -747,14 +756,14 @@ See [scripts/README.md](../scripts/README.md) for all options. Reports are saved
 | Connection Management | [`connection-management.yaml`](../tests/manual/connection-management.yaml) | `MT-CONN`  | 10      |
 | File Browser + Editor | [`file-browser.yaml`](../tests/manual/file-browser.yaml)                   | `MT-FB`    | 10      |
 | UI / Layout           | [`ui-layout.yaml`](../tests/manual/ui-layout.yaml)                         | `MT-UI`    | 23      |
-| Remote Agent          | [`remote-agent.yaml`](../tests/manual/remote-agent.yaml)                   | `MT-AGENT` | 17      |
+| Remote Agent          | [`remote-agent.yaml`](../tests/manual/remote-agent.yaml)                   | `MT-AGENT` | 18      |
 | Credential Store      | [`credential-store.yaml`](../tests/manual/credential-store.yaml)           | `MT-CRED`  | 3       |
 | Keyboard Shortcuts    | [`keyboard.yaml`](../tests/manual/keyboard.yaml)                           | `MT-KB`    | 12      |
 | Cross-Platform        | [`cross-platform.yaml`](../tests/manual/cross-platform.yaml)               | `MT-XPLAT` | 1       |
 | Portable Mode         | [`portable-mode.yaml`](../tests/manual/portable-mode.yaml)                 | `MT-PORT`  | 4       |
 | Embedded Services     | [`embedded-services.yaml`](../tests/manual/embedded-services.yaml)         | `MT-SVC`   | 3       |
 | Network Tools         | [`network-tools.yaml`](../tests/manual/network-tools.yaml)                 | `MT-NET`   | 11      |
-| **Total**             |                                                                            |            | **127** |
+| **Total**             |                                                                            |            | **128** |
 
 When adding new manual tests, add the YAML definition to the appropriate file in `tests/manual/` — the YAML files are the **source of truth** for guided testing.
 

@@ -22,7 +22,7 @@ use termihub_core::session::traits::OutputSink;
 #[cfg(unix)]
 use crate::daemon::client::{DaemonClient, DaemonWriterHandle};
 #[cfg(unix)]
-use crate::daemon::process::socket_dir;
+use crate::daemon::transport::session_endpoint;
 #[cfg(unix)]
 use crate::state::persistence::{AgentState, PersistedSession};
 
@@ -154,7 +154,7 @@ impl DaemonLauncher for SystemDaemonLauncher {
         notification_tx: NotificationSender,
         buffer_size_bytes: usize,
     ) -> Result<SessionBackend, anyhow::Error> {
-        let socket_path = socket_dir().join(format!("session-{session_id}.sock"));
+        let socket_path = std::path::PathBuf::from(session_endpoint(session_id));
         let settings_json = serde_json::to_string(settings)?;
         let agent_exe = std::env::current_exe()?;
 
