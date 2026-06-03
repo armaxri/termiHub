@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Terminal: after saving terminal content to a file (tab/pane **Save to File**), an **Open Saved File in Tab** dialog now offers to open the saved file in a Monaco editor tab. The dialog has an **Ask again** checkbox bound to a new persisted setting (**Settings → Terminal → Open Saved File in Tab**, default on). When the setting is off, files are saved silently with no dialog and no editor tab; unchecking **Ask again** in the dialog only affects future saves.
 - Agent (Windows): the session daemon's IPC transport is now cross-platform. A new `DaemonTransport` abstraction (`agent/src/daemon/transport.rs`) drives the daemon over a Unix domain socket on unix and a **Windows named pipe** on windows, behind erased `AsyncRead`/`AsyncWrite` halves. The named pipe is secured with a per-user DACL (`GENERIC_ALL` to the current user's SID and `LocalSystem` only) — the direct security analog of the Unix socket's `0o700` permissions, with no exposed TCP port. The session daemon (`--daemon` mode) and its binary frame protocol now compile and run on Windows. Persistent sessions on Windows agents are not yet wired end-to-end (the Windows daemon launcher follows separately); non-persistent Windows agent sessions continue to run in-process.
 
 ### Security
