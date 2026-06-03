@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Agent (Windows): the session daemon's IPC transport is now cross-platform. A new `DaemonTransport` abstraction (`agent/src/daemon/transport.rs`) drives the daemon over a Unix domain socket on unix and a **Windows named pipe** on windows, behind erased `AsyncRead`/`AsyncWrite` halves. The named pipe is secured with a per-user DACL (`GENERIC_ALL` to the current user's SID and `LocalSystem` only) — the direct security analog of the Unix socket's `0o700` permissions, with no exposed TCP port. The session daemon (`--daemon` mode) and its binary frame protocol now compile and run on Windows. Persistent sessions on Windows agents are not yet wired end-to-end (the Windows daemon launcher follows separately); non-persistent Windows agent sessions continue to run in-process.
+- Agent (Windows): **persistent (reconnectable) remote-agent sessions now work on Windows.** The session daemon's IPC transport is cross-platform — a new `DaemonTransport` abstraction (`agent/src/daemon/transport.rs`) drives the daemon over a Unix domain socket on unix and a **Windows named pipe** on windows, behind erased `AsyncRead`/`AsyncWrite` halves. The named pipe is secured with a per-user DACL (`GENERIC_ALL` to the current user's SID and `LocalSystem` only) — the direct security analog of the Unix socket's `0o700` permissions, with no exposed TCP port. The agent's `DaemonClient` is transport-agnostic, and the `SystemDaemonLauncher` spawns a fully **detached** daemon process on Windows (`DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW`) that survives the agent exiting and is reconnected on restart. No `nix` fork/setsid/signal usage on any daemon path.
 
 ### Security
 
