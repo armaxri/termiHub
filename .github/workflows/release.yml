@@ -287,10 +287,50 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # Build and upload Windows agent binaries as release assets (native MSVC build).
+  # cross-rs cannot build the MSVC ABI, so this runs native cargo on a Windows
+  # runner. The binary is emitted as termihub-agent.exe.
+  agent-binaries-windows:
+    name: Agent Binary (${{ matrix.target }})
+    needs: create-release
+    runs-on: windows-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            artifact_name: termihub-agent-windows-x64.exe
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release-agent-${{ matrix.target }}
+
+      - name: Build agent
+        run: cargo build --release --target ${{ matrix.target }} -p termihub-agent
+
+      - name: Upload agent binary as release asset
+        shell: bash
+        run: |
+          cp target/${{ matrix.target }}/release/termihub-agent.exe ${{ matrix.artifact_name }}
+          gh release upload v${{ needs.create-release.outputs.version }} "${{ matrix.artifact_name }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   # Update latest release tag
   update-latest:
     name: Update Latest Tag
-    needs: [create-release, build-and-upload, agent-binaries-linux, agent-binaries-macos]
+    needs: [create-release, build-and-upload, agent-binaries-linux, agent-binaries-macos, agent-binaries-windows]
     runs-on: ubuntu-latest
 
     steps:
@@ -307,7 +347,7 @@ jobs:
   # Notify on Discord/Slack (optional)
   notify:
     name: Notify Release
-    needs: [create-release, build-and-upload, agent-binaries-linux, agent-binaries-macos]
+    needs: [create-release, build-and-upload, agent-binaries-linux, agent-binaries-macos, agent-binaries-windows]
     runs-on: ubuntu-latest
     if: success()
 
