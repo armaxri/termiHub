@@ -128,6 +128,23 @@ tests:
       - "Re-enabling the setting makes the dialog reappear on the next save"
     verification: manual
 
+  - id: MT-TAB-14
+    name: "Save to File — width-wrapped lines are saved as logical lines"
+    pr: 782
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Make the terminal narrow (e.g. ~40 columns)"
+      - "Print a line longer than the terminal width, e.g. run: printf 'A%.0s' {1..120}; echo"
+      - "Also print a normal short line so a real newline is present"
+      - "Save to File and open the saved file in an external editor"
+    expected:
+      - "The long line is saved on a single line (no breaks at the terminal width)"
+      - "The separate short line remains on its own line"
+      - "Deliberate blank lines in the output are preserved"
+    verification: manual
+
   # --- Split Views ---
 
   - id: MT-TAB-16

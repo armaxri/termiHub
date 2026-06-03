@@ -698,7 +698,7 @@ Manual test procedures for verifying user-facing features before releases and af
 
 Manual tests that can be automated have been moved to WebdriverIO E2E tests. The YAML files now contain only items that truly require manual verification. See the [E2E Coverage Map](#e2e-coverage-map) below for the mapping from manual test IDs to E2E test files.
 
-**97 manual test items remain** across 14 YAML files. These cannot be automated due to:
+**98 manual test items remain** across 14 YAML files. These cannot be automated due to:
 
 | Reason                                | Items | Examples                                                          |
 | ------------------------------------- | ----- | ----------------------------------------------------------------- |
