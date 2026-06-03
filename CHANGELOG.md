@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Terminal: added a small horizontal inset (8 px) inside the terminal viewport so the first and last characters of each line are no longer flush against the container edge or the vertical scrollbar. This makes it easier to drag-select characters at the line edges. xterm's FitAddon reads the padding so column counts remain accurate; horizontal-scroll mode keeps zero padding to avoid clipping the imperatively sized canvas.
 
+### Added
+
+- Remote agent (Windows): `#[cfg(windows)]` integration tests for the ConPTY-backed local-shell path. The agent's Windows shell flow goes through `NativeLocalShellSpawner` → `portable_pty::native_pty_system()` → ConPTY, which behaves differently from Unix PTYs around resize and teardown. The new tests pin the shell to `powershell` and `cmd` and exercise spawn, I/O round-trip, back-to-back resizes, and clean teardown so regressions in ConPTY shell defaults fail fast on the Windows CI matrix. `NativeLocalShellSpawner` also gained a doc-comment block describing the ConPTY-specific behavior (`ResizePseudoConsole` firing `WINDOW_BUFFER_SIZE_EVENT`, `ClosePseudoConsole` on drop). Two manual tests (MT-AGENT-21 / MT-AGENT-22) cover the same flow end-to-end through the agent. Part of #771 (Closes #765).
+
 ### Fixed
 
 - Remote agent (Windows): config and session-state files are now stored under the platform user-config directory on every supported platform. Previously, the agent's path helpers special-cased Linux (`$XDG_CONFIG_HOME` / `$HOME/.config`) and macOS (`~/Library/Application Support`) but had no Windows branch, so a Windows-hosted agent fell through to a relative `.config/termihub-agent` path under the working directory. Both helpers (`agent/src/state/persistence.rs::config_dir` and `agent/src/session/definitions.rs::dirs_config_dir`) are now backed by the `dirs` crate, which resolves `%APPDATA%` (Roaming) on Windows. The previously `#[cfg(unix)]`-gated state module is now compiled on all platforms so the desktop's session manager can persist agent state regardless of host OS. Part of #771 (Closes #764).
