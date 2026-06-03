@@ -111,6 +111,13 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     keywords: ["right-click", "context menu", "copy", "paste", "quick action", "mouse"],
   },
   {
+    id: "askOpenSavedFileInTab",
+    label: "Open Saved File in Tab",
+    description: "Offer to open terminal content in an editor tab after saving it to a file",
+    category: "terminal",
+    keywords: ["save", "file", "tab", "editor", "monaco", "terminal", "open", "prompt"],
+  },
+  {
     id: "keybindings",
     label: "Keyboard Shortcuts",
     description: "Customize keyboard shortcuts and key bindings",

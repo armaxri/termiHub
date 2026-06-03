@@ -144,6 +144,11 @@ pub struct AppSettings {
     /// close-tab-group keyboard shortcut. The X-button on a tab is not affected.
     #[serde(default = "default_true")]
     pub confirm_close_tab_on_shortcut: bool,
+    /// When true (default), saving terminal content to a file shows a dialog
+    /// offering to open the saved file in a Monaco editor tab. When false, the
+    /// file is saved silently and no dialog or editor tab is opened.
+    #[serde(default = "default_true")]
+    pub ask_open_saved_file_in_tab: bool,
     /// Default value for Shell Integration toggle in new SSH connections.
     #[serde(default = "default_true")]
     pub default_shell_integration: bool,
@@ -208,6 +213,7 @@ impl Default for AppSettings {
             power_monitoring_enabled: true,
             file_browser_enabled: true,
             confirm_close_tab_on_shortcut: true,
+            ask_open_saved_file_in_tab: true,
             default_shell_integration: true,
             default_x11_forwarding: true,
             layout: None,

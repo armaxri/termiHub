@@ -179,6 +179,13 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       if (!filePath) return;
 
       await writeTextFile(filePath, content);
+
+      // Offer to open the just-saved file in an editor tab, unless the user
+      // disabled the prompt (in which case the file is saved silently).
+      const { settings, showOpenSavedFileDialog } = useAppStore.getState();
+      if (settings.askOpenSavedFileInTab ?? true) {
+        showOpenSavedFileDialog(filePath);
+      }
     },
     [getTerminalContent]
   );

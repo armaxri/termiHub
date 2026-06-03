@@ -200,6 +200,12 @@ export interface AppSettings {
    * The X-button on tabs always closes immediately and is unaffected by this setting.
    */
   confirmCloseTabOnShortcut?: boolean;
+  /**
+   * When true (default), saving terminal content to a file shows a dialog
+   * offering to open the saved file in a Monaco editor tab. When false, the
+   * file is saved silently and no dialog or editor tab is opened.
+   */
+  askOpenSavedFileInTab?: boolean;
   defaultShellIntegration?: boolean;
   defaultX11Forwarding?: boolean;
   layout?: LayoutConfig;
