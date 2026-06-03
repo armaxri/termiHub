@@ -29,10 +29,10 @@ pub type BoxedReader = Box<dyn AsyncRead + Send + Unpin>;
 /// Boxed writer half of a daemon connection (Unix socket or named pipe).
 pub type BoxedWriter = Box<dyn AsyncWrite + Send + Unpin>;
 
-// `connect` and its timeout constants are the client side of the transport.
-// They are exercised by the round-trip tests below; the production agent client
-// and Windows launcher are wired onto them in #767, so they read as dead code
-// in the plain binary build until then.
+// `connect` (and the shared retry helper it uses) are the client side of the
+// transport. They are exercised by the round-trip tests below; the production
+// agent client and Windows launcher are wired onto them in #767, so they read
+// as dead code in the plain binary build until then.
 
 /// How long [`connect`] waits for the daemon endpoint to appear before failing.
 #[allow(dead_code)]
@@ -40,6 +40,36 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// How often [`connect`] retries while the endpoint is not yet available.
 #[allow(dead_code)]
 const CONNECT_POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Retry `attempt` until it succeeds or [`CONNECT_TIMEOUT`] elapses, sleeping
+/// [`CONNECT_POLL_INTERVAL`] between tries whenever `retryable` accepts the
+/// error (the daemon binds its endpoint during slow startup work). Once the
+/// deadline passes, the last underlying error is returned.
+///
+/// Shared by the unix and windows [`connect`] implementations so the retry
+/// policy lives in one place; only the per-platform attempt and the
+/// "endpoint not ready yet" error predicate differ.
+#[allow(dead_code)]
+async fn connect_with_retry<A, Fut, R>(
+    mut attempt: A,
+    retryable: R,
+) -> std::io::Result<(BoxedReader, BoxedWriter)>
+where
+    A: FnMut() -> Fut,
+    Fut: std::future::Future<Output = std::io::Result<(BoxedReader, BoxedWriter)>>,
+    R: Fn(&std::io::Error) -> bool,
+{
+    let deadline = tokio::time::Instant::now() + CONNECT_TIMEOUT;
+    loop {
+        match attempt().await {
+            Ok(halves) => return Ok(halves),
+            Err(e) if retryable(&e) && tokio::time::Instant::now() < deadline => {
+                tokio::time::sleep(CONNECT_POLL_INTERVAL).await;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
 
 #[cfg(unix)]
 #[allow(unused_imports)]
@@ -119,24 +149,22 @@ mod unix_impl {
     /// yet present (the daemon binds it during slow startup work).
     #[allow(dead_code)] // wired into the agent client/launcher in #767
     pub async fn connect(endpoint: &str) -> io::Result<(BoxedReader, BoxedWriter)> {
-        let deadline = tokio::time::Instant::now() + CONNECT_TIMEOUT;
-        loop {
-            match UnixStream::connect(endpoint).await {
-                Ok(stream) => {
-                    let (reader, writer) = stream.into_split();
-                    return Ok((Box::new(reader), Box::new(writer)));
-                }
-                Err(e)
-                    if matches!(
-                        e.kind(),
-                        io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
-                    ) && tokio::time::Instant::now() < deadline =>
-                {
-                    tokio::time::sleep(CONNECT_POLL_INTERVAL).await;
-                }
-                Err(e) => return Err(e),
-            }
-        }
+        super::connect_with_retry(
+            || async {
+                let (reader, writer) = UnixStream::connect(endpoint).await?.into_split();
+                Ok((
+                    Box::new(reader) as BoxedReader,
+                    Box::new(writer) as BoxedWriter,
+                ))
+            },
+            |e| {
+                matches!(
+                    e.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
+                )
+            },
+        )
+        .await
     }
 }
 
@@ -224,26 +252,24 @@ mod windows_impl {
     /// instances are momentarily busy.
     #[allow(dead_code)] // wired into the agent client/launcher in #767
     pub async fn connect(endpoint: &str) -> io::Result<(BoxedReader, BoxedWriter)> {
-        let deadline = tokio::time::Instant::now() + CONNECT_TIMEOUT;
-        loop {
-            match ClientOptions::new().open(endpoint) {
-                Ok(client) => {
-                    let (reader, writer) = tokio::io::split(client);
-                    return Ok((Box::new(reader), Box::new(writer)));
-                }
-                Err(e)
-                    if matches!(
-                        e.raw_os_error(),
-                        Some(code)
-                            if code == ERROR_FILE_NOT_FOUND as i32
-                                || code == ERROR_PIPE_BUSY as i32
-                    ) && tokio::time::Instant::now() < deadline =>
-                {
-                    tokio::time::sleep(CONNECT_POLL_INTERVAL).await;
-                }
-                Err(e) => return Err(e),
-            }
-        }
+        super::connect_with_retry(
+            || async {
+                let client = ClientOptions::new().open(endpoint)?;
+                let (reader, writer) = tokio::io::split(client);
+                Ok((
+                    Box::new(reader) as BoxedReader,
+                    Box::new(writer) as BoxedWriter,
+                ))
+            },
+            |e| {
+                matches!(
+                    e.raw_os_error(),
+                    Some(code)
+                        if code == ERROR_FILE_NOT_FOUND as i32 || code == ERROR_PIPE_BUSY as i32
+                )
+            },
+        )
+        .await
     }
 
     /// Per-user security descriptor construction for the named pipe.
