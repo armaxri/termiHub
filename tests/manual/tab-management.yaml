@@ -81,6 +81,53 @@ tests:
       - "Nothing happens (no crash, no file written)"
     verification: manual
 
+  # --- Open Saved File in Tab (PR #782) ---
+
+  - id: MT-TAB-11
+    name: "Save to File — opens the saved file in an editor tab"
+    pr: 782
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Ensure Settings → Terminal → 'Open Saved File in Tab' is enabled (default)"
+      - "Open a terminal with some output and choose 'Save to File'"
+      - "Choose a location and save"
+      - "In the 'Open Saved File in Tab' dialog, leave 'Ask again' checked and click 'Open'"
+    expected:
+      - "A Monaco editor tab opens showing the saved terminal content"
+    verification: manual
+    tags: [native-dialog]
+
+  - id: MT-TAB-12
+    name: "Save to File — Cancel does not open a tab"
+    pr: 782
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Save terminal content to a file"
+      - "In the 'Open Saved File in Tab' dialog, click 'Cancel'"
+    expected:
+      - "The file is saved but no editor tab is opened"
+    verification: manual
+
+  - id: MT-TAB-13
+    name: "Save to File — 'Ask again' off suppresses the dialog"
+    pr: 782
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Save terminal content to a file"
+      - "In the dialog, uncheck 'Ask again', then click 'Cancel'"
+      - "Verify Settings → Terminal → 'Open Saved File in Tab' is now off"
+      - "Save terminal content to a file again"
+    expected:
+      - "No dialog appears on the second save and no editor tab is opened"
+      - "Re-enabling the setting makes the dialog reappear on the next save"
+    verification: manual
+
   # --- Split Views ---
 
   - id: MT-TAB-16
