@@ -6835,6 +6835,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "chrono",
+ "dirs",
  "jsonrpsee",
  "libc",
  "nix 0.29.0",

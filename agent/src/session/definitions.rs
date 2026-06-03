@@ -615,20 +615,21 @@ fn detect_default_shell() -> String {
     "/bin/sh".to_string()
 }
 
-/// Get the platform config directory (~/.config on Linux, ~/Library/Application Support on macOS).
+/// Platform user-config directory used as the parent for `termihub-agent/`.
+///
+/// Honors `XDG_CONFIG_HOME` first on every platform (used by integration
+/// tests and portable setups to redirect the agent's state to a sandbox).
+/// Otherwise delegates to the `dirs` crate: `$HOME/.config` on Linux,
+/// `~/Library/Application Support` on macOS, and `%APPDATA%` (Roaming) on
+/// Windows. Falls back to relative `.config` only if the platform has no
+/// resolvable user-config directory.
 fn dirs_config_dir() -> PathBuf {
     if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-        return PathBuf::from(xdg);
+        if !xdg.is_empty() {
+            return PathBuf::from(xdg);
+        }
     }
-    if let Ok(home) = std::env::var("HOME") {
-        #[cfg(target_os = "macos")]
-        return PathBuf::from(&home)
-            .join("Library")
-            .join("Application Support");
-        #[cfg(not(target_os = "macos"))]
-        return PathBuf::from(&home).join(".config");
-    }
-    PathBuf::from(".config")
+    dirs::config_dir().unwrap_or_else(|| PathBuf::from(".config"))
 }
 
 #[cfg(test)]
@@ -637,6 +638,33 @@ mod tests {
     use serde_json::json;
     use std::fs;
     use tempfile::TempDir;
+
+    #[test]
+    fn dirs_config_dir_returns_absolute_path() {
+        // Regression test for #764: the agent's connection-storage config
+        // directory must resolve to an absolute path on every platform
+        // (including Windows), not the relative ".config" fallback.
+        let dir = dirs_config_dir();
+        assert!(
+            dir.is_absolute(),
+            "dirs_config_dir must be absolute, got {}",
+            dir.display()
+        );
+    }
+
+    #[test]
+    fn default_path_is_absolute_and_ends_in_connections_json() {
+        let path = ConnectionStore::default_path();
+        assert!(
+            path.is_absolute(),
+            "default_path must be absolute, got {}",
+            path.display()
+        );
+        assert_eq!(
+            path.file_name().and_then(|s| s.to_str()),
+            Some("connections.json")
+        );
+    }
 
     fn make_connection(id: &str, name: &str, persistent: bool) -> Connection {
         Connection {

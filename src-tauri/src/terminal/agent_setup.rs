@@ -11,6 +11,7 @@ use tracing::{error, info};
 
 use crate::session::manager::SessionManager;
 use crate::terminal::agent_binary;
+use crate::terminal::agent_install;
 use crate::terminal::backend::RemoteAgentConfig;
 use crate::utils::errors::TerminalError;
 use crate::utils::remote_exec::{
@@ -264,9 +265,18 @@ fn run_setup_background(
         None => return,
     };
 
+    // Windows hosts use a different upload location and an install command
+    // injected directly into the terminal (no POSIX `sh` setup script).
+    let is_windows = agent_binary::is_windows_os(&setup_config.remote_os);
+    let upload_path = if is_windows {
+        agent_install::WINDOWS_UPLOAD_NAME
+    } else {
+        TEMP_UPLOAD_PATH
+    };
+
     // Upload binary via SFTP
     emit_progress(app_handle, agent_id, "upload", "Uploading agent binary...");
-    match upload_via_sftp(&sftp_session, &binary_path, TEMP_UPLOAD_PATH) {
+    match upload_via_sftp(&sftp_session, &binary_path, upload_path) {
         Ok(bytes) => {
             info!("Agent setup: uploaded {} bytes", bytes);
             emit_progress(
@@ -284,7 +294,8 @@ fn run_setup_background(
                 "error",
                 &format!("Upload failed: {}", e),
             );
-            inject_error_script(
+            inject_setup_error(
+                is_windows,
                 &sftp_session,
                 session_manager,
                 session_id,
@@ -295,7 +306,19 @@ fn run_setup_background(
         }
     }
 
-    // Generate and upload the setup script
+    if is_windows {
+        run_windows_install(
+            agent_id,
+            session_id,
+            &sftp_session,
+            app_handle,
+            session_manager,
+            rt_handle,
+        );
+        return;
+    }
+
+    // POSIX: generate and upload the setup script, then run it.
     let remote_path = setup_config
         .remote_path
         .as_deref()
@@ -337,6 +360,93 @@ fn run_setup_background(
         "Setup script started in terminal",
     );
     info!("Agent setup: script started for agent {}", agent_id);
+}
+
+/// Install the uploaded agent on a Windows host by injecting the
+/// platform-appropriate `cmd.exe`/PowerShell install + verify commands into the
+/// visible terminal. No systemd service is installed (Phase 1 uses on-demand
+/// `--stdio` launch).
+fn run_windows_install(
+    agent_id: &str,
+    session_id: &str,
+    sftp_session: &SshSession,
+    app_handle: &AppHandle,
+    session_manager: &SessionManager,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    let shell = agent_install::detect_windows_shell(sftp_session);
+    let plan = agent_install::windows_install_plan(shell);
+    info!("Agent setup: installing on Windows via {shell:?}");
+
+    emit_progress(
+        app_handle,
+        agent_id,
+        "install",
+        "Installing agent binary...",
+    );
+    inject_commands(
+        session_manager,
+        session_id,
+        "echo === termiHub Agent Setup ===\n",
+        rt_handle,
+    );
+    inject_commands(
+        session_manager,
+        session_id,
+        &format!("{}\n", plan.install_command),
+        rt_handle,
+    );
+    inject_commands(
+        session_manager,
+        session_id,
+        &format!("{}\n", plan.verify_command),
+        rt_handle,
+    );
+    inject_commands(
+        session_manager,
+        session_id,
+        "echo === Setup Complete ===\n",
+        rt_handle,
+    );
+
+    emit_progress(
+        app_handle,
+        agent_id,
+        "done",
+        "Setup commands sent to terminal",
+    );
+    info!("Agent setup: Windows install commands sent for agent {agent_id}");
+}
+
+/// Inject a setup error into the terminal using the OS-appropriate mechanism.
+///
+/// POSIX hosts get the styled `sh` error script; Windows hosts get a plain
+/// `echo` (the `sh`/`printf` fallbacks are not available there).
+fn inject_setup_error(
+    is_windows: bool,
+    sftp_session: &SshSession,
+    session_manager: &SessionManager,
+    session_id: &str,
+    message: &str,
+    rt_handle: &tokio::runtime::Handle,
+) {
+    if is_windows {
+        let safe = message.replace(['\r', '\n'], " ");
+        inject_commands(
+            session_manager,
+            session_id,
+            &format!("echo Error: {safe}\n"),
+            rt_handle,
+        );
+    } else {
+        inject_error_script(
+            sftp_session,
+            session_manager,
+            session_id,
+            message,
+            rt_handle,
+        );
+    }
 }
 
 /// Resolve the agent binary to a local path, downloading or validating as needed.

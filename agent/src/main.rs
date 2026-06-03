@@ -7,7 +7,6 @@ mod network;
 mod protocol;
 mod registry;
 mod session;
-#[cfg(unix)]
 mod state;
 mod transport;
 
