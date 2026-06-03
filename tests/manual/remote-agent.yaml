@@ -276,3 +276,43 @@ tests:
       - "`termihub-agent-windows-x64.exe` is attached to the release alongside the Linux and macOS agent binaries"
       - "Running the binary with `--version` prints the agent version and exits cleanly"
     verification: manual
+
+  # --- Windows ConPTY shell sessions through the agent (#765) ---
+
+  - id: MT-AGENT-22
+    name: "PowerShell session through the Windows agent (ConPTY spawn / resize / teardown)"
+    pr: 765
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Connect to a Windows host that already has the agent installed (see MT-AGENT-18 / MT-AGENT-20)"
+      - "Open a new Local Shell session through the agent and leave the shell as the detected default (PowerShell)"
+      - "Run `Write-Output 'HELLO_AGENT_PS'` and confirm the line appears in the output"
+      - "Resize the terminal pane several times (drag the split divider or toggle full-screen) — the prompt must keep re-rendering at the new size"
+      - "Close the tab and verify the agent's session list no longer contains the session"
+    expected:
+      - "PowerShell launches via the agent without error"
+      - "Echoed input and command output both appear normally"
+      - "Resize does not crash the session or scramble the prompt"
+      - "Closing the tab terminates the ConPTY child on the Windows host (no orphaned `powershell.exe` in Task Manager)"
+    verification: manual
+
+  - id: MT-AGENT-23
+    name: "cmd.exe session through the Windows agent (ConPTY spawn / resize / teardown)"
+    pr: 765
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Connect to a Windows host that already has the agent installed"
+      - "Open a new Local Shell session through the agent and choose `cmd` as the shell"
+      - "Run `echo HELLO_AGENT_CMD` and confirm the line appears in the output"
+      - "Resize the terminal pane a few times"
+      - "Close the tab"
+    expected:
+      - "`cmd.exe` launches via the agent without error"
+      - "Echoed input and command output both appear normally"
+      - "Resize does not crash the session"
+      - "Closing the tab terminates the `cmd.exe` child on the Windows host (no orphaned process in Task Manager)"
+    verification: manual
