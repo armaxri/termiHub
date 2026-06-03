@@ -1,27 +1,23 @@
 //! Reusable daemon client for connecting to session daemon processes.
 //!
-//! Manages the Unix socket connection, reader task, and provides methods
-//! for write_input, resize, attach, detach, and close. Used by both
+//! Manages the transport connection (Unix socket on unix, named pipe on
+//! windows — see [`crate::daemon::transport`]), reader task, and provides
+//! methods for write_input, resize, attach, detach, and close. Used by both
 //! `ShellBackend` and `DockerBackend`.
 
-use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use base64::Engine;
-use tokio::net::UnixStream;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
 use crate::daemon::protocol::{self, *};
+use crate::daemon::transport::{self, BoxedReader, BoxedWriter};
 use crate::io::transport::NotificationSender;
 use crate::protocol::messages::JsonRpcNotification;
 
-/// How long to wait for the daemon socket to appear after spawning.
-const SOCKET_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
-/// How often to poll for the socket file.
-const SOCKET_POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// How long to wait for the Ready frame after connecting.
 const READY_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -30,17 +26,18 @@ const READY_TIMEOUT: Duration = Duration::from_secs(5);
 /// Extracted from a [`DaemonClient`] via [`DaemonClient::writer_handle`] so
 /// callers can write to the daemon without holding a borrow of the client
 /// itself (e.g. across an async boundary while a sessions mutex is locked).
-pub type DaemonWriterHandle = Arc<Mutex<Option<tokio::net::unix::OwnedWriteHalf>>>;
+pub type DaemonWriterHandle = Arc<Mutex<Option<BoxedWriter>>>;
 
 /// A reusable client for communicating with a session daemon process.
 ///
-/// Handles the Unix socket connection lifecycle, background reader task,
+/// Handles the transport connection lifecycle, background reader task,
 /// and all frame-level I/O operations.
 pub struct DaemonClient {
     session_id: String,
-    socket_path: PathBuf,
-    /// Writer half of the Unix socket connection.
-    writer: Arc<Mutex<Option<tokio::net::unix::OwnedWriteHalf>>>,
+    /// Transport endpoint: socket path on unix, pipe name on windows.
+    endpoint: String,
+    /// Writer half of the transport connection.
+    writer: Arc<Mutex<Option<BoxedWriter>>>,
     /// Background reader task handle.
     reader_task: Option<tokio::task::JoinHandle<()>>,
     /// Whether this session is alive (daemon running, not exited).
@@ -52,39 +49,22 @@ pub struct DaemonClient {
 }
 
 impl DaemonClient {
-    /// Wait for a daemon socket file to appear on disk.
-    pub async fn wait_for_socket(path: &Path) -> Result<(), anyhow::Error> {
-        let deadline = tokio::time::Instant::now() + SOCKET_WAIT_TIMEOUT;
-
-        loop {
-            if path.exists() {
-                return Ok(());
-            }
-            if tokio::time::Instant::now() >= deadline {
-                return Err(anyhow::anyhow!(
-                    "Daemon socket did not appear within {:?}: {}",
-                    SOCKET_WAIT_TIMEOUT,
-                    path.display()
-                ));
-            }
-            tokio::time::sleep(SOCKET_POLL_INTERVAL).await;
-        }
-    }
-
-    /// Connect to an existing daemon socket and start the reader task.
+    /// Connect to an existing daemon endpoint and start the reader task.
     ///
     /// Used both for initial connection after spawning a daemon and for
-    /// reconnection during session recovery.
+    /// reconnection during session recovery. The transport retries briefly
+    /// while the endpoint is not yet present (the daemon binds it during slow
+    /// startup work), so no separate "wait for socket" step is needed.
     pub async fn connect(
         session_id: String,
-        socket_path: PathBuf,
+        endpoint: String,
         notification_tx: NotificationSender,
     ) -> Result<Self, anyhow::Error> {
         let pending_buffer_reply: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Vec<u8>>>>> =
             Arc::new(Mutex::new(None));
 
         let (writer, reader_task, alive) = connect_and_start_reader(
-            &socket_path,
+            &endpoint,
             &session_id,
             notification_tx.clone(),
             pending_buffer_reply.clone(),
@@ -93,7 +73,7 @@ impl DaemonClient {
 
         Ok(Self {
             session_id,
-            socket_path,
+            endpoint,
             writer: Arc::new(Mutex::new(Some(writer))),
             reader_task: Some(reader_task),
             alive,
@@ -170,7 +150,7 @@ impl DaemonClient {
 
         // Reconnect to get a fresh buffer replay
         let (writer, reader_task, alive) = connect_and_start_reader(
-            &self.socket_path,
+            &self.endpoint,
             &self.session_id,
             self.notification_tx.clone(),
             self.pending_buffer_reply.clone(),
@@ -214,9 +194,9 @@ impl DaemonClient {
         self.alive.load(Ordering::SeqCst)
     }
 
-    /// Get the socket path.
-    pub fn socket_path(&self) -> &Path {
-        &self.socket_path
+    /// Get the transport endpoint (socket path on unix, pipe name on windows).
+    pub fn endpoint(&self) -> &str {
+        &self.endpoint
     }
 
     /// Disconnect the current socket connection and abort the reader task.
@@ -293,24 +273,16 @@ impl termihub_core::session::traits::ProcessHandle for DaemonClient {
     }
 }
 
-/// Connect to the daemon socket, wait for the Ready frame, and start the reader task.
+/// Connect to the daemon endpoint, wait for the Ready frame, and start the reader task.
 ///
 /// Returns the writer half, the reader task handle, and the alive flag.
 async fn connect_and_start_reader(
-    socket_path: &Path,
+    endpoint: &str,
     session_id: &str,
     notification_tx: NotificationSender,
     pending_buffer_reply: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Vec<u8>>>>>,
-) -> Result<
-    (
-        tokio::net::unix::OwnedWriteHalf,
-        tokio::task::JoinHandle<()>,
-        Arc<AtomicBool>,
-    ),
-    anyhow::Error,
-> {
-    let stream = UnixStream::connect(socket_path).await?;
-    let (mut reader, writer) = stream.into_split();
+) -> Result<(BoxedWriter, tokio::task::JoinHandle<()>, Arc<AtomicBool>), anyhow::Error> {
+    let (mut reader, writer) = transport::connect(endpoint).await?;
 
     let alive = Arc::new(AtomicBool::new(true));
 
@@ -384,7 +356,7 @@ async fn connect_and_start_reader(
 
 /// Background task that reads frames from the daemon and sends notifications.
 async fn reader_loop(
-    mut reader: tokio::net::unix::OwnedReadHalf,
+    mut reader: BoxedReader,
     session_id: &str,
     notification_tx: &NotificationSender,
     alive: &AtomicBool,
@@ -478,7 +450,7 @@ pub(crate) fn send_output_notification(tx: &NotificationSender, session_id: &str
     }
 }
 
-#[cfg(all(unix, test))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::daemon::protocol;
@@ -492,9 +464,9 @@ mod tests {
     /// channel receives the response when a MSG_BUFFER_REPLAY frame arrives.
     #[tokio::test]
     async fn query_buffer_sends_request_and_receives_reply() {
-        // Create a Unix socket pair to simulate the daemon connection.
-        let (client_sock, server_sock) = tokio::net::UnixStream::pair().unwrap();
-        let (mut server_reader, mut server_writer) = server_sock.into_split();
+        // In-memory duplex pipe simulating the daemon connection (cross-platform).
+        let (client_sock, server_sock) = tokio::io::duplex(64 * 1024);
+        let (mut server_reader, mut server_writer) = tokio::io::split(server_sock);
 
         // Simulate daemon: first send MSG_READY (handshake), then wait for
         // MSG_QUERY_BUFFER and respond with MSG_BUFFER_REPLAY.
@@ -518,13 +490,14 @@ mod tests {
                 .unwrap();
         });
 
-        let socket_path = std::path::PathBuf::from("/tmp/test-unused.sock");
         let pending_buffer_reply: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Vec<u8>>>>> =
             Arc::new(Mutex::new(None));
         let notification_tx = make_notification_tx();
 
-        // Connect by using the socket pair directly.
-        let (mut reader, writer) = client_sock.into_split();
+        // Connect by using the duplex pipe directly.
+        let (client_reader, client_writer) = tokio::io::split(client_sock);
+        let mut reader: BoxedReader = Box::new(client_reader);
+        let writer: BoxedWriter = Box::new(client_writer);
 
         // Consume the ready frame manually
         let ready_frame = protocol::read_frame_async(&mut reader)
@@ -543,8 +516,7 @@ mod tests {
             reader_loop(reader, &session_id_owned, &tx, &alive_clone, pbr_clone).await;
         });
 
-        let writer_arc: Arc<Mutex<Option<tokio::net::unix::OwnedWriteHalf>>> =
-            Arc::new(Mutex::new(Some(writer)));
+        let writer_arc: Arc<Mutex<Option<BoxedWriter>>> = Arc::new(Mutex::new(Some(writer)));
 
         // Set up a pending reply channel manually
         let (reply_tx, reply_rx) = tokio::sync::oneshot::channel::<Vec<u8>>();
@@ -569,8 +541,5 @@ mod tests {
         assert_eq!(reply, b"buffered output");
 
         reader_task.abort();
-
-        // socket_path is unused (we used a socket pair)
-        let _ = socket_path;
     }
 }
