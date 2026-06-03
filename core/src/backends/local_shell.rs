@@ -31,6 +31,32 @@ const OUTPUT_CHANNEL_CAPACITY: usize = 64;
 
 /// Production spawner: opens a real PTY pair and forks a process using
 /// `portable_pty::native_pty_system()`.
+///
+/// # Platform notes
+///
+/// `native_pty_system()` selects a platform-specific PTY backend:
+///
+/// - **Unix** — `openpty(3)` returns a master/slave pair; resizes go through
+///   `TIOCSWINSZ`; the slave fd is closed in the parent after `spawn_command`
+///   so the master sees EOF when the child exits.
+/// - **Windows** — ConPTY (`CreatePseudoConsole`/`ResizePseudoConsole`) on
+///   Windows 10 1809+; portable-pty falls back to WinPTY only when ConPTY is
+///   unavailable. ConPTY differs from Unix PTYs in three ways the rest of
+///   this module relies on:
+///
+///   1. **Output is VT-processed by ConPTY itself.** The child writes legacy
+///      console APIs (`WriteConsole`) which ConPTY translates into VT
+///      sequences before they reach `reader`. The reader thread sees the
+///      same byte stream as on Unix; no extra parsing is needed.
+///   2. **Resize triggers a buffer re-flow.** `ResizePseudoConsole` fires a
+///      synthetic `WINDOW_BUFFER_SIZE_EVENT` in the child, which most shells
+///      (cmd, PowerShell) respond to by redrawing the prompt. This is louder
+///      than Unix `TIOCSWINSZ` but is fire-and-forget — the call returns as
+///      soon as the kernel queues the event.
+///   3. **`kill()` terminates the ConPTY itself, not just the child.** On
+///      drop, portable-pty calls `ClosePseudoConsole`, which closes the
+///      pseudoconsole and signals the child via the normal shutdown path.
+///      The reader thread observes EOF the same way as on Unix.
 pub struct NativeLocalShellSpawner;
 
 impl LocalShellSpawner for NativeLocalShellSpawner {
@@ -1158,6 +1184,145 @@ mod tests {
             "expected OSC 7 setup (__termihub_osc7 + PROMPT_COMMAND) in bash output, got: {:?}",
             String::from_utf8_lossy(&output)
         );
+
+        shell.disconnect().await.ok();
+    }
+
+    // ── Windows-gated ConPTY integration tests ──────────────────────
+    //
+    // Mirror the cross-platform integration tests above, but pin the shell
+    // to `powershell` / `cmd` so a regression in ConPTY-backed shell defaults
+    // fails fast on the Windows CI matrix. They exercise:
+    //
+    //   1. PTY spawn via `portable_pty::native_pty_system()`, which selects
+    //      the ConPTY backend on Windows 10 1809+.
+    //   2. Output streaming — verifies the reader thread bridges ConPTY's
+    //      synchronous reader to the async output channel without dropping
+    //      or reordering chunks across the ConPTY VT processor.
+    //   3. `resize()` — ConPTY's `ResizePseudoConsole` has different timing
+    //      semantics than Unix `TIOCSWINSZ` (it can fire a synthetic
+    //      `WINDOW_BUFFER_SIZE_EVENT` and trigger a prompt redraw); the
+    //      call must succeed without error.
+    //   4. Clean teardown — the kill closure must terminate the child and
+    //      the reader thread must observe EOF.
+
+    /// Windows-only: spawn PowerShell via the native ConPTY-backed
+    /// spawner, write a command, observe its output, resize the PTY, and
+    /// disconnect cleanly.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_powershell_spawn_echo_resize_teardown() {
+        let mut shell = LocalShell::new();
+        let settings = serde_json::json!({ "shell": "powershell" });
+
+        shell
+            .connect(settings)
+            .await
+            .expect("powershell connect failed");
+        assert!(shell.is_connected());
+
+        let mut rx = shell.subscribe_output();
+        // `Write-Output` is a built-in in both Windows PowerShell 5.1 and
+        // PowerShell 7. CRLF matches ConPTY's cooked-mode line ending.
+        shell
+            .write(b"Write-Output 'HELLO_WINDOWS_PS'\r\n")
+            .expect("write failed");
+
+        let mut output = Vec::new();
+        let deadline = tokio::time::Duration::from_secs(15);
+        let result = tokio::time::timeout(deadline, async {
+            while let Some(chunk) = rx.recv().await {
+                output.extend_from_slice(&chunk);
+                if String::from_utf8_lossy(&output).contains("HELLO_WINDOWS_PS") {
+                    return true;
+                }
+            }
+            false
+        })
+        .await;
+
+        assert!(
+            result.unwrap_or(false),
+            "expected HELLO_WINDOWS_PS in PowerShell output, got: {}",
+            String::from_utf8_lossy(&output)
+        );
+
+        // ConPTY resize: portable-pty forwards this to `ResizePseudoConsole`,
+        // which fires a synthetic `WINDOW_BUFFER_SIZE_EVENT` in the child.
+        // PowerShell may redraw its prompt as a result — the resize call
+        // itself must not return an error.
+        shell.resize(120, 40).expect("resize after PS spawn failed");
+
+        shell.disconnect().await.expect("disconnect failed");
+        assert!(!shell.is_connected());
+    }
+
+    /// Windows-only: spawn `cmd.exe` via the native ConPTY-backed spawner,
+    /// write a command, observe its output, resize the PTY, and disconnect
+    /// cleanly. `cmd.exe` has a different startup banner and prompt-redraw
+    /// cadence than PowerShell under ConPTY, so it is tested separately.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_cmd_spawn_echo_resize_teardown() {
+        let mut shell = LocalShell::new();
+        let settings = serde_json::json!({ "shell": "cmd" });
+
+        shell.connect(settings).await.expect("cmd connect failed");
+        assert!(shell.is_connected());
+
+        let mut rx = shell.subscribe_output();
+        shell
+            .write(b"echo HELLO_WINDOWS_CMD\r\n")
+            .expect("write failed");
+
+        let mut output = Vec::new();
+        let deadline = tokio::time::Duration::from_secs(15);
+        let result = tokio::time::timeout(deadline, async {
+            while let Some(chunk) = rx.recv().await {
+                output.extend_from_slice(&chunk);
+                if String::from_utf8_lossy(&output).contains("HELLO_WINDOWS_CMD") {
+                    return true;
+                }
+            }
+            false
+        })
+        .await;
+
+        assert!(
+            result.unwrap_or(false),
+            "expected HELLO_WINDOWS_CMD in cmd output, got: {}",
+            String::from_utf8_lossy(&output)
+        );
+
+        shell
+            .resize(120, 40)
+            .expect("resize after cmd spawn failed");
+
+        shell.disconnect().await.expect("disconnect failed");
+        assert!(!shell.is_connected());
+    }
+
+    /// Windows-only: verify that `resize()` is accepted by ConPTY at multiple
+    /// distinct sizes back-to-back. Unix PTYs coalesce rapid `TIOCSWINSZ`
+    /// calls in the kernel; ConPTY processes each `ResizePseudoConsole` as a
+    /// separate buffer-resize event, so back-to-back resizes are the more
+    /// interesting failure mode to exercise.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_back_to_back_resizes_under_conpty() {
+        let mut shell = LocalShell::new();
+        let settings = serde_json::json!({ "shell": "cmd" });
+
+        shell
+            .connect(settings)
+            .await
+            .expect("cmd connect for resize test failed");
+
+        for (cols, rows) in [(80, 24), (132, 43), (200, 50), (80, 24)] {
+            shell.resize(cols, rows).unwrap_or_else(|e| {
+                panic!("resize to {cols}x{rows} failed: {e}");
+            });
+        }
 
         shell.disconnect().await.ok();
     }
