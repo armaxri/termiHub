@@ -9,6 +9,7 @@ import { sendInput } from "@/services/api";
 import { SessionId } from "@/types/terminal";
 import { useAppStore } from "@/store/appStore";
 import { frontendLog } from "@/utils/frontendLog";
+import { bufferToLogicalLines } from "@/utils/terminalBuffer";
 
 const LARGE_PASTE_THRESHOLD = 5000;
 
@@ -143,33 +144,20 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const getTerminalContent = useCallback((tabId: string): string | undefined => {
-    const xterm = xtermRegistryRef.current.get(tabId);
-    if (!xterm) return undefined;
-
-    const buffer = xterm.buffer.active;
-    const lines: string[] = [];
-    for (let i = 0; i < buffer.length; i++) {
-      const line = buffer.getLine(i);
-      const text = line ? line.translateToString(true) : "";
-      if (line?.isWrapped && lines.length > 0) {
-        lines[lines.length - 1] += text;
-      } else {
-        lines.push(text);
-      }
-    }
-
-    // Trim trailing empty lines
-    while (lines.length > 0 && lines[lines.length - 1].trim() === "") {
-      lines.pop();
-    }
-
-    return lines.join("\n") + "\n";
-  }, []);
+  const getTerminalContent = useCallback(
+    (tabId: string, joinFullWidthRows = false): string | undefined => {
+      const xterm = xtermRegistryRef.current.get(tabId);
+      if (!xterm) return undefined;
+      return bufferToLogicalLines(xterm.buffer.active, xterm.cols, joinFullWidthRows);
+    },
+    []
+  );
 
   const saveTerminalToFile = useCallback(
     async (tabId: string) => {
-      const content = getTerminalContent(tabId);
+      // Saved files should reflect logical lines, so rejoin hard wraps at the
+      // terminal width in addition to xterm's own soft wraps.
+      const content = getTerminalContent(tabId, true);
       if (!content) return;
 
       const filePath = await save({
