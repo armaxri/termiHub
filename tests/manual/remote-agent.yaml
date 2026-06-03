@@ -260,3 +260,19 @@ tests:
       - "The agent launches over SSH exec via `--stdio` and the connection reaches the connected state"
       - "A shell session can be opened through the agent and echoes input/output normally"
     verification: manual
+
+  - id: MT-AGENT-21
+    name: "Windows agent binary ships with releases"
+    pr: 769
+    platforms: [all]
+    prerequisites:
+      - app: false
+    instructions:
+      - "After a tagged release completes, open the GitHub Releases page for the new version"
+      - "Locate the agent binary assets next to the desktop installers"
+      - "Download `termihub-agent-windows-x64.exe` onto a Windows host"
+      - "From a terminal on that host, run `termihub-agent-windows-x64.exe --version`"
+    expected:
+      - "`termihub-agent-windows-x64.exe` is attached to the release alongside the Linux and macOS agent binaries"
+      - "Running the binary with `--version` prints the agent version and exits cleanly"
+    verification: manual
