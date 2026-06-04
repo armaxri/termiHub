@@ -387,3 +387,27 @@ tests:
       - "Scrolling back to the bottom fades the slider out again on idle; no stray thumb remains"
     verification: manual
     tags: [terminal, scrollbar]
+
+  # --- Horizontal-scroll reserved vertical scrollbar (PR #785) ---
+
+  - id: MT-UI-36
+    name: "Horizontal-scroll mode keeps the vertical scrollbar in a reserved gutter"
+    pr: 785
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open a local shell tab and enable Horizontal Scrolling from the tab context menu"
+      - "Produce wide output, e.g. run: printf 'x%.0s' {1..400}; echo"
+      - "Produce scrollback, e.g. run: seq 1 200"
+      - "Without scrolling horizontally, observe the right edge of the pane"
+      - "Scroll all the way to the right and re-check the right edge and the rightmost column"
+      - "Drag the vertical scrollbar thumb and click on the empty track above/below it"
+      - "Resize the window/split, then disable Horizontal Scrolling again"
+    expected:
+      - "The vertical scrollbar is visible at all times in a reserved gutter on the right, even before scrolling horizontally"
+      - "The scrollbar never overlaps terminal text — including when scrolled fully right, where the rightmost column stays fully readable (not clipped)"
+      - "Dragging the thumb and clicking the track scroll the buffer; the thumb tracks the scroll position and the new pane height after a resize"
+      - "Disabling horizontal scrolling removes the gutter and restores the normal scrollbar behaviour with no leftover thumb"
+    verification: manual
+    tags: [terminal, scrollbar, horizontal-scroll]
