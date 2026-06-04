@@ -73,10 +73,10 @@ where
 
 #[cfg(unix)]
 #[allow(unused_imports)]
-pub use unix_impl::{connect, session_endpoint, DaemonListener};
+pub use unix_impl::{connect, endpoint_alive, session_endpoint, DaemonListener};
 #[cfg(windows)]
 #[allow(unused_imports)]
-pub use windows_impl::{connect, session_endpoint, DaemonListener};
+pub use windows_impl::{connect, endpoint_alive, session_endpoint, DaemonListener};
 
 // ── Unix domain socket transport ────────────────────────────────────
 
@@ -95,6 +95,14 @@ mod unix_impl {
             .join(format!("session-{session_id}.sock"))
             .to_string_lossy()
             .into_owned()
+    }
+
+    /// Cheap liveness pre-check: whether the socket file is present on disk.
+    ///
+    /// A bound daemon keeps its socket file; recovery uses this to skip dead
+    /// sessions without paying the [`connect`] retry timeout.
+    pub fn endpoint_alive(endpoint: &str) -> bool {
+        Path::new(endpoint).exists()
     }
 
     /// Get the per-user socket directory (`/tmp/termihub/{user}`).
@@ -185,6 +193,25 @@ mod windows_impl {
     /// Pipe names live in the `\\.\pipe\` namespace and are unique per session.
     pub fn session_endpoint(session_id: &str) -> String {
         format!(r"\\.\pipe\termihub-session-{session_id}")
+    }
+
+    /// Cheap liveness pre-check: whether a named-pipe instance exists.
+    ///
+    /// Uses `WaitNamedPipeW` with a 1 ms timeout, which does not consume an
+    /// instance. Recovery uses this to skip dead sessions without paying the
+    /// [`connect`] retry timeout. A non-existent pipe yields
+    /// `ERROR_FILE_NOT_FOUND` (not alive); a busy one yields `ERROR_SEM_TIMEOUT`
+    /// (the daemon is up but every instance is momentarily connected → alive).
+    pub fn endpoint_alive(endpoint: &str) -> bool {
+        use windows_sys::Win32::Foundation::{GetLastError, ERROR_SEM_TIMEOUT};
+        use windows_sys::Win32::System::Pipes::WaitNamedPipeW;
+
+        let wide: Vec<u16> = endpoint.encode_utf16().chain(std::iter::once(0)).collect();
+        // SAFETY: `wide` is a valid null-terminated UTF-16 string.
+        if unsafe { WaitNamedPipeW(wide.as_ptr(), 1) } != 0 {
+            return true;
+        }
+        unsafe { GetLastError() == ERROR_SEM_TIMEOUT }
     }
 
     /// A listening named pipe restricted to the current user via a DACL.

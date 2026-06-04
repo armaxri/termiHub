@@ -3,7 +3,6 @@
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
-#[cfg(unix)]
 use crate::daemon::client::DaemonClient;
 use termihub_core::connection::ConnectionType;
 
@@ -29,15 +28,14 @@ impl SessionStatus {
 pub enum SessionBackend {
     /// Connection running in a daemon subprocess with ring-buffer replay.
     ///
-    /// Used for persistent connection types (SSH, Docker, etc.) on Unix.
-    /// The daemon survives agent restarts.
-    #[cfg(unix)]
+    /// Used for persistent connection types (SSH, Docker, etc.). The daemon
+    /// survives agent restarts and is reconnectable on both unix (Unix domain
+    /// socket) and windows (named pipe).
     Daemon(DaemonClient),
 
     /// Connection running in-process.
     ///
-    /// Used for non-persistent connection types or on platforms without
-    /// daemon support (Windows).
+    /// Used for non-persistent connection types.
     InProcess {
         connection: Box<dyn ConnectionType>,
         /// Handle for the background output-forwarding task.
