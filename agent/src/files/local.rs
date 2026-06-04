@@ -217,6 +217,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn list_paths_use_forward_slashes() {
+        // The frontend uses a single `split("/")` code path, so listed entry
+        // paths must never contain backslashes — even on a Windows-hosted agent.
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("test.txt"), "x").unwrap();
+
+        let backend = LocalFileBackend::new();
+        let entries = backend.list(dir.path().to_str().unwrap()).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert!(
+            !entries[0].path.contains('\\'),
+            "entry path must not contain backslashes: {}",
+            entries[0].path
+        );
+    }
+
+    #[tokio::test]
+    async fn stat_path_uses_forward_slashes() {
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join("stat_slash.txt");
+        std::fs::write(&file_path, "x").unwrap();
+
+        let backend = LocalFileBackend::new();
+        let entry = backend.stat(file_path.to_str().unwrap()).await.unwrap();
+        assert!(
+            !entry.path.contains('\\'),
+            "stat path must not contain backslashes: {}",
+            entry.path
+        );
+    }
+
+    #[tokio::test]
     async fn list_nonexistent_dir() {
         let backend = LocalFileBackend::new();
         let result = backend.list("/nonexistent/path/abc123").await;
@@ -353,5 +385,50 @@ mod tests {
         let entry = result.unwrap();
         assert_eq!(entry.path, home, "stat path should be expanded home dir");
         assert!(entry.is_directory);
+    }
+
+    #[tokio::test]
+    #[cfg(windows)]
+    async fn list_tilde_expands_to_user_profile() {
+        let home = std::env::var("USERPROFILE").expect("USERPROFILE must be set");
+        // Returned paths are normalized to forward slashes.
+        let normalized_home = home.replace('\\', "/");
+        let backend = LocalFileBackend::new();
+        let result = backend.list("~").await;
+        assert!(result.is_ok(), "listing '~' failed: {:?}", result);
+        for entry in result.unwrap() {
+            assert!(
+                entry.path.starts_with(&normalized_home),
+                "entry path '{}' does not start with USERPROFILE '{}'",
+                entry.path,
+                normalized_home
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[cfg(windows)]
+    async fn stat_tilde_expands_to_user_profile() {
+        let home = std::env::var("USERPROFILE").expect("USERPROFILE must be set");
+        let normalized_home = home.replace('\\', "/");
+        let backend = LocalFileBackend::new();
+        let result = backend.stat("~").await;
+        assert!(result.is_ok(), "stat of '~' failed: {:?}", result);
+        let entry = result.unwrap();
+        assert_eq!(
+            entry.path, normalized_home,
+            "stat path should be the expanded, forward-slash USERPROFILE dir"
+        );
+        assert!(entry.is_directory);
+    }
+
+    #[tokio::test]
+    #[cfg(not(unix))]
+    async fn list_permissions_none_on_non_unix() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("f.txt"), "x").unwrap();
+        let backend = LocalFileBackend::new();
+        let entries = backend.list(dir.path().to_str().unwrap()).await.unwrap();
+        assert!(entries.iter().all(|e| e.permissions.is_none()));
     }
 }
