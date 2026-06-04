@@ -1276,6 +1276,20 @@ mod tests {
         assert_eq!(config.volumes.len(), 1);
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn podman_socket_uri_returns_named_pipe_on_windows() {
+        // On a Windows-hosted agent the Podman fallback must target the
+        // machine's named pipe, never a Unix socket path.
+        let uri = podman_socket_uri().expect("Windows always resolves a Podman npipe URI");
+        assert!(uri.starts_with("npipe:"), "expected npipe URI, got: {uri}");
+        assert!(
+            uri.contains("podman-machine-default"),
+            "expected the default Podman machine pipe, got: {uri}"
+        );
+        assert!(!uri.contains("unix://"), "must not be a Unix socket: {uri}");
+    }
+
     #[tokio::test]
     async fn connect_empty_image_fails() {
         let mut docker = Docker::new();

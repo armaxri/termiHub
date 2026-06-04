@@ -452,6 +452,37 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn home_directory_reads_user_profile_on_windows() {
+        temp_env::with_var("USERPROFILE", Some(r"C:\Users\testuser"), || {
+            assert_eq!(
+                home_directory(),
+                Some(std::path::PathBuf::from(r"C:\Users\testuser"))
+            );
+        });
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn expand_value_default_ssh_key_resolves_under_user_profile() {
+        // The SSH backend's default key path "~/.ssh/id_rsa" must resolve under
+        // the Windows user profile rather than being left untouched, so a
+        // Windows-hosted agent finds the user's keys.
+        temp_env::with_var("USERPROFILE", Some(r"C:\Users\testuser"), || {
+            let expanded = expand_config_value("~/.ssh/id_rsa");
+            assert!(!expanded.starts_with('~'), "got: {expanded}");
+            assert!(
+                expanded.contains(r"C:\Users\testuser") || expanded.contains("C:/Users/testuser"),
+                "expected a USERPROFILE-rooted path, got: {expanded}"
+            );
+            assert!(
+                expanded.ends_with(".ssh/id_rsa") || expanded.ends_with(r".ssh\id_rsa"),
+                "got: {expanded}"
+            );
+        });
+    }
+
     #[test]
     fn expand_tilde_only_tilde_alone() {
         let result = expand_tilde_only("~");
