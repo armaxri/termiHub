@@ -8,9 +8,11 @@ use termihub_core::config::expand_tilde_only as expand_tilde;
 use termihub_core::files::FileEntry;
 
 use super::{FileBackend, FileError};
-use termihub_core::files::utils::{chrono_from_epoch, normalize_path_separators, normalize_platform_path};
 #[cfg(unix)]
 use termihub_core::files::utils::format_permissions;
+use termihub_core::files::utils::{
+    chrono_from_epoch, normalize_path_separators, normalize_platform_path,
+};
 
 /// File backend that reads the agent host's local filesystem.
 pub struct LocalFileBackend;
