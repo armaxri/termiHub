@@ -855,34 +855,39 @@ graph TB
         APP[termiHub Desktop]
     end
 
-    subgraph "Remote Host (Server / ARM device)"
+    subgraph "Remote Host (Linux / macOS / Windows)"
         AGENT["termihub-agent binary<br/>(auto-deployed via SSH)"]
         SD1[Session Daemon 1<br/>PTY + Ring Buffer]
         SD2[Session Daemon 2<br/>PTY + Ring Buffer]
-        STATE["~/.config/termihub-agent/<br/>state.json"]
-        SOCKETS["/tmp/termihub/&lt;user&gt;/<br/>session-*.sock"]
+        STATE["state.json<br/>(~/.config or %APPDATA%)"]
+        IPC["Unix socket (unix)<br/>or named pipe (windows)"]
     end
 
     APP -->|SSH Tunnel + JSON-RPC| AGENT
     AGENT <-->|Binary Frame Protocol| SD1
     AGENT <-->|Binary Frame Protocol| SD2
     AGENT --> STATE
-    SD1 --- SOCKETS
-    SD2 --- SOCKETS
+    SD1 --- IPC
+    SD2 --- IPC
 ```
 
-The remote agent is a standalone Rust binary (`termihub-agent`) that runs on remote hosts — build servers, NAS devices, ARM boards, or any Linux/macOS machine. It maintains persistent terminal sessions that survive desktop disconnects and agent restarts. Communication uses JSON-RPC 2.0 over NDJSON through an SSH stdio channel.
+The remote agent is a standalone Rust binary (`termihub-agent`) that runs on remote hosts — build servers, NAS devices, ARM boards, or any Linux, macOS, or Windows machine. It maintains persistent terminal sessions that survive desktop disconnects and agent restarts. Communication uses JSON-RPC 2.0 over NDJSON through an SSH stdio channel.
 
-**Auto-deployment:** When the desktop connects to a host via SSH, it checks for `termihub-agent --version`. If the agent is missing or version-incompatible, the desktop detects the target architecture via `uname -m`, downloads the matching binary from GitHub Releases (or uses a bundled binary in development), uploads it via SFTP to `~/.local/bin/termihub-agent`, and starts it.
+**Auto-deployment:** When the desktop connects to a host via SSH, it checks for `termihub-agent --version`. If the agent is missing or version-incompatible, the desktop detects the remote OS and architecture (`uname -s`/`uname -m`, falling back to `%PROCESSOR_ARCHITECTURE%` on a cmd.exe/PowerShell-only Windows host), downloads the matching binary from GitHub Releases (or uses a bundled binary in development), uploads it via SFTP, and starts it. On Linux/macOS the binary is installed to `~/.local/bin/termihub-agent` (`mkdir`/`mv`/`chmod`); on Windows the desktop detects the default OpenSSH shell (cmd.exe vs PowerShell) and issues shell-appropriate commands to install to `%LOCALAPPDATA%\termiHub\agent\termihub-agent.exe` — no POSIX-only commands are sent to a Windows remote.
 
 **Agent binary targets:**
 
-| `uname -m` | Target           | Use Case                          |
-| ---------- | ---------------- | --------------------------------- |
-| `x86_64`   | `linux-x86_64`   | Linux build servers               |
-| `aarch64`  | `linux-aarch64`  | ARM64 servers, Raspberry Pi 4/5   |
-| `armv7l`   | `linux-armv7`    | ARMv7 devices, older Raspberry Pi |
-| `arm64`    | `darwin-aarch64` | macOS ARM hosts                   |
+| Detected host   | Target           | Use Case                          |
+| --------------- | ---------------- | --------------------------------- |
+| `x86_64` Linux  | `linux-x86_64`   | Linux build servers               |
+| `aarch64` Linux | `linux-aarch64`  | ARM64 servers, Raspberry Pi 4/5   |
+| `armv7l` Linux  | `linux-armv7`    | ARMv7 devices, older Raspberry Pi |
+| `arm64` macOS   | `darwin-aarch64` | macOS ARM hosts                   |
+| `x86_64` macOS  | `darwin-x86_64`  | Intel Mac hosts                   |
+| `AMD64` Windows | `windows-x64`    | Windows x64 hosts                 |
+| `ARM64` Windows | `windows-arm64`  | Windows ARM64 hosts (best effort) |
+
+Linux targets are cross-compiled to static musl binaries via `cross-rs` from any host; macOS and Windows targets are built natively (`scripts/build-agents.sh --native`) because `cross-rs` cannot produce the MSVC ABI. See [`scripts/build-agents.sh`](../scripts/build-agents.sh) and [Testing → Windows Agent CI Coverage](testing.md#windows-agent-ci-coverage).
 
 **Cross-platform daemon:** The session daemon is cross-platform end-to-end. Its frame protocol and IPC transport run over a Unix domain socket on unix and a Windows named pipe (per-user DACL) on windows (`agent/src/daemon/transport.rs`); shell spawning uses `portable-pty` (ConPTY on Windows); and the `SystemDaemonLauncher` spawns a detached daemon process on both platforms (orphaned child on unix, `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW` on windows). Persistent (reconnectable) agent sessions therefore work on Windows as well as unix; no `nix` fork/setsid/signal is used on the daemon path.
 
