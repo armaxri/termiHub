@@ -332,6 +332,13 @@ interface AppState {
   httpMonitors: HttpMonitorState[];
   setHttpMonitors: (monitors: HttpMonitorState[]) => void;
   openEditorTab: (filePath: string, isRemote: boolean, sftpSessionId?: string) => void;
+  /**
+   * Open a new "scratch" editor tab seeded with in-memory content that is not
+   * backed by a file on disk (e.g. captured terminal output). The tab is
+   * treated as unsaved until the user saves it via Save As. Each call creates a
+   * new tab — scratch buffers are never deduplicated.
+   */
+  openScratchEditorTab: (title: string, fileName: string, content: string) => void;
   openConnectionEditorTab: (connectionId: string, folderId?: string | null) => void;
   openAgentDefinitionEditorTab: (
     agentId: string,
@@ -1679,6 +1686,30 @@ export const useAppStore = create<AppState>((set, get) => {
         const dummyConfig: ConnectionConfig = { type: "local", config: { shell: "zsh" } };
         const editorMeta: EditorTabMeta = { filePath, isRemote, sftpSessionId };
         const newTab = createTab(fileName, "local", dummyConfig, targetPanelId, "editor");
+        newTab.editorMeta = editorMeta;
+
+        const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
+          const tabs = leaf.tabs.map((t) => ({ ...t, isActive: false }));
+          tabs.push(newTab);
+          return { ...leaf, tabs, activeTabId: newTab.id };
+        });
+        return { rootPanel, activePanelId: targetPanelId };
+      }),
+
+    openScratchEditorTab: (title, fileName, content) =>
+      set((state) => {
+        const allLeaves = getAllLeaves(state.rootPanel);
+        const targetPanelId = state.activePanelId ?? allLeaves[0]?.id;
+        if (!targetPanelId) return state;
+
+        const dummyConfig: ConnectionConfig = { type: "local", config: { shell: "zsh" } };
+        const editorMeta: EditorTabMeta = {
+          filePath: fileName,
+          isRemote: false,
+          scratch: true,
+          scratchContent: content,
+        };
+        const newTab = createTab(title, "local", dummyConfig, targetPanelId, "editor");
         newTab.editorMeta = editorMeta;
 
         const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {

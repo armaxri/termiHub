@@ -25,7 +25,8 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   const editorDirtyTabs = useAppStore((s) => s.editorDirtyTabs);
   const setPendingCloseRequest = useAppStore((s) => s.setPendingCloseRequest);
   const remoteStates = useAppStore((s) => s.remoteStates);
-  const { clearTerminal, saveTerminalToFile, copyTerminalToClipboard } = useTerminalRegistry();
+  const { clearTerminal, saveTerminalToFile, copyTerminalToClipboard, openTerminalInEditor } =
+    useTerminalRegistry();
 
   const [colorPickerTabId, setColorPickerTabId] = useState<string | null>(null);
   const [renameTabId, setRenameTabId] = useState<string | null>(null);
@@ -64,6 +65,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
               onClose={() => handleCloseTab(tab.id)}
               onClear={() => clearTerminal(tab.id)}
               onSave={() => saveTerminalToFile(tab.id)}
+              onOpenInEditor={() => openTerminalInEditor(tab.id, tab.title)}
               onCopyToClipboard={() => copyTerminalToClipboard(tab.id)}
               horizontalScrolling={tabHorizontalScrolling[tab.id] ?? false}
               onToggleHorizontalScrolling={() =>

@@ -1,10 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import Editor, { loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
-import { Save, Loader2, AlertCircle, Globe } from "lucide-react";
+import { Save, Loader2, AlertCircle, Globe, FileEdit } from "lucide-react";
+import { save } from "@tauri-apps/plugin-dialog";
 import { EditorTabMeta, EditorStatus } from "@/types/terminal";
 import { useAppStore } from "@/store/appStore";
 import { resolveLanguage } from "@/utils/languageMapping";
+import { getBasename } from "@/utils/formatters";
 import { getAvailableLanguages } from "@/utils/monacoLanguages";
 import { getMonacoTheme } from "@/utils/monacoCustomLanguages";
 import { getCurrentTheme, onThemeChange } from "@/themes";
@@ -59,6 +61,7 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
   const pendingCloseRequest = useAppStore((s) => s.pendingCloseRequest);
   const setPendingCloseRequest = useAppStore((s) => s.setPendingCloseRequest);
   const closeTab = useAppStore((s) => s.closeTab);
+  const renameTab = useAppStore((s) => s.renameTab);
   // Subscribe to the theme setting so we re-derive the Monaco theme when the
   // user explicitly switches between dark / light / system in the settings.
   const themeSetting = useAppStore((s) => s.settings.theme);
@@ -73,11 +76,24 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
   // is "system", so this handles all three settings modes correctly.
   const [monacoTheme, setMonacoTheme] = useState(() => getMonacoTheme(getCurrentTheme().id));
 
+  // Path a scratch buffer was saved to via Save As. Once set, the scratch tab
+  // behaves like a normal on-disk editor (subsequent saves write here directly).
+  const [scratchSavedPath, setScratchSavedPath] = useState<string | null>(null);
+
   const saveRef = useRef<() => void>(() => {});
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
 
-  const fileName = meta.filePath.split("/").pop() ?? meta.filePath;
+  // A scratch buffer has no on-disk counterpart until the user saves it.
+  const isUnsavedScratch = meta.scratch === true && scratchSavedPath === null;
+  // The effective path used for display, language detection and saving.
+  const effectivePath = scratchSavedPath ?? meta.filePath;
+  const fileName = getBasename(effectivePath);
   const detectedLanguage = resolveLanguage(fileName, fileLanguageMappings);
+  // Scratch buffers share the synthetic file name, so key the Monaco model on
+  // the tab id to avoid two scratch tabs colliding on the same model. Keeping it
+  // independent of the file name also preserves the model (and undo history)
+  // when the buffer is later renamed via Save As.
+  const monacoPath = meta.scratch ? `scratch/${tabId}` : fileName;
 
   // Re-derive Monaco theme when the settings theme changes (dark / light / system).
   useEffect(() => {
@@ -96,6 +112,18 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
     let cancelled = false;
     setLoading(true);
     setError(null);
+
+    // Scratch buffers are seeded from in-memory content and never read from
+    // disk. Content equals savedContent so it is not "modified", but the buffer
+    // is still flagged unsaved (see the dirty-tracking effect below) so closing
+    // it warns the user.
+    if (meta.scratch) {
+      const seeded = meta.scratchContent ?? "";
+      setContent(seeded);
+      setSavedContent(seeded);
+      setLoading(false);
+      return;
+    }
 
     const loadContent = async () => {
       try {
@@ -122,31 +150,61 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
     return () => {
       cancelled = true;
     };
-  }, [meta.filePath, meta.isRemote, meta.sftpSessionId]);
+  }, [meta.filePath, meta.isRemote, meta.sftpSessionId, meta.scratch, meta.scratchContent]);
 
-  // Track dirty state
+  // An unsaved scratch buffer has no on-disk copy, so it is always considered
+  // dirty (closing it would lose the captured content) until saved via Save As.
+  const isDirty =
+    content !== null && savedContent !== null && (isUnsavedScratch || content !== savedContent);
+
+  // Sync dirty state to the store (drives the tab dirty dot and close prompt).
   useEffect(() => {
     if (content === null || savedContent === null) return;
-    const isDirty = content !== savedContent;
     setEditorDirty(tabId, isDirty);
-  }, [content, savedContent, tabId, setEditorDirty]);
+  }, [isDirty, content, savedContent, tabId, setEditorDirty]);
 
   const handleSave = useCallback(async () => {
     if (content === null || saving) return;
+
+    // First save of a scratch buffer: ask the user where to write it (Save As).
+    // Until a destination is chosen there is nothing to write to disk.
+    let targetPath = scratchSavedPath ?? meta.filePath;
+    if (isUnsavedScratch) {
+      const chosen = await save({ title: "Save terminal content", defaultPath: meta.filePath });
+      if (!chosen) return;
+      targetPath = chosen;
+    }
+
     setSaving(true);
     try {
       if (meta.isRemote && meta.sftpSessionId) {
         await sftpWriteFileContent(meta.sftpSessionId, meta.filePath, content);
       } else {
-        await localWriteFile(meta.filePath, content);
+        await localWriteFile(targetPath, content);
       }
       setSavedContent(content);
+      if (isUnsavedScratch) {
+        // The scratch buffer now lives on disk; behave like a saved file and
+        // reflect the chosen file name on the tab.
+        setScratchSavedPath(targetPath);
+        renameTab(tabId, getBasename(targetPath));
+      }
     } catch (err) {
       console.error("Save failed:", err);
     } finally {
       setSaving(false);
     }
-  }, [content, saving, meta.filePath, meta.isRemote, meta.sftpSessionId]);
+  }, [
+    content,
+    saving,
+    isUnsavedScratch,
+    scratchSavedPath,
+    meta.filePath,
+    meta.isRemote,
+    meta.sftpSessionId,
+    tabId,
+    renameTab,
+  ]);
 
   // Keep saveRef up to date for Monaco keybinding
   saveRef.current = handleSave;
@@ -262,8 +320,6 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
     };
   }, [setEditorStatus, setEditorActions]);
 
-  const isDirty = content !== null && savedContent !== null && content !== savedContent;
-
   if (loading) {
     return (
       <div className={`file-editor ${!isVisible ? "file-editor--hidden" : ""}`}>
@@ -302,25 +358,31 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
               Remote
             </span>
           )}
-          <span className="file-editor__filepath" title={meta.filePath}>
-            {meta.filePath}
+          {isUnsavedScratch && (
+            <span className="file-editor__remote-badge" data-testid="file-editor-scratch-badge">
+              <FileEdit size={12} />
+              Unsaved
+            </span>
+          )}
+          <span className="file-editor__filepath" title={effectivePath}>
+            {effectivePath}
           </span>
         </div>
         <button
           className="file-editor__save-btn"
           onClick={handleSave}
           disabled={!isDirty || saving}
-          title="Save (Ctrl+S)"
+          title={isUnsavedScratch ? "Save As... (Ctrl+S)" : "Save (Ctrl+S)"}
           data-testid="file-editor-save"
         >
           <Save size={14} />
-          {saving ? "Saving..." : "Save"}
+          {saving ? "Saving..." : isUnsavedScratch ? "Save As..." : "Save"}
         </button>
       </div>
       <div className="file-editor__editor-container">
         <Editor
           defaultValue={content ?? ""}
-          path={fileName}
+          path={monacoPath}
           language={detectedLanguage}
           theme={monacoTheme}
           keepCurrentModel={keepModel}

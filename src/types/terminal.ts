@@ -36,6 +36,15 @@ export interface EditorTabMeta {
   filePath: string;
   isRemote: boolean;
   sftpSessionId?: string;
+  /**
+   * When true, the editor is a "scratch" buffer seeded from in-memory content
+   * ({@link scratchContent}) instead of being read from disk. Used e.g. to open
+   * captured terminal output in an editor that is not yet saved to a file.
+   * The buffer is treated as unsaved until the user saves it via Save As.
+   */
+  scratch?: boolean;
+  /** Initial in-memory content for a {@link scratch} editor. */
+  scratchContent?: string;
 }
 
 export interface ConnectionEditorMeta {

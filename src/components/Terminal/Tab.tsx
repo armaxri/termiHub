@@ -15,6 +15,7 @@ import {
   Check,
   Palette,
   Pencil,
+  FileSearch,
 } from "lucide-react";
 import { TerminalTab } from "@/types/terminal";
 import { ConnectionIcon } from "@/utils/connectionIcons";
@@ -25,6 +26,7 @@ interface TabProps {
   onClose: () => void;
   onClear?: () => void;
   onSave?: () => void;
+  onOpenInEditor?: () => void;
   onCopyToClipboard?: () => void;
   horizontalScrolling?: boolean;
   onToggleHorizontalScrolling?: () => void;
@@ -41,6 +43,7 @@ export function Tab({
   onClose,
   onClear,
   onSave,
+  onOpenInEditor,
   onCopyToClipboard,
   horizontalScrolling,
   onToggleHorizontalScrolling,
@@ -152,6 +155,13 @@ export function Tab({
             data-testid="tab-context-save"
           >
             <FileDown size={14} /> Save to File
+          </ContextMenu.Item>
+          <ContextMenu.Item
+            className="context-menu__item"
+            onSelect={() => onOpenInEditor?.()}
+            data-testid="tab-context-open-in-editor"
+          >
+            <FileSearch size={14} /> Open in Editor
           </ContextMenu.Item>
           <ContextMenu.Item
             className="context-menu__item"
