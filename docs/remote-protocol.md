@@ -13,14 +13,15 @@ Protocol specification for communication between the termiHub desktop app and re
 1. [Overview](#overview)
 2. [Architecture](#architecture)
 3. [Transport Layer](#transport-layer)
-4. [Message Format](#message-format)
-5. [Protocol Versioning](#protocol-versioning)
-6. [Methods](#methods)
-7. [Notifications](#notifications)
-8. [Session State Schema](#session-state-schema)
-9. [Error Codes](#error-codes)
-10. [Examples](#examples)
-11. [Security Considerations](#security-considerations)
+4. [Platform Notes (Windows)](#platform-notes-windows)
+5. [Message Format](#message-format)
+6. [Protocol Versioning](#protocol-versioning)
+7. [Methods](#methods)
+8. [Notifications](#notifications)
+9. [Session State Schema](#session-state-schema)
+10. [Error Codes](#error-codes)
+11. [Examples](#examples)
+12. [Security Considerations](#security-considerations)
 
 ---
 
@@ -129,6 +130,44 @@ Messages are **newline-delimited JSON** (NDJSON). Each message is a single line 
 3. **Operate**: Desktop sends requests; agent sends responses and notifications
 4. **Disconnect**: Desktop closes the SSH channel (sessions keep running on agent)
 5. **Reconnect**: Desktop opens a new channel, sends `initialize`, then `connection.list` + `connection.attach` to reattach to existing sessions
+
+---
+
+## Platform Notes (Windows)
+
+The protocol itself is platform-independent — the same JSON-RPC messages, NDJSON framing, and `connection.*` methods are used regardless of the agent's host OS. The differences below are confined to how the agent is **deployed**, how its **session daemon** communicates internally, and what the **default shell** is. None of them change the wire format.
+
+### Agent Deployment on Windows
+
+The desktop auto-deploys the agent to a Windows host over the same SSH/SFTP path it uses for Linux and macOS, with three Windows-specific steps:
+
+1. **Host detection** — the desktop probes `uname -s` first (which also covers MinGW/MSYS/Cygwin shells). When `uname` is absent it falls back to `%PROCESSOR_ARCHITECTURE%` (cmd.exe) / `$env:PROCESSOR_ARCHITECTURE` (PowerShell), so a host whose default OpenSSH shell is cmd.exe or PowerShell is recognized as Windows rather than misdetected as Linux. x64 → `windows-x64`, ARM64 → `windows-arm64`.
+2. **Default-shell detection** — before issuing install commands the desktop detects whether the remote OpenSSH `DefaultShell` is `cmd.exe` or PowerShell (it probes how `%PROCESSOR_ARCHITECTURE%` expands). This selects the command syntax for the install step.
+3. **Shell-appropriate install** — no POSIX-only commands (`mkdir -p`, `mv -f`, `chmod`, `/tmp`) are sent to a Windows remote. The binary is uploaded to the SFTP home, then moved into `%LOCALAPPDATA%\termiHub\agent\termihub-agent.exe`:
+   - **cmd.exe**: `(if not exist "<dir>" md "<dir>") & move /Y "<upload>" "<install>"`
+   - **PowerShell**: `New-Item -ItemType Directory -Force -Path "<dir>" | Out-Null; Move-Item -Force -Path "<upload>" -Destination "<install>"`
+   - Verified with `<install> --version` (cmd) or `& "<install>" --version` (PowerShell).
+
+For the current phase the agent launches on demand via `--stdio` over an SSH exec channel; no Windows service is installed. See [Deployment View](architecture.md#7-deployment-view) for the binary-target table and the full deploy flow.
+
+### Session-Daemon Transport (Named Pipe vs Unix Socket)
+
+Persistent (reconnectable) sessions run in a detached session-daemon process. The desktop never talks to this daemon directly — only the agent does, locally on the host — so the choice of IPC mechanism is invisible to the protocol. The transport is abstracted in `agent/src/daemon/transport.rs`:
+
+| Aspect         | Unix (Linux/macOS)                       | Windows                                                            |
+| -------------- | ---------------------------------------- | ------------------------------------------------------------------ |
+| Endpoint       | Unix domain socket                       | Named pipe                                                         |
+| Path / name    | `/tmp/termihub/<user>/session-<id>.sock` | `\\.\pipe\termihub-session-<id>`                                   |
+| Access control | `0o700` on the socket dir + socket       | Per-user DACL (`GENERIC_ALL` to the user SID + `LocalSystem`)      |
+| Daemon spawn   | Orphaned child (agent never waits on it) | `DETACHED_PROCESS \| CREATE_NEW_PROCESS_GROUP \| CREATE_NO_WINDOW` |
+
+Both restrict the endpoint to the current user, and neither exposes a TCP port. The daemon's binary frame protocol (`[type: 1B][length: 4B BE][payload]`) and the 1 MiB output ring buffer are identical on both platforms, so reconnect-with-scrollback-replay behaves the same. The `daemon_socket` field persisted in the agent's `state.json` therefore holds a named-pipe name on Windows and a socket path on unix.
+
+### Default Shell and Local Shell Spawning
+
+- **Default shell**: when a local-shell session omits the `shell` field, a Windows agent defaults to `powershell` (unix agents read `$SHELL`). Shell name resolution maps `cmd` → `cmd.exe`, `powershell` → the resolved PowerShell executable, and `gitbash` → the Git Bash `bash.exe`; a value containing `/` or `\` is treated as a literal path.
+- **PTY**: local shells spawn through `portable-pty`, which uses **ConPTY** on Windows 10 1809+ (falling back to WinPTY if unavailable). The reader sees the same VT byte stream as a Unix PTY, and `resize`/teardown map to `ResizePseudoConsole`/`ClosePseudoConsole`. No protocol-level difference results.
+- **CWD reporting**: PowerShell and cmd.exe emit OSC 9;9 (Windows Terminal's working-directory sequence) rather than OSC 7, injected via shell startup args.
 
 ---
 
