@@ -8,7 +8,7 @@ use termihub_core::config::expand_tilde_only as expand_tilde;
 use termihub_core::files::FileEntry;
 
 use super::{FileBackend, FileError};
-use termihub_core::files::utils::chrono_from_epoch;
+use termihub_core::files::utils::{chrono_from_epoch, normalize_path_separators, normalize_platform_path};
 #[cfg(unix)]
 use termihub_core::files::utils::format_permissions;
 
@@ -100,7 +100,8 @@ fn map_io_error(e: std::io::Error, path: &str) -> FileError {
 
 /// Synchronous directory listing.
 fn list_dir_sync(path: &str) -> Result<Vec<FileEntry>, FileError> {
-    let dir = Path::new(path);
+    let normalized = normalize_platform_path(path);
+    let dir = Path::new(&normalized);
     let entries = std::fs::read_dir(dir).map_err(|e| map_io_error(e, path))?;
 
     let mut result = Vec::new();
@@ -131,7 +132,7 @@ fn list_dir_sync(path: &str) -> Result<Vec<FileEntry>, FileError> {
         #[cfg(not(unix))]
         let permissions = None;
 
-        let full_path = entry.path().to_string_lossy().to_string();
+        let full_path = normalize_path_separators(&entry.path().to_string_lossy());
 
         result.push(FileEntry {
             name,
@@ -148,7 +149,8 @@ fn list_dir_sync(path: &str) -> Result<Vec<FileEntry>, FileError> {
 
 /// Synchronous stat for a single path.
 fn stat_sync(path: &str) -> Result<FileEntry, FileError> {
-    let p = Path::new(path);
+    let normalized = normalize_platform_path(path);
+    let p = Path::new(&normalized);
     let metadata = std::fs::metadata(p).map_err(|e| map_io_error(e, path))?;
 
     let name = p
@@ -173,7 +175,7 @@ fn stat_sync(path: &str) -> Result<FileEntry, FileError> {
 
     Ok(FileEntry {
         name,
-        path: path.to_string(),
+        path: normalize_path_separators(path),
         is_directory: metadata.is_dir(),
         size: metadata.len(),
         modified,
