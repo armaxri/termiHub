@@ -117,8 +117,15 @@ export function createHorizontalScrollbar({
   thumb,
 }: HorizontalScrollbarOptions): HorizontalScrollbarController {
   let disposed = false;
+  // Last rendered thumb geometry, kept so a drag can start from the current
+  // position and size without reading them back out of the DOM.
+  let thumbTopPx = 0;
+  let thumbHeightPx = 0;
+  // Drag state captured on pointerdown (layout reads done once per drag).
   let dragStartClientY = 0;
   let dragStartThumbTop = 0;
+  let dragTrackHeightPx = 0;
+  let dragThumbHeightPx = 0;
 
   const readGeometry = (): ThumbGeometry => {
     const buffer = xterm.buffer.active;
@@ -137,6 +144,8 @@ export function createHorizontalScrollbar({
       thumb.style.display = "none";
       return;
     }
+    thumbTopPx = geo.thumbTopPx;
+    thumbHeightPx = geo.thumbHeightPx;
     thumb.style.display = "block";
     thumb.style.height = `${geo.thumbHeightPx}px`;
     thumb.style.transform = `translateY(${geo.thumbTopPx}px)`;
@@ -146,8 +155,8 @@ export function createHorizontalScrollbar({
     const desiredTop = dragStartThumbTop + (e.clientY - dragStartClientY);
     const line = dragOffsetToLine({
       dragTopPx: desiredTop,
-      trackHeightPx: gutter.clientHeight,
-      thumbHeightPx: thumb.offsetHeight,
+      trackHeightPx: dragTrackHeightPx,
+      thumbHeightPx: dragThumbHeightPx,
       baseY: xterm.buffer.active.baseY,
     });
     xterm.scrollToLine(line);
@@ -164,7 +173,9 @@ export function createHorizontalScrollbar({
     e.preventDefault();
     e.stopPropagation();
     dragStartClientY = e.clientY;
-    dragStartThumbTop = thumb.offsetTop + getTranslateY(thumb);
+    dragStartThumbTop = thumbTopPx;
+    dragTrackHeightPx = gutter.clientHeight;
+    dragThumbHeightPx = thumbHeightPx;
     thumb.setPointerCapture?.(e.pointerId);
     window.addEventListener("pointermove", onThumbPointerMove);
     window.addEventListener("pointerup", onThumbPointerUp);
@@ -202,10 +213,4 @@ export function createHorizontalScrollbar({
       thumb.style.transform = "";
     },
   };
-}
-
-/** Read the current translateY (px) from an element's inline transform. */
-function getTranslateY(el: HTMLElement): number {
-  const match = /translateY\(([-\d.]+)px\)/.exec(el.style.transform);
-  return match ? parseFloat(match[1]) : 0;
 }

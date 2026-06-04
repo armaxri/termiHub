@@ -25,10 +25,7 @@ import {
   isShellReservedKey,
 } from "@/services/keybindings";
 import { frontendLog } from "@/utils/frontendLog";
-import {
-  createHorizontalScrollbar,
-  type HorizontalScrollbarController,
-} from "./horizontalScrollbar";
+import { createHorizontalScrollbar } from "./horizontalScrollbar";
 
 const HORIZONTAL_SCROLL_COLS = 500;
 
@@ -203,7 +200,6 @@ export function Terminal({
   const scrollViewportRef = useRef<HTMLDivElement | null>(null);
   const gutterRef = useRef<HTMLDivElement | null>(null);
   const thumbRef = useRef<HTMLDivElement | null>(null);
-  const gutterScrollbarRef = useRef<HorizontalScrollbarController | null>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const sessionIdRef = useRef<string | null>(null);
@@ -976,8 +972,6 @@ export function Terminal({
         cleanupRef.current();
         cleanupRef.current = null;
       }
-      gutterScrollbarRef.current?.dispose();
-      gutterScrollbarRef.current = null;
       xterm.dispose();
       el.remove();
       terminalElRef.current = null;
@@ -1040,7 +1034,6 @@ export function Terminal({
       }
 
       const gutterScrollbar = createHorizontalScrollbar({ xterm, gutter, thumb });
-      gutterScrollbarRef.current = gutterScrollbar;
 
       // Mark content dirty when new output arrives
       const writeParsedDisposable = xterm.onWriteParsed(() => {
@@ -1067,13 +1060,10 @@ export function Terminal({
         clearInterval(intervalId);
         contentDirtyRef.current = false;
         gutterScrollbar.dispose();
-        gutterScrollbarRef.current = null;
       };
     } else {
       scrollViewport.classList.remove("terminal-horizontal-scroll");
       gutter.classList.remove("terminal-vscroll-gutter--active");
-      gutterScrollbarRef.current?.dispose();
-      gutterScrollbarRef.current = null;
       try {
         removeHorizontalScrollResize(xterm, fitAddon);
       } catch {
