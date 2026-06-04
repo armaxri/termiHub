@@ -1,15 +1,19 @@
 import type { Terminal as XTerm } from "@xterm/xterm";
 
 /**
- * Reserved-gutter vertical scrollbar for the terminal's horizontal-scroll mode.
+ * The terminal's vertical (scrollback) scrollbar — used in both normal and
+ * horizontal-scroll modes so the scrollbar looks and behaves identically
+ * everywhere. xterm's own overlay scrollbar is hidden; instead we render an
+ * always-visible thumb inside a fixed gutter and keep it in sync with the
+ * buffer via xterm's public API.
  *
- * In horizontal-scroll mode the `.xterm` element is widened to the full content
- * width and scrolled inside an inner viewport. xterm's own overlay scrollbar is
- * an absolutely-positioned child of that scrolled content, so it drifts to the
- * content's right edge and is only visible when scrolled fully right (where it
- * also overlays the last column). Instead we hide xterm's overlay scrollbar and
- * render this independent thumb inside a fixed gutter that sits *beside* the
- * scroll viewport, kept in sync with the buffer via xterm's public API.
+ * This decoupling is required by horizontal-scroll mode: there the `.xterm`
+ * element is widened to the full content width and scrolled inside an inner
+ * viewport, so xterm's overlay scrollbar (an absolutely-positioned child of the
+ * scrolled content) would drift to the content's right edge and only become
+ * visible when scrolled fully right. A gutter that sits *beside* the scroll
+ * viewport avoids that, and reusing it in normal mode keeps one consistent
+ * scrollbar across the app.
  */
 
 /** Minimum thumb height in pixels so the handle stays grabbable with deep scrollback. */
@@ -90,14 +94,14 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-export interface HorizontalScrollbarController {
+export interface TerminalScrollbarController {
   /** Re-read the buffer state and re-render the thumb. */
   update(): void;
   /** Remove listeners and reset the thumb. */
   dispose(): void;
 }
 
-interface HorizontalScrollbarOptions {
+interface TerminalScrollbarOptions {
   xterm: XTerm;
   /** The fixed gutter element; its height defines the track length. */
   gutter: HTMLElement;
@@ -106,17 +110,18 @@ interface HorizontalScrollbarOptions {
 }
 
 /**
- * Wire a {@link HorizontalScrollbarController} to an xterm instance: render the
- * thumb on scroll/resize and translate thumb drags / track clicks back into
- * buffer scrolling. Touches only the provided gutter/thumb elements and xterm's
- * public API — never xterm's internal DOM.
+ * Wire a {@link TerminalScrollbarController} to an xterm instance: render the
+ * thumb on scroll/resize/output and translate thumb drags / track clicks back
+ * into buffer scrolling. Touches only the provided gutter/thumb elements and
+ * xterm's public API — never xterm's internal DOM.
  */
-export function createHorizontalScrollbar({
+export function createTerminalScrollbar({
   xterm,
   gutter,
   thumb,
-}: HorizontalScrollbarOptions): HorizontalScrollbarController {
+}: TerminalScrollbarOptions): TerminalScrollbarController {
   let disposed = false;
+  let rafId: number | null = null;
   // Last rendered thumb geometry, kept so a drag can start from the current
   // position and size without reading them back out of the DOM.
   let thumbTopPx = 0;
@@ -149,6 +154,15 @@ export function createHorizontalScrollbar({
     thumb.style.display = "block";
     thumb.style.height = `${geo.thumbHeightPx}px`;
     thumb.style.transform = `translateY(${geo.thumbTopPx}px)`;
+  };
+
+  // Coalesce frequent triggers (streaming output) into one update per frame.
+  const scheduleUpdate = (): void => {
+    if (disposed || rafId !== null) return;
+    rafId = requestAnimationFrame(() => {
+      rafId = null;
+      update();
+    });
   };
 
   const onThumbPointerMove = (e: PointerEvent): void => {
@@ -191,8 +205,12 @@ export function createHorizontalScrollbar({
     xterm.scrollLines(clickY < geo.thumbTopPx ? -xterm.rows : xterm.rows);
   };
 
+  // onScroll/onResize are infrequent → render immediately. Buffer growth while
+  // scrolled up changes the thumb but may not fire onScroll, so also refresh on
+  // parsed output (coalesced to one update per frame).
   const scrollDisposable = xterm.onScroll(update);
   const resizeDisposable = xterm.onResize(update);
+  const writeParsedDisposable = xterm.onWriteParsed(scheduleUpdate);
   thumb.addEventListener("pointerdown", onThumbPointerDown);
   gutter.addEventListener("pointerdown", onGutterPointerDown);
 
@@ -203,8 +221,10 @@ export function createHorizontalScrollbar({
     dispose(): void {
       if (disposed) return;
       disposed = true;
+      if (rafId !== null) cancelAnimationFrame(rafId);
       scrollDisposable.dispose();
       resizeDisposable.dispose();
+      writeParsedDisposable.dispose();
       thumb.removeEventListener("pointerdown", onThumbPointerDown);
       gutter.removeEventListener("pointerdown", onGutterPointerDown);
       window.removeEventListener("pointermove", onThumbPointerMove);

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeThumbGeometry, dragOffsetToLine, MIN_THUMB_PX } from "./horizontalScrollbar";
+import { computeThumbGeometry, dragOffsetToLine, MIN_THUMB_PX } from "./terminalScrollbar";
 
 describe("computeThumbGeometry", () => {
   it("hides the thumb when there is no scrollback", () => {

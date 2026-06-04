@@ -12,9 +12,10 @@
   position: absolute;
   inset: 0;
   background-color: var(--terminal-bg);
-  /* Width of the reserved vertical-scrollbar gutter used in horizontal-scroll
-     mode. Single source of truth: the scroll viewport is inset by this amount
-     and the gutter occupies it, so the scrollbar never overlaps text. */
+  /* Width of the vertical-scrollbar gutter. Single source of truth: the gutter
+     element uses it as its width, and in horizontal-scroll mode the scroll
+     viewport is inset by the same amount so the scrollbar never overlaps text.
+     In normal mode the gutter overlays the strip FitAddon already reserves. */
   --vscroll-gutter: 12px;
 }
 
@@ -63,37 +64,14 @@
   display: none;
 }
 
-/* xterm with allowProposedApi also overlays a VS Code-derived scrollbar
-   inside .xterm-scrollable-element. Two problems with the default:
-     1. The .xterm padding (0 8px) insets the scrollable element by 8 px
-        from the container's right edge, so the scrollbar floats in the
-        dark padding area instead of sitting flush against the edge.
-     2. The slider thumb is rendered at a default size even when xterm
-        considers the scrollbar invisible, producing a stray grey square.
-   Fix (1) by shifting the scrollbar 8 px right to undo the padding offset,
-   and (2) by hiding the slider unless the parent scrollbar is actively in
-   the "visible" state — xterm only sets that state when the buffer is
-   actually scrollable (_isNeeded && _shouldBeVisible). */
+/* xterm with allowProposedApi also overlays a VS Code-derived scrollbar inside
+   .xterm-scrollable-element. We replace it everywhere with our own gutter
+   scrollbar (see .terminal-vscroll-* below and terminalScrollbar.ts) so the
+   scrollbar looks and behaves the same in normal and horizontal-scroll modes.
+   In horizontal mode xterm's overlay would also drift to the widened content's
+   right edge. Hide it in all modes. */
 .terminal-container .xterm-scrollable-element > .scrollbar {
-  transform: translateX(8px);
-}
-
-.terminal-container .xterm-scrollable-element > .scrollbar > .slider {
   display: none;
-}
-
-/* The .xterm--has-scrollback class is toggled from Terminal.tsx based on
-   the real buffer length vs viewport rows. xterm's own "visible" state
-   alone isn't reliable: a tab whose xterm was first measured while parked
-   at 1×1 px keeps a stale "needs scroll" reading and shows a useless tiny
-   slider. Requiring both conditions ensures the thumb only appears when
-   there's genuinely scrollable content. */
-.terminal-container
-  .xterm--has-scrollback
-  .xterm-scrollable-element
-  > .scrollbar.visible
-  > .slider {
-  display: block;
 }
 
 /* Horizontal scrolling: the scroll viewport scrolls, .xterm is made wider via JS.
@@ -111,29 +89,18 @@
   overflow: hidden;
 }
 
-/* Hide xterm's own overlay vertical scrollbar in horizontal-scroll mode — it
-   lives inside the widened, horizontally-scrolling content and so drifts to the
-   content's right edge. Our reserved-gutter scrollbar replaces it here. */
-.terminal-horizontal-scroll .xterm-scrollable-element > .scrollbar {
-  display: none;
-}
-
-/* Reserved gutter holding the always-visible vertical scrollbar. Hidden unless
-   horizontal-scroll mode is active. Painted with the terminal background so it
-   reads as reserved space rather than a floating bar. */
+/* Fixed gutter on the right that hosts the vertical scrollbar thumb in every
+   mode. It is transparent: in normal mode it overlays the empty strip xterm's
+   FitAddon already reserves for a scrollbar (so the content width is unchanged),
+   and in horizontal mode it sits over the reserved viewport inset. Only the
+   thumb paints, so there is no artifact when there is no scrollback. */
 .terminal-vscroll-gutter {
   position: absolute;
   top: 0;
   right: 0;
   bottom: 0;
   width: var(--vscroll-gutter);
-  display: none;
-  background-color: var(--terminal-bg);
   z-index: 5;
-}
-
-.terminal-vscroll-gutter--active {
-  display: block;
 }
 
 .terminal-vscroll-thumb {
