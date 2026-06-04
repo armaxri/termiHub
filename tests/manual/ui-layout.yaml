@@ -367,11 +367,11 @@ tests:
     verification: manual
     tags: [drag-drop, split-view]
 
-  # --- Terminal scrollbar artifact (PR #774) ---
+  # --- Terminal vertical scrollbar (PR #774, reworked in #785) ---
 
   - id: MT-UI-35
     name: "Terminal right-edge scrollbar shows only when scrollback exceeds viewport"
-    pr: 774
+    pr: 785
     platforms: [all]
     prerequisites:
       - app: true
@@ -379,35 +379,35 @@ tests:
     instructions:
       - "Inspect the right edge of every terminal pane while each shell is freshly started with only a prompt visible"
       - "Run `seq 1 200` in one of the panes so its buffer exceeds the viewport"
-      - "Scroll back to the bottom of that pane (Ctrl/Cmd+End or wheel)"
+      - "Scroll up, then back to the bottom of that pane (Ctrl/Cmd+End or wheel)"
       - "Switch focus between panes and re-check each pane's right edge"
     expected:
-      - "With nothing to scroll, no scrollbar, slider square, or grey bar floats in the right padding strip of any pane (including freshly-switched-to panes)"
-      - "Once the buffer exceeds the viewport, the slider appears flush against the container's right edge (not inset by 8 px into the dark padding strip)"
-      - "Scrolling back to the bottom fades the slider out again on idle; no stray thumb remains"
+      - "With nothing to scroll, no scrollbar thumb appears in any pane (including freshly-switched-to panes initialised while parked off-screen) — no stray slider or grey bar"
+      - "Once the buffer exceeds the viewport, the thumb appears flush against the container's right edge"
+      - "The thumb stays visible while there is scrollback (it does not fade out on idle) and tracks the scroll position; no stray thumb remains after scrolling back to the bottom"
     verification: manual
     tags: [terminal, scrollbar]
 
-  # --- Horizontal-scroll reserved vertical scrollbar (PR #785) ---
+  # --- Unified vertical scrollbar across modes (PR #785) ---
 
   - id: MT-UI-36
-    name: "Horizontal-scroll mode keeps the vertical scrollbar in a reserved gutter"
+    name: "Vertical scrollbar is the same in normal and horizontal-scroll modes"
     pr: 785
     platforms: [all]
     prerequisites:
       - app: true
     instructions:
-      - "Open a local shell tab and enable Horizontal Scrolling from the tab context menu"
+      - "Open a local shell tab and run `seq 1 200` to produce scrollback; note the scrollbar appearance in normal mode"
+      - "Enable Horizontal Scrolling from the tab context menu"
       - "Produce wide output, e.g. run: printf 'x%.0s' {1..400}; echo"
-      - "Produce scrollback, e.g. run: seq 1 200"
       - "Without scrolling horizontally, observe the right edge of the pane"
       - "Scroll all the way to the right and re-check the right edge and the rightmost column"
       - "Drag the vertical scrollbar thumb and click on the empty track above/below it"
       - "Resize the window/split, then disable Horizontal Scrolling again"
     expected:
-      - "The vertical scrollbar is visible at all times in a reserved gutter on the right, even before scrolling horizontally"
-      - "The scrollbar never overlaps terminal text — including when scrolled fully right, where the rightmost column stays fully readable (not clipped)"
+      - "The vertical scrollbar looks and behaves identically in normal and horizontal-scroll modes (same reserved gutter on the right, same always-visible thumb)"
+      - "In horizontal-scroll mode the scrollbar is visible at all times even before scrolling horizontally, and never overlaps terminal text — including when scrolled fully right, where the rightmost column stays fully readable (not clipped)"
       - "Dragging the thumb and clicking the track scroll the buffer; the thumb tracks the scroll position and the new pane height after a resize"
-      - "Disabling horizontal scrolling removes the gutter and restores the normal scrollbar behaviour with no leftover thumb"
+      - "Toggling horizontal scrolling off keeps the same scrollbar with no leftover or duplicate thumb"
     verification: manual
     tags: [terminal, scrollbar, horizontal-scroll]
