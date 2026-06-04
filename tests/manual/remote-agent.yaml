@@ -317,28 +317,69 @@ tests:
       - "Closing the tab terminates the `cmd.exe` child on the Windows host (no orphaned process in Task Manager)"
     verification: manual
 
-  # --- Windows agent secondary backends: SSH / Docker / file browser (#768) ---
+  # --- Windows agent persistent session reconnect (named-pipe daemon) (#770) ---
 
   - id: MT-AGENT-24
-    name: "File browser on a Windows-hosted agent returns forward-slash paths"
+    name: "Persistent session on a Windows agent survives disconnect/reconnect (named-pipe daemon)"
+    pr: 770
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Connect to a Windows host that already has the agent installed"
+      - "Open a persistent Local Shell session (PowerShell) through the agent and run a long-lived command that keeps printing output (e.g. `1..1000 | % { $_; Start-Sleep 1 }`)"
+      - "Disconnect the agent (close the tab's connection or kill the agent connection from the Open Connections panel) while the loop is still running"
+      - "Reconnect to the agent and re-attach to the session (sidebar Active Sessions double-click, or Reconnect on the overlay)"
+      - "Optionally, on the Windows host, open Task Manager and confirm a detached `termihub-agent.exe` daemon process keeps running while the desktop is disconnected"
+    expected:
+      - "The session daemon keeps running on the Windows host while the desktop is disconnected (detached process, no console window)"
+      - "On reconnect the tab re-attaches to the SAME session and the ring-buffer scrollback is replayed (earlier output is visible)"
+      - "Live output resumes in the same tab — the counter continued advancing during the disconnect"
+      - "No second shell is spawned; the agent's session list shows a single session"
+    verification: manual
+
+  # --- File browsing + jump connections from a Windows agent (#770, #768) ---
+
+  - id: MT-AGENT-25
+    name: "File browser through a Windows agent (local filesystem, forward-slash paths)"
     pr: 768
     platforms: [all]
     prerequisites:
       - app: true
     instructions:
-      - "Connect to a Windows host that already has the agent installed (see MT-AGENT-18 / MT-AGENT-20)"
-      - "Open the file browser for the agent host"
-      - "Navigate into `C:\\Users\\<user>` and then a few subdirectories"
+      - "Connect to a Windows host that already has the agent installed"
+      - "Open the file browser scoped to the Windows agent's local filesystem"
+      - "Navigate to `%USERPROFILE%` and into a subfolder, then open a small text file in the editor"
       - "Type `~` (or a path beginning with `~/`) into the path field and navigate"
     expected:
       - "Directory listings render without errors or panics (the Permissions column is blank on Windows — this is expected)"
       - "Path breadcrumbs and navigation use forward slashes (e.g. `C:/Users/<user>`); no backslashes leak into the UI"
       - "`~` resolves to the Windows user profile (`%USERPROFILE%`) and lists its contents"
-      - "Files open, rename, delete, and folder creation all work"
+      - "Entering and leaving folders works; file sizes and names render correctly"
+      - "A text file opens in the Monaco editor tab with its contents intact; files rename, delete, and folder creation all work"
     verification: manual
 
-  - id: MT-AGENT-25
-    name: "SSH jump-host backend from a Windows-hosted agent"
+  - id: MT-AGENT-26
+    name: "SSH / Docker jump session originating from a Windows agent"
+    pr: 770
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Connect to a Windows host that already has the agent installed"
+      - "Through that Windows agent, open an SSH jump session to a reachable Linux host (and/or a Docker container session if Docker is available on the Windows host)"
+      - "Run a command in the jumped session and confirm output, then resize the pane"
+      - "Close the tab"
+    expected:
+      - "The SSH (and/or Docker) session is established from the Windows agent and reaches the connected state"
+      - "Input/output echo normally and resize does not crash the session"
+      - "Closing the tab tears the jump session down cleanly on the Windows host (no orphaned process)"
+    verification: manual
+
+  # --- Windows agent secondary backends: SSH key auth + Docker named pipe (#768) ---
+
+  - id: MT-AGENT-27
+    name: "SSH jump-host backend from a Windows-hosted agent (default key / agent auth)"
     pr: 768
     platforms: [all]
     prerequisites:
@@ -353,7 +394,7 @@ tests:
       - "The remote shell is interactive and the SSH session closes cleanly"
     verification: manual
 
-  - id: MT-AGENT-26
+  - id: MT-AGENT-28
     name: "Docker backend via named pipe from a Windows-hosted agent"
     pr: 768
     platforms: [all]
