@@ -407,6 +407,7 @@ tests:
     expected:
       - "The vertical scrollbar looks and behaves identically in normal and horizontal-scroll modes (same reserved gutter on the right, same always-visible thumb)"
       - "In horizontal-scroll mode the scrollbar is visible at all times even before scrolling horizontally, and never overlaps terminal text — including when scrolled fully right, where the rightmost column stays fully readable (not clipped)"
+      - "In horizontal-scroll mode the first character keeps the same left inset from the container edge as in normal mode, and the horizontal scrollbar along the bottom has a gap above it (it does not cover the last row)"
       - "Dragging the thumb and clicking the track scroll the buffer; the thumb tracks the scroll position and the new pane height after a resize"
       - "Toggling horizontal scrolling off keeps the same scrollbar with no leftover or duplicate thumb"
     verification: manual

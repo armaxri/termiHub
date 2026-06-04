@@ -17,6 +17,11 @@
      viewport is inset by the same amount so the scrollbar never overlaps text.
      In normal mode the gutter overlays the strip FitAddon already reserves. */
   --vscroll-gutter: 12px;
+  /* Height of the horizontal scrollbar shown in horizontal-scroll mode, and the
+     gap between the content edges and the container in that mode (matches the
+     8 px text inset used in normal mode). */
+  --hscroll-bar: 10px;
+  --terminal-edge-gap: 8px;
 }
 
 /* xterm is opened into this inner viewport (not the container element directly).
@@ -44,11 +49,13 @@
 }
 
 /* In horizontal-scroll mode we set xterm width imperatively to the content
-   width, which would clip with border-box + padding. Disable the side
-   padding for that mode; the horizontal scrollbar already gives the user a
-   clear handle on the edges. */
+   width, which would clip with border-box + side padding — so the left/right
+   gaps come from the scroll viewport's inset instead (see below), not from
+   .xterm padding. The bottom padding is safe and reserves room for the
+   horizontal scrollbar plus a small gap, so the bar never covers the last row.
+   FitAddon reads this padding-bottom and reduces the row count to match. */
 .terminal-horizontal-scroll .xterm {
-  padding: 0;
+  padding: 0 0 calc(var(--hscroll-bar) + 4px) 0;
 }
 
 .terminal-container .xterm-viewport {
@@ -78,8 +85,10 @@
    Use 'scroll' (not 'auto') so the scrollbar is always present and never
    toggles, which would change the content height and create a resize loop.
    Inset the right edge by the gutter width so the reserved vertical scrollbar
-   never overlaps content (content stays fully reachable by scrolling). */
+   never overlaps content, and inset the left edge by the edge gap so the first
+   character keeps the same distance from the container as in normal mode. */
 .terminal-scroll-viewport.terminal-horizontal-scroll {
+  left: var(--terminal-edge-gap);
   right: var(--vscroll-gutter);
   overflow-x: scroll;
   overflow-y: hidden;
@@ -87,6 +96,27 @@
 
 .terminal-horizontal-scroll .xterm-screen {
   overflow: hidden;
+}
+
+/* Theme the horizontal scrollbar to match the vertical gutter thumb, and pin its
+   height to --hscroll-bar so the bottom reserve above matches exactly. Defining
+   ::-webkit-scrollbar makes it a consistent, always-visible bar (not a
+   fading overlay), matching the vertical scrollbar. */
+.terminal-scroll-viewport.terminal-horizontal-scroll::-webkit-scrollbar {
+  height: var(--hscroll-bar);
+}
+
+.terminal-scroll-viewport.terminal-horizontal-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.terminal-scroll-viewport.terminal-horizontal-scroll::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
+  border-radius: 5px;
+}
+
+.terminal-scroll-viewport.terminal-horizontal-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
 }
 
 /* Fixed gutter on the right that hosts the vertical scrollbar thumb in every
