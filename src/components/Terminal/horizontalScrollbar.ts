@@ -1,0 +1,211 @@
+import type { Terminal as XTerm } from "@xterm/xterm";
+
+/**
+ * Reserved-gutter vertical scrollbar for the terminal's horizontal-scroll mode.
+ *
+ * In horizontal-scroll mode the `.xterm` element is widened to the full content
+ * width and scrolled inside an inner viewport. xterm's own overlay scrollbar is
+ * an absolutely-positioned child of that scrolled content, so it drifts to the
+ * content's right edge and is only visible when scrolled fully right (where it
+ * also overlays the last column). Instead we hide xterm's overlay scrollbar and
+ * render this independent thumb inside a fixed gutter that sits *beside* the
+ * scroll viewport, kept in sync with the buffer via xterm's public API.
+ */
+
+/** Minimum thumb height in pixels so the handle stays grabbable with deep scrollback. */
+export const MIN_THUMB_PX = 20;
+
+export interface ThumbGeometryInput {
+  /** Top line of the viewport within the scrollback buffer (0..baseY). */
+  viewportY: number;
+  /** Line index of the viewport top when scrolled fully down (total lines - rows). */
+  baseY: number;
+  /** Number of visible rows. */
+  rows: number;
+  /** Height of the scrollbar track in pixels. */
+  trackHeightPx: number;
+}
+
+export interface ThumbGeometry {
+  /** Whether the buffer is scrollable and the thumb should be shown. */
+  visible: boolean;
+  /** Thumb height in pixels. */
+  thumbHeightPx: number;
+  /** Thumb top offset within the track in pixels. */
+  thumbTopPx: number;
+}
+
+/**
+ * Compute the thumb size and position for the current scroll state.
+ * Pure function — no DOM access — so it is unit-testable under jsdom.
+ */
+export function computeThumbGeometry({
+  viewportY,
+  baseY,
+  rows,
+  trackHeightPx,
+}: ThumbGeometryInput): ThumbGeometry {
+  if (baseY <= 0 || trackHeightPx <= 0) {
+    return { visible: false, thumbHeightPx: 0, thumbTopPx: 0 };
+  }
+
+  const totalLines = baseY + rows;
+  const rawHeight = (trackHeightPx * rows) / totalLines;
+  const thumbHeightPx = Math.min(trackHeightPx, Math.max(MIN_THUMB_PX, rawHeight));
+
+  const travel = trackHeightPx - thumbHeightPx;
+  const scrollFraction = viewportY / baseY;
+  const thumbTopPx = travel > 0 ? travel * scrollFraction : 0;
+
+  return { visible: true, thumbHeightPx, thumbTopPx };
+}
+
+export interface DragOffsetInput {
+  /** Desired thumb top offset within the track in pixels. */
+  dragTopPx: number;
+  /** Height of the scrollbar track in pixels. */
+  trackHeightPx: number;
+  /** Current thumb height in pixels. */
+  thumbHeightPx: number;
+  /** Line index of the viewport top when scrolled fully down. */
+  baseY: number;
+}
+
+/**
+ * Inverse of {@link computeThumbGeometry}: map a thumb top offset (e.g. from a
+ * drag) back to a target scrollback line. Pure function for unit-testability.
+ */
+export function dragOffsetToLine({
+  dragTopPx,
+  trackHeightPx,
+  thumbHeightPx,
+  baseY,
+}: DragOffsetInput): number {
+  const travel = trackHeightPx - thumbHeightPx;
+  const fraction = travel > 0 ? clamp(dragTopPx / travel, 0, 1) : 0;
+  return clamp(Math.round(fraction * baseY), 0, baseY);
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+export interface HorizontalScrollbarController {
+  /** Re-read the buffer state and re-render the thumb. */
+  update(): void;
+  /** Remove listeners and reset the thumb. */
+  dispose(): void;
+}
+
+interface HorizontalScrollbarOptions {
+  xterm: XTerm;
+  /** The fixed gutter element; its height defines the track length. */
+  gutter: HTMLElement;
+  /** The thumb element rendered inside the gutter. */
+  thumb: HTMLElement;
+}
+
+/**
+ * Wire a {@link HorizontalScrollbarController} to an xterm instance: render the
+ * thumb on scroll/resize and translate thumb drags / track clicks back into
+ * buffer scrolling. Touches only the provided gutter/thumb elements and xterm's
+ * public API — never xterm's internal DOM.
+ */
+export function createHorizontalScrollbar({
+  xterm,
+  gutter,
+  thumb,
+}: HorizontalScrollbarOptions): HorizontalScrollbarController {
+  let disposed = false;
+  let dragStartClientY = 0;
+  let dragStartThumbTop = 0;
+
+  const readGeometry = (): ThumbGeometry => {
+    const buffer = xterm.buffer.active;
+    return computeThumbGeometry({
+      viewportY: buffer.viewportY,
+      baseY: buffer.baseY,
+      rows: xterm.rows,
+      trackHeightPx: gutter.clientHeight,
+    });
+  };
+
+  const update = (): void => {
+    if (disposed) return;
+    const geo = readGeometry();
+    if (!geo.visible) {
+      thumb.style.display = "none";
+      return;
+    }
+    thumb.style.display = "block";
+    thumb.style.height = `${geo.thumbHeightPx}px`;
+    thumb.style.transform = `translateY(${geo.thumbTopPx}px)`;
+  };
+
+  const onThumbPointerMove = (e: PointerEvent): void => {
+    const desiredTop = dragStartThumbTop + (e.clientY - dragStartClientY);
+    const line = dragOffsetToLine({
+      dragTopPx: desiredTop,
+      trackHeightPx: gutter.clientHeight,
+      thumbHeightPx: thumb.offsetHeight,
+      baseY: xterm.buffer.active.baseY,
+    });
+    xterm.scrollToLine(line);
+  };
+
+  const onThumbPointerUp = (e: PointerEvent): void => {
+    thumb.releasePointerCapture?.(e.pointerId);
+    window.removeEventListener("pointermove", onThumbPointerMove);
+    window.removeEventListener("pointerup", onThumbPointerUp);
+  };
+
+  const onThumbPointerDown = (e: PointerEvent): void => {
+    // Don't let the drag reach the gap-wheel handler or xterm.
+    e.preventDefault();
+    e.stopPropagation();
+    dragStartClientY = e.clientY;
+    dragStartThumbTop = thumb.offsetTop + getTranslateY(thumb);
+    thumb.setPointerCapture?.(e.pointerId);
+    window.addEventListener("pointermove", onThumbPointerMove);
+    window.addEventListener("pointerup", onThumbPointerUp);
+  };
+
+  const onGutterPointerDown = (e: PointerEvent): void => {
+    // Click on the track (not the thumb) pages the buffer toward the click.
+    if (e.target === thumb) return;
+    e.stopPropagation();
+    const geo = readGeometry();
+    if (!geo.visible) return;
+    const clickY = e.clientY - gutter.getBoundingClientRect().top;
+    xterm.scrollLines(clickY < geo.thumbTopPx ? -xterm.rows : xterm.rows);
+  };
+
+  const scrollDisposable = xterm.onScroll(update);
+  const resizeDisposable = xterm.onResize(update);
+  thumb.addEventListener("pointerdown", onThumbPointerDown);
+  gutter.addEventListener("pointerdown", onGutterPointerDown);
+
+  update();
+
+  return {
+    update,
+    dispose(): void {
+      if (disposed) return;
+      disposed = true;
+      scrollDisposable.dispose();
+      resizeDisposable.dispose();
+      thumb.removeEventListener("pointerdown", onThumbPointerDown);
+      gutter.removeEventListener("pointerdown", onGutterPointerDown);
+      window.removeEventListener("pointermove", onThumbPointerMove);
+      window.removeEventListener("pointerup", onThumbPointerUp);
+      thumb.style.display = "none";
+      thumb.style.transform = "";
+    },
+  };
+}
+
+/** Read the current translateY (px) from an element's inline transform. */
+function getTranslateY(el: HTMLElement): number {
+  const match = /translateY\(([-\d.]+)px\)/.exec(el.style.transform);
+  return match ? parseFloat(match[1]) : 0;
+}
