@@ -367,11 +367,11 @@ tests:
     verification: manual
     tags: [drag-drop, split-view]
 
-  # --- Terminal vertical scrollbar (PR #774, reworked in #785) ---
+  # --- Terminal vertical scrollbar (PR #774, reworked in #789) ---
 
   - id: MT-UI-35
     name: "Terminal right-edge scrollbar shows only when scrollback exceeds viewport"
-    pr: 785
+    pr: 789
     platforms: [all]
     prerequisites:
       - app: true
@@ -388,11 +388,11 @@ tests:
     verification: manual
     tags: [terminal, scrollbar]
 
-  # --- Unified vertical scrollbar across modes (PR #785) ---
+  # --- Unified vertical scrollbar across modes (PR #789) ---
 
   - id: MT-UI-36
     name: "Vertical scrollbar is the same in normal and horizontal-scroll modes"
-    pr: 785
+    pr: 789
     platforms: [all]
     prerequisites:
       - app: true
