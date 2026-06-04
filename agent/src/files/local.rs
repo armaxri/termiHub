@@ -8,9 +8,11 @@ use termihub_core::config::expand_tilde_only as expand_tilde;
 use termihub_core::files::FileEntry;
 
 use super::{FileBackend, FileError};
-use termihub_core::files::utils::chrono_from_epoch;
 #[cfg(unix)]
 use termihub_core::files::utils::format_permissions;
+use termihub_core::files::utils::{
+    chrono_from_epoch, normalize_path_separators, normalize_platform_path,
+};
 
 /// File backend that reads the agent host's local filesystem.
 pub struct LocalFileBackend;
@@ -100,7 +102,8 @@ fn map_io_error(e: std::io::Error, path: &str) -> FileError {
 
 /// Synchronous directory listing.
 fn list_dir_sync(path: &str) -> Result<Vec<FileEntry>, FileError> {
-    let dir = Path::new(path);
+    let normalized = normalize_platform_path(path);
+    let dir = Path::new(&normalized);
     let entries = std::fs::read_dir(dir).map_err(|e| map_io_error(e, path))?;
 
     let mut result = Vec::new();
@@ -131,7 +134,7 @@ fn list_dir_sync(path: &str) -> Result<Vec<FileEntry>, FileError> {
         #[cfg(not(unix))]
         let permissions = None;
 
-        let full_path = entry.path().to_string_lossy().to_string();
+        let full_path = normalize_path_separators(&entry.path().to_string_lossy());
 
         result.push(FileEntry {
             name,
@@ -148,7 +151,8 @@ fn list_dir_sync(path: &str) -> Result<Vec<FileEntry>, FileError> {
 
 /// Synchronous stat for a single path.
 fn stat_sync(path: &str) -> Result<FileEntry, FileError> {
-    let p = Path::new(path);
+    let normalized = normalize_platform_path(path);
+    let p = Path::new(&normalized);
     let metadata = std::fs::metadata(p).map_err(|e| map_io_error(e, path))?;
 
     let name = p
@@ -173,7 +177,7 @@ fn stat_sync(path: &str) -> Result<FileEntry, FileError> {
 
     Ok(FileEntry {
         name,
-        path: path.to_string(),
+        path: normalize_path_separators(path),
         is_directory: metadata.is_dir(),
         size: metadata.len(),
         modified,
@@ -214,6 +218,38 @@ mod tests {
 
         let dir_entry = entries.iter().find(|e| e.name == "subdir").unwrap();
         assert!(dir_entry.is_directory);
+    }
+
+    #[tokio::test]
+    async fn list_paths_use_forward_slashes() {
+        // The frontend uses a single `split("/")` code path, so listed entry
+        // paths must never contain backslashes — even on a Windows-hosted agent.
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("test.txt"), "x").unwrap();
+
+        let backend = LocalFileBackend::new();
+        let entries = backend.list(dir.path().to_str().unwrap()).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert!(
+            !entries[0].path.contains('\\'),
+            "entry path must not contain backslashes: {}",
+            entries[0].path
+        );
+    }
+
+    #[tokio::test]
+    async fn stat_path_uses_forward_slashes() {
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join("stat_slash.txt");
+        std::fs::write(&file_path, "x").unwrap();
+
+        let backend = LocalFileBackend::new();
+        let entry = backend.stat(file_path.to_str().unwrap()).await.unwrap();
+        assert!(
+            !entry.path.contains('\\'),
+            "stat path must not contain backslashes: {}",
+            entry.path
+        );
     }
 
     #[tokio::test]
@@ -353,5 +389,50 @@ mod tests {
         let entry = result.unwrap();
         assert_eq!(entry.path, home, "stat path should be expanded home dir");
         assert!(entry.is_directory);
+    }
+
+    #[tokio::test]
+    #[cfg(windows)]
+    async fn list_tilde_expands_to_user_profile() {
+        let home = std::env::var("USERPROFILE").expect("USERPROFILE must be set");
+        // Returned paths are normalized to forward slashes.
+        let normalized_home = home.replace('\\', "/");
+        let backend = LocalFileBackend::new();
+        let result = backend.list("~").await;
+        assert!(result.is_ok(), "listing '~' failed: {:?}", result);
+        for entry in result.unwrap() {
+            assert!(
+                entry.path.starts_with(&normalized_home),
+                "entry path '{}' does not start with USERPROFILE '{}'",
+                entry.path,
+                normalized_home
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[cfg(windows)]
+    async fn stat_tilde_expands_to_user_profile() {
+        let home = std::env::var("USERPROFILE").expect("USERPROFILE must be set");
+        let normalized_home = home.replace('\\', "/");
+        let backend = LocalFileBackend::new();
+        let result = backend.stat("~").await;
+        assert!(result.is_ok(), "stat of '~' failed: {:?}", result);
+        let entry = result.unwrap();
+        assert_eq!(
+            entry.path, normalized_home,
+            "stat path should be the expanded, forward-slash USERPROFILE dir"
+        );
+        assert!(entry.is_directory);
+    }
+
+    #[tokio::test]
+    #[cfg(not(unix))]
+    async fn list_permissions_none_on_non_unix() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("f.txt"), "x").unwrap();
+        let backend = LocalFileBackend::new();
+        let entries = backend.list(dir.path().to_str().unwrap()).await.unwrap();
+        assert!(entries.iter().all(|e| e.permissions.is_none()));
     }
 }
