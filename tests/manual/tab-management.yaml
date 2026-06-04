@@ -158,3 +158,47 @@ tests:
     expected:
       - "Panels resize, terminals re-fit"
     verification: manual
+
+  # --- Open terminal output in an unsaved editor tab (PR #786, Closes #785) ---
+
+  - id: MT-TAB-17
+    name: "Open in Editor — captures terminal output to an unsaved Monaco tab"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open a local terminal and run a command that produces several lines of output (e.g. `ls -la` or `echo` a few lines)"
+      - "Right-click the terminal tab title and choose 'Open in Editor'"
+    expected:
+      - "A new editor tab titled '<tab name> (output)' opens, seeded with the full terminal scrollback"
+      - "The tab shows an 'Unsaved' badge and a dirty indicator; the toolbar button reads 'Save As...'"
+      - "Ctrl+F / search, scrolling, folding and free-form editing all work on the captured text"
+    verification: manual
+
+  - id: MT-TAB-18
+    name: "Open in Editor — Save As writes the buffer and clears the unsaved state"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Capture terminal output via 'Open in Editor' (see MT-TAB-17)"
+      - "Optionally edit or add a comment line in the editor"
+      - "Click 'Save As...' (or press Ctrl+S) and choose a destination file"
+    expected:
+      - "A native save dialog opens; after choosing a path the file is written with the editor content"
+      - "The 'Unsaved' badge disappears, the tab title becomes the file name, and the button reverts to 'Save'"
+      - "Further edits + Save write directly to the chosen file without prompting again"
+    verification: manual
+
+  - id: MT-TAB-19
+    name: "Open in Editor — closing an unsaved capture warns before discarding"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Capture terminal output via 'Open in Editor' (see MT-TAB-17)"
+      - "Without saving, close the captured-output editor tab"
+    expected:
+      - "An unsaved-changes dialog appears offering Save and Close / Just Close / Cancel"
+      - "Choosing 'Just Close' discards the capture; 'Cancel' keeps the tab open"
+    verification: manual
