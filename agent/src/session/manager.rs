@@ -1,8 +1,10 @@
 //! Generic session manager using [`ConnectionType`] from `termihub_core`.
 //!
 //! Sessions are either hosted in-process (non-persistent) or in a daemon
-//! subprocess (persistent, Unix only). The decision is based on the
-//! connection type's [`Capabilities::persistent`] flag.
+//! subprocess (persistent). The decision is based on the connection type's
+//! [`Capabilities::persistent`] flag. Daemon-backed sessions are cross-platform
+//! (Unix domain socket on unix, named pipe on windows — see
+//! [`crate::daemon::transport`]).
 
 use std::collections::HashMap;
 use std::fmt;
@@ -19,11 +21,8 @@ use crate::transport::JsonRpcOutputSink;
 use termihub_core::connection::{ConnectionTypeRegistry, OutputReceiver};
 use termihub_core::session::traits::OutputSink;
 
-#[cfg(unix)]
 use crate::daemon::client::{DaemonClient, DaemonWriterHandle};
-#[cfg(unix)]
-use crate::daemon::transport::session_endpoint;
-#[cfg(unix)]
+use crate::daemon::transport::{endpoint_alive, session_endpoint};
 use crate::state::persistence::{AgentState, PersistedSession};
 
 /// Maximum number of concurrent sessions the agent supports.
@@ -117,15 +116,14 @@ impl fmt::Display for SessionCreateError {
     }
 }
 
-// ── DaemonLauncher trait (Unix only) ──────────────────────────────
+// ── DaemonLauncher trait ──────────────────────────────────────────
 
 /// Abstracts the spawning of a daemon subprocess for persistent sessions.
 ///
 /// The production implementation ([`SystemDaemonLauncher`]) calls
-/// `std::process::Command` to launch `termihub-agent --daemon` and
-/// connects via a Unix socket. Tests inject a mock that returns
-/// immediately without spawning a real process.
-#[cfg(unix)]
+/// `std::process::Command` to launch `termihub-agent --daemon` detached and
+/// connects via the transport. Tests inject a mock that returns immediately
+/// without spawning a real process.
 #[async_trait::async_trait]
 pub trait DaemonLauncher: Send + Sync + 'static {
     /// Spawn a daemon for the given session and return the connected backend.
@@ -140,10 +138,8 @@ pub trait DaemonLauncher: Send + Sync + 'static {
 }
 
 /// Production [`DaemonLauncher`] that spawns real `termihub-agent --daemon` processes.
-#[cfg(unix)]
 pub struct SystemDaemonLauncher;
 
-#[cfg(unix)]
 #[async_trait::async_trait]
 impl DaemonLauncher for SystemDaemonLauncher {
     async fn launch(
@@ -154,26 +150,43 @@ impl DaemonLauncher for SystemDaemonLauncher {
         notification_tx: NotificationSender,
         buffer_size_bytes: usize,
     ) -> Result<SessionBackend, anyhow::Error> {
-        let socket_path = std::path::PathBuf::from(session_endpoint(session_id));
+        let endpoint = session_endpoint(session_id);
         let settings_json = serde_json::to_string(settings)?;
         let agent_exe = std::env::current_exe()?;
 
-        let _child = std::process::Command::new(&agent_exe)
+        let mut command = std::process::Command::new(&agent_exe);
+        command
             .arg("--daemon")
             .arg(session_id)
-            .env("TERMIHUB_SOCKET_PATH", &socket_path)
+            .env("TERMIHUB_SOCKET_PATH", &endpoint)
             .env("TERMIHUB_TYPE_ID", type_id)
             .env("TERMIHUB_SETTINGS", &settings_json)
             .env("TERMIHUB_BUFFER_SIZE", buffer_size_bytes.to_string())
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit());
+
+        // On Windows, detach the daemon from the agent's console and process
+        // group so it survives the agent exiting and shows no console window.
+        // On unix the daemon detaches by being orphaned (the agent never waits
+        // on the child), so no extra flags are needed.
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            use windows_sys::Win32::System::Threading::{
+                CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, DETACHED_PROCESS,
+            };
+            command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
+        }
+
+        let _child = command
             .spawn()
             .map_err(|e| anyhow::anyhow!("Failed to spawn daemon: {e}"))?;
 
-        DaemonClient::wait_for_socket(&socket_path).await?;
+        // The transport retries while the daemon binds its endpoint during
+        // slow startup work, so no separate "wait for endpoint" step is needed.
         let client =
-            DaemonClient::connect(session_id.to_string(), socket_path, notification_tx).await?;
+            DaemonClient::connect(session_id.to_string(), endpoint, notification_tx).await?;
 
         info!("Daemon spawned for session {session_id} (type={type_id})");
         Ok(SessionBackend::Daemon(client))
@@ -191,9 +204,7 @@ pub struct SessionManager {
     sessions: Mutex<HashMap<String, SessionInfo>>,
     notification_tx: NotificationSender,
     registry: Arc<ConnectionTypeRegistry>,
-    #[cfg(unix)]
     launcher: Arc<dyn DaemonLauncher>,
-    #[cfg(unix)]
     state: Mutex<AgentState>,
     /// Configurable ring-buffer size for daemon-backed persistent sessions.
     persistent_buffer_size: Arc<AtomicUsize>,
@@ -205,16 +216,14 @@ impl SessionManager {
             sessions: Mutex::new(HashMap::new()),
             notification_tx,
             registry,
-            #[cfg(unix)]
             launcher: Arc::new(SystemDaemonLauncher),
-            #[cfg(unix)]
             state: Mutex::new(AgentState::load()),
             persistent_buffer_size: Arc::new(AtomicUsize::new(DEFAULT_PERSISTENT_BUFFER_SIZE)),
         }
     }
 
-    /// Create a session manager with a custom daemon launcher (for testing on Unix).
-    #[cfg(all(unix, test))]
+    /// Create a session manager with a custom daemon launcher (for testing).
+    #[cfg(test)]
     pub fn with_launcher(
         notification_tx: NotificationSender,
         registry: Arc<ConnectionTypeRegistry>,
@@ -232,9 +241,9 @@ impl SessionManager {
 
     /// Create a new session.
     ///
-    /// For persistent connection types on Unix, spawns a daemon subprocess
-    /// that keeps the connection alive. For non-persistent types (or on
-    /// non-Unix platforms), runs the connection in-process.
+    /// For persistent connection types, spawns a daemon subprocess that keeps
+    /// the connection alive. For non-persistent types, runs the connection
+    /// in-process.
     pub async fn create(
         &self,
         type_id: &str,
@@ -265,8 +274,7 @@ impl SessionManager {
             .await
             .map_err(|e| SessionCreateError::BackendFailed(e.to_string()))?;
 
-        // Persist for recovery on Unix.
-        #[cfg(unix)]
+        // Persist daemon-backed sessions for recovery after an agent restart.
         if capabilities.persistent {
             if let SessionBackend::Daemon(ref client) = backend {
                 let mut state = self.state.lock().await;
@@ -276,7 +284,7 @@ impl SessionManager {
                         type_id: type_id.to_string(),
                         title: title.clone(),
                         created_at: now.to_rfc3339(),
-                        daemon_socket: Some(client.socket_path().to_string_lossy().to_string()),
+                        daemon_socket: Some(client.endpoint().to_string()),
                         settings: settings.clone(),
                         definition_id: definition_id.clone(),
                     },
@@ -310,22 +318,17 @@ impl SessionManager {
         settings: &serde_json::Value,
         persistent: bool,
     ) -> Result<SessionBackend, anyhow::Error> {
-        #[cfg(unix)]
         if persistent {
             return self
                 .spawn_daemon_backend(session_id, type_id, settings)
                 .await;
         }
 
-        // Suppress unused variable warnings on non-Unix.
-        let _ = persistent;
-
         self.create_in_process_backend(session_id, type_id, settings)
             .await
     }
 
     /// Spawn a daemon process and connect via the injected [`DaemonLauncher`].
-    #[cfg(unix)]
     async fn spawn_daemon_backend(
         &self,
         session_id: &str,
@@ -352,7 +355,6 @@ impl SessionManager {
             .ok_or_else(|| "Session not found".to_string())?;
 
         match info.backend {
-            #[cfg(unix)]
             SessionBackend::Daemon(ref mut client) => {
                 client.query_buffer().await.map_err(|e| e.to_string())
             }
@@ -417,7 +419,6 @@ impl SessionManager {
         if let Some(mut info) = sessions.remove(session_id) {
             close_backend(&mut info.backend).await;
 
-            #[cfg(unix)]
             {
                 let mut state = self.state.lock().await;
                 state.remove_session(session_id);
@@ -490,7 +491,6 @@ impl SessionManager {
 
     /// Recover sessions from persistent state by reconnecting to
     /// surviving daemon processes.
-    #[cfg(unix)]
     pub async fn recover_sessions(&self) -> Vec<String> {
         let state = self.state.lock().await;
         let persisted = state.sessions.clone();
@@ -499,25 +499,24 @@ impl SessionManager {
         let mut recovered = Vec::new();
 
         for (id, session) in &persisted {
-            let socket_path = match &session.daemon_socket {
-                Some(p) => std::path::PathBuf::from(p),
+            let endpoint = match &session.daemon_socket {
+                Some(p) => p.clone(),
                 None => {
-                    warn!("Session {id} has no daemon socket, removing");
+                    warn!("Session {id} has no daemon endpoint, removing");
                     let mut state = self.state.lock().await;
                     state.remove_session(id);
                     continue;
                 }
             };
 
-            if !socket_path.exists() {
-                info!("Daemon socket gone for session {id}, removing from state");
+            if !endpoint_alive(&endpoint) {
+                info!("Daemon endpoint gone for session {id}, removing from state");
                 let mut state = self.state.lock().await;
                 state.remove_session(id);
                 continue;
             }
 
-            match DaemonClient::connect(id.clone(), socket_path, self.notification_tx.clone()).await
-            {
+            match DaemonClient::connect(id.clone(), endpoint, self.notification_tx.clone()).await {
                 Ok(client) => {
                     let created_at = chrono::DateTime::parse_from_rfc3339(&session.created_at)
                         .map(|dt| dt.with_timezone(&Utc))
@@ -570,7 +569,6 @@ impl SessionManager {
 
 async fn close_backend(backend: &mut SessionBackend) {
     match backend {
-        #[cfg(unix)]
         SessionBackend::Daemon(ref mut client) => {
             client.close().await;
         }
@@ -597,7 +595,6 @@ async fn close_backend(backend: &mut SessionBackend) {
 /// backends are disconnected normally.
 async fn shutdown_backend(backend: &mut SessionBackend) {
     match backend {
-        #[cfg(unix)]
         SessionBackend::Daemon(ref mut client) => {
             client.detach().await;
         }
@@ -619,7 +616,6 @@ async fn shutdown_backend(backend: &mut SessionBackend) {
 
 async fn attach_backend(backend: &mut SessionBackend) -> Result<(), anyhow::Error> {
     match backend {
-        #[cfg(unix)]
         SessionBackend::Daemon(ref mut client) => {
             client.attach().await?;
         }
@@ -634,7 +630,6 @@ async fn attach_backend(backend: &mut SessionBackend) -> Result<(), anyhow::Erro
 
 async fn detach_backend(backend: &mut SessionBackend) {
     match backend {
-        #[cfg(unix)]
         SessionBackend::Daemon(ref mut client) => {
             client.detach().await;
         }
@@ -726,7 +721,6 @@ impl SessionManagerApi for SessionManager {
     /// The sessions lock is released before any async operation so the future
     /// is `Send` regardless of the `ConnectionType` in-process implementations.
     async fn write_input(&self, session_id: &str, data: &[u8]) -> Result<(), String> {
-        #[cfg(unix)]
         let mut daemon_handle: Option<DaemonWriterHandle> = None;
         let sync_result: Option<Result<(), String>>;
 
@@ -737,7 +731,6 @@ impl SessionManagerApi for SessionManager {
                 .ok_or_else(|| "Session not found".to_string())?;
             info.last_activity = Utc::now();
             match &info.backend {
-                #[cfg(unix)]
                 SessionBackend::Daemon(client) => {
                     daemon_handle = Some(client.writer_handle());
                     sync_result = None;
@@ -755,7 +748,6 @@ impl SessionManagerApi for SessionManager {
         if let Some(result) = sync_result {
             return result;
         }
-        #[cfg(unix)]
         if let Some(handle) = daemon_handle {
             return DaemonClient::write_via_handle(&handle, data)
                 .await
@@ -767,7 +759,6 @@ impl SessionManagerApi for SessionManager {
     /// The sessions lock is released before any async operation so the future
     /// is `Send` regardless of the `ConnectionType` in-process implementations.
     async fn resize(&self, session_id: &str, cols: u16, rows: u16) -> Result<(), String> {
-        #[cfg(unix)]
         let mut daemon_handle: Option<DaemonWriterHandle> = None;
         let sync_result: Option<Result<(), String>>;
 
@@ -778,7 +769,6 @@ impl SessionManagerApi for SessionManager {
                 .ok_or_else(|| "Session not found".to_string())?;
             info.last_activity = Utc::now();
             match &info.backend {
-                #[cfg(unix)]
                 SessionBackend::Daemon(client) => {
                     daemon_handle = Some(client.writer_handle());
                     sync_result = None;
@@ -796,7 +786,6 @@ impl SessionManagerApi for SessionManager {
         if let Some(result) = sync_result {
             return result;
         }
-        #[cfg(unix)]
         if let Some(handle) = daemon_handle {
             return DaemonClient::resize_via_handle(&handle, cols, rows)
                 .await
@@ -969,9 +958,8 @@ mod tests {
         );
     }
 
-    // ── DaemonLauncher unit tests (Unix only) ─────────────────────────
+    // ── DaemonLauncher unit tests ─────────────────────────────────────
 
-    #[cfg(unix)]
     mod daemon_launcher_tests {
         use super::*;
         use crate::session::types::SessionBackend;
