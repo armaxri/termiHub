@@ -108,6 +108,24 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
           </span>
         </label>
       )}
+      {show("askOpenSavedFileInTab") && (
+        <div className="settings-form__field">
+          <span className="settings-form__label">Open Saved File in Tab</span>
+          <label className="settings-panel__toggle">
+            <input
+              type="checkbox"
+              checked={settings.askOpenSavedFileInTab ?? true}
+              onChange={(e) => onChange({ ...settings, askOpenSavedFileInTab: e.target.checked })}
+              data-testid="settings-ask-open-saved-file-in-tab"
+            />
+            <span className="settings-panel__toggle-slider" />
+          </label>
+          <span className="settings-form__hint">
+            After saving terminal content to a file, ask whether to open it in an editor tab. When
+            off, files are saved without prompting and are not opened.
+          </span>
+        </div>
+      )}
     </div>
   );
 }

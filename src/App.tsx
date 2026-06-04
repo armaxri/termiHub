@@ -13,6 +13,7 @@ import { RecoveryDialog } from "@/components/Settings/RecoveryDialog";
 import { ShortcutsOverlay } from "@/components/KeyboardShortcuts/ShortcutsOverlay";
 import { OverlayViewPanel } from "@/components/Settings/OverlayViewPanel";
 import { LargePasteDialog } from "@/components/Terminal/LargePasteDialog";
+import { OpenSavedFileDialog } from "@/components/Terminal/OpenSavedFileDialog";
 import { ConfirmCloseTabDialog } from "@/components/Terminal/ConfirmCloseTabDialog";
 import { UpdateNotification } from "@/components/UpdateNotification/UpdateNotification";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
@@ -116,6 +117,10 @@ function App() {
   const setShortcutsOverlayOpen = useAppStore((s) => s.setShortcutsOverlayOpen);
   const largePasteDialog = useAppStore((s) => s.largePasteDialog);
   const closeLargePasteDialog = useAppStore((s) => s.closeLargePasteDialog);
+  const openSavedFileDialog = useAppStore((s) => s.openSavedFileDialog);
+  const closeOpenSavedFileDialog = useAppStore((s) => s.closeOpenSavedFileDialog);
+  const updateSettings = useAppStore((s) => s.updateSettings);
+  const openEditorTab = useAppStore((s) => s.openEditorTab);
 
   useEffect(() => {
     (async () => {
@@ -246,6 +251,19 @@ function App() {
             closeLargePasteDialog();
           }}
           onCancel={closeLargePasteDialog}
+        />
+        <OpenSavedFileDialog
+          open={openSavedFileDialog.open}
+          filePath={openSavedFileDialog.filePath}
+          askAgain={settings.askOpenSavedFileInTab ?? true}
+          onAskAgainChange={(askAgain) =>
+            updateSettings({ ...settings, askOpenSavedFileInTab: askAgain })
+          }
+          onOpen={() => {
+            openEditorTab(openSavedFileDialog.filePath, false);
+            closeOpenSavedFileDialog();
+          }}
+          onCancel={closeOpenSavedFileDialog}
         />
         <UpdateNotification />
         <ConfirmCloseTabDialog />

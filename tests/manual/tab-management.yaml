@@ -81,6 +81,70 @@ tests:
       - "Nothing happens (no crash, no file written)"
     verification: manual
 
+  # --- Open Saved File in Tab (PR #782) ---
+
+  - id: MT-TAB-11
+    name: "Save to File — opens the saved file in an editor tab"
+    pr: 782
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Ensure Settings → Terminal → 'Open Saved File in Tab' is enabled (default)"
+      - "Open a terminal with some output and choose 'Save to File'"
+      - "Choose a location and save"
+      - "In the 'Open Saved File in Tab' dialog, leave 'Ask again' checked and click 'Open'"
+    expected:
+      - "A Monaco editor tab opens showing the saved terminal content"
+    verification: manual
+    tags: [native-dialog]
+
+  - id: MT-TAB-12
+    name: "Save to File — Cancel does not open a tab"
+    pr: 782
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Save terminal content to a file"
+      - "In the 'Open Saved File in Tab' dialog, click 'Cancel'"
+    expected:
+      - "The file is saved but no editor tab is opened"
+    verification: manual
+
+  - id: MT-TAB-13
+    name: "Save to File — 'Ask again' off suppresses the dialog"
+    pr: 782
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Save terminal content to a file"
+      - "In the dialog, uncheck 'Ask again', then click 'Cancel'"
+      - "Verify Settings → Terminal → 'Open Saved File in Tab' is now off"
+      - "Save terminal content to a file again"
+    expected:
+      - "No dialog appears on the second save and no editor tab is opened"
+      - "Re-enabling the setting makes the dialog reappear on the next save"
+    verification: manual
+
+  - id: MT-TAB-14
+    name: "Save to File — width-wrapped lines are saved as logical lines"
+    pr: 782
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Make the terminal narrow (e.g. ~40 columns)"
+      - "Print a line longer than the terminal width, e.g. run: printf 'A%.0s' {1..120}; echo"
+      - "Also print a normal short line so a real newline is present"
+      - "Save to File and open the saved file in an external editor"
+    expected:
+      - "The long line is saved on a single line (no breaks at the terminal width)"
+      - "The separate short line remains on its own line"
+      - "Deliberate blank lines in the output are preserved"
+    verification: manual
+
   # --- Split Views ---
 
   - id: MT-TAB-16

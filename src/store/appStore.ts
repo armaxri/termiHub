@@ -424,6 +424,11 @@ interface AppState {
   showLargePasteDialog: (charCount: number, onConfirm: () => void) => void;
   closeLargePasteDialog: () => void;
 
+  // Open-saved-file-in-tab confirmation
+  openSavedFileDialog: { open: boolean; filePath: string };
+  showOpenSavedFileDialog: (filePath: string) => void;
+  closeOpenSavedFileDialog: () => void;
+
   // Export/Import dialogs
   exportDialogOpen: boolean;
   setExportDialogOpen: (open: boolean) => void;
@@ -2081,6 +2086,7 @@ export const useAppStore = create<AppState>((set, get) => {
       powerMonitoringEnabled: true,
       fileBrowserEnabled: true,
       confirmCloseTabOnShortcut: true,
+      askOpenSavedFileInTab: true,
     },
     savedSettings: {
       version: "1",
@@ -2088,6 +2094,7 @@ export const useAppStore = create<AppState>((set, get) => {
       powerMonitoringEnabled: true,
       fileBrowserEnabled: true,
       confirmCloseTabOnShortcut: true,
+      askOpenSavedFileInTab: true,
     },
 
     // Layout
@@ -2151,6 +2158,11 @@ export const useAppStore = create<AppState>((set, get) => {
       set({ largePasteDialog: { open: true, charCount, onConfirm } }),
     closeLargePasteDialog: () =>
       set({ largePasteDialog: { open: false, charCount: 0, onConfirm: null } }),
+
+    // Open-saved-file-in-tab confirmation
+    openSavedFileDialog: { open: false, filePath: "" },
+    showOpenSavedFileDialog: (filePath) => set({ openSavedFileDialog: { open: true, filePath } }),
+    closeOpenSavedFileDialog: () => set({ openSavedFileDialog: { open: false, filePath: "" } }),
 
     // Export/Import dialogs
     exportDialogOpen: false,
