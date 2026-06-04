@@ -82,15 +82,17 @@
 }
 
 /* Horizontal scrolling: the scroll viewport scrolls, .xterm is made wider via JS.
-   Use 'scroll' (not 'auto') so the scrollbar is always present and never
-   toggles, which would change the content height and create a resize loop.
-   Inset the right edge by the gutter width so the reserved vertical scrollbar
-   never overlaps content, and inset the left edge by the edge gap so the first
-   character keeps the same distance from the container as in normal mode. */
+   Use 'auto' so the bar disappears when the window is wide enough that there is
+   nothing left to scroll. This is safe (no resize loop) because the bottom
+   strip for the bar is reserved unconditionally via .xterm padding-bottom, so
+   showing/hiding the bar never changes the row count. Inset the right edge by
+   the gutter width so the reserved vertical scrollbar never overlaps content,
+   and inset the left edge by the edge gap so the first character keeps the same
+   distance from the container as in normal mode. */
 .terminal-scroll-viewport.terminal-horizontal-scroll {
   left: var(--terminal-edge-gap);
   right: var(--vscroll-gutter);
-  overflow-x: scroll;
+  overflow-x: auto;
   overflow-y: hidden;
 }
 
