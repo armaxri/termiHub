@@ -338,11 +338,11 @@ tests:
       - "No second shell is spawned; the agent's session list shows a single session"
     verification: manual
 
-  # --- File browsing + jump connections from a Windows agent (#770) ---
+  # --- File browsing + jump connections from a Windows agent (#770, #768) ---
 
   - id: MT-AGENT-25
-    name: "File browser through a Windows agent (local filesystem)"
-    pr: 770
+    name: "File browser through a Windows agent (local filesystem, forward-slash paths)"
+    pr: 768
     platforms: [all]
     prerequisites:
       - app: true
@@ -350,10 +350,13 @@ tests:
       - "Connect to a Windows host that already has the agent installed"
       - "Open the file browser scoped to the Windows agent's local filesystem"
       - "Navigate to `%USERPROFILE%` and into a subfolder, then open a small text file in the editor"
+      - "Type `~` (or a path beginning with `~/`) into the path field and navigate"
     expected:
-      - "Directory listings show Windows paths/drives correctly (backslash separators, drive letters)"
+      - "Directory listings render without errors or panics (the Permissions column is blank on Windows — this is expected)"
+      - "Path breadcrumbs and navigation use forward slashes (e.g. `C:/Users/<user>`); no backslashes leak into the UI"
+      - "`~` resolves to the Windows user profile (`%USERPROFILE%`) and lists its contents"
       - "Entering and leaving folders works; file sizes and names render correctly"
-      - "A text file opens in the Monaco editor tab with its contents intact"
+      - "A text file opens in the Monaco editor tab with its contents intact; files rename, delete, and folder creation all work"
     verification: manual
 
   - id: MT-AGENT-26
@@ -371,4 +374,38 @@ tests:
       - "The SSH (and/or Docker) session is established from the Windows agent and reaches the connected state"
       - "Input/output echo normally and resize does not crash the session"
       - "Closing the tab tears the jump session down cleanly on the Windows host (no orphaned process)"
+    verification: manual
+
+  # --- Windows agent secondary backends: SSH key auth + Docker named pipe (#768) ---
+
+  - id: MT-AGENT-27
+    name: "SSH jump-host backend from a Windows-hosted agent (default key / agent auth)"
+    pr: 768
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "On the Windows agent host, place an SSH key at `%USERPROFILE%\\.ssh\\id_rsa` (or id_ed25519) authorized on a reachable SSH server"
+      - "Through the Windows agent, open an SSH session to that server using key auth and leave the key path empty (default)"
+      - "Repeat with `auth_method = agent` after starting the OpenSSH agent service (`Start-Service ssh-agent`) and adding the key"
+    expected:
+      - "Default key auth resolves the key under `%USERPROFILE%\\.ssh` and authenticates"
+      - "Agent auth connects via the `\\\\.\\pipe\\openssh-ssh-agent` named pipe and authenticates"
+      - "The remote shell is interactive and the SSH session closes cleanly"
+    verification: manual
+
+  - id: MT-AGENT-28
+    name: "Docker backend via named pipe from a Windows-hosted agent"
+    pr: 768
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "On the Windows agent host, ensure Docker Desktop (or Podman machine) is running"
+      - "Through the Windows agent, open a Docker session against a small image (e.g. `alpine`) with runtime left on `Auto`"
+      - "Run a command in the container and open the in-container file browser"
+    expected:
+      - "The backend connects to the local engine via the Windows named pipe without a TCP port"
+      - "The container shell is interactive and command output appears"
+      - "In-container file browsing lists directories; the container is removed on disconnect (when Remove on Exit is set)"
     verification: manual
