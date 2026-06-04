@@ -12,6 +12,18 @@
   position: absolute;
   inset: 0;
   background-color: var(--terminal-bg);
+  /* Width of the reserved vertical-scrollbar gutter used in horizontal-scroll
+     mode. Single source of truth: the scroll viewport is inset by this amount
+     and the gutter occupies it, so the scrollbar never overlaps text. */
+  --vscroll-gutter: 12px;
+}
+
+/* xterm is opened into this inner viewport (not the container element directly).
+   Normally it fills the container. In horizontal-scroll mode it becomes the
+   horizontal scroll container and is inset on the right to reserve the gutter. */
+.terminal-scroll-viewport {
+  position: absolute;
+  inset: 0;
 }
 
 .terminal-container--hidden {
@@ -84,16 +96,58 @@
   display: block;
 }
 
-/* Horizontal scrolling: the outer wrapper scrolls, .xterm is made wider via JS.
+/* Horizontal scrolling: the scroll viewport scrolls, .xterm is made wider via JS.
    Use 'scroll' (not 'auto') so the scrollbar is always present and never
-   toggles, which would change the content height and create a resize loop. */
-.terminal-horizontal-scroll {
+   toggles, which would change the content height and create a resize loop.
+   Inset the right edge by the gutter width so the reserved vertical scrollbar
+   never overlaps content (content stays fully reachable by scrolling). */
+.terminal-scroll-viewport.terminal-horizontal-scroll {
+  right: var(--vscroll-gutter);
   overflow-x: scroll;
   overflow-y: hidden;
 }
 
 .terminal-horizontal-scroll .xterm-screen {
   overflow: hidden;
+}
+
+/* Hide xterm's own overlay vertical scrollbar in horizontal-scroll mode — it
+   lives inside the widened, horizontally-scrolling content and so drifts to the
+   content's right edge. Our reserved-gutter scrollbar replaces it here. */
+.terminal-horizontal-scroll .xterm-scrollable-element > .scrollbar {
+  display: none;
+}
+
+/* Reserved gutter holding the always-visible vertical scrollbar. Hidden unless
+   horizontal-scroll mode is active. Painted with the terminal background so it
+   reads as reserved space rather than a floating bar. */
+.terminal-vscroll-gutter {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--vscroll-gutter);
+  display: none;
+  background-color: var(--terminal-bg);
+  z-index: 5;
+}
+
+.terminal-vscroll-gutter--active {
+  display: block;
+}
+
+.terminal-vscroll-thumb {
+  position: absolute;
+  top: 0;
+  right: 2px;
+  width: 8px;
+  border-radius: 4px;
+  background-color: var(--scrollbar-thumb);
+  cursor: default;
+}
+
+.terminal-vscroll-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
 }
 
 /* xterm.js measures cell width with `font-kerning: none` and assumes a
