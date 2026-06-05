@@ -7,7 +7,13 @@ import {
   cancelChord,
   isShellReservedKey,
   isEventFromTerminal,
+  getActionScope,
 } from "@/services/keybindings";
+import {
+  activeContextFromTab,
+  isEventFromTextInput,
+  isScopeCompatible,
+} from "@/utils/activeContext";
 
 /**
  * Global keyboard shortcuts for the application.
@@ -62,6 +68,19 @@ export function useKeyboardShortcuts() {
       }
 
       const allLeaves = getAllLeaves(rootPanel);
+
+      // Context-aware routing: when an editor or input surface owns this combo,
+      // step aside (no preventDefault) so the focused widget handles it. The
+      // setting lets users restore the old global-first behavior.
+      const delegationEnabled = useAppStore.getState().settings.editorShortcutDelegation !== false;
+      if (delegationEnabled) {
+        const ctxPanel = allLeaves.find((p) => p.id === activePanelId);
+        const ctxTab = ctxPanel?.tabs.find((t) => t.id === ctxPanel.activeTabId);
+        const ctx = activeContextFromTab(ctxTab);
+        if (!isScopeCompatible(getActionScope(action), ctx, isEventFromTextInput(e))) {
+          return;
+        }
+      }
 
       switch (action) {
         case "toggle-sidebar":

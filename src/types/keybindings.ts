@@ -10,6 +10,18 @@ export interface KeyCombo {
 /** Categories for grouping shortcuts in the overlay and settings. */
 export type ShortcutCategory = "general" | "clipboard" | "terminal" | "navigation" | "tab-groups";
 
+/**
+ * Where an action is allowed to fire, relative to the active tab's content.
+ *
+ * - `global` — fires regardless of which tab is active (new terminal, split,
+ *   zoom, switch tab, settings, sidebar, …). This is the default when omitted.
+ * - `terminal` — fires only when the active tab is a terminal (find/clear).
+ * - `editor-delegated` — when an editor or input surface is focused the global
+ *   handler steps aside so the focused widget receives the key (copy, paste,
+ *   select-all, …); it may still fire in non-editor contexts.
+ */
+export type ShortcutScope = "global" | "terminal" | "editor-delegated";
+
 /** A default keybinding definition with platform-specific defaults. */
 export interface KeyBinding {
   /** Unique action identifier (e.g., "toggle-sidebar"). */
@@ -24,6 +36,11 @@ export interface KeyBinding {
   winLinuxDefault: KeyCombo | KeyCombo[];
   /** Whether the user can rebind this shortcut. */
   configurable: boolean;
+  /**
+   * Where this action is allowed to fire, relative to the active tab.
+   * Defaults to `"global"` when omitted.
+   */
+  scope?: ShortcutScope;
 }
 
 /** A user override for a keybinding. */

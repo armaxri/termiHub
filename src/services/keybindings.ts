@@ -3,6 +3,7 @@ import {
   KeyBinding,
   KeybindingOverride,
   KeybindingOverrideEntry,
+  ShortcutScope,
 } from "@/types/keybindings";
 import { isMac } from "@/utils/platform";
 
@@ -89,6 +90,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     macDefault: { key: "K", meta: true, shift: true },
     winLinuxDefault: { key: "K", ctrl: true, shift: true },
     configurable: true,
+    scope: "terminal",
   },
   {
     action: "find-in-terminal",
@@ -97,6 +99,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     macDefault: { key: "f", meta: true },
     winLinuxDefault: { key: "F", ctrl: true, shift: true },
     configurable: true,
+    scope: "terminal",
   },
 
   // Clipboard
@@ -107,6 +110,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     macDefault: { key: "c", meta: true },
     winLinuxDefault: { key: "C", ctrl: true, shift: true },
     configurable: true,
+    scope: "editor-delegated",
   },
   {
     action: "paste",
@@ -115,6 +119,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     macDefault: { key: "v", meta: true },
     winLinuxDefault: { key: "V", ctrl: true, shift: true },
     configurable: true,
+    scope: "editor-delegated",
   },
   {
     action: "select-all",
@@ -123,6 +128,7 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     macDefault: { key: "a", meta: true },
     winLinuxDefault: { key: "A", ctrl: true, shift: true },
     configurable: true,
+    scope: "editor-delegated",
   },
 
   // Navigation / Split
@@ -443,6 +449,15 @@ function combosEqual(a: KeyCombo, b: KeyCombo): boolean {
 /** Get all default bindings (for display in overlay/settings). */
 export function getDefaultBindings(): KeyBinding[] {
   return DEFAULT_BINDINGS;
+}
+
+/**
+ * Get the scope of an action — where it is allowed to fire relative to the
+ * active tab. Unknown or unannotated actions default to `"global"` so existing
+ * behavior is preserved.
+ */
+export function getActionScope(action: string): ShortcutScope {
+  return DEFAULT_BINDINGS.find((b) => b.action === action)?.scope ?? "global";
 }
 
 // --- Chord state machine ---
