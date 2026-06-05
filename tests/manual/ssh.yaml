@@ -247,3 +247,39 @@ tests:
       - "Clicking 'Retry' retries the connection and shows the spinner again"
       - "Clicking 'Cancel' closes the tab entirely"
     verification: manual
+
+  # --- Configurable line endings (feature/configurable-line-endings) ---
+
+  - id: MT-SSH-38
+    name: "Pasting multi-line Windows text into SSH does not insert blank lines"
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Ensure Settings → Terminal → Line Ending is at its default (LF)"
+      - "Copy several lines of text that use Windows CRLF endings (e.g. from a Windows editor or any multi-line clipboard content)"
+      - "Open an SSH tab to a Linux host and run: cat > /tmp/paste-test.txt"
+      - "Paste the copied lines, press Enter, then Ctrl+D"
+      - "Run: cat -A /tmp/paste-test.txt"
+    expected:
+      - "Each pasted line appears on its own row with NO blank line between rows"
+      - "cat -A shows a single '$' at the end of each line (no '^M$' and no empty '$' lines)"
+    verification: manual
+
+  - id: MT-SSH-39
+    name: "Line-ending setting changes what Enter sends and is overridable per connection"
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - docker: true
+    instructions:
+      - "Set Settings → Terminal → Line Ending to CRLF and open a new SSH tab — type a command and press Enter"
+      - "Edit a saved SSH connection → Terminal → Line Ending and pick 'LF (\\n)' to override the global default"
+      - "Open that connection and confirm normal line submission"
+      - "Set the per-connection value back to 'Use global default'"
+    expected:
+      - "With each global setting, pressing Enter still submits commands normally (no doubled or missing newlines)"
+      - "The per-connection override takes precedence over the global default while it is set"
+      - "Selecting 'Use global default' makes the connection follow the global Line Ending again"
+    verification: manual
