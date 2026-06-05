@@ -103,6 +103,8 @@ export function HttpMonitorPanel() {
   );
 
   const latencyPoints = history.map((r) => r.latencyMs ?? null);
+  // Chart x axis uses the active monitor's real check interval (not the form field).
+  const activeIntervalMs = monitors.find((m) => m.config.id === activeMonitorId)?.config.intervalMs;
   const successCount = history.filter((r) => r.ok).length;
   const lossPercent =
     history.length > 0 ? ((history.length - successCount) / history.length) * 100 : 0;
@@ -205,7 +207,7 @@ export function HttpMonitorPanel() {
         <>
           <div className="network-panel__chart-section">
             <span className="network-panel__chart-title">Response Time</span>
-            <LatencyChart points={latencyPoints} />
+            <LatencyChart points={latencyPoints} intervalMs={activeIntervalMs} />
           </div>
           <div className="network-panel__stats">
             <span>

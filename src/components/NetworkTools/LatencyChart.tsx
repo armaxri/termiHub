@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
 import { buildLatencyChartData } from "./latencyChartData";
@@ -15,9 +15,8 @@ interface LatencyChartProps {
 const CHART_HEIGHT = 96;
 
 /** Resolve a CSS custom property to a concrete colour (canvas can't read CSS vars). */
-function cssVar(el: HTMLElement, name: string, fallback: string): string {
-  const value = getComputedStyle(el).getPropertyValue(name).trim();
-  return value || fallback;
+function cssVar(styles: CSSStyleDeclaration, name: string, fallback: string): string {
+  return styles.getPropertyValue(name).trim() || fallback;
 }
 
 /**
@@ -61,20 +60,26 @@ export function LatencyChart({ points, intervalMs, height = CHART_HEIGHT }: Late
   // Latest drops, read by the plugin closure without recreating the chart.
   const dropsRef = useRef<number[]>([]);
 
-  const chart = buildLatencyChartData(points, intervalMs);
-  dropsRef.current = chart.drops;
+  const chart = useMemo(() => buildLatencyChartData(points, intervalMs), [points, intervalMs]);
 
   // Create the uPlot instance once, wired to the container width.
   useLayoutEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
-    const accent = cssVar(container, "--accent-color", "#3794ff");
-    const axisText = cssVar(container, "--text-secondary", "#969696");
-    const grid = cssVar(container, "--border-secondary", "#3c3c3c");
-    const dropColor = cssVar(container, "--color-error", "#f44747");
+    const styles = getComputedStyle(container);
+    const accent = cssVar(styles, "--accent-color", "#3794ff");
+    const axisText = cssVar(styles, "--text-secondary", "#969696");
+    const grid = cssVar(styles, "--border-secondary", "#3c3c3c");
+    const dropColor = cssVar(styles, "--color-error", "#f44747");
 
     const timeAxis = intervalMs != null;
+    const axisBase = {
+      stroke: axisText,
+      grid: { stroke: grid, width: 1 },
+      ticks: { stroke: grid, width: 1 },
+      font: "10px var(--font-mono, monospace)",
+    };
     const opts: uPlot.Options = {
       width: container.clientWidth || 300,
       height,
@@ -84,18 +89,12 @@ export function LatencyChart({ points, intervalMs, height = CHART_HEIGHT }: Late
       scales: { x: { time: false }, y: { range: [chart.yMin, chart.yMax] } },
       axes: [
         {
-          stroke: axisText,
-          grid: { stroke: grid, width: 1 },
-          ticks: { stroke: grid, width: 1 },
-          font: "10px var(--font-mono, monospace)",
+          ...axisBase,
           size: 24,
           values: (_u, splits) => splits.map((v) => (timeAxis ? `${v}s` : `${v}`)),
         },
         {
-          stroke: axisText,
-          grid: { stroke: grid, width: 1 },
-          ticks: { stroke: grid, width: 1 },
-          font: "10px var(--font-mono, monospace)",
+          ...axisBase,
           size: 38,
           values: (_u, splits) => splits.map((v) => `${v}ms`),
         },
@@ -136,9 +135,11 @@ export function LatencyChart({ points, intervalMs, height = CHART_HEIGHT }: Late
   useEffect(() => {
     const plot = plotRef.current;
     if (!plot) return;
+    // Refresh drop positions before setData triggers the plugin's redraw.
+    dropsRef.current = chart.drops;
     plot.setScale("y", { min: chart.yMin, max: chart.yMax });
     plot.setData(chart.data);
-  }, [chart.data, chart.yMin, chart.yMax]);
+  }, [chart]);
 
   return <div ref={containerRef} className="latency-chart" />;
 }
