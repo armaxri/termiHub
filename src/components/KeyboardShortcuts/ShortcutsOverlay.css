@@ -141,6 +141,14 @@
   width: 40%;
 }
 
+.shortcuts-overlay__scope {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  opacity: 0.8;
+}
+
 .shortcuts-overlay__binding {
   width: 30%;
   font-family: monospace;

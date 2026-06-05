@@ -88,6 +88,27 @@ describe("ShortcutsOverlay", () => {
     expect(texts).toContain("Terminal");
   });
 
+  it("shows a scope hint for each action's row", () => {
+    act(() => {
+      root.render(<ShortcutsOverlay open={true} onOpenChange={vi.fn()} />);
+    });
+    const hints = Array.from(document.querySelectorAll(".shortcuts-overlay__scope")).map(
+      (el) => el.textContent
+    );
+    // A global action, the terminal-scoped find, and an editor-delegated clipboard action.
+    expect(hints).toContain("All tabs");
+    expect(hints).toContain("Terminal tabs");
+    expect(hints).toContain("Yields to editors & inputs");
+  });
+
+  it("labels Find in Terminal as a terminal-scoped action", () => {
+    act(() => {
+      root.render(<ShortcutsOverlay open={true} onOpenChange={vi.fn()} />);
+    });
+    const row = document.querySelector('[data-testid="shortcut-row-find-in-terminal"]');
+    expect(row?.querySelector(".shortcuts-overlay__scope")?.textContent).toBe("Terminal tabs");
+  });
+
   it("calls onOpenChange when close button is clicked", () => {
     const onOpenChange = vi.fn();
     act(() => {
