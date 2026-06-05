@@ -82,6 +82,29 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
           <span className="settings-form__hint">Whether the terminal cursor blinks.</span>
         </div>
       )}
+      {show("defaultLineEnding") && (
+        <label className="settings-form__field">
+          <span className="settings-form__label">Line Ending (Enter &amp; Paste)</span>
+          <select
+            value={settings.defaultLineEnding ?? "lf"}
+            onChange={(e) =>
+              onChange({
+                ...settings,
+                defaultLineEnding: e.target.value as "cr" | "lf" | "crlf",
+              })
+            }
+          >
+            <option value="lf">LF (\n) — Unix</option>
+            <option value="cr">CR (\r) — classic terminal</option>
+            <option value="crlf">CRLF (\r\n) — Windows</option>
+          </select>
+          <span className="settings-form__hint">
+            Sequence sent when pressing Enter and used to normalize line endings in pasted text.
+            Prevents Windows CRLF from inserting blank lines on Unix shells and serial devices. Can
+            be overridden per connection.
+          </span>
+        </label>
+      )}
       {show("rightClickBehavior") && (
         <label className="settings-form__field">
           <span className="settings-form__label">Right-Click Behavior</span>
