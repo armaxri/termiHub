@@ -28,6 +28,8 @@ interface TerminalRegistryContextType {
   saveTerminalToFile: (tabId: string) => Promise<void>;
   /** Copy terminal buffer content to the clipboard. */
   copyTerminalToClipboard: (tabId: string) => Promise<void>;
+  /** Open the terminal buffer content in a new unsaved (scratch) editor tab. */
+  openTerminalInEditor: (tabId: string, tabTitle: string) => void;
   /** Get the current text selection in a terminal, or undefined if none. */
   getTerminalSelection: (tabId: string) => string | undefined;
   /** Clear the current text selection in a terminal. */
@@ -188,6 +190,22 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     [getTerminalContent]
   );
 
+  const openTerminalInEditor = useCallback(
+    (tabId: string, tabTitle: string) => {
+      // Capture logical lines (rejoin hard wraps), matching "Save to File".
+      const content = getTerminalContent(tabId, true);
+      if (!content) return;
+
+      const base = (tabTitle || "terminal")
+        .replace(/[^a-zA-Z0-9._-]+/g, "-")
+        .replace(/^-+|-+$/g, "");
+      const fileName = `${base || "terminal"}.txt`;
+      const title = `${tabTitle || "Terminal"} (output)`;
+      useAppStore.getState().openScratchEditorTab(title, fileName, content);
+    },
+    [getTerminalContent]
+  );
+
   const getTerminalSelection = useCallback((tabId: string): string | undefined => {
     const xterm = xtermRegistryRef.current.get(tabId);
     if (!xterm || !xterm.hasSelection()) return undefined;
@@ -281,6 +299,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       clearTerminal,
       saveTerminalToFile,
       copyTerminalToClipboard,
+      openTerminalInEditor,
       getTerminalSelection,
       clearTerminalSelection,
       copySelectionToClipboard,
@@ -302,6 +321,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       clearTerminal,
       saveTerminalToFile,
       copyTerminalToClipboard,
+      openTerminalInEditor,
       getTerminalSelection,
       clearTerminalSelection,
       copySelectionToClipboard,

@@ -22,6 +22,11 @@ export function formatRelativeTime(dateString: string): string {
   return date.toLocaleDateString();
 }
 
+/** Extract the final path segment (file name) from a POSIX or Windows path. */
+export function getBasename(path: string): string {
+  return path.split(/[/\\]/).pop() ?? path;
+}
+
 /** Truncate string with ellipsis */
 export function truncate(str: string, maxLength: number): string {
   if (str.length <= maxLength) return str;
