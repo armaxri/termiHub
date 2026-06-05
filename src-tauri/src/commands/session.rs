@@ -13,6 +13,7 @@ use termihub_core::connection::ConnectionTypeInfo;
 use termihub_core::files::FileEntry;
 
 use crate::connection::manager::ConnectionManager;
+use crate::session::line_ending::LineEnding;
 use crate::session::manager::{PersistentSessionSummary, SessionInfo, SessionManager};
 use crate::utils::errors::TerminalError;
 use crate::utils::shell_detect;
@@ -51,6 +52,22 @@ pub async fn send_input(
 ) -> Result<(), TerminalError> {
     debug!(session_id, "Sending input");
     manager.send_input(&session_id, data.as_bytes()).await
+}
+
+/// Set the line ending applied to a session's interactive input (Enter / paste).
+///
+/// `line_ending` is `"cr"`, `"lf"`, or `"crlf"`; unknown values fall back to LF.
+#[tauri::command]
+pub async fn set_session_line_ending(
+    session_id: String,
+    line_ending: String,
+    manager: State<'_, SessionManager>,
+) -> Result<(), TerminalError> {
+    debug!(session_id, line_ending, "Setting session line ending");
+    manager
+        .set_session_line_ending(&session_id, LineEnding::from_opt_str(Some(&line_ending)))
+        .await;
+    Ok(())
 }
 
 /// Resize a session's terminal.
