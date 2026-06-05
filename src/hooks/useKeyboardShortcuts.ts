@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { useAppStore } from "@/store/appStore";
+import { useAppStore, getActiveTab } from "@/store/appStore";
 import { getAllLeaves, findAdjacentLeaf, FocusDirection } from "@/utils/panelTree";
 import {
   processKeyEvent,
@@ -71,13 +71,13 @@ export function useKeyboardShortcuts() {
 
       // Context-aware routing: when an editor or input surface owns this combo,
       // step aside (no preventDefault) so the focused widget handles it. The
-      // setting lets users restore the old global-first behavior.
+      // setting lets users restore the old global-first behavior. Global-scoped
+      // actions short-circuit before any context/DOM lookup since they always fire.
+      const scope = getActionScope(action);
       const delegationEnabled = useAppStore.getState().settings.editorShortcutDelegation !== false;
-      if (delegationEnabled) {
-        const ctxPanel = allLeaves.find((p) => p.id === activePanelId);
-        const ctxTab = ctxPanel?.tabs.find((t) => t.id === ctxPanel.activeTabId);
-        const ctx = activeContextFromTab(ctxTab);
-        if (!isScopeCompatible(getActionScope(action), ctx, isEventFromTextInput(e))) {
+      if (delegationEnabled && scope !== "global") {
+        const ctx = activeContextFromTab(getActiveTab(useAppStore.getState()) ?? undefined);
+        if (!isScopeCompatible(scope, ctx, isEventFromTextInput(e))) {
           return;
         }
       }

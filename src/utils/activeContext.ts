@@ -8,14 +8,22 @@ import { ShortcutScope } from "@/types/keybindings";
  */
 export type ActiveContext = "terminal" | "editor" | "form" | "other";
 
-/** Content types that host one or more text inputs the user may be editing. */
-const FORM_TYPES = new Set<TabContentType>([
-  "connection-editor",
-  "tunnel-editor",
-  "workspace-editor",
-  "settings",
-  "network-diagnostic",
-]);
+/**
+ * Maps every tab content type to its active context. Exhaustive over
+ * `TabContentType` so adding a new content type is a compile error here until
+ * it is bucketed, preventing silent drift from the {@link TabContentType} union.
+ */
+const CONTEXT_BY_CONTENT_TYPE: Record<TabContentType, ActiveContext> = {
+  terminal: "terminal",
+  editor: "editor",
+  "connection-editor": "form",
+  "tunnel-editor": "form",
+  "workspace-editor": "form",
+  settings: "form",
+  "network-diagnostic": "form",
+  "log-viewer": "other",
+  "agent-error": "other",
+};
 
 /**
  * Derive the active context from the active tab. Read-only tabs and the absence
@@ -23,10 +31,7 @@ const FORM_TYPES = new Set<TabContentType>([
  */
 export function activeContextFromTab(tab?: TerminalTab): ActiveContext {
   if (!tab) return "other";
-  if (tab.contentType === "terminal") return "terminal";
-  if (tab.contentType === "editor") return "editor";
-  if (FORM_TYPES.has(tab.contentType)) return "form";
-  return "other";
+  return CONTEXT_BY_CONTENT_TYPE[tab.contentType] ?? "other";
 }
 
 /**
