@@ -709,6 +709,48 @@ describe("appStore — connections, folders, and special tabs", () => {
     });
   });
 
+  describe("openScratchEditorTab", () => {
+    it("creates an unsaved scratch editor tab seeded with the given content", () => {
+      useAppStore
+        .getState()
+        .openScratchEditorTab("ssh: host (output)", "ssh-host-output.txt", "line1\nline2\n");
+
+      const state = useAppStore.getState();
+      const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
+      expect(leaf.tabs).toHaveLength(1);
+      const tab = leaf.tabs[0];
+      expect(tab.contentType).toBe("editor");
+      expect(tab.title).toBe("ssh: host (output)");
+      expect(tab.editorMeta?.scratch).toBe(true);
+      expect(tab.editorMeta?.scratchContent).toBe("line1\nline2\n");
+      expect(tab.editorMeta?.filePath).toBe("ssh-host-output.txt");
+      expect(tab.editorMeta?.isRemote).toBe(false);
+    });
+
+    it("activates the new scratch tab", () => {
+      useAppStore.getState().openScratchEditorTab("Output", "output.txt", "data");
+
+      const state = useAppStore.getState();
+      const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
+      expect(leaf.activeTabId).toBe(leaf.tabs[0].id);
+      expect(leaf.tabs[0].isActive).toBe(true);
+    });
+
+    it("always creates a separate tab for each capture (no dedup)", () => {
+      useAppStore.getState().openScratchEditorTab("Output", "output.txt", "first");
+      useAppStore.getState().openScratchEditorTab("Output", "output.txt", "second");
+
+      const state = useAppStore.getState();
+      const allLeaves = getAllLeaves(state.rootPanel);
+      const editorTabs = allLeaves.flatMap((l) => l.tabs.filter((t) => t.contentType === "editor"));
+      expect(editorTabs).toHaveLength(2);
+      expect(editorTabs.map((t) => t.editorMeta?.scratchContent).sort()).toEqual([
+        "first",
+        "second",
+      ]);
+    });
+  });
+
   describe("stripPassword — credential store interaction", () => {
     const mockPersist = vi.mocked(persistConnection);
 
