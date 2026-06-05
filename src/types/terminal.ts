@@ -92,6 +92,14 @@ export interface AgentErrorMeta {
   initialCommand?: string;
 }
 
+/**
+ * Line ending sent on Enter and used to normalize pasted text.
+ * - `cr`   — carriage return (`\r`), classic terminal behavior
+ * - `lf`   — line feed (`\n`), typical Unix
+ * - `crlf` — carriage return + line feed (`\r\n`), Windows-style
+ */
+export type LineEnding = "cr" | "lf" | "crlf";
+
 export interface TerminalOptions {
   horizontalScrolling?: boolean;
   color?: string;
@@ -101,6 +109,8 @@ export interface TerminalOptions {
   scrollbackBuffer?: number;
   cursorStyle?: "block" | "underline" | "bar";
   cursorBlink?: boolean;
+  /** Per-connection line-ending override. Falls back to the global default. */
+  lineEnding?: LineEnding;
 }
 
 /** An external connection file configured for a remote agent. */
