@@ -120,6 +120,22 @@ tests:
       - Results return showing the listening ports on the remote machine
       - Port list differs from the local machine's ports
 
+  - id: MT-NET-21
+    title: Ping / HTTP Monitor — readable latency chart (uPlot)
+    automated_by: null
+    pr: 790
+    steps:
+      - Open the Ping panel, enter a reachable host (e.g. a LAN device or `8.8.8.8`), set Interval to `1000`, and click Start
+      - Let several replies stream in, then hover the latency chart
+      - Stop, then start an HTTP Monitor for `https://example.com` and observe its Response Time chart
+    expected:
+      - The latency line has a uniform (non-distorted) stroke width regardless of panel width — no thick slanted smear
+      - The y axis shows millisecond gridlines and `…ms` tick labels, baselined at 0
+      - The Ping x axis is labelled in elapsed seconds (e.g. `0s`, `5s`, `10s`)
+      - Hovering shows a read-out of the exact latency at the hovered sample
+      - A dropped/timed-out sample is marked with a dashed vertical drop marker and a gap in the line
+      - The HTTP Monitor Response Time chart renders with the same readable axes and hover read-out
+
   - id: MT-NET-20
     title: Port Scanner — CIDR / multi-target scan
     automated_by: null
