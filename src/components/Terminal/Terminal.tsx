@@ -9,6 +9,7 @@ import { ConnectionConfig } from "@/types/terminal";
 import {
   createTerminal,
   sendInput,
+  setSessionLineEnding,
   resizeTerminal,
   closeTerminal,
   detachPersistentTab,
@@ -25,7 +26,7 @@ import {
   isShellReservedKey,
 } from "@/services/keybindings";
 import { frontendLog } from "@/utils/frontendLog";
-import { normalizeLineEndings, resolveLineEnding } from "@/utils/lineEndings";
+import { resolveLineEnding } from "@/utils/lineEndings";
 import { createTerminalScrollbar, type TerminalScrollbarController } from "./terminalScrollbar";
 
 const HORIZONTAL_SCROLL_COLS = 500;
@@ -505,6 +506,19 @@ export function Terminal({
         sessionIdRef.current = sessionId;
         registerSession(tabId, sessionId);
 
+        // Push the resolved line ending to the backend so it normalizes input
+        // (Enter / paste) for this session. This is the single point every
+        // establishment path (fresh create, reattach, reconnect) passes through;
+        // later setting changes are synced by the effect below.
+        {
+          const s = useAppStore.getState();
+          const ending = resolveLineEnding(
+            s.tabTerminalOptions[tabId]?.lineEnding,
+            s.settings.defaultLineEnding
+          );
+          setSessionLineEnding(sessionId, ending).catch(() => {});
+        }
+
         // Resize-deduplication: track the last (cols, rows) sent to the PTY
         // to avoid spurious SIGWINCH signals.  Multiple rapid fit() calls
         // (slot adoption sync+RAF, ResizeObserver, visibility effect) all
@@ -588,14 +602,9 @@ export function Terminal({
         const onDataDisposable = xterm.onData((data) => {
           lastInputTimeRef.current = Date.now();
           if (sessionIdRef.current) {
-            // Translate the Enter keystroke (xterm emits a bare CR) to the
-            // configured line ending. No-op for data without line breaks.
-            const s = useAppStore.getState();
-            const ending = resolveLineEnding(
-              s.tabTerminalOptions[tabId]?.lineEnding,
-              s.settings.defaultLineEnding
-            );
-            sendInput(sessionIdRef.current, normalizeLineEndings(data, ending));
+            // Line-ending translation (Enter / paste) happens in the backend
+            // send_input choke point using the session's configured ending.
+            sendInput(sessionIdRef.current, data);
           }
         });
 
@@ -637,12 +646,7 @@ export function Terminal({
         // Send initial command after session connects (used by workspace launch)
         if (initialCommand && !initialSessionIdRef.current) {
           setTimeout(() => {
-            const s = useAppStore.getState();
-            const ending = resolveLineEnding(
-              s.tabTerminalOptions[tabId]?.lineEnding,
-              s.settings.defaultLineEnding
-            );
-            sendInput(sessionId, normalizeLineEndings(initialCommand + "\n", ending));
+            sendInput(sessionId, initialCommand + "\n");
           }, 200);
         }
 
@@ -1106,6 +1110,16 @@ export function Terminal({
       }
     }
   }, [theme, fontFamily, fontSize, cursorBlink, cursorStyle, scrollbackBuffer, tabTermOpts, tabId]);
+
+  // Keep the backend's per-session line ending in sync when the global default
+  // or this connection's override changes while the terminal is open.
+  const defaultLineEnding = useAppStore((s) => s.settings.defaultLineEnding);
+  useEffect(() => {
+    const sessionId = sessionIdRef.current;
+    if (!sessionId) return;
+    const ending = resolveLineEnding(tabTermOpts?.lineEnding, defaultLineEnding);
+    setSessionLineEnding(sessionId, ending).catch(() => {});
+  }, [tabTermOpts, defaultLineEnding]);
 
   // Terminal renders nothing — TerminalSlot handles display
   return null;

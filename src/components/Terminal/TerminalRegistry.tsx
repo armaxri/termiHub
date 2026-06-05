@@ -8,7 +8,6 @@ import { readText as readClipboard } from "@tauri-apps/plugin-clipboard-manager"
 import { sendInput } from "@/services/api";
 import { SessionId } from "@/types/terminal";
 import { useAppStore } from "@/store/appStore";
-import { normalizeLineEndings, resolveLineEnding } from "@/utils/lineEndings";
 import { frontendLog } from "@/utils/frontendLog";
 import { bufferToLogicalLines } from "@/utils/terminalBuffer";
 
@@ -246,19 +245,13 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
 
     const doPaste = async () => {
       const xterm = xtermRegistryRef.current.get(tabId);
-
-      // Normalize line endings so Windows CRLF is not interpreted as two line
-      // breaks on Unix shells / serial devices (the double-line paste bug).
-      const state = useAppStore.getState();
-      const ending = resolveLineEnding(
-        state.tabTerminalOptions[tabId]?.lineEnding,
-        state.settings.defaultLineEnding
-      );
-      let payload = normalizeLineEndings(text, ending);
+      // Line endings are normalized in the backend send_input choke point using
+      // the session's configured ending, so paste only handles bracketing here.
+      let payload = text;
 
       // Wrap in bracketed paste escape sequences if the terminal supports it
       if (xterm && xterm.modes.bracketedPasteMode) {
-        payload = `\x1b[200~${payload}\x1b[201~`;
+        payload = `\x1b[200~${text}\x1b[201~`;
       }
 
       await sendInput(sessionId, payload);
