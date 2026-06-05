@@ -69,6 +69,14 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
     });
   }, [settings, passthroughEnabled, updateSettings]);
 
+  const editorDelegationEnabled = settings.editorShortcutDelegation !== false;
+  const handleToggleEditorDelegation = useCallback(() => {
+    updateSettings({
+      ...settings,
+      editorShortcutDelegation: !editorDelegationEnabled,
+    });
+  }, [settings, editorDelegationEnabled, updateSettings]);
+
   const handleResetOne = useCallback(
     (action: string) => {
       setOverride(action, null);
@@ -157,6 +165,25 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
           <small>
             Common shell, tmux, vim, and SSH keys (Ctrl+letter, Ctrl+\, Alt+letter) are sent to the
             terminal instead of triggering an app shortcut while a terminal pane has focus.
+          </small>
+        </span>
+      </label>
+
+      <label
+        className="keyboard-settings__passthrough"
+        data-testid="keyboard-settings-editor-delegation-label"
+      >
+        <input
+          type="checkbox"
+          checked={editorDelegationEnabled}
+          onChange={handleToggleEditorDelegation}
+          data-testid="keyboard-settings-editor-delegation"
+        />
+        <span>
+          Let editor tabs handle their own editing shortcuts
+          <small>
+            When on, shortcuts like Find (Cmd/Ctrl+F), Replace, and Select All go to the focused
+            editor or input instead of the global app while an editor tab is active.
           </small>
         </span>
       </label>

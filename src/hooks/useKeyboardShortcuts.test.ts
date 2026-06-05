@@ -8,6 +8,13 @@ vi.mock("@/services/keybindings", () => ({
   cancelChord: vi.fn(),
   isShellReservedKey: vi.fn(() => false),
   isEventFromTerminal: vi.fn(() => false),
+  getActionScope: vi.fn((action: string) => {
+    if (action === "find-in-terminal" || action === "clear-terminal") return "terminal";
+    if (action === "copy" || action === "paste" || action === "select-all") {
+      return "editor-delegated";
+    }
+    return "global";
+  }),
 }));
 
 vi.mock("@/services/storage", () => ({
@@ -434,6 +441,83 @@ describe("useKeyboardShortcuts", () => {
 
       expect(events).toHaveLength(1);
       expect(events[0].detail.tabId).toBeDefined();
+    });
+  });
+
+  describe("context-aware routing (scope gate)", () => {
+    /** Add a tab of the given content type and make it the active tab/panel. */
+    function addActiveTab(contentType: "terminal" | "editor"): void {
+      const id = useAppStore.getState().addTab("Tab", "local", undefined, undefined, contentType);
+      const panel = getAllLeaves(useAppStore.getState().rootPanel).find((p) =>
+        p.tabs.some((t) => t.id === id)
+      )!;
+      useAppStore.getState().setActivePanel(panel.id);
+      useAppStore.getState().setActiveTab(id, panel.id);
+    }
+
+    it("does NOT swallow find-in-terminal on an editor tab (regression for #787)", () => {
+      addActiveTab("editor");
+      const toggleSpy = vi.spyOn(useAppStore.getState(), "toggleTerminalSearch");
+
+      act(() => {
+        root.render(createElement(KeyboardHarness));
+      });
+      mockProcessKeyEvent.mockReturnValue("find-in-terminal");
+
+      const prevented = fireKey("f", { metaKey: true });
+
+      // The global handler must step aside so Monaco receives Cmd+F natively.
+      expect(prevented).toBe(false);
+      expect(toggleSpy).not.toHaveBeenCalled();
+    });
+
+    it("opens the terminal search bar for find-in-terminal on a terminal tab", () => {
+      addActiveTab("terminal");
+      const toggleSpy = vi.spyOn(useAppStore.getState(), "toggleTerminalSearch");
+
+      act(() => {
+        root.render(createElement(KeyboardHarness));
+      });
+      mockProcessKeyEvent.mockReturnValue("find-in-terminal");
+
+      const prevented = fireKey("f", { metaKey: true });
+
+      expect(prevented).toBe(true);
+      expect(toggleSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("still fires a global action (split-right) while an editor tab is active", () => {
+      addActiveTab("editor");
+
+      act(() => {
+        root.render(createElement(KeyboardHarness));
+      });
+      mockProcessKeyEvent.mockReturnValue("split-right");
+
+      const before = getAllLeaves(useAppStore.getState().rootPanel).length;
+      const prevented = fireKey("\\", { metaKey: true });
+      const after = getAllLeaves(useAppStore.getState().rootPanel).length;
+
+      expect(prevented).toBe(true);
+      expect(after).toBe(before + 1);
+    });
+
+    it("reverts to global-first behavior when editor delegation is disabled", () => {
+      useAppStore.setState((s) => ({
+        settings: { ...s.settings, editorShortcutDelegation: false },
+      }));
+      addActiveTab("editor");
+
+      act(() => {
+        root.render(createElement(KeyboardHarness));
+      });
+      mockProcessKeyEvent.mockReturnValue("find-in-terminal");
+
+      // With delegation off the handler claims the key (old behavior); the
+      // internal content-type guard still prevents opening a terminal search.
+      const prevented = fireKey("f", { metaKey: true });
+
+      expect(prevented).toBe(true);
     });
   });
 

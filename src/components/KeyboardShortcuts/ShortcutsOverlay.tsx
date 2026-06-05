@@ -1,10 +1,17 @@
 import { useState, useMemo } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
-import { ShortcutCategory } from "@/types/keybindings";
+import { ShortcutCategory, ShortcutScope } from "@/types/keybindings";
 import { getDefaultBindings, getEffectiveCombo, serializeBinding } from "@/services/keybindings";
 import { isMac } from "@/utils/platform";
 import "./ShortcutsOverlay.css";
+
+/** Human-readable "Active in" hint derived from an action's scope. */
+const SCOPE_HINTS: Record<ShortcutScope, string> = {
+  global: "All tabs",
+  terminal: "Terminal tabs",
+  "editor-delegated": "Yields to editors & inputs",
+};
 
 const CATEGORY_LABELS: Record<ShortcutCategory, string> = {
   general: "General",
@@ -109,7 +116,12 @@ export function ShortcutsOverlay({ open, onOpenChange }: ShortcutsOverlayProps) 
 
                       return (
                         <tr key={binding.action} data-testid={`shortcut-row-${binding.action}`}>
-                          <td className="shortcuts-overlay__action">{binding.label}</td>
+                          <td className="shortcuts-overlay__action">
+                            {binding.label}
+                            <span className="shortcuts-overlay__scope">
+                              {SCOPE_HINTS[binding.scope ?? "global"]}
+                            </span>
+                          </td>
                           <td
                             className={`shortcuts-overlay__binding ${!currentPlatformIsMac ? "shortcuts-overlay__highlight" : ""}`}
                           >
