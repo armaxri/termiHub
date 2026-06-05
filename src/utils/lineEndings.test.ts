@@ -1,18 +1,11 @@
 import { describe, it, expect } from "vitest";
 import {
   DEFAULT_LINE_ENDING,
-  lineEndingSequence,
+  LINE_ENDING_OPTIONS,
+  lineEndingLabel,
   normalizeLineEndings,
   resolveLineEnding,
 } from "./lineEndings";
-
-describe("lineEndingSequence", () => {
-  it("maps each mode to its byte sequence", () => {
-    expect(lineEndingSequence("cr")).toBe("\r");
-    expect(lineEndingSequence("lf")).toBe("\n");
-    expect(lineEndingSequence("crlf")).toBe("\r\n");
-  });
-});
 
 describe("normalizeLineEndings", () => {
   it("converts Windows CRLF to a single LF (fixes the double-line paste bug)", () => {
@@ -68,5 +61,17 @@ describe("resolveLineEnding", () => {
   it("falls back to the built-in default (LF) when nothing is configured", () => {
     expect(resolveLineEnding(undefined, undefined)).toBe("lf");
     expect(DEFAULT_LINE_ENDING).toBe("lf");
+  });
+});
+
+describe("LINE_ENDING_OPTIONS / lineEndingLabel", () => {
+  it("offers exactly the three supported endings", () => {
+    expect(LINE_ENDING_OPTIONS.map((o) => o.value)).toEqual(["lf", "cr", "crlf"]);
+  });
+
+  it("returns the matching option label for each ending", () => {
+    for (const opt of LINE_ENDING_OPTIONS) {
+      expect(lineEndingLabel(opt.value)).toBe(opt.label);
+    }
   });
 });

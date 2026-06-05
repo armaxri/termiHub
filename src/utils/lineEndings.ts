@@ -13,13 +13,20 @@ const SEQUENCES: Record<LineEnding, string> = {
   crlf: "\r\n",
 };
 
+/** Ordered options for the line-ending dropdowns (value + display label). */
+export const LINE_ENDING_OPTIONS: ReadonlyArray<{ value: LineEnding; label: string }> = [
+  { value: "lf", label: "LF (\\n) — Unix" },
+  { value: "cr", label: "CR (\\r) — classic terminal" },
+  { value: "crlf", label: "CRLF (\\r\\n) — Windows" },
+];
+
+/** Human-readable label for a line ending (used for the "use global default" hint). */
+export function lineEndingLabel(ending: LineEnding): string {
+  return LINE_ENDING_OPTIONS.find((o) => o.value === ending)?.label ?? ending;
+}
+
 /** Matches any single line break: CRLF first (so it is not split into two), then a lone CR or LF. */
 const LINE_BREAK_RE = /\r\n|\r|\n/g;
-
-/** Return the raw byte sequence sent for the given line ending mode. */
-export function lineEndingSequence(ending: LineEnding): string {
-  return SEQUENCES[ending];
-}
 
 /**
  * Normalize every line break in `text` to the chosen `ending`.
@@ -32,6 +39,8 @@ export function lineEndingSequence(ending: LineEnding): string {
  * bare `\r`).
  */
 export function normalizeLineEndings(text: string, ending: LineEnding): string {
+  // Fast path: most keystrokes are a single printable char with no line break.
+  if (!text.includes("\r") && !text.includes("\n")) return text;
   return text.replace(LINE_BREAK_RE, SEQUENCES[ending]);
 }
 

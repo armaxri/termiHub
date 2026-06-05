@@ -1,4 +1,6 @@
 import { AppSettings } from "@/types/connection";
+import { LineEnding } from "@/types/terminal";
+import { LINE_ENDING_OPTIONS } from "@/utils/lineEndings";
 
 interface TerminalSettingsProps {
   settings: AppSettings;
@@ -90,13 +92,15 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
             onChange={(e) =>
               onChange({
                 ...settings,
-                defaultLineEnding: e.target.value as "cr" | "lf" | "crlf",
+                defaultLineEnding: e.target.value as LineEnding,
               })
             }
           >
-            <option value="lf">LF (\n) — Unix</option>
-            <option value="cr">CR (\r) — classic terminal</option>
-            <option value="crlf">CRLF (\r\n) — Windows</option>
+            {LINE_ENDING_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
           </select>
           <span className="settings-form__hint">
             Sequence sent when pressing Enter and used to normalize line endings in pasted text.

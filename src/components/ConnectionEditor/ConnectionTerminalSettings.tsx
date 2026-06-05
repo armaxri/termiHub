@@ -1,5 +1,6 @@
 import { useAppStore } from "@/store/appStore";
-import { TerminalOptions } from "@/types/terminal";
+import { TerminalOptions, LineEnding } from "@/types/terminal";
+import { LINE_ENDING_OPTIONS, lineEndingLabel } from "@/utils/lineEndings";
 
 interface ConnectionTerminalSettingsProps {
   options: TerminalOptions;
@@ -17,12 +18,6 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
   const globalCursorBlink = globalSettings.cursorBlink ?? true;
   const globalHorizontalScrolling = globalSettings.defaultHorizontalScrolling ?? false;
   const globalLineEnding = globalSettings.defaultLineEnding ?? "lf";
-
-  const lineEndingLabels: Record<"cr" | "lf" | "crlf", string> = {
-    lf: "LF (\\n)",
-    cr: "CR (\\r)",
-    crlf: "CRLF (\\r\\n)",
-  };
 
   return (
     <div className="settings-panel__category">
@@ -102,14 +97,16 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
           onChange={(e) =>
             onChange({
               ...options,
-              lineEnding: (e.target.value as "cr" | "lf" | "crlf") || undefined,
+              lineEnding: (e.target.value as LineEnding) || undefined,
             })
           }
         >
-          <option value="">Use global default ({lineEndingLabels[globalLineEnding]})</option>
-          <option value="lf">LF (\n) — Unix</option>
-          <option value="cr">CR (\r) — classic terminal</option>
-          <option value="crlf">CRLF (\r\n) — Windows</option>
+          <option value="">Use global default ({lineEndingLabel(globalLineEnding)})</option>
+          {LINE_ENDING_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
         </select>
         <span className="settings-form__hint">
           Sequence sent on Enter and used to normalize pasted text for this connection.
