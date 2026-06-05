@@ -165,7 +165,7 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
       {results.length > 0 && (
         <div className="network-panel__chart-section">
           <span className="network-panel__chart-title">Latency Graph</span>
-          <LatencyChart points={latencyPoints} />
+          <LatencyChart points={latencyPoints} intervalMs={intervalMs} />
         </div>
       )}
 
