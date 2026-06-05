@@ -367,11 +367,11 @@ tests:
     verification: manual
     tags: [drag-drop, split-view]
 
-  # --- Terminal scrollbar artifact (PR #774) ---
+  # --- Terminal vertical scrollbar (PR #774, reworked in #789) ---
 
   - id: MT-UI-35
     name: "Terminal right-edge scrollbar shows only when scrollback exceeds viewport"
-    pr: 774
+    pr: 789
     platforms: [all]
     prerequisites:
       - app: true
@@ -379,11 +379,36 @@ tests:
     instructions:
       - "Inspect the right edge of every terminal pane while each shell is freshly started with only a prompt visible"
       - "Run `seq 1 200` in one of the panes so its buffer exceeds the viewport"
-      - "Scroll back to the bottom of that pane (Ctrl/Cmd+End or wheel)"
+      - "Scroll up, then back to the bottom of that pane (Ctrl/Cmd+End or wheel)"
       - "Switch focus between panes and re-check each pane's right edge"
     expected:
-      - "With nothing to scroll, no scrollbar, slider square, or grey bar floats in the right padding strip of any pane (including freshly-switched-to panes)"
-      - "Once the buffer exceeds the viewport, the slider appears flush against the container's right edge (not inset by 8 px into the dark padding strip)"
-      - "Scrolling back to the bottom fades the slider out again on idle; no stray thumb remains"
+      - "With nothing to scroll, no scrollbar thumb appears in any pane (including freshly-switched-to panes initialised while parked off-screen) — no stray slider or grey bar"
+      - "Once the buffer exceeds the viewport, the thumb appears flush against the container's right edge"
+      - "The thumb stays visible while there is scrollback (it does not fade out on idle) and tracks the scroll position; no stray thumb remains after scrolling back to the bottom"
     verification: manual
     tags: [terminal, scrollbar]
+
+  # --- Unified vertical scrollbar across modes (PR #789) ---
+
+  - id: MT-UI-36
+    name: "Vertical scrollbar is the same in normal and horizontal-scroll modes"
+    pr: 789
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open a local shell tab and run `seq 1 200` to produce scrollback; note the scrollbar appearance in normal mode"
+      - "Enable Horizontal Scrolling from the tab context menu"
+      - "Produce wide output, e.g. run: printf 'x%.0s' {1..400}; echo"
+      - "Without scrolling horizontally, observe the right edge of the pane"
+      - "Scroll all the way to the right and re-check the right edge and the rightmost column"
+      - "Drag the vertical scrollbar thumb and click on the empty track above/below it"
+      - "Resize the window/split, then disable Horizontal Scrolling again"
+    expected:
+      - "The vertical scrollbar looks and behaves identically in normal and horizontal-scroll modes (same reserved gutter on the right, same always-visible thumb)"
+      - "In horizontal-scroll mode the scrollbar is visible at all times even before scrolling horizontally, and never overlaps terminal text — including when scrolled fully right, where the rightmost column stays fully readable (not clipped)"
+      - "In horizontal-scroll mode the first character keeps the same left inset from the container edge as in normal mode, and the horizontal scrollbar along the bottom has a gap above it (it does not cover the last row)"
+      - "Dragging the thumb and clicking the track scroll the buffer; the thumb tracks the scroll position and the new pane height after a resize"
+      - "Toggling horizontal scrolling off keeps the same scrollbar with no leftover or duplicate thumb"
+    verification: manual
+    tags: [terminal, scrollbar, horizontal-scroll]

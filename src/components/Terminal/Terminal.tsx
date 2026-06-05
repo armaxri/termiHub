@@ -25,6 +25,7 @@ import {
   isShellReservedKey,
 } from "@/services/keybindings";
 import { frontendLog } from "@/utils/frontendLog";
+import { createTerminalScrollbar, type TerminalScrollbarController } from "./terminalScrollbar";
 
 const HORIZONTAL_SCROLL_COLS = 500;
 
@@ -196,6 +197,10 @@ export function Terminal({
 }: TerminalProps) {
   const retryCount = useAppStore((s) => s.terminalRetryCounters[tabId] ?? 0);
   const terminalElRef = useRef<HTMLDivElement | null>(null);
+  const scrollViewportRef = useRef<HTMLDivElement | null>(null);
+  const gutterRef = useRef<HTMLDivElement | null>(null);
+  const thumbRef = useRef<HTMLDivElement | null>(null);
+  const scrollbarRef = useRef<TerminalScrollbarController | null>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const sessionIdRef = useRef<string | null>(null);
@@ -683,7 +688,28 @@ export function Terminal({
     const el = document.createElement("div");
     el.style.position = "absolute";
     el.style.inset = "0";
+    el.style.overflow = "hidden";
     terminalElRef.current = el;
+
+    // Inner viewport that hosts xterm. In horizontal-scroll mode this becomes the
+    // horizontal scroll container, inset on the right by the gutter width (CSS), so
+    // the reserved scrollbar gutter never overlaps content. xterm opens into this
+    // element; FitAddon reads its width and so accounts for the gutter automatically.
+    const scrollViewport = document.createElement("div");
+    scrollViewport.className = "terminal-scroll-viewport";
+    el.appendChild(scrollViewport);
+    scrollViewportRef.current = scrollViewport;
+
+    // Fixed gutter on the right that holds our own vertical scrollbar thumb. Hidden
+    // unless horizontal-scroll mode is active (see the horizontal-scrolling effect).
+    const gutter = document.createElement("div");
+    gutter.className = "terminal-vscroll-gutter";
+    const thumb = document.createElement("div");
+    thumb.className = "terminal-vscroll-thumb";
+    gutter.appendChild(thumb);
+    el.appendChild(gutter);
+    gutterRef.current = gutter;
+    thumbRef.current = thumb;
 
     // Park the element so xterm.open() has a DOM parent
     parkingRef.current?.appendChild(el);
@@ -713,7 +739,13 @@ export function Terminal({
     xterm.loadAddon(searchAddon);
     registerSearchAddon(tabId, searchAddon);
 
-    xterm.open(el);
+    xterm.open(scrollViewport);
+
+    // The terminal's vertical scrollbar lives in the gutter in every mode (xterm's
+    // own overlay scrollbar is hidden via CSS), so it looks and behaves the same
+    // whether or not horizontal scrolling is active.
+    const scrollbar = createTerminalScrollbar({ xterm, gutter, thumb });
+    scrollbarRef.current = scrollbar;
 
     // Intercept application shortcuts before xterm processes them
     xterm.attachCustomKeyEventHandler((e: KeyboardEvent) => {
@@ -806,23 +838,7 @@ export function Terminal({
     const onScrollDisposable = xterm.onScroll(() => {
       const buf = xterm.buffer.active;
       userScrolledUpRef.current = buf.viewportY < buf.baseY;
-      updateScrollbackClass();
     });
-
-    // Toggle a class on the xterm element reflecting whether the buffer
-    // actually exceeds the viewport.  xterm's SmoothScrollableElement can
-    // report stale "needs scroll" state on tabs whose xterm was first
-    // measured while parked at 1×1 px — the scrollbar then shows a useless
-    // tiny slider until real content is written.  Gating the slider on this
-    // class (see Terminal.css) suppresses that artifact.
-    const updateScrollbackClass = () => {
-      const buf = xterm.buffer.active;
-      const hasScrollback = buf.length > xterm.rows;
-      el.classList.toggle("xterm--has-scrollback", hasScrollback);
-    };
-    const onCursorMoveDisposable = xterm.onCursorMove(updateScrollbackClass);
-    const onResizeDisposable = xterm.onResize(updateScrollbackClass);
-    updateScrollbackClass();
 
     // Expose xterm instance on the DOM element for E2E test access
     (el as HTMLDivElement & { _xtermInstance?: XTerm })._xtermInstance = xterm;
@@ -927,6 +943,8 @@ export function Terminal({
         if (!userScrolledUpRef.current) {
           requestAnimationFrame(() => xterm.scrollToBottom());
         }
+        // The gutter height tracks the container, so re-render the thumb.
+        scrollbar.update();
       } catch {
         // Ignore fit errors during transitions
       }
@@ -938,8 +956,6 @@ export function Terminal({
       resizeObserver.disconnect();
       el.removeEventListener("wheel", handleGapWheel);
       onScrollDisposable.dispose();
-      onCursorMoveDisposable.dispose();
-      onResizeDisposable.dispose();
       osc7Disposable.dispose();
       osc9Disposable.dispose();
       unregister(tabId);
@@ -947,9 +963,14 @@ export function Terminal({
         cleanupRef.current();
         cleanupRef.current = null;
       }
+      scrollbar.dispose();
+      scrollbarRef.current = null;
       xterm.dispose();
       el.remove();
       terminalElRef.current = null;
+      scrollViewportRef.current = null;
+      gutterRef.current = null;
+      thumbRef.current = null;
       xtermRef.current = null;
       fitAddonRef.current = null;
     };
@@ -987,17 +1008,22 @@ export function Terminal({
   useEffect(() => {
     horizontalScrollingRef.current = horizontalScrolling;
     const el = terminalElRef.current;
+    const scrollViewport = scrollViewportRef.current;
     const xterm = xtermRef.current;
     const fitAddon = fitAddonRef.current;
-    if (!el || !xterm || !fitAddon) return;
+    if (!el || !scrollViewport || !xterm || !fitAddon) return;
 
     if (horizontalScrolling) {
-      el.classList.add("terminal-horizontal-scroll");
+      // The viewport (not el) becomes the horizontal scroll container and is
+      // inset on the right (CSS) to reserve the gutter the vertical scrollbar
+      // already occupies in normal mode.
+      scrollViewport.classList.add("terminal-horizontal-scroll");
       try {
         applyHorizontalScrollResize(xterm, fitAddon, el);
       } catch {
         // Ignore resize errors
       }
+      scrollbarRef.current?.update();
 
       // Mark content dirty when new output arrives
       const writeParsedDisposable = xterm.onWriteParsed(() => {
@@ -1024,12 +1050,13 @@ export function Terminal({
         contentDirtyRef.current = false;
       };
     } else {
-      el.classList.remove("terminal-horizontal-scroll");
+      scrollViewport.classList.remove("terminal-horizontal-scroll");
       try {
         removeHorizontalScrollResize(xterm, fitAddon);
       } catch {
         // Ignore fit errors
       }
+      scrollbarRef.current?.update();
     }
   }, [horizontalScrolling, tabId]);
 

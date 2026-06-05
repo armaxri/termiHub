@@ -12,6 +12,24 @@
   position: absolute;
   inset: 0;
   background-color: var(--terminal-bg);
+  /* Width of the vertical-scrollbar gutter. Single source of truth: the gutter
+     element uses it as its width, and in horizontal-scroll mode the scroll
+     viewport is inset by the same amount so the scrollbar never overlaps text.
+     In normal mode the gutter overlays the strip FitAddon already reserves. */
+  --vscroll-gutter: 12px;
+  /* Height of the horizontal scrollbar shown in horizontal-scroll mode, and the
+     gap between the content edges and the container in that mode (matches the
+     8 px text inset used in normal mode). */
+  --hscroll-bar: 10px;
+  --terminal-edge-gap: 8px;
+}
+
+/* xterm is opened into this inner viewport (not the container element directly).
+   Normally it fills the container. In horizontal-scroll mode it becomes the
+   horizontal scroll container and is inset on the right to reserve the gutter. */
+.terminal-scroll-viewport {
+  position: absolute;
+  inset: 0;
 }
 
 .terminal-container--hidden {
@@ -31,11 +49,13 @@
 }
 
 /* In horizontal-scroll mode we set xterm width imperatively to the content
-   width, which would clip with border-box + padding. Disable the side
-   padding for that mode; the horizontal scrollbar already gives the user a
-   clear handle on the edges. */
+   width, which would clip with border-box + side padding — so the left/right
+   gaps come from the scroll viewport's inset instead (see below), not from
+   .xterm padding. The bottom padding is safe and reserves room for the
+   horizontal scrollbar plus a small gap, so the bar never covers the last row.
+   FitAddon reads this padding-bottom and reduces the row count to match. */
 .terminal-horizontal-scroll .xterm {
-  padding: 0;
+  padding: 0 0 calc(var(--hscroll-bar) + 4px) 0;
 }
 
 .terminal-container .xterm-viewport {
@@ -51,49 +71,82 @@
   display: none;
 }
 
-/* xterm with allowProposedApi also overlays a VS Code-derived scrollbar
-   inside .xterm-scrollable-element. Two problems with the default:
-     1. The .xterm padding (0 8px) insets the scrollable element by 8 px
-        from the container's right edge, so the scrollbar floats in the
-        dark padding area instead of sitting flush against the edge.
-     2. The slider thumb is rendered at a default size even when xterm
-        considers the scrollbar invisible, producing a stray grey square.
-   Fix (1) by shifting the scrollbar 8 px right to undo the padding offset,
-   and (2) by hiding the slider unless the parent scrollbar is actively in
-   the "visible" state — xterm only sets that state when the buffer is
-   actually scrollable (_isNeeded && _shouldBeVisible). */
+/* xterm with allowProposedApi also overlays a VS Code-derived scrollbar inside
+   .xterm-scrollable-element. We replace it everywhere with our own gutter
+   scrollbar (see .terminal-vscroll-* below and terminalScrollbar.ts) so the
+   scrollbar looks and behaves the same in normal and horizontal-scroll modes.
+   In horizontal mode xterm's overlay would also drift to the widened content's
+   right edge. Hide it in all modes. */
 .terminal-container .xterm-scrollable-element > .scrollbar {
-  transform: translateX(8px);
-}
-
-.terminal-container .xterm-scrollable-element > .scrollbar > .slider {
   display: none;
 }
 
-/* The .xterm--has-scrollback class is toggled from Terminal.tsx based on
-   the real buffer length vs viewport rows. xterm's own "visible" state
-   alone isn't reliable: a tab whose xterm was first measured while parked
-   at 1×1 px keeps a stale "needs scroll" reading and shows a useless tiny
-   slider. Requiring both conditions ensures the thumb only appears when
-   there's genuinely scrollable content. */
-.terminal-container
-  .xterm--has-scrollback
-  .xterm-scrollable-element
-  > .scrollbar.visible
-  > .slider {
-  display: block;
-}
-
-/* Horizontal scrolling: the outer wrapper scrolls, .xterm is made wider via JS.
-   Use 'scroll' (not 'auto') so the scrollbar is always present and never
-   toggles, which would change the content height and create a resize loop. */
-.terminal-horizontal-scroll {
-  overflow-x: scroll;
+/* Horizontal scrolling: the scroll viewport scrolls, .xterm is made wider via JS.
+   Use 'auto' so the bar disappears when the window is wide enough that there is
+   nothing left to scroll. This is safe (no resize loop) because the bottom
+   strip for the bar is reserved unconditionally via .xterm padding-bottom, so
+   showing/hiding the bar never changes the row count. Inset the right edge by
+   the gutter width so the reserved vertical scrollbar never overlaps content,
+   and inset the left edge by the edge gap so the first character keeps the same
+   distance from the container as in normal mode. */
+.terminal-scroll-viewport.terminal-horizontal-scroll {
+  left: var(--terminal-edge-gap);
+  right: var(--vscroll-gutter);
+  overflow-x: auto;
   overflow-y: hidden;
 }
 
 .terminal-horizontal-scroll .xterm-screen {
   overflow: hidden;
+}
+
+/* Theme the horizontal scrollbar to match the vertical gutter thumb, and pin its
+   height to --hscroll-bar so the bottom reserve above matches exactly. Defining
+   ::-webkit-scrollbar makes it a consistent, always-visible bar (not a
+   fading overlay), matching the vertical scrollbar. */
+.terminal-scroll-viewport.terminal-horizontal-scroll::-webkit-scrollbar {
+  height: var(--hscroll-bar);
+}
+
+.terminal-scroll-viewport.terminal-horizontal-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.terminal-scroll-viewport.terminal-horizontal-scroll::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
+  border-radius: 5px;
+}
+
+.terminal-scroll-viewport.terminal-horizontal-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
+}
+
+/* Fixed gutter on the right that hosts the vertical scrollbar thumb in every
+   mode. It is transparent: in normal mode it overlays the empty strip xterm's
+   FitAddon already reserves for a scrollbar (so the content width is unchanged),
+   and in horizontal mode it sits over the reserved viewport inset. Only the
+   thumb paints, so there is no artifact when there is no scrollback. */
+.terminal-vscroll-gutter {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--vscroll-gutter);
+  z-index: 5;
+}
+
+.terminal-vscroll-thumb {
+  position: absolute;
+  top: 0;
+  right: 2px;
+  width: 8px;
+  border-radius: 4px;
+  background-color: var(--scrollbar-thumb);
+  cursor: default;
+}
+
+.terminal-vscroll-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
 }
 
 /* xterm.js measures cell width with `font-kerning: none` and assumes a
