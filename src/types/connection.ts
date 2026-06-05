@@ -1,4 +1,4 @@
-import { ConnectionConfig, RemoteAgentConfig, TerminalOptions } from "./terminal";
+import { ConnectionConfig, RemoteAgentConfig, TerminalOptions, LineEnding } from "./terminal";
 import { SettingsSchema, Capabilities } from "./schema";
 import { KeybindingOverrideEntry } from "./keybindings";
 
@@ -212,6 +212,12 @@ export interface AppSettings {
   credentialStorageMode?: "master_password" | "none";
   credentialAutoLockMinutes?: number;
   rightClickBehavior?: "contextMenu" | "quickAction";
+  /**
+   * Default line ending sent on Enter and used to normalize pasted text for
+   * new terminals. Per-connection `terminalOptions.lineEnding` overrides this.
+   * Defaults to `lf` when unset.
+   */
+  defaultLineEnding?: LineEnding;
   keybindingOverrides?: KeybindingOverrideEntry[];
   /**
    * When true (default), application shortcuts that collide with standard

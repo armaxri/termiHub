@@ -25,6 +25,8 @@ import {
   isShellReservedKey,
 } from "@/services/keybindings";
 import { frontendLog } from "@/utils/frontendLog";
+import { DEFAULT_LINE_ENDING, normalizeLineEndings, resolveLineEnding } from "@/utils/lineEndings";
+import type { LineEnding } from "@/types/terminal";
 import { createTerminalScrollbar, type TerminalScrollbarController } from "./terminalScrollbar";
 
 const HORIZONTAL_SCROLL_COLS = 500;
@@ -208,6 +210,9 @@ export function Terminal({
   const horizontalScrollingRef = useRef(false);
   const userScrolledUpRef = useRef(false);
   const lastInputTimeRef = useRef(0);
+  // Effective line ending for this tab; kept in a ref so the long-lived
+  // onData closure always reads the latest resolved value.
+  const lineEndingRef = useRef<LineEnding>(DEFAULT_LINE_ENDING);
   const contentDirtyRef = useRef(false);
   const pendingCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isViewModeRef = useRef(false);
@@ -587,7 +592,9 @@ export function Terminal({
         const onDataDisposable = xterm.onData((data) => {
           lastInputTimeRef.current = Date.now();
           if (sessionIdRef.current) {
-            sendInput(sessionIdRef.current, data);
+            // Translate the Enter keystroke (xterm emits a bare CR) to the
+            // configured line ending. No-op for data without line breaks.
+            sendInput(sessionIdRef.current, normalizeLineEndings(data, lineEndingRef.current));
           }
         });
 
@@ -629,7 +636,10 @@ export function Terminal({
         // Send initial command after session connects (used by workspace launch)
         if (initialCommand && !initialSessionIdRef.current) {
           setTimeout(() => {
-            sendInput(sessionId, initialCommand + "\n");
+            sendInput(
+              sessionId,
+              normalizeLineEndings(initialCommand + "\n", lineEndingRef.current)
+            );
           }, 200);
         }
 
@@ -1067,9 +1077,14 @@ export function Terminal({
   const cursorBlink = useAppStore((s) => s.settings.cursorBlink);
   const cursorStyle = useAppStore((s) => s.settings.cursorStyle);
   const scrollbackBuffer = useAppStore((s) => s.settings.scrollbackBuffer);
+  const defaultLineEnding = useAppStore((s) => s.settings.defaultLineEnding);
   const tabTermOpts = useAppStore((s) => s.tabTerminalOptions[tabId]);
 
   useEffect(() => {
+    // Resolve before the xterm guard so the onData closure has the right value
+    // even before xterm finishes its async creation.
+    lineEndingRef.current = resolveLineEnding(tabTermOpts?.lineEnding, defaultLineEnding);
+
     const xterm = xtermRef.current;
     const fitAddon = fitAddonRef.current;
     if (!xterm) return;
@@ -1092,7 +1107,17 @@ export function Terminal({
         // Ignore fit errors
       }
     }
-  }, [theme, fontFamily, fontSize, cursorBlink, cursorStyle, scrollbackBuffer, tabTermOpts, tabId]);
+  }, [
+    theme,
+    fontFamily,
+    fontSize,
+    cursorBlink,
+    cursorStyle,
+    scrollbackBuffer,
+    defaultLineEnding,
+    tabTermOpts,
+    tabId,
+  ]);
 
   // Terminal renders nothing — TerminalSlot handles display
   return null;
