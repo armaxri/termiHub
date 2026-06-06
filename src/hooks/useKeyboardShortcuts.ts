@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { useAppStore } from "@/store/appStore";
+import { useAppStore, getActiveTab } from "@/store/appStore";
 import { getAllLeaves, findAdjacentLeaf, FocusDirection } from "@/utils/panelTree";
 import {
   processKeyEvent,
@@ -7,7 +7,13 @@ import {
   cancelChord,
   isShellReservedKey,
   isEventFromTerminal,
+  getActionScope,
 } from "@/services/keybindings";
+import {
+  activeContextFromTab,
+  isEventFromTextInput,
+  isScopeCompatible,
+} from "@/utils/activeContext";
 
 /**
  * Global keyboard shortcuts for the application.
@@ -62,6 +68,19 @@ export function useKeyboardShortcuts() {
       }
 
       const allLeaves = getAllLeaves(rootPanel);
+
+      // Context-aware routing: when an editor or input surface owns this combo,
+      // step aside (no preventDefault) so the focused widget handles it. The
+      // setting lets users restore the old global-first behavior. Global-scoped
+      // actions short-circuit before any context/DOM lookup since they always fire.
+      const scope = getActionScope(action);
+      const delegationEnabled = useAppStore.getState().settings.editorShortcutDelegation !== false;
+      if (delegationEnabled && scope !== "global") {
+        const ctx = activeContextFromTab(getActiveTab(useAppStore.getState()) ?? undefined);
+        if (!isScopeCompatible(scope, ctx, isEventFromTextInput(e))) {
+          return;
+        }
+      }
 
       switch (action) {
         case "toggle-sidebar":

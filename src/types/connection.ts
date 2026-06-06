@@ -227,6 +227,14 @@ export interface AppSettings {
    */
   terminalKeyPassthrough?: boolean;
   /**
+   * When true (default), an active editor or input-bearing tab handles its own
+   * editing shortcuts (Find, Replace, Select All, …) — the global keyboard
+   * dispatcher steps aside so the focused widget receives the key. Toggle off to
+   * restore the old global-first behavior where app shortcuts fire regardless of
+   * the active tab's content.
+   */
+  editorShortcutDelegation?: boolean;
+  /**
    * User-defined file-type overrides for the built-in language mapping.
    * Keys are exact filenames (e.g. `"Jenkinsfile"`) or extensions (e.g. `".conf"`).
    * Values are Monaco language IDs (e.g. `"groovy"`, `"ini"`).

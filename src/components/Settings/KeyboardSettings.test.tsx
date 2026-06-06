@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { KeyboardSettings } from "./KeyboardSettings";
 import { clearOverrides } from "@/services/keybindings";
+import { useAppStore } from "@/store/appStore";
 
 vi.mock("@/utils/cheatSheetPdf", () => ({
   exportCheatSheet: vi.fn().mockResolvedValue(undefined),
@@ -25,6 +26,9 @@ function renderComponent(visibleFields?: Set<string>) {
 describe("KeyboardSettings", () => {
   beforeEach(() => {
     clearOverrides();
+    useAppStore.setState((s) => ({
+      settings: { ...s.settings, editorShortcutDelegation: undefined },
+    }));
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -109,6 +113,30 @@ describe("KeyboardSettings", () => {
         value: { value: "clipboard" },
       });
     });
+  });
+
+  it("renders the editor-delegation toggle, on by default", () => {
+    renderComponent();
+    const toggle = container.querySelector(
+      '[data-testid="keyboard-settings-editor-delegation"]'
+    ) as HTMLInputElement;
+    expect(toggle).not.toBeNull();
+    expect(toggle.checked).toBe(true);
+  });
+
+  it("persists the editor-delegation setting when toggled off", async () => {
+    renderComponent();
+    const toggle = container.querySelector(
+      '[data-testid="keyboard-settings-editor-delegation"]'
+    ) as HTMLInputElement;
+
+    await act(async () => {
+      toggle.click();
+      // updateSettings persists asynchronously; flush the microtask queue.
+      await Promise.resolve();
+    });
+
+    expect(useAppStore.getState().settings.editorShortcutDelegation).toBe(false);
   });
 
   it("renders nothing when visibleFields excludes keybindings", () => {

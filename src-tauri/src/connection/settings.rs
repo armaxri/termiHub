@@ -178,6 +178,11 @@ pub struct AppSettings {
     /// terminal pane is focused so the keystroke reaches the PTY.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal_key_passthrough: Option<bool>,
+    /// When `true` (default), an active editor or input-bearing tab handles its
+    /// own editing shortcuts (Find, Replace, Select All) — the global keyboard
+    /// dispatcher steps aside so the focused widget receives the key.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub editor_shortcut_delegation: Option<bool>,
     /// User-defined file extension / filename → language ID mappings.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file_language_mappings: Option<std::collections::HashMap<String, String>>,
@@ -227,6 +232,7 @@ impl Default for AppSettings {
             default_line_ending: None,
             keybinding_overrides: None,
             terminal_key_passthrough: None,
+            editor_shortcut_delegation: None,
             file_language_mappings: None,
             installed_language_packages: None,
             custom_language_grammars: None,

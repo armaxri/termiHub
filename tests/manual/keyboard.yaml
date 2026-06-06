@@ -224,3 +224,45 @@ tests:
       - "Reset to Safer Defaults restores the conflict-avoiding bindings"
     verification: manual
     tags: [passthrough, settings]
+
+  # --- Context-aware shortcut routing (PR #787) ---
+
+  - id: MT-KB-13
+    name: "macOS: Cmd+F opens Monaco find in an editor tab, terminal search in a terminal tab"
+    pr: 787
+    platforms: [macos]
+    prerequisites:
+      - app: true
+      - terminal: true
+    instructions:
+      - "Open a terminal, produce some output, and use the tab/pane menu 'Open in Editor' (or open any file in the editor) to create a Monaco editor tab"
+      - "With the editor tab active, press Cmd+F"
+      - "Verify Monaco's find widget opens in the top-right of the editor (with Aa / .* toggles and a match count)"
+      - "Switch to a terminal tab and press Cmd+F"
+      - "Verify the terminal search bar opens (not Monaco)"
+    expected:
+      - "Cmd+F in an editor tab opens Monaco's built-in find widget"
+      - "Cmd+F in a terminal tab opens the terminal search bar"
+      - "No regression: global shortcuts (Cmd+\\ split, Cmd+Shift+Enter zoom) still work from an editor tab"
+    verification: manual
+    tags: [routing, editor, platform]
+
+  - id: MT-KB-14
+    name: "Editor-delegation toggle reverts to global-first behavior"
+    pr: 787
+    platforms: [macos]
+    prerequisites:
+      - app: true
+      - terminal: true
+    instructions:
+      - "Open Settings → Keyboard and confirm 'Let editor tabs handle their own editing shortcuts' is on (default)"
+      - "Open a Monaco editor tab and verify Cmd+F opens Monaco's find widget"
+      - "Disable 'Let editor tabs handle their own editing shortcuts'"
+      - "With the editor tab active, press Cmd+F again"
+      - "Verify Monaco's find no longer opens (old global-first behavior is restored)"
+      - "Re-enable the toggle"
+    expected:
+      - "With the toggle on, Cmd+F is delegated to Monaco in an editor tab"
+      - "With the toggle off, the global handler claims Cmd+F and Monaco's find does not open"
+    verification: manual
+    tags: [routing, editor, settings]

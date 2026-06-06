@@ -698,7 +698,7 @@ Manual test procedures for verifying user-facing features before releases and af
 
 Manual tests that can be automated have been moved to WebdriverIO E2E tests. The YAML files now contain only items that truly require manual verification. See the [E2E Coverage Map](#e2e-coverage-map) below for the mapping from manual test IDs to E2E test files.
 
-**99 manual test items remain** across 14 YAML files. These cannot be automated due to:
+**101 manual test items remain** across 14 YAML files. These cannot be automated due to:
 
 | Reason                                | Items | Examples                                                          |
 | ------------------------------------- | ----- | ----------------------------------------------------------------- |
@@ -758,12 +758,12 @@ See [scripts/README.md](../scripts/README.md) for all options. Reports are saved
 | UI / Layout           | [`ui-layout.yaml`](../tests/manual/ui-layout.yaml)                         | `MT-UI`    | 25      |
 | Remote Agent          | [`remote-agent.yaml`](../tests/manual/remote-agent.yaml)                   | `MT-AGENT` | 23      |
 | Credential Store      | [`credential-store.yaml`](../tests/manual/credential-store.yaml)           | `MT-CRED`  | 3       |
-| Keyboard Shortcuts    | [`keyboard.yaml`](../tests/manual/keyboard.yaml)                           | `MT-KB`    | 12      |
+| Keyboard Shortcuts    | [`keyboard.yaml`](../tests/manual/keyboard.yaml)                           | `MT-KB`    | 14      |
 | Cross-Platform        | [`cross-platform.yaml`](../tests/manual/cross-platform.yaml)               | `MT-XPLAT` | 1       |
 | Portable Mode         | [`portable-mode.yaml`](../tests/manual/portable-mode.yaml)                 | `MT-PORT`  | 4       |
 | Embedded Services     | [`embedded-services.yaml`](../tests/manual/embedded-services.yaml)         | `MT-SVC`   | 3       |
 | Network Tools         | [`network-tools.yaml`](../tests/manual/network-tools.yaml)                 | `MT-NET`   | 11      |
-| **Total**             |                                                                            |            | **144** |
+| **Total**             |                                                                            |            | **146** |
 
 When adding new manual tests, add the YAML definition to the appropriate file in `tests/manual/` — the YAML files are the **source of truth** for guided testing.
 
