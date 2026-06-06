@@ -1208,8 +1208,13 @@ mod tests {
     };
     use crate::terminal::backend::{OutputSender, RemoteAgentConfig};
 
-    /// A minimal mock connection without file browser capability.
-    struct MockConnection;
+    /// A minimal mock connection without file browser capability. When `writes`
+    /// is `Some`, every byte passed to `write` is recorded into it so tests can
+    /// assert the exact bytes forwarded by `send_input` / `send_input_raw`.
+    #[derive(Default)]
+    struct MockConnection {
+        writes: Option<Arc<std::sync::Mutex<Vec<u8>>>>,
+    }
 
     #[async_trait::async_trait]
     impl ConnectionType for MockConnection {
@@ -1239,60 +1244,10 @@ mod tests {
         fn is_connected(&self) -> bool {
             true
         }
-        fn write(&self, _data: &[u8]) -> Result<(), SessionError> {
-            Ok(())
-        }
-        fn resize(&self, _cols: u16, _rows: u16) -> Result<(), SessionError> {
-            Ok(())
-        }
-        fn subscribe_output(&self) -> OutputReceiver {
-            let (_tx, rx) = tokio::sync::mpsc::channel(1);
-            rx
-        }
-        fn monitoring(&self) -> Option<&dyn MonitoringProvider> {
-            None
-        }
-        fn file_browser(&self) -> Option<&dyn FileBrowser> {
-            None
-        }
-    }
-
-    /// A mock connection that records every byte written, for asserting the
-    /// exact bytes `send_input` / `send_input_raw` forward to the backend.
-    struct RecordingConnection {
-        writes: Arc<std::sync::Mutex<Vec<u8>>>,
-    }
-
-    #[async_trait::async_trait]
-    impl ConnectionType for RecordingConnection {
-        fn type_id(&self) -> &str {
-            "mock"
-        }
-        fn display_name(&self) -> &str {
-            "Recording"
-        }
-        fn settings_schema(&self) -> SettingsSchema {
-            SettingsSchema { groups: vec![] }
-        }
-        fn capabilities(&self) -> Capabilities {
-            Capabilities {
-                monitoring: false,
-                file_browser: false,
-                resize: true,
-                persistent: false,
-            }
-        }
-        async fn connect(&mut self, _settings: serde_json::Value) -> Result<(), SessionError> {
-            Ok(())
-        }
-        async fn disconnect(&mut self) -> Result<(), SessionError> {
-            Ok(())
-        }
-        fn is_connected(&self) -> bool {
-            true
-        }
         fn write(&self, data: &[u8]) -> Result<(), SessionError> {
-            self.writes.lock().unwrap().extend_from_slice(data);
+            if let Some(writes) = &self.writes {
+                writes.lock().unwrap().extend_from_slice(data);
+            }
             Ok(())
         }
         fn resize(&self, _cols: u16, _rows: u16) -> Result<(), SessionError> {
@@ -1317,7 +1272,7 @@ mod tests {
         map.insert(
             session_id.to_string(),
             SessionEntry {
-                connection: Box::new(MockConnection),
+                connection: Box::new(MockConnection::default()),
                 info: SessionInfo {
                     id: session_id.to_string(),
                     title: "Mock".to_string(),
@@ -1409,8 +1364,8 @@ mod tests {
         manager
             .insert_test_session(
                 "sess-1",
-                Box::new(RecordingConnection {
-                    writes: writes.clone(),
+                Box::new(MockConnection {
+                    writes: Some(writes.clone()),
                 }),
             )
             .await;
@@ -1437,8 +1392,8 @@ mod tests {
         manager
             .insert_test_session(
                 "sess-1",
-                Box::new(RecordingConnection {
-                    writes: writes.clone(),
+                Box::new(MockConnection {
+                    writes: Some(writes.clone()),
                 }),
             )
             .await;
@@ -1827,7 +1782,7 @@ mod tests {
         let registry = ConnectionTypeRegistry::new();
         let manager = SessionManager::new(registry, Arc::new(NullAgent));
         manager
-            .insert_test_session("local-sess", Box::new(MockConnection))
+            .insert_test_session("local-sess", Box::new(MockConnection::default()))
             .await;
         let result = manager.get_remote_session_buffer("local-sess").await;
         assert!(result.is_err());
@@ -1894,7 +1849,7 @@ mod tests {
             "mock",
             "Mock",
             "mock",
-            Box::new(|| Box::new(MockConnection)),
+            Box::new(|| Box::new(MockConnection::default())),
         );
         let agent_manager = Arc::new(NullAgent);
         SessionManager::new(registry, agent_manager)
@@ -2358,7 +2313,7 @@ mod tests {
             "mock",
             "Mock",
             "mock",
-            Box::new(|| Box::new(MockConnection)),
+            Box::new(|| Box::new(MockConnection::default())),
         );
         let manager = SessionManager::new(registry, Arc::new(spy));
         let emitter = MockPersistentEmitter::new();
