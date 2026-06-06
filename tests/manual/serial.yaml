@@ -130,7 +130,7 @@ tests:
       - "A 'Retry' button and a 'Cancel' button are shown"
     verification: manual
 
-  # --- Configurable line endings (feature/configurable-line-endings) ---
+  # --- Configurable line endings (PR #791) ---
 
   - id: MT-SER-06
     name: "Per-connection line ending controls what serial sends on Enter and paste"

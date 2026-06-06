@@ -248,7 +248,7 @@ tests:
       - "Clicking 'Cancel' closes the tab entirely"
     verification: manual
 
-  # --- Configurable line endings (feature/configurable-line-endings) ---
+  # --- Configurable line endings (PR #791) ---
 
   - id: MT-SSH-38
     name: "Pasting multi-line Windows text into SSH does not insert blank lines"
