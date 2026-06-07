@@ -5,6 +5,7 @@ import {
   networkPingStop,
   onPingResult,
   onPingComplete,
+  onPingError,
 } from "@/services/networkApi";
 import type { PingResult, PingStats, DiagnosticStatus } from "@/types/network";
 import { LatencyChart } from "./LatencyChart";
@@ -30,12 +31,15 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
   const taskIdRef = useRef<string | null>(null);
   const unlistenResultRef = useRef<(() => void) | null>(null);
   const unlistenCompleteRef = useRef<(() => void) | null>(null);
+  const unlistenErrorRef = useRef<(() => void) | null>(null);
 
   const cleanup = useCallback(() => {
     unlistenResultRef.current?.();
     unlistenCompleteRef.current?.();
+    unlistenErrorRef.current?.();
     unlistenResultRef.current = null;
     unlistenCompleteRef.current = null;
+    unlistenErrorRef.current = null;
   }, []);
 
   const handleStart = useCallback(async () => {
@@ -70,6 +74,17 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
         taskIdRef.current = null;
       });
       unlistenCompleteRef.current = unlistenComplete;
+
+      // A fatal error (e.g. DNS failure) ends the session backend-side without
+      // a complete event; reflect it so the panel doesn't stay stuck "running".
+      const unlistenError = await onPingError((payload) => {
+        if (payload.taskId !== taskId) return;
+        setError(payload.error);
+        setStatus("error");
+        cleanup();
+        taskIdRef.current = null;
+      });
+      unlistenErrorRef.current = unlistenError;
     } catch (err) {
       setError(String(err));
       setStatus("error");
