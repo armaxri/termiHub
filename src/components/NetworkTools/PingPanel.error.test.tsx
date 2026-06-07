@@ -10,13 +10,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
-import {
-  networkPingStart,
-  networkPingStop,
-  onPingError,
-  onPingResult,
-  onPingComplete,
-} from "@/services/networkApi";
+import { networkPingStart, onPingError, onPingResult, onPingComplete } from "@/services/networkApi";
 import { PingPanel } from "./PingPanel";
 
 vi.mock("@/services/networkApi", () => ({
@@ -53,6 +47,25 @@ describe("PingPanel — ping error handling", () => {
     act(() => root.unmount());
     container.remove();
     vi.clearAllMocks();
+  });
+
+  it("registers all listeners before starting the ping (no event race)", async () => {
+    await act(async () => {
+      root.render(<PingPanel prefillHost="does-not-exist.invalid" />);
+    });
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="ping-start"]')!.click();
+    });
+    await flush();
+
+    // The backend emits result/complete/error events as soon as the task runs,
+    // so every listener must be attached before networkPingStart is invoked,
+    // otherwise a fast failure fires before we listen and the panel hangs.
+    const startOrder = vi.mocked(networkPingStart).mock.invocationCallOrder[0];
+    expect(vi.mocked(onPingResult).mock.invocationCallOrder[0]).toBeLessThan(startOrder);
+    expect(vi.mocked(onPingComplete).mock.invocationCallOrder[0]).toBeLessThan(startOrder);
+    expect(vi.mocked(onPingError).mock.invocationCallOrder[0]).toBeLessThan(startOrder);
   });
 
   it("registers a network-ping-error listener when starting", async () => {
@@ -113,8 +126,5 @@ describe("PingPanel — ping error handling", () => {
 
     // Still running — the stray error was for another task.
     expect(container.querySelector('[data-testid="ping-start"]')).toBeNull();
-    void networkPingStop;
-    void onPingResult;
-    void onPingComplete;
   });
 });
