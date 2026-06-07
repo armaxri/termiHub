@@ -247,8 +247,10 @@
   background-color: var(--bg-tertiary);
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-secondary);
-  padding: var(--spacing-xs);
   box-sizing: border-box;
+  /* No padding here: uPlot sizes its canvas to clientWidth and owns all inner
+     spacing via its `padding` option + axis gutters. CSS padding would make the
+     canvas overflow and clip the edge axis labels. */
 }
 
 /* uPlot theming: keep the hover read-out legend compact and on-theme. */

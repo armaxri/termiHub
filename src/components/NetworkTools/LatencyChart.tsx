@@ -83,7 +83,9 @@ export function LatencyChart({ points, intervalMs, height = CHART_HEIGHT }: Late
     const opts: uPlot.Options = {
       width: container.clientWidth || 300,
       height,
-      padding: [8, 8, 0, 0],
+      // [top, right, bottom, left] gap between the canvas edge and the axes so
+      // the first/last tick labels never sit under the container border.
+      padding: [8, 10, 4, 6],
       cursor: { y: false, points: { size: 5 } },
       legend: { show: true },
       scales: { x: { time: false }, y: { range: [chart.yMin, chart.yMax] } },
