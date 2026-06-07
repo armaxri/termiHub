@@ -42,6 +42,12 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
     unlistenErrorRef.current = null;
   }, []);
 
+  // Tear down listeners and forget the active task; the session is over.
+  const endSession = useCallback(() => {
+    cleanup();
+    taskIdRef.current = null;
+  }, [cleanup]);
+
   const handleStart = useCallback(async () => {
     if (!host.trim()) return;
 
@@ -50,8 +56,7 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
     setStats(null);
     setTcpFallback(false);
     setError(null);
-    cleanup();
-    taskIdRef.current = null;
+    endSession();
 
     // Events are filtered by the active task id. Until networkPingStart returns
     // it is null; accept those events so a result/error the backend emits before
@@ -75,8 +80,7 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
         if (!matchesTask(payload.taskId)) return;
         setStats(payload.stats);
         setStatus(payload.canceled ? "canceled" : "completed");
-        cleanup();
-        taskIdRef.current = null;
+        endSession();
       });
 
       // A fatal error (e.g. DNS failure) ends the session backend-side without
@@ -85,8 +89,7 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
         if (!matchesTask(payload.taskId)) return;
         setError(payload.error);
         setStatus("error");
-        cleanup();
-        taskIdRef.current = null;
+        endSession();
       });
 
       taskIdRef.current = await networkPingStart(
@@ -97,11 +100,10 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
     } catch (err) {
       setError(String(err));
       setStatus("error");
-      cleanup();
-      taskIdRef.current = null;
+      endSession();
       frontendLog("ping_panel", `Ping failed: ${err}`);
     }
-  }, [host, intervalMs, count, cleanup]);
+  }, [host, intervalMs, count, endSession]);
 
   const handleStop = useCallback(async () => {
     if (!taskIdRef.current) return;
