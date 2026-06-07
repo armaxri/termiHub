@@ -5,6 +5,7 @@ import {
   networkPingStop,
   onPingResult,
   onPingComplete,
+  onPingError,
 } from "@/services/networkApi";
 import type { PingResult, PingStats, DiagnosticStatus } from "@/types/network";
 import { LatencyChart } from "./LatencyChart";
@@ -30,13 +31,22 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
   const taskIdRef = useRef<string | null>(null);
   const unlistenResultRef = useRef<(() => void) | null>(null);
   const unlistenCompleteRef = useRef<(() => void) | null>(null);
+  const unlistenErrorRef = useRef<(() => void) | null>(null);
 
   const cleanup = useCallback(() => {
     unlistenResultRef.current?.();
     unlistenCompleteRef.current?.();
+    unlistenErrorRef.current?.();
     unlistenResultRef.current = null;
     unlistenCompleteRef.current = null;
+    unlistenErrorRef.current = null;
   }, []);
+
+  // Tear down listeners and forget the active task; the session is over.
+  const endSession = useCallback(() => {
+    cleanup();
+    taskIdRef.current = null;
+  }, [cleanup]);
 
   const handleStart = useCallback(async () => {
     if (!host.trim()) return;
@@ -46,36 +56,54 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
     setStats(null);
     setTcpFallback(false);
     setError(null);
-    cleanup();
+    endSession();
+
+    // Events are filtered by the active task id. Until networkPingStart returns
+    // it is null; accept those events so a result/error the backend emits before
+    // the id round-trips back isn't dropped (see the listeners-before-start race).
+    const matchesTask = (id: string) => taskIdRef.current === null || id === taskIdRef.current;
 
     try {
-      const taskId = await networkPingStart(host, intervalMs, count !== "" ? count : undefined);
-      taskIdRef.current = taskId;
-
-      const unlistenResult = await onPingResult((payload) => {
-        if (payload.taskId !== taskId) return;
+      // Register listeners BEFORE starting so a fast failure (e.g. a cached DNS
+      // miss that errors instantly) can't fire network-ping-error before we are
+      // listening — which previously left the panel stuck on "running".
+      unlistenResultRef.current = await onPingResult((payload) => {
+        if (!matchesTask(payload.taskId)) return;
         const result = payload.result;
         if (result.tcpFallback) setTcpFallback(true);
         setResults((prev) =>
           prev.length >= MAX_CHART_POINTS ? [...prev.slice(1), result] : [...prev, result]
         );
       });
-      unlistenResultRef.current = unlistenResult;
 
-      const unlistenComplete = await onPingComplete((payload) => {
-        if (payload.taskId !== taskId) return;
+      unlistenCompleteRef.current = await onPingComplete((payload) => {
+        if (!matchesTask(payload.taskId)) return;
         setStats(payload.stats);
         setStatus(payload.canceled ? "canceled" : "completed");
-        cleanup();
-        taskIdRef.current = null;
+        endSession();
       });
-      unlistenCompleteRef.current = unlistenComplete;
+
+      // A fatal error (e.g. DNS failure) ends the session backend-side without
+      // a complete event; reflect it so the panel doesn't stay stuck "running".
+      unlistenErrorRef.current = await onPingError((payload) => {
+        if (!matchesTask(payload.taskId)) return;
+        setError(payload.error);
+        setStatus("error");
+        endSession();
+      });
+
+      taskIdRef.current = await networkPingStart(
+        host,
+        intervalMs,
+        count !== "" ? count : undefined
+      );
     } catch (err) {
       setError(String(err));
       setStatus("error");
+      endSession();
       frontendLog("ping_panel", `Ping failed: ${err}`);
     }
-  }, [host, intervalMs, count, cleanup]);
+  }, [host, intervalMs, count, endSession]);
 
   const handleStop = useCallback(async () => {
     if (!taskIdRef.current) return;
@@ -165,7 +193,7 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
       {results.length > 0 && (
         <div className="network-panel__chart-section">
           <span className="network-panel__chart-title">Latency Graph</span>
-          <LatencyChart points={latencyPoints} />
+          <LatencyChart points={latencyPoints} intervalMs={intervalMs} />
         </div>
       )}
 

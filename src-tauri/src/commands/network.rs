@@ -145,9 +145,11 @@ pub async fn network_ping_start(
             }
         };
 
-        let canceled = cancel_clone.is_cancelled();
         let result =
             ping::ping_stream(&host, interval_ms.unwrap_or(1000), count, on_result, cancel).await;
+        // Check cancellation *after* the stream ends so Stop is reported as
+        // canceled rather than completed (the token is set while it runs).
+        let canceled = cancel_clone.is_cancelled();
 
         match result {
             Ok(stats) => {

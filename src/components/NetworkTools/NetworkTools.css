@@ -243,9 +243,27 @@
 
 .latency-chart {
   display: block;
+  width: 100%;
   background-color: var(--bg-tertiary);
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-secondary);
+  box-sizing: border-box;
+  /* No padding here: uPlot sizes its canvas to clientWidth and owns all inner
+     spacing via its `padding` option + axis gutters. CSS padding would make the
+     canvas overflow and clip the edge axis labels. */
+}
+
+/* uPlot theming: keep the hover read-out legend compact and on-theme. */
+.latency-chart .u-legend {
+  font-size: var(--font-size-sm);
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.latency-chart .u-legend .u-marker {
+  width: 8px;
+  height: 8px;
 }
 
 /* Stats row */

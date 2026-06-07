@@ -205,6 +205,13 @@ export function onPingComplete(
   );
 }
 
+/** Listen for fatal ping session errors (e.g. DNS resolution failure). */
+export function onPingError(
+  cb: (payload: { taskId: string; error: string }) => void
+): Promise<UnlistenFn> {
+  return listen<{ taskId: string; error: string }>("network-ping-error", (e) => cb(e.payload));
+}
+
 /** Listen for traceroute hop events. */
 export function onTracerouteHop(
   cb: (payload: { taskId: string; hop: TracerouteHop }) => void

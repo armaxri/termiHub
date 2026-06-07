@@ -1,112 +1,171 @@
+import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import uPlot from "uplot";
+import "uplot/dist/uPlot.min.css";
+import { buildLatencyChartData } from "./latencyChartData";
+
 interface LatencyChartProps {
   /** Array of latency values (ms). Null entries represent timeouts/drops. */
   points: (number | null)[];
+  /** Sampling interval (ms). When set, the x axis is labelled in elapsed seconds. */
+  intervalMs?: number;
+  /** Chart height in pixels. */
   height?: number;
 }
 
-const CHART_HEIGHT = 80;
-const MIN_RANGE_MS = 10;
+const CHART_HEIGHT = 120;
+/** Axis tick-label font size (px). */
+const AXIS_FONT_PX = 13;
 
-/** Simple SVG sparkline chart for real-time latency visualization. */
-export function LatencyChart({ points, height = CHART_HEIGHT }: LatencyChartProps) {
-  if (points.length === 0) return null;
+/** Resolve a CSS custom property to a concrete colour (canvas can't read CSS vars). */
+function cssVar(styles: CSSStyleDeclaration, name: string, fallback: string): string {
+  return styles.getPropertyValue(name).trim() || fallback;
+}
 
-  const validPoints = points.filter((p): p is number => p != null);
-  const maxVal = Math.max(...validPoints, MIN_RANGE_MS);
-  const minVal = Math.min(...validPoints, 0);
-  const range = maxVal - minVal || 1;
+/**
+ * uPlot plugin that draws a dashed vertical marker at every dropped/timed-out
+ * sample so packet loss is visible even where the latency line has a gap.
+ */
+function dropMarkersPlugin(getDrops: () => number[], color: string): uPlot.Plugin {
+  return {
+    hooks: {
+      draw: (u) => {
+        const drops = getDrops();
+        if (drops.length === 0) return;
+        const { ctx } = u;
+        const top = u.bbox.top;
+        const bottom = u.bbox.top + u.bbox.height;
+        ctx.save();
+        ctx.strokeStyle = color;
+        ctx.globalAlpha = 0.5;
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 3]);
+        for (const xVal of drops) {
+          const cx = Math.round(u.valToPos(xVal, "x", true));
+          ctx.beginPath();
+          ctx.moveTo(cx, top);
+          ctx.lineTo(cx, bottom);
+          ctx.stroke();
+        }
+        ctx.restore();
+      },
+    },
+  };
+}
 
-  const width = 100; // viewBox percentage
-  const n = points.length;
+/**
+ * uPlot plugin that keeps the legend read-out populated with the most recent
+ * sample whenever the cursor isn't hovering the chart, so "t" / "latency" always
+ * show a value instead of going blank.
+ */
+function latestValuePlugin(): uPlot.Plugin {
+  const showLatest = (u: uPlot) => {
+    const n = u.data[0]?.length ?? 0;
+    if (n > 0) u.setLegend({ idx: n - 1 }, false);
+  };
+  return {
+    hooks: {
+      setData: showLatest,
+      setCursor: (u) => {
+        if (u.cursor.idx == null) showLatest(u);
+      },
+    },
+  };
+}
 
-  // Build polyline points string for valid segments
-  const segments: { x: number; y: number }[][] = [];
-  let currentSegment: { x: number; y: number }[] = [];
+/**
+ * Real-time latency line chart backed by uPlot, with a zero-baselined ms y axis,
+ * an elapsed-time x axis, hover read-out, and drop markers for timeouts.
+ */
+export function LatencyChart({ points, intervalMs, height = CHART_HEIGHT }: LatencyChartProps) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const plotRef = useRef<uPlot | null>(null);
+  // Latest drops, read by the plugin closure without recreating the chart.
+  const dropsRef = useRef<number[]>([]);
 
-  points.forEach((val, i) => {
-    const x = (i / Math.max(n - 1, 1)) * width;
-    if (val != null) {
-      const y = height - ((val - minVal) / range) * (height - 8) - 4;
-      currentSegment.push({ x, y });
-    } else {
-      if (currentSegment.length > 0) {
-        segments.push(currentSegment);
-        currentSegment = [];
-      }
-    }
-  });
-  if (currentSegment.length > 0) segments.push(currentSegment);
+  const chart = useMemo(() => buildLatencyChartData(points, intervalMs), [points, intervalMs]);
 
-  const toPoints = (seg: { x: number; y: number }[]) =>
-    seg.map(({ x, y }) => `${x},${y}`).join(" ");
+  // Create the uPlot instance once, wired to the container width.
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
 
-  // Drop markers (red dots at timeout positions)
-  const dropMarkers = points
-    .map((val, i) => ({
-      val,
-      x: (i / Math.max(n - 1, 1)) * width,
-    }))
-    .filter(({ val }) => val == null);
+    const styles = getComputedStyle(container);
+    const accent = cssVar(styles, "--accent-color", "#3794ff");
+    const axisText = cssVar(styles, "--text-secondary", "#969696");
+    // Canvas can't resolve CSS var() in a font string, so build a concrete one.
+    const fontFamily = cssVar(styles, "--font-mono", "monospace");
+    const grid = cssVar(styles, "--border-primary", "#3c3c3c");
+    const dropColor = cssVar(styles, "--color-error", "#f44747");
 
-  return (
-    <svg
-      className="latency-chart"
-      viewBox={`0 0 ${width} ${height}`}
-      preserveAspectRatio="none"
-      style={{ width: "100%", height }}
-    >
-      {/* Zero line */}
-      <line
-        x1="0"
-        y1={height - 4}
-        x2={width}
-        y2={height - 4}
-        stroke="var(--border-primary)"
-        strokeWidth="0.5"
-      />
+    const timeAxis = intervalMs != null;
+    const axisBase = {
+      stroke: axisText,
+      grid: { stroke: grid, width: 1 },
+      ticks: { stroke: grid, width: 1 },
+      font: `${AXIS_FONT_PX}px ${fontFamily}`,
+    };
+    const opts: uPlot.Options = {
+      width: container.clientWidth || 300,
+      height,
+      // [top, right, bottom, left] gap between the canvas edge and the axes so
+      // the first/last tick labels never sit under the container border.
+      padding: [12, 18, 8, 12],
+      cursor: { y: false, points: { size: 5 } },
+      legend: { show: true },
+      scales: { x: { time: false }, y: { range: [chart.yMin, chart.yMax] } },
+      axes: [
+        {
+          ...axisBase,
+          size: 30,
+          values: (_u, splits) => splits.map((v) => (timeAxis ? `${v}s` : `${v}`)),
+        },
+        {
+          ...axisBase,
+          size: 46,
+          values: (_u, splits) => splits.map((v) => `${v}ms`),
+        },
+      ],
+      series: [
+        { label: timeAxis ? "t" : "#" },
+        {
+          label: "latency",
+          stroke: accent,
+          width: 1.5,
+          spanGaps: false,
+          points: { show: true, size: 4, stroke: accent, fill: accent },
+          value: (_u, v) => (v == null ? "—" : `${v.toFixed(1)}ms`),
+        },
+      ],
+      plugins: [dropMarkersPlugin(() => dropsRef.current, dropColor), latestValuePlugin()],
+    };
 
-      {/* Latency line segments */}
-      {segments.map((seg, i) =>
-        seg.length === 1 ? (
-          <circle key={i} cx={seg[0].x} cy={seg[0].y} r="1.5" fill="var(--accent-color)" />
-        ) : (
-          <polyline
-            key={i}
-            points={toPoints(seg)}
-            fill="none"
-            stroke="var(--accent-color)"
-            strokeWidth="1.5"
-            strokeLinejoin="round"
-            strokeLinecap="round"
-          />
-        )
-      )}
+    const plot = new uPlot(opts, chart.data, container);
+    plotRef.current = plot;
 
-      {/* Drop markers */}
-      {dropMarkers.map(({ x }, i) => (
-        <line
-          key={i}
-          x1={x}
-          y1="0"
-          x2={x}
-          y2={height}
-          stroke="var(--color-error, #f44747)"
-          strokeWidth="1"
-          strokeDasharray="2,2"
-          opacity="0.6"
-        />
-      ))}
+    const resizeObserver = new ResizeObserver(() => {
+      const width = container.clientWidth;
+      if (width > 0) plot.setSize({ width, height });
+    });
+    resizeObserver.observe(container);
 
-      {/* Max label */}
-      <text
-        x="1"
-        y="8"
-        fontSize="5"
-        fill="var(--text-secondary)"
-        style={{ fontFamily: "monospace" }}
-      >
-        {maxVal.toFixed(0)}ms
-      </text>
-    </svg>
-  );
+    return () => {
+      resizeObserver.disconnect();
+      plot.destroy();
+      plotRef.current = null;
+    };
+    // Recreate only when structural options (axis mode / height) change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [intervalMs, height]);
+
+  // Push new samples / axis range into the existing instance on every update.
+  useEffect(() => {
+    const plot = plotRef.current;
+    if (!plot) return;
+    // Refresh drop positions before setData triggers the plugin's redraw.
+    dropsRef.current = chart.drops;
+    plot.setScale("y", { min: chart.yMin, max: chart.yMax });
+    plot.setData(chart.data);
+  }, [chart]);
+
+  return <div ref={containerRef} className="latency-chart" />;
 }
