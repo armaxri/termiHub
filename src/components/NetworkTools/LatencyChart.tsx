@@ -53,6 +53,26 @@ function dropMarkersPlugin(getDrops: () => number[], color: string): uPlot.Plugi
 }
 
 /**
+ * uPlot plugin that keeps the legend read-out populated with the most recent
+ * sample whenever the cursor isn't hovering the chart, so "t" / "latency" always
+ * show a value instead of going blank.
+ */
+function latestValuePlugin(): uPlot.Plugin {
+  const showLatest = (u: uPlot) => {
+    const n = u.data[0]?.length ?? 0;
+    if (n > 0) u.setLegend({ idx: n - 1 }, false);
+  };
+  return {
+    hooks: {
+      setData: showLatest,
+      setCursor: (u) => {
+        if (u.cursor.idx == null) showLatest(u);
+      },
+    },
+  };
+}
+
+/**
  * Real-time latency line chart backed by uPlot, with a zero-baselined ms y axis,
  * an elapsed-time x axis, hover read-out, and drop markers for timeouts.
  */
@@ -116,7 +136,7 @@ export function LatencyChart({ points, intervalMs, height = CHART_HEIGHT }: Late
           value: (_u, v) => (v == null ? "—" : `${v.toFixed(1)}ms`),
         },
       ],
-      plugins: [dropMarkersPlugin(() => dropsRef.current, dropColor)],
+      plugins: [dropMarkersPlugin(() => dropsRef.current, dropColor), latestValuePlugin()],
     };
 
     const plot = new uPlot(opts, chart.data, container);
