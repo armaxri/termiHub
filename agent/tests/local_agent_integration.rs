@@ -13,8 +13,8 @@
 //!
 //! The binary is built automatically by cargo before the tests run.
 
-use std::io::{BufRead, BufReader, Write};
-use std::net::{TcpListener, TcpStream};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{Shutdown, TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::{Duration, Instant};
@@ -22,7 +22,6 @@ use std::time::{Duration, Instant};
 use base64::Engine as _;
 use serde_json::{json, Value};
 
-#[cfg(unix)]
 use tempfile::TempDir;
 
 // ── Binary path ───────────────────────────────────────────────────────────────
@@ -38,6 +37,8 @@ fn agent_binary() -> &'static str {
 struct LocalAgent {
     process: Child,
     pub addr: String,
+    /// Temp config dir kept alive for the agent's lifetime (cleaned on drop).
+    _config_dir: TempDir,
 }
 
 impl LocalAgent {
@@ -45,15 +46,27 @@ impl LocalAgent {
         let port = unique_agent_port();
         let addr = format!("127.0.0.1:{port}");
 
+        // Isolate the agent's config/state from the developer's real
+        // `~/.config/termihub-agent` (XDG_CONFIG_HOME is honored on every
+        // platform). Without this, recover_sessions() reads real state at
+        // startup and can block, widening the window before the accept loop is
+        // live in which a connection could be reset.
+        let config_dir = TempDir::new().expect("failed to create temp config dir");
+
         let process = Command::new(agent_binary())
             .args(["--listen", &addr])
+            .env("XDG_CONFIG_HOME", config_dir.path())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
             .expect("failed to spawn termihub-agent");
 
-        wait_for_tcp(&addr, Duration::from_secs(5));
-        LocalAgent { process, addr }
+        wait_for_agent_ready(&addr, Duration::from_secs(30));
+        LocalAgent {
+            process,
+            addr,
+            _config_dir: config_dir,
+        }
     }
 }
 
@@ -92,17 +105,70 @@ fn unique_agent_port() -> u16 {
     }
 }
 
-/// Retry-connect to `addr` until it accepts or the deadline is exceeded.
-fn wait_for_tcp(addr: &str, timeout: Duration) {
+/// Block until the agent's accept loop is live and idle, or panic on timeout.
+///
+/// A bare TCP `connect()` succeeds the instant the listener socket is bound,
+/// which can happen while the agent is still in async startup *before* its
+/// accept loop runs. Because the agent serves one client at a time, a real
+/// test connection opened in that window sits in the backlog behind the
+/// readiness probe and can be reset — the flaky "connection reset by peer".
+///
+/// Instead, this probe connects, half-closes (sends FIN), and reads until the
+/// agent closes its end (EOF). Reaching EOF proves the agent accepted the
+/// probe, ran its transport loop to completion, and looped back to `accept()` —
+/// i.e. it is live and idle, leaving no overlapping connection for the test's
+/// real connection to race against. Transient errors (not-yet-bound, read
+/// timeout) are retried until the deadline.
+fn wait_for_agent_ready(addr: &str, timeout: Duration) {
     let deadline = Instant::now() + timeout;
+
+    // One probe at a time: connect, half-close (send FIN), and wait for the
+    // agent to serve it to completion and close its end (EOF). Reaching EOF
+    // proves the accept loop ran, finished this connection's transport loop, and
+    // looped back to accept() — i.e. it is live and idle, with no overlapping
+    // probe left to race the test's real connection.
+    //
+    // A single probe can still fail transiently while the agent is mid-startup
+    // under heavy parallel load (e.g. a brief listener hiccup resets the
+    // connection). The agent's accept loop survives such errors, so we simply
+    // retry with a fresh connection until the deadline. Because each attempt
+    // runs to completion before the next, retries never pile up a backlog.
     loop {
-        if TcpStream::connect(addr).is_ok() {
-            return;
-        }
-        if Instant::now() >= deadline {
-            panic!("agent did not start within {timeout:?} — addr: {addr}");
+        match probe_once(addr, &deadline) {
+            None => return,
+            Some(err) => {
+                if Instant::now() >= deadline {
+                    panic!(
+                        "agent did not become ready within {timeout:?} — addr: {addr}, last: {err}"
+                    );
+                }
+            }
         }
         std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// One FIN-readiness probe. Returns `None` on success (EOF observed), or
+/// `Some(reason)` describing a transient failure so the caller can retry.
+fn probe_once(addr: &str, deadline: &Instant) -> Option<String> {
+    let mut stream = match TcpStream::connect(addr) {
+        Ok(stream) => stream,
+        Err(e) => return Some(format!("connect: {e}")),
+    };
+    let remaining = deadline
+        .saturating_duration_since(Instant::now())
+        .max(Duration::from_millis(500));
+    if let Err(e) = stream.set_read_timeout(Some(remaining)) {
+        return Some(format!("set_read_timeout: {e}"));
+    }
+    if let Err(e) = stream.shutdown(Shutdown::Write) {
+        return Some(format!("shutdown: {e}"));
+    }
+    let mut buf = [0u8; 1];
+    match stream.read(&mut buf) {
+        Ok(0) => None,
+        Ok(_) => Some("unexpected data before EOF".to_string()),
+        Err(e) => Some(format!("read: {e}")),
     }
 }
 
@@ -123,8 +189,8 @@ fn rpc(stream: &mut TcpStream, msg: &str) -> String {
 #[test]
 fn agent_starts_and_accepts_connections() {
     let agent = LocalAgent::spawn();
-    // If we reach here, the agent bound a port and accepted at least one
-    // connection probe from wait_for_tcp.
+    // If we reach here, the agent bound a port and served the readiness probe
+    // to completion (accept loop is live and idle).
     assert!(!agent.addr.is_empty());
 }
 
@@ -658,10 +724,9 @@ impl IsolatedAgent {
             .stderr(Stdio::null())
             .spawn()
             .expect("failed to spawn isolated agent");
-        wait_for_tcp(&addr, Duration::from_secs(5));
-        // The agent calls recover_sessions() before entering the accept loop.
-        // The bind succeeds before recovery finishes, so we give it a moment.
-        std::thread::sleep(Duration::from_millis(500));
+        // The readiness probe waits until the accept loop is idle, which is
+        // after recover_sessions() finishes — no fixed-sleep guess needed.
+        wait_for_agent_ready(&addr, Duration::from_secs(30));
         IsolatedAgent { process, addr }
     }
 }

@@ -49,7 +49,20 @@ pub async fn run_tcp_listener(addr: &str, shutdown: CancellationToken) -> anyhow
             }
 
             accept_result = listener.accept() => {
-                let (stream, peer) = accept_result?;
+                // A transient accept() error (e.g. the peer aborted the pending
+                // connection, or the process briefly hit its file-descriptor
+                // limit under load) must not tear down the whole listener — that
+                // would drop every other client and exit the agent. Log and keep
+                // accepting; a short yield avoids a busy-spin if the condition
+                // persists.
+                let (stream, peer) = match accept_result {
+                    Ok(conn) => conn,
+                    Err(e) => {
+                        warn!("accept() failed, continuing to listen: {}", e);
+                        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                        continue;
+                    }
+                };
                 info!("Client connected from {}", peer);
 
                 // Drain stale notifications from previous connection.
@@ -57,11 +70,20 @@ pub async fn run_tcp_listener(addr: &str, shutdown: CancellationToken) -> anyhow
                 // replayed on attach, so these are not needed.
                 while notification_rx.try_recv().is_ok() {}
 
-                let handler = AgentHandler::new(
+                // As with accept(), a failure to build the per-connection
+                // handler must not kill the listener — drop this client and keep
+                // serving the rest.
+                let handler = match AgentHandler::new(
                     session_manager.clone(),
                     connection_store.clone() as Arc<dyn ConnectionStoreApi>,
                     monitoring_manager.clone() as Arc<dyn MonitoringManagerApi>,
-                )?;
+                ) {
+                    Ok(handler) => handler,
+                    Err(e) => {
+                        warn!("failed to build handler for {}, dropping client: {}", peer, e);
+                        continue;
+                    }
+                };
 
                 let (reader_half, mut writer_half) = stream.into_split();
                 let mut reader = BufReader::new(reader_half);
