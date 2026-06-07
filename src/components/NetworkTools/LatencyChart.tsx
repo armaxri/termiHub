@@ -85,7 +85,7 @@ export function LatencyChart({ points, intervalMs, height = CHART_HEIGHT }: Late
       height,
       // [top, right, bottom, left] gap between the canvas edge and the axes so
       // the first/last tick labels never sit under the container border.
-      padding: [8, 10, 4, 6],
+      padding: [12, 18, 8, 12],
       cursor: { y: false, points: { size: 5 } },
       legend: { show: true },
       scales: { x: { time: false }, y: { range: [chart.yMin, chart.yMax] } },
