@@ -364,6 +364,7 @@ pub fn run() {
             commands::session::create_connection,
             commands::session::get_connection_types,
             commands::session::send_input,
+            commands::session::set_session_line_ending,
             commands::session::resize_terminal,
             commands::session::close_terminal,
             commands::session::list_local_sessions,

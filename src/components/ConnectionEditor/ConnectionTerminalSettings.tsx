@@ -1,5 +1,6 @@
 import { useAppStore } from "@/store/appStore";
-import { TerminalOptions } from "@/types/terminal";
+import { TerminalOptions, LineEnding } from "@/types/terminal";
+import { LINE_ENDING_OPTIONS, lineEndingLabel } from "@/utils/lineEndings";
 
 interface ConnectionTerminalSettingsProps {
   options: TerminalOptions;
@@ -16,6 +17,7 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
   const globalCursorStyle = globalSettings.cursorStyle ?? "block";
   const globalCursorBlink = globalSettings.cursorBlink ?? true;
   const globalHorizontalScrolling = globalSettings.defaultHorizontalScrolling ?? false;
+  const globalLineEnding = globalSettings.defaultLineEnding ?? "lf";
 
   return (
     <div className="settings-panel__category">
@@ -86,6 +88,29 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
           <option value="underline">Underline</option>
           <option value="bar">Bar</option>
         </select>
+      </label>
+
+      <label className="settings-form__field">
+        <span className="settings-form__label">Line Ending (Enter &amp; Paste)</span>
+        <select
+          value={options.lineEnding ?? ""}
+          onChange={(e) =>
+            onChange({
+              ...options,
+              lineEnding: (e.target.value as LineEnding) || undefined,
+            })
+          }
+        >
+          <option value="">Use global default ({lineEndingLabel(globalLineEnding)})</option>
+          {LINE_ENDING_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+        <span className="settings-form__hint">
+          Sequence sent on Enter and used to normalize pasted text for this connection.
+        </span>
       </label>
 
       <div className="settings-form__field">

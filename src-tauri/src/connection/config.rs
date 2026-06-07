@@ -85,6 +85,9 @@ pub struct TerminalOptions {
     pub cursor_style: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor_blink: Option<bool>,
+    /// Per-connection line-ending override ("cr", "lf", or "crlf").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line_ending: Option<String>,
 }
 
 // ---------------------------------------------------------------------------

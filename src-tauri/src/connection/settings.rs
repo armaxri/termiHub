@@ -166,6 +166,10 @@ pub struct AppSettings {
     /// Right-click behavior: "contextMenu" or "quickAction". None = platform default.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub right_click_behavior: Option<String>,
+    /// Default line ending sent on Enter and used to normalize pasted text:
+    /// "cr", "lf", or "crlf". None = frontend default ("lf").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_line_ending: Option<String>,
     /// User-customized keybinding overrides.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub keybinding_overrides: Option<Vec<KeybindingOverrideEntry>>,
@@ -225,6 +229,7 @@ impl Default for AppSettings {
             credential_storage_mode: None,
             credential_auto_lock_minutes: None,
             right_click_behavior: None,
+            default_line_ending: None,
             keybinding_overrides: None,
             terminal_key_passthrough: None,
             editor_shortcut_delegation: None,

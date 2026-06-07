@@ -129,3 +129,21 @@ tests:
       - "Error message contains 'already in use'"
       - "A 'Retry' button and a 'Cancel' button are shown"
     verification: manual
+
+  # --- Configurable line endings (PR #791) ---
+
+  - id: MT-SER-06
+    name: "Per-connection line ending controls what serial sends on Enter and paste"
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Edit a serial connection → Terminal → Line Ending and select 'CRLF (\\r\\n)' (many serial devices expect CRLF)"
+      - "Open the connection and connect to a device or loopback that echoes input"
+      - "Type a line and press Enter; then paste a multi-line block"
+    expected:
+      - "Enter sends CRLF as configured for this connection"
+      - "Pasted multi-line text uses CRLF between lines (no doubled or missing line breaks)"
+      - "Switching the per-connection setting to LF or CR changes the bytes sent accordingly"
+    verification: manual
+    tags: [settings, serial]

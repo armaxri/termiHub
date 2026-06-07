@@ -245,6 +245,8 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
 
     const doPaste = async () => {
       const xterm = xtermRegistryRef.current.get(tabId);
+      // Line endings are normalized in the backend send_input choke point using
+      // the session's configured ending, so paste only handles bracketing here.
       let payload = text;
 
       // Wrap in bracketed paste escape sequences if the terminal supports it

@@ -695,13 +695,18 @@ echo ""
 "#;
 
 /// Inject commands into the visible terminal session via the SessionManager.
+///
+/// Uses the raw (non-normalizing) input path: these are internal setup commands
+/// targeting a known Unix shell and must be sent byte-exact, independent of the
+/// session's configured line ending.
 fn inject_commands(
     session_manager: &SessionManager,
     session_id: &str,
     commands: &str,
     rt_handle: &tokio::runtime::Handle,
 ) {
-    if let Err(e) = rt_handle.block_on(session_manager.send_input(session_id, commands.as_bytes()))
+    if let Err(e) =
+        rt_handle.block_on(session_manager.send_input_raw(session_id, commands.as_bytes()))
     {
         error!("Agent setup: failed to inject commands: {}", e);
     }
