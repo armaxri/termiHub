@@ -13,6 +13,8 @@ interface LatencyChartProps {
 }
 
 const CHART_HEIGHT = 120;
+/** Axis tick-label font size (px). */
+const AXIS_FONT_PX = 13;
 
 /** Resolve a CSS custom property to a concrete colour (canvas can't read CSS vars). */
 function cssVar(styles: CSSStyleDeclaration, name: string, fallback: string): string {
@@ -70,7 +72,9 @@ export function LatencyChart({ points, intervalMs, height = CHART_HEIGHT }: Late
     const styles = getComputedStyle(container);
     const accent = cssVar(styles, "--accent-color", "#3794ff");
     const axisText = cssVar(styles, "--text-secondary", "#969696");
-    const grid = cssVar(styles, "--border-secondary", "#3c3c3c");
+    // Canvas can't resolve CSS var() in a font string, so build a concrete one.
+    const fontFamily = cssVar(styles, "--font-mono", "monospace");
+    const grid = cssVar(styles, "--border-primary", "#3c3c3c");
     const dropColor = cssVar(styles, "--color-error", "#f44747");
 
     const timeAxis = intervalMs != null;
@@ -78,7 +82,7 @@ export function LatencyChart({ points, intervalMs, height = CHART_HEIGHT }: Late
       stroke: axisText,
       grid: { stroke: grid, width: 1 },
       ticks: { stroke: grid, width: 1 },
-      font: "12px var(--font-mono, monospace)",
+      font: `${AXIS_FONT_PX}px ${fontFamily}`,
     };
     const opts: uPlot.Options = {
       width: container.clientWidth || 300,
