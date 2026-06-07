@@ -51,43 +51,54 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
     setTcpFallback(false);
     setError(null);
     cleanup();
+    taskIdRef.current = null;
+
+    // Events are filtered by the active task id. Until networkPingStart returns
+    // it is null; accept those events so a result/error the backend emits before
+    // the id round-trips back isn't dropped (see the listeners-before-start race).
+    const matchesTask = (id: string) => taskIdRef.current === null || id === taskIdRef.current;
 
     try {
-      const taskId = await networkPingStart(host, intervalMs, count !== "" ? count : undefined);
-      taskIdRef.current = taskId;
-
-      const unlistenResult = await onPingResult((payload) => {
-        if (payload.taskId !== taskId) return;
+      // Register listeners BEFORE starting so a fast failure (e.g. a cached DNS
+      // miss that errors instantly) can't fire network-ping-error before we are
+      // listening — which previously left the panel stuck on "running".
+      unlistenResultRef.current = await onPingResult((payload) => {
+        if (!matchesTask(payload.taskId)) return;
         const result = payload.result;
         if (result.tcpFallback) setTcpFallback(true);
         setResults((prev) =>
           prev.length >= MAX_CHART_POINTS ? [...prev.slice(1), result] : [...prev, result]
         );
       });
-      unlistenResultRef.current = unlistenResult;
 
-      const unlistenComplete = await onPingComplete((payload) => {
-        if (payload.taskId !== taskId) return;
+      unlistenCompleteRef.current = await onPingComplete((payload) => {
+        if (!matchesTask(payload.taskId)) return;
         setStats(payload.stats);
         setStatus(payload.canceled ? "canceled" : "completed");
         cleanup();
         taskIdRef.current = null;
       });
-      unlistenCompleteRef.current = unlistenComplete;
 
       // A fatal error (e.g. DNS failure) ends the session backend-side without
       // a complete event; reflect it so the panel doesn't stay stuck "running".
-      const unlistenError = await onPingError((payload) => {
-        if (payload.taskId !== taskId) return;
+      unlistenErrorRef.current = await onPingError((payload) => {
+        if (!matchesTask(payload.taskId)) return;
         setError(payload.error);
         setStatus("error");
         cleanup();
         taskIdRef.current = null;
       });
-      unlistenErrorRef.current = unlistenError;
+
+      taskIdRef.current = await networkPingStart(
+        host,
+        intervalMs,
+        count !== "" ? count : undefined
+      );
     } catch (err) {
       setError(String(err));
       setStatus("error");
+      cleanup();
+      taskIdRef.current = null;
       frontendLog("ping_panel", `Ping failed: ${err}`);
     }
   }, [host, intervalMs, count, cleanup]);
