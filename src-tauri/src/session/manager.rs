@@ -25,6 +25,7 @@ use tracing::{error, info, warn};
 use crate::terminal::agent_manager::AgentRpcClient;
 use crate::utils::errors::TerminalError;
 
+use super::line_ending::{normalize_line_endings, LineEnding};
 use super::remote_proxy::RemoteProxy;
 
 /// Maximum number of concurrent sessions.
@@ -142,6 +143,10 @@ struct SessionEntry {
     info: SessionInfo,
     /// Remote session ID assigned by the agent (set for remote proxy sessions).
     remote_session_id: Option<String>,
+    /// Line ending applied to interactive input (Enter / paste) for this
+    /// session. Set by the frontend via `set_session_line_ending`; defaults to
+    /// [`LineEnding::Lf`] until then.
+    line_ending: LineEnding,
 }
 
 /// Push event emitted via Tauri when session-based monitoring delivers stats.
@@ -255,6 +260,7 @@ impl SessionManager {
                     connection,
                     info: info.clone(),
                     remote_session_id,
+                    line_ending: LineEnding::default(),
                 },
             );
         }
@@ -296,8 +302,31 @@ impl SessionManager {
         Ok(session_id)
     }
 
-    /// Send input data to a session.
+    /// Send user input to a session, normalizing line endings to the session's
+    /// configured [`LineEnding`] (Enter / paste translation, PuTTY-style).
+    ///
+    /// This is the single choke point for all interactive terminal input, so
+    /// every caller — keystrokes, paste, the file-browser "cd" button, etc. —
+    /// gets consistent line-ending handling. Internal command injection that
+    /// must stay byte-exact (e.g. agent setup targeting a Unix shell) should
+    /// use [`Self::send_input_raw`] instead.
     pub async fn send_input(&self, session_id: &str, data: &[u8]) -> Result<(), TerminalError> {
+        let ending = {
+            let sessions = self.sessions.lock().await;
+            sessions
+                .get(session_id)
+                .map(|e| e.line_ending)
+                .unwrap_or_default()
+        };
+        let normalized = normalize_line_endings(data, ending);
+        self.send_input_raw(session_id, &normalized).await
+    }
+
+    /// Write input to a session verbatim, without line-ending normalization.
+    ///
+    /// Used for internal command injection (agent setup, etc.) that targets a
+    /// known environment and must not be rewritten.
+    pub async fn send_input_raw(&self, session_id: &str, data: &[u8]) -> Result<(), TerminalError> {
         let sessions = self.sessions.lock().await;
         let entry = sessions
             .get(session_id)
@@ -317,6 +346,16 @@ impl SessionManager {
         // write on a dead connection waiting for SO_SNDTIMEO to fire).
         tokio::task::block_in_place(|| entry.connection.write(&data))
             .map_err(|e| TerminalError::WriteFailed(e.to_string()))
+    }
+
+    /// Set the line ending applied to input for a session. Called by the
+    /// frontend when a terminal opens and whenever the resolved setting changes.
+    /// No-op if the session no longer exists.
+    pub async fn set_session_line_ending(&self, session_id: &str, ending: LineEnding) {
+        let mut sessions = self.sessions.lock().await;
+        if let Some(entry) = sessions.get_mut(session_id) {
+            entry.line_ending = ending;
+        }
     }
 
     /// Resize a session's terminal.
@@ -785,6 +824,7 @@ impl SessionManager {
                                     agent_id: Some(agent_id),
                                 },
                                 remote_session_id: Some(remote_sid),
+                                line_ending: LineEnding::default(),
                             },
                         );
                     }
@@ -1025,6 +1065,7 @@ impl SessionManager {
                     agent_id: None,
                 },
                 remote_session_id: None,
+                line_ending: LineEnding::default(),
             },
         );
     }
@@ -1167,8 +1208,13 @@ mod tests {
     };
     use crate::terminal::backend::{OutputSender, RemoteAgentConfig};
 
-    /// A minimal mock connection without file browser capability.
-    struct MockConnection;
+    /// A minimal mock connection without file browser capability. When `writes`
+    /// is `Some`, every byte passed to `write` is recorded into it so tests can
+    /// assert the exact bytes forwarded by `send_input` / `send_input_raw`.
+    #[derive(Default)]
+    struct MockConnection {
+        writes: Option<Arc<std::sync::Mutex<Vec<u8>>>>,
+    }
 
     #[async_trait::async_trait]
     impl ConnectionType for MockConnection {
@@ -1198,7 +1244,10 @@ mod tests {
         fn is_connected(&self) -> bool {
             true
         }
-        fn write(&self, _data: &[u8]) -> Result<(), SessionError> {
+        fn write(&self, data: &[u8]) -> Result<(), SessionError> {
+            if let Some(writes) = &self.writes {
+                writes.lock().unwrap().extend_from_slice(data);
+            }
             Ok(())
         }
         fn resize(&self, _cols: u16, _rows: u16) -> Result<(), SessionError> {
@@ -1223,7 +1272,7 @@ mod tests {
         map.insert(
             session_id.to_string(),
             SessionEntry {
-                connection: Box::new(MockConnection),
+                connection: Box::new(MockConnection::default()),
                 info: SessionInfo {
                     id: session_id.to_string(),
                     title: "Mock".to_string(),
@@ -1232,6 +1281,7 @@ mod tests {
                     agent_id: None,
                 },
                 remote_session_id: None,
+                line_ending: LineEnding::default(),
             },
         );
         drop(map);
@@ -1303,6 +1353,56 @@ mod tests {
         let entry = sessions_guard.get("sess-1").unwrap();
         assert!(entry.connection.write(b"hello").is_ok());
         assert!(entry.connection.resize(80, 24).is_ok());
+    }
+
+    /// `send_input` normalizes line endings to the session's configured ending.
+    /// Regression test for the Windows-CRLF double-line paste bug.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn send_input_normalizes_to_session_line_ending() {
+        let writes = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+        manager
+            .insert_test_session(
+                "sess-1",
+                Box::new(MockConnection {
+                    writes: Some(writes.clone()),
+                }),
+            )
+            .await;
+
+        // Default (LF): CRLF paste collapses to single LF, no blank lines.
+        manager.send_input("sess-1", b"a\r\nb\r\nc").await.unwrap();
+        assert_eq!(writes.lock().unwrap().as_slice(), b"a\nb\nc");
+
+        // Switch to CRLF: a bare LF becomes CRLF.
+        writes.lock().unwrap().clear();
+        manager
+            .set_session_line_ending("sess-1", LineEnding::Crlf)
+            .await;
+        manager.send_input("sess-1", b"a\nb").await.unwrap();
+        assert_eq!(writes.lock().unwrap().as_slice(), b"a\r\nb");
+    }
+
+    /// `send_input_raw` bypasses normalization so internal injection (agent
+    /// setup) is sent byte-exact regardless of the session's line ending.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn send_input_raw_does_not_normalize() {
+        let writes = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+        manager
+            .insert_test_session(
+                "sess-1",
+                Box::new(MockConnection {
+                    writes: Some(writes.clone()),
+                }),
+            )
+            .await;
+        manager
+            .set_session_line_ending("sess-1", LineEnding::Crlf)
+            .await;
+
+        manager.send_input_raw("sess-1", b"a\nb\n").await.unwrap();
+        assert_eq!(writes.lock().unwrap().as_slice(), b"a\nb\n");
     }
 
     /// Test session removal.
@@ -1682,7 +1782,7 @@ mod tests {
         let registry = ConnectionTypeRegistry::new();
         let manager = SessionManager::new(registry, Arc::new(NullAgent));
         manager
-            .insert_test_session("local-sess", Box::new(MockConnection))
+            .insert_test_session("local-sess", Box::new(MockConnection::default()))
             .await;
         let result = manager.get_remote_session_buffer("local-sess").await;
         assert!(result.is_err());
@@ -1749,7 +1849,7 @@ mod tests {
             "mock",
             "Mock",
             "mock",
-            Box::new(|| Box::new(MockConnection)),
+            Box::new(|| Box::new(MockConnection::default())),
         );
         let agent_manager = Arc::new(NullAgent);
         SessionManager::new(registry, agent_manager)
@@ -2213,7 +2313,7 @@ mod tests {
             "mock",
             "Mock",
             "mock",
-            Box::new(|| Box::new(MockConnection)),
+            Box::new(|| Box::new(MockConnection::default())),
         );
         let manager = SessionManager::new(registry, Arc::new(spy));
         let emitter = MockPersistentEmitter::new();

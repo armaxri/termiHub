@@ -9,6 +9,7 @@ import { ConnectionConfig } from "@/types/terminal";
 import {
   createTerminal,
   sendInput,
+  setSessionLineEnding,
   resizeTerminal,
   closeTerminal,
   detachPersistentTab,
@@ -25,6 +26,7 @@ import {
   isShellReservedKey,
 } from "@/services/keybindings";
 import { frontendLog } from "@/utils/frontendLog";
+import { resolveLineEnding } from "@/utils/lineEndings";
 import { createTerminalScrollbar, type TerminalScrollbarController } from "./terminalScrollbar";
 
 const HORIZONTAL_SCROLL_COLS = 500;
@@ -169,6 +171,25 @@ function removeHorizontalScrollResize(xterm: XTerm, fitAddon: FitAddon) {
     }
   }
   fitAddon.fit();
+}
+
+/**
+ * Resolve the effective line ending for a tab (per-connection override > global
+ * default > LF) and push it to the backend so its `send_input` choke point
+ * normalizes this session's input. Resolved imperatively from the store so it
+ * works from both the establishment flow and the settings-change effect.
+ */
+async function pushLineEnding(tabId: string, sessionId: string): Promise<void> {
+  const s = useAppStore.getState();
+  const ending = resolveLineEnding(
+    s.tabTerminalOptions[tabId]?.lineEnding,
+    s.settings.defaultLineEnding
+  );
+  try {
+    await setSessionLineEnding(sessionId, ending);
+  } catch (e) {
+    frontendLog("terminal", `failed to set line ending for session ${sessionId}: ${String(e)}`);
+  }
 }
 
 interface TerminalProps {
@@ -504,6 +525,15 @@ export function Terminal({
         sessionIdRef.current = sessionId;
         registerSession(tabId, sessionId);
 
+        // Push the resolved line ending to the backend BEFORE wiring onData, so
+        // the session's send_input normalizes from the very first keystroke.
+        // Awaited to avoid an IPC ordering race where early input on a CR/CRLF
+        // connection would be sent with the backend's default (LF). This is the
+        // single point every establishment path (fresh create, reattach,
+        // reconnect) passes through; later setting changes are synced by the
+        // effect below.
+        await pushLineEnding(tabId, sessionId);
+
         // Resize-deduplication: track the last (cols, rows) sent to the PTY
         // to avoid spurious SIGWINCH signals.  Multiple rapid fit() calls
         // (slot adoption sync+RAF, ResizeObserver, visibility effect) all
@@ -587,6 +617,8 @@ export function Terminal({
         const onDataDisposable = xterm.onData((data) => {
           lastInputTimeRef.current = Date.now();
           if (sessionIdRef.current) {
+            // Line-ending translation (Enter / paste) happens in the backend
+            // send_input choke point using the session's configured ending.
             sendInput(sessionIdRef.current, data);
           }
         });
@@ -1093,6 +1125,14 @@ export function Terminal({
       }
     }
   }, [theme, fontFamily, fontSize, cursorBlink, cursorStyle, scrollbackBuffer, tabTermOpts, tabId]);
+
+  // Keep the backend's per-session line ending in sync when the global default
+  // or this connection's override changes while the terminal is open.
+  const defaultLineEnding = useAppStore((s) => s.settings.defaultLineEnding);
+  useEffect(() => {
+    const sessionId = sessionIdRef.current;
+    if (sessionId) void pushLineEnding(tabId, sessionId);
+  }, [tabTermOpts, defaultLineEnding, tabId]);
 
   // Terminal renders nothing — TerminalSlot handles display
   return null;

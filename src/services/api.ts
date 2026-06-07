@@ -9,6 +9,7 @@ import {
   RemoteAgentConfig,
   LogEntry,
   TerminalOptions,
+  LineEnding,
 } from "@/types/terminal";
 import { SystemStats } from "@/types/monitoring";
 import { CredentialStoreStatusInfo, SwitchCredentialStoreResult } from "@/types/credential";
@@ -72,6 +73,17 @@ export async function createTerminal(config: ConnectionConfig): Promise<SessionI
 /** Send input data to a terminal session */
 export async function sendInput(sessionId: SessionId, data: string): Promise<void> {
   await invoke("send_input", { sessionId, data });
+}
+
+/**
+ * Set the line ending applied to a session's interactive input (Enter / paste).
+ * The backend normalizes all input on `send_input` to this ending.
+ */
+export async function setSessionLineEnding(
+  sessionId: SessionId,
+  lineEnding: LineEnding
+): Promise<void> {
+  await invoke("set_session_line_ending", { sessionId, lineEnding });
 }
 
 /** Resize a terminal session */
