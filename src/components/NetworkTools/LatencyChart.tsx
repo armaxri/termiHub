@@ -12,7 +12,7 @@ interface LatencyChartProps {
   height?: number;
 }
 
-const CHART_HEIGHT = 96;
+const CHART_HEIGHT = 120;
 
 /** Resolve a CSS custom property to a concrete colour (canvas can't read CSS vars). */
 function cssVar(styles: CSSStyleDeclaration, name: string, fallback: string): string {
@@ -78,7 +78,7 @@ export function LatencyChart({ points, intervalMs, height = CHART_HEIGHT }: Late
       stroke: axisText,
       grid: { stroke: grid, width: 1 },
       ticks: { stroke: grid, width: 1 },
-      font: "10px var(--font-mono, monospace)",
+      font: "12px var(--font-mono, monospace)",
     };
     const opts: uPlot.Options = {
       width: container.clientWidth || 300,
@@ -92,12 +92,12 @@ export function LatencyChart({ points, intervalMs, height = CHART_HEIGHT }: Late
       axes: [
         {
           ...axisBase,
-          size: 24,
+          size: 30,
           values: (_u, splits) => splits.map((v) => (timeAxis ? `${v}s` : `${v}`)),
         },
         {
           ...axisBase,
-          size: 38,
+          size: 46,
           values: (_u, splits) => splits.map((v) => `${v}ms`),
         },
       ],
