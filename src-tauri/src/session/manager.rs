@@ -290,11 +290,7 @@ impl SessionManager {
             let cmd = cmd.to_string();
             tokio::spawn(async move {
                 tokio::time::sleep(Duration::from_millis(200)).await;
-                let sessions = sessions.lock().await;
-                if let Some(entry) = sessions.get(&sid) {
-                    let input = format!("{cmd}\n");
-                    let _ = entry.connection.write(input.as_bytes());
-                }
+                Self::inject_initial_command(&sessions, &sid, &cmd).await;
             });
         }
 
@@ -311,15 +307,7 @@ impl SessionManager {
     /// must stay byte-exact (e.g. agent setup targeting a Unix shell) should
     /// use [`Self::send_input_raw`] instead.
     pub async fn send_input(&self, session_id: &str, data: &[u8]) -> Result<(), TerminalError> {
-        let ending = {
-            let sessions = self.sessions.lock().await;
-            sessions
-                .get(session_id)
-                .map(|e| e.line_ending)
-                .unwrap_or_default()
-        };
-        let normalized = normalize_line_endings(data, ending);
-        self.send_input_raw(session_id, &normalized).await
+        Self::send_input_normalized(&self.sessions, session_id, data).await
     }
 
     /// Write input to a session verbatim, without line-ending normalization.
@@ -327,7 +315,38 @@ impl SessionManager {
     /// Used for internal command injection (agent setup, etc.) that targets a
     /// known environment and must not be rewritten.
     pub async fn send_input_raw(&self, session_id: &str, data: &[u8]) -> Result<(), TerminalError> {
-        let sessions = self.sessions.lock().await;
+        Self::write_session(&self.sessions, session_id, data).await
+    }
+
+    /// Resolve the session's [`LineEnding`] and write `data` normalized to it.
+    ///
+    /// Shared by [`Self::send_input`] and the settings-driven initial-command
+    /// injection so both honor the session's configured line ending. Operates on
+    /// the shared sessions map (not `&self`) so detached tasks can call it.
+    async fn send_input_normalized(
+        sessions: &Mutex<HashMap<String, SessionEntry>>,
+        session_id: &str,
+        data: &[u8],
+    ) -> Result<(), TerminalError> {
+        let ending = {
+            let sessions = sessions.lock().await;
+            sessions
+                .get(session_id)
+                .map(|e| e.line_ending)
+                .unwrap_or_default()
+        };
+        let normalized = normalize_line_endings(data, ending);
+        Self::write_session(sessions, session_id, &normalized).await
+    }
+
+    /// Write `data` to a session verbatim. Backing implementation shared by
+    /// [`Self::send_input_raw`] and [`Self::send_input_normalized`].
+    async fn write_session(
+        sessions: &Mutex<HashMap<String, SessionEntry>>,
+        session_id: &str,
+        data: &[u8],
+    ) -> Result<(), TerminalError> {
+        let sessions = sessions.lock().await;
         let entry = sessions
             .get(session_id)
             .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
@@ -346,6 +365,22 @@ impl SessionManager {
         // write on a dead connection waiting for SO_SNDTIMEO to fire).
         tokio::task::block_in_place(|| entry.connection.write(&data))
             .map_err(|e| TerminalError::WriteFailed(e.to_string()))
+    }
+
+    /// Send the settings-driven initial command to a freshly created session.
+    ///
+    /// Runs from a detached task after a short delay, so it operates on the
+    /// shared sessions map rather than `&self`. Routed through
+    /// [`Self::send_input_normalized`] so the trailing line break honors the
+    /// session's configured [`LineEnding`] (e.g. CRLF on hosts that require it)
+    /// rather than a hardcoded `\n`.
+    async fn inject_initial_command(
+        sessions: &Mutex<HashMap<String, SessionEntry>>,
+        session_id: &str,
+        command: &str,
+    ) {
+        let input = format!("{command}\n");
+        let _ = Self::send_input_normalized(sessions, session_id, input.as_bytes()).await;
     }
 
     /// Set the line ending applied to input for a session. Called by the
@@ -1403,6 +1438,36 @@ mod tests {
 
         manager.send_input_raw("sess-1", b"a\nb\n").await.unwrap();
         assert_eq!(writes.lock().unwrap().as_slice(), b"a\nb\n");
+    }
+
+    /// Regression test for #792: the settings-driven initial command must honor
+    /// the session's configured line ending instead of a hardcoded `\n`. A CRLF
+    /// session must receive the command terminated with `\r\n` so it executes on
+    /// hosts/devices that require CR/CRLF.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn initial_command_honors_session_line_ending() {
+        let writes = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+        manager
+            .insert_test_session(
+                "sess-1",
+                Box::new(MockConnection {
+                    writes: Some(writes.clone()),
+                }),
+            )
+            .await;
+
+        // Default (LF) session: command is terminated with a bare LF.
+        SessionManager::inject_initial_command(&manager.sessions, "sess-1", "echo hi").await;
+        assert_eq!(writes.lock().unwrap().as_slice(), b"echo hi\n");
+
+        // CRLF session: the trailing line break is translated to CRLF.
+        writes.lock().unwrap().clear();
+        manager
+            .set_session_line_ending("sess-1", LineEnding::Crlf)
+            .await;
+        SessionManager::inject_initial_command(&manager.sessions, "sess-1", "echo hi").await;
+        assert_eq!(writes.lock().unwrap().as_slice(), b"echo hi\r\n");
     }
 
     /// Test session removal.
