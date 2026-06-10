@@ -136,6 +136,19 @@ tests:
       - A dropped/timed-out sample is marked with a dashed vertical drop marker and a gap in the line
       - The HTTP Monitor Response Time chart renders with the same readable axes and hover read-out
 
+  - id: MT-NET-22
+    title: Traceroute / Port Scanner — error on unresolvable host (Stop works)
+    automated_by: null
+    pr: 795
+    steps:
+      - Open the Traceroute panel, enter a host that cannot resolve (e.g. `Keks` or `does-not-exist.invalid`), and click Run
+      - Repeat the Run a few times in a row (the second attempt often fails instantly from a cached DNS miss)
+      - Repeat the same with the Port Scanner panel (enter the bad host, keep the default ports, click Run)
+    expected:
+      - Each run surfaces an error message and returns to the Run button — the panel never stays stuck on "running"
+      - The Stop button is never left active with nothing happening
+      - On a reachable host, Run still streams hops / port results normally, and Stop during a run reports the run as canceled
+
   - id: MT-NET-20
     title: Port Scanner — CIDR / multi-target scan
     automated_by: null
