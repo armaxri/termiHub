@@ -259,6 +259,17 @@ pub fn run() {
                 }
             }
 
+            // Initialize the last-session manager. On failure the app still starts;
+            // session restore is simply unavailable until the next launch.
+            match workspace::last_session::LastSessionManager::new(app.handle()) {
+                Ok(manager) => {
+                    app.manage(manager);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to initialize last-session manager: {e}");
+                }
+            }
+
             // Initialize embedded server manager with recovery loading.
             // On failure, the app still starts but embedded servers are unavailable.
             match embedded_servers::server_manager::EmbeddedServerManager::new(app.handle()) {
@@ -485,6 +496,9 @@ pub fn run() {
             commands::workspace::export_workspaces,
             commands::workspace::import_workspaces,
             commands::workspace::preview_import_workspaces,
+            commands::workspace::save_last_session,
+            commands::workspace::load_last_session,
+            commands::workspace::clear_last_session,
             // Network diagnostics
             commands::network::network_port_scan,
             commands::network::network_port_scan_cancel,

@@ -155,6 +155,11 @@ pub struct AppSettings {
     /// Default value for X11 Forwarding toggle in new SSH connections.
     #[serde(default = "default_true")]
     pub default_x11_forwarding: bool,
+    /// When `true` (default), the open tab groups and layout are auto-saved on
+    /// every change and restored on the next startup. When `false`, the app
+    /// always starts with a fresh empty session.
+    #[serde(default = "default_true")]
+    pub restore_last_session_on_startup: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub layout: Option<LayoutConfig>,
     /// Credential storage mode: "master_password" or "none".
@@ -225,6 +230,7 @@ impl Default for AppSettings {
             ask_open_saved_file_in_tab: true,
             default_shell_integration: true,
             default_x11_forwarding: true,
+            restore_last_session_on_startup: true,
             layout: None,
             credential_storage_mode: None,
             credential_auto_lock_minutes: None,
@@ -442,6 +448,7 @@ mod tests {
         assert!(settings.default_shell_integration);
         assert!(settings.default_x11_forwarding);
         assert!(settings.ask_open_saved_file_in_tab);
+        assert!(settings.restore_last_session_on_startup);
     }
 
     #[test]
@@ -453,6 +460,18 @@ mod tests {
         assert!(settings.default_shell_integration);
         assert!(settings.default_x11_forwarding);
         assert!(settings.ask_open_saved_file_in_tab);
+        assert!(settings.restore_last_session_on_startup);
+    }
+
+    #[test]
+    fn restore_last_session_on_startup_round_trips() {
+        let settings = AppSettings {
+            restore_last_session_on_startup: false,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
+        assert!(!deserialized.restore_last_session_on_startup);
     }
 
     #[test]
