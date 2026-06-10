@@ -6,6 +6,7 @@ import { TerminalTab } from "@/types/terminal";
 import { getAllLeaves } from "@/utils/panelTree";
 import { TerminalPortalProvider } from "./TerminalRegistry";
 import { TerminalCommandBridge } from "./TerminalCommandBridge";
+import { TestBridge } from "@/testbridge/TestBridge";
 import { Terminal } from "./Terminal";
 import { TabGroupChips } from "./TabGroupChips";
 import { SplitView } from "@/components/SplitView";
@@ -247,6 +248,7 @@ export function TerminalView() {
   return (
     <TerminalPortalProvider>
       <TerminalCommandBridge />
+      <TestBridge />
       <div className="terminal-view">
         <div className="terminal-view__toolbar">
           <TabGroupChips />
