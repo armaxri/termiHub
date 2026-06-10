@@ -125,6 +125,11 @@ import {
   captureAllTabGroups,
   getWorkspaceLeaves,
 } from "@/utils/workspaceLayout";
+import {
+  saveLastSession as apiSaveLastSession,
+  loadLastSession as apiLoadLastSession,
+  clearLastSession as apiClearLastSession,
+} from "@/services/lastSessionApi";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { SystemStats } from "@/types/monitoring";
 import { onSessionMonitoringStats, onPersistentSessionStateChanged } from "@/services/events";
@@ -671,6 +676,16 @@ interface AppState {
     description?: string
   ) => Promise<void>;
 
+  // Last session (auto-saved layout restored on startup)
+  /** Capture the current tab groups/layout and persist them as the last session. */
+  saveLastSession: () => Promise<void>;
+  /** Debounced wrapper around {@link saveLastSession} for high-frequency layout changes. */
+  scheduleLastSessionSave: () => void;
+  /** Restore the persisted last session into the live layout. Returns true if a session was restored. */
+  restoreLastSession: () => Promise<boolean>;
+  /** Clear the persisted last session (e.g. when restore-on-startup is disabled). */
+  clearLastSession: () => Promise<void>;
+
   // Credential store
   credentialStoreStatus: CredentialStoreStatusInfo | null;
   setCredentialStoreStatus: (status: CredentialStoreStatusInfo) => void;
@@ -709,6 +724,9 @@ interface AppState {
 
 let tabCounter = 0;
 let layoutPersistTimer: ReturnType<typeof setTimeout> | null = null;
+/** Debounce timer for auto-saving the last session on layout changes. */
+let lastSessionPersistTimer: ReturnType<typeof setTimeout> | null = null;
+const LAST_SESSION_SAVE_DEBOUNCE_MS = 500;
 /** Unlisten function for the active session-based monitoring event subscription. */
 let _monitoringUnlisten: (() => void) | null = null;
 
@@ -3908,6 +3926,92 @@ export const useAppStore = create<AppState>((set, get) => {
       } catch (err) {
         console.error("Failed to save current layout as workspace:", err);
         throw err;
+      }
+    },
+
+    saveLastSession: async () => {
+      const state = get();
+      const tabGroups = captureAllTabGroups(
+        state.tabGroups,
+        state.activeTabGroupId,
+        state.rootPanel,
+        state.connections
+      );
+      // Only persist when there is at least one real tab to restore. An empty
+      // payload tells the backend to clear the stored session instead.
+      const totalTabs = tabGroups.reduce(
+        (n, g) => n + getWorkspaceLeaves(g.layout).reduce((m, leaf) => m + leaf.tabs.length, 0),
+        0
+      );
+      const activeGroupIndex = Math.max(
+        0,
+        state.tabGroups.findIndex((g) => g.id === state.activeTabGroupId)
+      );
+      try {
+        await apiSaveLastSession({
+          version: "1",
+          tabGroups: totalTabs > 0 ? tabGroups : [],
+          activeGroupIndex,
+        });
+      } catch (err) {
+        console.error("Failed to save last session:", err);
+      }
+    },
+
+    scheduleLastSessionSave: () => {
+      if (lastSessionPersistTimer) clearTimeout(lastSessionPersistTimer);
+      lastSessionPersistTimer = setTimeout(() => {
+        lastSessionPersistTimer = null;
+        void get().saveLastSession();
+      }, LAST_SESSION_SAVE_DEBOUNCE_MS);
+    },
+
+    restoreLastSession: async () => {
+      try {
+        const session = await apiLoadLastSession();
+        if (!session || session.tabGroups.length === 0) return false;
+        const state = get();
+        // Agents are all disconnected at startup, so agentRef tabs resolve to
+        // agent-error tabs rather than silently disappearing.
+        const agentContext = {
+          agents: state.remoteAgents.map((a) => ({
+            id: a.id,
+            name: a.name,
+            connected: a.connectionState === "connected",
+          })),
+          definitions: state.agentDefinitions,
+        };
+        const builtGroups = buildTabGroupsFromWorkspace(
+          session.tabGroups,
+          state.connections,
+          state.defaultShell,
+          agentContext
+        );
+        if (builtGroups.length === 0) return false;
+        const idx = Math.min(Math.max(session.activeGroupIndex, 0), builtGroups.length - 1);
+        const activeGroup = builtGroups[idx];
+        set({
+          tabGroups: builtGroups,
+          activeTabGroupId: activeGroup.id,
+          rootPanel: activeGroup.rootPanel,
+          activePanelId: activeGroup.activePanelId,
+        });
+        return true;
+      } catch (err) {
+        console.error("Failed to restore last session:", err);
+        return false;
+      }
+    },
+
+    clearLastSession: async () => {
+      if (lastSessionPersistTimer) {
+        clearTimeout(lastSessionPersistTimer);
+        lastSessionPersistTimer = null;
+      }
+      try {
+        await apiClearLastSession();
+      } catch (err) {
+        console.error("Failed to clear last session:", err);
       }
     },
 
