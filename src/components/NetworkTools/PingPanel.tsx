@@ -17,7 +17,17 @@ interface PingPanelProps {
 
 const MAX_CHART_POINTS = 120; // 2 minutes at 1s interval
 
-/** Ping diagnostic tab content. */
+/**
+ * Ping diagnostic tab content.
+ *
+ * Unlike the Traceroute and Port Scanner panels (which share the
+ * `useNetworkTask` hook), Ping keeps its own listener wiring: it must keep
+ * listening after the user hits Stop to receive the backend's final
+ * `network-ping-complete` event (which carries the closing stats and the
+ * `canceled` flag), and it juggles several result streams (results / stats /
+ * tcpFallback). The hook's stop tears listeners down immediately, so migrating
+ * Ping would drop those final stats.
+ */
 export function PingPanel({ prefillHost }: PingPanelProps) {
   const [host, setHost] = useState(prefillHost ?? "");
   const [intervalMs, setIntervalMs] = useState(1000);
