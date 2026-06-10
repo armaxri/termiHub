@@ -1,14 +1,15 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useCallback } from "react";
 import { Play, StopCircle } from "lucide-react";
 import {
   networkTraceroute,
   networkTracerouteCancel,
   onTracerouteHop,
   onTracerouteComplete,
+  onTracerouteError,
 } from "@/services/networkApi";
-import type { TracerouteHop, DiagnosticStatus } from "@/types/network";
+import type { TracerouteHop } from "@/types/network";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
-import { frontendLog } from "@/utils/frontendLog";
+import { useNetworkTask, type NetworkTaskContext } from "@/hooks/useNetworkTask";
 
 interface TraceroutePanelProps {
   prefillHost?: string;
@@ -18,59 +19,36 @@ interface TraceroutePanelProps {
 export function TraceroutePanel({ prefillHost }: TraceroutePanelProps) {
   const [host, setHost] = useState(prefillHost ?? "");
   const [maxHops, setMaxHops] = useState(30);
-  const [status, setStatus] = useState<DiagnosticStatus>("idle");
   const [hops, setHops] = useState<TracerouteHop[]>([]);
-  const [error, setError] = useState<string | null>(null);
 
-  const taskIdRef = useRef<string | null>(null);
-
-  const handleRun = useCallback(async () => {
-    if (!host.trim()) return;
-    setStatus("running");
-    setHops([]);
-    setError(null);
-
-    try {
-      const taskId = await networkTraceroute(host, maxHops);
-      taskIdRef.current = taskId;
-
-      const unlistenHop = await onTracerouteHop((payload) => {
-        if (payload.taskId !== taskId) return;
-        setHops((prev) => [...prev, payload.hop]);
-      });
-
-      const unlistenComplete = await onTracerouteComplete((payload) => {
-        if (payload.taskId !== taskId) return;
-        setStatus("completed");
-        unlistenHop();
-        unlistenComplete();
-        taskIdRef.current = null;
-      });
-    } catch (err) {
-      setError(String(err));
-      setStatus("error");
-      frontendLog("traceroute", `Traceroute failed: ${err}`);
-    }
-  }, [host, maxHops]);
-
-  const handleStop = useCallback(async () => {
-    if (!taskIdRef.current) return;
-    try {
-      await networkTracerouteCancel(taskIdRef.current);
-    } catch (err) {
-      frontendLog("traceroute", `Cancel failed: ${err}`);
-    }
-    setStatus("canceled");
-    taskIdRef.current = null;
+  const subscribe = useCallback(async ({ matchesTask, register, finish }: NetworkTaskContext) => {
+    register(
+      await onTracerouteHop((p) => {
+        if (!matchesTask(p.taskId)) return;
+        setHops((prev) => [...prev, p.hop]);
+      })
+    );
+    register(
+      await onTracerouteComplete((p) => {
+        if (!matchesTask(p.taskId)) return;
+        finish("completed");
+      })
+    );
+    register(
+      await onTracerouteError((p) => {
+        if (!matchesTask(p.taskId)) return;
+        finish("error", p.error);
+      })
+    );
   }, []);
 
-  useEffect(() => {
-    return () => {
-      if (taskIdRef.current) {
-        void networkTracerouteCancel(taskIdRef.current).catch(() => {});
-      }
-    };
-  }, []);
+  const { status, error, run, stop } = useNetworkTask({
+    logScope: "traceroute",
+    start: useCallback(() => networkTraceroute(host, maxHops), [host, maxHops]),
+    cancel: networkTracerouteCancel,
+    onReset: useCallback(() => setHops([]), []),
+    subscribe,
+  });
 
   const columns = [
     { key: "hop", label: "Hop" },
@@ -99,14 +77,14 @@ export function TraceroutePanel({ prefillHost }: TraceroutePanelProps) {
         <span className="network-panel__title">Traceroute</span>
         <div className="network-panel__actions">
           {status === "running" ? (
-            <button className="network-panel__btn network-panel__btn--stop" onClick={handleStop}>
+            <button className="network-panel__btn network-panel__btn--stop" onClick={stop}>
               <StopCircle size={14} />
               Stop
             </button>
           ) : (
             <button
               className="network-panel__btn network-panel__btn--run"
-              onClick={handleRun}
+              onClick={run}
               disabled={!host.trim()}
               data-testid="traceroute-run"
             >

@@ -1,14 +1,15 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { Play, StopCircle } from "lucide-react";
 import {
   networkPortScan,
   networkPortScanCancel,
   onScanResult,
   onScanComplete,
+  onScanError,
 } from "@/services/networkApi";
-import type { PortScanSummary, DiagnosticStatus } from "@/types/network";
+import type { PortScanSummary } from "@/types/network";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
-import { frontendLog } from "@/utils/frontendLog";
+import { useNetworkTask, type NetworkTaskContext } from "@/hooks/useNetworkTask";
 
 interface PortScannerPanelProps {
   prefillHost?: string;
@@ -27,12 +28,8 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
   const [ports, setPorts] = useState("22,80,443,8080,8443");
   const [timeoutMs, setTimeoutMs] = useState(2000);
   const [concurrency, setConcurrency] = useState(100);
-  const [status, setStatus] = useState<DiagnosticStatus>("idle");
   const [results, setResults] = useState<ScanRow[]>([]);
   const [summary, setSummary] = useState<PortScanSummary | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const taskIdRef = useRef<string | null>(null);
 
   // Warn user before scanning a very large range.
   const portCount = ports.split(",").reduce((acc, part) => {
@@ -44,71 +41,54 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
     return acc + 1;
   }, 0);
 
-  const handleRun = useCallback(async () => {
-    if (!host.trim()) return;
+  const subscribe = useCallback(async ({ matchesTask, register, finish }: NetworkTaskContext) => {
+    register(
+      await onScanResult((p) => {
+        if (!matchesTask(p.taskId)) return;
+        setResults((prev) => [
+          ...prev,
+          { host: p.host, port: p.port, state: p.state, latencyMs: p.latencyMs },
+        ]);
+      })
+    );
+    register(
+      await onScanComplete((p) => {
+        if (!matchesTask(p.taskId)) return;
+        setSummary(p.summary);
+        finish("completed");
+      })
+    );
+    register(
+      await onScanError((p) => {
+        if (!matchesTask(p.taskId)) return;
+        finish("error", p.error);
+      })
+    );
+  }, []);
+
+  const { status, error, run, stop } = useNetworkTask({
+    logScope: "port_scanner",
+    start: useCallback(
+      () => networkPortScan(host, ports, timeoutMs, concurrency),
+      [host, ports, timeoutMs, concurrency]
+    ),
+    cancel: networkPortScanCancel,
+    onReset: useCallback(() => {
+      setResults([]);
+      setSummary(null);
+    }, []),
+    subscribe,
+  });
+
+  const handleRun = useCallback(() => {
     if (portCount > 1000) {
       const confirmed = window.confirm(
         `Scanning ${portCount} ports may take several minutes. Continue?`
       );
       if (!confirmed) return;
     }
-
-    setStatus("running");
-    setResults([]);
-    setSummary(null);
-    setError(null);
-
-    try {
-      const taskId = await networkPortScan(host, ports, timeoutMs, concurrency);
-      taskIdRef.current = taskId;
-
-      const unlistenResult = await onScanResult((payload) => {
-        if (payload.taskId !== taskId) return;
-        setResults((prev) => [
-          ...prev,
-          {
-            host: payload.host,
-            port: payload.port,
-            state: payload.state,
-            latencyMs: payload.latencyMs,
-          },
-        ]);
-      });
-
-      const unlistenComplete = await onScanComplete((payload) => {
-        if (payload.taskId !== taskId) return;
-        setSummary(payload.summary);
-        setStatus("completed");
-        unlistenResult();
-        unlistenComplete();
-        taskIdRef.current = null;
-      });
-    } catch (err) {
-      setError(String(err));
-      setStatus("error");
-      frontendLog("port_scanner", `Scan failed: ${err}`);
-    }
-  }, [host, ports, timeoutMs, concurrency, portCount]);
-
-  const handleStop = useCallback(async () => {
-    if (!taskIdRef.current) return;
-    try {
-      await networkPortScanCancel(taskIdRef.current);
-    } catch (err) {
-      frontendLog("port_scanner", `Cancel failed: ${err}`);
-    }
-    setStatus("canceled");
-    taskIdRef.current = null;
-  }, []);
-
-  // Clean up on unmount.
-  useEffect(() => {
-    return () => {
-      if (taskIdRef.current) {
-        void networkPortScanCancel(taskIdRef.current).catch(() => {});
-      }
-    };
-  }, []);
+    void run();
+  }, [portCount, run]);
 
   // Only show the Host column when results span more than one host
   // (single-host scans look cleaner without it). Memoised because results
@@ -141,7 +121,7 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
         <span className="network-panel__title">Port Scanner</span>
         <div className="network-panel__actions">
           {status === "running" ? (
-            <button className="network-panel__btn network-panel__btn--stop" onClick={handleStop}>
+            <button className="network-panel__btn network-panel__btn--stop" onClick={stop}>
               <StopCircle size={14} />
               Stop
             </button>
