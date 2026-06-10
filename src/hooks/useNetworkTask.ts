@@ -126,10 +126,9 @@ export function useNetworkTask({
   useEffect(() => {
     return () => {
       if (taskIdRef.current) void cancelRef.current(taskIdRef.current).catch(() => {});
-      unlistenersRef.current.forEach((un) => un());
-      unlistenersRef.current = [];
+      teardown();
     };
-  }, []);
+  }, [teardown]);
 
   return { status, error, run, stop };
 }
