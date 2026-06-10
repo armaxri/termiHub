@@ -147,6 +147,27 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
             </span>
           </div>
         )}
+
+        {show("restoreLastSessionOnStartup") && (
+          <div className="settings-form__field">
+            <span className="settings-form__label">Restore Last Session on Startup</span>
+            <label className="settings-panel__toggle">
+              <input
+                type="checkbox"
+                checked={settings.restoreLastSessionOnStartup ?? true}
+                onChange={(e) =>
+                  onChange({ ...settings, restoreLastSessionOnStartup: e.target.checked })
+                }
+                data-testid="settings-restore-last-session"
+              />
+              <span className="settings-panel__toggle-slider" />
+            </label>
+            <span className="settings-form__hint">
+              Reopen the tabs and panel layout from your previous session when the app starts.
+              Sessions that can no longer reconnect are shown in a disconnected state.
+            </span>
+          </div>
+        )}
       </div>
 
       {(show("defaultShellIntegration") || show("defaultX11Forwarding")) && (
