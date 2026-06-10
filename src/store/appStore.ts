@@ -3931,6 +3931,8 @@ export const useAppStore = create<AppState>((set, get) => {
 
     saveLastSession: async () => {
       const state = get();
+      // Respect the setting at save time so toggling it takes effect immediately.
+      if (state.settings.restoreLastSessionOnStartup === false) return;
       const tabGroups = captureAllTabGroups(
         state.tabGroups,
         state.activeTabGroupId,

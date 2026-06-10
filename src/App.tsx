@@ -123,8 +123,29 @@ function App() {
   const openEditorTab = useAppStore((s) => s.openEditorTab);
 
   useEffect(() => {
+    let unsubscribe: (() => void) | null = null;
+
+    // Auto-save the open tabs/layout whenever the panel tree changes, so the
+    // session can be restored after a reload or restart. Attached only after the
+    // initial restore so restoring does not immediately re-save.
+    const enableAutoSave = () => {
+      unsubscribe = useAppStore.subscribe((state, prevState) => {
+        if (
+          state.tabGroups !== prevState.tabGroups ||
+          state.rootPanel !== prevState.rootPanel ||
+          state.activePanelId !== prevState.activePanelId ||
+          state.activeTabGroupId !== prevState.activeTabGroupId
+        ) {
+          state.scheduleLastSessionSave();
+        }
+      });
+    };
+
     (async () => {
       await loadFromBackend();
+
+      // A workspace launched from the CLI takes precedence over the last session.
+      let handledByCli = false;
       try {
         const cliWorkspaceName = await getCliWorkspace();
         if (cliWorkspaceName) {
@@ -133,13 +154,32 @@ function App() {
             (w) => w.name.toLowerCase() === cliWorkspaceName.toLowerCase()
           );
           if (ws) {
-            launchWorkspace(ws.id);
+            await launchWorkspace(ws.id);
+            handledByCli = true;
           }
         }
       } catch {
         // CLI plugin not available (e.g., browser dev mode)
       }
+
+      const store = useAppStore.getState();
+      if (store.settings.restoreLastSessionOnStartup !== false) {
+        if (!handledByCli) {
+          await store.restoreLastSession();
+        }
+      } else {
+        // Restore disabled: drop any stale stored session from a previous run.
+        await store.clearLastSession();
+      }
+
+      // Always observe layout changes; saveLastSession itself honors the current
+      // setting, so toggling it at runtime takes effect without a restart.
+      enableAutoSave();
     })();
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
   }, [loadFromBackend]);
 
   // Reload connections whenever this window regains focus so that changes made

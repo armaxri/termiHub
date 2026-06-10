@@ -56,6 +56,7 @@ describe("last session persistence", () => {
       remoteAgents: [],
       agentDefinitions: {},
       defaultShell: "bash",
+      settings: { ...useAppStore.getState().settings, restoreLastSessionOnStartup: true },
     });
     // Open a fresh local terminal so there is real content to capture.
     useAppStore.getState().addTab("Shell", "local", { type: "local", config: { shell: "bash" } });
@@ -70,6 +71,16 @@ describe("last session persistence", () => {
       expect(payload.version).toBe("1");
       expect(payload.tabGroups.length).toBeGreaterThan(0);
       expect(payload.activeGroupIndex).toBe(0);
+    });
+
+    it("does nothing when restore-on-startup is disabled", async () => {
+      useAppStore.setState({
+        settings: { ...useAppStore.getState().settings, restoreLastSessionOnStartup: false },
+      });
+
+      await useAppStore.getState().saveLastSession();
+
+      expect(mockSave).not.toHaveBeenCalled();
     });
 
     it("persists an empty payload when there are no real tabs", async () => {
