@@ -412,3 +412,42 @@ tests:
       - "Toggling horizontal scrolling off keeps the same scrollbar with no leftover or duplicate thumb"
     verification: manual
     tags: [terminal, scrollbar, horizontal-scroll]
+
+  # --- Restore last session on startup (PR #586) ---
+
+  - id: MT-UI-37
+    name: "Open tabs and layout are restored after an app restart"
+    pr: 586
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - "Settings → General → Restore Last Session on Startup is ON (the default)"
+    instructions:
+      - "Open several tabs of different types (e.g. a local shell and a saved SSH connection)"
+      - "Arrange them into a split layout and create a second tab group"
+      - "Fully quit the app (not just close the window) and relaunch it — alternatively, in dev mode, trigger a WebView reload"
+    expected:
+      - "On relaunch the previously open tabs reappear with the same split layout and tab groups"
+      - "The tab group that was active is active again"
+      - "Each restored terminal tab reconnects automatically where possible"
+      - "A tab whose target can no longer be reached (host down, agent offline) is shown in a disconnected/error state rather than being silently dropped"
+    verification: manual
+    tags: [session-restore, startup, layout]
+
+  - id: MT-UI-38
+    name: "Disabling Restore Last Session starts the app fresh"
+    pr: 586
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Open a few tabs, then turn OFF Settings → General → Restore Last Session on Startup"
+      - "Fully quit and relaunch the app"
+      - "Re-open Settings → General and turn the toggle back ON"
+      - "Open a couple of tabs and relaunch once more"
+    expected:
+      - "With the setting OFF, the app starts with a single fresh empty session — no previous tabs are restored"
+      - "Any previously stored session is discarded so it does not reappear later"
+      - "With the setting back ON, the tabs open before the final relaunch are restored again"
+    verification: manual
+    tags: [session-restore, startup, settings]

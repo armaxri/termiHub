@@ -208,6 +208,12 @@ export interface AppSettings {
   askOpenSavedFileInTab?: boolean;
   defaultShellIntegration?: boolean;
   defaultX11Forwarding?: boolean;
+  /**
+   * When true (default), the open tab groups and layout are auto-saved on every
+   * change and restored on the next startup. When false, the app always starts
+   * with a fresh empty session.
+   */
+  restoreLastSessionOnStartup?: boolean;
   layout?: LayoutConfig;
   credentialStorageMode?: "master_password" | "none";
   credentialAutoLockMinutes?: number;
