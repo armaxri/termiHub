@@ -186,6 +186,13 @@ export function onScanComplete(
   );
 }
 
+/** Listen for fatal port scan errors (e.g. invalid target / DNS resolution failure). */
+export function onScanError(
+  cb: (payload: { taskId: string; error: string }) => void
+): Promise<UnlistenFn> {
+  return listen<{ taskId: string; error: string }>("network-scan-error", (e) => cb(e.payload));
+}
+
 /** Listen for ping result events. */
 export function onPingResult(
   cb: (payload: { taskId: string; result: PingResult }) => void
@@ -226,6 +233,15 @@ export function onTracerouteComplete(
   cb: (payload: { taskId: string }) => void
 ): Promise<UnlistenFn> {
   return listen<{ taskId: string }>("network-traceroute-complete", (e) => cb(e.payload));
+}
+
+/** Listen for fatal traceroute errors (e.g. DNS resolution failure). */
+export function onTracerouteError(
+  cb: (payload: { taskId: string; error: string }) => void
+): Promise<UnlistenFn> {
+  return listen<{ taskId: string; error: string }>("network-traceroute-error", (e) =>
+    cb(e.payload)
+  );
 }
 
 /** Listen for HTTP monitor check events. */
