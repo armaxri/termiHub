@@ -6,6 +6,7 @@ use tauri_plugin_cli::CliExt;
 use crate::connection::manager::ConnectionManager;
 use crate::utils::errors::TerminalError;
 use crate::workspace::config::{WorkspaceDefinition, WorkspaceImportPreview, WorkspaceSummary};
+use crate::workspace::last_session::{LastSession, LastSessionManager};
 use crate::workspace::manager::WorkspaceManager;
 
 /// Get all workspace summaries for sidebar display.
@@ -152,4 +153,35 @@ pub fn import_workspaces(
 #[tauri::command]
 pub fn preview_import_workspaces(json: String) -> Result<WorkspaceImportPreview, TerminalError> {
     WorkspaceManager::preview_import_json(&json)
+}
+
+/// Persist the current session (open tab groups and layout) for restore on next startup.
+/// An empty session clears the stored file.
+#[tauri::command]
+pub fn save_last_session(
+    session: LastSession,
+    manager: State<'_, LastSessionManager>,
+) -> Result<(), TerminalError> {
+    manager
+        .save(session)
+        .map_err(|e| TerminalError::WorkspaceError(e.to_string()))
+}
+
+/// Load the persisted last session, if any. Returns `None` when there is nothing
+/// to restore (no file, or a corrupt file that was ignored).
+#[tauri::command]
+pub fn load_last_session(
+    manager: State<'_, LastSessionManager>,
+) -> Result<Option<LastSession>, TerminalError> {
+    manager
+        .load()
+        .map_err(|e| TerminalError::WorkspaceError(e.to_string()))
+}
+
+/// Clear the persisted last session.
+#[tauri::command]
+pub fn clear_last_session(manager: State<'_, LastSessionManager>) -> Result<(), TerminalError> {
+    manager
+        .clear()
+        .map_err(|e| TerminalError::WorkspaceError(e.to_string()))
 }
