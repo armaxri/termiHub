@@ -1,0 +1,129 @@
+import type { BridgeCommand, BridgeResponse } from "./protocol";
+
+/**
+ * Transport that carries a {@link BridgeCommand} to the running app and returns
+ * its {@link BridgeResponse}.
+ *
+ * This is the seam that makes the harness platform-agnostic. Different transports
+ * reach the same in-app bridge by different routes:
+ *  - {@link inProcessTransport} — calls `window.__termihubTestBridge` directly
+ *    (in-process, or via WebDriver `browser.execute`).
+ *  - a future WebSocket transport — talks to a backend-hosted control channel,
+ *    which is how macOS is driven where no WKWebView WebDriver exists (ADR-5).
+ *
+ * The {@link Driver} above never knows which transport is underneath.
+ */
+export type BridgeTransport = (command: BridgeCommand) => BridgeResponse | Promise<BridgeResponse>;
+
+/** Raised when a bridge command returns an `ok: false` response. */
+export class BridgeError extends Error {
+  constructor(
+    public readonly action: BridgeCommand["action"],
+    message: string
+  ) {
+    super(message);
+    this.name = "BridgeError";
+  }
+}
+
+/** Options for {@link Driver.readTerminal}. */
+export interface ReadTerminalOptions {
+  /** Read this specific tab instead of the active one. */
+  tabId?: string;
+  /** Rejoin hard wraps at the terminal width (matches "Save to File"). */
+  joinFullWidthRows?: boolean;
+}
+
+/**
+ * The abstraction test authors and coding agents program against.
+ *
+ * It exposes the same verbs regardless of platform or transport: press buttons,
+ * type into fields, read the terminal, and inspect app state. Query methods
+ * resolve to their value; action methods resolve when applied. Any underlying
+ * failure rejects with a {@link BridgeError} carrying an agent-readable message,
+ * so a scenario runner can turn it into structured feedback.
+ */
+export interface Driver {
+  /** Press the control carrying the given `data-testid`. */
+  click(testId: string): Promise<void>;
+  /** Set the value of the input/textarea carrying the given `data-testid`. */
+  type(testId: string, text: string): Promise<void>;
+  /** Whether an element with the given `data-testid` is currently present. */
+  exists(testId: string): Promise<boolean>;
+  /** Read the visible text of the element with the given `data-testid`. */
+  getText(testId: string): Promise<string>;
+  /** Read an attribute of the element with the given `data-testid`. */
+  getAttribute(testId: string, attribute: string): Promise<string | null>;
+  /** Read the reconstructed text of a terminal (active tab unless specified). */
+  readTerminal(options?: ReadTerminalOptions): Promise<string>;
+  /** Read a slice of app state, optionally by dot-path. */
+  getState(path?: string): Promise<unknown>;
+}
+
+/**
+ * Default transport that calls the in-app bridge installed on `window`.
+ *
+ * Works in-process and inside WebDriver's `browser.execute`. Throws if the bridge
+ * is absent, which usually means test mode was not enabled before the app booted.
+ */
+export const inProcessTransport: BridgeTransport = (command) => {
+  const bridge = window.__termihubTestBridge;
+  if (!bridge) {
+    throw new BridgeError(
+      command.action,
+      "test bridge is not installed — enable test mode before launching the app"
+    );
+  }
+  return bridge.dispatch(command);
+};
+
+/**
+ * A {@link Driver} backed by a {@link BridgeTransport}.
+ *
+ * Defaults to the {@link inProcessTransport}, so `new InAppBridgeDriver()` drives
+ * the app running in the same realm; pass a transport to target a remote app.
+ */
+export class InAppBridgeDriver implements Driver {
+  constructor(private readonly transport: BridgeTransport = inProcessTransport) {}
+
+  /** Send a command and unwrap its value, rejecting on an `ok: false` response. */
+  private async send(command: BridgeCommand): Promise<unknown> {
+    const res = await this.transport(command);
+    if (!res.ok) {
+      throw new BridgeError(res.action, res.error ?? `command "${res.action}" failed`);
+    }
+    return res.value;
+  }
+
+  async click(testId: string): Promise<void> {
+    await this.send({ action: "click", testId });
+  }
+
+  async type(testId: string, text: string): Promise<void> {
+    await this.send({ action: "type", testId, text });
+  }
+
+  async exists(testId: string): Promise<boolean> {
+    return (await this.send({ action: "exists", testId })) as boolean;
+  }
+
+  async getText(testId: string): Promise<string> {
+    return (await this.send({ action: "getText", testId })) as string;
+  }
+
+  async getAttribute(testId: string, attribute: string): Promise<string | null> {
+    return (await this.send({ action: "getAttribute", testId, attribute })) as string | null;
+  }
+
+  async readTerminal(options: ReadTerminalOptions = {}): Promise<string> {
+    return (await this.send({
+      action: "readTerminal",
+      tabId: options.tabId,
+      joinFullWidthRows: options.joinFullWidthRows,
+    })) as string;
+  }
+
+  async getState(path?: string): Promise<unknown> {
+    return this.send({ action: "getState", path });
+  }
+}
