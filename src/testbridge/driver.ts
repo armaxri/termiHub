@@ -87,12 +87,12 @@ export class InAppBridgeDriver implements Driver {
   constructor(private readonly transport: BridgeTransport = inProcessTransport) {}
 
   /** Send a command and unwrap its value, rejecting on an `ok: false` response. */
-  private async send(command: BridgeCommand): Promise<unknown> {
+  private async send<T = unknown>(command: BridgeCommand): Promise<T> {
     const res = await this.transport(command);
     if (!res.ok) {
       throw new BridgeError(res.action, res.error ?? `command "${res.action}" failed`);
     }
-    return res.value;
+    return res.value as T;
   }
 
   async click(testId: string): Promise<void> {
@@ -104,23 +104,23 @@ export class InAppBridgeDriver implements Driver {
   }
 
   async exists(testId: string): Promise<boolean> {
-    return (await this.send({ action: "exists", testId })) as boolean;
+    return this.send<boolean>({ action: "exists", testId });
   }
 
   async getText(testId: string): Promise<string> {
-    return (await this.send({ action: "getText", testId })) as string;
+    return this.send<string>({ action: "getText", testId });
   }
 
   async getAttribute(testId: string, attribute: string): Promise<string | null> {
-    return (await this.send({ action: "getAttribute", testId, attribute })) as string | null;
+    return this.send<string | null>({ action: "getAttribute", testId, attribute });
   }
 
   async readTerminal(options: ReadTerminalOptions = {}): Promise<string> {
-    return (await this.send({
+    return this.send<string>({
       action: "readTerminal",
       tabId: options.tabId,
       joinFullWidthRows: options.joinFullWidthRows,
-    })) as string;
+    });
   }
 
   async getState(path?: string): Promise<unknown> {

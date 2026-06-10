@@ -26,35 +26,26 @@ export const TEST_BRIDGE_GLOBAL_KEY = "__TERMIHUB_TEST_BRIDGE__";
  * storage) simply contributes `false` rather than breaking app startup.
  */
 export function isTestBridgeEnabled(): boolean {
-  // Build-time flag — baked into dev/test builds, never production by default.
-  try {
-    if (import.meta.env?.VITE_TEST_BRIDGE === "1") return true;
-  } catch {
-    // import.meta.env unavailable; ignore.
-  }
-
-  if (typeof window !== "undefined") {
+  return (
+    // Build-time flag — baked into dev/test builds, never production by default.
+    checkSignal(() => import.meta.env?.VITE_TEST_BRIDGE === "1") ||
     // Runtime global, e.g. injected by the backend init script in test mode.
-    try {
-      if ((window as Record<string, unknown>)[TEST_BRIDGE_GLOBAL_KEY]) return true;
-    } catch {
-      // ignore
-    }
-
+    checkSignal(() => !!(window as unknown as Record<string, unknown>)[TEST_BRIDGE_GLOBAL_KEY]) ||
     // URL query parameter.
-    try {
-      if (new URLSearchParams(window.location.search).get("testBridge") === "1") return true;
-    } catch {
-      // ignore
-    }
-
+    checkSignal(() => new URLSearchParams(window.location.search).get("testBridge") === "1") ||
     // Persisted opt-in.
-    try {
-      if (window.localStorage?.getItem(TEST_BRIDGE_STORAGE_KEY) === "1") return true;
-    } catch {
-      // localStorage may be unavailable/blocked.
-    }
-  }
+    checkSignal(() => window.localStorage?.getItem(TEST_BRIDGE_STORAGE_KEY) === "1")
+  );
+}
 
-  return false;
+/**
+ * Evaluate one opt-in signal, treating any thrown/absent environment (blocked
+ * storage, missing `window`, …) as a `false` contribution rather than an error.
+ */
+function checkSignal(probe: () => boolean): boolean {
+  try {
+    return probe();
+  } catch {
+    return false;
+  }
 }

@@ -25,7 +25,7 @@ describe("isTestBridgeEnabled", () => {
   });
 
   afterEach(() => {
-    delete (window as Record<string, unknown>)[TEST_BRIDGE_GLOBAL_KEY];
+    delete (window as unknown as Record<string, unknown>)[TEST_BRIDGE_GLOBAL_KEY];
     window.localStorage.clear();
     window.history.replaceState({}, "", "/");
   });
@@ -35,7 +35,7 @@ describe("isTestBridgeEnabled", () => {
   });
 
   it("is enabled by the runtime global", () => {
-    (window as Record<string, unknown>)[TEST_BRIDGE_GLOBAL_KEY] = true;
+    (window as unknown as Record<string, unknown>)[TEST_BRIDGE_GLOBAL_KEY] = true;
     expect(isTestBridgeEnabled()).toBe(true);
   });
 

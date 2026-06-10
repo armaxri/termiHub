@@ -125,11 +125,12 @@ export function dispatchCommand(command: BridgeCommand, deps: BridgeDeps): Bridg
     }
 
     default: {
-      const unknown = command as { action?: unknown };
-      return fail(
-        (unknown.action as BridgeCommand["action"]) ?? "getState",
-        `unknown command action "${String(unknown.action)}"`
-      );
+      const action = (command as { action?: unknown }).action;
+      return {
+        ok: false,
+        action: String(action) as BridgeCommand["action"],
+        error: `unknown command action "${String(action)}"`,
+      };
     }
   }
 }

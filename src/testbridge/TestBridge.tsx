@@ -1,7 +1,6 @@
 import { useEffect } from "react";
 import { useTerminalRegistry } from "@/components/Terminal/TerminalRegistry";
-import { useAppStore } from "@/store/appStore";
-import { findLeaf } from "@/utils/panelTree";
+import { useAppStore, getActiveTab } from "@/store/appStore";
 import { frontendLog } from "@/utils/frontendLog";
 import { dispatchCommand, type BridgeDeps } from "./dispatcher";
 import { isTestBridgeEnabled } from "./testMode";
@@ -28,11 +27,7 @@ export function TestBridge() {
     const deps: BridgeDeps = {
       root: document,
       readTerminal: (tabId, joinFullWidthRows) => getTerminalContent(tabId, joinFullWidthRows),
-      getActiveTabId: () => {
-        const { rootPanel, activePanelId } = useAppStore.getState();
-        const leaf = activePanelId ? findLeaf(rootPanel, activePanelId) : null;
-        return leaf?.activeTabId ?? undefined;
-      },
+      getActiveTabId: () => getActiveTab(useAppStore.getState())?.id ?? undefined,
       getState: () => useAppStore.getState() as unknown as Record<string, unknown>,
     };
 
