@@ -74,6 +74,17 @@ describe("WebSocket bridge round-trip", () => {
     expect(results).toEqual(["text:a", "text:b", "text:c"]);
   });
 
+  it("returns the same transport for repeated waitForApp() calls", async () => {
+    server = await serveWebSocketBridge();
+    client = runBridgeWebSocketClient({
+      url: `ws://127.0.0.1:${server.port}`,
+      dispatch: stubDispatch,
+    });
+    const first = await server.waitForApp();
+    const second = await server.waitForApp();
+    expect(second).toBe(first);
+  });
+
   it("drives a second app after the first disconnects (restart within one run)", async () => {
     // One runner session, one server: drive instance A, watch it disconnect,
     // then drive a freshly-launched instance B over the same server (issue #817).
