@@ -26,6 +26,10 @@ tests/reports/*.json
 .claude/*
 !.claude/CLAUDE.md
 !.claude/settings.json
+# Project skills are shared; personal skills under .claude/skills/ stay local.
+!.claude/skills
+.claude/skills/*
+!.claude/skills/sync-concept
 *.suo
 *.ntvs*
 *.njsproj

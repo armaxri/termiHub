@@ -35,6 +35,61 @@ Issues labeled **`Concept`** are design-only tasks. Do **not** implement code fo
 4. Reference the GitHub issue number in the document header
 5. Commit with `docs(concept): add concept for <name> (Closes #N)`
 
+### AI-Driven Concept Workflow (Folder-Form Concepts)
+
+For features with a **visual surface worth mocking up**, prefer the **folder form** of a concept
+over a single `.md`. This is a **design-first loop**: the artifacts are both the human discussion
+medium and Claude Code's implementation target. Full design:
+[`docs/concepts/ai-driven-concept-workflow.md`](../docs/concepts/backlog/ai-driven-concept-workflow.md).
+
+**Three fixed rules:**
+
+1. **Concept drives code (source of truth).** When artifacts and code disagree, the **concept is
+   authoritative** — fix the code by default. Only when a real constraint (platform, library,
+   performance) makes the design wrong do you change the **concept** instead — never silently
+   absorb the divergence into code.
+2. **Hand-written, layout-altitude mockups that look like termiHub.** Mockups show **structure
+   and states**, not pixels — but they must read as the real app, not a generic dark IDE. So:
+   - **Reuse the real component class names** from `docs/concepts/_assets/mockup.css`
+     (`.activity-bar__item`, `.tab`, `.terminal-view__toolbar`, `.status-bar`,
+     `.connection-tree__item`, …) — the kit mirrors the app's actual BEM classes and theme values,
+     so the mockup DOM matches the real DOM and doubles as a precise implementation target.
+   - **Use real lucide icons**, never unicode glyphs: copy the needed `<symbol>` from the inline
+     sprite in `mockup-template.html` and reference `<svg class="li"><use href="#i-name" /></svg>`.
+     (Glyphs like `◉`/`⫽` were the main reason early drafts didn't look like termiHub.)
+   - Self-contained HTML (link only `_assets/mockup.css`, never import app code) so they can
+     describe not-yet-built features. They may be "directionally right, not current" between syncs.
+3. **Sync is human-triggered.** Reconciliation happens only via the `/sync-concept <name>` skill —
+   never automatically.
+
+**Folder layout** (lives in the same status dirs as single-file concepts):
+
+```
+docs/concepts/<status>/<name>/
+  concept.md      # Overview, UI Interface (points at mockups), General Handling, Impl Details
+  behavior.md     # Mermaid state machines + sequence diagrams
+  mockups/*.html  # Hand-written, layout-altitude HTML (use _assets/mockup.css + mockup-template.html)
+  sync.md         # Concept↔code reconciliation ledger (last-synced commit, open divergences)
+```
+
+**Authoring a new folder-form concept:**
+
+1. Scaffold the folder; write `concept.md` + `behavior.md`; copy
+   `docs/concepts/_assets/mockup-template.html` into `mockups/` and build at least one mockup
+   using the real class names + lucide icons (rule 2 above).
+2. **Screenshot-verify fidelity**: render with `scripts/internal/screenshot-mockup.sh <file>` (or
+   `--all`) and confirm the mockup actually looks like termiHub before using it for discussion.
+3. Regenerate the index: `scripts/internal/build-mockups-index.sh` (or `.cmd`) →
+   `docs/concepts/mockups-index.html`.
+4. Discuss/iterate on artifacts **before** writing code. Implement only once they stabilize, using
+   the mockups as the layout target and `behavior.md` as the behavior spec.
+5. After implementing (and after any later change to the feature), run `/sync-concept <name>` to
+   refresh `sync.md` and reconcile.
+
+The standard Concept-issue rules (sections, Mermaid, issue header, commit message) still apply —
+they just split across `concept.md` and `behavior.md`. The first worked example is
+[`backlog/broadcast-input/`](../docs/concepts/backlog/broadcast-input/).
+
 ---
 
 ## Project Structure
@@ -216,6 +271,7 @@ feat(scope): implement <feature name> (Closes #N)
 Use these skills with `/skill-name` during development:
 
 - `/frontend-design:frontend-design` — UI components and new screens (VS Code-inspired aesthetic)
+- `/sync-concept <name>` — reconcile a folder-form concept with the code (concept is source of truth)
 - `/simplify` — post-implementation code quality review (run before PRs)
 - `/claude-md-management:revise-claude-md` — update CLAUDE.md with session learnings (run at session end)
 - `/claude-md-management:claude-md-improver` — full CLAUDE.md audit and improvement pass
