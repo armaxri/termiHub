@@ -12,9 +12,8 @@ class FakeSocket implements BridgeClientSocket {
   readonly sent: string[] = [];
   closed = false;
   closeCount = 0;
-  private messageListeners: ((event: { data: unknown }) => void)[] = [];
   /** Live listener registrations, keyed by type, for leak assertions. */
-  readonly listeners = new Map<string, Set<(event: unknown) => void>>();
+  readonly listeners = new Map<string, Set<(event: { data: unknown }) => void>>();
 
   send(data: string): void {
     this.sent.push(data);
@@ -26,16 +25,12 @@ class FakeSocket implements BridgeClientSocket {
   }
 
   addEventListener(type: string, listener: (event: { data: unknown }) => void): void {
-    if (type === "message") this.messageListeners.push(listener);
     if (!this.listeners.has(type)) this.listeners.set(type, new Set());
-    this.listeners.get(type)!.add(listener as (event: unknown) => void);
+    this.listeners.get(type)!.add(listener);
   }
 
   removeEventListener(type: string, listener: (event: unknown) => void): void {
-    this.listeners.get(type)?.delete(listener);
-    if (type === "message") {
-      this.messageListeners = this.messageListeners.filter((l) => l !== listener);
-    }
+    this.listeners.get(type)?.delete(listener as (event: { data: unknown }) => void);
   }
 
   /** Total number of currently-registered listeners across all types. */
@@ -48,7 +43,7 @@ class FakeSocket implements BridgeClientSocket {
   /** Simulate a message arriving from the runner. */
   emit(data: unknown): void {
     const payload = typeof data === "string" ? data : JSON.stringify(data);
-    for (const listener of this.messageListeners) listener({ data: payload });
+    for (const listener of this.listeners.get("message") ?? []) listener({ data: payload });
   }
 
   /** Parse the n-th sent frame as a response envelope. */

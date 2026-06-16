@@ -76,9 +76,10 @@ export function serveWebSocketBridge(
   // A monotonic connection counter (the "generation"). It increments on every
   // accepted app connection so the runner can tell a restarted app apart from
   // the one it last drove. `current` is the live transport (undefined between an
-  // app disconnecting and the next connecting); `handedOut` is the highest
-  // generation a waitForApp/awaitNextApp call has resolved with.
-  let generation = 0;
+  // app disconnecting and the next connecting), and stays paired with the
+  // generation in `currentGeneration`; `handedOut` is the highest generation a
+  // waitForApp/awaitNextApp call has resolved with. When `current` is set,
+  // `currentGeneration` is always >= `handedOut`, so the two never need a max().
   let currentGeneration = 0;
   let current: WebSocketBridgeTransport | undefined;
   let handedOut = 0;
@@ -87,19 +88,20 @@ export function serveWebSocketBridge(
   /** Resolve every waiter whose threshold the current connection now satisfies. */
   function settleWaiters(): void {
     if (!current) return;
+    let settled = false;
     for (let i = waiters.length - 1; i >= 0; i -= 1) {
       if (currentGeneration >= waiters[i].minGeneration) {
-        const waiter = waiters.splice(i, 1)[0];
-        handedOut = Math.max(handedOut, currentGeneration);
-        waiter.resolve(current);
+        waiters.splice(i, 1)[0].resolve(current);
+        settled = true;
       }
     }
+    if (settled) handedOut = currentGeneration;
   }
 
   /** Hand out the current connection if it satisfies `minGeneration`, else wait. */
   function acquire(minGeneration: number): Promise<WebSocketBridgeTransport> {
     if (current && currentGeneration >= minGeneration) {
-      handedOut = Math.max(handedOut, currentGeneration);
+      handedOut = currentGeneration;
       return Promise.resolve(current);
     }
     return new Promise<WebSocketBridgeTransport>((resolve, reject) => {
@@ -112,8 +114,7 @@ export function serveWebSocketBridge(
     // any predecessor, so a single app drives the run at a time AND a restarted
     // app always re-acquires the bridge (issue #817). Rejecting an overlapping
     // connection instead would wedge a restart that races the old socket's close.
-    generation += 1;
-    currentGeneration = generation;
+    currentGeneration += 1;
     const previous = current;
     const transport = new WebSocketBridgeTransport(channelFromSocket(socket), {
       requestTimeoutMs: options.requestTimeoutMs,
@@ -140,7 +141,7 @@ export function serveWebSocketBridge(
       resolve({
         port: address.port,
         // The current app, or the next to connect once the previous has gone.
-        waitForApp: () => acquire(Math.max(1, handedOut)),
+        waitForApp: () => acquire(currentGeneration),
         // Strictly the next connection after the one we last handed out.
         awaitNextApp: () => acquire(handedOut + 1),
         close: () =>

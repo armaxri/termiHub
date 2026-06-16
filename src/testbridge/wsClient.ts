@@ -68,32 +68,20 @@ export function runBridgeWebSocketClient(
   const createSocket = options.createSocket ?? defaultCreateSocket;
   const socket = createSocket(options.url);
 
-  // Track every listener we register so close() can detach them. A restarted app
-  // is a fresh process, but tearing down cleanly keeps a single run from leaking
-  // listeners on a socket the runner may keep around (issue #817).
+  // Register a listener and record how to detach it, so close() can remove every
+  // listener we added. A restarted app is a fresh process, but tearing down
+  // cleanly keeps a single run from leaking listeners on a socket the runner may
+  // keep around (issue #817).
   const detachers: (() => void)[] = [];
-  function track(type: "message" | "open" | "close" | "error", listener: (event: never) => void) {
+  function listen(type: "message" | "open" | "close" | "error", listener: (event: never) => void) {
+    socket.addEventListener(type as "message", listener as (event: { data: unknown }) => void);
     detachers.push(() => socket.removeEventListener?.(type, listener as (event: unknown) => void));
   }
 
-  const onMessage = (event: { data: unknown }) => void handleMessage(event.data);
-  socket.addEventListener("message", onMessage);
-  track("message", onMessage as (event: never) => void);
-  if (options.onOpen) {
-    const onOpen = () => options.onOpen?.();
-    socket.addEventListener("open", onOpen);
-    track("open", onOpen);
-  }
-  if (options.onClose) {
-    const onClose = () => options.onClose?.();
-    socket.addEventListener("close", onClose);
-    track("close", onClose);
-  }
-  if (options.onError) {
-    const onError = (event: unknown) => options.onError?.(event);
-    socket.addEventListener("error", onError);
-    track("error", onError as (event: never) => void);
-  }
+  listen("message", (event: { data: unknown }) => void handleMessage(event.data));
+  if (options.onOpen) listen("open", () => options.onOpen?.());
+  if (options.onClose) listen("close", () => options.onClose?.());
+  if (options.onError) listen("error", (event: unknown) => options.onError?.(event));
 
   let closed = false;
 
