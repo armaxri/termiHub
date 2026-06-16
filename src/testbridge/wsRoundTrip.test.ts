@@ -73,4 +73,27 @@ describe("WebSocket bridge round-trip", () => {
     ]);
     expect(results).toEqual(["text:a", "text:b", "text:c"]);
   });
+
+  it("drives a second app after the first disconnects (restart within one run)", async () => {
+    // One runner session, one server: drive instance A, watch it disconnect,
+    // then drive a freshly-launched instance B over the same server (issue #817).
+    server = await serveWebSocketBridge();
+    const url = `ws://127.0.0.1:${server.port}`;
+
+    // Instance A connects, gets driven, then is "killed".
+    const clientA = runBridgeWebSocketClient({ url, dispatch: stubDispatch });
+    const transportA = await server.waitForApp();
+    const driverA = new InAppBridgeDriver(transportA.transport);
+    await expect(driverA.getText("a")).resolves.toBe("text:a");
+    clientA.close();
+
+    // Instance B (a fresh process) connects out to the same server; the runner
+    // acquires a brand-new transport and drives it.
+    const clientB = runBridgeWebSocketClient({ url, dispatch: stubDispatch });
+    client = clientB; // tracked for afterEach teardown
+    const transportB = await server.awaitNextApp();
+    expect(transportB).not.toBe(transportA);
+    const driverB = new InAppBridgeDriver(transportB.transport);
+    await expect(driverB.getText("b")).resolves.toBe("text:b");
+  });
 });
