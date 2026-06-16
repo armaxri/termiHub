@@ -24,6 +24,12 @@ interface TerminalRegistryContextType {
   focusTerminal: (tabId: string) => void;
   /** Clear the terminal scrollback and screen for a tab. */
   clearTerminal: (tabId: string) => void;
+  /**
+   * Read a terminal's reconstructed logical-line text, or `undefined` when no
+   * terminal is registered for the tab. Used by the in-app test bridge to assert
+   * on displayed terminal output without scraping the GPU canvas.
+   */
+  getTerminalContent: (tabId: string, joinFullWidthRows?: boolean) => string | undefined;
   /** Save terminal buffer content to a file via native save dialog. */
   saveTerminalToFile: (tabId: string) => Promise<void>;
   /** Copy terminal buffer content to the clipboard. */
@@ -299,6 +305,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       focusTerminal,
       fitTerminal,
       clearTerminal,
+      getTerminalContent,
       saveTerminalToFile,
       copyTerminalToClipboard,
       openTerminalInEditor,
@@ -321,6 +328,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       focusTerminal,
       fitTerminal,
       clearTerminal,
+      getTerminalContent,
       saveTerminalToFile,
       copyTerminalToClipboard,
       openTerminalInEditor,
