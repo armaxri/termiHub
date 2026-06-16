@@ -12,6 +12,24 @@ Design documents are sorted into four folders based on **implementation status**
 Each partially implemented concept has an **## Implementation Status** section at the bottom
 of its document that lists exactly what exists and what is still missing.
 
+## Two forms: single-file vs. folder
+
+A concept is either a single `.md` file or a **folder** — both live in the same status
+directories.
+
+- **Single file** (`<name>.md`) — the default. Prose + inline Mermaid diagrams.
+- **Folder form** (`<name>/`) — used when a concept has a **visual surface worth mocking up**.
+  It co-locates `concept.md` (prose), `behavior.md` (diagrams), `mockups/*.html` (hand-written,
+  layout-altitude HTML), and `sync.md` (the concept↔code reconciliation ledger).
+
+The folder form is part of the **AI-driven concept workflow** — design-first artifacts that
+double as Claude Code's implementation target, reconciled via the `/sync-concept <name>` skill
+where the **concept is the source of truth**. See
+[`backlog/ai-driven-concept-workflow.md`](backlog/ai-driven-concept-workflow.md) for the full
+design, [`_assets/`](_assets/) for the shared mockup kit, and
+[`mockups-index.html`](mockups-index.html) for a browsable index of every mockup.
+[`backlog/broadcast-input/`](backlog/broadcast-input/) is the first worked example.
+
 ---
 
 ## implemented/
@@ -62,18 +80,19 @@ These features have something built, but there are meaningful gaps. See the
 
 Not started yet — realistic and planned for the near to medium term.
 
-| Document                                                                                               | Summary                                                                                      |
-| ------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
-| [app-icons.md](backlog/app-icons.md)                                                                   | Custom application icon design — placeholder Tauri icons are in place, not the designed ones |
-| [broadcast-input.md](backlog/broadcast-input.md)                                                       | Synchronised input across multiple terminals simultaneously                                  |
-| [cross-platform-testing.md](backlog/cross-platform-testing.md)                                         | Platform-divergent test modules and `XPLAT-*` identifiers for CI                             |
-| [embedded-unix-windows.md](backlog/embedded-unix-windows.md)                                           | Bundle BusyBox-w32 + Unix tools with the Windows build                                       |
-| [ftp-client.md](backlog/ftp-client.md)                                                                 | FTP client sessions (distinct from the embedded FTP server)                                  |
-| [macro-recording.md](backlog/macro-recording.md)                                                       | Record and replay terminal input sequences                                                   |
-| [release-planning-and-dependency-management.md](backlog/release-planning-and-dependency-management.md) | Structured release cadence, Dependabot, hotfix branching                                     |
-| [remote-agent-update-strategy.md](backlog/remote-agent-update-strategy.md)                             | Deliver updated agent binaries to remote hosts                                               |
-| [shell-context-menu-integration.md](backlog/shell-context-menu-integration.md)                         | OS "Open in termiHub" context menu + `termiHub spawn` CLI                                    |
-| [ssh-jump-host.md](backlog/ssh-jump-host.md)                                                           | First-class ProxyJump / gateway chains in the connection editor                              |
+| Document                                                                                               | Summary                                                                                                |
+| ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| [ai-driven-concept-workflow.md](backlog/ai-driven-concept-workflow.md)                                 | Design-first loop — per-concept mockups + diagrams as source of truth, human-triggered `/sync-concept` |
+| [app-icons.md](backlog/app-icons.md)                                                                   | Custom application icon design — placeholder Tauri icons are in place, not the designed ones           |
+| [broadcast-input/](backlog/broadcast-input/) _(folder form)_                                           | Synchronised input across multiple terminals simultaneously — first folder-form concept + mockups      |
+| [cross-platform-testing.md](backlog/cross-platform-testing.md)                                         | Platform-divergent test modules and `XPLAT-*` identifiers for CI                                       |
+| [embedded-unix-windows.md](backlog/embedded-unix-windows.md)                                           | Bundle BusyBox-w32 + Unix tools with the Windows build                                                 |
+| [ftp-client.md](backlog/ftp-client.md)                                                                 | FTP client sessions (distinct from the embedded FTP server)                                            |
+| [macro-recording.md](backlog/macro-recording.md)                                                       | Record and replay terminal input sequences                                                             |
+| [release-planning-and-dependency-management.md](backlog/release-planning-and-dependency-management.md) | Structured release cadence, Dependabot, hotfix branching                                               |
+| [remote-agent-update-strategy.md](backlog/remote-agent-update-strategy.md)                             | Deliver updated agent binaries to remote hosts                                                         |
+| [shell-context-menu-integration.md](backlog/shell-context-menu-integration.md)                         | OS "Open in termiHub" context menu + `termiHub spawn` CLI                                              |
+| [ssh-jump-host.md](backlog/ssh-jump-host.md)                                                           | First-class ProxyJump / gateway chains in the connection editor                                        |
 
 ---
 
