@@ -71,22 +71,18 @@ function parsePort(value: unknown): number | undefined {
 }
 
 /**
- * Evaluate one opt-in signal, treating any thrown/absent environment (blocked
- * storage, missing `window`, …) as a `false` contribution rather than an error.
+ * Read one signal, treating any thrown/absent environment (blocked storage,
+ * missing `window`, …) as `undefined` rather than letting it break startup.
  */
-function checkSignal(probe: () => boolean): boolean {
-  try {
-    return probe();
-  } catch {
-    return false;
-  }
-}
-
-/** Like {@link checkSignal} but returns the probed value (or `undefined`). */
 function readSignal<T>(probe: () => T): T | undefined {
   try {
     return probe();
   } catch {
     return undefined;
   }
+}
+
+/** {@link readSignal} for boolean opt-in probes: a throw contributes `false`. */
+function checkSignal(probe: () => boolean): boolean {
+  return readSignal(probe) === true;
 }

@@ -46,6 +46,8 @@ export function TestBridge() {
     // an external test runner can drive the app on every platform — including
     // macOS, where no WKWebView WebDriver exists (ADR-5).
     const port = getTestBridgePort();
+    // Loopback by design: the runner launches the app on the same host, so the
+    // server it hosts is always reachable at 127.0.0.1 — no host config needed.
     const wsClient = port
       ? runBridgeWebSocketClient({
           url: `ws://127.0.0.1:${port}`,
