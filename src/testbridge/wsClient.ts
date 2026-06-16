@@ -68,12 +68,34 @@ export function runBridgeWebSocketClient(
   const createSocket = options.createSocket ?? defaultCreateSocket;
   const socket = createSocket(options.url);
 
-  socket.addEventListener("message", (event) => {
-    void handleMessage(event.data);
-  });
-  if (options.onOpen) socket.addEventListener("open", () => options.onOpen?.());
-  if (options.onClose) socket.addEventListener("close", () => options.onClose?.());
-  if (options.onError) socket.addEventListener("error", (event) => options.onError?.(event));
+  // Track every listener we register so close() can detach them. A restarted app
+  // is a fresh process, but tearing down cleanly keeps a single run from leaking
+  // listeners on a socket the runner may keep around (issue #817).
+  const detachers: (() => void)[] = [];
+  function track(type: "message" | "open" | "close" | "error", listener: (event: never) => void) {
+    detachers.push(() => socket.removeEventListener?.(type, listener as (event: unknown) => void));
+  }
+
+  const onMessage = (event: { data: unknown }) => void handleMessage(event.data);
+  socket.addEventListener("message", onMessage);
+  track("message", onMessage as (event: never) => void);
+  if (options.onOpen) {
+    const onOpen = () => options.onOpen?.();
+    socket.addEventListener("open", onOpen);
+    track("open", onOpen);
+  }
+  if (options.onClose) {
+    const onClose = () => options.onClose?.();
+    socket.addEventListener("close", onClose);
+    track("close", onClose);
+  }
+  if (options.onError) {
+    const onError = (event: unknown) => options.onError?.(event);
+    socket.addEventListener("error", onError);
+    track("error", onError as (event: never) => void);
+  }
+
+  let closed = false;
 
   async function handleMessage(data: unknown): Promise<void> {
     let parsed: unknown;
@@ -101,6 +123,9 @@ export function runBridgeWebSocketClient(
 
   return {
     close() {
+      if (closed) return; // idempotent — safe to call on unmount and on error
+      closed = true;
+      for (const detach of detachers.splice(0)) detach();
       socket.close();
     },
   };
