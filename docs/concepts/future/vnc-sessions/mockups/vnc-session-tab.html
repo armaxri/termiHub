@@ -1,0 +1,714 @@
+<!doctype html>
+<!-- VNC Sessions — graphical session as a tab: canvas surface, floating hover toolbar, status segment.
+     Layout altitude, real class names + lucide icons. The canvas is a plain dark placeholder surface,
+     NOT a screenshot. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>VNC Sessions — Session Tab (mockup)</title>
+    <link rel="stylesheet" href="../../../_assets/mockup.css" />
+    <style>
+      /* ── VNC-specific structural markup (mockup-only; theme vars from mockup.css) ── */
+      .vnc-canvas {
+        position: relative;
+        flex: 1 1 auto;
+        min-height: 0;
+        /* Plain remote-desktop placeholder surface — deliberately NOT a screenshot. */
+        background: #0a0c10;
+        background-image:
+          linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
+        background-size: 22px 22px;
+        overflow: hidden;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .vnc-canvas__placeholder {
+        color: #2c3340;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        user-select: none;
+      }
+
+      /* Floating hover toolbar pinned to the top edge of the canvas */
+      .vnc-hover-toolbar {
+        position: absolute;
+        top: 8px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        align-items: center;
+        gap: 2px;
+        padding: 4px;
+        background: color-mix(in srgb, var(--bg-secondary) 92%, transparent);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-overlay);
+        backdrop-filter: blur(6px);
+      }
+
+      .vnc-hover-toolbar__btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        height: 26px;
+        padding: 0 8px;
+        border: none;
+        border-radius: var(--radius-sm);
+        background: none;
+        color: var(--text-secondary);
+        font-size: 12px;
+        font-family: inherit;
+        cursor: pointer;
+      }
+
+      .vnc-hover-toolbar__btn:hover {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+      }
+
+      .vnc-hover-toolbar__sep {
+        width: 1px;
+        height: 18px;
+        margin: 0 2px;
+        background: var(--border-primary);
+      }
+
+      .vnc-hover-toolbar__badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        height: 22px;
+        padding: 0 8px;
+        border-radius: var(--radius-sm);
+        background: color-mix(in srgb, var(--color-warning) 22%, transparent);
+        color: var(--color-warning);
+        font-size: 11px;
+        font-weight: 600;
+      }
+
+      /* Centered connection-state overlay */
+      .vnc-overlay {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        background: rgba(6, 7, 10, 0.72);
+        color: var(--text-primary);
+        text-align: center;
+      }
+
+      .vnc-overlay__spinner {
+        width: 26px;
+        height: 26px;
+        border-radius: 50%;
+        border: 2px solid var(--border-primary);
+        border-top-color: var(--accent-color);
+        animation: vnc-spin 0.9s linear infinite;
+      }
+
+      @keyframes vnc-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      .vnc-overlay__title {
+        font-size: 14px;
+        font-weight: 600;
+      }
+
+      .vnc-overlay__sub {
+        font-size: 12px;
+        color: var(--text-secondary);
+      }
+
+      .vnc-overlay__sub--warn {
+        color: var(--color-warning);
+      }
+
+      /* Status-bar VNC segment */
+      .status-bar__item--vnc {
+        color: var(--text-accent);
+      }
+    </style>
+  </head>
+  <body class="mockup-doc">
+    <!-- Inline lucide sprite (real lucide geometry). Only the symbols used here. -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-network" viewBox="0 0 24 24">
+        <rect x="16" y="16" width="6" height="6" rx="1" />
+        <rect x="2" y="16" width="6" height="6" rx="1" />
+        <rect x="9" y="2" width="6" height="6" rx="1" />
+        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+        <path d="M12 12V8" />
+      </symbol>
+      <symbol id="i-folder-open" viewBox="0 0 24 24">
+        <path
+          d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"
+        />
+      </symbol>
+      <symbol id="i-layout-grid" viewBox="0 0 24 24">
+        <rect width="7" height="7" x="3" y="3" rx="1" />
+        <rect width="7" height="7" x="14" y="3" rx="1" />
+        <rect width="7" height="7" x="14" y="14" rx="1" />
+        <rect width="7" height="7" x="3" y="14" rx="1" />
+      </symbol>
+      <symbol id="i-scroll-text" viewBox="0 0 24 24">
+        <path d="M15 12h-5" />
+        <path d="M15 8h-5" />
+        <path d="M19 17V5a2 2 0 0 0-2-2H4" />
+        <path
+          d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"
+        />
+      </symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24">
+        <path
+          d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"
+        />
+        <circle cx="12" cy="12" r="3" />
+      </symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24">
+        <path d="M5 12h14" />
+        <path d="M12 5v14" />
+      </symbol>
+      <symbol id="i-columns-2" viewBox="0 0 24 24">
+        <rect width="18" height="18" x="3" y="3" rx="2" />
+        <path d="M12 3v18" />
+      </symbol>
+      <symbol id="i-panel-left" viewBox="0 0 24 24">
+        <rect width="18" height="18" x="3" y="3" rx="2" />
+        <path d="M9 3v18" />
+      </symbol>
+      <symbol id="i-x" viewBox="0 0 24 24">
+        <path d="M18 6 6 18" />
+        <path d="m6 6 12 12" />
+      </symbol>
+      <symbol id="i-monitor" viewBox="0 0 24 24">
+        <rect width="20" height="14" x="2" y="3" rx="2" />
+        <line x1="8" x2="16" y1="21" y2="21" />
+        <line x1="12" x2="12" y1="17" y2="21" />
+      </symbol>
+      <symbol id="i-square-asterisk" viewBox="0 0 24 24">
+        <rect width="18" height="18" x="3" y="3" rx="2" />
+        <path d="M12 8v8" />
+        <path d="m8.5 14 7-4" />
+        <path d="m8.5 10 7 4" />
+      </symbol>
+      <symbol id="i-clipboard" viewBox="0 0 24 24">
+        <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
+        <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+      </symbol>
+      <symbol id="i-scaling" viewBox="0 0 24 24">
+        <path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+        <path d="M14 15H9v-5" />
+        <path d="M16 3h5v5" />
+        <path d="M21 3 9 15" />
+      </symbol>
+      <symbol id="i-maximize" viewBox="0 0 24 24">
+        <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+        <path d="M21 8V5a2 2 0 0 0-2-2h-3" />
+        <path d="M3 16v3a2 2 0 0 0 2 2h3" />
+        <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+      </symbol>
+      <symbol id="i-chevron-down" viewBox="0 0 24 24">
+        <path d="m6 9 6 6 6-6" />
+      </symbol>
+      <symbol id="i-refresh-cw" viewBox="0 0 24 24">
+        <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+        <path d="M21 3v5h-5" />
+        <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+        <path d="M8 16H3v5" />
+      </symbol>
+      <symbol id="i-eye-off" viewBox="0 0 24 24">
+        <path
+          d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49"
+        />
+        <path d="M14.084 14.158a3 3 0 0 1-4.242-4.242" />
+        <path
+          d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"
+        />
+        <path d="m2 2 20 20" />
+      </symbol>
+    </svg>
+
+    <h1>VNC Sessions — Graphical Session Tab</h1>
+    <p class="mockup-meta">
+      Layout-altitude mockup · <code>future/vnc-sessions/mockups/vnc-session-tab.html</code>
+    </p>
+
+    <!-- ── State 1: Connected ────────────────────────────────────────── -->
+    <section class="mockup-section">
+      <h2>1 · Connected — canvas, hover toolbar, status segment</h2>
+      <div class="mockup-note">
+        A VNC connection opens as a <code>vnc</code> tab in the normal tab/panel system. The canvas
+        <span class="callout">A</span> fills the panel content where a terminal would sit (plain
+        placeholder surface, not a screenshot). The floating hover toolbar
+        <span class="callout">B</span> auto-shows near the top edge. The status bar carries a VNC
+        segment <span class="callout">C</span>.
+      </div>
+      <div class="app">
+        <div class="app__body">
+          <nav class="activity-bar">
+            <div class="activity-bar__top">
+              <button class="activity-bar__item activity-bar__item--active" title="Connections">
+                <svg class="li"><use href="#i-network" /></svg>
+                <span class="activity-bar__indicator"></span>
+              </button>
+              <button class="activity-bar__item" title="File Browser">
+                <svg class="li"><use href="#i-folder-open" /></svg>
+              </button>
+              <button class="activity-bar__item" title="Workspaces">
+                <svg class="li"><use href="#i-layout-grid" /></svg>
+              </button>
+            </div>
+            <div class="activity-bar__bottom">
+              <button class="activity-bar__item" title="Log Viewer">
+                <svg class="li"><use href="#i-scroll-text" /></svg>
+              </button>
+              <button class="activity-bar__item" title="Settings">
+                <svg class="li"><use href="#i-settings" /></svg>
+              </button>
+            </div>
+          </nav>
+
+          <aside class="sidebar">
+            <div class="sidebar__header"><span class="sidebar__title">Connections</span></div>
+            <div class="sidebar__content">
+              <div class="connection-tree__item">
+                <svg class="li"><use href="#i-network" /></svg>
+                <span class="state-dot state-dot--connected"></span> dev-server
+              </div>
+              <div class="connection-tree__item connection-tree__item--selected">
+                <svg class="li"><use href="#i-monitor" /></svg>
+                <span class="state-dot state-dot--connected"></span> dev-desktop (5901)
+              </div>
+              <div class="connection-tree__item">
+                <svg class="li"><use href="#i-monitor" /></svg>
+                <span class="state-dot state-dot--disconnected"></span> workstation (5900)
+              </div>
+            </div>
+          </aside>
+
+          <div class="terminal-view">
+            <div class="terminal-view__toolbar">
+              <div class="terminal-view__toolbar-actions">
+                <button class="terminal-view__toolbar-btn" title="New Terminal">
+                  <svg class="li"><use href="#i-plus" /></svg>
+                </button>
+                <button class="terminal-view__toolbar-btn" title="Split Terminal Right">
+                  <svg class="li"><use href="#i-columns-2" /></svg>
+                </button>
+                <button
+                  class="terminal-view__toolbar-btn terminal-view__toolbar-btn--active"
+                  title="Toggle Sidebar"
+                >
+                  <svg class="li"><use href="#i-panel-left" /></svg>
+                </button>
+              </div>
+            </div>
+            <div class="terminal-view__content">
+              <div class="panel">
+                <div class="tab-bar">
+                  <div class="tab">
+                    <svg class="li"><use href="#i-network" /></svg>
+                    <span class="state-dot state-dot--connected"></span>
+                    <span class="tab__title">dev-server</span>
+                  </div>
+                  <div class="tab tab--active">
+                    <svg class="li"><use href="#i-monitor" /></svg>
+                    <span class="state-dot state-dot--connected"></span>
+                    <span class="tab__title">dev-desktop</span>
+                    <button class="tab__close">
+                      <svg class="li"><use href="#i-x" /></svg>
+                    </button>
+                  </div>
+                </div>
+                <div class="vnc-canvas">
+                  <span class="vnc-canvas__placeholder">remote desktop · noVNC canvas</span>
+                  <div class="vnc-hover-toolbar">
+                    <button class="vnc-hover-toolbar__btn" title="Send Ctrl+Alt+Del">
+                      <svg class="li"><use href="#i-square-asterisk" /></svg> Ctrl+Alt+Del
+                    </button>
+                    <span class="vnc-hover-toolbar__sep"></span>
+                    <button class="vnc-hover-toolbar__btn" title="Clipboard Sync">
+                      <svg class="li"><use href="#i-clipboard" /></svg>
+                    </button>
+                    <button class="vnc-hover-toolbar__btn" title="Scaling Mode">
+                      <svg class="li"><use href="#i-scaling" /></svg>
+                      <svg class="li"><use href="#i-chevron-down" /></svg>
+                    </button>
+                    <button class="vnc-hover-toolbar__btn" title="Fullscreen">
+                      <svg class="li"><use href="#i-maximize" /></svg>
+                    </button>
+                    <button class="vnc-hover-toolbar__btn" title="Settings">
+                      <svg class="li"><use href="#i-settings" /></svg>
+                    </button>
+                    <span class="vnc-hover-toolbar__sep"></span>
+                    <button class="vnc-hover-toolbar__btn" title="Disconnect">
+                      <svg class="li"><use href="#i-x" /></svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="status-bar">
+          <div class="status-bar__section status-bar__section--left">
+            <span class="status-bar__item status-bar__item--vnc">
+              <svg class="li"><use href="#i-monitor" /></svg> VNC: 192.168.1.100:5901
+            </span>
+            <span class="status-bar__item">1920×1080</span>
+            <span class="status-bar__item">Tight</span>
+            <span class="status-bar__item">24-bit</span>
+          </div>
+          <div class="status-bar__section status-bar__section--center"></div>
+          <div class="status-bar__section status-bar__section--right">
+            <span class="status-bar__item">UTF-8</span>
+          </div>
+        </div>
+      </div>
+      <div class="legend">
+        <ul>
+          <li>
+            <span class="callout">A</span> VNC canvas — plain remote-desktop placeholder surface
+            (noVNC renders the real framebuffer here). Not a screenshot.
+          </li>
+          <li>
+            <span class="callout">B</span> Floating hover toolbar — Ctrl+Alt+Del
+            (<code>square-asterisk</code>), Clipboard, Scaling, Fullscreen, Settings, Disconnect.
+            Auto-hides until the pointer nears the top edge.
+          </li>
+          <li>
+            <span class="callout">C</span> Status-bar VNC segment — address, resolution, encoding,
+            color depth.
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ── State 2: Connecting overlay ───────────────────────────────── -->
+    <section class="mockup-section">
+      <h2>2 · Connecting overlay</h2>
+      <div class="mockup-note">
+        While the proxy and optional SSH tunnel come up and the RFB handshake runs, a centered
+        overlay <span class="callout">D</span> covers a dark canvas. The tab dot is amber
+        (connecting); the status segment reads "connecting".
+      </div>
+      <div class="app" style="height: 300px">
+        <div class="app__body">
+          <div class="terminal-view">
+            <div class="terminal-view__content">
+              <div class="panel">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li"><use href="#i-monitor" /></svg>
+                    <span class="state-dot state-dot--connecting"></span>
+                    <span class="tab__title">dev-desktop</span>
+                    <button class="tab__close">
+                      <svg class="li"><use href="#i-x" /></svg>
+                    </button>
+                  </div>
+                </div>
+                <div class="vnc-canvas">
+                  <div class="vnc-overlay">
+                    <div class="vnc-overlay__spinner"></div>
+                    <div class="vnc-overlay__title">Connecting…</div>
+                    <div class="vnc-overlay__sub">Starting WebSocket proxy · RFB handshake</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="status-bar">
+          <div class="status-bar__section status-bar__section--left">
+            <span class="status-bar__item status-bar__item--vnc">
+              <svg class="li"><use href="#i-monitor" /></svg> VNC: connecting…
+            </span>
+          </div>
+          <div class="status-bar__section status-bar__section--center"></div>
+          <div class="status-bar__section status-bar__section--right"></div>
+        </div>
+      </div>
+      <div class="legend">
+        <ul>
+          <li><span class="callout">D</span> Connecting overlay — spinner + status line.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ── State 3: Reconnect overlay ────────────────────────────────── -->
+    <section class="mockup-section">
+      <h2>3 · Reconnect overlay (connection lost)</h2>
+      <div class="mockup-note">
+        On an unexpected drop, noVNC reports the disconnect and the canvas shows a "Connection lost"
+        overlay <span class="callout">E</span> with an auto-reconnect countdown and a manual
+        Reconnect button. The tab dot turns red.
+      </div>
+      <div class="app" style="height: 300px">
+        <div class="app__body">
+          <div class="terminal-view">
+            <div class="terminal-view__content">
+              <div class="panel">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li"><use href="#i-monitor" /></svg>
+                    <span class="state-dot state-dot--disconnected"></span>
+                    <span class="tab__title">dev-desktop</span>
+                    <button class="tab__close">
+                      <svg class="li"><use href="#i-x" /></svg>
+                    </button>
+                  </div>
+                </div>
+                <div class="vnc-canvas">
+                  <div class="vnc-overlay">
+                    <div class="vnc-overlay__title">Connection lost</div>
+                    <div class="vnc-overlay__sub vnc-overlay__sub--warn">
+                      Reconnecting automatically in 5s…
+                    </div>
+                    <button class="btn btn--primary">
+                      <svg class="li" style="margin-right: 6px"><use href="#i-refresh-cw" /></svg>
+                      Reconnect now
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="status-bar">
+          <div class="status-bar__section status-bar__section--left">
+            <span class="status-bar__item status-bar__item--vnc">
+              <svg class="li"><use href="#i-monitor" /></svg> VNC: reconnecting (1/3)
+            </span>
+          </div>
+          <div class="status-bar__section status-bar__section--center"></div>
+          <div class="status-bar__section status-bar__section--right"></div>
+        </div>
+      </div>
+      <div class="legend">
+        <ul>
+          <li>
+            <span class="callout">E</span> Reconnect overlay — countdown + manual
+            <code>refresh-cw</code> Reconnect button.
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ── State 4: View-only badge ──────────────────────────────────── -->
+    <section class="mockup-section">
+      <h2>4 · Connected, view-only</h2>
+      <div class="mockup-note">
+        In view-only mode the canvas still renders but input is suppressed. The toolbar shows a
+        persistent <strong>View Only</strong> badge <span class="callout">F</span> (lucide
+        <code>eye-off</code>); no Ctrl+Alt+Del button is offered.
+      </div>
+      <div class="app" style="height: 300px">
+        <div class="app__body">
+          <div class="terminal-view">
+            <div class="terminal-view__content">
+              <div class="panel">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li"><use href="#i-monitor" /></svg>
+                    <span class="state-dot state-dot--connected"></span>
+                    <span class="tab__title">monitor-only</span>
+                    <button class="tab__close">
+                      <svg class="li"><use href="#i-x" /></svg>
+                    </button>
+                  </div>
+                </div>
+                <div class="vnc-canvas">
+                  <span class="vnc-canvas__placeholder">remote desktop · noVNC canvas</span>
+                  <div class="vnc-hover-toolbar">
+                    <span class="vnc-hover-toolbar__badge">
+                      <svg class="li"><use href="#i-eye-off" /></svg> View Only
+                    </span>
+                    <span class="vnc-hover-toolbar__sep"></span>
+                    <button class="vnc-hover-toolbar__btn" title="Clipboard Sync">
+                      <svg class="li"><use href="#i-clipboard" /></svg>
+                    </button>
+                    <button class="vnc-hover-toolbar__btn" title="Scaling Mode">
+                      <svg class="li"><use href="#i-scaling" /></svg>
+                      <svg class="li"><use href="#i-chevron-down" /></svg>
+                    </button>
+                    <button class="vnc-hover-toolbar__btn" title="Fullscreen">
+                      <svg class="li"><use href="#i-maximize" /></svg>
+                    </button>
+                    <span class="vnc-hover-toolbar__sep"></span>
+                    <button class="vnc-hover-toolbar__btn" title="Disconnect">
+                      <svg class="li"><use href="#i-x" /></svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="status-bar">
+          <div class="status-bar__section status-bar__section--left">
+            <span class="status-bar__item status-bar__item--vnc">
+              <svg class="li"><use href="#i-monitor" /></svg> VNC: 192.168.1.50:5900
+            </span>
+            <span class="status-bar__item">View only</span>
+          </div>
+          <div class="status-bar__section status-bar__section--center"></div>
+          <div class="status-bar__section status-bar__section--right"></div>
+        </div>
+      </div>
+      <div class="legend">
+        <ul>
+          <li>
+            <span class="callout">F</span> View-only badge — <code>eye-off</code> icon; input
+            suppressed, no Ctrl+Alt+Del.
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ── State 5: Split view with terminal ─────────────────────────── -->
+    <section class="mockup-section">
+      <h2>5 · Split view — VNC panel beside a terminal panel</h2>
+      <div class="mockup-note">
+        VNC tabs share the split system with terminals. Here a VNC panel
+        <span class="callout">G</span> sits beside an SSH terminal panel
+        <span class="callout">H</span> — drag a VNC tab to a split to create this layout.
+      </div>
+      <div class="app">
+        <div class="app__body">
+          <nav class="activity-bar">
+            <div class="activity-bar__top">
+              <button class="activity-bar__item activity-bar__item--active" title="Connections">
+                <svg class="li"><use href="#i-network" /></svg>
+                <span class="activity-bar__indicator"></span>
+              </button>
+              <button class="activity-bar__item" title="File Browser">
+                <svg class="li"><use href="#i-folder-open" /></svg>
+              </button>
+            </div>
+            <div class="activity-bar__bottom">
+              <button class="activity-bar__item" title="Settings">
+                <svg class="li"><use href="#i-settings" /></svg>
+              </button>
+            </div>
+          </nav>
+
+          <aside class="sidebar">
+            <div class="sidebar__header"><span class="sidebar__title">Connections</span></div>
+            <div class="sidebar__content">
+              <div class="connection-tree__item">
+                <svg class="li"><use href="#i-network" /></svg>
+                <span class="state-dot state-dot--connected"></span> dev-server
+              </div>
+              <div class="connection-tree__item connection-tree__item--selected">
+                <svg class="li"><use href="#i-monitor" /></svg>
+                <span class="state-dot state-dot--connected"></span> dev-desktop (5901)
+              </div>
+            </div>
+          </aside>
+
+          <div class="terminal-view">
+            <div class="terminal-view__toolbar">
+              <div class="terminal-view__toolbar-actions">
+                <button class="terminal-view__toolbar-btn" title="New Terminal">
+                  <svg class="li"><use href="#i-plus" /></svg>
+                </button>
+                <button
+                  class="terminal-view__toolbar-btn terminal-view__toolbar-btn--active"
+                  title="Split Right"
+                >
+                  <svg class="li"><use href="#i-columns-2" /></svg>
+                </button>
+                <button
+                  class="terminal-view__toolbar-btn terminal-view__toolbar-btn--active"
+                  title="Toggle Sidebar"
+                >
+                  <svg class="li"><use href="#i-panel-left" /></svg>
+                </button>
+              </div>
+            </div>
+            <div class="terminal-view__content">
+              <div class="panel">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li"><use href="#i-network" /></svg>
+                    <span class="state-dot state-dot--connected"></span>
+                    <span class="tab__title">dev-server</span>
+                    <button class="tab__close">
+                      <svg class="li"><use href="#i-x" /></svg>
+                    </button>
+                  </div>
+                </div>
+                <div class="terminal">
+                  <span class="prompt">dev-server $</span> ls -la drwxr-xr-x 12 user staff 384 src
+                  -rw-r--r-- 1 user staff 1.2K README.md <span class="prompt">dev-server $</span>
+                  <span class="cursor"></span>
+                </div>
+              </div>
+              <div class="panel">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li"><use href="#i-monitor" /></svg>
+                    <span class="state-dot state-dot--connected"></span>
+                    <span class="tab__title">dev-desktop</span>
+                    <button class="tab__close">
+                      <svg class="li"><use href="#i-x" /></svg>
+                    </button>
+                  </div>
+                </div>
+                <div class="vnc-canvas">
+                  <span class="vnc-canvas__placeholder">remote desktop · noVNC canvas</span>
+                  <div class="vnc-hover-toolbar">
+                    <button class="vnc-hover-toolbar__btn" title="Send Ctrl+Alt+Del">
+                      <svg class="li"><use href="#i-square-asterisk" /></svg> Ctrl+Alt+Del
+                    </button>
+                    <span class="vnc-hover-toolbar__sep"></span>
+                    <button class="vnc-hover-toolbar__btn" title="Clipboard Sync">
+                      <svg class="li"><use href="#i-clipboard" /></svg>
+                    </button>
+                    <button class="vnc-hover-toolbar__btn" title="Fullscreen">
+                      <svg class="li"><use href="#i-maximize" /></svg>
+                    </button>
+                    <button class="vnc-hover-toolbar__btn" title="Disconnect">
+                      <svg class="li"><use href="#i-x" /></svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="status-bar">
+          <div class="status-bar__section status-bar__section--left">
+            <span class="status-bar__item status-bar__item--vnc">
+              <svg class="li"><use href="#i-monitor" /></svg> VNC: 192.168.1.100:5901
+            </span>
+            <span class="status-bar__item">1920×1080</span>
+          </div>
+          <div class="status-bar__section status-bar__section--center"></div>
+          <div class="status-bar__section status-bar__section--right">
+            <span class="status-bar__item">UTF-8</span>
+          </div>
+        </div>
+      </div>
+      <div class="legend">
+        <ul>
+          <li><span class="callout">G</span> VNC panel — same panel/tab chrome as a terminal.</li>
+          <li><span class="callout">H</span> SSH terminal panel — ordinary terminal beside it.</li>
+        </ul>
+      </div>
+    </section>
+  </body>
+</html>

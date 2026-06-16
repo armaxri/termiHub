@@ -86,13 +86,13 @@ Not started yet — realistic and planned for the near to medium term.
 | [app-icons.md](backlog/app-icons.md)                                                                   | Custom application icon design — placeholder Tauri icons are in place, not the designed ones           |
 | [broadcast-input/](backlog/broadcast-input/) _(folder form)_                                           | Synchronised input across multiple terminals simultaneously — first folder-form concept + mockups      |
 | [cross-platform-testing.md](backlog/cross-platform-testing.md)                                         | Platform-divergent test modules and `XPLAT-*` identifiers for CI                                       |
-| [embedded-unix-windows.md](backlog/embedded-unix-windows.md)                                           | Bundle BusyBox-w32 + Unix tools with the Windows build                                                 |
-| [ftp-client.md](backlog/ftp-client.md)                                                                 | FTP client sessions (distinct from the embedded FTP server)                                            |
-| [macro-recording.md](backlog/macro-recording.md)                                                       | Record and replay terminal input sequences                                                             |
+| [embedded-unix-windows/](backlog/embedded-unix-windows/) _(folder form)_                               | Bundle BusyBox-w32 + Unix tools with the Windows build                                                 |
+| [ftp-client/](backlog/ftp-client/) _(folder form)_                                                     | FTP client sessions (distinct from the embedded FTP server)                                            |
+| [macro-recording/](backlog/macro-recording/) _(folder form)_                                           | Record and replay terminal input sequences                                                             |
 | [release-planning-and-dependency-management.md](backlog/release-planning-and-dependency-management.md) | Structured release cadence, Dependabot, hotfix branching                                               |
-| [remote-agent-update-strategy.md](backlog/remote-agent-update-strategy.md)                             | Deliver updated agent binaries to remote hosts                                                         |
-| [shell-context-menu-integration.md](backlog/shell-context-menu-integration.md)                         | OS "Open in termiHub" context menu + `termiHub spawn` CLI                                              |
-| [ssh-jump-host.md](backlog/ssh-jump-host.md)                                                           | First-class ProxyJump / gateway chains in the connection editor                                        |
+| [remote-agent-update-strategy/](backlog/remote-agent-update-strategy/) _(folder form)_                 | Deliver updated agent binaries to remote hosts                                                         |
+| [shell-context-menu-integration/](backlog/shell-context-menu-integration/) _(folder form)_             | OS "Open in termiHub" context menu + `termiHub spawn` CLI                                              |
+| [ssh-jump-host/](backlog/ssh-jump-host/) _(folder form)_                                               | First-class ProxyJump / gateway chains in the connection editor                                        |
 
 ---
 
@@ -101,12 +101,12 @@ Not started yet — realistic and planned for the near to medium term.
 Speculative features, long-horizon research, or low-priority legacy protocols.
 These may eventually be implemented, but there is no active plan.
 
-| Document                                              | Summary                                           | Why future                                          |
-| ----------------------------------------------------- | ------------------------------------------------- | --------------------------------------------------- |
-| [package-manager.md](future/package-manager.md)       | Plugin/tool repository with dependency resolution | Blocked on plugin system                            |
-| [plugin-system.md](future/plugin-system.md)           | Dynamic extension API (Rust + JS)                 | Very high complexity, no active demand              |
-| [rdp-sessions.md](future/rdp-sessions.md)             | Embedded RDP client sessions                      | Requires native RDP library or FreeRDP binding      |
-| [remote-client-mode.md](future/remote-client-mode.md) | termiHub as a browser/iPad app via WebSocket      | Significant architectural change                    |
-| [rlogin-rsh.md](future/rlogin-rsh.md)                 | Legacy BSD rlogin/rsh protocol support            | Superseded by SSH; rarely needed                    |
-| [vnc-sessions.md](future/vnc-sessions.md)             | Embedded noVNC client with WebSocket-to-TCP proxy | High complexity, niche use case                     |
-| [xdmcp-sessions.md](future/xdmcp-sessions.md)         | XDMCP remote desktop sessions                     | Requires X11 server embedding; very high complexity |
+| Document                                                          | Summary                                           | Why future                                          |
+| ----------------------------------------------------------------- | ------------------------------------------------- | --------------------------------------------------- |
+| [package-manager/](future/package-manager/) _(folder form)_       | Plugin/tool repository with dependency resolution | Blocked on plugin system                            |
+| [plugin-system/](future/plugin-system/) _(folder form)_           | Dynamic extension API (Rust + JS)                 | Very high complexity, no active demand              |
+| [rdp-sessions/](future/rdp-sessions/) _(folder form)_             | Embedded RDP client sessions                      | Requires native RDP library or FreeRDP binding      |
+| [remote-client-mode/](future/remote-client-mode/) _(folder form)_ | termiHub as a browser/iPad app via WebSocket      | Significant architectural change                    |
+| [rlogin-rsh.md](future/rlogin-rsh.md)                             | Legacy BSD rlogin/rsh protocol support            | Superseded by SSH; rarely needed                    |
+| [vnc-sessions/](future/vnc-sessions/) _(folder form)_             | Embedded noVNC client with WebSocket-to-TCP proxy | High complexity, niche use case                     |
+| [xdmcp-sessions.md](future/xdmcp-sessions.md)                     | XDMCP remote desktop sessions                     | Requires X11 server embedding; very high complexity |

@@ -1,0 +1,367 @@
+<!doctype html>
+<!-- Embedded Unix on Windows — first-run prompt, update dialog, tab badge + status-bar segment. Layout altitude, real class names + lucide icons. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Embedded Unix on Windows — Dialogs &amp; Indicators (mockup)</title>
+    <link rel="stylesheet" href="../../../_assets/mockup.css" />
+    <style>
+      .dialog {
+        width: 420px;
+      }
+      .dialog__body {
+        padding: 14px 16px;
+        font-size: 12.5px;
+        color: var(--text-secondary);
+        line-height: 1.55;
+      }
+      .dialog__body strong {
+        color: var(--text-primary);
+      }
+      .dialog__head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--border-secondary);
+        font-weight: 600;
+        color: var(--text-primary);
+      }
+      .dialog__head .li {
+        width: 18px;
+        height: 18px;
+        color: var(--text-accent);
+      }
+      .opt-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 12px;
+        font-size: 12px;
+        color: var(--text-secondary);
+      }
+      .changelog {
+        margin: 6px 0 0;
+        padding: 8px 10px;
+        background: var(--bg-primary);
+        border: 1px solid var(--border-secondary);
+        border-radius: var(--radius-sm);
+        font-size: 12px;
+        color: var(--text-primary);
+      }
+      .changelog li {
+        margin: 2px 0;
+      }
+      .progress {
+        height: 6px;
+        border-radius: 3px;
+        background: var(--bg-tertiary);
+        overflow: hidden;
+        margin-top: 10px;
+      }
+      .progress__fill {
+        height: 100%;
+        width: 45%;
+        background: var(--accent-color);
+      }
+      .star {
+        color: var(--color-warning);
+      }
+      .checkbox {
+        width: 14px;
+        height: 14px;
+        border: 1px solid var(--text-secondary);
+        border-radius: 3px;
+        display: inline-block;
+      }
+    </style>
+  </head>
+  <body class="mockup-doc">
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-network" viewBox="0 0 24 24">
+        <rect x="16" y="16" width="6" height="6" rx="1" />
+        <rect x="2" y="16" width="6" height="6" rx="1" />
+        <rect x="9" y="2" width="6" height="6" rx="1" />
+        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+        <path d="M12 12V8" />
+      </symbol>
+      <symbol id="i-folder-open" viewBox="0 0 24 24">
+        <path
+          d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"
+        />
+      </symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24">
+        <path
+          d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"
+        />
+        <circle cx="12" cy="12" r="3" />
+      </symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24">
+        <path d="M5 12h14" />
+        <path d="M12 5v14" />
+      </symbol>
+      <symbol id="i-x" viewBox="0 0 24 24">
+        <path d="M18 6 6 18" />
+        <path d="m6 6 12 12" />
+      </symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24">
+        <path d="m4 17 6-6-6-6" />
+        <path d="M12 19h8" />
+      </symbol>
+      <symbol id="i-wrench" viewBox="0 0 24 24">
+        <path
+          d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"
+        />
+      </symbol>
+      <symbol id="i-download" viewBox="0 0 24 24">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+        <path d="M7 10l5 5 5-5" />
+        <path d="M12 15V3" />
+      </symbol>
+      <symbol id="i-loader" viewBox="0 0 24 24">
+        <path d="M12 2v4" />
+        <path d="m16.2 7.8 2.9-2.9" />
+        <path d="M18 12h4" />
+        <path d="m16.2 16.2 2.9 2.9" />
+        <path d="M12 18v4" />
+        <path d="m4.9 19.1 2.9-2.9" />
+        <path d="M2 12h4" />
+        <path d="m4.9 4.9 2.9 2.9" />
+      </symbol>
+      <symbol id="i-circle-check" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" />
+        <path d="m9 12 2 2 4-4" />
+      </symbol>
+      <symbol id="i-folder" viewBox="0 0 24 24">
+        <path
+          d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
+        />
+      </symbol>
+    </svg>
+
+    <h1>Embedded Unix on Windows — Dialogs &amp; Indicators</h1>
+    <p class="mockup-meta">
+      Layout-altitude mockup ·
+      <code>backlog/embedded-unix-windows/mockups/embedded-unix-dialogs.html</code> · Windows-only
+    </p>
+
+    <!-- ── First-run prompt ───────────────────────────────────────────── -->
+    <section class="mockup-section">
+      <h2>1 · First-run "Unix Tools Available" prompt</h2>
+      <div class="mockup-note">
+        Shown on first launch <strong>only when no other Unix shell is detected</strong> (no Git
+        Bash, no WSL bash). Offers to make termiHub Bash the default shell, with a "don't show
+        again" opt-out <span class="callout">A</span>.
+      </div>
+      <div class="menu dialog">
+        <div class="dialog__head">
+          <svg class="li"><use href="#i-terminal" /></svg> Unix Tools Available
+        </div>
+        <div class="dialog__body">
+          termiHub includes a bundled Unix command environment with
+          <strong>bash, grep, sed, curl, ssh</strong>, and 25+ more tools.<br /><br />
+          Would you like to set <strong><span class="star">★</span> termiHub Bash</strong> as your
+          default shell for new local connections?
+          <div class="opt-row">
+            <span class="checkbox"></span> Don't show this again
+            <span class="callout" style="margin-left: 4px">A</span>
+          </div>
+        </div>
+        <div class="menu__footer">
+          <button class="btn btn--primary">Yes, use termiHub Bash</button>
+          <button class="btn">No, keep PowerShell</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Update dialog — states ─────────────────────────────────────── -->
+    <section class="mockup-section">
+      <h2>2 · "Update Available" dialog — states</h2>
+      <div class="mockup-note">
+        Update offered <span class="callout">B</span>, downloading/applying
+        <span class="callout">C</span>, and the up-to-date result after a manual check
+        <span class="callout">D</span>.
+      </div>
+      <div class="states">
+        <div>
+          <div class="state-label">Offered <span class="callout">B</span></div>
+          <div class="menu dialog" style="width: auto">
+            <div class="dialog__head">
+              <svg class="li"><use href="#i-download" /></svg> Update Available
+            </div>
+            <div class="dialog__body">
+              <strong>Unix Environment</strong>: v1.2.0 → <strong>v1.3.0</strong>
+              <ul class="changelog">
+                <li>Updated curl to 8.5.0 (security fix)</li>
+                <li>Added jq 1.7 to tool set</li>
+                <li>BusyBox updated to 1.37.0</li>
+              </ul>
+              <div style="margin-top: 8px">Size: 2.3 MB download</div>
+            </div>
+            <div class="menu__footer">
+              <button class="btn btn--primary">Update Now</button>
+              <button class="btn">Remind Me Later</button>
+              <button class="btn btn--link">Skip This Version</button>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div class="state-label">Downloading <span class="callout">C</span></div>
+          <div class="menu dialog" style="width: auto">
+            <div class="dialog__head">
+              <svg class="li"><use href="#i-loader" /></svg> Updating Unix Environment
+            </div>
+            <div class="dialog__body">
+              Downloading <strong>v1.3.0</strong>… replacing binaries.
+              <div class="progress"><div class="progress__fill"></div></div>
+              <div style="margin-top: 6px">1.0 / 2.3 MB · verifying checksums</div>
+            </div>
+            <div class="menu__footer">
+              <button class="btn" disabled style="opacity: 0.6">Cancel</button>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div class="state-label">No update <span class="callout">D</span></div>
+          <div class="menu dialog" style="width: auto">
+            <div class="dialog__head">
+              <svg class="li" style="color: var(--color-success)">
+                <use href="#i-circle-check" />
+              </svg>
+              Up to Date
+            </div>
+            <div class="dialog__body">
+              The bundled Unix environment is current (<strong>v1.2.0</strong>). No update is
+              available.
+            </div>
+            <div class="menu__footer">
+              <button class="btn btn--primary">OK</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="legend">
+        <ul>
+          <li><span class="callout">B</span> Offered — changelog + size; Update / Later / Skip.</li>
+          <li>
+            <span class="callout">C</span> Downloading — <code>Loader</code> + progress; previous
+            version kept until verified.
+          </li>
+          <li>
+            <span class="callout">D</span> No update — result of a manual "Check for Updates".
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ── Active session: tab badge + status bar ─────────────────────── -->
+    <section class="mockup-section">
+      <h2>3 · Active termiHub Bash session — tab badge &amp; status bar</h2>
+      <div class="mockup-note">
+        A focused bundled-bash session. The tab title carries a ★ badge
+        <span class="callout">E</span>
+        to distinguish it from Git Bash / WSL bash. The status bar shows the environment segment
+        <span class="callout">F</span> (env version · cwd · bash version).
+      </div>
+      <div class="app">
+        <div class="app__body">
+          <nav class="activity-bar">
+            <div class="activity-bar__top">
+              <button class="activity-bar__item activity-bar__item--active" title="Connections">
+                <svg class="li"><use href="#i-network" /></svg>
+                <span class="activity-bar__indicator"></span>
+              </button>
+              <button class="activity-bar__item" title="File Browser">
+                <svg class="li"><use href="#i-folder-open" /></svg>
+              </button>
+            </div>
+            <div class="activity-bar__bottom">
+              <button class="activity-bar__item" title="Settings">
+                <svg class="li"><use href="#i-settings" /></svg>
+              </button>
+            </div>
+          </nav>
+
+          <aside class="sidebar">
+            <div class="sidebar__header"><span class="sidebar__title">Connections</span></div>
+            <div class="sidebar__content">
+              <div class="connection-tree__item connection-tree__item--selected">
+                <span class="state-dot state-dot--connected"></span> termiHub Bash
+              </div>
+              <div class="connection-tree__item">
+                <span class="state-dot state-dot--connected"></span> PowerShell
+              </div>
+            </div>
+          </aside>
+
+          <div class="terminal-view">
+            <div class="terminal-view__toolbar">
+              <div class="terminal-view__toolbar-actions">
+                <button class="terminal-view__toolbar-btn" title="New Terminal">
+                  <svg class="li"><use href="#i-plus" /></svg>
+                </button>
+              </div>
+            </div>
+            <div class="terminal-view__content">
+              <div class="panel">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li"><use href="#i-terminal" /></svg>
+                    <span class="state-dot state-dot--connected"></span>
+                    <span class="tab__title">Bash <span class="star">★</span></span>
+                    <button class="tab__close">
+                      <svg class="li"><use href="#i-x" /></svg>
+                    </button>
+                  </div>
+                  <div class="tab">
+                    <svg class="li"><use href="#i-terminal" /></svg>
+                    <span class="state-dot state-dot--connected"></span>
+                    <span class="tab__title">PowerShell</span>
+                  </div>
+                </div>
+                <div class="terminal">
+                  <span class="prompt">john@PC /c/Users/john/projects $</span> grep -rn TODO src/<br />
+                  src/main.rs:42: // TODO: handle reconnect<br />
+                  <span class="prompt">john@PC /c/Users/john/projects $</span>
+                  <span class="cursor"></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="status-bar">
+          <div class="status-bar__section status-bar__section--left">
+            <span class="status-bar__item">
+              <svg class="li"><use href="#i-terminal" /></svg> termiHub Bash v1.2.0
+              <span class="callout" style="margin-left: 4px">F</span>
+            </span>
+            <span class="status-bar__item">
+              <svg class="li"><use href="#i-folder" /></svg> ~/projects
+            </span>
+            <span class="status-bar__item">bash 5.2</span>
+          </div>
+          <div class="status-bar__section status-bar__section--center"></div>
+          <div class="status-bar__section status-bar__section--right">
+            <span class="status-bar__item">UTF-8</span>
+          </div>
+        </div>
+      </div>
+      <div class="legend">
+        <ul>
+          <li>
+            <span class="callout">E</span> Tab badge — ★ next to the title marks a bundled-bash
+            session (literal star, content not an icon).
+          </li>
+          <li>
+            <span class="callout">F</span> Status-bar segment — environment version, current
+            directory, and bash version; only present while a termiHub Bash tab is focused.
+          </li>
+        </ul>
+      </div>
+    </section>
+  </body>
+</html>

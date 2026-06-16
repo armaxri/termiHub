@@ -26,7 +26,7 @@ lowest-complexity variant and progressively enhancing it.
 ### Non-Goals
 
 - Release planning and dependency management (see
-  [Release Planning and Dependency Management](./release-planning-and-dependency-management.md))
+  [Release Planning and Dependency Management](../backlog/release-planning-and-dependency-management.md))
 - Automatic rollback in case of bad updates (out of scope for initial phases)
 - Delta/differential updates (full installer replacement only)
 - Update channels (stable/beta selection) — noted as a future extension

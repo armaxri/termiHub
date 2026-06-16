@@ -1,0 +1,282 @@
+<!doctype html>
+<!-- SSH Jump Host — sidebar hop badges, status-bar hop chain, context menu. Layout altitude, real class names + lucide icons. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SSH Jump Host — Indicators &amp; Context Menu (mockup)</title>
+    <link rel="stylesheet" href="../../../_assets/mockup.css" />
+    <style>
+      .jump-badge {
+        display: inline-flex;
+        align-items: center;
+        color: var(--text-accent);
+      }
+      .jump-badge .li {
+        width: 13px;
+        height: 13px;
+        color: var(--text-accent);
+      }
+      .hop-count {
+        font-size: 10px;
+        color: var(--text-secondary);
+        margin-left: 1px;
+      }
+      .tree-via {
+        margin-left: auto;
+        font-size: 11px;
+        color: var(--text-secondary);
+        white-space: nowrap;
+      }
+      .tooltip {
+        position: relative;
+        display: inline-block;
+        margin: 6px 0 0 28px;
+        padding: 6px 10px;
+        font-size: 12px;
+        color: var(--text-primary);
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-sm);
+        box-shadow: var(--shadow-overlay);
+      }
+      .menu__sep {
+        height: 1px;
+        background: var(--border-secondary);
+        margin: 4px 0;
+      }
+      .menu__row .li {
+        width: 14px;
+        height: 14px;
+        color: var(--text-secondary);
+      }
+    </style>
+  </head>
+  <body class="mockup-doc">
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-network" viewBox="0 0 24 24">
+        <rect x="16" y="16" width="6" height="6" rx="1" />
+        <rect x="2" y="16" width="6" height="6" rx="1" />
+        <rect x="9" y="2" width="6" height="6" rx="1" />
+        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+        <path d="M12 12V8" />
+      </symbol>
+      <symbol id="i-folder-open" viewBox="0 0 24 24">
+        <path
+          d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"
+        />
+      </symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24">
+        <path
+          d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"
+        />
+        <circle cx="12" cy="12" r="3" />
+      </symbol>
+      <symbol id="i-x" viewBox="0 0 24 24">
+        <path d="M18 6 6 18" />
+        <path d="m6 6 12 12" />
+      </symbol>
+      <symbol id="i-chevron-down" viewBox="0 0 24 24">
+        <path d="m6 9 6 6 6-6" />
+      </symbol>
+      <symbol id="i-chevron-right" viewBox="0 0 24 24">
+        <path d="m9 18 6-6-6-6" />
+      </symbol>
+      <symbol id="i-arrow-left-right" viewBox="0 0 24 24">
+        <path d="M8 3 4 7l4 4" />
+        <path d="M4 7h16" />
+        <path d="m16 21 4-4-4-4" />
+        <path d="M20 17H4" />
+      </symbol>
+      <symbol id="i-server" viewBox="0 0 24 24">
+        <rect width="20" height="8" x="2" y="2" rx="2" ry="2" />
+        <rect width="20" height="8" x="2" y="14" rx="2" ry="2" />
+        <line x1="6" x2="6.01" y1="6" y2="6" />
+        <line x1="6" x2="6.01" y1="18" y2="18" />
+      </symbol>
+      <symbol id="i-network-2" viewBox="0 0 24 24">
+        <rect x="16" y="16" width="6" height="6" rx="1" />
+        <rect x="2" y="16" width="6" height="6" rx="1" />
+        <rect x="9" y="2" width="6" height="6" rx="1" />
+        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+        <path d="M12 12V8" />
+      </symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24">
+        <path d="M12 19h8" />
+        <path d="m4 17 6-6-6-6" />
+      </symbol>
+      <symbol id="i-route" viewBox="0 0 24 24">
+        <circle cx="6" cy="19" r="3" />
+        <path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15" />
+        <circle cx="18" cy="5" r="3" />
+      </symbol>
+      <symbol id="i-pencil" viewBox="0 0 24 24">
+        <path
+          d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"
+        />
+        <path d="m15 5 4 4" />
+      </symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24">
+        <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+        <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+      </symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24">
+        <path d="M10 11v6" />
+        <path d="M14 11v6" />
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+        <path d="M3 6h18" />
+        <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      </symbol>
+    </svg>
+
+    <h1>SSH Jump Host — Indicators &amp; Context Menu</h1>
+    <p class="mockup-meta">
+      Layout-altitude mockup ·
+      <code>backlog/ssh-jump-host/mockups/ssh-jump-host-indicators.html</code>
+    </p>
+
+    <!-- ── A: sidebar hop badges + tooltip ────────────────────────────── -->
+    <section class="mockup-section">
+      <h2>A · Connection tree — hop badges &amp; tooltip</h2>
+      <div class="mockup-note">
+        Connections routed through a gateway show a hop badge <span class="callout">A</span> (lucide
+        <code>ArrowLeftRight</code>, never a unicode glyph). Multi-hop adds a small hop count
+        <span class="callout">B</span>. Hover surfaces a tooltip with the full path
+        <span class="callout">C</span>.
+      </div>
+      <div
+        class="sidebar"
+        style="height: 300px; border-radius: 8px; border: 1px solid var(--border-secondary)"
+      >
+        <div class="sidebar__header"><span class="sidebar__title">Connections</span></div>
+        <div class="sidebar__content">
+          <div class="connection-tree__item">
+            <svg class="li"><use href="#i-chevron-down" /></svg>
+            <svg class="li"><use href="#i-folder-open" /></svg> Work
+          </div>
+          <div class="connection-tree__item" style="padding-left: 22px">
+            <svg class="li"><use href="#i-server" /></svg> bastion.example.com
+          </div>
+          <div
+            class="connection-tree__item connection-tree__item--selected"
+            style="padding-left: 22px"
+          >
+            <svg class="li"><use href="#i-server" /></svg> app-server-01
+            <span class="jump-badge"
+              ><svg class="li"><use href="#i-arrow-left-right" /></svg
+            ></span>
+            <span class="callout" style="margin-left: 2px">A</span>
+            <span class="tree-via">via bastion</span>
+          </div>
+          <div class="connection-tree__item" style="padding-left: 22px">
+            <svg class="li"><use href="#i-server" /></svg> app-server-02
+            <span class="jump-badge"
+              ><svg class="li"><use href="#i-arrow-left-right" /></svg
+            ></span>
+            <span class="tree-via">via bastion</span>
+          </div>
+          <div class="connection-tree__item" style="padding-left: 22px">
+            <svg class="li"><use href="#i-server" /></svg> db-server
+            <span class="jump-badge">
+              <svg class="li"><use href="#i-arrow-left-right" /></svg>
+              <span class="hop-count">2</span>
+            </span>
+            <span class="callout" style="margin-left: 2px">B</span>
+            <span class="tree-via">2 hops</span>
+          </div>
+          <div class="connection-tree__item">
+            <svg class="li"><use href="#i-chevron-right" /></svg>
+            <svg class="li"><use href="#i-folder-open" /></svg> Personal
+          </div>
+        </div>
+      </div>
+      <div class="tooltip">
+        <span class="callout">C</span> Via: edge-gateway → internal-bastion → db-server
+      </div>
+      <div class="legend">
+        <ul>
+          <li>
+            <span class="callout">A</span> Hop badge — lucide <code>ArrowLeftRight</code> in accent
+            color next to the connection.
+          </li>
+          <li><span class="callout">B</span> Hop-count label for multi-hop connections.</li>
+          <li><span class="callout">C</span> Hover tooltip showing the full hop path.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ── B: status bar hop chain ────────────────────────────────────── -->
+    <section class="mockup-section">
+      <h2>B · Status bar — active hop chain</h2>
+      <div class="mockup-note">
+        When the active terminal uses a jump host, the status bar shows the chain
+        <span class="callout">D</span>: <code>SSH: user@target via gateway</code>.
+      </div>
+      <div class="app" style="height: auto">
+        <div class="status-bar">
+          <div class="status-bar__section status-bar__section--left">
+            <span class="status-bar__item">
+              <svg class="li"><use href="#i-route" /></svg>
+              <span class="callout" style="margin-right: 4px">D</span>
+              SSH: deploy@app-server via bastion.example.com
+            </span>
+          </div>
+          <div class="status-bar__section status-bar__section--center"></div>
+          <div class="status-bar__section status-bar__section--right">
+            <span class="status-bar__item">80x24</span>
+            <span class="status-bar__item">UTF-8</span>
+          </div>
+        </div>
+      </div>
+      <div class="legend">
+        <ul>
+          <li>
+            <span class="callout">D</span> Hop-chain display — lucide <code>Route</code> icon +
+            <code>user@target via gateway</code>.
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ── C: context menu ────────────────────────────────────────────── -->
+    <section class="mockup-section">
+      <h2>C · Connection context menu (jump-host connection)</h2>
+      <div class="mockup-note">
+        Right-clicking a jump-host connection adds two actions <span class="callout">E</span>: open
+        a terminal directly on the gateway, and show the full connection path.
+      </div>
+      <div class="menu" style="width: 260px">
+        <div class="menu__row">
+          <svg class="li"><use href="#i-terminal" /></svg> Connect
+        </div>
+        <div class="menu__row">
+          <svg class="li"><use href="#i-pencil" /></svg> Edit Connection…
+        </div>
+        <div class="menu__sep"></div>
+        <div class="menu__row">
+          <span class="callout">E</span>
+          <svg class="li"><use href="#i-server" /></svg> Open Jump Host Terminal
+        </div>
+        <div class="menu__row">
+          <svg class="li"><use href="#i-route" /></svg> Show Connection Path
+        </div>
+        <div class="menu__sep"></div>
+        <div class="menu__row">
+          <svg class="li"><use href="#i-copy" /></svg> Duplicate
+        </div>
+        <div class="menu__row">
+          <svg class="li"><use href="#i-trash" /></svg> Delete
+        </div>
+      </div>
+      <div class="legend">
+        <ul>
+          <li>
+            <span class="callout">E</span> Jump-host-only actions:
+            <code>Open Jump Host Terminal</code> (debug the gateway) and
+            <code>Show Connection Path</code> (per-hop status popover).
+          </li>
+        </ul>
+      </div>
+    </section>
+  </body>
+</html>

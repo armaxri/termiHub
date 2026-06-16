@@ -1,12 +1,18 @@
 # Remote Agent Update Strategy
 
+> **Folder-form concept** (AI-driven concept workflow). Visual surfaces live in
+> [`mockups/`](mockups/), behavior diagrams in [`behavior.md`](behavior.md), and the
+> concept↔code reconciliation ledger in [`sync.md`](sync.md). The concept is the source of
+> truth; run `/sync-concept remote-agent-update-strategy` to reconcile it with the
+> implementation.
+
 ---
 
 ## Overview
 
 When a termiHub desktop connects to a remote host it deploys a `termihub-agent` binary and
 communicates with it over a JSON-RPC channel (see
-[Remote Protocol](../remote-protocol.md)). As the desktop application evolves, the agent
+[Remote Protocol](../../../remote-protocol.md)). As the desktop application evolves, the agent
 binary needs to be kept in sync — but a remote agent may be **shared by multiple desktop
 instances** running different versions, and updating it can disrupt sessions that are still
 active.
@@ -51,95 +57,61 @@ updates the agent, Host B's active sessions are silently killed mid-use.
 
 ## UI Interface
 
-### Connection Panel — Agent Version Badge
+The visual surfaces are specified by the mockups — open them in a browser to review layout and
+states. This section describes them; the mockups are authoritative for layout. Only **in-app**
+surfaces are mocked; GitHub/CI tooling is out of scope.
 
-Each remote agent entry in the sidebar shows a version chip and update state:
+| Mockup                                                                   | Shows                                                                                                                                                                    |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [`mockups/agent-update-sidebar.html`](mockups/agent-update-sidebar.html) | Remote Agents sidebar — per-agent version chip + update-state badge (up-to-date / available / incompatible / updating), plus the full badge state space                  |
+| [`mockups/agent-update-dialogs.html`](mockups/agent-update-dialogs.html) | Update Prompt dialog (with/without other-hosts warning), the "being updated by another host" notice with progress, the deferred-update banner, and the self-update toast |
 
-```
-┌─────────────────────────────────────────────────────┐
-│  Remote Agents                               [+]     │
-│  ─────────────────────────────────────────────────  │
-│  ● prod-server-1       v0.3.0  ✓ Up to date         │
-│  ● staging-server      v0.2.1  ↑ Update available   │
-│  ● dev-box             v0.1.0  ✗ Incompatible        │
-└─────────────────────────────────────────────────────┘
-```
+### Remote Agents sidebar — version chip + update-state badge
 
-Badge colours:
+Each remote agent row in the **Remote Agents** sidebar reuses `connection-tree__item` with a
+`state-dot` for liveness, a monospace **version chip** carrying the installed agent semver, and an
+**update-state badge** whose lucide icon + theme colour encode the version comparison. A row that
+is mid-update shows a spinning badge and an inline progress bar. See
+`mockups/agent-update-sidebar.html`.
 
-| State              | Colour | Icon |
-| ------------------ | ------ | ---- |
-| Up to date         | Grey   | ✓    |
-| Update available   | Amber  | ↑    |
-| Update required    | Red    | ✗    |
-| Update in progress | Blue   | ↻    |
+| State              | Colour (theme var)        | Lucide icon | Meaning                                           |
+| ------------------ | ------------------------- | ----------- | ------------------------------------------------- |
+| Up to date         | grey (`--text-secondary`) | `Check`     | `agent.minor ≥ desktop.minor`, same major         |
+| Update available   | amber (`--color-warning`) | `ArrowUp`   | `agent.minor < desktop.minor`, same major         |
+| Incompatible       | red (`--color-error`)     | `X`         | `agent.major != desktop.major` — manual reinstall |
+| Update in progress | blue (`--accent-color`)   | `RefreshCw` | deploy running; spinner + inline progress bar     |
 
-### Update Prompt Dialog
+### Update Prompt dialog
 
-When the user clicks "Update available" or triggers an update manually:
+Clicking an "Update available" badge (or triggering an update manually) opens the Update Prompt
+dialog, showing installed vs. available versions. If other hosts are connected, a warning lists
+them (from `agent.list_connections`) and the primary action becomes **Notify Others & Update**;
+with no other hosts the warning is omitted and the action is a plain **Update**. See
+`mockups/agent-update-dialogs.html` state 1.
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│  Update agent on prod-server-1                                [×]    │
-│  ─────────────────────────────────────────────────────────────────   │
-│  Installed:  v0.2.1                                                  │
-│  Available:  v0.3.0                                                  │
-│                                                                      │
-│  ⚠  2 other host(s) are currently connected to this agent:           │
-│     • staging-pc (connected 43 min ago)                              │
-│     • macbook-anne (connected 2 h ago)                               │
-│                                                                      │
-│  They will receive a disconnect notice and reconnect automatically.  │
-│                                                                      │
-│  [Cancel]                         [Notify Others & Update]           │
-└──────────────────────────────────────────────────────────────────────┘
-```
+### Being-updated-by-another-host notice
 
-If no other hosts are connected, the warning section is omitted and "Update" is shown directly.
+When one host initiates a coordinated update (Approach 3), every other connected host shows an
+informational notice with a restart progress bar. Sessions pause and reconnect automatically once
+the new agent is up. See `mockups/agent-update-dialogs.html` state 2.
 
-### Incoming Update Notification (on other hosts)
+### Deferred-update banner
 
-When Host A initiates a coordinated update, connected hosts see:
+When an update is pending but sessions are still active (Approach 4), an inline banner indicates
+the update will apply on the last disconnect, with **Apply Now** to force it immediately. See
+`mockups/agent-update-dialogs.html` state 3.
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│  ℹ  Agent on prod-server-1 is being updated by another host   [×]   │
-│  ─────────────────────────────────────────────────────────────────   │
-│  Sessions will be paused briefly. Reconnecting automatically…        │
-│  ████████░░░░░░░░░░░░  Waiting for update…                          │
-└──────────────────────────────────────────────────────────────────────┘
-```
+### Self-update toast
 
-After the agent restarts, the host reconnects silently and sessions resume.
-
-### Deferred Update Banner (Approach 4)
-
-When an update is pending but sessions are still active:
-
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│  ↑  Agent update pending on prod-server-1 — applying on last disconnect
-│     [Apply Now]   [Dismiss]                                   [×]   │
-└──────────────────────────────────────────────────────────────────────┘
-```
-
-### Self-Update Notification (Approach 1 — agent-initiated)
-
-The agent notifies all connected hosts that it has detected a newer version:
-
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│  ↑  termihub-agent v0.3.0 is available on prod-server-1       [×]   │
-│  ─────────────────────────────────────────────────────────────────   │
-│  Installed: v0.2.1 · This host: v0.3.0                              │
-│                                                                      │
-│  [Update Agent]                                    [Remind Me Later] │
-└──────────────────────────────────────────────────────────────────────┘
-```
+When the agent's own GitHub poll (Approach 1) finds a newer release, a transient toast offers to
+update now or defer. See `mockups/agent-update-dialogs.html` state 4.
 
 ---
 
 ## General Handling
+
+Detailed flows — the version state machine and the per-approach update sequences — are diagrammed
+in [`behavior.md`](behavior.md). Key rules:
 
 ### Version Compatibility Rule (recap)
 
@@ -163,7 +135,7 @@ connected clients.
 ### Update Source
 
 Agent binaries are published to GitHub Releases as part of the existing CI workflow (see
-[`.github/workflows/release.yml`](../../.github/workflows/release.yml)):
+[`.github/workflows/release.yml`](../../../../.github/workflows/release.yml)):
 
 - `termihub-agent-linux-x64`
 - `termihub-agent-linux-arm64`
@@ -219,7 +191,8 @@ agent (running) → poll github/releases every N hours
 - Self-updates do not prevent a host from also triggering an update simultaneously
 
 **Verdict:** useful as a background hygiene option (off by default), but unsuitable as the
-primary update path. Best paired with Approach 3 or 4 where the host remains in control.
+primary update path. Best paired with Approach 3 or 4 where the host remains in control. The
+self-update flow is diagrammed in [`behavior.md`](behavior.md).
 
 ---
 
@@ -261,7 +234,7 @@ Response:
 - Requires the agent to track connected client identities
 
 **Verdict:** low effort, high value — this should be the **minimum viable improvement**
-shipped as Phase 1.
+shipped as Phase 1. The guard sequence is diagrammed in [`behavior.md`](behavior.md).
 
 ---
 
@@ -299,7 +272,7 @@ Host A → agent.request_update (new RPC method)
 - Older desktop versions that don't understand the new notification will still be cut off
 
 **Verdict:** best end-user experience for the multi-host scenario; reasonable effort.
-Recommended as **Phase 2**.
+Recommended as **Phase 2**. The broadcast sequence is diagrammed in [`behavior.md`](behavior.md).
 
 ---
 
@@ -335,7 +308,8 @@ this a natural extension.
 - Requires "pending update" state in the agent's state persistence (`state.json`)
 
 **Verdict:** best fit for production servers; elegant given the daemon model. Recommended
-as a **Phase 3 option** alongside or instead of Approach 3.
+as a **Phase 3 option** alongside or instead of Approach 3. The deferred sequence is diagrammed
+in [`behavior.md`](behavior.md).
 
 ---
 
@@ -367,143 +341,10 @@ management and version discovery outweighs any benefit. **Not recommended.**
 
 ---
 
-## States & Sequences
-
-### Agent Version State Machine (per connection)
-
-```mermaid
-stateDiagram-v2
-    [*] --> Probing : Host connects via SSH
-
-    Probing --> Compatible : agent.minor >= desktop.minor\n(same major)
-    Probing --> AgentTooOld : agent.minor < desktop.minor
-    Probing --> MajorMismatch : agent.major != desktop.major
-    Probing --> NotInstalled : binary not found
-
-    Compatible --> Connected : Initialize handshake OK
-    AgentTooOld --> UpdateOffered : Show update badge in sidebar
-    MajorMismatch --> BlockedReinstall : Show error;\nrequire manual redeploy
-    NotInstalled --> DeployOffered : Show deploy button
-
-    UpdateOffered --> Updating : User confirms update
-    DeployOffered --> Updating : User deploys
-
-    Updating --> Connected : Deploy succeeds;\nre-probe passes
-    Updating --> UpdateFailed : Deploy fails
-
-    UpdateFailed --> UpdateOffered : Show error;\nretry available
-
-    Connected --> Disconnected : Session ends / network drop
-    Disconnected --> Probing : User reconnects
-```
-
-### Approach 2: Host-Triggered Update with Guard
-
-```mermaid
-sequenceDiagram
-    participant HA as Host A (desktop)
-    participant Agent as termihub-agent
-    participant HB as Host B (desktop)
-
-    HA->>Agent: probe → version mismatch detected
-    HA->>Agent: agent.list_connections
-    Agent-->>HA: [{ client: "Host B", version: "0.2.1" }]
-
-    Note over HA: Show warning dialog\n"1 other host connected"
-
-    HA->>Agent: update_agent (shutdown RPC)
-    Agent-->>HB: connection dropped (no notice)
-    Note over HB: Session lost — user surprised
-
-    HA->>HA: redeploy new binary via SFTP
-    HA->>Agent: reconnect to new version
-    Note over HB: User manually reconnects
-```
-
-### Approach 3: Coordinated Broadcast Update
-
-```mermaid
-sequenceDiagram
-    participant HA as Host A (desktop)
-    participant Agent as termihub-agent
-    participant HB as Host B (desktop)
-    participant HC as Host C (desktop)
-
-    HA->>Agent: agent.request_update
-    Agent-->>HB: notification: agent.update_pending\n{ estimated_restart: "10s", requested_by: "Host A" }
-    Agent-->>HC: notification: agent.update_pending
-
-    Note over HB: Show "agent updating" notice;\nqueue reconnect
-    Note over HC: Show "agent updating" notice;\nqueue reconnect
-
-    HB-->>Agent: clean disconnect
-    HC-->>Agent: clean disconnect
-
-    Note over Agent: All clients disconnected\n(or 10s timeout elapsed)
-
-    HA->>Agent: agent.shutdown (graceful)
-    HA->>HA: redeploy new binary via SFTP
-
-    HB->>Agent: auto-reconnect (new version)
-    HC->>Agent: auto-reconnect (new version)
-    HA->>Agent: reconnect (updating host)
-
-    Note over HA,HC: All hosts on new version;\nsessions resume
-```
-
-### Approach 4: Deferred Update via Daemon
-
-```mermaid
-sequenceDiagram
-    participant HA as Host A (desktop)
-    participant Daemon as daemon process
-    participant Agent as agent worker
-    participant HB as Host B (desktop)
-
-    HA->>Agent: agent.request_deferred_update\n{ binary_path: "/tmp/termihub-agent-new" }
-    Agent-->>HA: { status: "pending", active_sessions: 2 }
-    Note over Agent: pending_update_path = /tmp/termihub-agent-new
-
-    Note over HB,Agent: Sessions continue unaffected
-
-    HB->>Agent: session ends naturally
-    Note over Agent: 1 active session remaining
-
-    HA->>Agent: final session ends
-    Note over Agent: 0 active sessions\npending_update_path set
-
-    Agent->>Daemon: notify: applying pending update
-    Daemon->>Agent: exec new binary (daemon survives)
-
-    Note over Daemon: New agent version starts\nunder same daemon
-
-    HA->>Agent: reconnect → new version v0.3.0
-    HB->>Agent: reconnect → new version v0.3.0
-```
-
-### Agent Self-Update Flow (Approach 1 — optional)
-
-```mermaid
-flowchart TD
-    A[Agent periodic timer fires\nevery 24 hours] --> B[GET github.com/releases/latest]
-    B --> C{API success?}
-    C -->|No| D[Log warning;\nretry next cycle]
-    C -->|Yes| E{latest > installed?}
-    E -->|No| F[No action;\nupdate last_check_time]
-    E -->|Yes| G{active sessions > 0?}
-    G -->|Yes| H[Notify connected hosts:\nagent.update_available]
-    H --> I[Wait for sessions to drain\nor host to trigger update]
-    G -->|No| J[Download new binary\nfrom GitHub Releases]
-    I --> G
-    J --> K{Download + verify\nintegrity OK?}
-    K -->|No| L[Log error;\nretry next cycle]
-    K -->|Yes| M[Write to pending path\nin state.json]
-    M --> N[Exec-replace self\nvia daemon restart]
-```
-
----
-
 ## Preliminary Implementation Details
+
+Based on the current project architecture at concept-creation time; the codebase may evolve before
+implementation. The version state machine and per-approach sequences live in [`behavior.md`](behavior.md).
 
 ### Phase 1 — Approach 2: Connected-Host Guard
 
@@ -547,8 +388,10 @@ New Tauri command variant `update_agent_force` bypasses the guard after user con
 
 **Frontend** (`src/components/`):
 
-- Update `RemoteAgentsSidebar` (or equivalent) to show version badge per agent
+- Update `RemoteAgentsSidebar` (or equivalent) to show version chip + update-state badge per agent
+  (see `mockups/agent-update-sidebar.html`)
 - Add `UpdateAgentDialog.tsx` that renders the connected-hosts warning
+  (see `mockups/agent-update-dialogs.html` state 1)
 - Wire `agent.list_connections` result into the dialog state before showing
 
 ---
@@ -584,7 +427,8 @@ On receiving `agent.request_update`:
 **Desktop side** — new Tauri event `remote-agent-update-pending` forwarded from the
 agent notification to the frontend via the existing event bridge.
 
-**Frontend** — `UpdatePendingToast.tsx` shown on receiving `remote-agent-update-pending`;
+**Frontend** — `UpdatePendingToast.tsx` shown on receiving `remote-agent-update-pending`
+(the "being updated by another host" notice, `mockups/agent-update-dialogs.html` state 2);
 triggers graceful session suspension and queues reconnect after 15 seconds.
 
 ---
@@ -621,7 +465,8 @@ if self.active_sessions() == 0 {
 ```
 
 Daemon exec-replace uses the existing detach mechanism (commit `7c52017`) to survive the
-agent worker process restart.
+agent worker process restart. The desktop surfaces the pending state via the deferred-update
+banner (`mockups/agent-update-dialogs.html` state 3).
 
 ---
 
@@ -633,7 +478,8 @@ during `initialize`. When enabled:
 - Agent runs a 24-hour timer
 - Queries `https://api.github.com/repos/armaxri/termiHub/releases/latest`
 - Compares `tag_name` semver against `env!("CARGO_PKG_VERSION")`
-- If newer: notifies connected hosts via `agent.update_available` notification (new)
+- If newer: notifies connected hosts via `agent.update_available` notification (new), surfaced as
+  the self-update toast (`mockups/agent-update-dialogs.html` state 4)
 - If no hosts connected and Approach 4 is also enabled: auto-downloads and defers update
 
 Binary integrity verification: SHA-256 checksum published as a release asset
@@ -664,3 +510,11 @@ pub struct RemoteAgentConfig {
     pub update_strategy: UpdateStrategy, // "immediate" | "coordinated" | "deferred"
 }
 ```
+
+---
+
+## Implementation Status
+
+Not started — this is a `backlog/` concept. Once implementation begins, run
+`/sync-concept remote-agent-update-strategy` after each change to keep [`sync.md`](sync.md)
+current.

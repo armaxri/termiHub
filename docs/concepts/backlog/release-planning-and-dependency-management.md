@@ -28,7 +28,7 @@ response for termiHub's ongoing development lifecycle.
 
 - Automated version bumping or changelog generation (always requires human review)
 - In-app update delivery to end users (covered in the separate
-  [In-Field Update Mechanism](./in-field-update-mechanism.md) concept)
+  [In-Field Update Mechanism](../partial/in-field-update-mechanism.md) concept)
 - Commercial SLA guarantees or enterprise support contracts
 - Backporting fixes to older release branches (single main release line only)
 

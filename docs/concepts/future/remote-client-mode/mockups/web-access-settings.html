@@ -1,0 +1,565 @@
+<!doctype html>
+<!-- Remote Client Mode — desktop Settings → Web & Mobile Access page. Layout altitude, real class names + lucide icons. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Remote Client Mode — Web &amp; Mobile Access Settings (mockup)</title>
+    <link rel="stylesheet" href="../../../_assets/mockup.css" />
+    <style>
+      /* Settings-specific structural styling (not part of the shared kit). */
+      .settings-nav {
+        width: 150px;
+        flex: 0 0 150px;
+        border-right: 1px solid var(--border-secondary);
+        padding: 8px 0;
+      }
+      .settings-nav__item {
+        padding: 6px 16px;
+        font-size: 12px;
+        color: var(--text-secondary);
+        cursor: pointer;
+      }
+      .settings-nav__item:hover {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+      }
+      .settings-nav__item--active {
+        color: var(--text-primary);
+        background: color-mix(in srgb, var(--accent-color) 16%, transparent);
+        box-shadow: inset 2px 0 0 var(--accent-color);
+      }
+      .settings-pane {
+        flex: 1 1 auto;
+        overflow: auto;
+        padding: 18px 20px;
+      }
+      .settings-section-title {
+        font-size: 13px;
+        font-weight: 600;
+        margin: 0 0 4px;
+      }
+      .settings-hint {
+        color: var(--text-secondary);
+        font-size: 12px;
+        margin: 0 0 14px;
+      }
+      .settings-group-label {
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-secondary);
+        margin: 18px 0 8px;
+      }
+      /* Generic form field row */
+      .field {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin: 0 0 10px;
+      }
+      .field__label {
+        width: 140px;
+        flex: 0 0 140px;
+        font-size: 12px;
+        color: var(--text-secondary);
+      }
+      .field__control {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .input {
+        height: 30px;
+        padding: 0 10px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-md);
+        font-size: 12px;
+        color: var(--text-primary);
+        font-family: inherit;
+      }
+      .input--addr {
+        width: 200px;
+      }
+      .input--port {
+        width: 90px;
+      }
+      .input--token {
+        width: 260px;
+        font-family: var(--font-mono);
+        letter-spacing: 0.12em;
+      }
+      .input--url {
+        width: 300px;
+        font-family: var(--font-mono);
+        color: var(--text-accent);
+      }
+      .field-select {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        width: 320px;
+        height: 30px;
+        padding: 0 10px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-md);
+        font-size: 12px;
+        color: var(--text-primary);
+      }
+      .field-select .li {
+        color: var(--text-secondary);
+      }
+      /* toggle */
+      .toggle {
+        position: relative;
+        width: 38px;
+        height: 20px;
+        border-radius: 999px;
+        background: var(--bg-active);
+        border: 1px solid var(--border-primary);
+        flex: 0 0 auto;
+      }
+      .toggle::after {
+        content: "";
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: var(--text-secondary);
+        transition: none;
+      }
+      .toggle--on {
+        background: var(--accent-color);
+        border-color: var(--accent-color);
+      }
+      .toggle--on::after {
+        left: 20px;
+        background: #fff;
+      }
+      .toggle-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .toggle-row__text {
+        font-size: 12px;
+        color: var(--text-primary);
+      }
+      /* small icon button next to inputs */
+      .icon-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+      }
+      .icon-btn .li {
+        width: 13px;
+        height: 13px;
+      }
+      /* QR placeholder */
+      .qr {
+        margin-top: 12px;
+        width: 132px;
+        height: 132px;
+        display: grid;
+        place-items: center;
+        background: #fff;
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-md);
+        color: #0b0d12;
+      }
+      .qr .li {
+        width: 104px;
+        height: 104px;
+        stroke: #0b0d12;
+      }
+      .access-banner {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 460px;
+        margin: 4px 0 0;
+        padding: 8px 10px;
+        border-radius: var(--radius-sm);
+        font-size: 12px;
+        background: rgba(45, 215, 156, 0.1);
+        border: 1px solid var(--state-connected);
+        color: #8fe6c4;
+      }
+      .access-banner .li {
+        width: 14px;
+        height: 14px;
+      }
+      .disabled-note {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 460px;
+        margin: 4px 0 0;
+        padding: 8px 10px;
+        border-radius: var(--radius-sm);
+        font-size: 12px;
+        background: rgba(212, 168, 67, 0.12);
+        border: 1px solid var(--color-warning);
+        color: #e6c577;
+      }
+      .disabled-note .li {
+        width: 14px;
+        height: 14px;
+      }
+    </style>
+  </head>
+  <body class="mockup-doc">
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-network" viewBox="0 0 24 24">
+        <rect x="16" y="16" width="6" height="6" rx="1" />
+        <rect x="2" y="16" width="6" height="6" rx="1" />
+        <rect x="9" y="2" width="6" height="6" rx="1" />
+        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+        <path d="M12 12V8" />
+      </symbol>
+      <symbol id="i-folder-open" viewBox="0 0 24 24">
+        <path
+          d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"
+        />
+      </symbol>
+      <symbol id="i-scroll-text" viewBox="0 0 24 24">
+        <path d="M15 12h-5" />
+        <path d="M15 8h-5" />
+        <path d="M19 17V5a2 2 0 0 0-2-2H4" />
+        <path
+          d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"
+        />
+      </symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24">
+        <path
+          d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"
+        />
+        <circle cx="12" cy="12" r="3" />
+      </symbol>
+      <symbol id="i-globe" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" />
+        <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
+        <path d="M2 12h20" />
+      </symbol>
+      <symbol id="i-chevron-down" viewBox="0 0 24 24">
+        <path d="m6 9 6 6 6-6" />
+      </symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24">
+        <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+      </symbol>
+      <symbol id="i-key" viewBox="0 0 24 24">
+        <path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4" />
+        <path d="m21 2-9.6 9.6" />
+        <circle cx="7.5" cy="15.5" r="5.5" />
+      </symbol>
+      <symbol id="i-refresh-cw" viewBox="0 0 24 24">
+        <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+        <path d="M21 3v5h-5" />
+        <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+        <path d="M8 16H3v5" />
+      </symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24">
+        <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+        <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+      </symbol>
+      <symbol id="i-qr-code" viewBox="0 0 24 24">
+        <rect width="5" height="5" x="3" y="3" rx="1" />
+        <rect width="5" height="5" x="16" y="3" rx="1" />
+        <rect width="5" height="5" x="3" y="16" rx="1" />
+        <path d="M21 16h-3a2 2 0 0 0-2 2v3" />
+        <path d="M21 21v.01" />
+        <path d="M12 7v3a2 2 0 0 1-2 2H7" />
+        <path d="M3 12h.01" />
+        <path d="M12 3h.01" />
+        <path d="M12 16v.01" />
+        <path d="M16 12h1" />
+        <path d="M21 12v.01" />
+        <path d="M12 21v-1" />
+      </symbol>
+      <symbol id="i-smartphone" viewBox="0 0 24 24">
+        <rect width="14" height="20" x="5" y="2" rx="2" ry="2" />
+        <path d="M12 18h.01" />
+      </symbol>
+      <symbol id="i-circle-check" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" />
+        <path d="m9 12 2 2 4-4" />
+      </symbol>
+      <symbol id="i-triangle-alert" viewBox="0 0 24 24">
+        <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" />
+        <path d="M12 9v4" />
+        <path d="M12 17h.01" />
+      </symbol>
+    </svg>
+
+    <h1>Remote Client Mode — Settings · Web &amp; Mobile Access</h1>
+    <p class="mockup-meta">
+      Layout-altitude mockup ·
+      <code>future/remote-client-mode/mockups/web-access-settings.html</code> · Desktop only
+    </p>
+
+    <!-- ── State 1: Enabled / Listening ───────────────────────────────── -->
+    <section class="mockup-section">
+      <h2>1 · Web access enabled (listening)</h2>
+      <div class="mockup-note">
+        Settings → <strong>Web &amp; Mobile Access</strong>. The master toggle
+        <span class="callout">A</span> is on, so the listener binds. The user sets the listen
+        address/port <span class="callout">B</span>, the TLS mode <span class="callout">C</span>,
+        and the auth mode + token <span class="callout">D</span>. The resolved access URL
+        <span class="callout">E</span> and a scannable QR code <span class="callout">F</span> let an
+        iPad or phone reach the login screen.
+      </div>
+      <div class="app">
+        <div class="app__body">
+          <nav class="activity-bar">
+            <div class="activity-bar__top">
+              <button class="activity-bar__item" title="Connections">
+                <svg class="li"><use href="#i-network" /></svg>
+              </button>
+              <button class="activity-bar__item" title="File Browser">
+                <svg class="li"><use href="#i-folder-open" /></svg>
+              </button>
+            </div>
+            <div class="activity-bar__bottom">
+              <button class="activity-bar__item" title="Log Viewer">
+                <svg class="li"><use href="#i-scroll-text" /></svg>
+              </button>
+              <button class="activity-bar__item activity-bar__item--active" title="Settings">
+                <svg class="li"><use href="#i-settings" /></svg>
+                <span class="activity-bar__indicator"></span>
+              </button>
+            </div>
+          </nav>
+
+          <aside class="sidebar">
+            <div class="sidebar__header"><span class="sidebar__title">Settings</span></div>
+            <div class="sidebar__content" style="display: flex; padding: 0">
+              <div class="settings-nav">
+                <div class="settings-nav__item">General</div>
+                <div class="settings-nav__item">Appearance</div>
+                <div class="settings-nav__item">Terminal</div>
+                <div class="settings-nav__item">Security</div>
+                <div class="settings-nav__item settings-nav__item--active">Web &amp; Mobile</div>
+                <div class="settings-nav__item">Keyboard</div>
+              </div>
+            </div>
+          </aside>
+
+          <div class="terminal-view">
+            <div class="settings-pane">
+              <div class="settings-section-title">
+                <svg class="li" style="margin-right: 4px"><use href="#i-globe" /></svg>
+                Web &amp; Mobile Access
+              </div>
+              <div class="settings-hint">
+                Serve the termiHub UI over HTTPS so browsers and the iPad app can connect to this
+                agent.
+              </div>
+
+              <div class="toggle-row">
+                <span class="toggle toggle--on"></span>
+                <span class="toggle-row__text">Enable web access</span>
+                <span class="callout">A</span>
+              </div>
+
+              <div class="field" style="margin-top: 14px">
+                <span class="field__label">Listen address</span>
+                <span class="field__control">
+                  <input class="input input--addr" value="0.0.0.0" />
+                  <span class="field__label" style="width: auto; flex: 0 0 auto">Port</span>
+                  <input class="input input--port" value="7681" />
+                  <span class="callout">B</span>
+                </span>
+              </div>
+
+              <div class="settings-group-label">TLS</div>
+              <div class="field">
+                <span class="field__label">Mode</span>
+                <span class="field__control">
+                  <div class="field-select">
+                    <span>
+                      <svg class="li" style="margin-right: 5px"><use href="#i-lock" /></svg>
+                      Self-signed (auto-generated)
+                    </span>
+                    <svg class="li"><use href="#i-chevron-down" /></svg>
+                  </div>
+                  <span class="callout">C</span>
+                </span>
+              </div>
+
+              <div class="settings-group-label">Authentication</div>
+              <div class="field">
+                <span class="field__label">Mode</span>
+                <span class="field__control">
+                  <div class="field-select">
+                    <span>
+                      <svg class="li" style="margin-right: 5px"><use href="#i-key" /></svg>
+                      Token
+                    </span>
+                    <svg class="li"><use href="#i-chevron-down" /></svg>
+                  </div>
+                  <span class="callout">D</span>
+                </span>
+              </div>
+              <div class="field">
+                <span class="field__label">Token</span>
+                <span class="field__control">
+                  <input class="input input--token" type="password" value="thx_3f9b2c8a1d" />
+                  <button class="btn icon-btn">
+                    <svg class="li"><use href="#i-refresh-cw" /></svg> Regenerate
+                  </button>
+                  <button class="btn icon-btn">
+                    <svg class="li"><use href="#i-copy" /></svg> Copy
+                  </button>
+                </span>
+              </div>
+
+              <div class="settings-group-label">Access URL</div>
+              <div class="field">
+                <span class="field__label">URL</span>
+                <span class="field__control">
+                  <input class="input input--url" readonly value="https://192.168.1.42:7681" />
+                  <button class="btn icon-btn">
+                    <svg class="li"><use href="#i-copy" /></svg> Copy
+                  </button>
+                  <button class="btn btn--primary icon-btn">
+                    <svg class="li"><use href="#i-qr-code" /></svg> Show QR
+                  </button>
+                  <span class="callout">E</span>
+                </span>
+              </div>
+
+              <div class="access-banner">
+                <svg class="li"><use href="#i-circle-check" /></svg>
+                Listening — web access available at
+                <code>https://192.168.1.42:7681</code>
+              </div>
+
+              <div class="qr" title="Scan to open the login screen">
+                <svg class="li"><use href="#i-qr-code" /></svg>
+              </div>
+              <div class="settings-hint" style="margin: 8px 0 0; display: flex; gap: 6px">
+                <svg class="li" style="width: 14px; height: 14px"><use href="#i-smartphone" /></svg>
+                Scan with an iPad or phone to open the login screen
+                <span class="callout">F</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="status-bar">
+          <div class="status-bar__section status-bar__section--left">
+            <span class="status-bar__item">
+              <svg class="li"><use href="#i-globe" /></svg> Web access · listening
+            </span>
+          </div>
+          <div class="status-bar__section status-bar__section--center"></div>
+          <div class="status-bar__section status-bar__section--right">
+            <span class="status-bar__item">2 clients</span>
+          </div>
+        </div>
+      </div>
+      <div class="legend">
+        <ul>
+          <li><span class="callout">A</span> Master toggle — listener does not bind until on.</li>
+          <li>
+            <span class="callout">B</span> Listen address / port — <code>0.0.0.0</code> exposes the
+            agent on the LAN (explicit opt-in); default is <code>127.0.0.1:7681</code>.
+          </li>
+          <li>
+            <span class="callout">C</span> TLS mode (<code>Lock</code> icon) — Self-signed / Custom
+            cert / Disable (LAN only).
+          </li>
+          <li>
+            <span class="callout">D</span> Auth mode (<code>Key</code> icon) — Token or Username +
+            Password; the masked token row offers Regenerate / Copy.
+          </li>
+          <li>
+            <span class="callout">E</span> Access URL — resolved
+            <code>https://&lt;ip&gt;:&lt;port&gt;</code>
+            with Copy / Show QR.
+          </li>
+          <li>
+            <span class="callout">F</span> QR code (<code>QrCode</code>) — scan to open the login
+            screen on a mobile device.
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ── State 2: control variants ──────────────────────────────────── -->
+    <section class="mockup-section">
+      <h2>2 · Control states</h2>
+      <div class="mockup-note">
+        Key control variants. <strong>Disabled</strong> <span class="callout">G</span> = master
+        toggle off, listener stopped, fields greyed and URL/QR hidden. <strong>TLS disabled</strong>
+        <span class="callout">H</span> = the not-recommended LAN-only mode shows a warning.
+        <strong>Username + Password</strong> auth mode <span class="callout">I</span> swaps the
+        token row for credential fields.
+      </div>
+      <div class="states">
+        <div>
+          <div class="state-label">Disabled <span class="callout">G</span></div>
+          <div class="toggle-row" style="margin-bottom: 8px">
+            <span class="toggle"></span>
+            <span class="toggle-row__text" style="color: var(--text-secondary)"
+              >Enable web access</span
+            >
+          </div>
+          <div class="disabled-note">
+            <svg class="li"><use href="#i-triangle-alert" /></svg>
+            Web access is off — the agent is reachable only from the desktop app.
+          </div>
+        </div>
+
+        <div>
+          <div class="state-label">TLS disabled (LAN only) <span class="callout">H</span></div>
+          <div class="field-select" style="width: auto">
+            <span>
+              <svg class="li" style="margin-right: 5px"><use href="#i-lock" /></svg>
+              Disable TLS (LAN only)
+            </span>
+            <svg class="li"><use href="#i-chevron-down" /></svg>
+          </div>
+          <div class="disabled-note" style="width: auto; margin-top: 8px">
+            <svg class="li"><use href="#i-triangle-alert" /></svg>
+            Traffic is unencrypted — not recommended outside a trusted LAN.
+          </div>
+        </div>
+
+        <div>
+          <div class="state-label">Username + Password <span class="callout">I</span></div>
+          <div class="field" style="margin: 0 0 8px">
+            <span class="field__label" style="width: 90px; flex: 0 0 90px">Username</span>
+            <input class="input" style="width: 180px" value="admin" />
+          </div>
+          <div class="field" style="margin: 0">
+            <span class="field__label" style="width: 90px; flex: 0 0 90px">Password</span>
+            <input class="input" style="width: 180px" type="password" value="hunter2hunter2" />
+          </div>
+        </div>
+      </div>
+      <div class="legend">
+        <ul>
+          <li>
+            <span class="callout">G</span> Disabled — toggle off; URL, QR and listener removed.
+          </li>
+          <li>
+            <span class="callout">H</span> TLS off — <code>TriangleAlert</code> warning; explicit
+            opt-in required.
+          </li>
+          <li>
+            <span class="callout">I</span> Password auth — token row replaced by Username / Password
+            fields.
+          </li>
+        </ul>
+      </div>
+    </section>
+  </body>
+</html>

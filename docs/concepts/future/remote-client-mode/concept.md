@@ -1,6 +1,13 @@
 # Remote Client Mode (Web & iPad)
 
-> GitHub Issue: #TBD
+**GitHub Issue:** #TBD
+
+> **Folder-form concept** (AI-driven concept workflow). Visual surfaces live in
+> [`mockups/`](mockups/), behavior diagrams in [`behavior.md`](behavior.md), and the
+> concept↔code reconciliation ledger in [`sync.md`](sync.md). The concept is the source of
+> truth; run `/sync-concept remote-client-mode` to reconcile it with the implementation.
+
+---
 
 ## Overview
 
@@ -34,31 +41,37 @@ use-cases with a shared implementation.
 - Providing local PTY access on iOS (iOS platform restriction, cannot be worked around)
 - Full offline capability (both web and iPad modes require network access to an agent)
 
-```mermaid
-flowchart TD
-    subgraph Clients
-        A[Desktop App\nTauri IPC]
-        B[Browser\nWebSocket]
-        C[iPad App\nWebSocket]
-    end
-    subgraph Agent["termiHub Agent (server / desktop / RPi)"]
-        D[HTTP Server\nstatic assets + /api]
-        E[WebSocket Endpoint\n/ws]
-        F[JSON-RPC Dispatcher]
-        G[Terminal Backends\nSSH · Docker · Serial · Telnet]
-    end
-    A -->|Tauri IPC| F
-    B -->|WSS /ws| E
-    C -->|WSS /ws| E
-    E --> F
-    F --> G
-    B -->|HTTPS| D
-    C -->|HTTPS| D
-```
+The top-level client→agent architecture is diagrammed in [`behavior.md`](behavior.md).
 
 ---
 
 ## UI Interface
+
+The visual surfaces are specified by the mockups — open them in a browser to review layout and
+states. This section describes them; the mockups are authoritative for layout.
+
+| Mockup                                                                                 | Shows                                                                                                        |
+| -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| [`mockups/web-access-settings.html`](mockups/web-access-settings.html)                 | Desktop Settings → **Web & Mobile Access** page (enable toggle, listener, TLS, auth, token, access URL + QR) |
+| [`mockups/remote-client-login-and-bar.html`](mockups/remote-client-login-and-bar.html) | The standalone web/iPad **login screen** (token + username/password) and the in-app **connection bar**       |
+
+### Agent Configuration Screen (Desktop Only)
+
+A new **Web & Mobile Access** settings page (accessible from the Settings sidebar) lets the user
+configure the agent's HTTP listener. See `mockups/web-access-settings.html`. The page exposes:
+
+- **Enable web access** — master toggle; the listener does not bind until this is on
+- **Listen address / Port** — defaults to `127.0.0.1` and `7681`; `0.0.0.0` requires explicit
+  user action (see Security Considerations)
+- **TLS mode** — `Self-signed (auto-generated)` (default), `Custom certificate + key`, or
+  `Disable TLS (LAN only, not recommended)`
+- **Authentication mode** — `Token` (long-lived copy/paste token, default) or
+  `Username + Password`
+- **Token field** — masked, with **Regenerate** and **Copy** actions (shown for token mode)
+- **Access URL** — the resolved `https://<ip>:<port>` URL with **Copy** and **Show QR** actions
+
+The **Show QR** button displays a QR code the user can scan with an iPad or phone to open the
+login screen directly.
 
 ### Web Client (Browser)
 
@@ -67,30 +80,12 @@ The experience is visually identical to the desktop app with the following diffe
 
 - **No local-shell connection type** — the connection type selector omits "Local Shell"; existing
   local-shell connections in the workspace show a "not available in remote mode" banner
-- **Connection bar** (top of window, replaces the OS title bar) — shows the agent hostname/IP,
-  connection health indicator (green/yellow/red dot), and a disconnect button
-- **Login screen** — shown before the main UI if the agent requires authentication:
-
-```
-┌──────────────────────────────────────────────────────────┐
-│                                                          │
-│              termiHub                                    │
-│                                                          │
-│   Connect to agent at agent.example.com                  │
-│                                                          │
-│   Token  [________________________________]              │
-│                                                          │
-│                        [Connect]                         │
-│                                                          │
-│   ─── or ───                                             │
-│                                                          │
-│   Username  [______________________]                     │
-│   Password  [______________________]                     │
-│                        [Sign in]                         │
-│                                                          │
-└──────────────────────────────────────────────────────────┘
-```
-
+- **Connection bar** (top of window, replaces the OS title bar) — shows the agent hostname/IP, a
+  connection-health indicator (green/yellow/red dot), and a disconnect button. See the connection
+  bar in `mockups/remote-client-login-and-bar.html`.
+- **Login screen** — shown before the main UI if the agent requires authentication. It is a
+  **standalone browser page** (not the termiHub desktop chrome): a centered card offering a token
+  field and a username/password fallback. See `mockups/remote-client-login-and-bar.html`.
 - **SFTP / file browser** — fully functional; files are on the agent host, not the client
 - **Settings** — saved to the agent; changes are reflected immediately for all connected clients
 - **Split views, drag-and-drop tabs** — identical to desktop; no functional reduction
@@ -99,62 +94,23 @@ The experience is visually identical to the desktop app with the following diffe
 
 Same UI as the web client, with touch-specific additions:
 
-- **On-screen toolbar** (appears below the terminal, above the keyboard):
-
-```
-┌───────────────────────────────────────────────────────┐
-│  [Tab]  [Esc]  [Ctrl]  [Alt]  [↑]  [↓]  [←]  [→]    │
-│  [F1] [F2] [F3] [F4] [F5] [F6] [F7] [F8] [F9] [F10]  │
-└───────────────────────────────────────────────────────┘
-```
-
+- **On-screen toolbar** (appears below the terminal, above the keyboard) with `Tab`, `Esc`,
+  `Ctrl`, `Alt`, arrow keys, and a function-key row (`F1`–`F10`)
 - **Side panel gesture** — swipe right from the left edge to open the connection sidebar;
   swipe left to close it (mirrors the Activity Bar behaviour on desktop)
 - **Split view** — supported via a vertically stacked layout (horizontal split is hidden on
   small screens; available on iPad landscape via settings toggle)
 - **Pinch-to-zoom** — adjusts terminal font size; double-tap resets to default
 - **Connection indicator** — persistent pill in the top-right corner showing agent hostname and
-  latency; tap to expand connection detail sheet
-
-### Agent Configuration Screen (Desktop Only)
-
-A new "Web & Mobile Access" settings page (accessible from the Settings sidebar) lets the user
-configure the agent's HTTP listener:
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│ Settings › Web & Mobile Access                               │
-│──────────────────────────────────────────────────────────────│
-│ Enable web access          [toggle: OFF]                     │
-│                                                              │
-│ Listen address             [0.0.0.0          ]               │
-│ Port                       [7681              ]               │
-│                                                              │
-│ ─── TLS ───                                                  │
-│ Mode        [Self-signed (auto-generated) ▾]                 │
-│              ├─ Self-signed (auto-generated)                  │
-│              ├─ Custom certificate + key                      │
-│              └─ Disable TLS (LAN only, not recommended)       │
-│                                                              │
-│ ─── Authentication ───                                       │
-│ Mode        [Token ▾]                                        │
-│              ├─ Token (copy/paste a long-lived token)         │
-│              └─ Username + Password                           │
-│                                                              │
-│ Token       [••••••••••••••••••••]  [Regenerate] [Copy]      │
-│                                                              │
-│ ─── Access URL ───                                           │
-│ https://192.168.1.42:7681    [Copy] [Show QR]                │
-│                                                              │
-└──────────────────────────────────────────────────────────────┘
-```
-
-The **Show QR** button displays a QR code the user can scan with an iPad or phone to open the
-login screen directly.
+  latency; tap to expand a connection-detail sheet
 
 ---
 
 ## General Handling
+
+Detailed flows — the client connection handshake, the agent listener lifecycle, the client
+session lifecycle, and the iPad launch path — are diagrammed in [`behavior.md`](behavior.md).
+Key rules:
 
 ### Starting the Web Listener
 
@@ -166,35 +122,12 @@ login screen directly.
 5. The agent logs a line: `Web access available at https://<ip>:<port>`
 6. The access URL and QR code appear in the Settings panel
 
-### Client Connection Flow
-
-```mermaid
-sequenceDiagram
-    participant Client as Browser / iPad
-    participant Agent as termiHub Agent
-    participant Auth as Auth Middleware
-
-    Client->>Agent: GET https://host:port/
-    Agent-->>Client: 200 index.html + assets
-    Client->>Agent: POST /api/auth  {token | user+pass}
-    Agent->>Auth: validate credentials
-    Auth-->>Agent: session token (JWT, 8h TTL)
-    Agent-->>Client: 200 {sessionToken}
-    Client->>Agent: WS Upgrade /ws  Authorization: Bearer <token>
-    Agent->>Auth: validate token
-    Auth-->>Agent: OK
-    Agent-->>Client: 101 Switching Protocols
-    Note over Client,Agent: JSON-RPC over WebSocket (same protocol as TCP agent)
-    Client->>Agent: session/create {type: "ssh", ...}
-    Agent-->>Client: session/output stream
-```
-
 ### Transport Abstraction (Frontend)
 
 The frontend today calls `import { invoke } from "@tauri-apps/api/core"` and
 `import { listen } from "@tauri-apps/api/event"` throughout `src/services/api.ts` and
-`src/services/events.ts`. In remote-client mode these are replaced by a WebSocket
-transport that speaks the same JSON-RPC dialect as the desktop-to-agent protocol.
+`src/services/events.ts`. In remote-client mode these are replaced by a WebSocket transport that
+speaks the same JSON-RPC dialect as the desktop-to-agent protocol.
 
 A thin adapter is selected at startup:
 
@@ -248,67 +181,10 @@ Multiple clients (e.g. desktop + browser simultaneously) can connect to the same
 
 ---
 
-## States & Sequences
-
-### Agent Listener State Machine
-
-```mermaid
-stateDiagram-v2
-    [*] --> Disabled : initial state
-    Disabled --> Starting : user enables in Settings
-    Starting --> Listening : TLS cert ready, port bound
-    Starting --> Error : port in use / TLS failure
-    Error --> Starting : user retries / changes port
-    Listening --> Stopping : user disables in Settings
-    Listening --> Error : unexpected bind failure
-    Stopping --> Disabled : port released
-```
-
-### Client Session State Machine
-
-```mermaid
-stateDiagram-v2
-    [*] --> Unauthenticated : page load
-    Unauthenticated --> Authenticating : user submits token/password
-    Authenticating --> Connected : token valid, WS open
-    Authenticating --> Unauthenticated : auth failure
-    Connected --> Reconnecting : WS closed (network drop)
-    Reconnecting --> Connected : WS re-established, sessions re-attached
-    Reconnecting --> Unauthenticated : token expired
-    Connected --> Unauthenticated : user disconnects
-```
-
-### iPad App Launch Sequence
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant App as iPad App
-    participant Store as Saved Connections
-    participant Agent
-
-    User->>App: opens app
-    App->>Store: load saved agent URLs
-    alt saved agents exist
-        App-->>User: show agent list
-        User->>App: tap agent
-    else no saved agents
-        App-->>User: "Add agent" screen
-        User->>App: enter URL (or scan QR)
-    end
-    App->>Agent: POST /api/auth
-    Agent-->>App: sessionToken
-    App->>Agent: WS /ws
-    Agent-->>App: session list
-    App-->>User: termiHub main UI
-```
-
----
-
 ## Preliminary Implementation Details
 
-> This section reflects the codebase as of April 2026. The architecture may evolve before
-> implementation begins.
+Based on the current project architecture at concept-creation time (April 2026); the codebase may
+evolve before implementation begins. The architecture diagram lives in [`behavior.md`](behavior.md).
 
 ### Phase 1 — Transport Abstraction (shared prerequisite)
 
@@ -351,7 +227,8 @@ The Vite build output is checked into `agent/assets/` (git-ignored large files; 
 
 The Tauri desktop app gains "Web & Mobile Access" settings backed by a new config section in
 `src-tauri/src/connection/config.rs` and a new Tauri command group in
-`src-tauri/src/commands/web_access.rs`.
+`src-tauri/src/commands/web_access.rs`. The settings page layout is specified by
+`mockups/web-access-settings.html`.
 
 ### Phase 4 — Tauri iOS Build
 
@@ -377,3 +254,10 @@ A PWA fallback (skipping the native wrapper) is viable if Tauri iOS proves too i
 | 4 — Tauri iOS / PWA       | 4–6 weeks | Phases 1–3 |
 
 Phases 1–3 together deliver the web-browser client. Phase 4 adds the iPad app.
+
+---
+
+## Implementation Status
+
+Not started — this is a `future/` concept. Once implementation begins, run
+`/sync-concept remote-client-mode` after each change to keep [`sync.md`](sync.md) current.
