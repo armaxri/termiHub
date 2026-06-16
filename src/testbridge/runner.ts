@@ -66,10 +66,23 @@ export async function runScenario(
     }
   }
 
+  // Checks are postconditions over a single end state, so a terminal only needs
+  // reading once per tab — memoize it. Over a remote (WebSocket) transport this
+  // turns N terminal checks + the failure snapshot into one round-trip per tab.
+  const terminalCache = new Map<string, string>();
+  const readTerminal = async (tabId?: string): Promise<string> => {
+    const key = tabId ?? "";
+    const cached = terminalCache.get(key);
+    if (cached !== undefined) return cached;
+    const text = await driver.readTerminal({ tabId });
+    terminalCache.set(key, text);
+    return text;
+  };
+
   const checks: CheckResult[] = [];
   if (stepsOk) {
     for (const check of scenario.checks) {
-      checks.push(await runCheck(check, driver));
+      checks.push(await runCheck(check, driver, readTerminal));
     }
   }
 
@@ -78,7 +91,8 @@ export async function runScenario(
   const result: ScenarioResult = { scenario: scenario.name, passed, steps, checks };
   if (scenario.requirement !== undefined) result.requirement = scenario.requirement;
   if (!passed) {
-    const snapshot = await safeReadTerminal(driver);
+    // Reuse the active-tab read a check already made; otherwise fetch it once.
+    const snapshot = terminalCache.get("") ?? (await safeReadTerminal(driver));
     if (snapshot !== undefined) result.terminalSnapshot = snapshot;
   }
   return result;
@@ -115,15 +129,19 @@ async function runStep(
 }
 
 /** Evaluate a single check, capturing any driver error rather than throwing. */
-async function runCheck(check: ScenarioCheck, driver: Driver): Promise<CheckResult> {
+async function runCheck(
+  check: ScenarioCheck,
+  driver: Driver,
+  readTerminal: (tabId?: string) => Promise<string>
+): Promise<CheckResult> {
   try {
     switch (check.assert) {
       case "terminalContains": {
-        const actual = await driver.readTerminal({ tabId: check.tabId });
+        const actual = await readTerminal(check.tabId);
         return { check, passed: actual.includes(check.value), expected: check.value, actual };
       }
       case "terminalMatches": {
-        const actual = await driver.readTerminal({ tabId: check.tabId });
+        const actual = await readTerminal(check.tabId);
         const passed = new RegExp(check.pattern, check.flags).test(actual);
         return { check, passed, expected: check.pattern, actual };
       }

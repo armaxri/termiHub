@@ -15,6 +15,7 @@ class FakeDriver implements Driver {
   elements = new Map<string, { text?: string }>();
   terminalText = "";
   hasTerminal = true;
+  readTerminalCalls = 0;
   state: Record<string, unknown> = {};
   /** Optional override so tests can model `exists` changing over time. */
   existsImpl?: (testId: string) => boolean;
@@ -44,6 +45,7 @@ class FakeDriver implements Driver {
   }
 
   async readTerminal(_options?: ReadTerminalOptions): Promise<string> {
+    this.readTerminalCalls++;
     if (!this.hasTerminal) throw new BridgeError("readTerminal", "no active terminal");
     return this.terminalText;
   }
@@ -241,6 +243,43 @@ describe("runScenario", () => {
         instant()
       );
       expect(result.passed).toBe(true);
+    });
+
+    it("reads each terminal only once across multiple terminal checks", async () => {
+      const driver = new FakeDriver();
+      driver.terminalText = "alpha beta gamma\n";
+      const result = await runScenario(
+        {
+          name: "cached reads",
+          steps: [],
+          checks: [
+            { assert: "terminalContains", value: "alpha" },
+            { assert: "terminalMatches", pattern: "beta" },
+            { assert: "terminalContains", value: "gamma" },
+          ],
+        },
+        driver,
+        instant()
+      );
+      expect(result.passed).toBe(true);
+      expect(driver.readTerminalCalls).toBe(1);
+    });
+
+    it("reuses the cached terminal read for the failure snapshot", async () => {
+      const driver = new FakeDriver();
+      driver.terminalText = "only this\n";
+      const result = await runScenario(
+        {
+          name: "snapshot reuse",
+          steps: [],
+          checks: [{ assert: "terminalContains", value: "MISSING" }],
+        },
+        driver,
+        instant()
+      );
+      expect(result.passed).toBe(false);
+      expect(result.terminalSnapshot).toBe("only this\n");
+      expect(driver.readTerminalCalls).toBe(1); // not re-read for the snapshot
     });
 
     it("records a check that cannot be evaluated as an error, without throwing", async () => {
