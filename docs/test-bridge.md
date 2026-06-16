@@ -100,6 +100,66 @@ const res = await browser.execute((cmd) => window.__termihubTestBridge?.dispatch
 });
 ```
 
+## Authoring scenarios
+
+For test authors (and coding agents), the ergonomic layer is the **declarative
+scenario**: a sequence of UI actions followed by checks, run by `runScenario`,
+which returns a structured `ScenarioResult` instead of throwing. `passed` is the
+only field that must be checked; on failure each step/check carries detail and a
+terminal snapshot is attached for diagnostics.
+
+```ts
+import { runScenario } from "@/testbridge/runner";
+import { InAppBridgeDriver } from "@/testbridge/driver";
+
+const result = await runScenario(
+  {
+    name: "Initial command runs on connect",
+    requirement: "A connection's initial command is sent once the shell is ready.",
+    steps: [
+      { action: "click", testId: "connection-item-abc" },
+      { action: "waitFor", testId: "tab-abc", timeoutMs: 5000 },
+      { action: "pause", ms: 300 },
+    ],
+    checks: [
+      { assert: "terminalContains", value: "HELLO_MARKER" },
+      { assert: "stateEquals", path: "activePanelId", value: "panel-1" },
+    ],
+  },
+  new InAppBridgeDriver()
+);
+
+if (!result.passed) {
+  // result.requirement, result.checks[*].expected/actual, result.terminalSnapshot
+}
+```
+
+### Steps
+
+| Step                                                     | Effect                                            |
+| -------------------------------------------------------- | ------------------------------------------------- |
+| `{ action: "click", testId }`                            | Press the control                                 |
+| `{ action: "type", testId, text }`                       | Set an input/textarea value                       |
+| `{ action: "waitFor", testId, timeoutMs?, intervalMs? }` | Poll until the element exists, or fail on timeout |
+| `{ action: "pause", ms }`                                | Wait a fixed duration for output to settle        |
+
+The first failing step aborts the rest (steps are sequential preconditions) and
+the checks are skipped.
+
+### Checker catalog
+
+| Check                                                    | Passes when                                            |
+| -------------------------------------------------------- | ------------------------------------------------------ |
+| `{ assert: "terminalContains", value, tabId? }`          | The terminal text contains `value`                     |
+| `{ assert: "terminalMatches", pattern, flags?, tabId? }` | The terminal text matches the regex                    |
+| `{ assert: "textEquals", testId, value }`                | The element's visible text equals `value`              |
+| `{ assert: "exists", testId, present? }`                 | The element is present (or absent if `present: false`) |
+| `{ assert: "stateEquals", path, value }`                 | The app-state value at dot-`path` deep-equals `value`  |
+
+When all steps succeed, **every** check is evaluated (even after one fails) so a
+single run reports all assertions at once. A check that cannot be evaluated (e.g.
+no terminal to read) is recorded with an `error` rather than throwing.
+
 ## Source layout
 
 | File                            | Responsibility                                     |
@@ -109,6 +169,8 @@ const res = await browser.execute((cmd) => window.__termihubTestBridge?.dispatch
 | `src/testbridge/testMode.ts`    | Opt-in detection                                   |
 | `src/testbridge/TestBridge.tsx` | Live component that installs the window bridge     |
 | `src/testbridge/driver.ts`      | `Driver` abstraction + `InAppBridgeDriver` adapter |
+| `src/testbridge/scenario.ts`    | Declarative scenario + result types                |
+| `src/testbridge/runner.ts`      | `runScenario` — runs scenarios, returns feedback   |
 
 ## Not covered
 
