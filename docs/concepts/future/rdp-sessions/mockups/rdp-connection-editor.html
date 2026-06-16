@@ -1,0 +1,296 @@
+<!doctype html>
+<!-- RDP Sessions — connection editor form. Layout altitude, real class names + lucide icons. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RDP Sessions — Connection Editor (mockup)</title>
+    <link rel="stylesheet" href="../../../_assets/mockup.css" />
+    <style>
+      /* Mockup-only structural styles for the schema-driven RDP form. The real
+         form is rendered by DynamicForm; this shows the field grouping and
+         controls at layout altitude using theme vars only. */
+      .editor {
+        width: 560px;
+        max-width: 100%;
+        background: var(--bg-primary);
+        border: 1px solid var(--border-secondary);
+        border-radius: 8px;
+        box-shadow: var(--shadow-overlay);
+        overflow: hidden;
+      }
+      .editor__header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 14px;
+        background: var(--bg-secondary);
+        border-bottom: 1px solid var(--border-secondary);
+        font-weight: 600;
+      }
+      .editor__body {
+        padding: 14px;
+      }
+      .form-group {
+        margin: 0 0 16px;
+      }
+      .form-group__title {
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-secondary);
+        border-bottom: 1px solid var(--border-secondary);
+        padding-bottom: 4px;
+        margin: 0 0 10px;
+      }
+      .field {
+        display: grid;
+        grid-template-columns: 120px 1fr;
+        align-items: center;
+        gap: 10px;
+        margin: 0 0 8px;
+      }
+      .field__label {
+        color: var(--text-secondary);
+        font-size: 12px;
+      }
+      .input,
+      .select {
+        height: 28px;
+        padding: 0 8px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-sm);
+        color: var(--text-primary);
+        font-family: inherit;
+        font-size: 12px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .input--mono {
+        font-family: var(--font-mono);
+      }
+      .field__row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .check-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0 0 8px;
+        color: var(--text-primary);
+        font-size: 12px;
+      }
+      .check-row .check {
+        width: 14px;
+        height: 14px;
+        border: 1px solid var(--text-secondary);
+        border-radius: 3px;
+        display: inline-grid;
+        place-items: center;
+        flex: 0 0 14px;
+      }
+      .check-row--on .check {
+        border-color: var(--accent-color);
+        background: var(--accent-color);
+        color: #fff;
+      }
+      .check-row .check .li {
+        width: 10px;
+        height: 10px;
+        stroke-width: 3;
+      }
+      .warn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--color-warning);
+        font-size: 11px;
+      }
+      .editor__footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        padding: 12px 14px;
+        border-top: 1px solid var(--border-secondary);
+        background: var(--bg-secondary);
+      }
+      .caret .li {
+        width: 14px;
+        height: 14px;
+        color: var(--text-secondary);
+      }
+    </style>
+  </head>
+  <body class="mockup-doc">
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-monitor" viewBox="0 0 24 24">
+        <rect width="20" height="14" x="2" y="3" rx="2" />
+        <line x1="8" x2="16" y1="21" y2="21" />
+        <line x1="12" x2="12" y1="17" y2="21" />
+      </symbol>
+      <symbol id="i-chevron-down" viewBox="0 0 24 24">
+        <path d="m6 9 6 6 6-6" />
+      </symbol>
+      <symbol id="i-check" viewBox="0 0 24 24">
+        <path d="M20 6 9 17l-5-5" />
+      </symbol>
+      <symbol id="i-folder-open" viewBox="0 0 24 24">
+        <path
+          d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"
+        />
+      </symbol>
+      <symbol id="i-triangle-alert" viewBox="0 0 24 24">
+        <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" />
+        <path d="M12 9v4" />
+        <path d="M12 17h.01" />
+      </symbol>
+    </svg>
+
+    <h1>RDP Sessions — Connection Editor</h1>
+    <p class="mockup-meta">
+      Layout-altitude mockup ·
+      <code>future/rdp-sessions/mockups/rdp-connection-editor.html</code>
+    </p>
+
+    <section class="mockup-section">
+      <h2>RDP connection form (schema-driven)</h2>
+      <div class="mockup-note">
+        Rendered by the existing <code>DynamicForm</code> from the RDP settings schema. Grouped into
+        Connection, Display <span class="callout">A</span>, Features <span class="callout">B</span>,
+        and Security <span class="callout">C</span>. The Scale Mode and Color Depth selects
+        <span class="callout">A</span> and the "Ignore certificate errors" warning toggle
+        <span class="callout">C</span> are RDP-specific.
+      </div>
+
+      <div class="editor">
+        <div class="editor__header">
+          <svg class="li"><use href="#i-monitor" /></svg> RDP (Remote Desktop) — New Connection
+        </div>
+        <div class="editor__body">
+          <!-- Connection -->
+          <div class="form-group">
+            <div class="form-group__title">Connection</div>
+            <div class="field">
+              <span class="field__label">Host</span>
+              <span class="input input--mono">windows-server.local</span>
+            </div>
+            <div class="field">
+              <span class="field__label">Port</span>
+              <span class="input input--mono">3389</span>
+            </div>
+            <div class="field">
+              <span class="field__label">Username</span>
+              <span class="input input--mono">admin</span>
+            </div>
+            <div class="field">
+              <span class="field__label">Domain</span>
+              <span class="input input--mono">CORP</span>
+            </div>
+            <div class="field">
+              <span class="field__label">Password</span>
+              <div class="field__row">
+                <span class="input input--mono" style="flex: 1">••••••••</span>
+                <button class="btn">Save</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Display (A) -->
+          <div class="form-group">
+            <div class="form-group__title">Display</div>
+            <div class="field">
+              <span class="field__label">Resolution</span>
+              <span class="select"
+                >Match Window
+                <span class="caret"
+                  ><svg class="li"><use href="#i-chevron-down" /></svg></span
+              ></span>
+            </div>
+            <div class="field">
+              <span class="field__label">Color Depth</span>
+              <span class="select"
+                >32-bit
+                <span class="caret"
+                  ><svg class="li"><use href="#i-chevron-down" /></svg></span
+              ></span>
+            </div>
+            <div class="field">
+              <span class="field__label">Scale Mode</span>
+              <span class="select"
+                >Fit to Tab
+                <span class="caret"
+                  ><svg class="li"><use href="#i-chevron-down" /></svg></span
+              ></span>
+            </div>
+          </div>
+
+          <!-- Features (B) -->
+          <div class="form-group">
+            <div class="form-group__title">Features</div>
+            <div class="check-row check-row--on">
+              <span class="check"
+                ><svg class="li"><use href="#i-check" /></svg
+              ></span>
+              Clipboard Sync
+            </div>
+            <div class="check-row">
+              <span class="check"></span> Drive Redirection
+              <span class="input input--mono" style="flex: 1; margin-left: 6px"
+                >/Users/admin/shared</span
+              >
+              <button class="btn">
+                <svg class="li"><use href="#i-folder-open" /></svg>
+              </button>
+            </div>
+            <div class="check-row"><span class="check"></span> Audio Playback</div>
+            <div class="check-row"><span class="check"></span> Admin/Console Session</div>
+          </div>
+
+          <!-- Security (C) -->
+          <div class="form-group" style="margin-bottom: 0">
+            <div class="form-group__title">Security</div>
+            <div class="field">
+              <span class="field__label">Security</span>
+              <span class="select"
+                >Auto
+                <span class="caret"
+                  ><svg class="li"><use href="#i-chevron-down" /></svg></span
+              ></span>
+            </div>
+            <div class="check-row"><span class="check"></span> Ignore certificate errors</div>
+            <div class="warn">
+              <svg class="li"><use href="#i-triangle-alert" /></svg> Off by default — skips server
+              certificate validation.
+            </div>
+          </div>
+        </div>
+        <div class="editor__footer">
+          <button class="btn">Test Connection</button>
+          <button class="btn btn--primary">Save</button>
+        </div>
+      </div>
+
+      <div class="legend">
+        <ul>
+          <li>
+            <span class="callout">A</span> Display group — RDP-specific Resolution, Color Depth
+            (16/24/32-bit), and Scale Mode (Fit to Tab / 1:1 Pixel / Match Window) selects.
+          </li>
+          <li>
+            <span class="callout">B</span> Features group — Clipboard Sync (on by default), Drive
+            Redirection with path picker, Audio Playback, Admin/Console Session.
+          </li>
+          <li>
+            <span class="callout">C</span> Security group — security-mode select (Auto / TLS / NLA /
+            RDP) and the "Ignore certificate errors" toggle, off by default with a warning.
+          </li>
+        </ul>
+      </div>
+    </section>
+  </body>
+</html>

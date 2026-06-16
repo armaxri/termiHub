@@ -488,7 +488,7 @@ This step runs only on Windows runners.
 
 ### Portable mode considerations
 
-When termiHub runs in portable mode (see [portable-mode concept](../portable-mode.md)):
+When termiHub runs in portable mode (see [portable-mode concept](../../implemented/portable-mode.md)):
 
 - `unix-env/` lives inside the portable app directory (relative path)
 - `HOME` inside bash is set to the portable data directory instead of `%USERPROFILE%`

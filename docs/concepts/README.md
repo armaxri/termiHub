@@ -101,12 +101,12 @@ Not started yet — realistic and planned for the near to medium term.
 Speculative features, long-horizon research, or low-priority legacy protocols.
 These may eventually be implemented, but there is no active plan.
 
-| Document                                              | Summary                                           | Why future                                          |
-| ----------------------------------------------------- | ------------------------------------------------- | --------------------------------------------------- |
-| [package-manager.md](future/package-manager.md)       | Plugin/tool repository with dependency resolution | Blocked on plugin system                            |
-| [plugin-system.md](future/plugin-system.md)           | Dynamic extension API (Rust + JS)                 | Very high complexity, no active demand              |
-| [rdp-sessions.md](future/rdp-sessions.md)             | Embedded RDP client sessions                      | Requires native RDP library or FreeRDP binding      |
-| [remote-client-mode.md](future/remote-client-mode.md) | termiHub as a browser/iPad app via WebSocket      | Significant architectural change                    |
-| [rlogin-rsh.md](future/rlogin-rsh.md)                 | Legacy BSD rlogin/rsh protocol support            | Superseded by SSH; rarely needed                    |
-| [vnc-sessions.md](future/vnc-sessions.md)             | Embedded noVNC client with WebSocket-to-TCP proxy | High complexity, niche use case                     |
-| [xdmcp-sessions.md](future/xdmcp-sessions.md)         | XDMCP remote desktop sessions                     | Requires X11 server embedding; very high complexity |
+| Document                                                          | Summary                                           | Why future                                          |
+| ----------------------------------------------------------------- | ------------------------------------------------- | --------------------------------------------------- |
+| [package-manager/](future/package-manager/) _(folder form)_       | Plugin/tool repository with dependency resolution | Blocked on plugin system                            |
+| [plugin-system/](future/plugin-system/) _(folder form)_           | Dynamic extension API (Rust + JS)                 | Very high complexity, no active demand              |
+| [rdp-sessions/](future/rdp-sessions/) _(folder form)_             | Embedded RDP client sessions                      | Requires native RDP library or FreeRDP binding      |
+| [remote-client-mode/](future/remote-client-mode/) _(folder form)_ | termiHub as a browser/iPad app via WebSocket      | Significant architectural change                    |
+| [rlogin-rsh.md](future/rlogin-rsh.md)                             | Legacy BSD rlogin/rsh protocol support            | Superseded by SSH; rarely needed                    |
+| [vnc-sessions/](future/vnc-sessions/) _(folder form)_             | Embedded noVNC client with WebSocket-to-TCP proxy | High complexity, niche use case                     |
+| [xdmcp-sessions.md](future/xdmcp-sessions.md)                     | XDMCP remote desktop sessions                     | Requires X11 server embedding; very high complexity |

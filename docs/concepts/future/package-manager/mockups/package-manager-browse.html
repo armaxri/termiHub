@@ -1,0 +1,750 @@
+<!doctype html>
+<!-- Package Manager — Packages Activity Bar view: Browse + Installed tabs. Layout altitude, real class names + lucide icons. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Package Manager — Browse &amp; Installed (mockup)</title>
+    <link rel="stylesheet" href="../../../_assets/mockup.css" />
+    <style>
+      /* Mockup-only structural helpers built from theme vars (not app classes). */
+      .pkg-tabs {
+        display: flex;
+        gap: 2px;
+        padding: 6px 8px 4px;
+      }
+      .pkg-tab {
+        flex: 1;
+        text-align: center;
+        padding: 5px 0;
+        font-size: 12px;
+        color: var(--text-secondary);
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-secondary);
+        border-radius: var(--radius-sm);
+        cursor: pointer;
+      }
+      .pkg-tab--active {
+        color: var(--text-primary);
+        background: var(--bg-active);
+        border-color: var(--accent-color);
+      }
+      .pkg-search {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin: 4px 8px;
+        padding: 4px 8px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-secondary);
+        border-radius: var(--radius-md);
+        color: var(--text-secondary);
+        font-size: 12px;
+      }
+      .pkg-search .li {
+        width: 13px;
+        height: 13px;
+      }
+      .pkg-filter {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 6px;
+        margin: 0 8px 6px;
+        padding: 4px 8px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-secondary);
+        border-radius: var(--radius-md);
+        color: var(--text-primary);
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .pkg-filter .li {
+        width: 13px;
+        height: 13px;
+        color: var(--text-secondary);
+      }
+      .pkg-sep {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 8px 4px;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-disabled);
+      }
+      .pkg-sep::after {
+        content: "";
+        flex: 1;
+        height: 1px;
+        background: var(--border-secondary);
+      }
+      /* Package card */
+      .pkg-card {
+        margin: 4px 8px;
+        padding: 8px 10px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-md);
+      }
+      .pkg-card__head {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .pkg-card__head .li {
+        width: 15px;
+        height: 15px;
+        color: var(--text-secondary);
+      }
+      .pkg-card__name {
+        font-weight: 600;
+        font-size: 13px;
+        color: var(--text-primary);
+      }
+      .pkg-card__featured {
+        color: var(--color-warning);
+      }
+      .pkg-card__type {
+        margin-left: auto;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--text-secondary);
+        padding: 1px 6px;
+        border: 1px solid var(--border-secondary);
+        border-radius: 999px;
+      }
+      .pkg-card__desc {
+        margin: 4px 0 6px;
+        font-size: 11px;
+        color: var(--text-secondary);
+        line-height: 1.4;
+      }
+      .pkg-card__meta {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-size: 11px;
+        color: var(--text-secondary);
+      }
+      .pkg-card__meta .li {
+        width: 12px;
+        height: 12px;
+      }
+      .pkg-card__foot {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-top: 8px;
+      }
+      .pkg-btn {
+        padding: 3px 12px;
+        font-size: 11px;
+        font-family: inherit;
+        border-radius: var(--radius-sm);
+        border: 1px solid var(--accent-color);
+        background: var(--accent-color);
+        color: #fff;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+      }
+      .pkg-btn .li {
+        width: 12px;
+        height: 12px;
+      }
+      .pkg-btn--ghost {
+        background: var(--bg-tertiary);
+        border-color: var(--border-primary);
+        color: var(--text-primary);
+      }
+      /* update chip */
+      .pkg-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 11px;
+        padding: 1px 8px;
+        border-radius: 999px;
+      }
+      .pkg-chip .li {
+        width: 12px;
+        height: 12px;
+      }
+      .pkg-chip--update {
+        color: var(--color-warning);
+        background: rgba(212, 168, 67, 0.12);
+        border: 1px solid var(--color-warning);
+      }
+      .pkg-chip--ok {
+        color: var(--color-success);
+      }
+      .pkg-size {
+        margin-left: auto;
+        font-size: 11px;
+        color: var(--text-secondary);
+        font-family: var(--font-mono);
+      }
+      /* update banner */
+      .pkg-banner {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 4px 8px 2px;
+        padding: 7px 10px;
+        background: rgba(212, 168, 67, 0.1);
+        border: 1px solid var(--color-warning);
+        border-radius: var(--radius-md);
+        font-size: 12px;
+        color: var(--text-primary);
+      }
+      .pkg-banner .li {
+        width: 14px;
+        height: 14px;
+        color: var(--color-warning);
+      }
+      .pkg-banner__actions {
+        margin-left: auto;
+        display: flex;
+        gap: 8px;
+      }
+      .pkg-banner__actions .btn--link {
+        padding: 0;
+        font-size: 12px;
+      }
+      /* installed footer */
+      .pkg-foot {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin: 8px 8px 0;
+        padding-top: 8px;
+        border-top: 1px solid var(--border-secondary);
+        font-size: 12px;
+        color: var(--text-secondary);
+      }
+      .pkg-foot strong {
+        color: var(--text-primary);
+        font-family: var(--font-mono);
+      }
+    </style>
+  </head>
+  <body class="mockup-doc">
+    <!-- Inline lucide v0.563 sprite — copy only the symbols used. -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-network" viewBox="0 0 24 24">
+        <rect x="16" y="16" width="6" height="6" rx="1" />
+        <rect x="2" y="16" width="6" height="6" rx="1" />
+        <rect x="9" y="2" width="6" height="6" rx="1" />
+        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+        <path d="M12 12V8" />
+      </symbol>
+      <symbol id="i-folder-open" viewBox="0 0 24 24">
+        <path
+          d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"
+        />
+      </symbol>
+      <symbol id="i-scroll-text" viewBox="0 0 24 24">
+        <path d="M15 12h-5" />
+        <path d="M15 8h-5" />
+        <path d="M19 17V5a2 2 0 0 0-2-2H4" />
+        <path
+          d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"
+        />
+      </symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24">
+        <path
+          d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"
+        />
+        <circle cx="12" cy="12" r="3" />
+      </symbol>
+      <symbol id="i-package" viewBox="0 0 24 24">
+        <path
+          d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"
+        />
+        <path d="M12 22V12" />
+        <polyline points="3.29 7 12 12 20.71 7" />
+        <path d="m7.5 4.27 9 5.15" />
+      </symbol>
+      <symbol id="i-box" viewBox="0 0 24 24">
+        <path
+          d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"
+        />
+        <path d="m3.3 7 8.7 5 8.7-5" />
+        <path d="M12 22V12" />
+      </symbol>
+      <symbol id="i-blocks" viewBox="0 0 24 24">
+        <path
+          d="M10 22V7a1 1 0 0 0-1-1H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5a1 1 0 0 0-1-1H2"
+        />
+        <rect x="14" y="2" width="8" height="8" rx="1" />
+      </symbol>
+      <symbol id="i-palette" viewBox="0 0 24 24">
+        <path
+          d="M12 22a1 1 0 0 1 0-20 10 9 0 0 1 10 9 5 5 0 0 1-5 5h-2.25a1.75 1.75 0 0 0-1.4 2.8l.3.4a1.75 1.75 0 0 1-1.4 2.8z"
+        />
+        <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
+        <circle cx="17.5" cy="10.5" r=".5" fill="currentColor" />
+        <circle cx="6.5" cy="12.5" r=".5" fill="currentColor" />
+        <circle cx="8.5" cy="7.5" r=".5" fill="currentColor" />
+      </symbol>
+      <symbol id="i-wrench" viewBox="0 0 24 24">
+        <path
+          d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z"
+        />
+      </symbol>
+      <symbol id="i-search" viewBox="0 0 24 24">
+        <path d="m21 21-4.34-4.34" />
+        <circle cx="11" cy="11" r="8" />
+      </symbol>
+      <symbol id="i-download" viewBox="0 0 24 24">
+        <path d="M12 15V3" />
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+        <path d="m7 10 5 5 5-5" />
+      </symbol>
+      <symbol id="i-arrow-up" viewBox="0 0 24 24">
+        <path d="m5 12 7-7 7 7" />
+        <path d="M12 19V5" />
+      </symbol>
+      <symbol id="i-check" viewBox="0 0 24 24">
+        <path d="M20 6 9 17l-5-5" />
+      </symbol>
+      <symbol id="i-star" viewBox="0 0 24 24">
+        <path
+          d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.69 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.453 9.795a.53.53 0 0 1 .294-.906l5.166-.755a2.122 2.122 0 0 0 1.597-1.16z"
+        />
+      </symbol>
+      <symbol id="i-chevron-down" viewBox="0 0 24 24">
+        <path d="m6 9 6 6 6-6" />
+      </symbol>
+      <symbol id="i-trash-2" viewBox="0 0 24 24">
+        <path d="M3 6h18" />
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+        <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+        <path d="M10 11v6" />
+        <path d="M14 11v6" />
+      </symbol>
+      <symbol id="i-x" viewBox="0 0 24 24">
+        <path d="M18 6 6 18" />
+        <path d="m6 6 12 12" />
+      </symbol>
+      <symbol id="i-panel-left" viewBox="0 0 24 24">
+        <rect width="18" height="18" x="3" y="3" rx="2" />
+        <path d="M9 3v18" />
+      </symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24">
+        <path d="M5 12h14" />
+        <path d="M12 5v14" />
+      </symbol>
+    </svg>
+
+    <h1>Package Manager — Browse &amp; Installed</h1>
+    <p class="mockup-meta">
+      Layout-altitude mockup ·
+      <code>future/package-manager/mockups/package-manager-browse.html</code>
+    </p>
+
+    <!-- ── State 1: Browse tab ────────────────────────────────────────── -->
+    <section class="mockup-section">
+      <h2>1 · Packages view — Browse tab</h2>
+      <div class="mockup-note">
+        New <strong>Packages</strong> Activity Bar item <span class="callout">A</span> opens the
+        Package Manager sidebar with <strong>Browse</strong> / <strong>Installed</strong> tabs
+        <span class="callout">B</span>. Browse shows a search box <span class="callout">C</span>, a
+        category filter <span class="callout">D</span>, and package cards
+        <span class="callout">E</span> grouped into Featured / Terminal Backends / Tools.
+      </div>
+      <div class="app">
+        <div class="app__body">
+          <nav class="activity-bar">
+            <div class="activity-bar__top">
+              <button class="activity-bar__item" title="Connections">
+                <svg class="li"><use href="#i-network" /></svg>
+              </button>
+              <button class="activity-bar__item" title="File Browser">
+                <svg class="li"><use href="#i-folder-open" /></svg>
+              </button>
+              <button class="activity-bar__item activity-bar__item--active" title="Packages">
+                <svg class="li"><use href="#i-package" /></svg>
+                <span class="activity-bar__indicator"></span>
+              </button>
+            </div>
+            <div class="activity-bar__bottom">
+              <button class="activity-bar__item" title="Log Viewer">
+                <svg class="li"><use href="#i-scroll-text" /></svg>
+              </button>
+              <button class="activity-bar__item" title="Settings">
+                <svg class="li"><use href="#i-settings" /></svg>
+              </button>
+            </div>
+          </nav>
+
+          <aside class="sidebar">
+            <div class="sidebar__header"><span class="sidebar__title">Packages</span></div>
+            <div class="pkg-tabs">
+              <div class="pkg-tab pkg-tab--active">Browse</div>
+              <div class="pkg-tab">Installed</div>
+            </div>
+            <div class="pkg-search">
+              <svg class="li"><use href="#i-search" /></svg> Search packages…
+            </div>
+            <div class="pkg-filter">
+              <span
+                ><svg class="li"><use href="#i-blocks" /></svg> All categories</span
+              >
+              <svg class="li"><use href="#i-chevron-down" /></svg>
+            </div>
+            <div class="sidebar__content">
+              <div class="pkg-sep">Featured</div>
+
+              <div class="pkg-card">
+                <div class="pkg-card__head">
+                  <svg class="li pkg-card__featured"><use href="#i-star" /></svg>
+                  <span class="pkg-card__name">Kubernetes Exec</span>
+                  <span class="pkg-card__type">Plugin</span>
+                </div>
+                <div class="pkg-card__desc">Terminal backend for Kubernetes pod exec sessions.</div>
+                <div class="pkg-card__foot">
+                  <span class="pkg-card__meta">
+                    v1.2.0
+                    <span
+                      ><svg class="li"><use href="#i-download" /></svg> 4.2k</span
+                    >
+                  </span>
+                  <button class="pkg-btn">Install</button>
+                </div>
+              </div>
+
+              <div class="pkg-card">
+                <div class="pkg-card__head">
+                  <svg class="li pkg-card__featured"><use href="#i-star" /></svg>
+                  <span class="pkg-card__name">Dracula Theme</span>
+                  <span class="pkg-card__type">Theme</span>
+                </div>
+                <div class="pkg-card__desc">Dark theme with the classic Dracula palette.</div>
+                <div class="pkg-card__foot">
+                  <span class="pkg-card__meta">
+                    v2.0.1
+                    <span
+                      ><svg class="li"><use href="#i-download" /></svg> 12k</span
+                    >
+                  </span>
+                  <button class="pkg-btn">Install</button>
+                </div>
+              </div>
+
+              <div class="pkg-sep">Terminal Backends</div>
+
+              <div class="pkg-card">
+                <div class="pkg-card__head">
+                  <svg class="li"><use href="#i-network" /></svg>
+                  <span class="pkg-card__name">AWS CloudShell</span>
+                  <span class="pkg-card__type">Backend</span>
+                </div>
+                <div class="pkg-card__desc">Connect to AWS CloudShell environments.</div>
+                <div class="pkg-card__foot">
+                  <span class="pkg-card__meta">
+                    v0.5.0
+                    <span
+                      ><svg class="li"><use href="#i-download" /></svg> 890</span
+                    >
+                  </span>
+                  <button class="pkg-btn">Install</button>
+                </div>
+              </div>
+
+              <div class="pkg-sep">Tools</div>
+
+              <div class="pkg-card">
+                <div class="pkg-card__head">
+                  <svg class="li"><use href="#i-wrench" /></svg>
+                  <span class="pkg-card__name">git</span>
+                  <span class="pkg-card__type">Tool</span>
+                </div>
+                <div class="pkg-card__desc">Distributed version control system.</div>
+                <div class="pkg-card__foot">
+                  <span class="pkg-card__meta"> v2.44 <span class="pkg-size">3.2 MB</span> </span>
+                  <button class="pkg-btn">
+                    <svg class="li"><use href="#i-download" /></svg> Install
+                  </button>
+                </div>
+              </div>
+            </div>
+          </aside>
+
+          <div class="terminal-view">
+            <div class="terminal-view__toolbar">
+              <div class="terminal-view__toolbar-actions">
+                <button class="terminal-view__toolbar-btn" title="New Terminal">
+                  <svg class="li"><use href="#i-plus" /></svg>
+                </button>
+                <button
+                  class="terminal-view__toolbar-btn terminal-view__toolbar-btn--active"
+                  title="Toggle Sidebar"
+                >
+                  <svg class="li"><use href="#i-panel-left" /></svg>
+                </button>
+              </div>
+            </div>
+            <div class="terminal-view__content">
+              <div class="panel">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li"><use href="#i-network" /></svg>
+                    <span class="state-dot state-dot--connected"></span>
+                    <span class="tab__title">server-01</span>
+                    <button class="tab__close">
+                      <svg class="li"><use href="#i-x" /></svg>
+                    </button>
+                  </div>
+                </div>
+                <div class="terminal">
+                  <span class="prompt">server-01 $</span> <span class="cursor"></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="status-bar">
+          <div class="status-bar__section status-bar__section--left">
+            <span class="status-bar__item">42 packages</span>
+          </div>
+          <div class="status-bar__section status-bar__section--center"></div>
+          <div class="status-bar__section status-bar__section--right">
+            <span class="status-bar__item">UTF-8</span>
+          </div>
+        </div>
+      </div>
+      <div class="legend">
+        <ul>
+          <li>
+            <span class="callout">A</span> Packages Activity Bar item — lucide <code>Package</code>,
+            active with indicator (replaces the plugin system's "Plugins" item).
+          </li>
+          <li><span class="callout">B</span> Browse / Installed tab switch.</li>
+          <li>
+            <span class="callout">C</span> Search box — filters by name, description, tags, author.
+          </li>
+          <li>
+            <span class="callout">D</span> Category filter — All / Plugins (Backends, Themes,
+            Parsers, Widgets) / Tools (Shells, Utilities, Compilers, Languages).
+          </li>
+          <li>
+            <span class="callout">E</span> Package card — type glyph + name, type pill, description,
+            version, download count (plugins) or size (tools), and an
+            <strong>Install</strong> button. Featured cards carry a <code>Star</code>.
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ── State 2: Installed tab ─────────────────────────────────────── -->
+    <section class="mockup-section">
+      <h2>2 · Packages view — Installed tab (updates available)</h2>
+      <div class="mockup-note">
+        The Installed tab groups packages by type with per-package on-disk size
+        <span class="callout">F</span>. Packages with a newer version show an amber update chip
+        <span class="callout">G</span>; up-to-date ones show <code>✓ Up to date</code>. An update
+        banner <span class="callout">H</span> sits at the top, and a footer
+        <span class="callout">I</span> shows total size + <strong>Clean unused…</strong>.
+      </div>
+      <div class="app">
+        <div class="app__body">
+          <nav class="activity-bar">
+            <div class="activity-bar__top">
+              <button class="activity-bar__item" title="Connections">
+                <svg class="li"><use href="#i-network" /></svg>
+              </button>
+              <button class="activity-bar__item" title="File Browser">
+                <svg class="li"><use href="#i-folder-open" /></svg>
+              </button>
+              <button class="activity-bar__item activity-bar__item--active" title="Packages">
+                <svg class="li"><use href="#i-package" /></svg>
+                <span class="activity-bar__indicator"></span>
+              </button>
+            </div>
+            <div class="activity-bar__bottom">
+              <button class="activity-bar__item" title="Log Viewer">
+                <svg class="li"><use href="#i-scroll-text" /></svg>
+              </button>
+              <button class="activity-bar__item" title="Settings">
+                <svg class="li"><use href="#i-settings" /></svg>
+              </button>
+            </div>
+          </nav>
+
+          <aside class="sidebar">
+            <div class="sidebar__header"><span class="sidebar__title">Packages</span></div>
+            <div class="pkg-tabs">
+              <div class="pkg-tab">Browse</div>
+              <div class="pkg-tab pkg-tab--active">Installed</div>
+            </div>
+
+            <div class="pkg-banner">
+              <svg class="li"><use href="#i-arrow-up" /></svg> 2 updates available
+              <span class="pkg-banner__actions">
+                <button class="btn--link">Update All</button>
+                <button class="btn--link">Review…</button>
+                <button class="btn--link">Dismiss</button>
+              </span>
+            </div>
+
+            <div class="pkg-search">
+              <svg class="li"><use href="#i-search" /></svg> Search installed…
+            </div>
+
+            <div class="sidebar__content">
+              <div class="pkg-sep">Plugins (2)</div>
+
+              <div class="pkg-card">
+                <div class="pkg-card__head">
+                  <span class="state-dot state-dot--connected"></span>
+                  <span class="pkg-card__name">Kubernetes Exec</span>
+                  <span class="pkg-card__type">Plugin</span>
+                </div>
+                <div class="pkg-card__meta" style="margin-top: 4px">
+                  v1.2.0 <span class="pkg-size">1.4 MB</span>
+                </div>
+                <div class="pkg-card__foot">
+                  <span class="pkg-chip pkg-chip--update">
+                    <svg class="li"><use href="#i-arrow-up" /></svg> Update: v1.3.0
+                  </span>
+                  <button class="pkg-btn pkg-btn--ghost">Update</button>
+                </div>
+              </div>
+
+              <div class="pkg-card">
+                <div class="pkg-card__head">
+                  <span class="state-dot state-dot--connected"></span>
+                  <span class="pkg-card__name">Dracula Theme</span>
+                  <span class="pkg-card__type">Theme</span>
+                </div>
+                <div class="pkg-card__meta" style="margin-top: 4px">
+                  v2.0.1 <span class="pkg-size">42 KB</span>
+                </div>
+                <div class="pkg-card__foot">
+                  <span class="pkg-chip pkg-chip--ok">
+                    <svg class="li"><use href="#i-check" /></svg> Up to date
+                  </span>
+                </div>
+              </div>
+
+              <div class="pkg-sep">Tools (3)</div>
+
+              <div class="pkg-card">
+                <div class="pkg-card__head">
+                  <svg class="li"><use href="#i-wrench" /></svg>
+                  <span class="pkg-card__name">git</span>
+                  <span class="pkg-card__type">Tool</span>
+                </div>
+                <div class="pkg-card__meta" style="margin-top: 4px">
+                  v2.44 <span class="pkg-size">3.2 MB</span>
+                </div>
+                <div class="pkg-card__foot">
+                  <span class="pkg-chip pkg-chip--update">
+                    <svg class="li"><use href="#i-arrow-up" /></svg> Update: v2.45
+                  </span>
+                  <button class="pkg-btn pkg-btn--ghost">Update</button>
+                </div>
+              </div>
+
+              <div class="pkg-card">
+                <div class="pkg-card__head">
+                  <svg class="li"><use href="#i-wrench" /></svg>
+                  <span class="pkg-card__name">python</span>
+                  <span class="pkg-card__type">Tool</span>
+                </div>
+                <div class="pkg-card__meta" style="margin-top: 4px">
+                  v3.12 <span class="pkg-size">28.7 MB</span>
+                </div>
+                <div class="pkg-card__foot">
+                  <span class="pkg-chip pkg-chip--ok">
+                    <svg class="li"><use href="#i-check" /></svg> Up to date
+                  </span>
+                </div>
+              </div>
+
+              <div class="pkg-foot">
+                <span>Total: <strong>33.4 MB</strong></span>
+                <button class="pkg-btn pkg-btn--ghost">
+                  <svg class="li"><use href="#i-trash-2" /></svg> Clean unused…
+                </button>
+              </div>
+            </div>
+          </aside>
+
+          <div class="terminal-view">
+            <div class="terminal-view__toolbar">
+              <div class="terminal-view__toolbar-actions">
+                <button class="terminal-view__toolbar-btn" title="New Terminal">
+                  <svg class="li"><use href="#i-plus" /></svg>
+                </button>
+                <button
+                  class="terminal-view__toolbar-btn terminal-view__toolbar-btn--active"
+                  title="Toggle Sidebar"
+                >
+                  <svg class="li"><use href="#i-panel-left" /></svg>
+                </button>
+              </div>
+            </div>
+            <div class="terminal-view__content">
+              <div class="panel">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li"><use href="#i-network" /></svg>
+                    <span class="state-dot state-dot--connected"></span>
+                    <span class="tab__title">server-01</span>
+                    <button class="tab__close">
+                      <svg class="li"><use href="#i-x" /></svg>
+                    </button>
+                  </div>
+                </div>
+                <div class="terminal">
+                  <span class="prompt">server-01 $</span> git --version<br />
+                  git version 2.44.0<br />
+                  <span class="prompt">server-01 $</span> <span class="cursor"></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="status-bar">
+          <div class="status-bar__section status-bar__section--left">
+            <span class="status-bar__item">
+              <svg class="li"><use href="#i-arrow-up" /></svg> 2 updates
+            </span>
+          </div>
+          <div class="status-bar__section status-bar__section--center"></div>
+          <div class="status-bar__section status-bar__section--right">
+            <span class="status-bar__item">UTF-8</span>
+          </div>
+        </div>
+      </div>
+      <div class="legend">
+        <ul>
+          <li>
+            <span class="callout">F</span> Per-package on-disk size (monospace), grouped under
+            Plugins / Tools.
+          </li>
+          <li>
+            <span class="callout">G</span> Update chip — amber <code>⬆ Update: vX.Y.Z</code> with an
+            inline <strong>Update</strong> button; up-to-date packages show
+            <code>✓ Up to date</code>.
+          </li>
+          <li>
+            <span class="callout">H</span> Update banner — count + Update All / Review… / Dismiss.
+          </li>
+          <li>
+            <span class="callout">I</span> Footer — total installed size +
+            <strong>Clean unused…</strong> cleanup action.
+          </li>
+        </ul>
+      </div>
+    </section>
+  </body>
+</html>

@@ -12,7 +12,7 @@
 
 When a termiHub desktop connects to a remote host it deploys a `termihub-agent` binary and
 communicates with it over a JSON-RPC channel (see
-[Remote Protocol](../../remote-protocol.md)). As the desktop application evolves, the agent
+[Remote Protocol](../../../remote-protocol.md)). As the desktop application evolves, the agent
 binary needs to be kept in sync — but a remote agent may be **shared by multiple desktop
 instances** running different versions, and updating it can disrupt sessions that are still
 active.
@@ -135,7 +135,7 @@ connected clients.
 ### Update Source
 
 Agent binaries are published to GitHub Releases as part of the existing CI workflow (see
-[`.github/workflows/release.yml`](../../../.github/workflows/release.yml)):
+[`.github/workflows/release.yml`](../../../../.github/workflows/release.yml)):
 
 - `termihub-agent-linux-x64`
 - `termihub-agent-linux-arm64`
