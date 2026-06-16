@@ -1,0 +1,81 @@
+<!doctype html>
+<!-- Broadcast Input — scope dropdown + custom target picker. Layout altitude. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Broadcast Input — Target Picker (mockup)</title>
+    <link rel="stylesheet" href="../../../_assets/mockup.css" />
+  </head>
+  <body class="mockup-doc">
+    <h1>Broadcast Input — Target Selection</h1>
+    <p class="mockup-meta">
+      Layout-altitude mockup · <code>backlog/broadcast-input/mockups/target-picker.html</code>
+    </p>
+
+    <div class="states">
+      <!-- ── Scope dropdown ──────────────────────────────────────────── -->
+      <div>
+        <p class="state-label">Step 1 — scope dropdown (on toggle click)</p>
+        <div class="menu">
+          <div class="menu__title">Broadcast To</div>
+          <div class="menu__row menu__row--selected">
+            <span class="radio"></span> All terminals <span class="count">5</span>
+          </div>
+          <div class="menu__row">
+            <span class="radio"></span> All in current panel <span class="count">2</span>
+          </div>
+          <div class="menu__row"><span class="radio"></span> Custom selection…</div>
+          <div class="menu__footer">
+            <button class="btn btn--primary">Start Broadcast</button>
+            <button class="btn">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Custom picker ───────────────────────────────────────────── -->
+      <div>
+        <p class="state-label">Step 2 — custom selection (checkbox per tab)</p>
+        <div class="menu">
+          <div class="menu__title">Select Broadcast Targets</div>
+          <div class="menu__row menu__row--selected">
+            <span class="check">✓</span> server-1 <span class="count">SSH</span>
+          </div>
+          <div class="menu__row menu__row--selected">
+            <span class="check">✓</span> server-2 <span class="count">SSH</span>
+          </div>
+          <div class="menu__row">
+            <span class="check"></span> local shell <span class="count">local</span>
+          </div>
+          <div class="menu__row menu__row--selected">
+            <span class="check">✓</span> server-3 <span class="count">SSH</span>
+          </div>
+          <div class="menu__row">
+            <span class="check"></span> /dev/ttyUSB0 <span class="count">serial</span>
+          </div>
+          <div class="menu__footer">
+            <button class="btn btn--link">Select All</button>
+            <button class="btn btn--link">Select None</button>
+          </div>
+          <div class="menu__footer">
+            <button class="btn btn--primary">Start Broadcast</button>
+            <button class="btn">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="legend">
+      <ul>
+        <li>
+          Non-terminal tabs (file editor, SFTP) never appear here — only terminal sessions are
+          broadcast targets.
+        </li>
+        <li>
+          The keyboard shortcut (<code>Ctrl/Cmd+Shift+B</code>) skips Step 1 and reuses the last
+          scope.
+        </li>
+      </ul>
+    </div>
+  </body>
+</html>
