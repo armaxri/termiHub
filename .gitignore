@@ -26,6 +26,10 @@ tests/reports/*.json
 .claude/*
 !.claude/CLAUDE.md
 !.claude/settings.json
+# Project skills are shared; personal skills under .claude/skills/ stay local.
+!.claude/skills
+.claude/skills/*
+!.claude/skills/sync-concept
 *.suo
 *.ntvs*
 *.njsproj
@@ -45,3 +49,6 @@ AUX
 # Lock files from other package managers (we use pnpm)
 package-lock.json
 yarn.lock
+
+# Concept mockup screenshot previews (generated)
+docs/concepts/_assets/.preview/

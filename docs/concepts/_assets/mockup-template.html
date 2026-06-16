@@ -1,0 +1,144 @@
+<!doctype html>
+<!--
+  Mockup template — copy into docs/concepts/<status>/<name>/mockups/<screen>.html
+  and replace the body. Keep it layout-altitude: real class names + real values,
+  but structure/states rather than pixel-perfect.
+  Rules:
+    - Self-contained: link only the shared mockup.css; never import app code.
+    - Use the real component class names (.activity-bar__item, .tab, .status-bar, …).
+    - Use the inline lucide sprite below for icons (real lucide geometry).
+    - Annotate non-obvious regions with <span class="callout">A</span> + a legend.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Concept Name — Screen Name (mockup)</title>
+    <link rel="stylesheet" href="../../../_assets/mockup.css" />
+  </head>
+  <body class="mockup-doc">
+    <!-- Inline lucide sprite (real lucide v0.563 geometry). Copy only the symbols you use. -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-network" viewBox="0 0 24 24">
+        <rect x="16" y="16" width="6" height="6" rx="1" />
+        <rect x="2" y="16" width="6" height="6" rx="1" />
+        <rect x="9" y="2" width="6" height="6" rx="1" />
+        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+        <path d="M12 12V8" />
+      </symbol>
+      <symbol id="i-folder-open" viewBox="0 0 24 24">
+        <path
+          d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"
+        />
+      </symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24">
+        <path
+          d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"
+        />
+        <circle cx="12" cy="12" r="3" />
+      </symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24">
+        <path d="M5 12h14" />
+        <path d="M12 5v14" />
+      </symbol>
+      <symbol id="i-panel-left" viewBox="0 0 24 24">
+        <rect width="18" height="18" x="3" y="3" rx="2" />
+        <path d="M9 3v18" />
+      </symbol>
+      <symbol id="i-x" viewBox="0 0 24 24">
+        <path d="M18 6 6 18" />
+        <path d="m6 6 12 12" />
+      </symbol>
+    </svg>
+
+    <h1>Concept Name — Screen Name</h1>
+    <p class="mockup-meta">
+      Layout-altitude mockup ·
+      <code>docs/concepts/&lt;status&gt;/&lt;name&gt;/mockups/&lt;screen&gt;.html</code>
+    </p>
+
+    <section class="mockup-section">
+      <h2>Default state</h2>
+      <div class="mockup-note">One sentence: what this screen shows and when it appears.</div>
+
+      <div class="app">
+        <div class="app__body">
+          <nav class="activity-bar">
+            <div class="activity-bar__top">
+              <button class="activity-bar__item activity-bar__item--active" title="Connections">
+                <svg class="li"><use href="#i-network" /></svg>
+                <span class="activity-bar__indicator"></span>
+              </button>
+              <button class="activity-bar__item" title="File Browser">
+                <svg class="li"><use href="#i-folder-open" /></svg>
+              </button>
+            </div>
+            <div class="activity-bar__bottom">
+              <button class="activity-bar__item" title="Settings">
+                <svg class="li"><use href="#i-settings" /></svg>
+              </button>
+            </div>
+          </nav>
+
+          <aside class="sidebar">
+            <div class="sidebar__header"><span class="sidebar__title">Connections</span></div>
+            <div class="sidebar__content">
+              <div class="connection-tree__item connection-tree__item--selected">
+                <span class="state-dot state-dot--connected"></span> server-1
+              </div>
+            </div>
+          </aside>
+
+          <div class="terminal-view">
+            <div class="terminal-view__toolbar">
+              <div class="terminal-view__toolbar-actions">
+                <button class="terminal-view__toolbar-btn" title="New Terminal">
+                  <svg class="li"><use href="#i-plus" /></svg>
+                </button>
+                <button
+                  class="terminal-view__toolbar-btn terminal-view__toolbar-btn--active"
+                  title="Toggle Sidebar"
+                >
+                  <svg class="li"><use href="#i-panel-left" /></svg>
+                </button>
+              </div>
+            </div>
+            <div class="terminal-view__content">
+              <div class="panel">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li"><use href="#i-network" /></svg>
+                    <span class="state-dot state-dot--connected"></span>
+                    <span class="tab__title">server-1</span>
+                    <button class="tab__close">
+                      <svg class="li"><use href="#i-x" /></svg>
+                    </button>
+                  </div>
+                </div>
+                <div class="terminal">
+                  <span class="prompt">user@host $</span> <span class="cursor"></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="status-bar">
+          <div class="status-bar__section status-bar__section--left">
+            <span class="status-bar__item">ready</span>
+          </div>
+          <div class="status-bar__section status-bar__section--center"></div>
+          <div class="status-bar__section status-bar__section--right">
+            <span class="status-bar__item">UTF-8</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="legend">
+        <ul>
+          <li><span class="callout">A</span> Describe annotated region A.</li>
+        </ul>
+      </div>
+    </section>
+  </body>
+</html>
