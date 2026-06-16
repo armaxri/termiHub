@@ -3,7 +3,8 @@ import { useTerminalRegistry } from "@/components/Terminal/TerminalRegistry";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import { frontendLog } from "@/utils/frontendLog";
 import { dispatchCommand, type BridgeDeps } from "./dispatcher";
-import { isTestBridgeEnabled } from "./testMode";
+import { isTestBridgeEnabled, getTestBridgePort } from "./testMode";
+import { runBridgeWebSocketClient } from "./wsClient";
 
 /** Protocol revision exposed via `window.__termihubTestBridge.version`. */
 const BRIDGE_VERSION = 1;
@@ -31,14 +32,35 @@ export function TestBridge() {
       getState: () => useAppStore.getState() as unknown as Record<string, unknown>,
     };
 
+    const dispatch = (command: Parameters<typeof dispatchCommand>[0]) =>
+      dispatchCommand(command, deps);
+
     window.__termihubTestBridge = {
       ready: true,
       version: BRIDGE_VERSION,
-      dispatch: (command) => dispatchCommand(command, deps),
+      dispatch,
     };
     frontendLog("test_bridge", `installed (v${BRIDGE_VERSION})`);
 
+    // When the backend supplied a runner port, also connect out over WebSocket so
+    // an external test runner can drive the app on every platform — including
+    // macOS, where no WKWebView WebDriver exists (ADR-5).
+    const port = getTestBridgePort();
+    // Loopback by design: the runner launches the app on the same host, so the
+    // server it hosts is always reachable at 127.0.0.1 — no host config needed.
+    const wsClient = port
+      ? runBridgeWebSocketClient({
+          url: `ws://127.0.0.1:${port}`,
+          dispatch,
+          onOpen: () => frontendLog("test_bridge", `ws connected to runner on :${port}`),
+          onClose: () => frontendLog("test_bridge", "ws disconnected from runner"),
+          onError: () => frontendLog("test_bridge", `ws error connecting to runner on :${port}`),
+        })
+      : undefined;
+    if (port) frontendLog("test_bridge", `ws client connecting to runner on :${port}`);
+
     return () => {
+      wsClient?.close();
       delete window.__termihubTestBridge;
       frontendLog("test_bridge", "removed");
     };

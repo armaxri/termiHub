@@ -42,7 +42,7 @@ pub fn run() {
         .with(capture_layer)
         .init();
 
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -51,7 +51,17 @@ pub fn run() {
         .manage(SftpManager::new())
         .manage(MonitoringManager::new())
         .manage(NetworkManager::new())
-        .manage(log_buffer)
+        .manage(log_buffer);
+
+    // In test mode (TERMIHUB_TEST_BRIDGE_PORT set), inject the bridge globals into
+    // the webview before boot so the in-app WebSocket client connects out to the
+    // runner — the cross-platform test transport (issue #801). No-op otherwise.
+    if let Some(plugin) = utils::test_bridge::test_bridge_plugin() {
+        info!("Test bridge WebSocket transport enabled");
+        builder = builder.plugin(plugin);
+    }
+
+    builder
         .setup(move |app| {
             #[cfg(target_os = "macos")]
             {

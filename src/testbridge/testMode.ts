@@ -14,6 +14,12 @@ export const TEST_BRIDGE_STORAGE_KEY = "termihub.testBridge";
 export const TEST_BRIDGE_GLOBAL_KEY = "__TERMIHUB_TEST_BRIDGE__";
 
 /**
+ * Global the backend sets before the app boots to point the in-app WebSocket
+ * client at the runner's server (the cross-platform transport, issue #801).
+ */
+export const TEST_BRIDGE_PORT_GLOBAL_KEY = "__TERMIHUB_TEST_BRIDGE_PORT__";
+
+/**
  * Whether the in-app test bridge should be active.
  *
  * Returns true when any opt-in signal is present:
@@ -39,13 +45,44 @@ export function isTestBridgeEnabled(): boolean {
 }
 
 /**
- * Evaluate one opt-in signal, treating any thrown/absent environment (blocked
- * storage, missing `window`, …) as a `false` contribution rather than an error.
+ * The WebSocket port of the runner's bridge server, when the app should connect
+ * out to it (issue #801). Returns `undefined` when no port signal is present, in
+ * which case the bridge stays purely in-process / WebDriver-driven.
+ *
+ * Sources, in order: the `__TERMIHUB_TEST_BRIDGE_PORT__` global (injected by the
+ * backend before boot) then a `?testBridgePort=<n>` query parameter. A value that
+ * is not a valid TCP port (1–65535) is ignored.
  */
-function checkSignal(probe: () => boolean): boolean {
+export function getTestBridgePort(): number | undefined {
+  const fromGlobal = readSignal(
+    () => (window as unknown as Record<string, unknown>)[TEST_BRIDGE_PORT_GLOBAL_KEY]
+  );
+  const fromQuery = readSignal(() =>
+    new URLSearchParams(window.location.search).get("testBridgePort")
+  );
+  return parsePort(fromGlobal) ?? parsePort(fromQuery);
+}
+
+/** Coerce an arbitrary value to a valid TCP port number, or `undefined`. */
+function parsePort(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  const port = typeof value === "number" ? value : Number(value);
+  return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : undefined;
+}
+
+/**
+ * Read one signal, treating any thrown/absent environment (blocked storage,
+ * missing `window`, …) as `undefined` rather than letting it break startup.
+ */
+function readSignal<T>(probe: () => T): T | undefined {
   try {
     return probe();
   } catch {
-    return false;
+    return undefined;
   }
+}
+
+/** {@link readSignal} for boolean opt-in probes: a throw contributes `false`. */
+function checkSignal(probe: () => boolean): boolean {
+  return readSignal(probe) === true;
 }
