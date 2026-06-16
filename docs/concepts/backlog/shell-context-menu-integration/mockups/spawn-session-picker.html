@@ -1,0 +1,525 @@
+<!doctype html>
+<!-- Shell Context Menu Integration — in-app Session Picker dialog + spawn toast. Layout altitude, real class names + lucide icons. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Shell Context Menu Integration — Session Picker (mockup)</title>
+    <link rel="stylesheet" href="../../../_assets/mockup.css" />
+    <style>
+      /* Minimal structural helpers for the picker; theme vars only. */
+      .picker {
+        width: 460px;
+      }
+      .picker__path {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 14px;
+        color: var(--text-secondary);
+        font-family: var(--font-mono);
+        font-size: 12px;
+        border-bottom: 1px solid var(--border-secondary);
+      }
+      .picker__section-label {
+        padding: 10px 14px 4px;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-secondary);
+      }
+      .menu__row .row__path {
+        margin-left: auto;
+        color: var(--text-secondary);
+        font-family: var(--font-mono);
+        font-size: 11px;
+      }
+      .menu__row--head {
+        font-weight: 500;
+      }
+      .container-form {
+        padding: 6px 14px 12px 38px;
+        display: grid;
+        grid-template-columns: 80px 1fr;
+        gap: 8px 10px;
+        align-items: center;
+        background: var(--bg-tertiary);
+        border-bottom: 1px solid var(--border-secondary);
+      }
+      .container-form label {
+        font-size: 12px;
+        color: var(--text-secondary);
+      }
+      .field {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        height: 26px;
+        padding: 0 8px;
+        background: var(--bg-primary);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-sm);
+        font-size: 12px;
+        color: var(--text-primary);
+      }
+      .field--select {
+        justify-content: space-between;
+        cursor: pointer;
+      }
+      .field .li {
+        color: var(--text-secondary);
+      }
+      .menu__footer--split {
+        justify-content: space-between;
+        align-items: center;
+      }
+      .footer-checks {
+        display: flex;
+        gap: 16px;
+        align-items: center;
+      }
+      .footer-checks label {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        font-size: 12px;
+        color: var(--text-primary);
+        cursor: default;
+      }
+      /* Spawn toast */
+      .toast {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 14px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-primary);
+        border-left: 3px solid var(--state-connected);
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-overlay);
+        color: var(--text-primary);
+        font-size: 12px;
+      }
+      .toast .li {
+        color: var(--state-connected);
+      }
+      .overlay {
+        position: relative;
+      }
+      .overlay__scrim {
+        position: absolute;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.5);
+        display: grid;
+        place-items: center;
+      }
+      .overlay__toast {
+        position: absolute;
+        top: 12px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 2;
+      }
+    </style>
+  </head>
+  <body class="mockup-doc">
+    <!-- Inline lucide sprite (real lucide geometry). -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-network" viewBox="0 0 24 24">
+        <rect x="16" y="16" width="6" height="6" rx="1" />
+        <rect x="2" y="16" width="6" height="6" rx="1" />
+        <rect x="9" y="2" width="6" height="6" rx="1" />
+        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+        <path d="M12 12V8" />
+      </symbol>
+      <symbol id="i-folder-open" viewBox="0 0 24 24">
+        <path
+          d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"
+        />
+      </symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24">
+        <path
+          d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"
+        />
+        <circle cx="12" cy="12" r="3" />
+      </symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24">
+        <path d="M5 12h14" />
+        <path d="M12 5v14" />
+      </symbol>
+      <symbol id="i-x" viewBox="0 0 24 24">
+        <path d="M18 6 6 18" />
+        <path d="m6 6 12 12" />
+      </symbol>
+      <symbol id="i-panel-left" viewBox="0 0 24 24">
+        <rect width="18" height="18" x="3" y="3" rx="2" />
+        <path d="M9 3v18" />
+      </symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24">
+        <path d="M12 19h8" />
+        <path d="m4 17 6-6-6-6" />
+      </symbol>
+      <symbol id="i-box" viewBox="0 0 24 24">
+        <path
+          d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"
+        />
+        <path d="m3.3 7 8.7 5 8.7-5" />
+        <path d="M12 22V12" />
+      </symbol>
+      <symbol id="i-container" viewBox="0 0 24 24">
+        <path
+          d="M22 7.7c0-.6-.4-1.2-.8-1.5l-6.3-3.9a1.72 1.72 0 0 0-1.7 0l-10.3 6c-.5.2-.9.8-.9 1.4v6.6c0 .5.4 1.2.8 1.5l6.3 3.9a1.72 1.72 0 0 0 1.7 0l10.3-6c.5-.3.9-1 .9-1.5Z"
+        />
+        <path d="M10 21.9V14L2.1 9.1" />
+        <path d="m10 14 11.9-6.9" />
+        <path d="M14 19.8v-8.1" />
+        <path d="M18 17.5V9.4" />
+      </symbol>
+      <symbol id="i-folder" viewBox="0 0 24 24">
+        <path
+          d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
+        />
+      </symbol>
+      <symbol id="i-chevron-down" viewBox="0 0 24 24">
+        <path d="m6 9 6 6 6-6" />
+      </symbol>
+      <symbol id="i-check" viewBox="0 0 24 24">
+        <path d="M20 6 9 17l-5-5" />
+      </symbol>
+      <symbol id="i-zap" viewBox="0 0 24 24">
+        <path
+          d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"
+        />
+      </symbol>
+    </svg>
+
+    <h1>Shell Context Menu Integration — Session Picker</h1>
+    <p class="mockup-meta">
+      Layout-altitude mockup ·
+      <code>backlog/shell-context-menu-integration/mockups/spawn-session-picker.html</code>
+    </p>
+
+    <!-- ── State 1: picker ready ─────────────────────────────────────── -->
+    <section class="mockup-section">
+      <h2>1 · Session Picker — ready</h2>
+      <div class="mockup-note">
+        The picker <span class="callout">A</span> opens inside the focused termiHub window when a
+        spawn has no default connection (or <code>--pick</code>). The resolved host path
+        <span class="callout">B</span> is shown at the top; targets are grouped into Local shells /
+        WSL / Docker / Podman <span class="callout">C</span>. A <code>.menu</code> over the app
+        shell.
+      </div>
+      <div class="app overlay" style="height: 620px">
+        <div class="app__body">
+          <nav class="activity-bar">
+            <div class="activity-bar__top">
+              <button class="activity-bar__item activity-bar__item--active" title="Connections">
+                <svg class="li"><use href="#i-network" /></svg>
+                <span class="activity-bar__indicator"></span>
+              </button>
+              <button class="activity-bar__item" title="File Browser">
+                <svg class="li"><use href="#i-folder-open" /></svg>
+              </button>
+            </div>
+            <div class="activity-bar__bottom">
+              <button class="activity-bar__item" title="Settings">
+                <svg class="li"><use href="#i-settings" /></svg>
+              </button>
+            </div>
+          </nav>
+
+          <aside class="sidebar">
+            <div class="sidebar__header"><span class="sidebar__title">Connections</span></div>
+            <div class="sidebar__content">
+              <div class="connection-tree__item">
+                <span class="state-dot state-dot--connected"></span> server-1
+              </div>
+            </div>
+          </aside>
+
+          <div class="terminal-view">
+            <div class="terminal-view__toolbar">
+              <div class="terminal-view__toolbar-actions">
+                <button class="terminal-view__toolbar-btn" title="New Terminal">
+                  <svg class="li"><use href="#i-plus" /></svg>
+                </button>
+                <button
+                  class="terminal-view__toolbar-btn terminal-view__toolbar-btn--active"
+                  title="Toggle Sidebar"
+                >
+                  <svg class="li"><use href="#i-panel-left" /></svg>
+                </button>
+              </div>
+            </div>
+            <div class="terminal-view__content">
+              <div class="panel">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li"><use href="#i-terminal" /></svg>
+                    <span class="tab__title">bash</span>
+                    <button class="tab__close">
+                      <svg class="li"><use href="#i-x" /></svg>
+                    </button>
+                  </div>
+                </div>
+                <div class="terminal">
+                  <span class="prompt">user@host $</span> <span class="cursor"></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="status-bar">
+          <div class="status-bar__section status-bar__section--left">
+            <span class="status-bar__item">ready</span>
+          </div>
+          <div class="status-bar__section status-bar__section--center"></div>
+          <div class="status-bar__section status-bar__section--right">
+            <span class="status-bar__item">UTF-8</span>
+          </div>
+        </div>
+
+        <!-- picker overlay -->
+        <div class="overlay__scrim">
+          <div class="menu picker">
+            <div class="menu__title">Open in termiHub</div>
+            <div class="picker__path">
+              <svg class="li"><use href="#i-folder" /></svg>
+              /home/user/projects/myapp
+            </div>
+
+            <div class="picker__section-label">Local shells</div>
+            <div class="menu__row menu__row--selected">
+              <span class="radio"></span>
+              <svg class="li"><use href="#i-terminal" /></svg>
+              bash
+              <span class="row__path">/bin/bash</span>
+            </div>
+            <div class="menu__row">
+              <span class="radio"></span>
+              <svg class="li"><use href="#i-terminal" /></svg>
+              zsh
+              <span class="row__path">/bin/zsh</span>
+            </div>
+            <div class="menu__row">
+              <span class="radio"></span>
+              <svg class="li"><use href="#i-terminal" /></svg>
+              fish
+              <span class="row__path">/usr/bin/fish</span>
+            </div>
+
+            <div class="picker__section-label">
+              WSL <span style="color: var(--text-disabled)">(Windows only)</span>
+            </div>
+            <div class="menu__row">
+              <span class="radio"></span>
+              <svg class="li"><use href="#i-box" /></svg>
+              Ubuntu-22.04
+            </div>
+            <div class="menu__row">
+              <span class="radio"></span>
+              <svg class="li"><use href="#i-box" /></svg>
+              Debian
+            </div>
+
+            <div class="picker__section-label">Docker</div>
+            <div class="menu__row">
+              <span class="radio"></span>
+              <svg class="li"><use href="#i-container" /></svg>
+              New container…
+              <span class="row__path">mounts directory</span>
+            </div>
+
+            <div class="picker__section-label">Podman</div>
+            <div class="menu__row">
+              <span class="radio"></span>
+              <svg class="li"><use href="#i-container" /></svg>
+              New container…
+              <span class="row__path">mounts directory</span>
+            </div>
+
+            <div class="menu__footer menu__footer--split">
+              <div class="footer-checks">
+                <label><span class="check"></span> Open in new window</label>
+                <label><span class="check"></span> Remember choice</label>
+              </div>
+              <div style="display: flex; gap: 8px">
+                <button class="btn">Cancel</button>
+                <button class="btn btn--primary">Open</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="legend">
+        <ul>
+          <li>
+            <span class="callout">A</span> Picker dialog — shared <code>.menu</code> chrome over a
+            dark scrim.
+          </li>
+          <li>
+            <span class="callout">B</span> Resolved host path (<code>folder</code> icon, mono font).
+          </li>
+          <li>
+            <span class="callout">C</span> Section groups: Local shells / WSL / Docker / Podman. WSL
+            present on Windows only.
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ── State 2: Docker expanded + remember ───────────────────────── -->
+    <section class="mockup-section">
+      <h2>2 · Docker "New container" expanded · Remember checked</h2>
+      <div class="mockup-note">
+        Selecting "New container…" expands an inline image selector in place
+        <span class="callout">D</span> (image dropdown + mount-path field). "Remember choice"
+        <span class="callout">E</span> is checked — confirming will save this as the new default and
+        re-register the context menu.
+      </div>
+      <div class="menu picker" style="margin: 0 auto">
+        <div class="menu__title">Open in termiHub</div>
+        <div class="picker__path">
+          <svg class="li"><use href="#i-folder" /></svg>
+          /home/user/projects/myapp
+        </div>
+
+        <div class="picker__section-label">Local shells</div>
+        <div class="menu__row">
+          <span class="radio"></span>
+          <svg class="li"><use href="#i-terminal" /></svg>
+          bash
+          <span class="row__path">/bin/bash</span>
+        </div>
+
+        <div class="picker__section-label">Docker</div>
+        <div class="menu__row menu__row--selected menu__row--head">
+          <span class="radio"></span>
+          <svg class="li"><use href="#i-container" /></svg>
+          New container…
+        </div>
+        <div class="container-form">
+          <label>Image</label>
+          <div class="field field--select">
+            ubuntu:22.04 <svg class="li"><use href="#i-chevron-down" /></svg>
+          </div>
+          <label>Mount as</label>
+          <div class="field">/workspace</div>
+        </div>
+
+        <div class="picker__section-label">Podman</div>
+        <div class="menu__row">
+          <span class="radio"></span>
+          <svg class="li"><use href="#i-container" /></svg>
+          New container…
+          <span class="row__path">mounts directory</span>
+        </div>
+
+        <div class="menu__footer menu__footer--split">
+          <div class="footer-checks">
+            <label><span class="check"></span> Open in new window</label>
+            <label
+              ><span
+                class="check"
+                style="
+                  border-color: var(--accent-color);
+                  background: var(--accent-color);
+                  color: #fff;
+                "
+                ><svg class="li" style="width: 10px; height: 10px"><use href="#i-check" /></svg
+              ></span>
+              Remember choice</label
+            >
+          </div>
+          <div style="display: flex; gap: 8px">
+            <button class="btn">Cancel</button>
+            <button class="btn btn--primary">Open</button>
+          </div>
+        </div>
+      </div>
+      <div class="legend">
+        <ul>
+          <li>
+            <span class="callout">D</span> Inline container form — image dropdown + mount-path field
+            (theme-var inputs), shown under the selected "New container" row.
+          </li>
+          <li>
+            <span class="callout">E</span> "Remember choice" checked (<code>.check</code> filled) →
+            saves new default + re-registers context menu.
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ── State 3: spawn confirmation toast ─────────────────────────── -->
+    <section class="mockup-section">
+      <h2>3 · Spawn confirmation toast</h2>
+      <div class="mockup-note">
+        When an external spawn arrives in a running termiHub, a brief toast
+        <span class="callout">F</span> appears at the top of the window confirming the session
+        opened, then auto-dismisses after 3 s.
+      </div>
+      <div class="app overlay">
+        <div class="overlay__toast">
+          <div class="toast">
+            <svg class="li"><use href="#i-zap" /></svg>
+            Opened bash session at ~/projects/myapp
+          </div>
+        </div>
+        <div class="app__body">
+          <nav class="activity-bar">
+            <div class="activity-bar__top">
+              <button class="activity-bar__item activity-bar__item--active" title="Connections">
+                <svg class="li"><use href="#i-network" /></svg>
+                <span class="activity-bar__indicator"></span>
+              </button>
+            </div>
+            <div class="activity-bar__bottom">
+              <button class="activity-bar__item" title="Settings">
+                <svg class="li"><use href="#i-settings" /></svg>
+              </button>
+            </div>
+          </nav>
+          <div class="terminal-view">
+            <div class="terminal-view__content">
+              <div class="panel">
+                <div class="tab-bar">
+                  <div class="tab tab--active">
+                    <svg class="li"><use href="#i-terminal" /></svg>
+                    <span class="tab__title">bash — myapp</span>
+                    <button class="tab__close">
+                      <svg class="li"><use href="#i-x" /></svg>
+                    </button>
+                  </div>
+                </div>
+                <div class="terminal">
+                  <span class="prompt">user@host:~/projects/myapp $</span>
+                  <span class="cursor"></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="status-bar">
+          <div class="status-bar__section status-bar__section--left">
+            <span class="status-bar__item">1 connection</span>
+          </div>
+          <div class="status-bar__section status-bar__section--center"></div>
+          <div class="status-bar__section status-bar__section--right">
+            <span class="status-bar__item">UTF-8</span>
+          </div>
+        </div>
+      </div>
+      <div class="legend">
+        <ul>
+          <li>
+            <span class="callout">F</span> Spawn toast — <code>zap</code> icon, green left accent,
+            top-center; auto-dismiss 3 s.
+          </li>
+        </ul>
+      </div>
+    </section>
+  </body>
+</html>

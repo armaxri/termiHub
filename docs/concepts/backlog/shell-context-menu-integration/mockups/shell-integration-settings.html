@@ -1,0 +1,587 @@
+<!doctype html>
+<!-- Shell Context Menu Integration — Shell Integration settings panel + entry editor + first-launch banner. Layout altitude, real class names + lucide icons. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Shell Context Menu Integration — Settings (mockup)</title>
+    <link rel="stylesheet" href="../../../_assets/mockup.css" />
+    <style>
+      .settings-pane {
+        background: var(--bg-primary);
+        border: 1px solid var(--border-secondary);
+        border-radius: 8px;
+        box-shadow: var(--shadow-overlay);
+        overflow: hidden;
+        max-width: 620px;
+      }
+      .settings-pane__header {
+        padding: 12px 16px;
+        font-size: 13px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-secondary);
+        border-bottom: 1px solid var(--border-secondary);
+        background: var(--bg-secondary);
+      }
+      .settings-pane__body {
+        padding: 16px;
+      }
+      .settings-group {
+        margin: 0 0 20px;
+      }
+      .settings-group__head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin: 0 0 8px;
+      }
+      .settings-group__title {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text-primary);
+      }
+      .settings-card {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-md);
+        padding: 12px 14px;
+      }
+      .status-line {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0 0 12px;
+        font-size: 12px;
+        color: var(--text-primary);
+      }
+      .status-line .meta {
+        color: var(--text-secondary);
+      }
+      .entry-list {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-md);
+        overflow: hidden;
+      }
+      .entry-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 12px;
+        font-size: 12px;
+        border-bottom: 1px solid var(--border-secondary);
+      }
+      .entry-row:last-child {
+        border-bottom: none;
+      }
+      .entry-row:hover {
+        background: var(--bg-hover);
+      }
+      .entry-row__grip {
+        color: var(--text-disabled);
+        cursor: grab;
+      }
+      .entry-row__idx {
+        width: 14px;
+        color: var(--text-secondary);
+        text-align: center;
+      }
+      .entry-row__name {
+        font-weight: 500;
+        color: var(--text-primary);
+        min-width: 130px;
+      }
+      .entry-row__conn {
+        color: var(--text-secondary);
+        font-family: var(--font-mono);
+        font-size: 11px;
+        min-width: 120px;
+      }
+      .badge {
+        padding: 1px 7px;
+        border-radius: 999px;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+      }
+      .badge--always {
+        background: color-mix(in srgb, var(--state-connected) 22%, transparent);
+        color: var(--state-connected);
+      }
+      .badge--extended {
+        background: color-mix(in srgb, var(--accent-color) 22%, transparent);
+        color: var(--text-accent);
+      }
+      .entry-row__actions {
+        margin-left: auto;
+        display: flex;
+        gap: 2px;
+      }
+      .icon-btn {
+        width: 24px;
+        height: 24px;
+        display: grid;
+        place-items: center;
+        border-radius: var(--radius-sm);
+        color: var(--text-secondary);
+        background: none;
+        border: none;
+        cursor: pointer;
+      }
+      .icon-btn:hover {
+        color: var(--text-primary);
+        background: var(--bg-active);
+      }
+      .hint {
+        margin: 6px 2px 0;
+        font-size: 11px;
+        color: var(--text-secondary);
+      }
+      .radio-list,
+      .check-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin: 6px 0 0;
+      }
+      .opt {
+        display: inline-flex;
+        align-items: center;
+        gap: 9px;
+        font-size: 12px;
+        color: var(--text-primary);
+        cursor: default;
+      }
+      .opt .meta {
+        color: var(--text-secondary);
+      }
+      /* dialog */
+      .dialog-form {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding: 14px;
+      }
+      .form-field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .form-field > label {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .field {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 6px;
+        height: 28px;
+        padding: 0 8px;
+        background: var(--bg-primary);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-sm);
+        font-size: 12px;
+        color: var(--text-primary);
+      }
+      .field .li {
+        color: var(--text-secondary);
+      }
+      /* banner */
+      .banner {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 14px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-primary);
+        border-left: 3px solid var(--accent-color);
+        border-radius: var(--radius-md);
+        max-width: 620px;
+      }
+      .banner__icon {
+        color: var(--accent-color);
+      }
+      .banner__icon .li {
+        width: 20px;
+        height: 20px;
+      }
+      .banner__text {
+        flex: 1;
+      }
+      .banner__text strong {
+        display: block;
+        font-size: 13px;
+        color: var(--text-primary);
+        margin: 0 0 2px;
+      }
+      .banner__text span {
+        font-size: 12px;
+        color: var(--text-secondary);
+      }
+      .banner__actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+    </style>
+  </head>
+  <body class="mockup-doc">
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-grip-vertical" viewBox="0 0 24 24">
+        <circle cx="9" cy="12" r="1" />
+        <circle cx="9" cy="5" r="1" />
+        <circle cx="9" cy="19" r="1" />
+        <circle cx="15" cy="12" r="1" />
+        <circle cx="15" cy="5" r="1" />
+        <circle cx="15" cy="19" r="1" />
+      </symbol>
+      <symbol id="i-pencil" viewBox="0 0 24 24">
+        <path
+          d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"
+        />
+        <path d="m15 5 4 4" />
+      </symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24">
+        <path d="M3 6h18" />
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+        <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+        <path d="M10 11v6" />
+        <path d="M14 11v6" />
+      </symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24">
+        <path d="M5 12h14" />
+        <path d="M12 5v14" />
+      </symbol>
+      <symbol id="i-chevron-down" viewBox="0 0 24 24">
+        <path d="m6 9 6 6 6-6" />
+      </symbol>
+      <symbol id="i-check" viewBox="0 0 24 24">
+        <path d="M20 6 9 17l-5-5" />
+      </symbol>
+      <symbol id="i-folder" viewBox="0 0 24 24">
+        <path
+          d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
+        />
+      </symbol>
+    </svg>
+
+    <h1>Shell Context Menu Integration — Settings</h1>
+    <p class="mockup-meta">
+      Layout-altitude mockup ·
+      <code>backlog/shell-context-menu-integration/mockups/shell-integration-settings.html</code>
+    </p>
+
+    <!-- ── State 1: settings panel ───────────────────────────────────── -->
+    <section class="mockup-section">
+      <h2>1 · Shell Integration settings panel</h2>
+      <div class="mockup-note">
+        New Settings section. Registration status + actions <span class="callout">A</span>,
+        draggable Quick-Access entries <span class="callout">B</span>, fallback + window-behaviour
+        radios <span class="callout">C</span>, and Linux-only file-manager toggles
+        <span class="callout">D</span>.
+      </div>
+      <div class="settings-pane">
+        <div class="settings-pane__header">Shell Integration</div>
+        <div class="settings-pane__body">
+          <!-- registration -->
+          <div class="settings-group">
+            <div class="settings-group__head">
+              <span class="settings-group__title">Context Menu Registration</span>
+            </div>
+            <div class="settings-card">
+              <div class="status-line">
+                <span class="state-dot state-dot--connected"></span>
+                <span>Registered</span>
+                <span class="meta">· last updated 2026-04-15</span>
+                <span class="callout" style="margin-left: auto">A</span>
+              </div>
+              <div style="display: flex; gap: 8px">
+                <button class="btn btn--primary">Reinstall / Update</button>
+                <button class="btn">Uninstall</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- entries -->
+          <div class="settings-group">
+            <div class="settings-group__head">
+              <span class="settings-group__title">
+                Quick-Access Entries <span class="callout">B</span>
+              </span>
+              <button class="btn">
+                <svg class="li" style="width: 13px; height: 13px"><use href="#i-plus" /></svg> Add
+                entry
+              </button>
+            </div>
+            <div class="entry-list">
+              <div class="entry-row">
+                <svg class="li entry-row__grip"><use href="#i-grip-vertical" /></svg>
+                <span class="entry-row__idx">1</span>
+                <span class="entry-row__name">Open in termiHub</span>
+                <span class="entry-row__conn">bash</span>
+                <span class="badge badge--always">Always</span>
+                <div class="entry-row__actions">
+                  <button class="icon-btn">
+                    <svg class="li"><use href="#i-pencil" /></svg>
+                  </button>
+                  <button class="icon-btn">
+                    <svg class="li"><use href="#i-trash" /></svg>
+                  </button>
+                </div>
+              </div>
+              <div class="entry-row">
+                <svg class="li entry-row__grip"><use href="#i-grip-vertical" /></svg>
+                <span class="entry-row__idx">2</span>
+                <span class="entry-row__name">Open with WSL</span>
+                <span class="entry-row__conn">Ubuntu-22.04</span>
+                <span class="badge badge--extended">Extended</span>
+                <div class="entry-row__actions">
+                  <button class="icon-btn">
+                    <svg class="li"><use href="#i-pencil" /></svg>
+                  </button>
+                  <button class="icon-btn">
+                    <svg class="li"><use href="#i-trash" /></svg>
+                  </button>
+                </div>
+              </div>
+              <div class="entry-row">
+                <svg class="li entry-row__grip"><use href="#i-grip-vertical" /></svg>
+                <span class="entry-row__idx">3</span>
+                <span class="entry-row__name">Pick session…</span>
+                <span class="entry-row__conn">(picker)</span>
+                <span class="badge badge--extended">Extended</span>
+                <div class="entry-row__actions">
+                  <button class="icon-btn">
+                    <svg class="li"><use href="#i-pencil" /></svg>
+                  </button>
+                  <button class="icon-btn">
+                    <svg class="li"><use href="#i-trash" /></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <p class="hint">Drag the handle to reorder. The first "Always" entry is the default.</p>
+          </div>
+
+          <!-- radios -->
+          <div class="settings-group">
+            <span class="settings-group__title">Fallback when no entry matches</span>
+            <span class="callout">C</span>
+            <div class="radio-list">
+              <span class="opt"
+                ><span class="radio" style="border-color: var(--accent-color)"
+                  ><span
+                    style="
+                      width: 7px;
+                      height: 7px;
+                      border-radius: 50%;
+                      background: var(--accent-color);
+                      display: block;
+                    "
+                  ></span
+                ></span>
+                Show session picker</span
+              >
+              <span class="opt"><span class="radio"></span> Use system default shell</span>
+            </div>
+          </div>
+
+          <div class="settings-group">
+            <span class="settings-group__title">When termiHub is already running</span>
+            <div class="radio-list">
+              <span class="opt"
+                ><span class="radio" style="border-color: var(--accent-color)"
+                  ><span
+                    style="
+                      width: 7px;
+                      height: 7px;
+                      border-radius: 50%;
+                      background: var(--accent-color);
+                      display: block;
+                    "
+                  ></span
+                ></span>
+                Open in existing window (focus it)</span
+              >
+              <span class="opt"><span class="radio"></span> Always open a new window</span>
+            </div>
+          </div>
+
+          <!-- linux -->
+          <div class="settings-group" style="margin-bottom: 0">
+            <span class="settings-group__title">Linux — File Manager Integrations</span>
+            <span class="meta" style="color: var(--text-secondary); font-size: 11px"
+              >(Linux only)</span
+            >
+            <span class="callout">D</span>
+            <div class="check-list">
+              <span class="opt"
+                ><span
+                  class="check"
+                  style="
+                    border-color: var(--accent-color);
+                    background: var(--accent-color);
+                    color: #fff;
+                    display: inline-grid;
+                    place-items: center;
+                  "
+                  ><svg class="li" style="width: 10px; height: 10px"><use href="#i-check" /></svg
+                ></span>
+                Install Nautilus scripts <span class="meta">— detected: Nautilus 45</span></span
+              >
+              <span class="opt"
+                ><span
+                  class="check"
+                  style="
+                    border-color: var(--accent-color);
+                    background: var(--accent-color);
+                    color: #fff;
+                    display: inline-grid;
+                    place-items: center;
+                  "
+                  ><svg class="li" style="width: 10px; height: 10px"><use href="#i-check" /></svg
+                ></span>
+                Install KDE service menu <span class="meta">— detected: Dolphin 23</span></span
+              >
+              <span class="opt"
+                ><span class="check"></span> Install Thunar custom action
+                <span class="meta">— not detected</span></span
+              >
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="legend">
+        <ul>
+          <li>
+            <span class="callout">A</span> Registration status (<code>state-dot</code>) + Reinstall
+            / Uninstall actions.
+          </li>
+          <li>
+            <span class="callout">B</span> Draggable entry list — grip handle, order index, name,
+            connection, visibility badge, edit / delete.
+          </li>
+          <li><span class="callout">C</span> Fallback + already-running-window radio groups.</li>
+          <li>
+            <span class="callout">D</span> Linux-only per-file-manager toggles, annotated with
+            detection status.
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ── State 2: entry editor dialog ──────────────────────────────── -->
+    <section class="mockup-section">
+      <h2>2 · Entry editor dialog (add / edit)</h2>
+      <div class="mockup-note">
+        Opened from "Add entry" or an entry's edit action. Name, connection (or "Show session
+        picker"), Windows visibility, and the "Show for" targets.
+      </div>
+      <div class="menu" style="width: 380px; margin: 0 auto">
+        <div class="menu__title">Edit Entry</div>
+        <div class="dialog-form">
+          <div class="form-field">
+            <label>Name</label>
+            <div class="field">Open in termiHub</div>
+          </div>
+          <div class="form-field">
+            <label>Connection</label>
+            <div class="field field--select">
+              Local Shell — bash <svg class="li"><use href="#i-chevron-down" /></svg>
+            </div>
+          </div>
+          <div class="form-field">
+            <label>Visibility (Windows only)</label>
+            <div class="radio-list">
+              <span class="opt"
+                ><span class="radio" style="border-color: var(--accent-color)"
+                  ><span
+                    style="
+                      width: 7px;
+                      height: 7px;
+                      border-radius: 50%;
+                      background: var(--accent-color);
+                      display: block;
+                    "
+                  ></span
+                ></span>
+                Always visible in context menu</span
+              >
+              <span class="opt"
+                ><span class="radio"></span> Extended menu only (Shift+Right-click)</span
+              >
+            </div>
+          </div>
+          <div class="form-field">
+            <label>Show for</label>
+            <div class="check-list">
+              <span class="opt"
+                ><span
+                  class="check"
+                  style="
+                    border-color: var(--accent-color);
+                    background: var(--accent-color);
+                    color: #fff;
+                    display: inline-grid;
+                    place-items: center;
+                  "
+                  ><svg class="li" style="width: 10px; height: 10px"><use href="#i-check" /></svg
+                ></span>
+                Folders</span
+              >
+              <span class="opt"
+                ><span
+                  class="check"
+                  style="
+                    border-color: var(--accent-color);
+                    background: var(--accent-color);
+                    color: #fff;
+                    display: inline-grid;
+                    place-items: center;
+                  "
+                  ><svg class="li" style="width: 10px; height: 10px"><use href="#i-check" /></svg
+                ></span>
+                Files <span class="meta">(opens terminal in parent directory)</span></span
+              >
+              <span class="opt"
+                ><span class="check"></span> Folder background (right-click empty space)</span
+              >
+            </div>
+          </div>
+        </div>
+        <div class="menu__footer" style="justify-content: flex-end">
+          <button class="btn">Cancel</button>
+          <button class="btn btn--primary">Save</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── State 3: first-launch banner ──────────────────────────────── -->
+    <section class="mockup-section">
+      <h2>3 · First-launch install banner</h2>
+      <div class="mockup-note">
+        Non-blocking banner shown on first launch (or if shell integration was never set up).
+      </div>
+      <div class="banner">
+        <span class="banner__icon"
+          ><svg class="li"><use href="#i-folder" /></svg
+        ></span>
+        <div class="banner__text">
+          <strong>Add "Open in termiHub" to your file manager?</strong>
+          <span>Right-click any folder to open it directly in termiHub.</span>
+        </div>
+        <div class="banner__actions">
+          <button class="btn btn--link">Not now</button>
+          <button class="btn btn--link">Don't ask again</button>
+          <button class="btn btn--primary">Install Now</button>
+        </div>
+      </div>
+    </section>
+  </body>
+</html>

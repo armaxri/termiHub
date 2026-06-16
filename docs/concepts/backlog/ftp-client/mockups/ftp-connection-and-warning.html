@@ -1,0 +1,353 @@
+<!doctype html>
+<!-- FTP Client — schema-driven connection editor + insecure-FTP warning modal. Layout altitude. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FTP Client — Connection Editor &amp; Warning (mockup)</title>
+    <link rel="stylesheet" href="../../../_assets/mockup.css" />
+    <style>
+      /* ── Schema-driven form chrome (DynamicForm proxy) ─────────────────── */
+      .form-card {
+        width: 460px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-lg);
+        overflow: hidden;
+      }
+      .form-card__tabs {
+        display: flex;
+        border-bottom: 1px solid var(--border-secondary);
+      }
+      .form-card__tab {
+        padding: 9px 14px;
+        font-size: 12px;
+        color: var(--text-secondary);
+        border-bottom: 2px solid transparent;
+        cursor: default;
+      }
+      .form-card__tab--active {
+        color: var(--text-primary);
+        border-bottom-color: var(--accent-color);
+      }
+      .form-card__body {
+        padding: 12px 14px;
+      }
+      .form-group__label {
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-secondary);
+        margin: 14px 0 8px;
+      }
+      .form-group__label:first-child {
+        margin-top: 0;
+      }
+      .form-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 8px 0;
+      }
+      .form-row__label {
+        flex: 0 0 96px;
+        color: var(--text-secondary);
+      }
+      .form-field {
+        flex: 1 1 auto;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        height: 28px;
+        padding: 0 8px;
+        background: var(--bg-primary);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-sm);
+        color: var(--text-primary);
+        font-family: var(--font-mono);
+        font-size: 12px;
+      }
+      .form-field--select::after {
+        content: "";
+        margin-left: auto;
+        width: 0;
+        height: 0;
+        border-left: 4px solid transparent;
+        border-right: 4px solid transparent;
+        border-top: 5px solid var(--text-secondary);
+      }
+      .form-field__icon-btn {
+        margin-left: auto;
+        color: var(--text-secondary);
+        display: inline-flex;
+      }
+      .form-checkbox {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .form-checkbox .check {
+        width: 14px;
+        height: 14px;
+        border: 1px solid var(--text-secondary);
+        border-radius: 3px;
+        display: inline-grid;
+        place-items: center;
+        font-size: 10px;
+        color: transparent;
+      }
+      .form-checkbox--on .check {
+        border-color: var(--accent-color);
+        background: var(--accent-color);
+        color: #fff;
+      }
+      .form-callout-warn {
+        display: flex;
+        gap: 8px;
+        align-items: flex-start;
+        margin: 8px 0;
+        padding: 8px 10px;
+        border-left: 3px solid var(--color-warning);
+        background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+        color: var(--color-warning);
+        font-size: 12px;
+        border-radius: var(--radius-sm);
+      }
+      .form-callout-warn .li {
+        color: var(--color-warning);
+        flex: 0 0 auto;
+        margin-top: 1px;
+      }
+      .form-card__footer {
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+        padding: 10px 14px;
+        border-top: 1px solid var(--border-secondary);
+      }
+      .form-conditional {
+        outline: 1px dashed color-mix(in srgb, var(--broadcast-accent) 60%, transparent);
+        outline-offset: 3px;
+        border-radius: 2px;
+      }
+      /* ── Warning modal ─────────────────────────────────────────────────── */
+      .modal-backdrop {
+        background: rgba(6, 7, 10, 0.6);
+        padding: 28px;
+        border-radius: 8px;
+        display: grid;
+        place-items: center;
+      }
+      .modal {
+        width: 380px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-overlay);
+        overflow: hidden;
+      }
+      .modal__header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 14px;
+        font-weight: 600;
+        color: var(--color-warning);
+        border-bottom: 1px solid var(--border-secondary);
+      }
+      .modal__body {
+        padding: 14px;
+        color: var(--text-primary);
+        font-size: 12.5px;
+      }
+      .modal__body p {
+        margin: 0 0 10px;
+      }
+      .modal__footer {
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+        padding: 10px 14px;
+        border-top: 1px solid var(--border-secondary);
+      }
+    </style>
+  </head>
+  <body class="mockup-doc">
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-eye" viewBox="0 0 24 24">
+        <path
+          d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"
+        />
+        <circle cx="12" cy="12" r="3" />
+      </symbol>
+      <symbol id="i-triangle-alert" viewBox="0 0 24 24">
+        <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" />
+        <path d="M12 9v4" />
+        <path d="M12 17h.01" />
+      </symbol>
+    </svg>
+
+    <h1>FTP Client — Connection Editor &amp; Insecure Warning</h1>
+    <p class="mockup-meta">
+      Layout-altitude mockup ·
+      <code>backlog/ftp-client/mockups/ftp-connection-and-warning.html</code>
+    </p>
+
+    <div class="states">
+      <!-- ── Connection editor (schema-driven) ───────────────────────────── -->
+      <section class="mockup-section" style="flex: 1 1 480px">
+        <h2>Schema-driven connection editor (FTP type)</h2>
+        <div class="mockup-note">
+          Rendered by <code>DynamicForm</code> from the FTP backend's settings schema — no
+          hand-coded FTP fields. TLS Mode <span class="callout">A</span> conditionally reveals the
+          plain-FTP warning <span class="callout">B</span>; the Anonymous toggle
+          <span class="callout">C</span> hides Username / Password (dashed regions are
+          schema-conditional).
+        </div>
+        <div class="form-card">
+          <div class="form-card__tabs">
+            <div class="form-card__tab form-card__tab--active">Connection</div>
+            <div class="form-card__tab">Terminal</div>
+            <div class="form-card__tab">Appearance</div>
+          </div>
+          <div class="form-card__body">
+            <div class="form-row">
+              <span class="form-row__label">Name</span>
+              <span class="form-field">My FTP Server</span>
+            </div>
+            <div class="form-row">
+              <span class="form-row__label">Type</span>
+              <span class="form-field form-field--select">FTP</span>
+            </div>
+
+            <div class="form-group__label">Server</div>
+            <div class="form-row">
+              <span class="form-row__label">Host</span>
+              <span class="form-field">ftp.example.com</span>
+            </div>
+            <div class="form-row">
+              <span class="form-row__label">Port</span>
+              <span class="form-field">21</span>
+            </div>
+
+            <div class="form-group__label">Security</div>
+            <div class="form-row">
+              <span class="form-row__label">TLS Mode <span class="callout">A</span></span>
+              <span class="form-field form-field--select">None (plain FTP)</span>
+            </div>
+            <div class="form-callout-warn form-conditional">
+              <svg class="li"><use href="#i-triangle-alert" /></svg>
+              <span
+                ><span class="callout">B</span> Plain FTP transmits credentials and data in
+                cleartext. Use FTPS if the server supports it.</span
+              >
+            </div>
+
+            <div class="form-group__label">Authentication</div>
+            <div class="form-row">
+              <span class="form-row__label"></span>
+              <span class="form-checkbox"
+                ><span class="check"></span> Use anonymous login
+                <span class="callout">C</span></span
+              >
+            </div>
+            <div class="form-conditional">
+              <div class="form-row">
+                <span class="form-row__label">Username</span>
+                <span class="form-field">admin</span>
+              </div>
+              <div class="form-row">
+                <span class="form-row__label">Password</span>
+                <span class="form-field"
+                  >••••••••
+                  <span class="form-field__icon-btn"
+                    ><svg class="li"><use href="#i-eye" /></svg
+                  ></span>
+                </span>
+              </div>
+            </div>
+
+            <div class="form-group__label">Transfer</div>
+            <div class="form-row">
+              <span class="form-row__label">Mode</span>
+              <span class="form-field form-field--select">Passive</span>
+            </div>
+            <div class="form-row">
+              <span class="form-row__label">Transfer</span>
+              <span class="form-field form-field--select">Binary</span>
+            </div>
+            <div class="form-row">
+              <span class="form-row__label">Initial Dir</span>
+              <span class="form-field">/pub</span>
+            </div>
+            <div class="form-row">
+              <span class="form-row__label">Timeout (s)</span>
+              <span class="form-field">30</span>
+            </div>
+          </div>
+          <div class="form-card__footer">
+            <button class="btn">Test Connection</button>
+            <button class="btn btn--primary">Save</button>
+          </div>
+        </div>
+        <div class="legend">
+          <ul>
+            <li>
+              <span class="callout">A</span> TLS Mode select — <code>None</code> /
+              <code>Explicit (STARTTLS)</code> / <code>Implicit</code>; Port auto-adjusts to 990 for
+              Implicit.
+            </li>
+            <li>
+              <span class="callout">B</span> Insecure warning — only visible while TLS Mode is
+              <code>None</code>.
+            </li>
+            <li>
+              <span class="callout">C</span> Anonymous toggle — when on, Username becomes
+              <code>anonymous</code> and the Username / Password rows (dashed) are hidden.
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- ── Insecure-FTP warning modal ──────────────────────────────────── -->
+      <section class="mockup-section" style="flex: 1 1 420px">
+        <h2>Insecure connection warning (on connect, plain FTP)</h2>
+        <div class="mockup-note">
+          Shown before the control connection opens when TLS Mode is <code>None</code>. The user can
+          suppress it per connection <span class="callout">D</span> or back out.
+        </div>
+        <div class="modal-backdrop">
+          <div class="modal">
+            <div class="modal__header">
+              <svg class="li"><use href="#i-triangle-alert" /></svg> Insecure Connection
+            </div>
+            <div class="modal__body">
+              <p>
+                Plain FTP transmits your username, password, and all data in cleartext. Anyone on
+                the network path can intercept your credentials and files.
+              </p>
+              <p>Consider using FTPS (FTP over TLS) if the server supports it.</p>
+              <div class="form-checkbox">
+                <span class="check"></span> Don't warn again for this connection
+                <span class="callout">D</span>
+              </div>
+            </div>
+            <div class="modal__footer">
+              <button class="btn">Cancel</button>
+              <button class="btn btn--primary">Connect Anyway</button>
+            </div>
+          </div>
+        </div>
+        <div class="legend">
+          <ul>
+            <li>
+              <span class="callout">D</span> Sets <code>suppressSecurityWarning</code> on the
+              connection so future connects skip this modal.
+            </li>
+          </ul>
+        </div>
+      </section>
+    </div>
+  </body>
+</html>

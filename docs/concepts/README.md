@@ -86,13 +86,13 @@ Not started yet — realistic and planned for the near to medium term.
 | [app-icons.md](backlog/app-icons.md)                                                                   | Custom application icon design — placeholder Tauri icons are in place, not the designed ones           |
 | [broadcast-input/](backlog/broadcast-input/) _(folder form)_                                           | Synchronised input across multiple terminals simultaneously — first folder-form concept + mockups      |
 | [cross-platform-testing.md](backlog/cross-platform-testing.md)                                         | Platform-divergent test modules and `XPLAT-*` identifiers for CI                                       |
-| [embedded-unix-windows.md](backlog/embedded-unix-windows.md)                                           | Bundle BusyBox-w32 + Unix tools with the Windows build                                                 |
-| [ftp-client.md](backlog/ftp-client.md)                                                                 | FTP client sessions (distinct from the embedded FTP server)                                            |
-| [macro-recording.md](backlog/macro-recording.md)                                                       | Record and replay terminal input sequences                                                             |
+| [embedded-unix-windows/](backlog/embedded-unix-windows/) _(folder form)_                               | Bundle BusyBox-w32 + Unix tools with the Windows build                                                 |
+| [ftp-client/](backlog/ftp-client/) _(folder form)_                                                     | FTP client sessions (distinct from the embedded FTP server)                                            |
+| [macro-recording/](backlog/macro-recording/) _(folder form)_                                           | Record and replay terminal input sequences                                                             |
 | [release-planning-and-dependency-management.md](backlog/release-planning-and-dependency-management.md) | Structured release cadence, Dependabot, hotfix branching                                               |
-| [remote-agent-update-strategy.md](backlog/remote-agent-update-strategy.md)                             | Deliver updated agent binaries to remote hosts                                                         |
-| [shell-context-menu-integration.md](backlog/shell-context-menu-integration.md)                         | OS "Open in termiHub" context menu + `termiHub spawn` CLI                                              |
-| [ssh-jump-host.md](backlog/ssh-jump-host.md)                                                           | First-class ProxyJump / gateway chains in the connection editor                                        |
+| [remote-agent-update-strategy/](backlog/remote-agent-update-strategy/) _(folder form)_                 | Deliver updated agent binaries to remote hosts                                                         |
+| [shell-context-menu-integration/](backlog/shell-context-menu-integration/) _(folder form)_             | OS "Open in termiHub" context menu + `termiHub spawn` CLI                                              |
+| [ssh-jump-host/](backlog/ssh-jump-host/) _(folder form)_                                               | First-class ProxyJump / gateway chains in the connection editor                                        |
 
 ---
 
