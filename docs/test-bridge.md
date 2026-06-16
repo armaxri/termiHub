@@ -32,7 +32,8 @@ flowchart TD
     R["Scenario runner / coding agent"] --> D["Driver interface (port)<br/>click · type · readTerminal · getState"]
     D --> T["BridgeTransport"]
     T -->|in-process / browser.execute| G["window.__termihubTestBridge.dispatch"]
-    T -.->|future: WebSocket| WS["backend control channel<br/>(headless macOS)"]
+    T -->|WebSocket| WSC["in-app WS client<br/>(connects out to the runner)"]
+    WSC --> G
     G --> DP["dispatchCommand"]
     DP --> DOM["live DOM<br/>(by data-testid)"]
     DP --> REG["TerminalRegistry<br/>(xterm buffer → logical lines)"]
@@ -40,8 +41,55 @@ flowchart TD
 ```
 
 The `Driver` never knows which transport is underneath, so the same test runs
-in-process, through WebDriver `browser.execute`, or (later) over a WebSocket to a
-backend-hosted channel for headless macOS.
+in-process, through WebDriver `browser.execute`, or over a WebSocket to an
+external test runner — the last of which works on **every** platform, including
+headless macOS.
+
+## Cross-platform WebSocket transport
+
+The WebSocket transport is the one path that runs identically on Linux, Windows,
+and macOS, because no platform automation driver is involved at all. The app is
+the WebSocket **client** and the test runner is the **server**:
+
+```mermaid
+sequenceDiagram
+    participant Runner as Test runner
+    participant App as App (webview)
+    Runner->>Runner: serveWebSocketBridge() — listen on a port
+    Runner->>App: launch with TERMIHUB_TEST_BRIDGE_PORT=<port>
+    App->>Runner: WebSocket connect (out)
+    Runner->>App: { id, command }
+    App->>App: dispatchCommand(command) in-process
+    App->>Runner: { id, response }
+    Runner->>Runner: correlate response to the pending command by id
+```
+
+Because several commands may be in flight at once, each message is wrapped in an
+envelope carrying a monotonic `id` (`{ id, command }` / `{ id, response }`); the
+runner's `WebSocketBridgeTransport` matches each response back to its pending
+promise by `id`. Nothing new crosses the bridge semantically — only the bytes
+travel over a socket — so the command vocabulary and `ok/error` contract are
+unchanged.
+
+```ts
+import { serveWebSocketBridge } from "@/testbridge/wsServer";
+import { InAppBridgeDriver } from "@/testbridge/driver";
+
+const server = await serveWebSocketBridge(); // ephemeral port
+// launch the app with TERMIHUB_TEST_BRIDGE_PORT=server.port …
+const transport = await server.waitForApp(); // resolves once the app connects
+const driver = new InAppBridgeDriver(transport.transport);
+
+const output = await driver.readTerminal({ joinFullWidthRows: true });
+await server.close();
+```
+
+The backend enables test mode and supplies the port by injecting two globals into
+the webview before any page script runs (a Tauri plugin `js_init_script`, only
+registered when `TERMIHUB_TEST_BRIDGE_PORT` is set):
+`window.__TERMIHUB_TEST_BRIDGE__ = true` and
+`window.__TERMIHUB_TEST_BRIDGE_PORT__ = <port>`. The app's `TestBridge` then opens
+the WebSocket client alongside the in-process bridge.
 
 ## Enabling test mode
 
@@ -102,13 +150,17 @@ const res = await browser.execute((cmd) => window.__termihubTestBridge?.dispatch
 
 ## Source layout
 
-| File                            | Responsibility                                     |
-| ------------------------------- | -------------------------------------------------- |
-| `src/testbridge/protocol.ts`    | Command + response types (the contract)            |
-| `src/testbridge/dispatcher.ts`  | Pure, dependency-injected command executor         |
-| `src/testbridge/testMode.ts`    | Opt-in detection                                   |
-| `src/testbridge/TestBridge.tsx` | Live component that installs the window bridge     |
-| `src/testbridge/driver.ts`      | `Driver` abstraction + `InAppBridgeDriver` adapter |
+| File                            | Responsibility                                       |
+| ------------------------------- | ---------------------------------------------------- |
+| `src/testbridge/protocol.ts`    | Command + response types (the contract)              |
+| `src/testbridge/dispatcher.ts`  | Pure, dependency-injected command executor           |
+| `src/testbridge/testMode.ts`    | Opt-in detection                                     |
+| `src/testbridge/TestBridge.tsx` | Live component that installs the window bridge       |
+| `src/testbridge/driver.ts`      | `Driver` abstraction + `InAppBridgeDriver` adapter   |
+| `src/testbridge/wsProtocol.ts`  | `{ id, command/response }` correlation envelope      |
+| `src/testbridge/wsClient.ts`    | In-app WS client (connects out, dispatches, replies) |
+| `src/testbridge/wsTransport.ts` | Runner-side `WebSocketBridgeTransport` (correlation) |
+| `src/testbridge/wsServer.ts`    | `ws`-backed runner server (`serveWebSocketBridge`)   |
 
 ## Not covered
 
