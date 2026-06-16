@@ -108,19 +108,44 @@ unmount.
 
 ## Command vocabulary
 
-| Action         | Purpose                                                     |
-| -------------- | ----------------------------------------------------------- |
-| `click`        | Press the element with the given `data-testid`              |
-| `type`         | Set an input/textarea value (native setter + `input` event) |
-| `exists`       | Whether an element is present                               |
-| `getText`      | Read an element's visible text                              |
-| `getAttribute` | Read an element's attribute                                 |
-| `readTerminal` | Read a terminal's reconstructed logical-line text           |
-| `getState`     | Read app store state, optionally by dot-path                |
+| Action          | Purpose                                                     |
+| --------------- | ----------------------------------------------------------- |
+| `click`         | Press the element with the given `data-testid`              |
+| `type`          | Set an input/textarea value (native setter + `input` event) |
+| `terminalInput` | Send a command into a terminal **session** (see below)      |
+| `exists`        | Whether an element is present                               |
+| `getText`       | Read an element's visible text                              |
+| `getAttribute`  | Read an element's attribute                                 |
+| `readTerminal`  | Read a terminal's reconstructed logical-line text           |
+| `getState`      | Read app store state, optionally by dot-path                |
 
 Every command returns a structured `BridgeResponse` (`{ ok, action, value?,
 error? }`). Nothing throws across the bridge — failures are `ok: false` with an
 agent-readable `error` — so a runner branches on results instead of catching.
+
+### Writing into a terminal (`terminalInput`)
+
+`type` targets `<input>`/`<textarea>` elements, but an xterm terminal renders to
+a **canvas**, not a form field — so `type` cannot drive a shell. `terminalInput`
+fills that gap: `{ action: "terminalInput", text, tabId? }` routes `text` to the
+session's backend `send_input` — the **same choke point** interactive keystrokes
+and paste use — rather than synthesizing canvas key events. When `tabId` is
+omitted the active terminal tab is used.
+
+A **trailing newline is appended for you**, and the backend normalizes it to the
+session's configured line ending, exactly like pressing Enter. So
+`terminalInput("ls")` runs `ls`. This "honor the session line ending" ergonomics
+choice mirrors interactive input and the workspace `initialCommand` path; callers
+pass the command, not the newline.
+
+```ts
+await driver.terminalInput("echo HELLO_MARKER"); // runs in the active terminal
+const output = await driver.readTerminal();
+output.includes("HELLO_MARKER"); // assert on the result
+```
+
+It fails (`ok: false`) when there is no active terminal, or when the target tab
+has no backend session bound (e.g. the shell has exited).
 
 ## Programmatic use
 
@@ -188,6 +213,7 @@ if (!result.passed) {
 | -------------------------------------------------------- | ------------------------------------------------- |
 | `{ action: "click", testId }`                            | Press the control                                 |
 | `{ action: "type", testId, text }`                       | Set an input/textarea value                       |
+| `{ action: "terminalInput", text, tabId? }`              | Send a command into a terminal session            |
 | `{ action: "waitFor", testId, timeoutMs?, intervalMs? }` | Poll until the element exists, or fail on timeout |
 | `{ action: "pause", ms }`                                | Wait a fixed duration for output to settle        |
 
