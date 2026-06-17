@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { runScenario, type RunOptions } from "./runner";
-import type { Driver, ReadTerminalOptions } from "./driver";
+import type { Driver, ReadTerminalOptions, TerminalInputOptions } from "./driver";
 import { BridgeError } from "./driver";
 import type { Scenario } from "./scenario";
 
@@ -12,6 +12,7 @@ import type { Scenario } from "./scenario";
 class FakeDriver implements Driver {
   clicks: string[] = [];
   typed: Array<{ testId: string; text: string }> = [];
+  terminalInputs: Array<{ text: string; tabId?: string }> = [];
   elements = new Map<string, { text?: string }>();
   terminalText = "";
   hasTerminal = true;
@@ -28,6 +29,11 @@ class FakeDriver implements Driver {
   async type(testId: string, text: string): Promise<void> {
     if (!this.elements.has(testId)) throw new BridgeError("type", `no element "${testId}"`);
     this.typed.push({ testId, text });
+  }
+
+  async terminalInput(text: string, options: TerminalInputOptions = {}): Promise<void> {
+    if (!this.hasTerminal) throw new BridgeError("terminalInput", "no active terminal");
+    this.terminalInputs.push({ text, tabId: options.tabId });
   }
 
   async exists(testId: string): Promise<boolean> {
@@ -95,6 +101,23 @@ describe("runScenario", () => {
     expect(result.steps.every((s) => s.ok)).toBe(true);
     expect(result.checks[0].passed).toBe(true);
     expect(result.terminalSnapshot).toBeUndefined();
+  });
+
+  it("runs a terminalInput step and then asserts on the resulting output", async () => {
+    const driver = new FakeDriver();
+    driver.terminalText = "user@host:~$ whoami\nroot\n";
+
+    const scenario: Scenario = {
+      name: "drive a shell",
+      requirement: "a command typed into the shell shows its output",
+      steps: [{ action: "terminalInput", text: "whoami", tabId: "tab-1" }],
+      checks: [{ assert: "terminalContains", value: "root" }],
+    };
+
+    const result = await runScenario(scenario, driver, instant());
+
+    expect(result.passed).toBe(true);
+    expect(driver.terminalInputs).toEqual([{ text: "whoami", tabId: "tab-1" }]);
   });
 
   it("reports a failing check with expected and actual, and captures a snapshot", async () => {

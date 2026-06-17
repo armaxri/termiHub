@@ -59,22 +59,25 @@ describe("TestBridge", () => {
       expect(typeof window.__termihubTestBridge?.version).toBe("number");
     });
 
-    it("dispatches commands against the live DOM", () => {
+    it("dispatches commands against the live DOM", async () => {
       const probe = document.createElement("div");
       probe.setAttribute("data-testid", "probe");
       probe.textContent = "hello";
       document.body.appendChild(probe);
 
       mount();
-      const res = window.__termihubTestBridge!.dispatch({ action: "getText", testId: "probe" });
+      const res = await window.__termihubTestBridge!.dispatch({
+        action: "getText",
+        testId: "probe",
+      });
       expect(res).toEqual({ ok: true, action: "getText", value: "hello" });
 
       probe.remove();
     });
 
-    it("dispatches getState against the live store", () => {
+    it("dispatches getState against the live store", async () => {
       mount();
-      const res = window.__termihubTestBridge!.dispatch({
+      const res = await window.__termihubTestBridge!.dispatch({
         action: "getState",
         path: "sidebarCollapsed",
       });

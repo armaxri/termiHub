@@ -336,3 +336,33 @@ describe("pasteToTerminal", () => {
     expect(sendInput).toHaveBeenCalledWith("session-dup", "hello");
   });
 });
+
+describe("sendInputToTerminal", () => {
+  it("writes input to the registered session and reports success", async () => {
+    vi.mocked(sendInput).mockClear();
+
+    act(() => {
+      registryActions.registerSession("tab-1", "session-1");
+    });
+
+    let sent: boolean | undefined;
+    await act(async () => {
+      sent = await registryActions.sendInputToTerminal("tab-1", "ls\n");
+    });
+
+    expect(sent).toBe(true);
+    expect(sendInput).toHaveBeenCalledWith("session-1", "ls\n");
+  });
+
+  it("reports failure and sends nothing when no session is registered", async () => {
+    vi.mocked(sendInput).mockClear();
+
+    let sent: boolean | undefined;
+    await act(async () => {
+      sent = await registryActions.sendInputToTerminal("tab-no-session", "ls\n");
+    });
+
+    expect(sent).toBe(false);
+    expect(sendInput).not.toHaveBeenCalled();
+  });
+});
