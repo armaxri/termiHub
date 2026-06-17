@@ -138,73 +138,75 @@ the full `pytest` after a `tauri build` when you want the real-app lifecycle che
 
 ## Writing a new test
 
-A system test launches the app via the `bridge` + `app` fixtures (from
-`conftest.py`), drives it with a `Driver`, and asserts on what it reads back.
-Mark it `integration` so it auto-skips when the app is not built. Add the file
-under `tests/` — pytest discovers `test_*.py` automatically.
+Integration suites subclass **`SystemTest`** (from `termihub_harness`). The base
+class handles the per-suite lifecycle and provides the polling/terminal helpers,
+so a test method is just the steps you care about. Add the file under `tests/`
+and mark it `integration` — pytest discovers `test_*.py` automatically.
 
 ```python
 # tests/test_my_feature.py
-import time
-
 import pytest
 
-from termihub_harness import BridgeError
+from termihub_harness import SystemTest
 
 pytestmark = pytest.mark.integration  # auto-skips when the app is not built
 
 
-def _eventually(predicate, timeout=20.0):
-    """Poll until `predicate()` is truthy, retrying while the UI settles.
+class TestMyFeature(SystemTest):
+    def test_echo_runs_in_a_shell(self):
+        self.ensure_terminal()                      # open a terminal, wait for the prompt
+        self.run_command("echo hello-world")        # type a command (newline appended)
+        assert "hello-world" in self.wait_for_output("hello-world")
 
-    The UI is asynchronous (a shell prints when it is ready, output streams in),
-    so a read after an action usually needs polling rather than a single call. A
-    `BridgeError` (e.g. "no active terminal" before one exists) is treated as
-    "not ready yet".
-    """
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            result = predicate()
-            if result:
-                return result
-        except BridgeError:
-            pass
-        time.sleep(0.25)
-    raise AssertionError(f"condition not met within {timeout}s")
+    def test_state_is_introspectable(self):
+        # Runs against the SAME app instance as the test above.
+        assert isinstance(self.driver.get_state(), dict)
 
-
-def test_echo_runs_in_a_shell(bridge, app):
-    # 1. Launch the app pointed at the bridge, then acquire a Driver.
-    app.start(bridge.port)
-    driver = bridge.wait_for_app()
-
-    # 2. Interact by data-testid (the same ids the TS E2E tests use), then wait
-    #    for the shell prompt (non-empty output) before typing into it.
-    driver.click("terminal-view-new-terminal")
-    _eventually(lambda: driver.read_terminal().strip() != "")
-
-    # 3. Write into the terminal once, then poll for the echoed output.
-    driver.terminal_input("echo hello-world")
-    assert _eventually(lambda: "hello-world" in driver.read_terminal())
-
-    # 4. Lifecycle: kill + restart, then re-acquire the bridge for the new app.
-    app.restart()
-    driver = bridge.wait_for_app()
-    assert isinstance(driver.get_state(), dict)
+    def test_survives_a_restart(self):
+        self.restart_app()                          # kill + relaunch, driver re-acquired
+        self.ensure_terminal()
+        self.run_command("echo after-restart")
+        assert "after-restart" in self.wait_for_output("after-restart")
 ```
+
+### How a suite runs (per-suite clean environment)
+
+```
+class setup ──► test_a ──► test_b ──► … ──► class teardown
+  • fresh isolated config dir                  • kill the app
+  • launch the app once                        • close the bridge
+  • acquire self.driver                         • remove the config dir
+        (tests share this one instance, run in order)
+```
+
+Each **suite (class)** gets a clean app set up once and shared by its tests; the
+next suite gets its own fresh app. Use a **new class** to force a clean app/state;
+use a **new method in the same class** to keep running in the existing instance.
+
+### What `SystemTest` gives you
+
+| Member                                     | Purpose                                             |
+| ------------------------------------------ | --------------------------------------------------- |
+| `self.driver` / `self.app` / `self.bridge` | the suite's live `Driver` / app / bridge            |
+| `self.wait(predicate, *, timeout, what)`   | poll until truthy (retries on `BridgeError`)        |
+| `self.has_terminal()`                      | whether a readable terminal exists                  |
+| `self.ensure_terminal()`                   | open a terminal (if needed) and wait for its prompt |
+| `self.run_command(cmd)`                    | type a command into the active terminal             |
+| `self.wait_for_output(text)`               | poll the terminal until it contains `text`          |
+| `self.restart_app()`                       | kill + relaunch, re-acquiring `self.driver`         |
 
 Tips:
 
 - **Find `data-testid`s** in the React components (`src/**`) or the existing
   selectors in `tests/e2e/helpers/selectors.js`.
+- **Read app state** with `self.driver.get_state("some.dot.path")` to assert on
+  the Zustand store (e.g. `activePanelId`).
 - **Fast tests without a build** — to exercise harness/protocol behavior, drive a
-  `FakeApp` instead of the real app (no `integration` marker); see
+  `FakeApp` instead (no `SystemTest`, no `integration` marker); see
   `tests/test_roundtrip.py`.
-- **Read app state** with `driver.get_state("some.dot.path")` to assert on the
-  Zustand store (e.g. `activePanelId`).
-- `bridge.wait_for_app()` is also how you re-acquire the app after `app.restart()`
-  — each call returns the next connection (issue #817).
+- **Lower-level control** — the function-scoped `bridge` / `app` / `agent`
+  fixtures (in `conftest.py`) are still available for one-off tests that want to
+  manage launch ordering themselves instead of subclassing `SystemTest`.
 
 ## Driver verbs
 
