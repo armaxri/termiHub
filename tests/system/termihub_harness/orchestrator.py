@@ -142,13 +142,21 @@ class AppInstance:
     def pid(self) -> Optional[int]:
         return self._process.pid if self._process is not None else None
 
+    def cleanup(self) -> None:
+        """Stop the app and remove its config dir (if this instance created it).
+
+        The explicit counterpart to the context manager, for callers that manage
+        the instance by hand (e.g. a class-scoped pytest fixture).
+        """
+        self.stop()
+        if self._owns_config_dir:
+            shutil.rmtree(self._config_dir, ignore_errors=True)
+
     def __enter__(self) -> "AppInstance":
         return self
 
     def __exit__(self, *_exc: object) -> None:
-        self.stop()
-        if self._owns_config_dir:
-            shutil.rmtree(self._config_dir, ignore_errors=True)
+        self.cleanup()
 
 
 class AgentInstance:
