@@ -7,6 +7,7 @@ tests that run identically on Linux, Windows, and macOS (issue #802).
 
 from .bridge import Bridge, BridgeError, Driver
 from .orchestrator import AgentInstance, AppInstance, agent_binary_path, app_binary_path
+from .systemtest import SystemTest
 
 __all__ = [
     "Bridge",
@@ -16,4 +17,5 @@ __all__ = [
     "AgentInstance",
     "app_binary_path",
     "agent_binary_path",
+    "SystemTest",
 ]
