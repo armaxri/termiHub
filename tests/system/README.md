@@ -55,12 +55,26 @@ just write `pytest`.
 
 ## Test groups
 
-Tests split into two groups via the `integration` marker:
+Tests split into two groups via the `integration` marker. **Only the
+`integration` group launches the real app** — the rest run against a fake app, so
+no window or terminal ever appears (that is expected, not a failure).
 
-| Group       | Files                                    | Needs a build?                   |
-| ----------- | ---------------------------------------- | -------------------------------- |
-| machinery   | `test_protocol.py`, `test_roundtrip.py`  | No — run anywhere via a fake app |
-| integration | `test_app_lifecycle.py` (`@integration`) | Yes — `pnpm tauri build` first   |
+| Group       | Files                                    | Launches the real app?         | Needs a build?                 |
+| ----------- | ---------------------------------------- | ------------------------------ | ------------------------------ |
+| machinery   | `test_protocol.py`, `test_roundtrip.py`  | ❌ No — drives a **fake app**  | No — runs anywhere             |
+| integration | `test_app_lifecycle.py` (`@integration`) | ✅ Yes — the built desktop app | Yes — `pnpm tauri build` first |
+
+The **machinery** tests exercise the harness plumbing (bridge server, response
+correlation, `Driver`, sequential connections) against a `FakeApp` — a Python
+WebSocket client that stands in for the in-app bridge. They are fast and need no
+build, but they **do not** start the app or a terminal. A name containing
+`fake_app` is the giveaway.
+
+> 💡 **Want to see the real app launch?** Run an **`integration`** test
+> (`pytest -m integration -v -s`). It opens the app window briefly (~2 s — the
+> test kills it on teardown, and the kill/restart step launches it twice), and
+> `-s` streams the app's logs (`Test bridge WebSocket transport enabled`,
+> `Spawning local shell`, …) as proof it ran.
 
 Integration tests **auto-skip** when the app/agent binaries are not built, so a
 plain `pytest` never errors for a missing build — it just skips them.
@@ -82,10 +96,10 @@ plain `pytest` never errors for a missing build — it just skips them.
 ## Running specific suites / tests
 
 ```sh
-# Only the fast machinery suite (no build), by marker:
+# Only the fast machinery suite (fake app, no build, no window), by marker:
 ./.venv/bin/python -m pytest -m "not integration"
 
-# Only the integration suite (build the app first), by marker:
+# Only the integration suite (launches the real app; build it first), by marker:
 ./.venv/bin/python -m pytest -m integration
 
 # A single file:
