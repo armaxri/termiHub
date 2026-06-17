@@ -122,6 +122,76 @@ cd tests/system
 The quickest daily loop is `pytest -m "not integration"` (instant, no build); run
 the full `pytest` after a `tauri build` when you want the real-app lifecycle check.
 
+## Writing a new test
+
+A system test launches the app via the `bridge` + `app` fixtures (from
+`conftest.py`), drives it with a `Driver`, and asserts on what it reads back.
+Mark it `integration` so it auto-skips when the app is not built. Add the file
+under `tests/` — pytest discovers `test_*.py` automatically.
+
+```python
+# tests/test_my_feature.py
+import time
+
+import pytest
+
+from termihub_harness import BridgeError
+
+pytestmark = pytest.mark.integration  # auto-skips when the app is not built
+
+
+def _eventually(predicate, timeout=20.0):
+    """Poll until `predicate()` is truthy, retrying while the UI settles.
+
+    The UI is asynchronous (a shell prints when it is ready, output streams in),
+    so a read after an action usually needs polling rather than a single call. A
+    `BridgeError` (e.g. "no active terminal" before one exists) is treated as
+    "not ready yet".
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            result = predicate()
+            if result:
+                return result
+        except BridgeError:
+            pass
+        time.sleep(0.25)
+    raise AssertionError(f"condition not met within {timeout}s")
+
+
+def test_echo_runs_in_a_shell(bridge, app):
+    # 1. Launch the app pointed at the bridge, then acquire a Driver.
+    app.start(bridge.port)
+    driver = bridge.wait_for_app()
+
+    # 2. Interact by data-testid (the same ids the TS E2E tests use), then wait
+    #    for the shell prompt (non-empty output) before typing into it.
+    driver.click("terminal-view-new-terminal")
+    _eventually(lambda: driver.read_terminal().strip() != "")
+
+    # 3. Write into the terminal once, then poll for the echoed output.
+    driver.terminal_input("echo hello-world")
+    assert _eventually(lambda: "hello-world" in driver.read_terminal())
+
+    # 4. Lifecycle: kill + restart, then re-acquire the bridge for the new app.
+    app.restart()
+    driver = bridge.wait_for_app()
+    assert isinstance(driver.get_state(), dict)
+```
+
+Tips:
+
+- **Find `data-testid`s** in the React components (`src/**`) or the existing
+  selectors in `tests/e2e/helpers/selectors.js`.
+- **Fast tests without a build** — to exercise harness/protocol behavior, drive a
+  `FakeApp` instead of the real app (no `integration` marker); see
+  `tests/test_roundtrip.py`.
+- **Read app state** with `driver.get_state("some.dot.path")` to assert on the
+  Zustand store (e.g. `activePanelId`).
+- `bridge.wait_for_app()` is also how you re-acquire the app after `app.restart()`
+  — each call returns the next connection (issue #817).
+
 ## Driver verbs
 
 `click`, `type`, `terminal_input`, `exists`, `get_text`, `get_attribute`,
