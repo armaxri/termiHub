@@ -1,0 +1,23 @@
+name: 'Setup pnpm (with retry)'
+description: >-
+  Install pnpm via pnpm/action-setup, retrying the occasionally-flaky
+  self-installer. The installer (run via npm) intermittently exits non-zero on
+  GitHub runners — Windows especially — which would otherwise fail the whole job
+  on a transient hiccup. The pnpm version is read from package.json as usual.
+
+runs:
+  using: 'composite'
+  steps:
+    - id: attempt-1
+      uses: pnpm/action-setup@v6
+      continue-on-error: true
+
+    - name: Retry pnpm install (attempt 2)
+      id: attempt-2
+      if: steps.attempt-1.outcome == 'failure'
+      uses: pnpm/action-setup@v6
+      continue-on-error: true
+
+    - name: Retry pnpm install (final attempt)
+      if: steps.attempt-1.outcome == 'failure' && steps.attempt-2.outcome == 'failure'
+      uses: pnpm/action-setup@v6
