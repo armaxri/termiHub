@@ -1,0 +1,4 @@
+# termiHub Python system-test harness dependencies.
+pytest>=8.0
+websockets>=12.0
+psutil>=5.9
