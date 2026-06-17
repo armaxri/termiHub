@@ -48,6 +48,9 @@ class SystemTest:
     app: ClassVar[AppInstance]
     driver: ClassVar[Driver]
 
+    #: Whether :meth:`delay4user` actually sleeps. Set from ``--delay4user``.
+    _delay_enabled: ClassVar[bool] = False
+
     @pytest.fixture(scope="class", autouse=True)
     @classmethod
     def _system_test_app(cls, request: pytest.FixtureRequest):
@@ -76,6 +79,7 @@ class SystemTest:
         request.cls.bridge = bridge
         request.cls.app = app
         request.cls.driver = driver
+        request.cls._delay_enabled = bool(request.config.getoption("delay4user"))
         try:
             yield
         finally:
@@ -136,6 +140,24 @@ class SystemTest:
             timeout=timeout,
             what=f"{needle!r} in terminal output",
         )
+
+    # ── Watch-along ──────────────────────────────────────────────────────────
+    def delay4user(self, seconds: float = 1.0, reason: str = "") -> None:
+        """Sleep so a human can see the last UI change — only under ``--delay4user``.
+
+        A no-op in normal / CI / AI-agent runs (the flag is off), so these calls
+        cost nothing there. Set ``seconds`` per call — pass a longer value for
+        changes that are harder to spot. Sprinkle calls wherever following along
+        matters::
+
+            self.run_command("echo hi")
+            self.delay4user(2, reason="watch the output appear")
+        """
+        if not self._delay_enabled:
+            return
+        label = f" — {reason}" if reason else ""
+        print(f"\n⏸  delay4user: sleeping {seconds:.1f}s{label}", flush=True)
+        time.sleep(seconds)
 
     # ── Lifecycle ────────────────────────────────────────────────────────────
     def restart_app(self) -> None:

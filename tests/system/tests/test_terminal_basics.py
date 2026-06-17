@@ -15,14 +15,17 @@ pytestmark = pytest.mark.integration
 class TestTerminalBasics(SystemTest):
     def test_echo_runs(self):
         self.ensure_terminal()
+        self.delay4user(1, reason="terminal opened")  # no-op unless --delay4user
         self.run_command("echo basics-echo-marker")
         assert "basics-echo-marker" in self.wait_for_output("basics-echo-marker")
+        self.delay4user(2, reason="echo output visible")
 
     def test_pwd_runs_in_the_same_instance(self):
         # No new app launch — reuses the instance (and terminal) from above.
         self.ensure_terminal()  # idempotent: keeps the existing terminal
         self.run_command("pwd")
         assert "/" in self.wait_for_output("/")
+        self.delay4user(2, reason="pwd output visible")
 
     def test_app_state_is_introspectable(self):
         state = self.driver.get_state()

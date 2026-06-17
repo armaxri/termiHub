@@ -194,6 +194,22 @@ use a **new method in the same class** to keep running in the existing instance.
 | `self.run_command(cmd)`                    | type a command into the active terminal             |
 | `self.wait_for_output(text)`               | poll the terminal until it contains `text`          |
 | `self.restart_app()`                       | kill + relaunch, re-acquiring `self.driver`         |
+| `self.delay4user(seconds, reason)`         | watch-along sleep — only runs under `--delay4user`  |
+
+### Watch-along mode (`--delay4user`)
+
+Sprinkle `self.delay4user(seconds, reason="…")` wherever following along by eye
+matters, setting the duration per call (longer for changes that are hard to
+spot). It is a **no-op by default**, so CI, AI-agent, and normal runs skip every
+delay and run at full speed. To actually watch the UI, add the boolean flag:
+
+```sh
+# insert the delays so a human can see each step (use -s to also see the app):
+./.venv/bin/python -m pytest -m integration --delay4user -s
+```
+
+Each delay prints `⏸  delay4user: sleeping 2.0s — <reason>` so it is clear what
+is being shown.
 
 Tips:
 
