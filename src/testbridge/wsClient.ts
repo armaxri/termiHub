@@ -68,12 +68,22 @@ export function runBridgeWebSocketClient(
   const createSocket = options.createSocket ?? defaultCreateSocket;
   const socket = createSocket(options.url);
 
-  socket.addEventListener("message", (event) => {
-    void handleMessage(event.data);
-  });
-  if (options.onOpen) socket.addEventListener("open", () => options.onOpen?.());
-  if (options.onClose) socket.addEventListener("close", () => options.onClose?.());
-  if (options.onError) socket.addEventListener("error", (event) => options.onError?.(event));
+  // Register a listener and record how to detach it, so close() can remove every
+  // listener we added. A restarted app is a fresh process, but tearing down
+  // cleanly keeps a single run from leaking listeners on a socket the runner may
+  // keep around (issue #817).
+  const detachers: (() => void)[] = [];
+  function listen(type: "message" | "open" | "close" | "error", listener: (event: never) => void) {
+    socket.addEventListener(type as "message", listener as (event: { data: unknown }) => void);
+    detachers.push(() => socket.removeEventListener?.(type, listener as (event: unknown) => void));
+  }
+
+  listen("message", (event: { data: unknown }) => void handleMessage(event.data));
+  if (options.onOpen) listen("open", () => options.onOpen?.());
+  if (options.onClose) listen("close", () => options.onClose?.());
+  if (options.onError) listen("error", (event: unknown) => options.onError?.(event));
+
+  let closed = false;
 
   async function handleMessage(data: unknown): Promise<void> {
     let parsed: unknown;
@@ -101,6 +111,9 @@ export function runBridgeWebSocketClient(
 
   return {
     close() {
+      if (closed) return; // idempotent — safe to call on unmount and on error
+      closed = true;
+      for (const detach of detachers.splice(0)) detach();
       socket.close();
     },
   };

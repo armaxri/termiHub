@@ -84,6 +84,31 @@ const output = await driver.readTerminal({ joinFullWidthRows: true });
 await server.close();
 ```
 
+### Sequential connections (kill/restart within one run)
+
+A single runner session can drive **several app instances in sequence** — kill the
+app, launch a fresh one, and keep driving — so system tests can assert restart and
+recovery (issue #817). The server tracks a monotonic **connection generation** and
+applies **last-writer-wins**: a newly connected app becomes the live one and
+supersedes any predecessor, so exactly one app drives the run at a time and a
+restarted app always re-acquires the bridge (even if its connection races the old
+socket's close). Both the TS `wsServer.ts` and the Python harness (#802) expose
+this same contract:
+
+| Call             | Resolves with                                                                                                                                                |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `waitForApp()`   | The current app's transport; once it disconnects, waits for the next to connect. Repeated calls return the same transport while one app stays connected.     |
+| `awaitNextApp()` | A fresh transport for the **next** connection after the one last handed out — the restart seam. Resolves immediately if that connection has already arrived. |
+
+```ts
+const a = await server.waitForApp(); // drive instance A …
+killApp(); // A's socket closes
+const b = await server.awaitNextApp(); // launch + drive instance B over the same server
+```
+
+The in-app `wsClient` detaches all its socket listeners on `close()` (idempotently),
+so a restarted app boots cleanly with no listeners leaked from a prior connection.
+
 The backend enables test mode and supplies the port by injecting two globals into
 the webview before any page script runs (a Tauri plugin `js_init_script`, only
 registered when `TERMIHUB_TEST_BRIDGE_PORT` is set):

@@ -11,7 +11,9 @@ import type { BridgeResponseEnvelope } from "./wsProtocol";
 class FakeSocket implements BridgeClientSocket {
   readonly sent: string[] = [];
   closed = false;
-  private messageListeners: ((event: { data: unknown }) => void)[] = [];
+  closeCount = 0;
+  /** Live listener registrations, keyed by type, for leak assertions. */
+  readonly listeners = new Map<string, Set<(event: { data: unknown }) => void>>();
 
   send(data: string): void {
     this.sent.push(data);
@@ -19,20 +21,29 @@ class FakeSocket implements BridgeClientSocket {
 
   close(): void {
     this.closed = true;
+    this.closeCount += 1;
   }
 
   addEventListener(type: string, listener: (event: { data: unknown }) => void): void {
-    if (type === "message") this.messageListeners.push(listener);
+    if (!this.listeners.has(type)) this.listeners.set(type, new Set());
+    this.listeners.get(type)!.add(listener);
   }
 
-  removeEventListener(): void {
-    /* not exercised by these tests */
+  removeEventListener(type: string, listener: (event: unknown) => void): void {
+    this.listeners.get(type)?.delete(listener as (event: { data: unknown }) => void);
+  }
+
+  /** Total number of currently-registered listeners across all types. */
+  listenerCount(): number {
+    let count = 0;
+    for (const set of this.listeners.values()) count += set.size;
+    return count;
   }
 
   /** Simulate a message arriving from the runner. */
   emit(data: unknown): void {
     const payload = typeof data === "string" ? data : JSON.stringify(data);
-    for (const listener of this.messageListeners) listener({ data: payload });
+    for (const listener of this.listeners.get("message") ?? []) listener({ data: payload });
   }
 
   /** Parse the n-th sent frame as a response envelope. */
@@ -129,5 +140,40 @@ describe("runBridgeWebSocketClient", () => {
     const { socket, client } = setup(() => ({ ok: true, action: "exists" }));
     client.close();
     expect(socket.closed).toBe(true);
+  });
+
+  it("detaches every listener on close() so nothing leaks across a restart", () => {
+    const socket = new FakeSocket();
+    const client = runBridgeWebSocketClient({
+      url: "ws://127.0.0.1:1234",
+      dispatch: () => ({ ok: true, action: "exists" }),
+      createSocket: () => socket,
+      onOpen: () => {},
+      onClose: () => {},
+      onError: () => {},
+    });
+    expect(socket.listenerCount()).toBeGreaterThan(0);
+
+    client.close();
+    expect(socket.listenerCount()).toBe(0);
+  });
+
+  it("is idempotent — repeated close() closes the socket once", () => {
+    const { socket, client } = setup(() => ({ ok: true, action: "exists" }));
+    client.close();
+    client.close();
+    client.close();
+    expect(socket.closeCount).toBe(1);
+  });
+
+  it("ignores messages that arrive after close()", async () => {
+    const dispatch = vi.fn(() => ({ ok: true, action: "exists" as const }));
+    const { socket, client } = setup(dispatch);
+    client.close();
+
+    socket.emit({ id: 1, command: { action: "getText", testId: "x" } });
+
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(socket.sent).toHaveLength(0);
   });
 });
