@@ -25,6 +25,18 @@ describe("InAppBridgeDriver", () => {
     expect(sent).toEqual([{ action: "type", testId: "host", text: "example.com" }]);
   });
 
+  it("maps terminalInput to a terminalInput command, defaulting to the active tab", async () => {
+    const { transport, sent } = scriptedTransport({});
+    await new InAppBridgeDriver(transport).terminalInput("ls");
+    expect(sent).toEqual([{ action: "terminalInput", text: "ls", tabId: undefined }]);
+  });
+
+  it("maps terminalInput tabId option through", async () => {
+    const { transport, sent } = scriptedTransport({});
+    await new InAppBridgeDriver(transport).terminalInput("whoami", { tabId: "tab-9" });
+    expect(sent).toEqual([{ action: "terminalInput", text: "whoami", tabId: "tab-9" }]);
+  });
+
   it("unwraps the value of a query command", async () => {
     const { transport } = scriptedTransport({
       getText: { ok: true, action: "getText", value: "Connected" },
@@ -73,13 +85,17 @@ describe("InAppBridgeDriver", () => {
 });
 
 describe("inProcessTransport", () => {
-  it("dispatches via the installed window bridge", () => {
+  it("dispatches via the installed window bridge", async () => {
     const dispatch = vi.fn(
-      (c: BridgeCommand): BridgeResponse => ({ ok: true, action: c.action, value: "ok" })
+      async (c: BridgeCommand): Promise<BridgeResponse> => ({
+        ok: true,
+        action: c.action,
+        value: "ok",
+      })
     );
     window.__termihubTestBridge = { ready: true, version: 1, dispatch };
     try {
-      const res = inProcessTransport({ action: "exists", testId: "x" });
+      const res = await inProcessTransport({ action: "exists", testId: "x" });
       expect(res).toEqual({ ok: true, action: "exists", value: "ok" });
       expect(dispatch).toHaveBeenCalledOnce();
     } finally {

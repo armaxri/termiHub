@@ -13,6 +13,8 @@
 export type ScenarioStep =
   | { action: "click"; testId: string }
   | { action: "type"; testId: string; text: string }
+  /** Send a command into a terminal session (active tab unless `tabId` is set). */
+  | { action: "terminalInput"; text: string; tabId?: string }
   /** Poll until an element with `testId` exists, or fail after `timeoutMs`. */
   | { action: "waitFor"; testId: string; timeoutMs?: number; intervalMs?: number }
   /** Wait a fixed duration (e.g. to let terminal output settle). */

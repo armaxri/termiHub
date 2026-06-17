@@ -112,6 +112,9 @@ async function runStep(
     case "type":
       await driver.type(step.testId, step.text);
       return;
+    case "terminalInput":
+      await driver.terminalInput(step.text, { tabId: step.tabId });
+      return;
     case "pause":
       await sleep(step.ms);
       return;

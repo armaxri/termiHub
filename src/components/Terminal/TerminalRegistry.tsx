@@ -48,6 +48,14 @@ interface TerminalRegistryContextType {
   unregisterSession: (tabId: string) => void;
   /** Paste clipboard text into a terminal by sending it as input. */
   pasteToTerminal: (tabId: string) => Promise<void>;
+  /**
+   * Write `data` into the backend session bound to `tabId`, returning `true` when
+   * a session was found and the input was sent, or `false` when no session is
+   * registered for the tab. Used by the in-app test bridge to drive a shell;
+   * routes through the same `send_input` choke point as interactive typing, so
+   * line-ending normalization applies.
+   */
+  sendInputToTerminal: (tabId: string, data: string) => Promise<boolean>;
   /** Register a search addon for a terminal tab. */
   registerSearchAddon: (tabId: string, addon: SearchAddon) => void;
   /** Search forward in the terminal. */
@@ -270,6 +278,13 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const sendInputToTerminal = useCallback(async (tabId: string, data: string): Promise<boolean> => {
+    const sessionId = sessionRegistryRef.current.get(tabId);
+    if (!sessionId) return false;
+    await sendInput(sessionId, data);
+    return true;
+  }, []);
+
   const registerSearchAddon = useCallback((tabId: string, addon: SearchAddon) => {
     searchAddonRegistryRef.current.set(tabId, addon);
   }, []);
@@ -315,6 +330,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       registerSession,
       unregisterSession,
       pasteToTerminal,
+      sendInputToTerminal,
       registerSearchAddon,
       findNext,
       findPrevious,
@@ -338,6 +354,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       registerSession,
       unregisterSession,
       pasteToTerminal,
+      sendInputToTerminal,
       registerSearchAddon,
       findNext,
       findPrevious,

@@ -20,7 +20,7 @@ const BRIDGE_VERSION = 1;
  * every platform — including macOS, where no WKWebView WebDriver exists (ADR-5).
  */
 export function TestBridge() {
-  const { getTerminalContent } = useTerminalRegistry();
+  const { getTerminalContent, sendInputToTerminal } = useTerminalRegistry();
 
   useEffect(() => {
     if (!isTestBridgeEnabled()) return;
@@ -30,6 +30,7 @@ export function TestBridge() {
       readTerminal: (tabId, joinFullWidthRows) => getTerminalContent(tabId, joinFullWidthRows),
       getActiveTabId: () => getActiveTab(useAppStore.getState())?.id ?? undefined,
       getState: () => useAppStore.getState() as unknown as Record<string, unknown>,
+      sendTerminalInput: (tabId, text) => sendInputToTerminal(tabId, text),
     };
 
     const dispatch = (command: Parameters<typeof dispatchCommand>[0]) =>
@@ -64,7 +65,7 @@ export function TestBridge() {
       delete window.__termihubTestBridge;
       frontendLog("test_bridge", "removed");
     };
-  }, [getTerminalContent]);
+  }, [getTerminalContent, sendInputToTerminal]);
 
   return null;
 }

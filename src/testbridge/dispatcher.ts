@@ -20,6 +20,13 @@ export interface BridgeDeps {
   getActiveTabId: () => string | undefined;
   /** A snapshot of the app store state for introspection. */
   getState: () => Record<string, unknown>;
+  /**
+   * Write `text` into the backend session bound to `tabId`, resolving to `true`
+   * when a session was found and the input was sent, or `false` when no session
+   * is registered for the tab. Routes through the session's `send_input` choke
+   * point so line-ending normalization applies, exactly like interactive typing.
+   */
+  sendTerminalInput: (tabId: string, text: string) => Promise<boolean>;
 }
 
 /** Resolve an element by its `data-testid`, escaping the value for the selector. */
@@ -58,9 +65,13 @@ const fail = (action: BridgeCommand["action"], error: string): BridgeResponse =>
  *
  * The function never throws: every failure path produces an `ok: false` response
  * with an agent-readable `error`, so a test runner can branch on the result
- * rather than catch exceptions.
+ * rather than catch exceptions. It is async because `terminalInput` awaits the
+ * session send path; the other commands resolve immediately.
  */
-export function dispatchCommand(command: BridgeCommand, deps: BridgeDeps): BridgeResponse {
+export async function dispatchCommand(
+  command: BridgeCommand,
+  deps: BridgeDeps
+): Promise<BridgeResponse> {
   switch (command.action) {
     case "exists": {
       return ok("exists", findByTestId(deps.root, command.testId) !== null);
@@ -102,6 +113,18 @@ export function dispatchCommand(command: BridgeCommand, deps: BridgeDeps): Bridg
       setter?.call(el, command.text);
       el.dispatchEvent(new Event("input", { bubbles: true }));
       return ok("type");
+    }
+
+    case "terminalInput": {
+      const tabId = command.tabId ?? deps.getActiveTabId();
+      if (!tabId) return fail("terminalInput", "no active terminal to write to");
+      // Append a newline so the command runs, matching interactive Enter — the
+      // backend's send_input choke point normalizes it to the session's
+      // configured line ending (same path as `initialCommand + "\n"`).
+      const sent = await deps.sendTerminalInput(tabId, command.text + "\n");
+      return sent
+        ? ok("terminalInput")
+        : fail("terminalInput", `no terminal session registered for tab "${tabId}"`);
     }
 
     case "readTerminal": {

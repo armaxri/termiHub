@@ -26,6 +26,12 @@ export class BridgeError extends Error {
   }
 }
 
+/** Options for {@link Driver.terminalInput}. */
+export interface TerminalInputOptions {
+  /** Write into this specific tab's terminal instead of the active one. */
+  tabId?: string;
+}
+
 /** Options for {@link Driver.readTerminal}. */
 export interface ReadTerminalOptions {
   /** Read this specific tab instead of the active one. */
@@ -48,6 +54,11 @@ export interface Driver {
   click(testId: string): Promise<void>;
   /** Set the value of the input/textarea carrying the given `data-testid`. */
   type(testId: string, text: string): Promise<void>;
+  /**
+   * Send input into a terminal session (active tab unless `tabId` is given). A
+   * trailing newline is appended, so `terminalInput("ls")` runs `ls`.
+   */
+  terminalInput(text: string, options?: TerminalInputOptions): Promise<void>;
   /** Whether an element with the given `data-testid` is currently present. */
   exists(testId: string): Promise<boolean>;
   /** Read the visible text of the element with the given `data-testid`. */
@@ -101,6 +112,10 @@ export class InAppBridgeDriver implements Driver {
 
   async type(testId: string, text: string): Promise<void> {
     await this.send({ action: "type", testId, text });
+  }
+
+  async terminalInput(text: string, options: TerminalInputOptions = {}): Promise<void> {
+    await this.send({ action: "terminalInput", text, tabId: options.tabId });
   }
 
   async exists(testId: string): Promise<boolean> {

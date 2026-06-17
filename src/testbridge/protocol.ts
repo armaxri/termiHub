@@ -33,6 +33,22 @@ export interface TypeCommand {
   text: string;
 }
 
+/**
+ * Send input into a running terminal **session** (not a form field).
+ *
+ * An xterm terminal renders to a canvas, so {@link TypeCommand} cannot drive it.
+ * This command routes `text` to the session's backend `send_input` — the same
+ * choke point interactive keystrokes use — so line-ending normalization applies.
+ * A trailing newline is appended for you (honoring the session's configured line
+ * ending, exactly like pressing Enter), so `text: "ls"` runs `ls`. When `tabId`
+ * is omitted the active tab's terminal is used.
+ */
+export interface TerminalInputCommand {
+  action: "terminalInput";
+  text: string;
+  tabId?: string;
+}
+
 /** Whether an element with the given `data-testid` currently exists in the DOM. */
 export interface ExistsCommand {
   action: "exists";
@@ -78,6 +94,7 @@ export interface GetStateCommand {
 export type BridgeCommand =
   | ClickCommand
   | TypeCommand
+  | TerminalInputCommand
   | ExistsCommand
   | GetTextCommand
   | GetAttributeCommand
@@ -91,8 +108,9 @@ export type BridgeAction = BridgeCommand["action"];
  * The result of dispatching a {@link BridgeCommand}.
  *
  * `ok` is the single field an agent must check. On success, query commands place
- * their result in `value`; action commands (`click`, `type`) return `ok` with no
- * `value`. On failure, `error` carries an agent-readable reason.
+ * their result in `value`; action commands (`click`, `type`, `terminalInput`)
+ * return `ok` with no `value`. On failure, `error` carries an agent-readable
+ * reason.
  */
 export interface BridgeResponse {
   ok: boolean;

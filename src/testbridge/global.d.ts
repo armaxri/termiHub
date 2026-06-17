@@ -11,8 +11,8 @@ export interface TermihubTestBridge {
   ready: true;
   /** Protocol revision, so a runner can detect capability mismatches. */
   version: number;
-  /** Execute a single command and return its structured response. */
-  dispatch: (command: BridgeCommand) => BridgeResponse;
+  /** Execute a single command and resolve to its structured response. */
+  dispatch: (command: BridgeCommand) => Promise<BridgeResponse>;
 }
 
 declare global {
