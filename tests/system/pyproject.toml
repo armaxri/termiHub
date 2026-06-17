@@ -1,0 +1,8 @@
+[tool.pytest.ini_options]
+# Run from tests/system. `pythonpath = .` makes `termihub_harness` importable;
+# test modules in tests/ import their local `fake_app` via pytest's prepend mode.
+pythonpath = ["."]
+testpaths = ["tests"]
+markers = [
+    "integration: launches the real built app/agent (needs `pnpm tauri build`)",
+]

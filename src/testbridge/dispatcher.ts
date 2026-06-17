@@ -139,7 +139,9 @@ export async function dispatchCommand(
 
     case "getState": {
       const state = deps.getState();
-      if (command.path === undefined) return ok("getState", state);
+      // `== null` catches both an omitted path and an explicit JSON `null` — a
+      // remote client (e.g. the Python harness) sends `null`, not `undefined`.
+      if (command.path == null) return ok("getState", state);
       const resolved = resolvePath(state, command.path);
       if (resolved === MISSING) {
         return fail("getState", `state path "${command.path}" does not resolve`);

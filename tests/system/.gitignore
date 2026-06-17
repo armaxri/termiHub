@@ -1,0 +1,5 @@
+# Python system-test harness local artifacts
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/

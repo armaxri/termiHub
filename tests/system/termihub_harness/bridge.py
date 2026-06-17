@@ -1,0 +1,251 @@
+"""The runner-side WebSocket bridge server and a synchronous ``Driver``.
+
+The app connects *out* to this server (it is the WebSocket client), so the same
+path works on every platform — including macOS, where no WKWebView WebDriver
+exists. This module runs an asyncio event loop on a background thread and exposes
+a **synchronous** API, so test authors write plain imperative code
+(``driver.click(...)``, ``app.restart()``) without ``async``/``await``.
+
+Mirrors the runner half of the TypeScript transport (``wsServer.ts`` +
+``wsTransport.ts``): per-connection monotonic request ids, response correlation,
+and sequential-connection support so an app can be killed and restarted within a
+single run (issue #817).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import threading
+from typing import Any, Optional
+
+import websockets
+
+from .protocol import Command, Response, decode_response, encode_request
+
+DEFAULT_REQUEST_TIMEOUT = 10.0
+DEFAULT_APP_WAIT_TIMEOUT = 30.0
+
+
+class BridgeError(Exception):
+    """Raised when a bridge command returns ``ok: false`` or the link drops."""
+
+    def __init__(self, action: str, message: str) -> None:
+        super().__init__(message)
+        self.action = action
+
+
+class _Connection:
+    """One app WebSocket connection. Lives entirely on the bridge event loop."""
+
+    def __init__(self, ws: Any, loop: asyncio.AbstractEventLoop) -> None:
+        self._ws = ws
+        self._loop = loop
+        self._next_id = 1
+        self._pending: dict[int, asyncio.Future] = {}
+        self._closed = False
+
+    async def reader(self) -> None:
+        """Pump incoming response envelopes to their pending futures until close."""
+        try:
+            async for message in self._ws:
+                decoded = decode_response(message)
+                if decoded is None:
+                    continue
+                request_id, response = decoded
+                future = self._pending.pop(request_id, None)
+                if future is not None and not future.done():
+                    future.set_result(response)
+        except websockets.exceptions.ConnectionClosed:
+            # Expected when the app is killed/restarted — not an error.
+            pass
+        finally:
+            self._fail_all()
+
+    def _fail_all(self) -> None:
+        self._closed = True
+        for future in self._pending.values():
+            if not future.done():
+                future.set_exception(BridgeError("", "bridge connection closed"))
+        self._pending.clear()
+
+    async def send(self, command: Command, timeout: float) -> Response:
+        if self._closed:
+            raise BridgeError(command.get("action", ""), "bridge connection closed")
+        request_id = self._next_id
+        self._next_id += 1
+        future: asyncio.Future = self._loop.create_future()
+        self._pending[request_id] = future
+        await self._ws.send(encode_request(request_id, command))
+        try:
+            return await asyncio.wait_for(future, timeout)
+        except asyncio.TimeoutError as exc:
+            self._pending.pop(request_id, None)
+            raise BridgeError(
+                command.get("action", ""),
+                f"command timed out after {timeout}s",
+            ) from exc
+
+
+class Driver:
+    """Synchronous façade over a single app connection.
+
+    Query verbs return their value; action verbs return ``None``. Any ``ok: false``
+    response (or a dropped connection) raises :class:`BridgeError`, so a test can
+    assert with plain ``pytest`` and let unexpected failures surface as errors.
+    """
+
+    def __init__(
+        self,
+        connection: _Connection,
+        loop: asyncio.AbstractEventLoop,
+        request_timeout: float = DEFAULT_REQUEST_TIMEOUT,
+    ) -> None:
+        self._conn = connection
+        self._loop = loop
+        self._timeout = request_timeout
+
+    def _call(self, command: Command) -> Any:
+        # Drop None-valued keys so the wire form matches the in-process client:
+        # JSON.stringify omits `undefined`, and the dispatcher distinguishes an
+        # absent optional (e.g. getState path) from an explicit null.
+        command = {key: value for key, value in command.items() if value is not None}
+        cfut = asyncio.run_coroutine_threadsafe(
+            self._conn.send(command, self._timeout), self._loop
+        )
+        response = cfut.result(self._timeout + 5)
+        if not response.get("ok"):
+            raise BridgeError(
+                response.get("action", command.get("action", "")),
+                response.get("error") or "command failed",
+            )
+        return response.get("value")
+
+    # ── Interaction ──────────────────────────────────────────────────────────
+    def click(self, test_id: str) -> None:
+        self._call({"action": "click", "testId": test_id})
+
+    def type(self, test_id: str, text: str) -> None:
+        self._call({"action": "type", "testId": test_id, "text": text})
+
+    def terminal_input(self, text: str, tab_id: Optional[str] = None) -> None:
+        self._call({"action": "terminalInput", "text": text, "tabId": tab_id})
+
+    # ── Introspection ────────────────────────────────────────────────────────
+    def exists(self, test_id: str) -> bool:
+        return bool(self._call({"action": "exists", "testId": test_id}))
+
+    def get_text(self, test_id: str) -> str:
+        return self._call({"action": "getText", "testId": test_id})
+
+    def get_attribute(self, test_id: str, attribute: str) -> Optional[str]:
+        return self._call(
+            {"action": "getAttribute", "testId": test_id, "attribute": attribute}
+        )
+
+    def read_terminal(
+        self, tab_id: Optional[str] = None, join_full_width_rows: bool = False
+    ) -> str:
+        return self._call(
+            {
+                "action": "readTerminal",
+                "tabId": tab_id,
+                "joinFullWidthRows": join_full_width_rows,
+            }
+        )
+
+    def get_state(self, path: Optional[str] = None) -> Any:
+        return self._call({"action": "getState", "path": path})
+
+
+class Bridge:
+    """A listening bridge server. Hand :attr:`port` to the app before launch."""
+
+    def __init__(self, host: str = "127.0.0.1", port: int = 0) -> None:
+        self._host = host
+        self._requested_port = port
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._thread: Optional[threading.Thread] = None
+        self._server: Any = None
+        self._conn_queue: Optional[asyncio.Queue] = None
+        self._port: Optional[int] = None
+        self._ready = threading.Event()
+        self._error: Optional[BaseException] = None
+        self._stop_future: Optional[asyncio.Future] = None
+
+    def start(self) -> "Bridge":
+        """Start listening on a background thread; resolves once :attr:`port` is set."""
+        self._thread = threading.Thread(target=self._run, name="bridge", daemon=True)
+        self._thread.start()
+        if not self._ready.wait(10) or self._error is not None:
+            raise RuntimeError(f"bridge failed to start: {self._error}")
+        return self
+
+    @property
+    def port(self) -> int:
+        if self._port is None:
+            raise RuntimeError("bridge is not started")
+        return self._port
+
+    def wait_for_app(self, timeout: float = DEFAULT_APP_WAIT_TIMEOUT) -> Driver:
+        """Block until the next app connects out, returning a :class:`Driver`.
+
+        Each call consumes one connection in arrival order, so the first call
+        returns the first app instance and a call after a restart returns the
+        next one — the sequential-connection contract from issue #817.
+        """
+        if self._loop is None or self._conn_queue is None:
+            raise RuntimeError("bridge is not started")
+        cfut = asyncio.run_coroutine_threadsafe(
+            asyncio.wait_for(self._conn_queue.get(), timeout), self._loop
+        )
+        try:
+            connection = cfut.result(timeout + 5)
+        except asyncio.TimeoutError as exc:
+            raise TimeoutError(
+                f"no app connected to the bridge within {timeout}s"
+            ) from exc
+        return Driver(connection, self._loop)
+
+    def close(self) -> None:
+        loop, stop = self._loop, self._stop_future
+        if loop is None or stop is None:
+            return
+        loop.call_soon_threadsafe(lambda: stop.done() or stop.set_result(None))
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+
+    def __enter__(self) -> "Bridge":
+        return self.start()
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
+
+    def _run(self) -> None:
+        loop = asyncio.new_event_loop()
+        self._loop = loop
+        asyncio.set_event_loop(loop)
+        self._conn_queue = asyncio.Queue()
+        self._stop_future = loop.create_future()
+
+        async def handler(ws: Any) -> None:
+            connection = _Connection(ws, loop)
+            await self._conn_queue.put(connection)
+            await connection.reader()
+
+        async def serve() -> None:
+            self._server = await websockets.serve(handler, self._host, self._requested_port)
+            self._port = self._server.sockets[0].getsockname()[1]
+            self._ready.set()
+            try:
+                await self._stop_future
+            finally:
+                self._server.close()
+                await self._server.wait_closed()
+
+        try:
+            loop.run_until_complete(serve())
+        except BaseException as exc:  # noqa: BLE001 - surface to start()
+            self._error = exc
+            self._ready.set()
+        finally:
+            loop.close()
