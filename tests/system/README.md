@@ -41,24 +41,86 @@ def test_app_lifecycle(bridge, app):
     assert driver.get_state() is not None
 ```
 
-## Running
+## Setup (once)
 
 ```sh
-# from tests/system/
+cd tests/system
 python3 -m venv .venv
 ./.venv/bin/pip install -r requirements.txt
-
-# Fast tests (no build needed) — protocol parity + harness machinery via a fake app:
-./.venv/bin/python -m pytest -m "not integration"
-
-# Integration tests need the built app (and agent for agent tests):
-pnpm tauri build                        # from the repo root
-cargo build --release -p termihub-agent # only for agent tests
-./.venv/bin/python -m pytest            # runs everything
 ```
 
-Integration tests are **skipped automatically** when the app/agent binaries are
-not built, so the fast tests run anywhere.
+All commands below run from `tests/system/`. They use `./.venv/bin/python -m
+pytest`; if you `source .venv/bin/activate` first, you can drop that prefix and
+just write `pytest`.
+
+## Test groups
+
+Tests split into two groups via the `integration` marker:
+
+| Group       | Files                                    | Needs a build?                   |
+| ----------- | ---------------------------------------- | -------------------------------- |
+| machinery   | `test_protocol.py`, `test_roundtrip.py`  | No — run anywhere via a fake app |
+| integration | `test_app_lifecycle.py` (`@integration`) | Yes — `pnpm tauri build` first   |
+
+Integration tests **auto-skip** when the app/agent binaries are not built, so a
+plain `pytest` never errors for a missing build — it just skips them.
+
+## Listing tests
+
+```sh
+./.venv/bin/python -m pytest --collect-only -q     # every test id
+./.venv/bin/python -m pytest --markers             # marker groups (incl. integration)
+```
+
+## Running everything
+
+```sh
+./.venv/bin/python -m pytest           # all (integration auto-skips if not built)
+./.venv/bin/python -m pytest -v        # one line per test
+```
+
+## Running specific suites / tests
+
+```sh
+# Only the fast machinery suite (no build), by marker:
+./.venv/bin/python -m pytest -m "not integration"
+
+# Only the integration suite (build the app first), by marker:
+./.venv/bin/python -m pytest -m integration
+
+# A single file:
+./.venv/bin/python -m pytest tests/test_roundtrip.py
+
+# A single test by node id:
+./.venv/bin/python -m pytest tests/test_app_lifecycle.py::test_app_lifecycle
+
+# By name substring (matches across files):
+./.venv/bin/python -m pytest -k restart
+./.venv/bin/python -m pytest -k "roundtrip or protocol"
+```
+
+## Running the integration suite
+
+```sh
+pnpm tauri build                         # from the repo root — build the app once
+cargo build --release -p termihub-agent  # only needed for agent tests
+cd tests/system
+./.venv/bin/python -m pytest -m integration -v -s
+```
+
+## Useful flags
+
+| Flag      | Effect                                                   |
+| --------- | -------------------------------------------------------- |
+| `-v`      | one line per test                                        |
+| `-s`      | show stdout / app logs live (handy for `-m integration`) |
+| `-x`      | stop at the first failure                                |
+| `--lf`    | re-run only the last-failed tests                        |
+| `-k EXPR` | filter by name substring / expression                    |
+| `-m EXPR` | filter by marker (`integration` / `"not integration"`)   |
+
+The quickest daily loop is `pytest -m "not integration"` (instant, no build); run
+the full `pytest` after a `tauri build` when you want the real-app lifecycle check.
 
 ## Driver verbs
 
