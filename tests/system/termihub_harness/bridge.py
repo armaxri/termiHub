@@ -193,7 +193,8 @@ class Bridge:
         returns the first app instance and a call after a restart returns the
         next one — the sequential-connection contract from issue #817.
         """
-        assert self._loop is not None and self._conn_queue is not None
+        if self._loop is None or self._conn_queue is None:
+            raise RuntimeError("bridge is not started")
         cfut = asyncio.run_coroutine_threadsafe(
             asyncio.wait_for(self._conn_queue.get(), timeout), self._loop
         )

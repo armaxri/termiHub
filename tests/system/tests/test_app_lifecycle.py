@@ -51,21 +51,23 @@ def test_app_lifecycle(bridge, app):
     driver = bridge.wait_for_app(timeout=WAIT_APP)
     assert isinstance(driver.get_state(), dict), "app should be introspectable once connected"
 
-    # ── Ensure a live terminal session ───────────────────────────────────────
+    # ── Ensure a live terminal whose shell is ready for input ────────────────
     if not _has_terminal(driver):
         driver.click("terminal-view-new-terminal")
     _wait(lambda: _has_terminal(driver), what="a terminal to exist")
+    # Wait for the shell to print its prompt, so the session is registered and
+    # accepting input before we type into it.
+    _wait(lambda: driver.read_terminal().strip() != "", what="the shell prompt")
 
-    # ── Write into the terminal and read the output back ─────────────────────
+    # ── Write into the terminal once, then poll the output (no re-sends) ──────
     marker = "HELLO_FROM_BRIDGE_4242"
+    driver.terminal_input(f"echo {marker}")
 
-    def run_and_capture():
-        # Retried by _wait: re-sends until the session is ready and the echo lands.
-        driver.terminal_input(f"echo {marker}")
+    def marker_in_terminal():
         output = driver.read_terminal()
         return output if marker in output else None
 
-    output = _wait(run_and_capture, timeout=25.0, what="echoed marker in terminal output")
+    output = _wait(marker_in_terminal, timeout=25.0, what="echoed marker in terminal output")
     assert marker in output
 
     # ── Kill and restart the app; re-acquire the bridge ──────────────────────

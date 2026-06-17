@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import platform
+import shutil
 import socket
 import subprocess
 import tempfile
@@ -22,10 +23,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-try:
-    import psutil
-except ImportError:  # pragma: no cover - psutil is a declared dependency
-    psutil = None  # type: ignore
+import psutil
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -70,32 +68,30 @@ def free_port() -> int:
 
 
 def _terminate_tree(process: subprocess.Popen, timeout: float = 5.0) -> None:
-    """Kill a process and all of its children, escalating to SIGKILL."""
+    """Kill a process and all of its children, escalating to SIGKILL.
+
+    Uses ``psutil`` so a killed app does not leave orphaned shells behind — the
+    app spawns its own child processes (local shells), which a bare
+    ``process.terminate()`` would not reap.
+    """
     if process.poll() is not None:
         return
-    if psutil is not None:
-        try:
-            parent = psutil.Process(process.pid)
-        except psutil.NoSuchProcess:
-            return
-        procs = parent.children(recursive=True) + [parent]
-        for proc in procs:
-            try:
-                proc.terminate()
-            except psutil.NoSuchProcess:
-                pass
-        _, alive = psutil.wait_procs(procs, timeout=timeout)
-        for proc in alive:
-            try:
-                proc.kill()
-            except psutil.NoSuchProcess:
-                pass
-        return
-    process.terminate()
     try:
-        process.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        process.kill()
+        parent = psutil.Process(process.pid)
+    except psutil.NoSuchProcess:
+        return
+    procs = parent.children(recursive=True) + [parent]
+    for proc in procs:
+        try:
+            proc.terminate()
+        except psutil.NoSuchProcess:
+            pass
+    _, alive = psutil.wait_procs(procs, timeout=timeout)
+    for proc in alive:
+        try:
+            proc.kill()
+        except psutil.NoSuchProcess:
+            pass
 
 
 class AppInstance:
@@ -152,8 +148,6 @@ class AppInstance:
     def __exit__(self, *_exc: object) -> None:
         self.stop()
         if self._owns_config_dir:
-            import shutil
-
             shutil.rmtree(self._config_dir, ignore_errors=True)
 
 
@@ -226,6 +220,4 @@ class AgentInstance:
 
     def __exit__(self, *_exc: object) -> None:
         self.stop()
-        import shutil
-
         shutil.rmtree(self._config_dir, ignore_errors=True)
