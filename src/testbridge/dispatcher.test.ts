@@ -203,6 +203,17 @@ describe("dispatchCommand", () => {
       expect(res.value).toEqual({ activePanelId: "p1", sidebarCollapsed: false });
     });
 
+    it("treats an explicit null path like an omitted one (JSON clients send null)", async () => {
+      const { deps } = setup(`<div></div>`, {
+        getState: () => ({ activePanelId: "p1" }),
+      });
+      // A remote JSON client (e.g. the Python harness) serializes an absent
+      // optional as `null`, not `undefined`.
+      const res = await dispatchCommand({ action: "getState", path: null } as never, deps);
+      expect(res.ok).toBe(true);
+      expect(res.value).toEqual({ activePanelId: "p1" });
+    });
+
     it("resolves a dot-path into nested state", async () => {
       const { deps } = setup(`<div></div>`, {
         getState: () => ({ rootPanel: { activeTabId: "tab-7" } }),
