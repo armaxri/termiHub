@@ -39,11 +39,6 @@ T = TypeVar("T")
 DEFAULT_WAIT_TIMEOUT = 20.0
 DEFAULT_WAIT_INTERVAL = 0.25
 
-#: Sentinel for "argument not supplied" so recursive helpers can default to the
-#: live tree while still accepting ``None`` as a real (empty) node.
-_UNSET: Any = object()
-
-
 class SystemTest:
     """Shared setup + helpers for an integration suite (one app per class)."""
 
@@ -150,9 +145,9 @@ class SystemTest:
         """The current panel tree (``rootPanel``): a leaf or a split container."""
         return self.driver.get_state("rootPanel")
 
-    def leaf_count(self, node: Any = _UNSET) -> int:
+    def leaf_count(self, node: Any = None) -> int:
         """Count the leaf panels in the tree (1 = unsplit, >1 = split)."""
-        if node is _UNSET:
+        if node is None:
             node = self.panel_tree()
         if not isinstance(node, dict):
             return 0
@@ -160,9 +155,9 @@ class SystemTest:
             return 1
         return sum(self.leaf_count(child) for child in node.get("children", []))
 
-    def tab_ids(self, node: Any = _UNSET) -> list[str]:
+    def tab_ids(self, node: Any = None) -> list[str]:
         """All tab ids across every panel, in tree order."""
-        if node is _UNSET:
+        if node is None:
             node = self.panel_tree()
         if not isinstance(node, dict):
             return []
@@ -188,6 +183,22 @@ class SystemTest:
             self.wait(
                 lambda before=before: len(self.tab_ids()) < before,
                 what="a tab to close",
+            )
+
+    # ── Sidebar ──────────────────────────────────────────────────────────────
+    def set_sidebar_visible(self, visible: bool) -> None:
+        """Bring the sidebar to the wanted visibility via the toolbar toggle.
+
+        The ``Sidebar`` renders ``null`` while collapsed, so ``exists("sidebar")``
+        is the visibility signal. The toggle lives in the terminal-view toolbar,
+        so a terminal is ensured first.
+        """
+        self.ensure_terminal()
+        if self.driver.exists("sidebar") != visible:
+            self.driver.click("terminal-view-toggle-sidebar")
+            self.wait(
+                lambda: self.driver.exists("sidebar") == visible,
+                what=f"sidebar visible={visible}",
             )
 
     # ── Watch-along ──────────────────────────────────────────────────────────

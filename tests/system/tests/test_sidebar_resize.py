@@ -30,10 +30,7 @@ class TestSidebarResize(SystemTest):
 
     def _ensure_sidebar_shown(self) -> None:
         """Make sure the sidebar (and thus its resize handle) is present."""
-        if not self.driver.exists("sidebar"):
-            self.ensure_terminal()
-            self.driver.click(TOGGLE)
-            self.wait(lambda: self.driver.exists("sidebar"), what="the sidebar to show")
+        self.set_sidebar_visible(True)
         assert self.driver.exists(HANDLE)
 
     def _reset_width(self) -> float:
