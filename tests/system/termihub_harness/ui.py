@@ -11,9 +11,11 @@ base's ``self.driver`` and ``self.wait``).
 
 from __future__ import annotations
 
-from typing import Any, Iterator, Optional
+from typing import TYPE_CHECKING, Any, Callable, Iterator, Optional, TypeVar
 
 from .bridge import BridgeError, Driver
+
+_T = TypeVar("_T")
 
 
 # ── State lookups (no polling) ─────────────────────────────────────────────────
@@ -117,7 +119,20 @@ class ConnectionsUi:
     CTX_DELETE = "context-connection-delete"
     CTX_PING = "context-connection-ping"
 
+    # Supplied by SystemTest, with which this mixin is always combined (it sits
+    # first in the MRO, so these are declared for type-checkers only — defining
+    # `wait` for real here would shadow the base implementation).
     driver: Driver
+    if TYPE_CHECKING:
+
+        def wait(
+            self,
+            predicate: Callable[[], _T],
+            *,
+            timeout: float = ...,
+            interval: float = ...,
+            what: str = ...,
+        ) -> _T: ...
 
     # -- lookups -----------------------------------------------------------------
     def find_connection(self, name: str) -> Optional[dict[str, Any]]:
@@ -128,9 +143,7 @@ class ConnectionsUi:
 
     def require_connection(self, name: str) -> dict[str, Any]:
         """Wait until a connection named ``name`` exists in the store, returning it."""
-        return self.wait(  # type: ignore[attr-defined]
-            lambda: self.find_connection(name), what=f"connection {name!r}"
-        )
+        return self.wait(lambda: self.find_connection(name), what=f"connection {name!r}")
 
     # -- sidebar -----------------------------------------------------------------
     ACTIVITY_BAR_CONNECTIONS = "activity-bar-connections"
@@ -139,7 +152,7 @@ class ConnectionsUi:
         """Make sure the Connections sidebar (with its New buttons) is showing."""
         if not self.driver.exists(self.NEW_CONNECTION):
             self.driver.click(self.ACTIVITY_BAR_CONNECTIONS)
-        self.wait(  # type: ignore[attr-defined]
+        self.wait(
             lambda: self.driver.exists(self.NEW_CONNECTION),
             what="the connections sidebar",
         )
@@ -148,9 +161,7 @@ class ConnectionsUi:
     def open_new_connection_editor(self) -> None:
         """Open the New Connection editor and wait for its name field."""
         self.driver.click(self.NEW_CONNECTION)
-        self.wait(  # type: ignore[attr-defined]
-            lambda: self.driver.exists(self.EDITOR_NAME), what="the connection editor"
-        )
+        self.wait(lambda: self.driver.exists(self.EDITOR_NAME), what="the connection editor")
 
     def editor_open(self) -> bool:
         """Whether the connection editor name field is currently present."""
@@ -170,7 +181,7 @@ class ConnectionsUi:
         self.driver.type(self.EDITOR_NAME, name)
         self.driver.select_option(self.EDITOR_TYPE, conn_type)
         for key, value in fields.items():
-            self.wait(  # type: ignore[attr-defined]
+            self.wait(
                 lambda key=key: self.driver.exists(f"field-{key}"),
                 what=f"the {key!r} field",
             )
@@ -184,10 +195,14 @@ class ConnectionsUi:
         """Right-click a connection by name and wait for its menu to mount."""
         conn = self.require_connection(name)
         item = connection_item_testid(conn["id"])
-        self.wait(  # type: ignore[attr-defined]
-            lambda: (self.driver.context_menu(item), self.driver.exists(self.CTX_EDIT))[1],
-            what="the connection context menu",
-        )
+
+        def right_click_and_check() -> bool:
+            # Re-dispatch each poll: a single right-click can race the item's
+            # mount/handler, so retrying the gesture is what makes it reliable.
+            self.driver.context_menu(item)
+            return self.driver.exists(self.CTX_EDIT)
+
+        self.wait(right_click_and_check, what="the connection context menu")
 
     def connection_context_action(self, name: str, action_test_id: str) -> None:
         """Right-click a connection by name and click a context-menu action."""
