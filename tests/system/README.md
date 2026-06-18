@@ -226,8 +226,14 @@ Tips:
 
 ## Driver verbs
 
-`click`, `type`, `terminal_input`, `exists`, `get_text`, `get_attribute`,
-`read_terminal`, `get_state` — the same vocabulary as the TypeScript `Driver`.
+`click`, `type`, `context_menu`, `select_option`, `press_key`, `terminal_input`,
+`exists`, `get_text`, `get_attribute`, `read_terminal`, `get_state` — the same
+vocabulary as the TypeScript `Driver`.
+
+UI elements with UUID `data-testid`s (connections, folders, tabs) are resolved by
+**name** through `getState` via the `termihub_harness.ui` helpers (`find_connection`,
+`find_folder`, `find_tab`, `tab_count`, …) and the `ConnectionsUi` suite mixin —
+the bridge-native analog of the old WebdriverIO find-by-title lookups.
 
 ## Orchestration
 

@@ -132,6 +132,18 @@ class ConnectionsUi:
             lambda: self.find_connection(name), what=f"connection {name!r}"
         )
 
+    # -- sidebar -----------------------------------------------------------------
+    ACTIVITY_BAR_CONNECTIONS = "activity-bar-connections"
+
+    def ensure_connections_sidebar(self) -> None:
+        """Make sure the Connections sidebar (with its New buttons) is showing."""
+        if not self.driver.exists(self.NEW_CONNECTION):
+            self.driver.click(self.ACTIVITY_BAR_CONNECTIONS)
+        self.wait(  # type: ignore[attr-defined]
+            lambda: self.driver.exists(self.NEW_CONNECTION),
+            what="the connections sidebar",
+        )
+
     # -- editor ------------------------------------------------------------------
     def open_new_connection_editor(self) -> None:
         """Open the New Connection editor and wait for its name field."""
