@@ -69,6 +69,47 @@ export interface GetAttributeCommand {
 }
 
 /**
+ * Open the context menu of the element carrying the given `data-testid`.
+ *
+ * A left {@link ClickCommand} cannot reach right-click menus, so this dispatches a
+ * bubbling `contextmenu` mouse event at the element's center — the same gesture a
+ * real right-click produces. Radix's `ContextMenu` (and the native handler) opens
+ * the menu, whose items carry their own stable `data-testid`s to click next.
+ */
+export interface ContextMenuCommand {
+  action: "contextMenu";
+  testId: string;
+}
+
+/**
+ * Choose an `<option>` by value in the `<select>` carrying the given `data-testid`.
+ *
+ * Sets the value via the native setter, then fires `input` + `change` so React's
+ * controlled `<select>` observes the choice — the `<select>` analog of
+ * {@link TypeCommand}. Fails when the element is not a `<select>` or has no option
+ * with `value`.
+ */
+export interface SelectOptionCommand {
+  action: "selectOption";
+  testId: string;
+  value: string;
+}
+
+/**
+ * Dispatch a keyboard key press (`keydown` + `keyup`).
+ *
+ * Targets the element with `testId` when given, else the focused element — so a
+ * bare `pressKey("Escape")` dismisses an open menu/dialog via the document-level
+ * key handlers (e.g. Radix's dismiss layer). `key` is a DOM key value such as
+ * `"Escape"`, `"Enter"`, `"Tab"`, `"ArrowDown"`.
+ */
+export interface PressKeyCommand {
+  action: "pressKey";
+  key: string;
+  testId?: string;
+}
+
+/**
  * Read the reconstructed text of a terminal's scrollback + viewport.
  *
  * When `tabId` is omitted the active tab's terminal is used. `joinFullWidthRows`
@@ -98,6 +139,9 @@ export type BridgeCommand =
   | ExistsCommand
   | GetTextCommand
   | GetAttributeCommand
+  | ContextMenuCommand
+  | SelectOptionCommand
+  | PressKeyCommand
   | ReadTerminalCommand
   | GetStateCommand;
 
