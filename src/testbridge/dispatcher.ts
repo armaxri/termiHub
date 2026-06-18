@@ -115,6 +115,68 @@ export async function dispatchCommand(
       return ok("type");
     }
 
+    case "contextMenu": {
+      const el = findByTestId(deps.root, command.testId);
+      if (!el) return fail("contextMenu", `no element with data-testid="${command.testId}"`);
+      // Aim the event at the element's center so menu libraries that position at
+      // the pointer (Radix `ContextMenu`) anchor sensibly. `getBoundingClientRect`
+      // is absent in some jsdom paths, so fall back to the origin.
+      const rect = (el as HTMLElement).getBoundingClientRect?.();
+      const clientX = rect ? Math.round(rect.left + rect.width / 2) : 0;
+      const clientY = rect ? Math.round(rect.top + rect.height / 2) : 0;
+      el.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          button: 2,
+          clientX,
+          clientY,
+        })
+      );
+      return ok("contextMenu");
+    }
+
+    case "selectOption": {
+      const el = findByTestId(deps.root, command.testId);
+      if (!el) return fail("selectOption", `no element with data-testid="${command.testId}"`);
+      if (!(el instanceof HTMLSelectElement)) {
+        return fail("selectOption", `element data-testid="${command.testId}" is not a <select>`);
+      }
+      const hasOption = Array.from(el.options).some((opt) => opt.value === command.value);
+      if (!hasOption) {
+        return fail(
+          "selectOption",
+          `<select data-testid="${command.testId}"> has no option with value "${command.value}"`
+        );
+      }
+      // Drive React's controlled <select> via the native value setter, then fire
+      // input + change — the same approach as `type`, since React's onChange for a
+      // <select> listens on the change event.
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
+      setter?.call(el, command.value);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      return ok("selectOption");
+    }
+
+    case "pressKey": {
+      let target: EventTarget | null;
+      if (command.testId) {
+        target = findByTestId(deps.root, command.testId);
+        if (!target) return fail("pressKey", `no element with data-testid="${command.testId}"`);
+      } else {
+        // No explicit target: aim at the focused element so a bare Escape/Enter
+        // reaches document-level handlers (e.g. Radix's dismiss layer) by bubbling.
+        const doc = deps.root instanceof Document ? deps.root : (deps.root.ownerDocument ?? null);
+        target = doc?.activeElement ?? doc ?? null;
+      }
+      if (!target) return fail("pressKey", "no focused element to press a key on");
+      const init: KeyboardEventInit = { key: command.key, bubbles: true, cancelable: true };
+      target.dispatchEvent(new KeyboardEvent("keydown", init));
+      target.dispatchEvent(new KeyboardEvent("keyup", init));
+      return ok("pressKey");
+    }
+
     case "terminalInput": {
       const tabId = command.tabId ?? deps.getActiveTabId();
       if (!tabId) return fail("terminalInput", "no active terminal to write to");
