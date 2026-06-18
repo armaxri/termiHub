@@ -6,6 +6,18 @@ tests that run identically on Linux, Windows, and macOS (issue #802).
 """
 
 from .bridge import Bridge, BridgeError, Driver
+from .fixtures import (
+    SSH_KEY_PATH,
+    SSH_KEYS_PORT,
+    SSH_KEYS_SERVICE,
+    SSH_PASSWORD,
+    SSH_PASSWORD_PORT,
+    SSH_PASSWORD_SERVICE,
+    SSH_USERNAME,
+    DockerComposeFixture,
+    DockerUnavailable,
+    docker_available,
+)
 from .orchestrator import AgentInstance, AppInstance, agent_binary_path, app_binary_path
 from .systemtest import SystemTest
 
@@ -18,4 +30,14 @@ __all__ = [
     "app_binary_path",
     "agent_binary_path",
     "SystemTest",
+    "DockerComposeFixture",
+    "DockerUnavailable",
+    "docker_available",
+    "SSH_PASSWORD_SERVICE",
+    "SSH_PASSWORD_PORT",
+    "SSH_KEYS_SERVICE",
+    "SSH_KEYS_PORT",
+    "SSH_USERNAME",
+    "SSH_PASSWORD",
+    "SSH_KEY_PATH",
 ]
