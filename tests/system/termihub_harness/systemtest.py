@@ -27,11 +27,12 @@ Suites that do not need a real app (pure harness/protocol checks) should drive a
 from __future__ import annotations
 
 import time
-from typing import Callable, ClassVar, Optional, TypeVar
+from typing import Any, Callable, ClassVar, Optional, TypeVar
 
 import pytest
 
 from .bridge import Bridge, BridgeError, Driver
+from .fixtures import SSH_PASSWORD
 from .orchestrator import AppInstance
 
 T = TypeVar("T")
@@ -139,6 +140,144 @@ class SystemTest:
             lambda: (lambda t: t if needle in t else None)(self.driver.read_terminal()),
             timeout=timeout,
             what=f"{needle!r} in terminal output",
+        )
+
+    # ── Connection editor ──────────────────────────────────────────────────────
+    def open_new_connection_editor(self) -> None:
+        """Open a fresh connection editor and wait for its name field."""
+        self.driver.click("connection-list-new-connection")
+        self.wait(
+            lambda: self.driver.exists("connection-editor-name-input"),
+            what="the connection editor",
+        )
+
+    def create_ssh_connection(
+        self,
+        name: str,
+        *,
+        host: str,
+        port: int,
+        username: str,
+        auth_method: str = "password",
+        key_path: Optional[str] = None,
+        connect: bool = False,
+    ) -> None:
+        """Fill the editor for an SSH connection and save (or Save & Connect).
+
+        ``connect=True`` clicks **Save & Connect**, which saves then immediately
+        opens the session — raising the password prompt for password auth — so a
+        test never needs a sidebar double-click. ``auth_method`` selects the
+        native ``field-authMethod`` dropdown; pass ``key_path`` for key auth.
+        """
+        self.open_new_connection_editor()
+        self.driver.type("connection-editor-name-input", name)
+        self.driver.select("connection-editor-type-select", "ssh")
+        self.wait(
+            lambda: self.driver.exists("field-host"), what="the SSH connection fields"
+        )
+        self.driver.type("field-host", str(host))
+        self.driver.type("field-port", str(port))
+        self.driver.type("field-username", username)
+        if auth_method:
+            self.driver.select("field-authMethod", auth_method)
+        if key_path is not None:
+            self.wait(
+                lambda: self.driver.exists("field-keyPath"),
+                what="the SSH key-path field",
+            )
+            self.driver.type("field-keyPath", str(key_path))
+        self.driver.click(
+            "connection-editor-save-connect" if connect else "connection-editor-save"
+        )
+
+    # ── Password prompt ────────────────────────────────────────────────────────
+    def password_prompt_open(self) -> bool:
+        """Whether the SSH password prompt modal is currently open."""
+        try:
+            return bool(self.driver.get_state("passwordPromptOpen"))
+        except BridgeError:
+            return False
+
+    def handle_password_prompt(self, password: str = SSH_PASSWORD) -> None:
+        """Wait for the password prompt, enter ``password``, and click Connect."""
+        self.wait(
+            lambda: self.driver.exists("password-prompt-input"),
+            what="the SSH password prompt",
+        )
+        self.driver.type("password-prompt-input", password)
+        self.driver.click("password-prompt-connect")
+
+    def cancel_password_prompt(self) -> None:
+        """Dismiss the password prompt without connecting."""
+        self.driver.click("password-prompt-cancel")
+
+    # ── Tabs ───────────────────────────────────────────────────────────────────
+    def _all_tabs(self) -> list[dict[str, Any]]:
+        """Every open tab in the active tab group (walks the panel tree)."""
+        tabs: list[dict[str, Any]] = []
+
+        def walk(node: Any) -> None:
+            if not isinstance(node, dict):
+                return
+            if node.get("type") == "leaf":
+                tabs.extend(node.get("tabs") or [])
+            else:
+                for child in node.get("children") or []:
+                    walk(child)
+
+        walk(self.driver.get_state("rootPanel"))
+        return tabs
+
+    def tab_count(self) -> int:
+        """Number of open tabs across the active tab group's panels."""
+        return len(self._all_tabs())
+
+    def find_tab(self, title_substr: str) -> Optional[dict[str, Any]]:
+        """Return the first tab whose title contains ``title_substr``, or None."""
+        for tab in self._all_tabs():
+            if title_substr in (tab.get("title") or ""):
+                return tab
+        return None
+
+    def active_tab(self) -> Optional[dict[str, Any]]:
+        """The focused tab in the active leaf panel, or None."""
+        active_panel_id = self.driver.get_state("activePanelId")
+
+        def find_leaf(node: Any) -> Optional[dict[str, Any]]:
+            if not isinstance(node, dict):
+                return None
+            if node.get("type") == "leaf":
+                return node if node.get("id") == active_panel_id else None
+            for child in node.get("children") or []:
+                found = find_leaf(child)
+                if found is not None:
+                    return found
+            return None
+
+        leaf = find_leaf(self.driver.get_state("rootPanel"))
+        if leaf is None:
+            return None
+        active_tab_id = leaf.get("activeTabId")
+        for tab in leaf.get("tabs") or []:
+            if tab.get("id") == active_tab_id:
+                return tab
+        return None
+
+    def switch_to_tab(self, tab_id: str) -> None:
+        """Click the tab with the given id to make it active."""
+        self.driver.click(f"tab-{tab_id}")
+
+    # ── Monitoring ─────────────────────────────────────────────────────────────
+    def monitoring_visible(self) -> bool:
+        """Whether any monitoring status-bar element is present (any state)."""
+        return any(
+            self.driver.exists(test_id)
+            for test_id in (
+                "monitoring-connect-btn",
+                "monitoring-loading",
+                "monitoring-host",
+                "monitoring-cpu",
+            )
         )
 
     # ── Watch-along ──────────────────────────────────────────────────────────
