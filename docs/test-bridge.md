@@ -133,16 +133,17 @@ unmount.
 
 ## Command vocabulary
 
-| Action          | Purpose                                                     |
-| --------------- | ----------------------------------------------------------- |
-| `click`         | Press the element with the given `data-testid`              |
-| `type`          | Set an input/textarea value (native setter + `input` event) |
-| `terminalInput` | Send a command into a terminal **session** (see below)      |
-| `exists`        | Whether an element is present                               |
-| `getText`       | Read an element's visible text                              |
-| `getAttribute`  | Read an element's attribute                                 |
-| `readTerminal`  | Read a terminal's reconstructed logical-line text           |
-| `getState`      | Read app store state, optionally by dot-path                |
+| Action          | Purpose                                                      |
+| --------------- | ------------------------------------------------------------ |
+| `click`         | Press the element with the given `data-testid`               |
+| `type`          | Set an input/textarea value (native setter + `input` event)  |
+| `select`        | Choose a native `<select>` option (native setter + `change`) |
+| `terminalInput` | Send a command into a terminal **session** (see below)       |
+| `exists`        | Whether an element is present                                |
+| `getText`       | Read an element's visible text                               |
+| `getAttribute`  | Read an element's attribute                                  |
+| `readTerminal`  | Read a terminal's reconstructed logical-line text            |
+| `getState`      | Read app store state, optionally by dot-path                 |
 
 Every command returns a structured `BridgeResponse` (`{ ok, action, value?,
 error? }`). Nothing throws across the bridge — failures are `ok: false` with an

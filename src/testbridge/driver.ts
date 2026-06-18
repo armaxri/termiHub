@@ -54,6 +54,8 @@ export interface Driver {
   click(testId: string): Promise<void>;
   /** Set the value of the input/textarea carrying the given `data-testid`. */
   type(testId: string, text: string): Promise<void>;
+  /** Choose `value` on the native `<select>` carrying the given `data-testid`. */
+  select(testId: string, value: string): Promise<void>;
   /**
    * Send input into a terminal session (active tab unless `tabId` is given). A
    * trailing newline is appended, so `terminalInput("ls")` runs `ls`.
@@ -112,6 +114,10 @@ export class InAppBridgeDriver implements Driver {
 
   async type(testId: string, text: string): Promise<void> {
     await this.send({ action: "type", testId, text });
+  }
+
+  async select(testId: string, value: string): Promise<void> {
+    await this.send({ action: "select", testId, value });
   }
 
   async terminalInput(text: string, options: TerminalInputOptions = {}): Promise<void> {

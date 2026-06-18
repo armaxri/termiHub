@@ -115,6 +115,28 @@ export async function dispatchCommand(
       return ok("type");
     }
 
+    case "select": {
+      const el = findByTestId(deps.root, command.testId);
+      if (!el) return fail("select", `no element with data-testid="${command.testId}"`);
+      if (!(el instanceof HTMLSelectElement)) {
+        return fail("select", `element data-testid="${command.testId}" is not a select`);
+      }
+      const options = Array.from(el.options).map((option) => option.value);
+      if (!options.includes(command.value)) {
+        return fail(
+          "select",
+          `option "${command.value}" not found in data-testid="${command.testId}" ` +
+            `(have: ${options.join(", ")})`
+        );
+      }
+      // Mirror the `type` workaround: drive the native value setter, then fire a
+      // `change` event so React's controlled <select> onChange observes it.
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
+      setter?.call(el, command.value);
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      return ok("select");
+    }
+
     case "terminalInput": {
       const tabId = command.tabId ?? deps.getActiveTabId();
       if (!tabId) return fail("terminalInput", "no active terminal to write to");

@@ -34,6 +34,20 @@ export interface TypeCommand {
 }
 
 /**
+ * Choose an option of a `<select>` carrying the given `data-testid`.
+ *
+ * A counterpart to {@link TypeCommand} for native dropdowns (connection type,
+ * SSH auth method, …): sets `value` via the native setter and dispatches a
+ * `change` event so React's controlled `<select>` observes it. Fails if the
+ * element is not a `<select>` or `value` is not one of its options.
+ */
+export interface SelectCommand {
+  action: "select";
+  testId: string;
+  value: string;
+}
+
+/**
  * Send input into a running terminal **session** (not a form field).
  *
  * An xterm terminal renders to a canvas, so {@link TypeCommand} cannot drive it.
@@ -94,6 +108,7 @@ export interface GetStateCommand {
 export type BridgeCommand =
   | ClickCommand
   | TypeCommand
+  | SelectCommand
   | TerminalInputCommand
   | ExistsCommand
   | GetTextCommand

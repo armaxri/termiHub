@@ -13,6 +13,8 @@
 export type ScenarioStep =
   | { action: "click"; testId: string }
   | { action: "type"; testId: string; text: string }
+  /** Choose a native `<select>` option by value. */
+  | { action: "select"; testId: string; value: string }
   /** Send a command into a terminal session (active tab unless `tabId` is set). */
   | { action: "terminalInput"; text: string; tabId?: string }
   /** Poll until an element with `testId` exists, or fail after `timeoutMs`. */
