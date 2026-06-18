@@ -50,6 +50,12 @@ class FakeDriver implements Driver {
     return null;
   }
 
+  async contextMenu(_testId: string): Promise<void> {}
+
+  async selectOption(_testId: string, _value: string): Promise<void> {}
+
+  async pressKey(_key: string, _testId?: string): Promise<void> {}
+
   async readTerminal(_options?: ReadTerminalOptions): Promise<string> {
     this.readTerminalCalls++;
     if (!this.hasTerminal) throw new BridgeError("readTerminal", "no active terminal");
