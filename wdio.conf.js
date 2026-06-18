@@ -45,7 +45,8 @@ export const config = {
   suites: {
     ui: [
       "./tests/e2e/connection-forms.test.js",
-      "./tests/e2e/connection-crud.test.js",
+      // connection-crud.test.js was ported to the Python bridge harness
+      // (tests/system/tests/test_connection_crud.py) and removed — see #807.
       "./tests/e2e/connection-editor-extended.test.js",
       "./tests/e2e/tab-management.test.js",
       "./tests/e2e/tab-horizontal-scroll.test.js",
