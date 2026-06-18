@@ -66,7 +66,7 @@ class DockerComposeFixture:
 
     Does **not** tear containers down — they are shared fixtures that survive
     across suites and runs (matching ``scripts/test-system.sh`` semantics, where
-    the infra is brought up once). Explicit cleanup is opt-in via :meth:`down`.
+    the infra is brought up once and torn down by the run script, not the tests).
     """
 
     def __init__(self, compose_file: Path = COMPOSE_FILE) -> None:
@@ -102,12 +102,3 @@ class DockerComposeFixture:
             raise DockerUnavailable(
                 f"`docker compose up` timed out after {timeout}s for {list(services)}"
             ) from exc
-
-    def down(self, *services: str) -> None:
-        """Stop the given services (best-effort cleanup; never raises)."""
-        if not docker_available():
-            return
-        subprocess.run(
-            ["docker", "compose", "-f", str(self._compose_file), "stop", *services],
-            check=False,
-        )

@@ -143,7 +143,7 @@ class SystemTest:
         )
 
     # ── Connection editor ──────────────────────────────────────────────────────
-    def _select(self, test_id: str, value: str) -> bool:
+    def _try_select(self, test_id: str, value: str) -> bool:
         """``driver.select`` that returns True, for use as a :meth:`wait` predicate.
 
         A native ``<select>`` whose options load asynchronously raises a
@@ -185,7 +185,7 @@ class SystemTest:
         # store, so they can lag the editor render — retry the select until the
         # "ssh" option exists (self.wait swallows the BridgeError and retries).
         self.wait(
-            lambda: self._select("connection-editor-type-select", "ssh"),
+            lambda: self._try_select("connection-editor-type-select", "ssh"),
             what="the connection-type options to load",
         )
         self.wait(
@@ -209,10 +209,7 @@ class SystemTest:
     # ── Password prompt ────────────────────────────────────────────────────────
     def password_prompt_open(self) -> bool:
         """Whether the SSH password prompt modal is currently open."""
-        try:
-            return bool(self.driver.get_state("passwordPromptOpen"))
-        except BridgeError:
-            return False
+        return bool(self.driver.get_state("passwordPromptOpen"))
 
     def handle_password_prompt(self, password: str = SSH_PASSWORD) -> None:
         """Wait for the password prompt, enter ``password``, and click Connect."""
