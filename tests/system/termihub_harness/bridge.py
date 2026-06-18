@@ -127,6 +127,18 @@ class Driver:
     def type(self, test_id: str, text: str) -> None:
         self._call({"action": "type", "testId": test_id, "text": text})
 
+    def context_menu(self, test_id: str) -> None:
+        """Open the right-click context menu of the element with ``test_id``."""
+        self._call({"action": "contextMenu", "testId": test_id})
+
+    def select_option(self, test_id: str, value: str) -> None:
+        """Choose an ``<option>`` by value in the ``<select>`` with ``test_id``."""
+        self._call({"action": "selectOption", "testId": test_id, "value": value})
+
+    def press_key(self, key: str, test_id: Optional[str] = None) -> None:
+        """Press ``key`` on ``test_id`` (or the focused element), e.g. ``"Escape"``."""
+        self._call({"action": "pressKey", "key": key, "testId": test_id})
+
     def terminal_input(self, text: str, tab_id: Optional[str] = None) -> None:
         self._call({"action": "terminalInput", "text": text, "tabId": tab_id})
 

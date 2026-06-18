@@ -8,6 +8,18 @@ tests that run identically on Linux, Windows, and macOS (issue #802).
 from .bridge import Bridge, BridgeError, Driver
 from .orchestrator import AgentInstance, AppInstance, agent_binary_path, app_binary_path
 from .systemtest import SystemTest
+from .ui import (
+    ConnectionsUi,
+    connection_item_testid,
+    connections,
+    find_connection,
+    find_folder,
+    find_tab,
+    folder_toggle_testid,
+    folders,
+    open_tabs,
+    tab_count,
+)
 
 __all__ = [
     "Bridge",
@@ -18,4 +30,14 @@ __all__ = [
     "app_binary_path",
     "agent_binary_path",
     "SystemTest",
+    "ConnectionsUi",
+    "connections",
+    "find_connection",
+    "folders",
+    "find_folder",
+    "open_tabs",
+    "tab_count",
+    "find_tab",
+    "connection_item_testid",
+    "folder_toggle_testid",
 ]
