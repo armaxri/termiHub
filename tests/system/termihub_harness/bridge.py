@@ -127,6 +127,15 @@ class Driver:
     def type(self, test_id: str, text: str) -> None:
         self._call({"action": "type", "testId": test_id, "text": text})
 
+    def drag(self, test_id: str, dx: float, dy: float = 0.0) -> None:
+        """Drag an element by a pixel delta (e.g. a resize handle).
+
+        Dispatches a synthetic ``mousedown`` → ``mousemove`` → ``mouseup`` offset
+        by ``(dx, dy)`` from the element's center — the sequence drag handlers
+        listen for. Only the delta matters, so absolute coordinates are not needed.
+        """
+        self._call({"action": "drag", "testId": test_id, "dx": dx, "dy": dy})
+
     def terminal_input(self, text: str, tab_id: Optional[str] = None) -> None:
         self._call({"action": "terminalInput", "text": text, "tabId": tab_id})
 
@@ -140,6 +149,18 @@ class Driver:
     def get_attribute(self, test_id: str, attribute: str) -> Optional[str]:
         return self._call(
             {"action": "getAttribute", "testId": test_id, "attribute": attribute}
+        )
+
+    def get_computed_style(self, property: str, test_id: Optional[str] = None) -> str:
+        """Read a *computed* CSS property (including custom properties).
+
+        Pass ``test_id`` to read an element; omit it to read the document root,
+        where theme CSS variables like ``--bg-primary`` are defined. Unlike
+        :meth:`get_attribute`, this resolves the effective value from stylesheets
+        (e.g. ``cursor: col-resize`` or a theme color).
+        """
+        return self._call(
+            {"action": "getComputedStyle", "testId": test_id, "property": property}
         )
 
     def read_terminal(

@@ -73,16 +73,37 @@ class FakeApp:
             await ws.send(json.dumps({"id": envelope["id"], "response": response}))
 
 
-def dispatcher_like(terminal_text: str = "", state: dict | None = None) -> Handler:
-    """A handler that mimics the real dispatcher for the common command set."""
+def dispatcher_like(
+    terminal_text: str = "",
+    state: dict | None = None,
+    computed_styles: dict | None = None,
+) -> Handler:
+    """A handler that mimics the real dispatcher for the common command set.
+
+    ``computed_styles`` is keyed by ``(testId or "")`` → ``{property: value}`` so
+    ``getComputedStyle`` (with or without a ``testId``) can be answered.
+    """
     state = state or {}
-    recorded: dict[str, list] = {"clicks": [], "input": []}
+    computed_styles = computed_styles or {}
+    recorded: dict[str, list] = {"clicks": [], "input": [], "drags": []}
 
     def handle(command: dict[str, Any]) -> dict[str, Any]:
         action = command.get("action")
         if action == "click":
             recorded["clicks"].append(command["testId"])
             return {"ok": True, "action": "click"}
+        if action == "drag":
+            recorded["drags"].append(
+                {"testId": command["testId"], "dx": command["dx"], "dy": command.get("dy")}
+            )
+            return {"ok": True, "action": "drag"}
+        if action == "getComputedStyle":
+            styles = computed_styles.get(command.get("testId") or "", {})
+            return {
+                "ok": True,
+                "action": "getComputedStyle",
+                "value": styles.get(command["property"], ""),
+            }
         if action == "terminalInput":
             recorded["input"].append(command["text"])
             return {"ok": True, "action": "terminalInput"}

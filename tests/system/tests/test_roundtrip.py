@@ -26,6 +26,26 @@ def test_driver_drives_a_fake_app(bridge):
         assert handler.recorded["input"] == ["echo hi"]
 
 
+def test_drag_and_computed_style_round_trip(bridge):
+    handler = dispatcher_like(
+        computed_styles={
+            "sidebar-resize-handle": {"cursor": "col-resize"},
+            "": {"--bg-primary": "#1e1e1e"},
+        }
+    )
+    with FakeApp(bridge.port, handler):
+        driver = bridge.wait_for_app(timeout=5)
+
+        driver.drag("sidebar-resize-handle", 100, 5)
+        assert handler.recorded["drags"] == [
+            {"testId": "sidebar-resize-handle", "dx": 100, "dy": 5}
+        ]
+
+        assert driver.get_computed_style("cursor", "sidebar-resize-handle") == "col-resize"
+        # Omitting the test id reads the document root (theme CSS variables).
+        assert driver.get_computed_style("--bg-primary") == "#1e1e1e"
+
+
 def test_ok_false_raises_bridge_error(bridge):
     with FakeApp(bridge.port, dispatcher_like(state={})):
         driver = bridge.wait_for_app(timeout=5)
