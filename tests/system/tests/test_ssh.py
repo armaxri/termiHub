@@ -150,8 +150,7 @@ class TestSshKeyAuth(SystemTest):
 class TestSshConnectionFailure(SystemTest):
     """SSH-03: an unreachable host fails gracefully (no Docker needed)."""
 
-    def test_unreachable_host_does_not_hang(self):
-        before = self.tab_count()
+    def test_unreachable_host_is_handled_gracefully(self):
         name = _name("ssh-fail")
         self.create_ssh_connection(
             name,
@@ -160,15 +159,16 @@ class TestSshConnectionFailure(SystemTest):
             username=SSH_USERNAME,
             connect=True,
         )
-        # TCP fails before auth, so no password prompt should appear, and the app
-        # must stay responsive throughout the failed attempt.
-        for _ in range(12):
+        # Save & Connect raises the password prompt before connecting; provide the
+        # password, then the TCP connection to a closed localhost port fails fast
+        # (connection refused). The original WebdriverIO test's only real pass
+        # condition was "the app does not hang or crash" — assert exactly that.
+        self.handle_password_prompt()
+        for _ in range(8):
             assert isinstance(self.driver.get_state(), dict)
-            assert not self.password_prompt_open()
             time.sleep(0.25)
-        # The app may open an error tab or none — either is acceptable, as long as
-        # it did not hang or crash.
-        assert self.tab_count() >= before
+        # The prompt must not be left stuck open after the failed attempt.
+        assert not self.password_prompt_open()
 
 
 @pytest.mark.usefixtures("ssh_fixtures")

@@ -143,6 +143,16 @@ class SystemTest:
         )
 
     # ── Connection editor ──────────────────────────────────────────────────────
+    def _select(self, test_id: str, value: str) -> bool:
+        """``driver.select`` that returns True, for use as a :meth:`wait` predicate.
+
+        A native ``<select>`` whose options load asynchronously raises a
+        ``BridgeError`` ("option … not found") until the option exists; wrapping
+        the call lets :meth:`wait` retry until it succeeds.
+        """
+        self.driver.select(test_id, value)
+        return True
+
     def open_new_connection_editor(self) -> None:
         """Open a fresh connection editor and wait for its name field."""
         self.driver.click("connection-list-new-connection")
@@ -171,7 +181,13 @@ class SystemTest:
         """
         self.open_new_connection_editor()
         self.driver.type("connection-editor-name-input", name)
-        self.driver.select("connection-editor-type-select", "ssh")
+        # The type <select>'s options come from the async-loaded `connectionTypes`
+        # store, so they can lag the editor render — retry the select until the
+        # "ssh" option exists (self.wait swallows the BridgeError and retries).
+        self.wait(
+            lambda: self._select("connection-editor-type-select", "ssh"),
+            what="the connection-type options to load",
+        )
         self.wait(
             lambda: self.driver.exists("field-host"), what="the SSH connection fields"
         )
