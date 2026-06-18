@@ -113,6 +113,49 @@ describe("dispatchCommand", () => {
     });
   });
 
+  describe("select", () => {
+    const OPTIONS = `
+      <select data-testid="type">
+        <option value="local">Local</option>
+        <option value="ssh">SSH</option>
+      </select>`;
+
+    it("sets the value via the native setter and fires a change event", async () => {
+      const { deps, container } = setup(OPTIONS);
+      const select = container.querySelector("select")!;
+      const observed: string[] = [];
+      select.addEventListener("change", () => observed.push(select.value));
+
+      const res = await dispatchCommand({ action: "select", testId: "type", value: "ssh" }, deps);
+      expect(res).toEqual({ ok: true, action: "select" });
+      expect(select.value).toBe("ssh");
+      expect(observed).toEqual(["ssh"]);
+    });
+
+    it("fails on a non-select element", async () => {
+      const { deps } = setup(`<input data-testid="type" />`);
+      const res = await dispatchCommand({ action: "select", testId: "type", value: "ssh" }, deps);
+      expect(res.ok).toBe(false);
+      expect(res.error).toMatch(/select/i);
+    });
+
+    it("fails when the value is not one of the options", async () => {
+      const { deps } = setup(OPTIONS);
+      const res = await dispatchCommand(
+        { action: "select", testId: "type", value: "telnet" },
+        deps
+      );
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain("telnet");
+    });
+
+    it("fails when the target is absent", async () => {
+      const { deps } = setup(`<div></div>`);
+      const res = await dispatchCommand({ action: "select", testId: "type", value: "ssh" }, deps);
+      expect(res.ok).toBe(false);
+    });
+  });
+
   describe("terminalInput", () => {
     it("sends text plus a trailing newline to the active terminal session", async () => {
       const send = vi.fn(async () => true);
