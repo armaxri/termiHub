@@ -69,6 +69,43 @@ export interface GetAttributeCommand {
 }
 
 /**
+ * Read a *computed* CSS property of an element — including custom properties.
+ *
+ * `getAttribute` only sees inline/markup attributes, so it cannot observe the
+ * effective `cursor`, a theme color, or a CSS variable resolved from a
+ * stylesheet. This command runs `getComputedStyle(el).getPropertyValue(property)`
+ * and returns the trimmed value. When `testId` is omitted the document root
+ * (`:root` / `documentElement`) is read — the place theme custom properties like
+ * `--bg-primary` are defined.
+ */
+export interface GetComputedStyleCommand {
+  action: "getComputedStyle";
+  /** Element to read; omit to read the document root (theme CSS variables). */
+  testId?: string;
+  /** CSS property name, e.g. `"cursor"` or a custom property `"--bg-primary"`. */
+  property: string;
+}
+
+/**
+ * Drag an element by a pixel delta via synthetic mouse events.
+ *
+ * `click` cannot drive drag-to-resize handles or pointer-based reordering. This
+ * command dispatches a `mousedown` on the element followed by `mousemove` and
+ * `mouseup` on the document, offset by `(dx, dy)` from the element's center —
+ * the exact sequence handlers like `useSidebarResize` listen for (they read
+ * `event.clientX`). Only the delta matters, so the caller need not know absolute
+ * coordinates.
+ */
+export interface DragCommand {
+  action: "drag";
+  testId: string;
+  /** Horizontal drag distance in pixels (positive = right). */
+  dx: number;
+  /** Vertical drag distance in pixels (positive = down); defaults to 0. */
+  dy?: number;
+}
+
+/**
  * Read the reconstructed text of a terminal's scrollback + viewport.
  *
  * When `tabId` is omitted the active tab's terminal is used. `joinFullWidthRows`
@@ -98,6 +135,8 @@ export type BridgeCommand =
   | ExistsCommand
   | GetTextCommand
   | GetAttributeCommand
+  | GetComputedStyleCommand
+  | DragCommand
   | ReadTerminalCommand
   | GetStateCommand;
 

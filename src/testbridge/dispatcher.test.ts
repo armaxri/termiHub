@@ -75,6 +75,42 @@ describe("dispatchCommand", () => {
     });
   });
 
+  describe("getComputedStyle", () => {
+    it("reads a computed property of an element by testId", async () => {
+      const { deps, container } = setup(`<div data-testid="handle"></div>`);
+      (container.querySelector("div") as HTMLElement).style.cursor = "col-resize";
+      const res = await dispatchCommand(
+        { action: "getComputedStyle", testId: "handle", property: "cursor" },
+        deps
+      );
+      expect(res).toEqual({ ok: true, action: "getComputedStyle", value: "col-resize" });
+    });
+
+    it("reads a custom property from the document root when testId is omitted", async () => {
+      const { deps } = setup(`<div></div>`);
+      document.documentElement.style.setProperty("--bg-primary", "#123456");
+      try {
+        const res = await dispatchCommand(
+          { action: "getComputedStyle", property: "--bg-primary" },
+          deps
+        );
+        expect(res).toEqual({ ok: true, action: "getComputedStyle", value: "#123456" });
+      } finally {
+        document.documentElement.style.removeProperty("--bg-primary");
+      }
+    });
+
+    it("fails when the element is absent", async () => {
+      const { deps } = setup(`<div></div>`);
+      const res = await dispatchCommand(
+        { action: "getComputedStyle", testId: "ghost", property: "cursor" },
+        deps
+      );
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain("ghost");
+    });
+  });
+
   describe("click", () => {
     it("dispatches a bubbling click the element's handler observes", async () => {
       const { deps, container } = setup(`<button data-testid="go">Go</button>`);
@@ -90,6 +126,37 @@ describe("dispatchCommand", () => {
       const { deps } = setup(`<div></div>`);
       const res = await dispatchCommand({ action: "click", testId: "go" }, deps);
       expect(res.ok).toBe(false);
+    });
+  });
+
+  describe("drag", () => {
+    it("fires mousedown on the handle then mousemove/mouseup with the delta applied", async () => {
+      const { deps, container } = setup(`<div data-testid="handle"></div>`);
+      const handle = container.querySelector("div") as HTMLElement;
+      const events: Array<{ type: string; clientX: number }> = [];
+      handle.addEventListener("mousedown", (e) =>
+        events.push({ type: "down", clientX: (e as MouseEvent).clientX })
+      );
+      document.addEventListener("mousemove", (e) =>
+        events.push({ type: "move", clientX: (e as MouseEvent).clientX })
+      );
+      document.addEventListener("mouseup", (e) =>
+        events.push({ type: "up", clientX: (e as MouseEvent).clientX })
+      );
+
+      const res = await dispatchCommand({ action: "drag", testId: "handle", dx: 100 }, deps);
+      expect(res).toEqual({ ok: true, action: "drag" });
+      expect(events.map((e) => e.type)).toEqual(["down", "move", "up"]);
+      // jsdom rects are zero-sized, so the start is 0 and the move carries dx.
+      expect(events[1].clientX - events[0].clientX).toBe(100);
+      expect(events[2].clientX - events[0].clientX).toBe(100);
+    });
+
+    it("fails when the handle is absent", async () => {
+      const { deps } = setup(`<div></div>`);
+      const res = await dispatchCommand({ action: "drag", testId: "handle", dx: 10 }, deps);
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain("handle");
     });
   });
 

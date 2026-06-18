@@ -1,6 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
 import { runScenario, type RunOptions } from "./runner";
-import type { Driver, ReadTerminalOptions, TerminalInputOptions } from "./driver";
+import type {
+  Driver,
+  GetComputedStyleOptions,
+  ReadTerminalOptions,
+  TerminalInputOptions,
+} from "./driver";
 import { BridgeError } from "./driver";
 import type { Scenario } from "./scenario";
 
@@ -12,8 +17,11 @@ import type { Scenario } from "./scenario";
 class FakeDriver implements Driver {
   clicks: string[] = [];
   typed: Array<{ testId: string; text: string }> = [];
+  drags: Array<{ testId: string; dx: number; dy?: number }> = [];
   terminalInputs: Array<{ text: string; tabId?: string }> = [];
   elements = new Map<string, { text?: string }>();
+  /** Keyed by `testId ?? ""`, then property name → computed value. */
+  computedStyles = new Map<string, Record<string, string>>();
   terminalText = "";
   hasTerminal = true;
   readTerminalCalls = 0;
@@ -48,6 +56,15 @@ class FakeDriver implements Driver {
 
   async getAttribute(): Promise<string | null> {
     return null;
+  }
+
+  async drag(testId: string, dx: number, dy?: number): Promise<void> {
+    if (!this.elements.has(testId)) throw new BridgeError("drag", `no element "${testId}"`);
+    this.drags.push({ testId, dx, dy });
+  }
+
+  async getComputedStyle(property: string, options: GetComputedStyleOptions = {}): Promise<string> {
+    return this.computedStyles.get(options.testId ?? "")?.[property] ?? "";
   }
 
   async readTerminal(_options?: ReadTerminalOptions): Promise<string> {
@@ -118,6 +135,46 @@ describe("runScenario", () => {
 
     expect(result.passed).toBe(true);
     expect(driver.terminalInputs).toEqual([{ text: "whoami", tabId: "tab-1" }]);
+  });
+
+  it("runs a drag step and checks a computed style", async () => {
+    const driver = new FakeDriver();
+    driver.elements.set("sidebar-resize-handle", {});
+    driver.computedStyles.set("sidebar-resize-handle", { cursor: "col-resize" });
+
+    const scenario: Scenario = {
+      name: "resize the sidebar",
+      requirement: "the resize handle shows a col-resize cursor and accepts a drag",
+      steps: [{ action: "drag", testId: "sidebar-resize-handle", dx: 100 }],
+      checks: [
+        {
+          assert: "computedStyleEquals",
+          testId: "sidebar-resize-handle",
+          property: "cursor",
+          value: "col-resize",
+        },
+      ],
+    };
+
+    const result = await runScenario(scenario, driver, instant());
+
+    expect(result.passed).toBe(true);
+    expect(driver.drags).toEqual([{ testId: "sidebar-resize-handle", dx: 100, dy: undefined }]);
+    expect(result.checks[0].passed).toBe(true);
+  });
+
+  it("reads a root-level computed style (theme variable) when testId is omitted", async () => {
+    const driver = new FakeDriver();
+    driver.computedStyles.set("", { "--bg-primary": "#1e1e1e" });
+
+    const scenario: Scenario = {
+      name: "theme variable",
+      steps: [],
+      checks: [{ assert: "computedStyleEquals", property: "--bg-primary", value: "#1e1e1e" }],
+    };
+
+    const result = await runScenario(scenario, driver, instant());
+    expect(result.passed).toBe(true);
   });
 
   it("reports a failing check with expected and actual, and captures a snapshot", async () => {

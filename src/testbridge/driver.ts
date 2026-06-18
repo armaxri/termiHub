@@ -40,6 +40,12 @@ export interface ReadTerminalOptions {
   joinFullWidthRows?: boolean;
 }
 
+/** Options for {@link Driver.getComputedStyle}. */
+export interface GetComputedStyleOptions {
+  /** Read this element instead of the document root (theme CSS variables). */
+  testId?: string;
+}
+
 /**
  * The abstraction test authors and coding agents program against.
  *
@@ -65,6 +71,14 @@ export interface Driver {
   getText(testId: string): Promise<string>;
   /** Read an attribute of the element with the given `data-testid`. */
   getAttribute(testId: string, attribute: string): Promise<string | null>;
+  /**
+   * Read a computed CSS property (including custom properties). Pass `testId` to
+   * read an element; omit it to read the document root, where theme CSS variables
+   * like `--bg-primary` live.
+   */
+  getComputedStyle(property: string, options?: GetComputedStyleOptions): Promise<string>;
+  /** Drag an element by a pixel delta (e.g. a resize handle). */
+  drag(testId: string, dx: number, dy?: number): Promise<void>;
   /** Read the reconstructed text of a terminal (active tab unless specified). */
   readTerminal(options?: ReadTerminalOptions): Promise<string>;
   /** Read a slice of app state, optionally by dot-path. */
@@ -128,6 +142,14 @@ export class InAppBridgeDriver implements Driver {
 
   async getAttribute(testId: string, attribute: string): Promise<string | null> {
     return this.send<string | null>({ action: "getAttribute", testId, attribute });
+  }
+
+  async getComputedStyle(property: string, options: GetComputedStyleOptions = {}): Promise<string> {
+    return this.send<string>({ action: "getComputedStyle", testId: options.testId, property });
+  }
+
+  async drag(testId: string, dx: number, dy?: number): Promise<void> {
+    await this.send({ action: "drag", testId, dx, dy });
   }
 
   async readTerminal(options: ReadTerminalOptions = {}): Promise<string> {

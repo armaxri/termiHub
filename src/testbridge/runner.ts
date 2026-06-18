@@ -112,6 +112,9 @@ async function runStep(
     case "type":
       await driver.type(step.testId, step.text);
       return;
+    case "drag":
+      await driver.drag(step.testId, step.dx, step.dy);
+      return;
     case "terminalInput":
       await driver.terminalInput(step.text, { tabId: step.tabId });
       return;
@@ -156,6 +159,10 @@ async function runCheck(
         const expected = check.present ?? true;
         const actual = await driver.exists(check.testId);
         return { check, passed: actual === expected, expected, actual };
+      }
+      case "computedStyleEquals": {
+        const actual = await driver.getComputedStyle(check.property, { testId: check.testId });
+        return { check, passed: actual === check.value, expected: check.value, actual };
       }
       case "stateEquals": {
         const actual = await driver.getState(check.path);

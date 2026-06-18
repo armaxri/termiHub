@@ -38,6 +38,18 @@ function findByTestId(root: ParentNode, testId: string): Element | null {
   return root.querySelector(`[data-testid="${escaped}"]`);
 }
 
+/** The owning document of a bridge root (which may itself be a `Document`). */
+function ownerDocument(root: ParentNode): Document {
+  return root instanceof Document ? root : ((root as Element).ownerDocument ?? document);
+}
+
+/** Dispatch a bubbling, cancelable mouse event carrying viewport coordinates. */
+function dispatchMouse(target: EventTarget, type: string, clientX: number, clientY: number): void {
+  target.dispatchEvent(
+    new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX, clientY })
+  );
+}
+
 /** Walk a dot-path into a plain object, returning a sentinel when unresolvable. */
 const MISSING = Symbol("missing");
 function resolvePath(state: Record<string, unknown>, path: string): unknown {
@@ -89,11 +101,44 @@ export async function dispatchCommand(
       return ok("getAttribute", el.getAttribute(command.attribute));
     }
 
+    case "getComputedStyle": {
+      const doc = ownerDocument(deps.root);
+      let el: Element | null;
+      if (command.testId == null) {
+        el = doc.documentElement;
+      } else {
+        el = findByTestId(deps.root, command.testId);
+        if (!el) {
+          return fail("getComputedStyle", `no element with data-testid="${command.testId}"`);
+        }
+      }
+      const view = doc.defaultView ?? window;
+      const value = view.getComputedStyle(el).getPropertyValue(command.property).trim();
+      return ok("getComputedStyle", value);
+    }
+
     case "click": {
       const el = findByTestId(deps.root, command.testId);
       if (!el) return fail("click", `no element with data-testid="${command.testId}"`);
       (el as HTMLElement).click();
       return ok("click");
+    }
+
+    case "drag": {
+      const el = findByTestId(deps.root, command.testId);
+      if (!el) return fail("drag", `no element with data-testid="${command.testId}"`);
+      const rect = (el as HTMLElement).getBoundingClientRect();
+      const startX = rect.left + rect.width / 2;
+      const startY = rect.top + rect.height / 2;
+      const endX = startX + command.dx;
+      const endY = startY + (command.dy ?? 0);
+      // Press on the handle, then move/release on the document — drag handlers
+      // (e.g. useSidebarResize) attach mousemove/mouseup there and read clientX.
+      const doc = ownerDocument(deps.root);
+      dispatchMouse(el, "mousedown", startX, startY);
+      dispatchMouse(doc, "mousemove", endX, endY);
+      dispatchMouse(doc, "mouseup", endX, endY);
+      return ok("drag");
     }
 
     case "type": {

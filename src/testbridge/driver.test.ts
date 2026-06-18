@@ -37,6 +37,34 @@ describe("InAppBridgeDriver", () => {
     expect(sent).toEqual([{ action: "terminalInput", text: "whoami", tabId: "tab-9" }]);
   });
 
+  it("maps drag to a drag command", async () => {
+    const { transport, sent } = scriptedTransport({});
+    await new InAppBridgeDriver(transport).drag("sidebar-resize-handle", 100, 5);
+    expect(sent).toEqual([{ action: "drag", testId: "sidebar-resize-handle", dx: 100, dy: 5 }]);
+  });
+
+  it("maps getComputedStyle to a command and unwraps the value", async () => {
+    const { transport, sent } = scriptedTransport({
+      getComputedStyle: { ok: true, action: "getComputedStyle", value: "col-resize" },
+    });
+    const driver = new InAppBridgeDriver(transport);
+    const value = await driver.getComputedStyle("cursor", { testId: "handle" });
+    expect(value).toBe("col-resize");
+    expect(sent[0]).toEqual({ action: "getComputedStyle", testId: "handle", property: "cursor" });
+  });
+
+  it("getComputedStyle defaults testId to the document root (undefined)", async () => {
+    const { transport, sent } = scriptedTransport({
+      getComputedStyle: { ok: true, action: "getComputedStyle", value: "#1e1e1e" },
+    });
+    await new InAppBridgeDriver(transport).getComputedStyle("--bg-primary");
+    expect(sent[0]).toEqual({
+      action: "getComputedStyle",
+      testId: undefined,
+      property: "--bg-primary",
+    });
+  });
+
   it("unwraps the value of a query command", async () => {
     const { transport } = scriptedTransport({
       getText: { ok: true, action: "getText", value: "Connected" },
