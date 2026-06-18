@@ -27,7 +27,7 @@ Suites that do not need a real app (pure harness/protocol checks) should drive a
 from __future__ import annotations
 
 import time
-from typing import Callable, ClassVar, Optional, TypeVar
+from typing import Any, Callable, ClassVar, Optional, TypeVar
 
 import pytest
 
@@ -38,6 +38,10 @@ T = TypeVar("T")
 
 DEFAULT_WAIT_TIMEOUT = 20.0
 DEFAULT_WAIT_INTERVAL = 0.25
+
+#: Sentinel for "argument not supplied" so recursive helpers can default to the
+#: live tree while still accepting ``None`` as a real (empty) node.
+_UNSET: Any = object()
 
 
 class SystemTest:
@@ -140,6 +144,51 @@ class SystemTest:
             timeout=timeout,
             what=f"{needle!r} in terminal output",
         )
+
+    # ── Panels & tabs ────────────────────────────────────────────────────────
+    def panel_tree(self) -> Any:
+        """The current panel tree (``rootPanel``): a leaf or a split container."""
+        return self.driver.get_state("rootPanel")
+
+    def leaf_count(self, node: Any = _UNSET) -> int:
+        """Count the leaf panels in the tree (1 = unsplit, >1 = split)."""
+        if node is _UNSET:
+            node = self.panel_tree()
+        if not isinstance(node, dict):
+            return 0
+        if node.get("type") == "leaf":
+            return 1
+        return sum(self.leaf_count(child) for child in node.get("children", []))
+
+    def tab_ids(self, node: Any = _UNSET) -> list[str]:
+        """All tab ids across every panel, in tree order."""
+        if node is _UNSET:
+            node = self.panel_tree()
+        if not isinstance(node, dict):
+            return []
+        if node.get("type") == "leaf":
+            return [tab["id"] for tab in node.get("tabs", []) if "id" in tab]
+        ids: list[str] = []
+        for child in node.get("children", []):
+            ids.extend(self.tab_ids(child))
+        return ids
+
+    def close_all_tabs(self) -> None:
+        """Close every open tab, collapsing splits back to a single empty panel.
+
+        The bridge clicks programmatically, so close buttons that are only
+        pointer-visible on hover are still hit (mirrors the old E2E helper).
+        """
+        for _ in range(50):
+            ids = self.tab_ids()
+            if not ids:
+                break
+            before = len(ids)
+            self.driver.click(f"tab-close-{ids[0]}")
+            self.wait(
+                lambda before=before: len(self.tab_ids()) < before,
+                what="a tab to close",
+            )
 
     # ── Watch-along ──────────────────────────────────────────────────────────
     def delay4user(self, seconds: float = 1.0, reason: str = "") -> None:

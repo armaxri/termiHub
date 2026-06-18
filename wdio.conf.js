@@ -49,9 +49,8 @@ export const config = {
       "./tests/e2e/connection-editor-extended.test.js",
       "./tests/e2e/tab-management.test.js",
       "./tests/e2e/tab-horizontal-scroll.test.js",
-      "./tests/e2e/split-views.test.js",
+      // split-views, sidebar-toggle, sidebar-resize ported to tests/system (#808)
       "./tests/e2e/settings.test.js",
-      "./tests/e2e/sidebar-toggle.test.js",
       "./tests/e2e/sidebar-sections.test.js",
       "./tests/e2e/theme-layout.test.js",
       "./tests/e2e/ui-state.test.js",
