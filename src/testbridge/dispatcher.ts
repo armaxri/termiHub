@@ -29,6 +29,20 @@ export interface BridgeDeps {
   sendTerminalInput: (tabId: string, text: string) => Promise<boolean>;
 }
 
+/**
+ * Build a primary-button pointer event, falling back to a {@link MouseEvent} of
+ * the same type where `PointerEvent` is unavailable (e.g. jsdom). The fallback
+ * still dispatches to `pointerdown`/`pointerup` listeners — the type string is
+ * what matters — so menu libraries that gate on those events still fire.
+ */
+function pointerLikeEvent(type: string): Event {
+  const init: MouseEventInit = { bubbles: true, cancelable: true, button: 0 };
+  if (typeof PointerEvent === "function") {
+    return new PointerEvent(type, { ...init, isPrimary: true, pointerType: "mouse" });
+  }
+  return new MouseEvent(type, init);
+}
+
 /** Resolve an element by its `data-testid`, escaping the value for the selector. */
 function findByTestId(root: ParentNode, testId: string): Element | null {
   const escaped =
@@ -92,7 +106,17 @@ export async function dispatchCommand(
     case "click": {
       const el = findByTestId(deps.root, command.testId);
       if (!el) return fail("click", `no element with data-testid="${command.testId}"`);
-      (el as HTMLElement).click();
+      const target = el as HTMLElement;
+      // Emulate a full user click: pointer + mouse down/up, then the click itself.
+      // Plain `onClick` buttons act only on the final `click()`, but pointer-driven
+      // triggers (Radix dropdown/menu) open on `pointerdown` — which a bare
+      // `click()` never fires. Ordering and a single trailing `click()` keep the
+      // `click` event from double-firing.
+      target.dispatchEvent(pointerLikeEvent("pointerdown"));
+      target.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+      target.dispatchEvent(pointerLikeEvent("pointerup"));
+      target.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
+      target.click();
       return ok("click");
     }
 

@@ -86,6 +86,24 @@ describe("dispatchCommand", () => {
       expect(handler).toHaveBeenCalledOnce();
     });
 
+    it("emulates a pointer sequence so pointer-driven menus (Radix) open", async () => {
+      // A bare element.click() fires only a `click` event, which never opens
+      // pointerdown-triggered menus. The verb must dispatch pointerdown first.
+      const { deps, container } = setup(`<button data-testid="gear">⚙</button>`);
+      const seen: string[] = [];
+      const button = container.querySelector("button")!;
+      for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
+        button.addEventListener(type, () => seen.push(type));
+      }
+
+      const res = await dispatchCommand({ action: "click", testId: "gear" }, deps);
+      expect(res).toEqual({ ok: true, action: "click" });
+      expect(seen[0]).toBe("pointerdown");
+      expect(seen).toContain("click");
+      // The click event still fires exactly once (not double-fired).
+      expect(seen.filter((t) => t === "click")).toEqual(["click"]);
+    });
+
     it("fails when the target is absent", async () => {
       const { deps } = setup(`<div></div>`);
       const res = await dispatchCommand({ action: "click", testId: "go" }, deps);
