@@ -34,6 +34,64 @@ export interface TypeCommand {
 }
 
 /**
+ * Set the value of a `<select>` element and fire a `change` event.
+ *
+ * `type` drives `<input>`/`<textarea>`; a `<select>` needs its `value` set and a
+ * `change` dispatched so React's controlled `onChange` observes the choice. The
+ * `value` must match one of the option values (e.g. a theme id like `"light"`).
+ */
+export interface SelectOptionCommand {
+  action: "selectOption";
+  testId: string;
+  value: string;
+}
+
+/**
+ * Open an element's context menu via a synthetic right-click.
+ *
+ * `click` left-clicks; context menus (Radix `ContextMenu.Trigger`) open on the
+ * native `contextmenu` event. This dispatches `pointerdown`/`mousedown` with the
+ * secondary button, then `contextmenu`, so the menu opens exactly as a real
+ * right-click would.
+ */
+export interface RightClickCommand {
+  action: "rightClick";
+  testId: string;
+}
+
+/**
+ * Press a key (with optional modifiers) as a `keydown` + `keyup` pair.
+ *
+ * Drives keyboard-only affordances the pointer verbs cannot: dismissing a menu
+ * with `Escape`, or triggering an app shortcut. The event is dispatched on the
+ * active element (falling back to the document body) and bubbles, so global
+ * shortcut handlers on `window`/`document` observe it. `key` is the
+ * `KeyboardEvent.key` value (e.g. `"Escape"`, `"a"`, `"Enter"`).
+ */
+export interface KeyCommand {
+  action: "key";
+  key: string;
+  ctrl?: boolean;
+  meta?: boolean;
+  shift?: boolean;
+  alt?: boolean;
+}
+
+/**
+ * Drag one element onto another via synthetic pointer events.
+ *
+ * For pointer-based drag-and-drop (e.g. @dnd-kit tab reordering): dispatches
+ * `pointerdown` on `fromTestId`, a series of `pointermove`s crossing the sensor's
+ * activation distance toward `toTestId`'s center, then `pointerup`. Unlike
+ * {@link DragCommand} (a blind pixel delta), this targets a destination element.
+ */
+export interface DragToCommand {
+  action: "dragTo";
+  fromTestId: string;
+  toTestId: string;
+}
+
+/**
  * Send input into a running terminal **session** (not a form field).
  *
  * An xterm terminal renders to a canvas, so {@link TypeCommand} cannot drive it.
@@ -131,12 +189,16 @@ export interface GetStateCommand {
 export type BridgeCommand =
   | ClickCommand
   | TypeCommand
+  | SelectOptionCommand
+  | RightClickCommand
+  | KeyCommand
   | TerminalInputCommand
   | ExistsCommand
   | GetTextCommand
   | GetAttributeCommand
   | GetComputedStyleCommand
   | DragCommand
+  | DragToCommand
   | ReadTerminalCommand
   | GetStateCommand;
 

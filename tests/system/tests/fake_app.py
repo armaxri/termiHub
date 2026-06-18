@@ -85,13 +85,35 @@ def dispatcher_like(
     """
     state = state or {}
     computed_styles = computed_styles or {}
-    recorded: dict[str, list] = {"clicks": [], "input": [], "drags": []}
+    recorded: dict[str, list] = {
+        "clicks": [],
+        "input": [],
+        "drags": [],
+        "selects": [],
+        "rightClicks": [],
+        "keys": [],
+        "dragTos": [],
+    }
 
     def handle(command: dict[str, Any]) -> dict[str, Any]:
         action = command.get("action")
         if action == "click":
             recorded["clicks"].append(command["testId"])
             return {"ok": True, "action": "click"}
+        if action == "selectOption":
+            recorded["selects"].append({"testId": command["testId"], "value": command["value"]})
+            return {"ok": True, "action": "selectOption"}
+        if action == "rightClick":
+            recorded["rightClicks"].append(command["testId"])
+            return {"ok": True, "action": "rightClick"}
+        if action == "key":
+            recorded["keys"].append(command["key"])
+            return {"ok": True, "action": "key"}
+        if action == "dragTo":
+            recorded["dragTos"].append(
+                {"from": command["fromTestId"], "to": command["toTestId"]}
+            )
+            return {"ok": True, "action": "dragTo"}
         if action == "drag":
             recorded["drags"].append(
                 {"testId": command["testId"], "dx": command["dx"], "dy": command.get("dy")}

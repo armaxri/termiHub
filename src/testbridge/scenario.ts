@@ -13,8 +13,16 @@
 export type ScenarioStep =
   | { action: "click"; testId: string }
   | { action: "type"; testId: string; text: string }
+  /** Set a `<select>`'s value and fire a `change` event. */
+  | { action: "selectOption"; testId: string; value: string }
+  /** Open an element's context menu via a synthetic right-click. */
+  | { action: "rightClick"; testId: string }
+  /** Press a key (with optional modifiers). */
+  | { action: "key"; key: string; ctrl?: boolean; meta?: boolean; shift?: boolean; alt?: boolean }
   /** Drag an element by a pixel delta (e.g. a resize handle); `dy` defaults to 0. */
   | { action: "drag"; testId: string; dx: number; dy?: number }
+  /** Drag one element onto another (pointer-based, e.g. @dnd-kit reordering). */
+  | { action: "dragTo"; fromTestId: string; toTestId: string }
   /** Send a command into a terminal session (active tab unless `tabId` is set). */
   | { action: "terminalInput"; text: string; tabId?: string }
   /** Poll until an element with `testId` exists, or fail after `timeoutMs`. */

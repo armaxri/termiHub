@@ -137,8 +137,12 @@ unmount.
 | ------------------ | -------------------------------------------------------------- |
 | `click`            | Press the element with the given `data-testid`                 |
 | `type`             | Set an input/textarea value (native setter + `input` event)    |
+| `selectOption`     | Set a `<select>`'s value and fire `change`                     |
+| `rightClick`       | Open an element's context menu (synthetic `contextmenu`)       |
+| `key`              | Press a key (with modifiers) as a `keydown`/`keyup` pair       |
 | `terminalInput`    | Send a command into a terminal **session** (see below)         |
-| `drag`             | Drag an element by a pixel delta (resize handles, reordering)  |
+| `drag`             | Drag an element by a pixel delta (resize handles)              |
+| `dragTo`           | Drag one element onto another (pointer-based, e.g. @dnd-kit)   |
 | `exists`           | Whether an element is present                                  |
 | `getText`          | Read an element's visible text                                 |
 | `getAttribute`     | Read an element's attribute                                    |
@@ -264,7 +268,11 @@ if (!result.passed) {
 | -------------------------------------------------------- | ------------------------------------------------- |
 | `{ action: "click", testId }`                            | Press the control                                 |
 | `{ action: "type", testId, text }`                       | Set an input/textarea value                       |
+| `{ action: "selectOption", testId, value }`              | Set a `<select>`'s value                          |
+| `{ action: "rightClick", testId }`                       | Open the element's context menu                   |
+| `{ action: "key", key, ctrl?, meta?, shift?, alt? }`     | Press a key with optional modifiers               |
 | `{ action: "drag", testId, dx, dy? }`                    | Drag an element by a pixel delta                  |
+| `{ action: "dragTo", fromTestId, toTestId }`             | Drag one element onto another                     |
 | `{ action: "terminalInput", text, tabId? }`              | Send a command into a terminal session            |
 | `{ action: "waitFor", testId, timeoutMs?, intervalMs? }` | Poll until the element exists, or fail on timeout |
 | `{ action: "pause", ms }`                                | Wait a fixed duration for output to settle        |

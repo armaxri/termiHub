@@ -3,6 +3,7 @@ import { runScenario, type RunOptions } from "./runner";
 import type {
   Driver,
   GetComputedStyleOptions,
+  KeyModifiers,
   ReadTerminalOptions,
   TerminalInputOptions,
 } from "./driver";
@@ -37,6 +38,31 @@ class FakeDriver implements Driver {
   async type(testId: string, text: string): Promise<void> {
     if (!this.elements.has(testId)) throw new BridgeError("type", `no element "${testId}"`);
     this.typed.push({ testId, text });
+  }
+
+  selected: Array<{ testId: string; value: string }> = [];
+  rightClicks: string[] = [];
+  keys: Array<{ key: string; modifiers: KeyModifiers }> = [];
+  dragTos: Array<{ from: string; to: string }> = [];
+
+  async selectOption(testId: string, value: string): Promise<void> {
+    if (!this.elements.has(testId)) throw new BridgeError("selectOption", `no element "${testId}"`);
+    this.selected.push({ testId, value });
+  }
+
+  async rightClick(testId: string): Promise<void> {
+    if (!this.elements.has(testId)) throw new BridgeError("rightClick", `no element "${testId}"`);
+    this.rightClicks.push(testId);
+  }
+
+  async key(key: string, modifiers: KeyModifiers = {}): Promise<void> {
+    this.keys.push({ key, modifiers });
+  }
+
+  async dragTo(from: string, to: string): Promise<void> {
+    if (!this.elements.has(from)) throw new BridgeError("dragTo", `no element "${from}"`);
+    if (!this.elements.has(to)) throw new BridgeError("dragTo", `no element "${to}"`);
+    this.dragTos.push({ from, to });
   }
 
   async terminalInput(text: string, options: TerminalInputOptions = {}): Promise<void> {
@@ -161,6 +187,39 @@ describe("runScenario", () => {
     expect(result.passed).toBe(true);
     expect(driver.drags).toEqual([{ testId: "sidebar-resize-handle", dx: 100, dy: undefined }]);
     expect(result.checks[0].passed).toBe(true);
+  });
+
+  it("runs selectOption, rightClick, key, and dragTo steps", async () => {
+    const driver = new FakeDriver();
+    driver.elements.set("theme-select", {});
+    driver.elements.set("tab-1", {});
+    driver.elements.set("tab-2", {});
+
+    const scenario: Scenario = {
+      name: "extended interactions",
+      steps: [
+        { action: "selectOption", testId: "theme-select", value: "light" },
+        { action: "rightClick", testId: "tab-1" },
+        { action: "key", key: "Escape" },
+        { action: "key", key: ",", ctrl: true },
+        { action: "dragTo", fromTestId: "tab-1", toTestId: "tab-2" },
+      ],
+      checks: [],
+    };
+
+    const result = await runScenario(scenario, driver, instant());
+
+    expect(result.passed).toBe(true);
+    expect(driver.selected).toEqual([{ testId: "theme-select", value: "light" }]);
+    expect(driver.rightClicks).toEqual(["tab-1"]);
+    expect(driver.keys).toEqual([
+      {
+        key: "Escape",
+        modifiers: { ctrl: undefined, meta: undefined, shift: undefined, alt: undefined },
+      },
+      { key: ",", modifiers: { ctrl: true, meta: undefined, shift: undefined, alt: undefined } },
+    ]);
+    expect(driver.dragTos).toEqual([{ from: "tab-1", to: "tab-2" }]);
   });
 
   it("reads a root-level computed style (theme variable) when testId is omitted", async () => {

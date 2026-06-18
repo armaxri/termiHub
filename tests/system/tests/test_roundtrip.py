@@ -46,6 +46,23 @@ def test_drag_and_computed_style_round_trip(bridge):
         assert driver.get_computed_style("--bg-primary") == "#1e1e1e"
 
 
+def test_extended_interaction_verbs_round_trip(bridge):
+    handler = dispatcher_like()
+    with FakeApp(bridge.port, handler):
+        driver = bridge.wait_for_app(timeout=5)
+
+        driver.select_option("theme-select", "light")
+        driver.right_click("tab-1")
+        driver.key("Escape")
+        driver.key(",", ctrl=True)
+        driver.drag_to("tab-1", "tab-2")
+
+        assert handler.recorded["selects"] == [{"testId": "theme-select", "value": "light"}]
+        assert handler.recorded["rightClicks"] == ["tab-1"]
+        assert handler.recorded["keys"] == ["Escape", ","]
+        assert handler.recorded["dragTos"] == [{"from": "tab-1", "to": "tab-2"}]
+
+
 def test_ok_false_raises_bridge_error(bridge):
     with FakeApp(bridge.port, dispatcher_like(state={})):
         driver = bridge.wait_for_app(timeout=5)

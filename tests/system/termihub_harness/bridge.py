@@ -127,6 +127,32 @@ class Driver:
     def type(self, test_id: str, text: str) -> None:
         self._call({"action": "type", "testId": test_id, "text": text})
 
+    def select_option(self, test_id: str, value: str) -> None:
+        """Set a ``<select>``'s value and fire a ``change`` event."""
+        self._call({"action": "selectOption", "testId": test_id, "value": value})
+
+    def right_click(self, test_id: str) -> None:
+        """Open an element's context menu via a synthetic right-click."""
+        self._call({"action": "rightClick", "testId": test_id})
+
+    def key(
+        self,
+        key: str,
+        *,
+        ctrl: bool = False,
+        meta: bool = False,
+        shift: bool = False,
+        alt: bool = False,
+    ) -> None:
+        """Press a key (with optional modifiers) as a ``keydown``/``keyup`` pair."""
+        self._call(
+            {"action": "key", "key": key, "ctrl": ctrl, "meta": meta, "shift": shift, "alt": alt}
+        )
+
+    def drag_to(self, from_test_id: str, to_test_id: str) -> None:
+        """Drag one element onto another (pointer-based, e.g. @dnd-kit reorder)."""
+        self._call({"action": "dragTo", "fromTestId": from_test_id, "toTestId": to_test_id})
+
     def drag(self, test_id: str, dx: float, dy: float = 0.0) -> None:
         """Drag an element by a pixel delta (e.g. a resize handle).
 

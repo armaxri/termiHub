@@ -160,6 +160,110 @@ describe("dispatchCommand", () => {
     });
   });
 
+  describe("dragTo", () => {
+    it("fires pointerdown on the source, moves, and releases at the target", async () => {
+      const { deps, container } = setup(`<div data-testid="a"></div><div data-testid="b"></div>`);
+      const a = container.querySelectorAll("div")[0];
+      const seq: string[] = [];
+      a.addEventListener("pointerdown", () => seq.push("down"));
+      document.addEventListener("pointermove", () => seq.push("move"));
+      document.addEventListener("pointerup", () => seq.push("up"));
+
+      const res = await dispatchCommand({ action: "dragTo", fromTestId: "a", toTestId: "b" }, deps);
+      expect(res).toEqual({ ok: true, action: "dragTo" });
+      expect(seq[0]).toBe("down");
+      expect(seq[seq.length - 1]).toBe("up");
+      expect(seq.filter((s) => s === "move").length).toBeGreaterThan(0);
+    });
+
+    it("fails when an endpoint is absent", async () => {
+      const { deps } = setup(`<div data-testid="a"></div>`);
+      const res = await dispatchCommand({ action: "dragTo", fromTestId: "a", toTestId: "z" }, deps);
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain("z");
+    });
+  });
+
+  describe("rightClick", () => {
+    it("dispatches a contextmenu event the trigger observes", async () => {
+      const { deps, container } = setup(`<div data-testid="tab">Tab</div>`);
+      const handler = vi.fn();
+      container.querySelector("div")!.addEventListener("contextmenu", handler);
+      const res = await dispatchCommand({ action: "rightClick", testId: "tab" }, deps);
+      expect(res).toEqual({ ok: true, action: "rightClick" });
+      expect(handler).toHaveBeenCalledOnce();
+    });
+
+    it("fails when the element is absent", async () => {
+      const { deps } = setup(`<div></div>`);
+      const res = await dispatchCommand({ action: "rightClick", testId: "ghost" }, deps);
+      expect(res.ok).toBe(false);
+    });
+  });
+
+  describe("key", () => {
+    it("dispatches keydown and keyup with modifiers, bubbling to the document", async () => {
+      const { deps } = setup(`<div></div>`);
+      const events: Array<{ type: string; key: string; ctrl: boolean }> = [];
+      const record = (e: Event) =>
+        events.push({
+          type: e.type,
+          key: (e as KeyboardEvent).key,
+          ctrl: (e as KeyboardEvent).ctrlKey,
+        });
+      document.addEventListener("keydown", record);
+      document.addEventListener("keyup", record);
+      try {
+        const res = await dispatchCommand({ action: "key", key: ",", ctrl: true }, deps);
+        expect(res).toEqual({ ok: true, action: "key" });
+        expect(events).toEqual([
+          { type: "keydown", key: ",", ctrl: true },
+          { type: "keyup", key: ",", ctrl: true },
+        ]);
+      } finally {
+        document.removeEventListener("keydown", record);
+        document.removeEventListener("keyup", record);
+      }
+    });
+  });
+
+  describe("selectOption", () => {
+    it("sets the select value and fires a change event", async () => {
+      const { deps, container } = setup(
+        `<select data-testid="theme"><option value="dark">Dark</option><option value="light">Light</option></select>`
+      );
+      const select = container.querySelector("select")!;
+      const changes: string[] = [];
+      select.addEventListener("change", () => changes.push(select.value));
+
+      const res = await dispatchCommand(
+        { action: "selectOption", testId: "theme", value: "light" },
+        deps
+      );
+      expect(res).toEqual({ ok: true, action: "selectOption" });
+      expect(select.value).toBe("light");
+      expect(changes).toEqual(["light"]);
+    });
+
+    it("fails on a value the select does not offer", async () => {
+      const { deps } = setup(
+        `<select data-testid="theme"><option value="dark">Dark</option></select>`
+      );
+      const res = await dispatchCommand(
+        { action: "selectOption", testId: "theme", value: "nope" },
+        deps
+      );
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain("nope");
+    });
+
+    it("fails on a non-select element", async () => {
+      const { deps } = setup(`<input data-testid="x" />`);
+      const res = await dispatchCommand({ action: "selectOption", testId: "x", value: "v" }, deps);
+      expect(res.ok).toBe(false);
+    });
+  });
+
   describe("type", () => {
     it("sets the value via the native setter and fires an input event", async () => {
       const { deps, container } = setup(`<input data-testid="name" />`);

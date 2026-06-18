@@ -112,8 +112,25 @@ async function runStep(
     case "type":
       await driver.type(step.testId, step.text);
       return;
+    case "selectOption":
+      await driver.selectOption(step.testId, step.value);
+      return;
+    case "rightClick":
+      await driver.rightClick(step.testId);
+      return;
+    case "key":
+      await driver.key(step.key, {
+        ctrl: step.ctrl,
+        meta: step.meta,
+        shift: step.shift,
+        alt: step.alt,
+      });
+      return;
     case "drag":
       await driver.drag(step.testId, step.dx, step.dy);
+      return;
+    case "dragTo":
+      await driver.dragTo(step.fromTestId, step.toTestId);
       return;
     case "terminalInput":
       await driver.terminalInput(step.text, { tabId: step.tabId });

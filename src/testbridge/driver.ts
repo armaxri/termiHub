@@ -46,6 +46,14 @@ export interface GetComputedStyleOptions {
   testId?: string;
 }
 
+/** Modifier keys for {@link Driver.key}. */
+export interface KeyModifiers {
+  ctrl?: boolean;
+  meta?: boolean;
+  shift?: boolean;
+  alt?: boolean;
+}
+
 /**
  * The abstraction test authors and coding agents program against.
  *
@@ -60,6 +68,14 @@ export interface Driver {
   click(testId: string): Promise<void>;
   /** Set the value of the input/textarea carrying the given `data-testid`. */
   type(testId: string, text: string): Promise<void>;
+  /** Set a `<select>`'s value and fire a `change` event. */
+  selectOption(testId: string, value: string): Promise<void>;
+  /** Open an element's context menu via a synthetic right-click. */
+  rightClick(testId: string): Promise<void>;
+  /** Press a key (with optional modifiers) as a `keydown`/`keyup` pair. */
+  key(key: string, modifiers?: KeyModifiers): Promise<void>;
+  /** Drag one element onto another (pointer-based, e.g. @dnd-kit reordering). */
+  dragTo(fromTestId: string, toTestId: string): Promise<void>;
   /**
    * Send input into a terminal session (active tab unless `tabId` is given). A
    * trailing newline is appended, so `terminalInput("ls")` runs `ls`.
@@ -126,6 +142,22 @@ export class InAppBridgeDriver implements Driver {
 
   async type(testId: string, text: string): Promise<void> {
     await this.send({ action: "type", testId, text });
+  }
+
+  async selectOption(testId: string, value: string): Promise<void> {
+    await this.send({ action: "selectOption", testId, value });
+  }
+
+  async rightClick(testId: string): Promise<void> {
+    await this.send({ action: "rightClick", testId });
+  }
+
+  async key(key: string, modifiers: KeyModifiers = {}): Promise<void> {
+    await this.send({ action: "key", key, ...modifiers });
+  }
+
+  async dragTo(fromTestId: string, toTestId: string): Promise<void> {
+    await this.send({ action: "dragTo", fromTestId, toTestId });
   }
 
   async terminalInput(text: string, options: TerminalInputOptions = {}): Promise<void> {
