@@ -28,18 +28,7 @@ class TestSettings(SystemTest):
         self.open_settings_tab()
         self.open_settings_tab()
         # Exactly one tab titled "Settings" should exist.
-        titles = []
-
-        def collect(node):
-            if not isinstance(node, dict):
-                return
-            if node.get("type") == "leaf":
-                titles.extend(t.get("title", "") for t in node.get("tabs", []))
-            for c in node.get("children", []):
-                collect(c)
-
-        collect(self.panel_tree())
-        assert sum(1 for t in titles if t == "Settings") == 1
+        assert sum(1 for t in self.all_tabs() if t.get("title") == "Settings") == 1
 
     def test_gear_menu_lists_settings_import_export(self):
         self.driver.click("activity-bar-settings")

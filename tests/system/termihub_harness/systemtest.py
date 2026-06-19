@@ -155,18 +155,22 @@ class SystemTest:
             return 1
         return sum(self.leaf_count(child) for child in node.get("children", []))
 
-    def tab_ids(self, node: Any = None) -> list[str]:
-        """All tab ids across every panel, in tree order."""
+    def all_tabs(self, node: Any = None) -> list[dict]:
+        """Every tab object across all panels, in tree order."""
         if node is None:
             node = self.panel_tree()
         if not isinstance(node, dict):
             return []
         if node.get("type") == "leaf":
-            return [tab["id"] for tab in node.get("tabs", []) if "id" in tab]
-        ids: list[str] = []
+            return list(node.get("tabs", []))
+        tabs: list[dict] = []
         for child in node.get("children", []):
-            ids.extend(self.tab_ids(child))
-        return ids
+            tabs.extend(self.all_tabs(child))
+        return tabs
+
+    def tab_ids(self, node: Any = None) -> list[str]:
+        """All tab ids across every panel, in tree order."""
+        return [tab["id"] for tab in self.all_tabs(node) if "id" in tab]
 
     def close_all_tabs(self) -> None:
         """Close every open tab, collapsing splits back to a single empty panel.
@@ -211,25 +215,10 @@ class SystemTest:
     def find_tab(self, title: str) -> Optional[dict]:
         """The first tab whose ``title`` contains ``title``, or ``None``.
 
-        Walks every panel's ``tabs`` (a tab carries its own ``title`` in state),
-        the data-equivalent of the old ``findTabByTitle`` DOM scan.
+        A tab carries its own ``title`` in state — the data-equivalent of the old
+        ``findTabByTitle`` DOM scan.
         """
-
-        def walk(node: Any) -> Optional[dict]:
-            if not isinstance(node, dict):
-                return None
-            if node.get("type") == "leaf":
-                for tab in node.get("tabs", []):
-                    if title in (tab.get("title") or ""):
-                        return tab
-                return None
-            for child in node.get("children", []):
-                found = walk(child)
-                if found:
-                    return found
-            return None
-
-        return walk(self.panel_tree())
+        return next((t for t in self.all_tabs() if title in (t.get("title") or "")), None)
 
     # ── Settings & connections ─────────────────────────────────────────────────
     def open_settings_tab(self) -> None:
@@ -261,8 +250,7 @@ class SystemTest:
         self.wait(lambda: self.driver.exists("connection-editor-name-input"), what="the editor")
         self.driver.type("connection-editor-name-input", name)
         self.driver.click("connection-editor-save")
-        self.wait(lambda: self.connection_id(name) is not None, what=f"connection {name!r}")
-        return self.connection_id(name)
+        return self.wait(lambda: self.connection_id(name), what=f"connection {name!r}")
 
     def connect_to(self, name: str) -> None:
         """Open a saved connection through its right-click → Connect action."""

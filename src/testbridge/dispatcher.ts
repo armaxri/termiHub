@@ -44,9 +44,15 @@ function ownerDocument(root: ParentNode): Document {
 }
 
 /** Dispatch a bubbling, cancelable mouse event carrying viewport coordinates. */
-function dispatchMouse(target: EventTarget, type: string, clientX: number, clientY: number): void {
+function dispatchMouse(
+  target: EventTarget,
+  type: string,
+  clientX: number,
+  clientY: number,
+  button = 0
+): void {
   target.dispatchEvent(
-    new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX, clientY })
+    new MouseEvent(type, { bubbles: true, cancelable: true, button, clientX, clientY })
   );
 }
 
@@ -156,18 +162,15 @@ export async function dispatchCommand(
       dispatchMouse(el, "mousedown", x, y);
       dispatchPointer(el, "pointerup", x, y);
       dispatchMouse(el, "mouseup", x, y);
-      if (el.getAttribute("aria-haspopup") !== "menu") {
-        (el as HTMLElement).click();
-      }
+      const opensMenuOnPointerDown = el.getAttribute("aria-haspopup") === "menu";
+      if (!opensMenuOnPointerDown) (el as HTMLElement).click();
       return ok("click");
     }
 
     case "drag": {
       const el = findByTestId(deps.root, command.testId);
       if (!el) return fail("drag", `no element with data-testid="${command.testId}"`);
-      const rect = (el as HTMLElement).getBoundingClientRect();
-      const startX = rect.left + rect.width / 2;
-      const startY = rect.top + rect.height / 2;
+      const { x: startX, y: startY } = centerOf(el);
       const endX = startX + command.dx;
       const endY = startY + (command.dy ?? 0);
       // Press on the handle, then move/release on the document — drag handlers
@@ -205,21 +208,11 @@ export async function dispatchCommand(
       if (!el) return fail("rightClick", `no element with data-testid="${command.testId}"`);
       const { x, y } = centerOf(el);
       // Radix's ContextMenu.Trigger opens on the native `contextmenu` event; the
-      // pointer/mouse pair mirrors a real secondary-button press around it.
-      el.dispatchEvent(
-        new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 2 })
-      );
-      el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 2 }));
-      el.dispatchEvent(
-        new MouseEvent("contextmenu", {
-          bubbles: true,
-          cancelable: true,
-          button: 2,
-          clientX: x,
-          clientY: y,
-        })
-      );
-      el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, button: 2 }));
+      // secondary-button pointer/mouse pair mirrors a real right-click around it.
+      dispatchMouse(el, "pointerdown", x, y, 2);
+      dispatchMouse(el, "mousedown", x, y, 2);
+      dispatchMouse(el, "contextmenu", x, y, 2);
+      dispatchMouse(el, "mouseup", x, y, 2);
       return ok("rightClick");
     }
 
