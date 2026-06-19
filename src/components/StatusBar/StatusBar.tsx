@@ -80,7 +80,7 @@ export function StatusBar() {
     : "";
 
   return (
-    <div className="status-bar">
+    <div className="status-bar" data-testid="status-bar">
       <div className="status-bar__section status-bar__section--left">
         <PortableBadge />
         <MonitoringStatus />
