@@ -202,31 +202,43 @@ Connect**), `handle_password_prompt()` / `cancel_password_prompt()`,
 `tab_count()` / `find_tab(title)` / `active_tab()` / `switch_to_tab(id)`, and
 `monitoring_visible()`.
 
-### Tests that need Docker fixtures (SSH/serial/telnet)
+### Tests that need container fixtures (SSH/serial/telnet)
 
-The infrastructure suites reuse the **Docker containers in
-[`tests/docker/docker-compose.yml`](../docker/docker-compose.yml)** as
-black-box fixtures — only the driver changed, the containers stay (epic #799).
-The harness owns bringing them up: depend on the session-scoped **`ssh_fixtures`**
-fixture (`@pytest.mark.usefixtures("ssh_fixtures")` on the class) and it runs
-`docker compose up -d --wait ssh-password ssh-keys` once per session, blocking on
-the containers' healthchecks. When Docker is unavailable the suite **skips
-cleanly** rather than failing, so a plain `pytest` still works on a machine
-without Docker.
+The infrastructure suites reuse the **containers in
+[`tests/docker/docker-compose.yml`](../docker/docker-compose.yml)** as black-box
+fixtures — only the driver changed, the containers stay (epic #799). The harness
+owns bringing them up: depend on the session-scoped **`ssh_fixtures`** fixture
+(`@pytest.mark.usefixtures("ssh_fixtures")` on the class) and it runs
+`<runtime> compose up -d ssh-password ssh-keys` once per session, then waits for
+each published SSH port to accept a connection. When no container runtime is
+available the suite **skips cleanly** rather than failing, so a plain `pytest`
+still works on a machine without one.
+
+**Docker or Podman** — the runtime is detected like `scripts/test-system.sh`:
+a `CONTAINER_CMD` env override wins; otherwise Docker is preferred and Podman is
+the fallback, choosing whichever CLI exists _and_ whose daemon/machine answers
+`<cmd> info`. (Readiness is a TCP port probe, not `compose --wait`, because
+Podman's compose provider may not support that flag.) Force a runtime with
+`CONTAINER_CMD=podman`.
 
 Coordinates live in `termihub_harness` as constants: `SSH_PASSWORD_PORT` (2201),
 `SSH_KEYS_PORT` (2203), `SSH_USERNAME` / `SSH_PASSWORD`, and `SSH_KEY_PATH`. To
 run the SSH suite live:
 
 ```sh
-docker compose -f tests/docker/docker-compose.yml up -d --wait ssh-password ssh-keys
+# Docker:
+docker compose -f tests/docker/docker-compose.yml up -d ssh-password ssh-keys
+# …or Podman (e.g. on Windows where Docker is unavailable):
+podman compose -f tests/docker/docker-compose.yml up -d ssh-password ssh-keys
+
 pnpm tauri build            # the app must include the bridge verbs the test uses
 cd tests/system && ./.venv/bin/python -m pytest -m integration -k ssh -v -s
+# (the harness can also bring the containers up itself; CONTAINER_CMD=podman forces Podman)
 ```
 
 > The SSH connection-failure case needs **no** server, so it is not gated on
-> `ssh_fixtures` and runs even on Docker-less machines (it still needs the built
-> app).
+> `ssh_fixtures` and runs even without a container runtime (it still needs the
+> built app).
 
 ### Watch-along mode (`--delay4user`)
 

@@ -3,13 +3,16 @@
 import pytest
 
 from termihub_harness import (
+    SSH_HOST,
+    SSH_KEYS_PORT,
     SSH_KEYS_SERVICE,
+    SSH_PASSWORD_PORT,
     SSH_PASSWORD_SERVICE,
     AgentInstance,
     AppInstance,
     Bridge,
-    DockerComposeFixture,
-    DockerUnavailable,
+    ComposeFixture,
+    ContainerRuntimeUnavailable,
 )
 
 
@@ -65,17 +68,21 @@ def agent():
 
 @pytest.fixture(scope="session")
 def ssh_fixtures():
-    """Ensure the SSH Docker containers are up for the whole session.
+    """Ensure the SSH containers (Docker or Podman) are up for the whole session.
 
     Session-scoped so the (potentially slow, image-building) bring-up happens
     once. Because it is requested by the SSH suites — and is session-scoped, so
     pytest sets it up before the per-class app fixture — the suite **skips before
-    even launching the app** when Docker is unavailable. Containers are left
-    running afterward (shared fixtures, like ``scripts/test-system.sh``).
+    even launching the app** when no container runtime is available. Containers
+    are left running afterward (shared fixtures, like ``scripts/test-system.sh``).
     """
-    fixture = DockerComposeFixture()
+    fixture = ComposeFixture()
     try:
-        fixture.ensure(SSH_PASSWORD_SERVICE, SSH_KEYS_SERVICE)
-    except DockerUnavailable as exc:
-        pytest.skip(f"SSH Docker fixtures unavailable: {exc}")
+        fixture.ensure(
+            SSH_PASSWORD_SERVICE,
+            SSH_KEYS_SERVICE,
+            ports=[(SSH_HOST, SSH_PASSWORD_PORT), (SSH_HOST, SSH_KEYS_PORT)],
+        )
+    except ContainerRuntimeUnavailable as exc:
+        pytest.skip(f"SSH container fixtures unavailable: {exc}")
     return fixture

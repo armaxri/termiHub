@@ -1,27 +1,37 @@
-"""Docker fixture orchestration for the system-test harness.
+"""Container fixture orchestration for the system-test harness.
 
-The SSH / telnet / serial integration tests reuse the comprehensive Docker
-containers in ``tests/docker/docker-compose.yml`` as black-box **fixtures**
-(epic #799: "Docker fixtures stay; only the driver changes"). The harness owns
-bringing them up so a single ``pytest -m integration`` run is self-contained —
-and when Docker is not available the dependent suites **skip cleanly** instead
-of failing, so a plain ``pytest`` never errors on a machine without Docker.
+The SSH / telnet / serial integration tests reuse the comprehensive containers
+in [`tests/docker/docker-compose.yml`](../../docker/docker-compose.yml) as
+black-box **fixtures** (epic #799: "Docker fixtures stay; only the driver
+changes"). The harness owns bringing them up so a single ``pytest -m
+integration`` run is self-contained — and when no container runtime is available
+the dependent suites **skip cleanly** instead of failing.
 
-Reuses the healthchecks already declared per container in the compose file:
-``docker compose up -d --wait`` blocks until those report healthy, so a test
-never races a half-started sshd.
+Runtime-agnostic: works with **Docker or Podman**. The runtime is detected the
+same way as ``scripts/test-system.sh`` — honor a ``CONTAINER_CMD`` override,
+otherwise prefer Docker and fall back to Podman, picking whichever CLI exists
+*and* whose daemon/machine answers ``<cmd> info``. Containers are started with
+``<runtime> compose up -d`` (not ``--wait``: Podman's compose provider may not
+support that flag) and readiness is then confirmed by **probing each published
+TCP port** — the same signal the Rust integration tests use.
 """
 
 from __future__ import annotations
 
+import os
 import shutil
+import socket
 import subprocess
+import time
 from pathlib import Path
+from typing import Optional, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 COMPOSE_FILE = REPO_ROOT / "tests" / "docker" / "docker-compose.yml"
 
 # ── SSH fixture coordinates (mirror tests/docker/docker-compose.yml) ──────────
+#: Host the published container ports are reachable on.
+SSH_HOST = "127.0.0.1"
 #: Service + host port for the password-auth SSH container.
 SSH_PASSWORD_SERVICE = "ssh-password"
 SSH_PASSWORD_PORT = 2201
@@ -35,34 +45,46 @@ SSH_PASSWORD = "testpass"
 SSH_KEY_PATH = REPO_ROOT / "tests" / "fixtures" / "ssh-keys" / "ed25519"
 
 
-class DockerUnavailable(RuntimeError):
-    """Raised when Docker (or its daemon) cannot be reached, or a service fails
-    to come up. Callers turn this into ``pytest.skip(...)``."""
+class ContainerRuntimeUnavailable(RuntimeError):
+    """Raised when no container runtime is reachable, or a service fails to come
+    up. Callers turn this into ``pytest.skip(...)``."""
 
 
-def docker_available() -> bool:
-    """Whether a Docker CLI with a reachable daemon is present.
+def container_runtime() -> Optional[str]:
+    """Return the container CLI to use (``"docker"`` / ``"podman"``), or None.
 
-    ``docker version`` (unlike ``--version``) contacts the daemon, so it returns
-    non-zero when Docker is installed but the daemon is down — exactly the case
-    we want to skip on.
+    Honors a ``CONTAINER_CMD`` override; otherwise prefers Docker and falls back
+    to Podman — the same order as ``scripts/test-system.sh``. A runtime counts as
+    available only when its CLI exists *and* its daemon/machine answers
+    ``<cmd> info`` (so a Docker CLI with no daemon, or a stopped Podman machine,
+    is correctly treated as unavailable).
     """
-    if shutil.which("docker") is None:
+    override = os.environ.get("CONTAINER_CMD")
+    candidates = [override] if override else ["docker", "podman"]
+    for cmd in candidates:
+        if cmd and _runtime_works(cmd):
+            return cmd
+    return None
+
+
+def _runtime_works(cmd: str) -> bool:
+    """Whether ``cmd`` exists on PATH and its daemon answers ``<cmd> info``."""
+    if shutil.which(cmd) is None:
         return False
     try:
         result = subprocess.run(
-            ["docker", "version"],
+            [cmd, "info"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            timeout=15,
+            timeout=30,
         )
     except (OSError, subprocess.SubprocessError):
         return False
     return result.returncode == 0
 
 
-class DockerComposeFixture:
-    """On-demand access to the ``tests/docker`` compose services.
+class ComposeFixture:
+    """On-demand access to the ``tests/docker`` compose services via Docker/Podman.
 
     Does **not** tear containers down — they are shared fixtures that survive
     across suites and runs (matching ``scripts/test-system.sh`` semantics, where
@@ -72,33 +94,55 @@ class DockerComposeFixture:
     def __init__(self, compose_file: Path = COMPOSE_FILE) -> None:
         self._compose_file = compose_file
 
-    def ensure(self, *services: str, timeout: float = 300.0) -> None:
-        """Start ``services`` detached and block until healthy (idempotent).
+    def ensure(
+        self,
+        *services: str,
+        ports: Sequence[tuple[str, int]] = (),
+        up_timeout: float = 300.0,
+        ready_timeout: float = 90.0,
+    ) -> None:
+        """Start ``services`` detached, then block until each ``ports`` entry is
+        reachable.
 
-        ``docker compose up -d --wait`` is a no-op for containers already running
-        and healthy, so repeated calls within a session are cheap. The first call
-        may build images, which is why ``timeout`` is generous. Raises
-        :class:`DockerUnavailable` when Docker is unreachable or a service fails.
+        ``<runtime> compose up -d`` is a no-op for containers already running, so
+        repeated calls within a session are cheap; the first call may build
+        images, hence the generous ``up_timeout``. Readiness is confirmed by a TCP
+        probe of each ``(host, port)`` rather than ``--wait`` (Podman's compose
+        provider may not support it). Raises :class:`ContainerRuntimeUnavailable`
+        when no runtime is reachable, the compose up fails, or a port never opens.
         """
-        if not docker_available():
-            raise DockerUnavailable("docker CLI or daemon is not available")
-        cmd = [
-            "docker",
-            "compose",
-            "-f",
-            str(self._compose_file),
-            "up",
-            "-d",
-            "--wait",
-            *services,
-        ]
+        runtime = container_runtime()
+        if runtime is None:
+            raise ContainerRuntimeUnavailable(
+                "no container runtime available — need Docker or Podman "
+                "(override the choice with CONTAINER_CMD=podman)"
+            )
+        cmd = [runtime, "compose", "-f", str(self._compose_file), "up", "-d", *services]
         try:
-            subprocess.run(cmd, check=True, timeout=timeout)
+            subprocess.run(cmd, check=True, timeout=up_timeout)
         except subprocess.CalledProcessError as exc:
-            raise DockerUnavailable(
-                f"`docker compose up` failed for {list(services)}: exit {exc.returncode}"
+            raise ContainerRuntimeUnavailable(
+                f"`{runtime} compose up` failed for {list(services)}: exit {exc.returncode}"
             ) from exc
         except subprocess.TimeoutExpired as exc:
-            raise DockerUnavailable(
-                f"`docker compose up` timed out after {timeout}s for {list(services)}"
+            raise ContainerRuntimeUnavailable(
+                f"`{runtime} compose up` timed out after {up_timeout}s for {list(services)}"
             ) from exc
+        for host, port in ports:
+            wait_for_port(host, port, timeout=ready_timeout)
+
+
+def wait_for_port(host: str, port: int, *, timeout: float) -> None:
+    """Block until ``host:port`` accepts a TCP connection, or raise on timeout."""
+    deadline = time.monotonic() + timeout
+    last_error: Optional[OSError] = None
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=1.0):
+                return
+        except OSError as exc:
+            last_error = exc
+            time.sleep(0.25)
+    raise ContainerRuntimeUnavailable(
+        f"container port {host}:{port} did not become reachable within {timeout}s: {last_error}"
+    )
