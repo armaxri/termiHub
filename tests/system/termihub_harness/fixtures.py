@@ -119,17 +119,34 @@ class ComposeFixture:
             )
         cmd = [runtime, "compose", "-f", str(self._compose_file), "up", "-d", *services]
         try:
-            subprocess.run(cmd, check=True, timeout=up_timeout)
+            subprocess.run(
+                cmd, check=True, timeout=up_timeout, capture_output=True, text=True
+            )
         except subprocess.CalledProcessError as exc:
             raise ContainerRuntimeUnavailable(
-                f"`{runtime} compose up` failed for {list(services)}: exit {exc.returncode}"
+                f"`{runtime} compose up` failed for {list(services)} "
+                f"(exit {exc.returncode}):\n{_tail(exc.stderr or exc.stdout)}"
             ) from exc
         except subprocess.TimeoutExpired as exc:
             raise ContainerRuntimeUnavailable(
-                f"`{runtime} compose up` timed out after {up_timeout}s for {list(services)}"
+                f"`{runtime} compose up` timed out after {up_timeout}s for {list(services)}:"
+                f"\n{_tail(exc.stderr)}"
             ) from exc
         for host, port in ports:
             wait_for_port(host, port, timeout=ready_timeout)
+
+
+def _tail(output: Optional[str], lines: int = 15) -> str:
+    """The last ``lines`` non-empty lines of captured subprocess output.
+
+    Surfacing the real compose error (e.g. "additional_contexts is not allowed"
+    from an outdated Compose) makes the skip reason actionable instead of a bare
+    exit code.
+    """
+    text = (output or "").strip()
+    if not text:
+        return "(no output captured)"
+    return "\n".join(text.splitlines()[-lines:])
 
 
 def wait_for_port(host: str, port: int, *, timeout: float) -> None:

@@ -242,6 +242,13 @@ the fallback, choosing whichever CLI exists _and_ whose daemon/machine answers
 Podman's compose provider may not support that flag.) Force a runtime with
 `CONTAINER_CMD=podman`.
 
+> **Compose version:** `tests/docker/docker-compose.yml` uses build
+> `additional_contexts`, which needs **Docker Compose v2.17+** (or a Podman
+> compose provider of similar vintage). An older Compose rejects the file with
+> `Additional property additional_contexts is not allowed` — the suite surfaces
+> that exact message in its skip reason. Update Docker Desktop / the compose
+> plugin if you hit it.
+
 Coordinates live in `termihub_harness` as constants: `SSH_PASSWORD_PORT` (2201),
 `SSH_KEYS_PORT` (2203), `SSH_USERNAME` / `SSH_PASSWORD`, and `SSH_KEY_PATH`. To
 run the SSH suite live:
