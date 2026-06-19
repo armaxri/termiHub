@@ -146,7 +146,19 @@ export async function dispatchCommand(
     case "click": {
       const el = findByTestId(deps.root, command.testId);
       if (!el) return fail("click", `no element with data-testid="${command.testId}"`);
-      (el as HTMLElement).click();
+      const { x, y } = centerOf(el);
+      // Fire the full pointer→mouse sequence a real click produces, so libraries
+      // that open on pointerdown (Radix dropdown/menu triggers) respond. A Radix
+      // *menu* trigger (aria-haspopup="menu") opens on pointerdown, so a trailing
+      // click() would toggle it shut — skip it there; plain controls and
+      // popover/dialog triggers (which open on click) still get the click().
+      dispatchPointer(el, "pointerdown", x, y);
+      dispatchMouse(el, "mousedown", x, y);
+      dispatchPointer(el, "pointerup", x, y);
+      dispatchMouse(el, "mouseup", x, y);
+      if (el.getAttribute("aria-haspopup") !== "menu") {
+        (el as HTMLElement).click();
+      }
       return ok("click");
     }
 

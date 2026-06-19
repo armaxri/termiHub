@@ -122,6 +122,23 @@ describe("dispatchCommand", () => {
       expect(handler).toHaveBeenCalledOnce();
     });
 
+    it("opens a menu trigger via pointerdown without a toggling trailing click", async () => {
+      const { deps, container } = setup(
+        `<button data-testid="gear" aria-haspopup="menu">Gear</button>`
+      );
+      const btn = container.querySelector("button")!;
+      const seen: string[] = [];
+      btn.addEventListener("pointerdown", () => seen.push("pointerdown"));
+      btn.addEventListener("click", () => seen.push("click"));
+
+      const res = await dispatchCommand({ action: "click", testId: "gear" }, deps);
+      expect(res).toEqual({ ok: true, action: "click" });
+      // pointerdown fires (Radix menus open on it); click() is suppressed so the
+      // menu is not toggled shut again.
+      expect(seen).toContain("pointerdown");
+      expect(seen).not.toContain("click");
+    });
+
     it("fails when the target is absent", async () => {
       const { deps } = setup(`<div></div>`);
       const res = await dispatchCommand({ action: "click", testId: "go" }, deps);
