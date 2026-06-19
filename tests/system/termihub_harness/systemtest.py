@@ -180,10 +180,17 @@ class SystemTest:
                 break
             before = len(ids)
             self.driver.click(f"tab-close-{ids[0]}")
-            self.wait(
-                lambda before=before: len(self.tab_ids()) < before,
-                what="a tab to close",
-            )
+
+            def closed(before=before):
+                if len(self.tab_ids()) < before:
+                    return True
+                # A dirty editor/connection/settings tab opens the unsaved-changes
+                # dialog instead of closing — discard and continue.
+                if self.driver.exists("unsaved-changes-just-close"):
+                    self.driver.click("unsaved-changes-just-close")
+                return False
+
+            self.wait(closed, what="a tab to close")
 
     # ── Sidebar ──────────────────────────────────────────────────────────────
     def set_sidebar_visible(self, visible: bool) -> None:
@@ -200,6 +207,70 @@ class SystemTest:
                 lambda: self.driver.exists("sidebar") == visible,
                 what=f"sidebar visible={visible}",
             )
+
+    def find_tab(self, title: str) -> Optional[dict]:
+        """The first tab whose ``title`` contains ``title``, or ``None``.
+
+        Walks every panel's ``tabs`` (a tab carries its own ``title`` in state),
+        the data-equivalent of the old ``findTabByTitle`` DOM scan.
+        """
+
+        def walk(node: Any) -> Optional[dict]:
+            if not isinstance(node, dict):
+                return None
+            if node.get("type") == "leaf":
+                for tab in node.get("tabs", []):
+                    if title in (tab.get("title") or ""):
+                        return tab
+                return None
+            for child in node.get("children", []):
+                found = walk(child)
+                if found:
+                    return found
+            return None
+
+        return walk(self.panel_tree())
+
+    # ── Settings & connections ─────────────────────────────────────────────────
+    def open_settings_tab(self) -> None:
+        """Open (or focus) the Settings tab via the activity-bar gear menu.
+
+        The gear is a Radix dropdown that opens on pointer-down; ``click`` drives
+        that, then we wait for the portaled menu item before selecting it.
+        """
+        self.driver.click("activity-bar-settings")
+        self.wait(lambda: self.driver.exists("settings-menu-open"), what="the gear menu")
+        self.driver.click("settings-menu-open")
+        self.wait(lambda: self.find_tab("Settings") is not None, what="the Settings tab")
+
+    def connection_id(self, name: str) -> Optional[str]:
+        """The id of the saved connection named ``name`` (exact match), or ``None``."""
+        for conn in self.driver.get_state("connections") or []:
+            if conn.get("name") == name:
+                return conn.get("id")
+        return None
+
+    def create_local_connection(self, name: str) -> str:
+        """Create a local-shell connection via the editor and return its id.
+
+        Mirrors the old ``createLocalConnection`` helper: open the new-connection
+        editor (type defaults to local), set the name, save, and wait for the
+        connection to land in the store.
+        """
+        self.driver.click("connection-list-new-connection")
+        self.wait(lambda: self.driver.exists("connection-editor-name-input"), what="the editor")
+        self.driver.type("connection-editor-name-input", name)
+        self.driver.click("connection-editor-save")
+        self.wait(lambda: self.connection_id(name) is not None, what=f"connection {name!r}")
+        return self.connection_id(name)
+
+    def connect_to(self, name: str) -> None:
+        """Open a saved connection through its right-click → Connect action."""
+        conn_id = self.connection_id(name)
+        assert conn_id is not None, f"no saved connection named {name!r}"
+        self.driver.right_click(f"connection-item-{conn_id}")
+        self.driver.click("context-connection-connect")
+        self.wait(lambda: self.find_tab(name) is not None, what=f"a tab for {name!r}")
 
     # ── Watch-along ──────────────────────────────────────────────────────────
     def delay4user(self, seconds: float = 1.0, reason: str = "") -> None:
