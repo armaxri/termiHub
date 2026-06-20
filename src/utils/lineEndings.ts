@@ -2,14 +2,16 @@ import type { LineEnding } from "@/types/terminal";
 
 /**
  * Default line ending used when neither the connection nor the global
- * settings specify one. LF matches typical Unix terminals and fixes the
- * Windows-paste double-line bug out of the box.
+ * settings specify one. CR (`\r`) is the byte every terminal sends for Enter
+ * and what Windows ConPTY / Unix PTYs expect to submit a command — so it keeps
+ * the Enter key working out of the box. It also still fixes the Windows-paste
+ * double-line bug, since pasted CRLF collapses to a single CR per line.
  *
  * The actual byte-level normalization happens in the Rust backend
  * (`session::line_ending`); the frontend only resolves which ending applies
  * and pushes it to the session via `set_session_line_ending`.
  */
-export const DEFAULT_LINE_ENDING: LineEnding = "lf";
+export const DEFAULT_LINE_ENDING: LineEnding = "cr";
 
 /** Ordered options for the line-ending dropdowns (value + display label). */
 export const LINE_ENDING_OPTIONS: ReadonlyArray<{ value: LineEnding; label: string }> = [

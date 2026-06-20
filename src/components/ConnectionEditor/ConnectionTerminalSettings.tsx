@@ -1,6 +1,6 @@
 import { useAppStore } from "@/store/appStore";
 import { TerminalOptions, LineEnding } from "@/types/terminal";
-import { LINE_ENDING_OPTIONS, lineEndingLabel } from "@/utils/lineEndings";
+import { DEFAULT_LINE_ENDING, LINE_ENDING_OPTIONS, lineEndingLabel } from "@/utils/lineEndings";
 
 interface ConnectionTerminalSettingsProps {
   options: TerminalOptions;
@@ -17,7 +17,7 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
   const globalCursorStyle = globalSettings.cursorStyle ?? "block";
   const globalCursorBlink = globalSettings.cursorBlink ?? true;
   const globalHorizontalScrolling = globalSettings.defaultHorizontalScrolling ?? false;
-  const globalLineEnding = globalSettings.defaultLineEnding ?? "lf";
+  const globalLineEnding = globalSettings.defaultLineEnding ?? DEFAULT_LINE_ENDING;
 
   return (
     <div className="settings-panel__category">
