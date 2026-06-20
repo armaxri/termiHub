@@ -749,7 +749,7 @@ See [scripts/README.md](../scripts/README.md) for all options. Reports are saved
 
 | Category              | YAML File                                                                  | ID Prefix  | Tests   |
 | --------------------- | -------------------------------------------------------------------------- | ---------- | ------- |
-| Local Shell           | [`local-shell.yaml`](../tests/manual/local-shell.yaml)                     | `MT-LOCAL` | 3       |
+| Local Shell           | [`local-shell.yaml`](../tests/manual/local-shell.yaml)                     | `MT-LOCAL` | 4       |
 | SSH                   | [`ssh.yaml`](../tests/manual/ssh.yaml)                                     | `MT-SSH`   | 15      |
 | Serial                | [`serial.yaml`](../tests/manual/serial.yaml)                               | `MT-SER`   | 8       |
 | Tab Management        | [`tab-management.yaml`](../tests/manual/tab-management.yaml)               | `MT-TAB`   | 14      |
@@ -763,7 +763,7 @@ See [scripts/README.md](../scripts/README.md) for all options. Reports are saved
 | Portable Mode         | [`portable-mode.yaml`](../tests/manual/portable-mode.yaml)                 | `MT-PORT`  | 4       |
 | Embedded Services     | [`embedded-services.yaml`](../tests/manual/embedded-services.yaml)         | `MT-SVC`   | 3       |
 | Network Tools         | [`network-tools.yaml`](../tests/manual/network-tools.yaml)                 | `MT-NET`   | 13      |
-| **Total**             |                                                                            |            | **148** |
+| **Total**             |                                                                            |            | **149** |
 
 When adding new manual tests, add the YAML definition to the appropriate file in `tests/manual/` — the YAML files are the **source of truth** for guided testing.
 
