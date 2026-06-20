@@ -11,10 +11,12 @@
 /// Line ending sent on Enter and used to normalize pasted text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LineEnding {
-    /// Carriage return (`\r`) — classic terminal behavior.
-    Cr,
-    /// Line feed (`\n`) — typical Unix. The default.
+    /// Carriage return (`\r`) — classic terminal behavior. The default: this is
+    /// the byte every terminal sends for Enter, and what Windows ConPTY / Unix
+    /// PTYs expect in order to submit a command.
     #[default]
+    Cr,
+    /// Line feed (`\n`) — typical Unix.
     Lf,
     /// Carriage return + line feed (`\r\n`) — Windows-style.
     Crlf,
@@ -22,12 +24,12 @@ pub enum LineEnding {
 
 impl LineEnding {
     /// Parse the frontend string form (`"cr"`, `"lf"`, `"crlf"`). Anything else
-    /// — including `None` — resolves to the default ([`LineEnding::Lf`]).
+    /// — including `None` — resolves to the default ([`LineEnding::Cr`]).
     pub fn from_opt_str(value: Option<&str>) -> Self {
         match value {
-            Some("cr") => LineEnding::Cr,
+            Some("lf") => LineEnding::Lf,
             Some("crlf") => LineEnding::Crlf,
-            _ => LineEnding::Lf,
+            _ => LineEnding::Cr,
         }
     }
 
@@ -86,10 +88,20 @@ mod tests {
     }
 
     #[test]
-    fn from_opt_str_defaults_to_lf() {
-        assert_eq!(LineEnding::from_opt_str(None), LineEnding::Lf);
-        assert_eq!(LineEnding::from_opt_str(Some("bogus")), LineEnding::Lf);
-        assert_eq!(LineEnding::default(), LineEnding::Lf);
+    fn from_opt_str_defaults_to_cr() {
+        // CR (`\r`) is the standard terminal Enter byte. Defaulting to LF would
+        // rewrite Enter to `\n`, which Windows ConPTY — and shells on macOS — do
+        // not treat as "submit", so commands never run (the Enter-key regression).
+        assert_eq!(LineEnding::from_opt_str(None), LineEnding::Cr);
+        assert_eq!(LineEnding::from_opt_str(Some("bogus")), LineEnding::Cr);
+        assert_eq!(LineEnding::default(), LineEnding::Cr);
+    }
+
+    #[test]
+    fn bare_enter_stays_cr_by_default() {
+        // Regression guard: the Enter keystroke (xterm sends `\r`) must reach the
+        // PTY as `\r`, not `\n`, when no line ending is configured.
+        assert_eq!(normalize_line_endings(b"\r", LineEnding::default()), b"\r");
     }
 
     #[test]
