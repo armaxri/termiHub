@@ -1,6 +1,6 @@
 import { AppSettings } from "@/types/connection";
 import { LineEnding } from "@/types/terminal";
-import { LINE_ENDING_OPTIONS } from "@/utils/lineEndings";
+import { DEFAULT_LINE_ENDING, LINE_ENDING_OPTIONS } from "@/utils/lineEndings";
 
 interface TerminalSettingsProps {
   settings: AppSettings;
@@ -88,7 +88,7 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
         <label className="settings-form__field">
           <span className="settings-form__label">Line Ending (Enter &amp; Paste)</span>
           <select
-            value={settings.defaultLineEnding ?? "lf"}
+            value={settings.defaultLineEnding ?? DEFAULT_LINE_ENDING}
             onChange={(e) =>
               onChange({
                 ...settings,

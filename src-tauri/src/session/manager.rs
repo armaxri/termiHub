@@ -1405,9 +1405,9 @@ mod tests {
             )
             .await;
 
-        // Default (LF): CRLF paste collapses to single LF, no blank lines.
+        // Default (CR): CRLF paste collapses to a single CR, no blank lines.
         manager.send_input("sess-1", b"a\r\nb\r\nc").await.unwrap();
-        assert_eq!(writes.lock().unwrap().as_slice(), b"a\nb\nc");
+        assert_eq!(writes.lock().unwrap().as_slice(), b"a\rb\rc");
 
         // Switch to CRLF: a bare LF becomes CRLF.
         writes.lock().unwrap().clear();
@@ -1457,9 +1457,9 @@ mod tests {
             )
             .await;
 
-        // Default (LF) session: command is terminated with a bare LF.
+        // Default (CR) session: command is terminated with a bare CR.
         SessionManager::inject_initial_command(&manager.sessions, "sess-1", "echo hi").await;
-        assert_eq!(writes.lock().unwrap().as_slice(), b"echo hi\n");
+        assert_eq!(writes.lock().unwrap().as_slice(), b"echo hi\r");
 
         // CRLF session: the trailing line break is translated to CRLF.
         writes.lock().unwrap().clear();

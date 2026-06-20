@@ -11,10 +11,12 @@
 /// Line ending sent on Enter and used to normalize pasted text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LineEnding {
-    /// Carriage return (`\r`) — classic terminal behavior.
-    Cr,
-    /// Line feed (`\n`) — typical Unix. The default.
+    /// Carriage return (`\r`) — classic terminal behavior. The default: this is
+    /// the byte every terminal sends for Enter, and what Windows ConPTY / Unix
+    /// PTYs expect in order to submit a command.
     #[default]
+    Cr,
+    /// Line feed (`\n`) — typical Unix.
     Lf,
     /// Carriage return + line feed (`\r\n`) — Windows-style.
     Crlf,
@@ -22,12 +24,12 @@ pub enum LineEnding {
 
 impl LineEnding {
     /// Parse the frontend string form (`"cr"`, `"lf"`, `"crlf"`). Anything else
-    /// — including `None` — resolves to the default ([`LineEnding::Lf`]).
+    /// — including `None` — resolves to the default ([`LineEnding::Cr`]).
     pub fn from_opt_str(value: Option<&str>) -> Self {
         match value {
-            Some("cr") => LineEnding::Cr,
+            Some("lf") => LineEnding::Lf,
             Some("crlf") => LineEnding::Crlf,
-            _ => LineEnding::Lf,
+            _ => LineEnding::Cr,
         }
     }
 
