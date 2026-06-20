@@ -15,9 +15,13 @@ describe("resolveLineEnding", () => {
     expect(resolveLineEnding(undefined, "cr")).toBe("cr");
   });
 
-  it("falls back to the built-in default (LF) when nothing is configured", () => {
-    expect(resolveLineEnding(undefined, undefined)).toBe("lf");
-    expect(DEFAULT_LINE_ENDING).toBe("lf");
+  it("falls back to the built-in default (CR) when nothing is configured", () => {
+    // CR (\r) is the standard terminal Enter byte. Defaulting to anything else
+    // (e.g. LF) rewrites Enter to \n, which Windows ConPTY — and shells on
+    // macOS — do not treat as "submit", so commands never run. Regression: the
+    // line-ending feature shipped with an LF default and broke the Enter key.
+    expect(resolveLineEnding(undefined, undefined)).toBe("cr");
+    expect(DEFAULT_LINE_ENDING).toBe("cr");
   });
 });
 

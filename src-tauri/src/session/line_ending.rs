@@ -86,10 +86,20 @@ mod tests {
     }
 
     #[test]
-    fn from_opt_str_defaults_to_lf() {
-        assert_eq!(LineEnding::from_opt_str(None), LineEnding::Lf);
-        assert_eq!(LineEnding::from_opt_str(Some("bogus")), LineEnding::Lf);
-        assert_eq!(LineEnding::default(), LineEnding::Lf);
+    fn from_opt_str_defaults_to_cr() {
+        // CR (`\r`) is the standard terminal Enter byte. Defaulting to LF would
+        // rewrite Enter to `\n`, which Windows ConPTY — and shells on macOS — do
+        // not treat as "submit", so commands never run (the Enter-key regression).
+        assert_eq!(LineEnding::from_opt_str(None), LineEnding::Cr);
+        assert_eq!(LineEnding::from_opt_str(Some("bogus")), LineEnding::Cr);
+        assert_eq!(LineEnding::default(), LineEnding::Cr);
+    }
+
+    #[test]
+    fn bare_enter_stays_cr_by_default() {
+        // Regression guard: the Enter keystroke (xterm sends `\r`) must reach the
+        // PTY as `\r`, not `\n`, when no line ending is configured.
+        assert_eq!(normalize_line_endings(b"\r", LineEnding::default()), b"\r");
     }
 
     #[test]
