@@ -61,9 +61,11 @@ pub async fn sftp_download(
 ) -> Result<u64, TerminalError> {
     debug!(session_id, remote_path, local_path, "SFTP download");
     let session = manager.get_session(&session_id)?;
-    tokio::task::spawn_blocking(move || session.lock().unwrap().read_file(&remote_path, &local_path))
-        .await
-        .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
+    tokio::task::spawn_blocking(move || {
+        session.lock().unwrap().read_file(&remote_path, &local_path)
+    })
+    .await
+    .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
 }
 
 /// Upload a local file to a remote path. Returns bytes transferred.
@@ -76,9 +78,14 @@ pub async fn sftp_upload(
 ) -> Result<u64, TerminalError> {
     debug!(session_id, local_path, remote_path, "SFTP upload");
     let session = manager.get_session(&session_id)?;
-    tokio::task::spawn_blocking(move || session.lock().unwrap().write_file(&local_path, &remote_path))
-        .await
-        .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
+    tokio::task::spawn_blocking(move || {
+        session
+            .lock()
+            .unwrap()
+            .write_file(&local_path, &remote_path)
+    })
+    .await
+    .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
 }
 
 /// Create a directory on the remote host.
@@ -206,7 +213,10 @@ pub async fn sftp_write_file_content(
 ) -> Result<(), TerminalError> {
     let session = manager.get_session(&session_id)?;
     tokio::task::spawn_blocking(move || {
-        session.lock().unwrap().write_file_content(&remote_path, &content)
+        session
+            .lock()
+            .unwrap()
+            .write_file_content(&remote_path, &content)
     })
     .await
     .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
