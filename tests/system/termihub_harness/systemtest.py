@@ -336,6 +336,99 @@ class SystemTest:
             )
         )
 
+    def monitoring_stats(self) -> Optional[dict[str, str]]:
+        """The connected monitoring stats (cpu/mem/disk text), or None."""
+        if not self.driver.exists("monitoring-cpu"):
+            return None
+        return {
+            "cpu": self.driver.get_text("monitoring-cpu"),
+            "mem": self.driver.get_text("monitoring-mem"),
+            "disk": self.driver.get_text("monitoring-disk"),
+        }
+
+    def wait_for_monitoring_stats(self, *, timeout: float = 20.0) -> dict[str, str]:
+        """Poll until monitoring has connected and shows stats; return them."""
+        return self.wait(
+            self.monitoring_stats, timeout=timeout, what="monitoring stats to appear"
+        )
+
+    def open_monitoring_dropdown(self) -> None:
+        """Click the monitoring host chip to open its refresh/disconnect menu."""
+        self.driver.click("monitoring-host")
+        self.wait(
+            lambda: self.driver.exists("monitoring-disconnect"),
+            what="the monitoring dropdown",
+        )
+
+    def monitoring_refresh(self) -> None:
+        """Open the monitoring dropdown and click Refresh."""
+        self.open_monitoring_dropdown()
+        self.driver.click("monitoring-refresh")
+
+    def monitoring_disconnect(self) -> None:
+        """Open the monitoring dropdown and click Disconnect."""
+        self.open_monitoring_dropdown()
+        self.driver.click("monitoring-disconnect")
+
+    # ── Sidebars / file browser ────────────────────────────────────────────────
+    def _ensure_sidebar(self, view: str, test_id: str) -> None:
+        """Show the given sidebar ``view`` (idempotent).
+
+        Clicking an already-active activity-bar icon *toggles the sidebar
+        closed*, so only click when ``view`` isn't already the visible one.
+        """
+        try:
+            showing = self.driver.get_state("sidebarView") == view and not self.driver.get_state(
+                "sidebarCollapsed"
+            )
+        except BridgeError:
+            showing = False
+        if not showing:
+            self.driver.click(test_id)
+
+    def switch_to_files_sidebar(self) -> None:
+        """Open the SFTP file-browser sidebar from the activity bar."""
+        self._ensure_sidebar("files", "activity-bar-file-browser")
+
+    def switch_to_connections_sidebar(self) -> None:
+        """Return to the connections sidebar from the activity bar."""
+        self._ensure_sidebar("connections", "activity-bar-connections")
+
+    def connect_sftp_browser(self, password: str = SSH_PASSWORD) -> str:
+        """Open the file browser for the active SSH tab and wait for its path.
+
+        Switches to the Files sidebar; SFTP auto-connects (prompting for a
+        password when none is cached) and the browser follows the terminal's CWD.
+        Returns the displayed path.
+        """
+        self.switch_to_files_sidebar()
+        if self.wait(
+            lambda: self.driver.exists("password-prompt-input")
+            or self.driver.exists("file-browser-current-path"),
+            what="the SFTP browser or its password prompt",
+        ):
+            if self.driver.exists("password-prompt-input"):
+                self.handle_password_prompt(password)
+        return self.wait(
+            lambda: self.driver.get_text("file-browser-current-path"),
+            what="the file-browser path",
+        )
+
+    def file_browser_path(self) -> str:
+        """The path currently shown in the file browser (empty if none)."""
+        if not self.driver.exists("file-browser-current-path"):
+            return ""
+        return self.driver.get_text("file-browser-current-path")
+
+    # ── Settings ───────────────────────────────────────────────────────────────
+    def open_settings_tab(self) -> None:
+        """Open the Settings editor tab from the activity-bar gear menu."""
+        self.driver.click("activity-bar-settings")
+        self.wait(
+            lambda: self.driver.exists("settings-menu-open"), what="the settings menu"
+        )
+        self.driver.click("settings-menu-open")
+
     # ── Watch-along ──────────────────────────────────────────────────────────
     def delay4user(self, seconds: float = 1.0, reason: str = "") -> None:
         """Sleep so a human can see the last UI change — only under ``--delay4user``.
