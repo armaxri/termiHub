@@ -92,7 +92,24 @@ export async function dispatchCommand(
     case "click": {
       const el = findByTestId(deps.root, command.testId);
       if (!el) return fail("click", `no element with data-testid="${command.testId}"`);
-      (el as HTMLElement).click();
+      const target = el as HTMLElement;
+      // Dispatch a realistic pointer+mouse sequence before the native click.
+      // A bare element.click() only fires a `click` event, which libraries that
+      // open on `pointerdown` (e.g. Radix dropdown/menu triggers used across the
+      // app) ignore — so menus never opened. This mirrors what a real mouse
+      // click produces, so both those triggers and plain onClick handlers fire.
+      const init: MouseEventInit = { bubbles: true, cancelable: true, button: 0 };
+      if (typeof PointerEvent === "function") {
+        const pointerInit = { ...init, pointerType: "mouse", isPrimary: true };
+        target.dispatchEvent(new PointerEvent("pointerdown", pointerInit));
+        target.dispatchEvent(new MouseEvent("mousedown", init));
+        target.dispatchEvent(new PointerEvent("pointerup", pointerInit));
+        target.dispatchEvent(new MouseEvent("mouseup", init));
+      } else {
+        target.dispatchEvent(new MouseEvent("mousedown", init));
+        target.dispatchEvent(new MouseEvent("mouseup", init));
+      }
+      target.click();
       return ok("click");
     }
 

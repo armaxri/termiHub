@@ -86,6 +86,20 @@ describe("dispatchCommand", () => {
       expect(handler).toHaveBeenCalledOnce();
     });
 
+    it("fires pointerdown before the click (for Radix-style menu triggers)", async () => {
+      const { deps, container } = setup(`<button data-testid="go">Go</button>`);
+      const seen: string[] = [];
+      const btn = container.querySelector("button")!;
+      btn.addEventListener("pointerdown", () => seen.push("pointerdown"));
+      btn.addEventListener("mousedown", () => seen.push("mousedown"));
+      btn.addEventListener("click", () => seen.push("click"));
+
+      await dispatchCommand({ action: "click", testId: "go" }, deps);
+      // A real click opens libraries that open on pointerdown, then fires click.
+      expect(seen[0]).toBe("pointerdown");
+      expect(seen).toContain("click");
+    });
+
     it("fails when the target is absent", async () => {
       const { deps } = setup(`<div></div>`);
       const res = await dispatchCommand({ action: "click", testId: "go" }, deps);
