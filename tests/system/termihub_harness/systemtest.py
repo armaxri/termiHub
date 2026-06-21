@@ -131,8 +131,22 @@ class SystemTest:
         self.wait(lambda: self.driver.read_terminal().strip() != "", what="the shell prompt")
 
     def run_command(self, command: str) -> None:
-        """Type a command into the active terminal (a newline is appended)."""
+        """Type a command into the active terminal (a newline is appended).
+
+        Retries while the backend session is still registering: an SSH session
+        connects asynchronously, so the terminal buffer can be readable a moment
+        before its session accepts input. A failed send transmits nothing, so the
+        retry never double-sends.
+        """
+        self.wait(
+            lambda: self._send_terminal_input(command),
+            what="the terminal session to accept input",
+        )
+
+    def _send_terminal_input(self, command: str) -> bool:
+        """``driver.terminal_input`` that returns True, for :meth:`wait`."""
         self.driver.terminal_input(command)
+        return True
 
     def wait_for_output(self, needle: str, *, timeout: float = DEFAULT_WAIT_TIMEOUT) -> str:
         """Poll the terminal until it contains ``needle``; return the full text."""
@@ -197,11 +211,14 @@ class SystemTest:
         if auth_method:
             self.driver.select("field-authMethod", auth_method)
         if key_path is not None:
+            # The keyPath field renders a KeyPathInput (with browse + key
+            # autocomplete), so its input testid is the KeyPathInput one, not a
+            # plain ``field-keyPath``.
+            key_input = "field-keyPath-key-path-input"
             self.wait(
-                lambda: self.driver.exists("field-keyPath"),
-                what="the SSH key-path field",
+                lambda: self.driver.exists(key_input), what="the SSH key-path field"
             )
-            self.driver.type("field-keyPath", str(key_path))
+            self.driver.type(key_input, str(key_path))
         self.driver.click(
             "connection-editor-save-connect" if connect else "connection-editor-save"
         )
