@@ -38,6 +38,12 @@ SSH_PASSWORD_PORT = 2201
 #: Service + host port for the key-auth-only SSH container.
 SSH_KEYS_SERVICE = "ssh-keys"
 SSH_KEYS_PORT = 2203
+#: Service + host port for the pre-auth-banner / MOTD SSH container.
+SSH_BANNER_SERVICE = "ssh-banner"
+SSH_BANNER_PORT = 2206
+#: Service + host port for the tunnel-target SSH container (internal HTTP :8080).
+SSH_TUNNEL_SERVICE = "ssh-tunnel-target"
+SSH_TUNNEL_PORT = 2207
 #: Credentials shared by the test SSH containers.
 SSH_USERNAME = "testuser"
 SSH_PASSWORD = "testpass"

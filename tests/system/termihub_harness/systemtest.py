@@ -27,6 +27,7 @@ Suites that do not need a real app (pure harness/protocol checks) should drive a
 from __future__ import annotations
 
 import time
+import uuid
 from typing import Any, Callable, ClassVar, Optional, TypeVar
 
 import pytest
@@ -39,6 +40,15 @@ T = TypeVar("T")
 
 DEFAULT_WAIT_TIMEOUT = 20.0
 DEFAULT_WAIT_INTERVAL = 0.25
+
+
+def unique_name(purpose: str) -> str:
+    """A collision-free connection name, like the old E2E ``uniqueName`` helper.
+
+    Tabs persist across a suite's methods, so each connection needs a distinct
+    name to avoid aliasing an earlier method's tab.
+    """
+    return f"sys-{purpose}-{uuid.uuid4().hex[:8]}"
 
 
 class SystemTest:
@@ -296,6 +306,22 @@ class SystemTest:
     def switch_to_tab(self, tab_id: str) -> None:
         """Click the tab with the given id to make it active."""
         self.driver.click(f"tab-{tab_id}")
+
+    def close_tab(self, tab_id: str) -> None:
+        """Close the tab with the given id, confirming any close dialog."""
+        self.driver.click(f"tab-close-{tab_id}")
+        time.sleep(0.3)
+        if self.driver.exists("confirm-close-tab-confirm"):
+            self.driver.click("confirm-close-tab-confirm")
+
+    def close_all_tabs(self) -> None:
+        """Close every open tab (e.g. between reconnect checks)."""
+        for _ in range(20):
+            tabs = self._all_tabs()
+            if not tabs:
+                return
+            self.close_tab(tabs[0]["id"])
+            time.sleep(0.2)
 
     # ── Monitoring ─────────────────────────────────────────────────────────────
     def monitoring_visible(self) -> bool:
