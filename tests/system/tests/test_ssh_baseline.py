@@ -11,7 +11,6 @@ import pytest
 from termihub_harness import (
     SSH_KEY_PATH,
     SSH_KEYS_PORT,
-    SSH_PASSWORD_PORT,
     SSH_USERNAME,
     SystemTest,
     unique_name,
@@ -42,7 +41,7 @@ class TestSshBaseline(SystemTest):
 
     def test_handles_session_exit_gracefully(self):
         name = unique_name("ssh-disconnect")
-        self._connect_password(name)
+        self.connect_ssh_password(name)
         # `exit` ends the remote shell; the tab must remain (disconnected state).
         self.run_command("exit")
         self.wait(lambda: self.find_tab(name), what="the tab to persist after exit")
@@ -50,13 +49,13 @@ class TestSshBaseline(SystemTest):
 
     def test_command_output_renders(self):
         name = unique_name("ssh-cmd-output")
-        self._connect_password(name)
+        self.connect_ssh_password(name)
         self.run_command("echo TERMIHUB_TEST_MARKER")
         assert "TERMIHUB_TEST_MARKER" in self.wait_for_output("TERMIHUB_TEST_MARKER")
 
     def test_input_works_immediately_after_connect(self):
         name = unique_name("ssh-input")
-        self._connect_password(name)
+        self.connect_ssh_password(name)
         # No explicit focus/click first — run_command drives the session directly.
         self.run_command("echo INPUT_WORKS")
         assert "INPUT_WORKS" in self.wait_for_output("INPUT_WORKS")
@@ -69,18 +68,6 @@ class TestSshBaseline(SystemTest):
         self.handle_password_prompt()
         assert isinstance(self.driver.get_state(), dict)
         assert not self.password_prompt_open()
-
-    def _connect_password(self, name: str) -> None:
-        self.create_ssh_connection(
-            name,
-            host=HOST,
-            port=SSH_PASSWORD_PORT,
-            username=SSH_USERNAME,
-            connect=True,
-        )
-        self.handle_password_prompt()
-        self.wait(self.has_terminal, what="the SSH terminal session")
-
 
 # Window resize (SSH-BASELINE-RESIZE) is not portable to the bridge: the harness
 # has no window-resize verb, and the original only re-checked that the terminal

@@ -12,7 +12,6 @@ earlier methods never alias later ones.
 from __future__ import annotations
 
 import time
-import uuid
 
 import pytest
 
@@ -22,6 +21,7 @@ from termihub_harness import (
     SSH_PASSWORD_PORT,
     SSH_USERNAME,
     SystemTest,
+    unique_name,
 )
 
 pytestmark = pytest.mark.integration
@@ -29,17 +29,12 @@ pytestmark = pytest.mark.integration
 HOST = "127.0.0.1"
 
 
-def _name(prefix: str) -> str:
-    """A unique connection name, like the old ``uniqueName`` helper."""
-    return f"sys-{prefix}-{uuid.uuid4().hex[:8]}"
-
-
 @pytest.mark.usefixtures("ssh_fixtures")
 class TestSshPasswordAuth(SystemTest):
     """SSH-01: password authentication opens a working terminal tab."""
 
     def test_connects_with_password_and_opens_a_tab(self):
-        name = _name("ssh-pass")
+        name = unique_name("ssh-pass")
         self.create_ssh_connection(
             name,
             host=HOST,
@@ -56,7 +51,7 @@ class TestSshPasswordAuth(SystemTest):
         assert active is not None and name in (active.get("title") or "")
 
     def test_terminal_becomes_live_after_connect(self):
-        name = _name("ssh-live")
+        name = unique_name("ssh-live")
         self.create_ssh_connection(
             name,
             host=HOST,
@@ -76,7 +71,7 @@ class TestSshPasswordPromptFlow(SystemTest):
     """SSH-PASSWORD: the password-prompt modal gates the connection."""
 
     def test_prompt_appears_on_connect(self):
-        name = _name("ssh-prompt")
+        name = unique_name("ssh-prompt")
         self.create_ssh_connection(
             name,
             host=HOST,
@@ -94,7 +89,7 @@ class TestSshPasswordPromptFlow(SystemTest):
 
     def test_cancel_does_not_open_a_tab(self):
         before = self.tab_count()
-        name = _name("ssh-cancel")
+        name = unique_name("ssh-cancel")
         self.create_ssh_connection(
             name,
             host=HOST,
@@ -111,7 +106,7 @@ class TestSshPasswordPromptFlow(SystemTest):
         assert self.tab_count() == before
 
     def test_connects_after_entering_password(self):
-        name = _name("ssh-enter")
+        name = unique_name("ssh-enter")
         self.create_ssh_connection(
             name,
             host=HOST,
@@ -130,7 +125,7 @@ class TestSshKeyAuth(SystemTest):
     def test_connects_with_key_and_opens_a_tab(self):
         if not SSH_KEY_PATH.exists():
             pytest.skip(f"SSH key fixture missing: {SSH_KEY_PATH}")
-        name = _name("ssh-key")
+        name = unique_name("ssh-key")
         self.create_ssh_connection(
             name,
             host=HOST,
@@ -151,7 +146,7 @@ class TestSshConnectionFailure(SystemTest):
     """SSH-03: an unreachable host fails gracefully (no Docker needed)."""
 
     def test_unreachable_host_is_handled_gracefully(self):
-        name = _name("ssh-fail")
+        name = unique_name("ssh-fail")
         self.create_ssh_connection(
             name,
             host=HOST,
@@ -176,7 +171,7 @@ class TestSshSessionOutput(SystemTest):
     """SSH-05: the SSH terminal is interactive and streams command output."""
 
     def test_terminal_echoes_command_output(self):
-        name = _name("ssh-output")
+        name = unique_name("ssh-output")
         self.create_ssh_connection(
             name,
             host=HOST,
@@ -197,7 +192,7 @@ class TestSshMonitoring(SystemTest):
     """SSH-08: monitoring shows on an SSH tab and hides on a local tab."""
 
     def test_monitoring_tracks_the_active_tab(self):
-        ssh_name = _name("ssh-mon")
+        ssh_name = unique_name("ssh-mon")
         self.create_ssh_connection(
             ssh_name,
             host=HOST,

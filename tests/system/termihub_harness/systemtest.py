@@ -33,7 +33,7 @@ from typing import Any, Callable, ClassVar, Optional, TypeVar
 import pytest
 
 from .bridge import Bridge, BridgeError, Driver
-from .fixtures import SSH_PASSWORD
+from .fixtures import SSH_HOST, SSH_PASSWORD, SSH_PASSWORD_PORT, SSH_USERNAME
 from .orchestrator import AppInstance
 
 T = TypeVar("T")
@@ -233,6 +233,15 @@ class SystemTest:
             "connection-editor-save-connect" if connect else "connection-editor-save"
         )
 
+    def connect_ssh_password(self, name: str, *, port: int = SSH_PASSWORD_PORT) -> None:
+        """Create + Save & Connect a password SSH connection, answer the prompt,
+        and wait for its terminal — the sequence nearly every SSH suite repeats."""
+        self.create_ssh_connection(
+            name, host=SSH_HOST, port=port, username=SSH_USERNAME, connect=True
+        )
+        self.handle_password_prompt()
+        self.wait(self.has_terminal, what="the SSH terminal session")
+
     # ── Password prompt ────────────────────────────────────────────────────────
     def password_prompt_open(self) -> bool:
         """Whether the SSH password prompt modal is currently open."""
@@ -402,13 +411,14 @@ class SystemTest:
         Returns the displayed path.
         """
         self.switch_to_files_sidebar()
-        if self.wait(
+        # wait() returns truthy or raises, so no outer guard is needed.
+        self.wait(
             lambda: self.driver.exists("password-prompt-input")
             or self.driver.exists("file-browser-current-path"),
             what="the SFTP browser or its password prompt",
-        ):
-            if self.driver.exists("password-prompt-input"):
-                self.handle_password_prompt(password)
+        )
+        if self.driver.exists("password-prompt-input"):
+            self.handle_password_prompt(password)
         return self.wait(
             lambda: self.driver.get_text("file-browser-current-path"),
             what="the file-browser path",

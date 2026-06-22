@@ -14,11 +14,10 @@ from __future__ import annotations
 
 import pytest
 
-from termihub_harness import SSH_PASSWORD_PORT, SSH_USERNAME, SystemTest, unique_name
+from termihub_harness import SystemTest, unique_name
 
 pytestmark = pytest.mark.integration
 
-HOST = "127.0.0.1"
 POWER = ("toggle-power-monitoring", "settings.powerMonitoringEnabled")
 FILES = ("toggle-file-browser", "settings.fileBrowserEnabled")
 
@@ -42,7 +41,7 @@ class TestSshMonitoringSettings(SystemTest):
 
     def test_global_disable_hides_monitoring(self):
         self._set_setting(*POWER, False)
-        self._connect(unique_name("ssh-mon-off"))
+        self.connect_ssh_password(unique_name("ssh-mon-off"))
         assert self.wait(
             lambda: not self.monitoring_visible(),
             what="monitoring to stay hidden when globally disabled",
@@ -50,19 +49,19 @@ class TestSshMonitoringSettings(SystemTest):
 
     def test_global_reenable_shows_monitoring(self):
         self._set_setting(*POWER, True)
-        self._connect(unique_name("ssh-mon-on"))
+        self.connect_ssh_password(unique_name("ssh-mon-on"))
         self.wait_for_monitoring_stats()
 
     def test_file_browser_enabled_shows_sftp(self):
         self._set_setting(*FILES, True)
-        self._connect(unique_name("ssh-fb-on"))
+        self.connect_ssh_password(unique_name("ssh-fb-on"))
         self.connect_sftp_browser()
         assert self.wait(lambda: self.file_browser_path() != "", what="an SFTP path")
 
     def test_default_per_connection_follows_global(self):
         self._set_setting(*POWER, True)
         # A connection with no override follows the (enabled) global setting.
-        self._connect(unique_name("ssh-mon-default"))
+        self.connect_ssh_password(unique_name("ssh-mon-default"))
         self.wait_for_monitoring_stats()
 
     # ── helpers ────────────────────────────────────────────────────────────────
@@ -76,10 +75,3 @@ class TestSshMonitoringSettings(SystemTest):
                 what=f"{field} to become {desired}",
             )
         self.switch_to_connections_sidebar()
-
-    def _connect(self, name: str) -> None:
-        self.create_ssh_connection(
-            name, host=HOST, port=SSH_PASSWORD_PORT, username=SSH_USERNAME, connect=True
-        )
-        self.handle_password_prompt()
-        self.wait(self.has_terminal, what="the SSH terminal session")
