@@ -1,0 +1,77 @@
+"""SSH baseline system tests (ported from infrastructure/ssh-baseline.test.js).
+
+Covers key auth, graceful disconnect, command output, immediate input, and a
+connection-failure case against the Docker SSH containers.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from termihub_harness import (
+    SSH_KEY_PATH,
+    SSH_KEYS_PORT,
+    SSH_USERNAME,
+    SystemTest,
+    unique_name,
+)
+
+pytestmark = pytest.mark.integration
+
+HOST = "127.0.0.1"
+
+
+@pytest.mark.usefixtures("ssh_fixtures")
+class TestSshBaseline(SystemTest):
+    def test_key_auth_connects_without_password_prompt(self):
+        name = unique_name("ssh-key-baseline")
+        self.create_ssh_connection(
+            name,
+            host=HOST,
+            port=SSH_KEYS_PORT,
+            username=SSH_USERNAME,
+            auth_method="key",
+            key_path=str(SSH_KEY_PATH),
+            connect=True,
+        )
+        tab = self.wait(lambda: self.find_tab(name), what="the SSH key tab")
+        assert tab is not None
+        assert not self.password_prompt_open()
+        self.wait(self.has_terminal, what="the SSH terminal session")
+
+    def test_handles_session_exit_gracefully(self):
+        name = unique_name("ssh-disconnect")
+        self.connect_ssh_password(name)
+        # `exit` ends the remote shell; the tab must remain (disconnected state).
+        self.run_command("exit")
+        self.wait(lambda: self.find_tab(name), what="the tab to persist after exit")
+        assert self.find_tab(name) is not None
+
+    def test_command_output_renders(self):
+        name = unique_name("ssh-cmd-output")
+        self.connect_ssh_password(name)
+        self.run_command("echo TERMIHUB_TEST_MARKER")
+        assert "TERMIHUB_TEST_MARKER" in self.wait_for_output("TERMIHUB_TEST_MARKER")
+
+    def test_input_works_immediately_after_connect(self):
+        name = unique_name("ssh-input")
+        self.connect_ssh_password(name)
+        # No explicit focus/click first — run_command drives the session directly.
+        self.run_command("echo INPUT_WORKS")
+        assert "INPUT_WORKS" in self.wait_for_output("INPUT_WORKS")
+
+    def test_unreachable_port_is_handled_gracefully(self):
+        name = unique_name("ssh-fail-baseline")
+        self.create_ssh_connection(
+            name, host=HOST, port=19997, username=SSH_USERNAME, connect=True
+        )
+        self.handle_password_prompt()
+        assert isinstance(self.driver.get_state(), dict)
+        assert not self.password_prompt_open()
+
+# Window resize (SSH-BASELINE-RESIZE) is not portable to the bridge: the harness
+# has no window-resize verb, and the original only re-checked that the terminal
+# still rendered afterward. Tracked as a follow-up if a resize verb is added.
+@pytest.mark.skip(reason="no window-resize verb in the test bridge (SSH-BASELINE-RESIZE)")
+def test_terminal_survives_window_resize():
+    ...

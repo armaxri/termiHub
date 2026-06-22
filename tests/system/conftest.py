@@ -2,7 +2,22 @@
 
 import pytest
 
-from termihub_harness import AgentInstance, AppInstance, Bridge
+from termihub_harness import (
+    SSH_BANNER_PORT,
+    SSH_BANNER_SERVICE,
+    SSH_HOST,
+    SSH_KEYS_PORT,
+    SSH_KEYS_SERVICE,
+    SSH_PASSWORD_PORT,
+    SSH_PASSWORD_SERVICE,
+    SSH_TUNNEL_PORT,
+    SSH_TUNNEL_SERVICE,
+    AgentInstance,
+    AppInstance,
+    Bridge,
+    ComposeFixture,
+    ContainerRuntimeUnavailable,
+)
 
 
 def pytest_addoption(parser):
@@ -53,3 +68,41 @@ def agent():
         pytest.skip(str(exc))
     with instance as started:
         yield started
+
+
+def _ensure_ssh_services(services_and_ports):
+    """Bring up the given SSH services or skip the suite when no runtime exists.
+
+    Session-scoped callers share the (slow, image-building) bring-up. Requesting
+    such a fixture before the per-class app fixture means the suite **skips before
+    even launching the app** when no container runtime is available. Containers
+    are left running afterward (shared fixtures, like ``scripts/test-system.sh``).
+    """
+    fixture = ComposeFixture()
+    services = [s for s, _ in services_and_ports]
+    ports = [(SSH_HOST, port) for _, port in services_and_ports]
+    try:
+        fixture.ensure(*services, ports=ports)
+    except ContainerRuntimeUnavailable as exc:
+        pytest.skip(f"SSH container fixtures unavailable: {exc}")
+    return fixture
+
+
+@pytest.fixture(scope="session")
+def ssh_fixtures():
+    """Password- and key-auth SSH containers (ports 2201 / 2203)."""
+    return _ensure_ssh_services(
+        [(SSH_PASSWORD_SERVICE, SSH_PASSWORD_PORT), (SSH_KEYS_SERVICE, SSH_KEYS_PORT)]
+    )
+
+
+@pytest.fixture(scope="session")
+def ssh_banner_fixtures():
+    """Pre-auth-banner / MOTD SSH container (port 2206)."""
+    return _ensure_ssh_services([(SSH_BANNER_SERVICE, SSH_BANNER_PORT)])
+
+
+@pytest.fixture(scope="session")
+def ssh_tunnel_fixtures():
+    """Tunnel-target SSH container with internal HTTP (port 2207)."""
+    return _ensure_ssh_services([(SSH_TUNNEL_SERVICE, SSH_TUNNEL_PORT)])

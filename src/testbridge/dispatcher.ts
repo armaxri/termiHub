@@ -92,7 +92,24 @@ export async function dispatchCommand(
     case "click": {
       const el = findByTestId(deps.root, command.testId);
       if (!el) return fail("click", `no element with data-testid="${command.testId}"`);
-      (el as HTMLElement).click();
+      const target = el as HTMLElement;
+      // Dispatch a realistic pointer+mouse sequence before the native click.
+      // A bare element.click() only fires a `click` event, which libraries that
+      // open on `pointerdown` (e.g. Radix dropdown/menu triggers used across the
+      // app) ignore — so menus never opened. This mirrors what a real mouse
+      // click produces, so both those triggers and plain onClick handlers fire.
+      const init: MouseEventInit = { bubbles: true, cancelable: true, button: 0 };
+      if (typeof PointerEvent === "function") {
+        const pointerInit = { ...init, pointerType: "mouse", isPrimary: true };
+        target.dispatchEvent(new PointerEvent("pointerdown", pointerInit));
+        target.dispatchEvent(new MouseEvent("mousedown", init));
+        target.dispatchEvent(new PointerEvent("pointerup", pointerInit));
+        target.dispatchEvent(new MouseEvent("mouseup", init));
+      } else {
+        target.dispatchEvent(new MouseEvent("mousedown", init));
+        target.dispatchEvent(new MouseEvent("mouseup", init));
+      }
+      target.click();
       return ok("click");
     }
 
@@ -113,6 +130,28 @@ export async function dispatchCommand(
       setter?.call(el, command.text);
       el.dispatchEvent(new Event("input", { bubbles: true }));
       return ok("type");
+    }
+
+    case "select": {
+      const el = findByTestId(deps.root, command.testId);
+      if (!el) return fail("select", `no element with data-testid="${command.testId}"`);
+      if (!(el instanceof HTMLSelectElement)) {
+        return fail("select", `element data-testid="${command.testId}" is not a select`);
+      }
+      const options = Array.from(el.options).map((option) => option.value);
+      if (!options.includes(command.value)) {
+        return fail(
+          "select",
+          `option "${command.value}" not found in data-testid="${command.testId}" ` +
+            `(have: ${options.join(", ")})`
+        );
+      }
+      // Mirror the `type` workaround: drive the native value setter, then fire a
+      // `change` event so React's controlled <select> onChange observes it.
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
+      setter?.call(el, command.value);
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      return ok("select");
     }
 
     case "terminalInput": {

@@ -86,6 +86,20 @@ describe("dispatchCommand", () => {
       expect(handler).toHaveBeenCalledOnce();
     });
 
+    it("fires pointerdown before the click (for Radix-style menu triggers)", async () => {
+      const { deps, container } = setup(`<button data-testid="go">Go</button>`);
+      const seen: string[] = [];
+      const btn = container.querySelector("button")!;
+      btn.addEventListener("pointerdown", () => seen.push("pointerdown"));
+      btn.addEventListener("mousedown", () => seen.push("mousedown"));
+      btn.addEventListener("click", () => seen.push("click"));
+
+      await dispatchCommand({ action: "click", testId: "go" }, deps);
+      // A real click opens libraries that open on pointerdown, then fires click.
+      expect(seen[0]).toBe("pointerdown");
+      expect(seen).toContain("click");
+    });
+
     it("fails when the target is absent", async () => {
       const { deps } = setup(`<div></div>`);
       const res = await dispatchCommand({ action: "click", testId: "go" }, deps);
@@ -109,6 +123,49 @@ describe("dispatchCommand", () => {
     it("fails on a non-input element", async () => {
       const { deps } = setup(`<div data-testid="name"></div>`);
       const res = await dispatchCommand({ action: "type", testId: "name", text: "x" }, deps);
+      expect(res.ok).toBe(false);
+    });
+  });
+
+  describe("select", () => {
+    const OPTIONS = `
+      <select data-testid="type">
+        <option value="local">Local</option>
+        <option value="ssh">SSH</option>
+      </select>`;
+
+    it("sets the value via the native setter and fires a change event", async () => {
+      const { deps, container } = setup(OPTIONS);
+      const select = container.querySelector("select")!;
+      const observed: string[] = [];
+      select.addEventListener("change", () => observed.push(select.value));
+
+      const res = await dispatchCommand({ action: "select", testId: "type", value: "ssh" }, deps);
+      expect(res).toEqual({ ok: true, action: "select" });
+      expect(select.value).toBe("ssh");
+      expect(observed).toEqual(["ssh"]);
+    });
+
+    it("fails on a non-select element", async () => {
+      const { deps } = setup(`<input data-testid="type" />`);
+      const res = await dispatchCommand({ action: "select", testId: "type", value: "ssh" }, deps);
+      expect(res.ok).toBe(false);
+      expect(res.error).toMatch(/select/i);
+    });
+
+    it("fails when the value is not one of the options", async () => {
+      const { deps } = setup(OPTIONS);
+      const res = await dispatchCommand(
+        { action: "select", testId: "type", value: "telnet" },
+        deps
+      );
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain("telnet");
+    });
+
+    it("fails when the target is absent", async () => {
+      const { deps } = setup(`<div></div>`);
+      const res = await dispatchCommand({ action: "select", testId: "type", value: "ssh" }, deps);
       expect(res.ok).toBe(false);
     });
   });

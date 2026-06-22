@@ -127,6 +127,10 @@ class Driver:
     def type(self, test_id: str, text: str) -> None:
         self._call({"action": "type", "testId": test_id, "text": text})
 
+    def select(self, test_id: str, value: str) -> None:
+        """Choose ``value`` on the native ``<select>`` with ``test_id``."""
+        self._call({"action": "select", "testId": test_id, "value": value})
+
     def terminal_input(self, text: str, tab_id: Optional[str] = None) -> None:
         self._call({"action": "terminalInput", "text": text, "tabId": tab_id})
 

@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import type { SettingsSchema } from "@/types/schema";
 import { ConnectionSettingsForm } from "./ConnectionSettingsForm";
+import { dispatchCommand, type BridgeDeps } from "@/testbridge/dispatcher";
 
 // Mock Tauri dialog
 vi.mock("@tauri-apps/plugin-dialog", () => ({
@@ -132,6 +133,29 @@ describe("ConnectionSettingsForm", () => {
     expect(query("dynamic-field-password")).toBeTruthy();
     // Key path NOT visible when authMethod = "password"
     expect(query("dynamic-field-keyPath")).toBeNull();
+  });
+
+  it("updates conditional fields when the test bridge selects an option", async () => {
+    // Regression: the auth-method <select> is a react-hook-form Controller, whose
+    // watched value drives `visibleWhen`. A bridge `select` must actually update
+    // that value so dependent fields (keyPath) appear — i.e. it must fire the
+    // event RHF listens to, exactly like the `type` command does for inputs.
+    renderForm(SSH_SCHEMA, { authMethod: "password", port: 22 }, vi.fn());
+    expect(query("dynamic-field-keyPath")).toBeNull();
+
+    const deps: BridgeDeps = {
+      root: container,
+      readTerminal: () => undefined,
+      getActiveTabId: () => undefined,
+      getState: () => ({}),
+      sendTerminalInput: async () => false,
+    };
+    await act(async () => {
+      await dispatchCommand({ action: "select", testId: "field-authMethod", value: "key" }, deps);
+    });
+
+    expect(query("dynamic-field-keyPath")).toBeTruthy();
+    expect(query("dynamic-field-password")).toBeNull();
   });
 
   it("hides entire group when all fields are hidden", () => {

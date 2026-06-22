@@ -14,13 +14,20 @@ use crate::utils::vscode;
 /// them with `parse_ssh_settings` so that array-encoded `env` fields
 /// (from the `keyValueList` schema type) are handled correctly.
 #[tauri::command]
-pub fn sftp_open(
+pub async fn sftp_open(
     config: serde_json::Value,
     manager: State<'_, SftpManager>,
 ) -> Result<String, TerminalError> {
     let config = parse_ssh_settings(&config);
     info!(host = %config.host, port = config.port, "Opening SFTP session");
-    manager.open_session(&config)
+    // The SSH handshake blocks (and uses `block_in_place` internally), so run it
+    // on a blocking-pool thread rather than the Tauri command thread — calling it
+    // directly aborts the process (`block_in_place` is only valid on a runtime
+    // worker thread). Mirrors `monitoring_open`.
+    let manager = (*manager).clone();
+    tokio::task::spawn_blocking(move || manager.open_session(&config))
+        .await
+        .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
 }
 
 /// Close an SFTP session.
@@ -32,20 +39,21 @@ pub fn sftp_close(session_id: String, manager: State<'_, SftpManager>) {
 
 /// List directory contents via SFTP.
 #[tauri::command]
-pub fn sftp_list_dir(
+pub async fn sftp_list_dir(
     session_id: String,
     path: String,
     manager: State<'_, SftpManager>,
 ) -> Result<Vec<FileEntry>, TerminalError> {
     debug!(session_id, path, "SFTP list directory");
     let session = manager.get_session(&session_id)?;
-    let session = session.lock().unwrap();
-    session.list_dir(&path)
+    tokio::task::spawn_blocking(move || session.lock().unwrap().list_dir(&path))
+        .await
+        .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
 }
 
 /// Download a remote file to a local path. Returns bytes transferred.
 #[tauri::command]
-pub fn sftp_download(
+pub async fn sftp_download(
     session_id: String,
     remote_path: String,
     local_path: String,
@@ -53,13 +61,16 @@ pub fn sftp_download(
 ) -> Result<u64, TerminalError> {
     debug!(session_id, remote_path, local_path, "SFTP download");
     let session = manager.get_session(&session_id)?;
-    let session = session.lock().unwrap();
-    session.read_file(&remote_path, &local_path)
+    tokio::task::spawn_blocking(move || {
+        session.lock().unwrap().read_file(&remote_path, &local_path)
+    })
+    .await
+    .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
 }
 
 /// Upload a local file to a remote path. Returns bytes transferred.
 #[tauri::command]
-pub fn sftp_upload(
+pub async fn sftp_upload(
     session_id: String,
     local_path: String,
     remote_path: String,
@@ -67,50 +78,62 @@ pub fn sftp_upload(
 ) -> Result<u64, TerminalError> {
     debug!(session_id, local_path, remote_path, "SFTP upload");
     let session = manager.get_session(&session_id)?;
-    let session = session.lock().unwrap();
-    session.write_file(&local_path, &remote_path)
+    tokio::task::spawn_blocking(move || {
+        session
+            .lock()
+            .unwrap()
+            .write_file(&local_path, &remote_path)
+    })
+    .await
+    .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
 }
 
 /// Create a directory on the remote host.
 #[tauri::command]
-pub fn sftp_mkdir(
+pub async fn sftp_mkdir(
     session_id: String,
     path: String,
     manager: State<'_, SftpManager>,
 ) -> Result<(), TerminalError> {
     let session = manager.get_session(&session_id)?;
-    let session = session.lock().unwrap();
-    session.mkdir(&path)
+    tokio::task::spawn_blocking(move || session.lock().unwrap().mkdir(&path))
+        .await
+        .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
 }
 
 /// Delete a file or empty directory on the remote host.
 #[tauri::command]
-pub fn sftp_delete(
+pub async fn sftp_delete(
     session_id: String,
     path: String,
     is_directory: bool,
     manager: State<'_, SftpManager>,
 ) -> Result<(), TerminalError> {
     let session = manager.get_session(&session_id)?;
-    let session = session.lock().unwrap();
-    if is_directory {
-        session.remove_dir(&path)
-    } else {
-        session.remove_file(&path)
-    }
+    tokio::task::spawn_blocking(move || {
+        let session = session.lock().unwrap();
+        if is_directory {
+            session.remove_dir(&path)
+        } else {
+            session.remove_file(&path)
+        }
+    })
+    .await
+    .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
 }
 
 /// Rename a file or directory on the remote host.
 #[tauri::command]
-pub fn sftp_rename(
+pub async fn sftp_rename(
     session_id: String,
     old_path: String,
     new_path: String,
     manager: State<'_, SftpManager>,
 ) -> Result<(), TerminalError> {
     let session = manager.get_session(&session_id)?;
-    let session = session.lock().unwrap();
-    session.rename(&old_path, &new_path)
+    tokio::task::spawn_blocking(move || session.lock().unwrap().rename(&old_path, &new_path))
+        .await
+        .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
 }
 
 // --- Local filesystem commands ---
@@ -169,27 +192,34 @@ pub fn local_write_file(path: String, content: String) -> Result<(), TerminalErr
 
 /// Read a remote file's contents as a UTF-8 string via SFTP.
 #[tauri::command]
-pub fn sftp_read_file_content(
+pub async fn sftp_read_file_content(
     session_id: String,
     remote_path: String,
     manager: State<'_, SftpManager>,
 ) -> Result<String, TerminalError> {
     let session = manager.get_session(&session_id)?;
-    let session = session.lock().unwrap();
-    session.read_file_content(&remote_path)
+    tokio::task::spawn_blocking(move || session.lock().unwrap().read_file_content(&remote_path))
+        .await
+        .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
 }
 
 /// Write a string to a remote file via SFTP.
 #[tauri::command]
-pub fn sftp_write_file_content(
+pub async fn sftp_write_file_content(
     session_id: String,
     remote_path: String,
     content: String,
     manager: State<'_, SftpManager>,
 ) -> Result<(), TerminalError> {
     let session = manager.get_session(&session_id)?;
-    let session = session.lock().unwrap();
-    session.write_file_content(&remote_path, &content)
+    tokio::task::spawn_blocking(move || {
+        session
+            .lock()
+            .unwrap()
+            .write_file_content(&remote_path, &content)
+    })
+    .await
+    .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))?
 }
 
 // --- VS Code integration ---
