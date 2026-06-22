@@ -429,6 +429,17 @@ class SystemTest:
         )
         self.driver.click("settings-menu-open")
 
+    def open_settings_category(self, category: str) -> None:
+        """Open Settings and select a category nav item (e.g. ``external-files``).
+
+        Only the active category's fields are mounted, so a setting like
+        ``toggle-power-monitoring`` (under *external-files*) must be navigated to.
+        """
+        self.open_settings_tab()
+        nav = f"settings-nav-{category}"
+        self.wait(lambda: self.driver.exists(nav), what=f"the {category} settings nav")
+        self.driver.click(nav)
+
     # ── Watch-along ──────────────────────────────────────────────────────────
     def delay4user(self, seconds: float = 1.0, reason: str = "") -> None:
         """Sleep so a human can see the last UI change — only under ``--delay4user``.
