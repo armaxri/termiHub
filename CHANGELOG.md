@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - SSH: upgraded `russh` from 0.46 to 0.61 and `russh-sftp` from 2.0 to 2.3 to resolve two advisories in the SSH transport — `RUSTSEC-2026-0154` (`russh`: unbounded 32-bit allocation) and `RUSTSEC-2026-0153` (`russh-cryptovec`: unchecked allocation/growth), both fixed in `russh >= 0.60.3`. The `russh-keys` crate was merged into `russh::keys` upstream, so the separate dependency was dropped. SSH key/password/agent authentication and SFTP were migrated to the new API (`PrivateKeyWithHashAlg`, `AuthResult`, agent `Signer`-based auth); behaviour is unchanged.
+- Dependencies: bumped the transitive `quinn-proto` from 0.11.14 to 0.11.15 to resolve `RUSTSEC-2026-0185` (remote memory exhaustion from unbounded out-of-order QUIC stream reassembly). Lockfile-only change.
 
 ### Changed
 
