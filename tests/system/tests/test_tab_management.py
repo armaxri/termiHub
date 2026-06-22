@@ -81,7 +81,7 @@ class TestTabManagement(SystemTest):
     @pytest.mark.skip(
         reason="@dnd-kit tab reordering needs a real pointer gesture (activation "
         "distance/timing) that synthetic dragTo events do not reliably trigger; "
-        "covered by manual testing (see docs/testing.md)."
+        "tracked in #832, covered by manual testing (see docs/testing.md)."
     )
     def test_reorder_tabs_by_dragging(self):
         self._reset()
