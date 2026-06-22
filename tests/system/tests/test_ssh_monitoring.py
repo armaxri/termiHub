@@ -11,7 +11,14 @@ import time
 
 import pytest
 
-from termihub_harness import SSH_PASSWORD_PORT, SSH_USERNAME, SystemTest, unique_name
+from termihub_harness import (
+    SSH_KEY_PATH,
+    SSH_KEYS_PORT,
+    SSH_PASSWORD_PORT,
+    SSH_USERNAME,
+    SystemTest,
+    unique_name,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -24,6 +31,33 @@ class TestSshMonitoring(SystemTest):
     def test_auto_shows_stats_on_ssh_tab(self):
         self._connect(unique_name("ssh-mon-auto"))
         self.wait_for_monitoring_stats()
+
+    def test_monitoring_follows_active_ssh_tab(self):
+        # Two different SSH hosts; monitoring tracks whichever tab is active.
+        name1 = unique_name("ssh-mon-h1")
+        self._connect(name1)
+        self.wait_for_monitoring_stats()
+
+        name2 = unique_name("ssh-mon-h2")
+        self.switch_to_connections_sidebar()
+        self.create_ssh_connection(
+            name2,
+            host=HOST,
+            port=SSH_KEYS_PORT,
+            username=SSH_USERNAME,
+            auth_method="key",
+            key_path=str(SSH_KEY_PATH),
+            connect=True,
+        )
+        self.wait(self.has_terminal, what="the second SSH terminal")
+        self.wait_for_monitoring_stats()
+
+        tab1 = self.find_tab(name1)
+        assert tab1 is not None
+        self.switch_to_tab(tab1["id"])
+        assert self.wait(
+            self.monitoring_visible, what="monitoring back on the first tab"
+        )
 
     def test_disconnect_triggers_reconnect(self):
         # On an SSH tab monitoring auto-connects, so a manual Disconnect is
