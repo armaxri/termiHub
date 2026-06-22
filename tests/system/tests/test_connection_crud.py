@@ -2,9 +2,13 @@
 the WebdriverIO ``connection-crud.test.js`` to the Python bridge harness (#807).
 
 Each WebdriverIO ``data-testid`` interaction maps to a bridge step and each
-assertion to a check, driven through :class:`ConnectionsUi` over the live app.
-Lookups that the old suite did by visible name/title (connection items, folders,
-tabs carry UUID testids) are resolved here through ``getState``.
+assertion to a check. The suite combines :class:`ConnectionsUi` (connection-list
+flows) with :class:`SystemTest`, reusing the base's generic helpers
+(``unique_name``, ``create_ssh_connection``, ``find_tab`` / ``tab_count``,
+``open_new_connection_editor``, ``switch_to_connections_sidebar``) so only the
+connection-list specifics live here. Lookups the old suite did by visible
+name/title (connection items, folders, tabs carry UUID testids) are resolved
+through ``getState``.
 
 Divergences from the original, by design:
 
@@ -23,7 +27,7 @@ from __future__ import annotations
 
 import pytest
 
-from termihub_harness import ConnectionsUi, SystemTest, find_tab, tab_count
+from termihub_harness import ConnectionsUi, SystemTest, unique_name
 
 pytestmark = pytest.mark.integration
 
@@ -31,17 +35,14 @@ pytestmark = pytest.mark.integration
 class TestConnectionCrud(ConnectionsUi, SystemTest):
     """One app for the whole suite; methods run in order and share its state."""
 
-    _counter = 0
-
-    def _name(self, purpose: str) -> str:
-        """A unique connection name for this suite run (app is fresh per class)."""
-        type(self)._counter += 1
-        return f"SYS-{purpose}-{self._counter}"
-
     @pytest.fixture(autouse=True)
     def _connection_suite(self):
         """Per-test: ensure the sidebar is up; afterwards close stray menus/editor."""
-        self.ensure_connections_sidebar()
+        self.switch_to_connections_sidebar()
+        self.wait(
+            lambda: self.driver.exists("connection-list-new-connection"),
+            what="the connections sidebar",
+        )
         yield
         try:
             self.dismiss_menu()
@@ -53,13 +54,13 @@ class TestConnectionCrud(ConnectionsUi, SystemTest):
 
     # ── CONN-01: create ────────────────────────────────────────────────────────
     def test_create_local_connection(self):
-        name = self._name("create")
+        name = unique_name("create")
         self.create_local_connection(name)
         assert self.find_connection(name) is not None
 
     # ── CONN-02: edit name via context menu ────────────────────────────────────
     def test_edit_connection_name(self):
-        original = self._name("edit-orig")
+        original = unique_name("edit-orig")
         self.create_local_connection(original)
 
         self.connection_context_action(original, self.CTX_EDIT)
@@ -74,7 +75,7 @@ class TestConnectionCrud(ConnectionsUi, SystemTest):
 
     # ── CONN-03: delete via context menu ───────────────────────────────────────
     def test_delete_connection(self):
-        name = self._name("delete")
+        name = unique_name("delete")
         self.create_local_connection(name)
         assert self.find_connection(name) is not None
 
@@ -83,7 +84,7 @@ class TestConnectionCrud(ConnectionsUi, SystemTest):
 
     # ── CONN-04: create folder via toolbar ─────────────────────────────────────
     def test_create_folder(self):
-        folder = self._name("folder")
+        folder = unique_name("folder")
         self.driver.click(self.NEW_FOLDER)
         self.wait(lambda: self.driver.exists(self.FOLDER_NAME_INPUT), what="the folder input")
         self.driver.type(self.FOLDER_NAME_INPUT, folder)
@@ -92,7 +93,7 @@ class TestConnectionCrud(ConnectionsUi, SystemTest):
 
     # ── CONN-10: duplicate via context menu ────────────────────────────────────
     def test_duplicate_connection(self):
-        name = self._name("dup")
+        name = unique_name("dup")
         self.create_local_connection(name)
         self.connection_context_action(name, self.CTX_DUPLICATE)
         self.wait(
@@ -102,75 +103,74 @@ class TestConnectionCrud(ConnectionsUi, SystemTest):
 
     # ── CONN-EDITOR-TAB: editor lives in a tab (PR #109) ───────────────────────
     def test_editor_opens_as_tab(self):
-        before = tab_count(self.driver)
+        before = self.tab_count()
         self.open_new_connection_editor()
         assert self.editor_open()
-        assert tab_count(self.driver) == before + 1
+        assert self.tab_count() == before + 1
 
     def test_edit_opens_tab_titled_edit(self):
-        name = self._name("edit-tab")
+        name = unique_name("edit-tab")
         self.create_local_connection(name)
         self.connection_context_action(name, self.CTX_EDIT)
-        self.wait(lambda: find_tab(self.driver, f"Edit: {name}") is not None, what="the edit tab")
+        self.wait(lambda: self.find_tab(f"Edit: {name}") is not None, what="the edit tab")
 
     def test_saving_closes_editor_tab(self):
-        name = self._name("save-close")
+        name = unique_name("save-close")
         self.open_new_connection_editor()
         self.driver.type(self.EDITOR_NAME, name)
-        before = tab_count(self.driver)
+        before = self.tab_count()
         self.driver.click(self.EDITOR_SAVE)
-        self.wait(lambda: tab_count(self.driver) < before, what="the editor tab to close")
+        self.wait(lambda: self.tab_count() < before, what="the editor tab to close")
 
     def test_cancelling_closes_editor_tab(self):
         self.open_new_connection_editor()
-        before = tab_count(self.driver)
+        before = self.tab_count()
         self.driver.click(self.EDITOR_CANCEL)
-        self.wait(lambda: tab_count(self.driver) < before, what="the editor tab to close")
+        self.wait(lambda: self.tab_count() < before, what="the editor tab to close")
 
     def test_reedit_activates_existing_tab(self):
-        name = self._name("re-edit")
+        name = unique_name("re-edit")
         self.create_local_connection(name)
 
         self.connection_context_action(name, self.CTX_EDIT)
-        self.wait(lambda: find_tab(self.driver, f"Edit: {name}") is not None, what="the edit tab")
-        after_first = tab_count(self.driver)
+        self.wait(lambda: self.find_tab(f"Edit: {name}") is not None, what="the edit tab")
+        after_first = self.tab_count()
 
         # Editing the same connection again must reuse, not duplicate, its tab.
         self.connection_context_action(name, self.CTX_EDIT)
-        # Give any (erroneous) second tab a chance to appear, then assert it didn't.
-        self.wait(lambda: find_tab(self.driver, f"Edit: {name}") is not None, what="the edit tab")
-        assert tab_count(self.driver) == after_first
+        self.wait(lambda: self.find_tab(f"Edit: {name}") is not None, what="the edit tab")
+        assert self.tab_count() == after_first
 
     def test_multiple_editor_tabs_for_different_connections(self):
-        name1 = self._name("multi-a")
-        name2 = self._name("multi-b")
+        name1 = unique_name("multi-a")
+        name2 = unique_name("multi-b")
         self.create_local_connection(name1)
         self.create_local_connection(name2)
 
         self.connection_context_action(name1, self.CTX_EDIT)
-        self.wait(lambda: find_tab(self.driver, f"Edit: {name1}") is not None, what="first edit tab")
-        after_first = tab_count(self.driver)
+        self.wait(lambda: self.find_tab(f"Edit: {name1}") is not None, what="first edit tab")
+        after_first = self.tab_count()
 
         self.connection_context_action(name2, self.CTX_EDIT)
         self.wait(
-            lambda: tab_count(self.driver) == after_first + 1,
+            lambda: self.tab_count() == after_first + 1,
             what="a second, distinct edit tab",
         )
-        assert find_tab(self.driver, f"Edit: {name1}") is not None
-        assert find_tab(self.driver, f"Edit: {name2}") is not None
+        assert self.find_tab(f"Edit: {name1}") is not None
+        assert self.find_tab(f"Edit: {name2}") is not None
 
     # ── CONN-SAVE-CONNECT: Save & Connect (PR #112) ────────────────────────────
     def test_save_and_connect_opens_terminal(self):
-        name = self._name("save-conn")
+        name = unique_name("save-conn")
         self.open_new_connection_editor()
         self.driver.type(self.EDITOR_NAME, name)
         self.driver.click(self.EDITOR_SAVE_CONNECT)
         self.require_connection(name)
-        self.wait(lambda: find_tab(self.driver, name) is not None, what="the connected terminal tab")
+        self.wait(lambda: self.find_tab(name) is not None, what="the connected terminal tab")
 
     # ── CONN-DUP-NAME: duplicate-name validation (#380) ────────────────────────
     def test_duplicate_name_shows_error(self):
-        name = self._name("dup-check")
+        name = unique_name("dup-check")
         self.create_local_connection(name)
 
         self.open_new_connection_editor()
@@ -179,7 +179,7 @@ class TestConnectionCrud(ConnectionsUi, SystemTest):
         assert "already exists" in self.driver.get_text(self.EDITOR_NAME_ERROR)
 
     def test_duplicate_name_blocks_save(self):
-        name = self._name("dup-block")
+        name = unique_name("dup-block")
         self.create_local_connection(name)
 
         self.open_new_connection_editor()
@@ -191,24 +191,24 @@ class TestConnectionCrud(ConnectionsUi, SystemTest):
         assert self.driver.exists(self.EDITOR_NAME_ERROR)
 
     def test_duplicate_name_error_clears_on_unique(self):
-        name = self._name("dup-clear")
+        name = unique_name("dup-clear")
         self.create_local_connection(name)
 
         self.open_new_connection_editor()
         self.driver.type(self.EDITOR_NAME, name)
         self.wait(lambda: self.driver.exists(self.EDITOR_NAME_ERROR), what="the duplicate-name error")
 
-        unique = self._name("dup-fixed")
-        self.driver.type(self.EDITOR_NAME, unique)
+        fresh = unique_name("dup-fixed")
+        self.driver.type(self.EDITOR_NAME, fresh)
         self.wait(
             lambda: not self.driver.exists(self.EDITOR_NAME_ERROR),
             what="the error to clear",
         )
         self.driver.click(self.EDITOR_SAVE)
-        self.require_connection(unique)
+        self.require_connection(fresh)
 
     def test_edit_without_changing_name_saves(self):
-        name = self._name("self-edit")
+        name = unique_name("self-edit")
         self.create_local_connection(name)
 
         self.connection_context_action(name, self.CTX_EDIT)
@@ -220,32 +220,28 @@ class TestConnectionCrud(ConnectionsUi, SystemTest):
 
     # ── CONN-PING: ping host context menu (PR #37) ─────────────────────────────
     def test_ping_menu_shown_for_ssh(self):
-        name = self._name("ping-ssh")
-        self.create_typed_connection(
-            name, "ssh", {"host": "127.0.0.1", "port": "22", "username": "tester"}
-        )
+        name = unique_name("ping-ssh")
+        self.create_ssh_connection(name, host="127.0.0.1", port=22, username="tester")
         self.open_connection_menu(name)
         assert self.driver.exists(self.CTX_PING)
 
     def test_ping_menu_hidden_for_local(self):
-        name = self._name("ping-local")
+        name = unique_name("ping-local")
         self.create_local_connection(name)
         self.open_connection_menu(name)
         assert not self.driver.exists(self.CTX_PING)
 
     def test_ping_opens_tab(self):
-        name = self._name("ping-tab")
-        self.create_typed_connection(name, "ssh", {"host": "127.0.0.1", "port": "22"})
+        name = unique_name("ping-tab")
+        self.create_ssh_connection(name, host="127.0.0.1", port=22, username="tester")
         self.connection_context_action(name, self.CTX_PING)
-        self.wait(lambda: find_tab(self.driver, "Ping") is not None, what="a Ping tab")
+        self.wait(lambda: self.find_tab("Ping") is not None, what="a Ping tab")
 
     # ── MT-CONN-04: create SSH connection ──────────────────────────────────────
     def test_create_ssh_connection(self):
-        name = self._name("ssh-conn")
-        self.create_typed_connection(
-            name, "ssh", {"host": "192.168.1.1", "port": "22", "username": "tester"}
-        )
-        assert self.find_connection(name) is not None
+        name = unique_name("ssh-conn")
+        self.create_ssh_connection(name, host="192.168.1.1", port=22, username="tester")
+        self.require_connection(name)
 
     # ── MT-CONN-08: export connections dialog ──────────────────────────────────
     def test_export_dialog_opens(self):

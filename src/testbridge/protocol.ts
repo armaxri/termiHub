@@ -34,6 +34,20 @@ export interface TypeCommand {
 }
 
 /**
+ * Choose an option of a `<select>` carrying the given `data-testid`.
+ *
+ * A counterpart to {@link TypeCommand} for native dropdowns (connection type,
+ * SSH auth method, …): sets `value` via the native setter and dispatches a
+ * `change` event so React's controlled `<select>` observes it. Fails if the
+ * element is not a `<select>` or `value` is not one of its options.
+ */
+export interface SelectCommand {
+  action: "select";
+  testId: string;
+  value: string;
+}
+
+/**
  * Send input into a running terminal **session** (not a form field).
  *
  * An xterm terminal renders to a canvas, so {@link TypeCommand} cannot drive it.
@@ -82,20 +96,6 @@ export interface ContextMenuCommand {
 }
 
 /**
- * Choose an `<option>` by value in the `<select>` carrying the given `data-testid`.
- *
- * Sets the value via the native setter, then fires `input` + `change` so React's
- * controlled `<select>` observes the choice — the `<select>` analog of
- * {@link TypeCommand}. Fails when the element is not a `<select>` or has no option
- * with `value`.
- */
-export interface SelectOptionCommand {
-  action: "selectOption";
-  testId: string;
-  value: string;
-}
-
-/**
  * Dispatch a keyboard key press (`keydown` + `keyup`).
  *
  * Targets the element with `testId` when given, else the focused element — so a
@@ -135,12 +135,12 @@ export interface GetStateCommand {
 export type BridgeCommand =
   | ClickCommand
   | TypeCommand
+  | SelectCommand
   | TerminalInputCommand
   | ExistsCommand
   | GetTextCommand
   | GetAttributeCommand
   | ContextMenuCommand
-  | SelectOptionCommand
   | PressKeyCommand
   | ReadTerminalCommand
   | GetStateCommand;

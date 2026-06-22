@@ -137,8 +137,8 @@ unmount.
 | --------------- | -------------------------------------------------------------- |
 | `click`         | Press the element (full pointer sequence, so Radix menus open) |
 | `type`          | Set an input/textarea value (native setter + `input` event)    |
+| `select`        | Choose a native `<select>` option (native setter + `change`)   |
 | `contextMenu`   | Open an element's right-click menu (`contextmenu` event)       |
-| `selectOption`  | Choose a `<select>` option by value (`change` event)           |
 | `pressKey`      | Dispatch a key (`keydown`+`keyup`), e.g. `Escape`, `Enter`     |
 | `terminalInput` | Send a command into a terminal **session** (see below)         |
 | `exists`        | Whether an element is present                                  |

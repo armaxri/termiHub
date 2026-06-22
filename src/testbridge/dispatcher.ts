@@ -29,20 +29,6 @@ export interface BridgeDeps {
   sendTerminalInput: (tabId: string, text: string) => Promise<boolean>;
 }
 
-/**
- * Build a primary-button pointer event, falling back to a {@link MouseEvent} of
- * the same type where `PointerEvent` is unavailable (e.g. jsdom). The fallback
- * still dispatches to `pointerdown`/`pointerup` listeners — the type string is
- * what matters — so menu libraries that gate on those events still fire.
- */
-function pointerLikeEvent(type: string): Event {
-  const init: MouseEventInit = { bubbles: true, cancelable: true, button: 0 };
-  if (typeof PointerEvent === "function") {
-    return new PointerEvent(type, { ...init, isPrimary: true, pointerType: "mouse" });
-  }
-  return new MouseEvent(type, init);
-}
-
 /** Resolve an element by its `data-testid`, escaping the value for the selector. */
 function findByTestId(root: ParentNode, testId: string): Element | null {
   const escaped =
@@ -107,15 +93,22 @@ export async function dispatchCommand(
       const el = findByTestId(deps.root, command.testId);
       if (!el) return fail("click", `no element with data-testid="${command.testId}"`);
       const target = el as HTMLElement;
-      // Emulate a full user click: pointer + mouse down/up, then the click itself.
-      // Plain `onClick` buttons act only on the final `click()`, but pointer-driven
-      // triggers (Radix dropdown/menu) open on `pointerdown` — which a bare
-      // `click()` never fires. Ordering and a single trailing `click()` keep the
-      // `click` event from double-firing.
-      target.dispatchEvent(pointerLikeEvent("pointerdown"));
-      target.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
-      target.dispatchEvent(pointerLikeEvent("pointerup"));
-      target.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
+      // Dispatch a realistic pointer+mouse sequence before the native click.
+      // A bare element.click() only fires a `click` event, which libraries that
+      // open on `pointerdown` (e.g. Radix dropdown/menu triggers used across the
+      // app) ignore — so menus never opened. This mirrors what a real mouse
+      // click produces, so both those triggers and plain onClick handlers fire.
+      const init: MouseEventInit = { bubbles: true, cancelable: true, button: 0 };
+      if (typeof PointerEvent === "function") {
+        const pointerInit = { ...init, pointerType: "mouse", isPrimary: true };
+        target.dispatchEvent(new PointerEvent("pointerdown", pointerInit));
+        target.dispatchEvent(new MouseEvent("mousedown", init));
+        target.dispatchEvent(new PointerEvent("pointerup", pointerInit));
+        target.dispatchEvent(new MouseEvent("mouseup", init));
+      } else {
+        target.dispatchEvent(new MouseEvent("mousedown", init));
+        target.dispatchEvent(new MouseEvent("mouseup", init));
+      }
       target.click();
       return ok("click");
     }
@@ -160,29 +153,6 @@ export async function dispatchCommand(
       return ok("contextMenu");
     }
 
-    case "selectOption": {
-      const el = findByTestId(deps.root, command.testId);
-      if (!el) return fail("selectOption", `no element with data-testid="${command.testId}"`);
-      if (!(el instanceof HTMLSelectElement)) {
-        return fail("selectOption", `element data-testid="${command.testId}" is not a <select>`);
-      }
-      const hasOption = Array.from(el.options).some((opt) => opt.value === command.value);
-      if (!hasOption) {
-        return fail(
-          "selectOption",
-          `<select data-testid="${command.testId}"> has no option with value "${command.value}"`
-        );
-      }
-      // Drive React's controlled <select> via the native value setter, then fire
-      // input + change — the same approach as `type`, since React's onChange for a
-      // <select> listens on the change event.
-      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
-      setter?.call(el, command.value);
-      el.dispatchEvent(new Event("input", { bubbles: true }));
-      el.dispatchEvent(new Event("change", { bubbles: true }));
-      return ok("selectOption");
-    }
-
     case "pressKey": {
       let target: EventTarget | null;
       if (command.testId) {
@@ -199,6 +169,28 @@ export async function dispatchCommand(
       target.dispatchEvent(new KeyboardEvent("keydown", init));
       target.dispatchEvent(new KeyboardEvent("keyup", init));
       return ok("pressKey");
+    }
+
+    case "select": {
+      const el = findByTestId(deps.root, command.testId);
+      if (!el) return fail("select", `no element with data-testid="${command.testId}"`);
+      if (!(el instanceof HTMLSelectElement)) {
+        return fail("select", `element data-testid="${command.testId}" is not a select`);
+      }
+      const options = Array.from(el.options).map((option) => option.value);
+      if (!options.includes(command.value)) {
+        return fail(
+          "select",
+          `option "${command.value}" not found in data-testid="${command.testId}" ` +
+            `(have: ${options.join(", ")})`
+        );
+      }
+      // Mirror the `type` workaround: drive the native value setter, then fire a
+      // `change` event so React's controlled <select> onChange observes it.
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
+      setter?.call(el, command.value);
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      return ok("select");
     }
 
     case "terminalInput": {

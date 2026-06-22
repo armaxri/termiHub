@@ -54,6 +54,8 @@ export interface Driver {
   click(testId: string): Promise<void>;
   /** Set the value of the input/textarea carrying the given `data-testid`. */
   type(testId: string, text: string): Promise<void>;
+  /** Choose `value` on the native `<select>` carrying the given `data-testid`. */
+  select(testId: string, value: string): Promise<void>;
   /**
    * Send input into a terminal session (active tab unless `tabId` is given). A
    * trailing newline is appended, so `terminalInput("ls")` runs `ls`.
@@ -67,8 +69,6 @@ export interface Driver {
   getAttribute(testId: string, attribute: string): Promise<string | null>;
   /** Open the right-click context menu of the element with the given `data-testid`. */
   contextMenu(testId: string): Promise<void>;
-  /** Choose an `<option>` by value in the `<select>` with the given `data-testid`. */
-  selectOption(testId: string, value: string): Promise<void>;
   /** Press a key on `testId` (or the focused element when omitted), e.g. `"Escape"`. */
   pressKey(key: string, testId?: string): Promise<void>;
   /** Read the reconstructed text of a terminal (active tab unless specified). */
@@ -120,6 +120,10 @@ export class InAppBridgeDriver implements Driver {
     await this.send({ action: "type", testId, text });
   }
 
+  async select(testId: string, value: string): Promise<void> {
+    await this.send({ action: "select", testId, value });
+  }
+
   async terminalInput(text: string, options: TerminalInputOptions = {}): Promise<void> {
     await this.send({ action: "terminalInput", text, tabId: options.tabId });
   }
@@ -138,10 +142,6 @@ export class InAppBridgeDriver implements Driver {
 
   async contextMenu(testId: string): Promise<void> {
     await this.send({ action: "contextMenu", testId });
-  }
-
-  async selectOption(testId: string, value: string): Promise<void> {
-    await this.send({ action: "selectOption", testId, value });
   }
 
   async pressKey(key: string, testId?: string): Promise<void> {

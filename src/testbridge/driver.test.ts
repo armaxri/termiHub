@@ -43,10 +43,10 @@ describe("InAppBridgeDriver", () => {
     expect(sent).toEqual([{ action: "contextMenu", testId: "connection-item-1" }]);
   });
 
-  it("maps selectOption to a selectOption command", async () => {
+  it("maps select to a select command", async () => {
     const { transport, sent } = scriptedTransport({});
-    await new InAppBridgeDriver(transport).selectOption("type", "ssh");
-    expect(sent).toEqual([{ action: "selectOption", testId: "type", value: "ssh" }]);
+    await new InAppBridgeDriver(transport).select("type", "ssh");
+    expect(sent).toEqual([{ action: "select", testId: "type", value: "ssh" }]);
   });
 
   it("maps pressKey to a pressKey command, defaulting testId to undefined", async () => {

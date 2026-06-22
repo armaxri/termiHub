@@ -12,6 +12,7 @@ import type { Scenario } from "./scenario";
 class FakeDriver implements Driver {
   clicks: string[] = [];
   typed: Array<{ testId: string; text: string }> = [];
+  selected: Array<{ testId: string; value: string }> = [];
   terminalInputs: Array<{ text: string; tabId?: string }> = [];
   elements = new Map<string, { text?: string }>();
   terminalText = "";
@@ -29,6 +30,11 @@ class FakeDriver implements Driver {
   async type(testId: string, text: string): Promise<void> {
     if (!this.elements.has(testId)) throw new BridgeError("type", `no element "${testId}"`);
     this.typed.push({ testId, text });
+  }
+
+  async select(testId: string, value: string): Promise<void> {
+    if (!this.elements.has(testId)) throw new BridgeError("select", `no element "${testId}"`);
+    this.selected.push({ testId, value });
   }
 
   async terminalInput(text: string, options: TerminalInputOptions = {}): Promise<void> {
@@ -51,8 +57,6 @@ class FakeDriver implements Driver {
   }
 
   async contextMenu(_testId: string): Promise<void> {}
-
-  async selectOption(_testId: string, _value: string): Promise<void> {}
 
   async pressKey(_key: string, _testId?: string): Promise<void> {}
 
@@ -107,6 +111,22 @@ describe("runScenario", () => {
     expect(result.steps.every((s) => s.ok)).toBe(true);
     expect(result.checks[0].passed).toBe(true);
     expect(result.terminalSnapshot).toBeUndefined();
+  });
+
+  it("runs a select step against the driver", async () => {
+    const driver = new FakeDriver();
+    driver.elements.set("connection-editor-type-select", {});
+
+    const scenario: Scenario = {
+      name: "choose a type",
+      steps: [{ action: "select", testId: "connection-editor-type-select", value: "ssh" }],
+      checks: [],
+    };
+
+    const result = await runScenario(scenario, driver, instant());
+
+    expect(result.passed).toBe(true);
+    expect(driver.selected).toEqual([{ testId: "connection-editor-type-select", value: "ssh" }]);
   });
 
   it("runs a terminalInput step and then asserts on the resulting output", async () => {
