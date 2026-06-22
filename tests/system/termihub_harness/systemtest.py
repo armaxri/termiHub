@@ -429,6 +429,27 @@ class SystemTest:
         )
         self.driver.click("settings-menu-open")
 
+    def enable_experimental_features(self) -> None:
+        """Turn on experimental features (reveals the Tunnels/Services views)."""
+        if self._experimental_enabled():
+            return
+        self.open_settings_category("general")
+        self.wait(
+            lambda: self.driver.exists("settings-experimental-features"),
+            what="the experimental-features toggle",
+        )
+        self.driver.click("settings-experimental-features")
+        self.wait(self._experimental_enabled, what="experimental features to enable")
+        self.switch_to_connections_sidebar()
+
+    def _experimental_enabled(self) -> bool:
+        # The setting is absent from the store until first set, so a missing path
+        # (BridgeError) means "off".
+        try:
+            return bool(self.driver.get_state("settings.experimentalFeaturesEnabled"))
+        except BridgeError:
+            return False
+
     def open_settings_category(self, category: str) -> None:
         """Open Settings and select a category nav item (e.g. ``external-files``).
 
