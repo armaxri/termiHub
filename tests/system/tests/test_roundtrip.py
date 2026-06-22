@@ -51,7 +51,7 @@ def test_extended_interaction_verbs_round_trip(bridge):
     with FakeApp(bridge.port, handler):
         driver = bridge.wait_for_app(timeout=5)
 
-        driver.select_option("theme-select", "light")
+        driver.select("theme-select", "light")
         driver.right_click("tab-1")
         driver.key("Escape")
         driver.key(",", ctrl=True)

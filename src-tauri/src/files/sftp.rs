@@ -426,14 +426,20 @@ impl FileBackend for SftpFileBackend {
 }
 
 /// Manages multiple SFTP sessions keyed by UUID.
+///
+/// `Clone` (the session map is behind an `Arc`) so SFTP commands can move a
+/// handle into `spawn_blocking` — the SSH/SFTP calls block, and running them on
+/// a blocking-pool thread (rather than the Tauri command thread) is what keeps
+/// `block_in_place` valid and avoids starving the async runtime.
+#[derive(Clone)]
 pub struct SftpManager {
-    sessions: Mutex<HashMap<String, Arc<Mutex<SftpSession>>>>,
+    sessions: Arc<Mutex<HashMap<String, Arc<Mutex<SftpSession>>>>>,
 }
 
 impl SftpManager {
     pub fn new() -> Self {
         Self {
-            sessions: Mutex::new(HashMap::new()),
+            sessions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 

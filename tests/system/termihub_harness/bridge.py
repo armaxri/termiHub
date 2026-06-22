@@ -127,9 +127,9 @@ class Driver:
     def type(self, test_id: str, text: str) -> None:
         self._call({"action": "type", "testId": test_id, "text": text})
 
-    def select_option(self, test_id: str, value: str) -> None:
-        """Set a ``<select>``'s value and fire a ``change`` event."""
-        self._call({"action": "selectOption", "testId": test_id, "value": value})
+    def select(self, test_id: str, value: str) -> None:
+        """Choose ``value`` on the native ``<select>`` with ``test_id``."""
+        self._call({"action": "select", "testId": test_id, "value": value})
 
     def right_click(self, test_id: str) -> None:
         """Open an element's context menu via a synthetic right-click."""

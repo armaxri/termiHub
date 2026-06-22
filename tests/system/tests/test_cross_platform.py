@@ -19,11 +19,7 @@ pytestmark = pytest.mark.integration
 class TestCrossPlatform(SystemTest):
     def _open_new_connection_editor(self) -> None:
         self.set_sidebar_visible(True)
-        self.driver.click("connection-list-new-connection")
-        self.wait(
-            lambda: self.driver.exists("connection-editor-type-select"),
-            what="the connection editor",
-        )
+        self.open_new_connection_editor()
 
     def test_typed_command_is_not_echoed_twice(self):
         # MT-LOCAL-09: input must not be doubled back into the terminal.
@@ -50,7 +46,7 @@ class TestCrossPlatform(SystemTest):
     def test_local_shell_field_and_platform_default_shell(self):
         # MT-XPLAT-01: the local type offers a shell field and a platform default.
         self._open_new_connection_editor()
-        self.driver.select_option("connection-editor-type-select", "local")
+        self.driver.select("connection-editor-type-select", "local")
         self.wait(lambda: self.driver.exists("field-shell"), what="the shell field")
 
         default_shell = str(self.driver.get_state("defaultShell") or "").lower()
@@ -66,6 +62,6 @@ class TestCrossPlatform(SystemTest):
     def test_serial_type_offers_a_port_field(self):
         # MT-XPLAT-02: the serial type renders a port field (select or free input).
         self._open_new_connection_editor()
-        self.driver.select_option("connection-editor-type-select", "serial")
+        self.driver.select("connection-editor-type-select", "serial")
         self.wait(lambda: self.driver.exists("field-port"), what="the serial port field")
         self.close_all_tabs()

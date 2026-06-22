@@ -34,14 +34,15 @@ export interface TypeCommand {
 }
 
 /**
- * Set the value of a `<select>` element and fire a `change` event.
+ * Choose an option of a `<select>` carrying the given `data-testid`.
  *
- * `type` drives `<input>`/`<textarea>`; a `<select>` needs its `value` set and a
- * `change` dispatched so React's controlled `onChange` observes the choice. The
- * `value` must match one of the option values (e.g. a theme id like `"light"`).
+ * A counterpart to {@link TypeCommand} for native dropdowns (connection type,
+ * SSH auth method, theme, …): sets `value` via the native setter and dispatches a
+ * `change` event so React's controlled `<select>` observes it. Fails if the
+ * element is not a `<select>` or `value` is not one of its options.
  */
-export interface SelectOptionCommand {
-  action: "selectOption";
+export interface SelectCommand {
+  action: "select";
   testId: string;
   value: string;
 }
@@ -189,7 +190,7 @@ export interface GetStateCommand {
 export type BridgeCommand =
   | ClickCommand
   | TypeCommand
-  | SelectOptionCommand
+  | SelectCommand
   | RightClickCommand
   | KeyCommand
   | TerminalInputCommand

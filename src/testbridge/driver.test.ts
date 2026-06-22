@@ -43,16 +43,16 @@ describe("InAppBridgeDriver", () => {
     expect(sent).toEqual([{ action: "drag", testId: "sidebar-resize-handle", dx: 100, dy: 5 }]);
   });
 
-  it("maps selectOption, rightClick, key, and dragTo to commands", async () => {
+  it("maps select, rightClick, key, and dragTo to commands", async () => {
     const { transport, sent } = scriptedTransport({});
     const driver = new InAppBridgeDriver(transport);
-    await driver.selectOption("theme-select", "light");
+    await driver.select("theme-select", "light");
     await driver.rightClick("tab-1");
     await driver.key("Escape");
     await driver.key(",", { ctrl: true });
     await driver.dragTo("tab-1", "tab-2");
     expect(sent).toEqual([
-      { action: "selectOption", testId: "theme-select", value: "light" },
+      { action: "select", testId: "theme-select", value: "light" },
       { action: "rightClick", testId: "tab-1" },
       { action: "key", key: "Escape" },
       { action: "key", key: ",", ctrl: true },

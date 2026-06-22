@@ -11,7 +11,7 @@ icon Y-position ordering check (pixel geometry).
 
 import pytest
 
-from termihub_harness import SystemTest
+from termihub_harness import SystemTest, unique_name
 
 pytestmark = pytest.mark.integration
 
@@ -28,7 +28,7 @@ class TestSettings(SystemTest):
         self.open_settings_tab()
         self.open_settings_tab()
         # Exactly one tab titled "Settings" should exist.
-        assert sum(1 for t in self.all_tabs() if t.get("title") == "Settings") == 1
+        assert sum(1 for t in self._all_tabs() if t.get("title") == "Settings") == 1
 
     def test_gear_menu_lists_settings_import_export(self):
         self.driver.click("activity-bar-settings")
@@ -88,26 +88,12 @@ class TestSettings(SystemTest):
         self.close_all_tabs()
 
     # ── Monitoring entry point ──────────────────────────────────────────────
-    @pytest.mark.skip(
-        reason="Requires creating an SSH connection through the connection editor "
-        "(the #807 connections port owns those editor helpers); the status-bar "
-        "monitoring entry point is verified there / via manual testing."
-    )
     def test_monitor_button_appears_with_an_ssh_connection(self):
+        # A saved SSH connection is monitorable (by type), which surfaces the
+        # status-bar monitoring entry point. Uses the shared SSH editor helper
+        # from the #812 port; the connection is only saved, never connected.
         self.set_sidebar_visible(True)
-        name = "MonSsh"
-        self.driver.click("connection-list-new-connection")
-        self.wait(lambda: self.driver.exists("connection-editor-type-select"), what="the editor")
-        self.driver.select_option("connection-editor-type-select", "ssh")
-        self.wait(lambda: self.driver.exists("field-host"), what="the ssh host field")
-        self.driver.type("connection-editor-name-input", name)
-        self.driver.type("field-host", "127.0.0.1")
-        # A host + username make the connection monitorable, which is what gates
-        # the status-bar Monitor button.
-        if self.driver.exists("field-username"):
-            self.driver.type("field-username", "root")
-        self.driver.click("connection-editor-save")
-        self.wait(lambda: self.connection_id(name) is not None, what="the saved ssh connection")
-
-        self.wait(lambda: self.driver.exists("monitoring-connect-btn"), what="the monitor button")
-        assert "Monitor" in self.driver.get_text("monitoring-connect-btn")
+        self.create_ssh_connection(
+            unique_name("mon"), host="127.0.0.1", port=22, username="root"
+        )
+        self.wait(self.monitoring_visible, what="the status-bar monitoring entry")

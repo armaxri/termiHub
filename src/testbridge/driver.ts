@@ -68,8 +68,8 @@ export interface Driver {
   click(testId: string): Promise<void>;
   /** Set the value of the input/textarea carrying the given `data-testid`. */
   type(testId: string, text: string): Promise<void>;
-  /** Set a `<select>`'s value and fire a `change` event. */
-  selectOption(testId: string, value: string): Promise<void>;
+  /** Choose `value` on the native `<select>` carrying the given `data-testid`. */
+  select(testId: string, value: string): Promise<void>;
   /** Open an element's context menu via a synthetic right-click. */
   rightClick(testId: string): Promise<void>;
   /** Press a key (with optional modifiers) as a `keydown`/`keyup` pair. */
@@ -144,8 +144,8 @@ export class InAppBridgeDriver implements Driver {
     await this.send({ action: "type", testId, text });
   }
 
-  async selectOption(testId: string, value: string): Promise<void> {
-    await this.send({ action: "selectOption", testId, value });
+  async select(testId: string, value: string): Promise<void> {
+    await this.send({ action: "select", testId, value });
   }
 
   async rightClick(testId: string): Promise<void> {

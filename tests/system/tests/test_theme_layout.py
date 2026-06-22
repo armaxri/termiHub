@@ -33,12 +33,12 @@ class TestThemeLayout(SystemTest):
         self.driver.click("settings-nav-appearance")
         self.wait(lambda: self.driver.exists(THEME_SELECT), what="the theme selector")
 
-        self.driver.select_option(THEME_SELECT, "light")
+        self.driver.select(THEME_SELECT, "light")
         self.wait(lambda: self.driver.get_state("settings.theme") == "light", what="light theme")
         light_bg = self.driver.get_computed_style("--bg-primary")
         self.delay4user(2, reason="light theme applied")
 
-        self.driver.select_option(THEME_SELECT, "dark")
+        self.driver.select(THEME_SELECT, "dark")
         self.wait(lambda: self.driver.get_state("settings.theme") == "dark", what="dark theme")
         dark_bg = self.driver.get_computed_style("--bg-primary")
         self.delay4user(2, reason="dark theme applied")

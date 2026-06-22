@@ -13,8 +13,8 @@
 export type ScenarioStep =
   | { action: "click"; testId: string }
   | { action: "type"; testId: string; text: string }
-  /** Set a `<select>`'s value and fire a `change` event. */
-  | { action: "selectOption"; testId: string; value: string }
+  /** Choose a native `<select>` option by value. */
+  | { action: "select"; testId: string; value: string }
   /** Open an element's context menu via a synthetic right-click. */
   | { action: "rightClick"; testId: string }
   /** Press a key (with optional modifiers). */

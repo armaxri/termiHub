@@ -137,7 +137,7 @@ unmount.
 | ------------------ | -------------------------------------------------------------- |
 | `click`            | Press the element with the given `data-testid`                 |
 | `type`             | Set an input/textarea value (native setter + `input` event)    |
-| `selectOption`     | Set a `<select>`'s value and fire `change`                     |
+| `select`           | Choose a native `<select>` option (native setter + `change`)   |
 | `rightClick`       | Open an element's context menu (synthetic `contextmenu`)       |
 | `key`              | Press a key (with modifiers) as a `keydown`/`keyup` pair       |
 | `terminalInput`    | Send a command into a terminal **session** (see below)         |
@@ -268,7 +268,7 @@ if (!result.passed) {
 | -------------------------------------------------------- | ------------------------------------------------- |
 | `{ action: "click", testId }`                            | Press the control                                 |
 | `{ action: "type", testId, text }`                       | Set an input/textarea value                       |
-| `{ action: "selectOption", testId, value }`              | Set a `<select>`'s value                          |
+| `{ action: "select", testId, value }`                    | Choose a native `<select>` option                 |
 | `{ action: "rightClick", testId }`                       | Open the element's context menu                   |
 | `{ action: "key", key, ctrl?, meta?, shift?, alt? }`     | Press a key with optional modifiers               |
 | `{ action: "drag", testId, dx, dy? }`                    | Drag an element by a pixel delta                  |

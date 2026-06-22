@@ -153,17 +153,17 @@ export async function dispatchCommand(
       const el = findByTestId(deps.root, command.testId);
       if (!el) return fail("click", `no element with data-testid="${command.testId}"`);
       const { x, y } = centerOf(el);
-      // Fire the full pointer→mouse sequence a real click produces, so libraries
-      // that open on pointerdown (Radix dropdown/menu triggers) respond. A Radix
-      // *menu* trigger (aria-haspopup="menu") opens on pointerdown, so a trailing
-      // click() would toggle it shut — skip it there; plain controls and
-      // popover/dialog triggers (which open on click) still get the click().
+      // Fire the realistic pointer→mouse sequence a real click produces, then the
+      // native click(). A bare element.click() only fires a `click` event, which
+      // libraries that open on pointerdown (Radix dropdown/menu triggers used
+      // across the app) ignore — so menus never opened. Radix dedups the trailing
+      // click on a pointerdown-opened trigger, so plain onClick handlers and menu
+      // triggers both behave correctly.
       dispatchPointer(el, "pointerdown", x, y);
       dispatchMouse(el, "mousedown", x, y);
       dispatchPointer(el, "pointerup", x, y);
       dispatchMouse(el, "mouseup", x, y);
-      const opensMenuOnPointerDown = el.getAttribute("aria-haspopup") === "menu";
-      if (!opensMenuOnPointerDown) (el as HTMLElement).click();
+      (el as HTMLElement).click();
       return ok("click");
     }
 
@@ -233,28 +233,6 @@ export async function dispatchCommand(
       return ok("key");
     }
 
-    case "selectOption": {
-      const el = findByTestId(deps.root, command.testId);
-      if (!el) return fail("selectOption", `no element with data-testid="${command.testId}"`);
-      if (!(el instanceof HTMLSelectElement)) {
-        return fail("selectOption", `element data-testid="${command.testId}" is not a <select>`);
-      }
-      const hasOption = Array.from(el.options).some((opt) => opt.value === command.value);
-      if (!hasOption) {
-        return fail(
-          "selectOption",
-          `<select> "${command.testId}" has no option value "${command.value}"`
-        );
-      }
-      // Drive React's controlled <select> via the native value setter, then fire
-      // change — the same pattern `type` uses for inputs.
-      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
-      setter?.call(el, command.value);
-      el.dispatchEvent(new Event("input", { bubbles: true }));
-      el.dispatchEvent(new Event("change", { bubbles: true }));
-      return ok("selectOption");
-    }
-
     case "type": {
       const el = findByTestId(deps.root, command.testId);
       if (!el) return fail("type", `no element with data-testid="${command.testId}"`);
@@ -272,6 +250,28 @@ export async function dispatchCommand(
       setter?.call(el, command.text);
       el.dispatchEvent(new Event("input", { bubbles: true }));
       return ok("type");
+    }
+
+    case "select": {
+      const el = findByTestId(deps.root, command.testId);
+      if (!el) return fail("select", `no element with data-testid="${command.testId}"`);
+      if (!(el instanceof HTMLSelectElement)) {
+        return fail("select", `element data-testid="${command.testId}" is not a select`);
+      }
+      const options = Array.from(el.options).map((option) => option.value);
+      if (!options.includes(command.value)) {
+        return fail(
+          "select",
+          `option "${command.value}" not found in data-testid="${command.testId}" ` +
+            `(have: ${options.join(", ")})`
+        );
+      }
+      // Mirror the `type` workaround: drive the native value setter, then fire a
+      // `change` event so React's controlled <select> onChange observes it.
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
+      setter?.call(el, command.value);
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      return ok("select");
     }
 
     case "terminalInput": {

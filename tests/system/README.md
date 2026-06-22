@@ -17,8 +17,10 @@ contract, kept in parity with the TypeScript dispatcher (`src/testbridge/`). See
 | `termihub_harness/protocol.py`     | Wire envelope encode/decode (mirrors `wsProtocol.ts`) |
 | `termihub_harness/bridge.py`       | WebSocket bridge server + synchronous `Driver`        |
 | `termihub_harness/orchestrator.py` | `AppInstance` / `AgentInstance` process lifecycle     |
+| `termihub_harness/fixtures.py`     | Docker/Podman container fixtures (SSH, …)             |
 | `tests/`                           | pytest tests + `fake_app.py` (a WS client stand-in)   |
-| `conftest.py`                      | `bridge` / `app` / `agent` fixtures                   |
+| `conftest.py`                      | `bridge` / `app` / `agent` / `ssh_fixtures` fixtures  |
+| `pytest.sh` / `pytest.cmd`         | venv-bootstrapping wrapper around `python -m pytest`  |
 
 ## How it works
 
@@ -41,7 +43,26 @@ def test_app_lifecycle(bridge, app):
     assert driver.get_state() is not None
 ```
 
-## Setup (once)
+## Quick start — the `pytest` wrapper
+
+The easiest entry point is the **`pytest.sh`** / **`pytest.cmd`** wrapper in this
+directory. It creates the virtualenv on first use (installing
+`requirements.txt`), then forwards **all arguments verbatim** to `python -m
+pytest` — so you never type the `.venv` path and never set up the env by hand:
+
+```sh
+# Unix / macOS                         # Windows
+./pytest.sh -m "not integration" -v    pytest.cmd -m "not integration" -v
+./pytest.sh -m integration -k ssh -v   pytest.cmd -m integration -k ssh -v
+./pytest.sh --collect-only -q          pytest.cmd --collect-only -q
+```
+
+The wrapper runs from `tests/system/` regardless of where you call it, is a
+no-op once the venv exists, and accepts `PYTHON=/path/to/python3` (or
+`set PYTHON=py` on Windows) to pick the base interpreter for the venv. Every
+`./.venv/bin/python -m pytest …` command below can be written as `./pytest.sh …`.
+
+## Setup (manual, if you prefer)
 
 ```sh
 cd tests/system
@@ -196,6 +217,57 @@ use a **new method in the same class** to keep running in the existing instance.
 | `self.restart_app()`                       | kill + relaunch, re-acquiring `self.driver`         |
 | `self.delay4user(seconds, reason)`         | watch-along sleep — only runs under `--delay4user`  |
 
+SSH-focused suites also get connection/tab helpers:
+`create_ssh_connection(...)` (drives the editor; `connect=True` uses **Save &
+Connect**), `handle_password_prompt()` / `cancel_password_prompt()`,
+`tab_count()` / `find_tab(title)` / `active_tab()` / `switch_to_tab(id)`, and
+`monitoring_visible()`.
+
+### Tests that need container fixtures (SSH/serial/telnet)
+
+The infrastructure suites reuse the **containers in
+[`tests/docker/docker-compose.yml`](../docker/docker-compose.yml)** as black-box
+fixtures — only the driver changed, the containers stay (epic #799). The harness
+owns bringing them up: depend on the session-scoped **`ssh_fixtures`** fixture
+(`@pytest.mark.usefixtures("ssh_fixtures")` on the class) and it runs
+`<runtime> compose up -d ssh-password ssh-keys` once per session, then waits for
+each published SSH port to accept a connection. When no container runtime is
+available the suite **skips cleanly** rather than failing, so a plain `pytest`
+still works on a machine without one.
+
+**Docker or Podman** — the runtime is detected like `scripts/test-system.sh`:
+a `CONTAINER_CMD` env override wins; otherwise Docker is preferred and Podman is
+the fallback, choosing whichever CLI exists _and_ whose daemon/machine answers
+`<cmd> info`. (Readiness is a TCP port probe, not `compose --wait`, because
+Podman's compose provider may not support that flag.) Force a runtime with
+`CONTAINER_CMD=podman`.
+
+> **Compose version:** `tests/docker/docker-compose.yml` uses build
+> `additional_contexts`, which needs **Docker Compose v2.17+** (or a Podman
+> compose provider of similar vintage). An older Compose rejects the file with
+> `Additional property additional_contexts is not allowed` — the suite surfaces
+> that exact message in its skip reason. Update Docker Desktop / the compose
+> plugin if you hit it.
+
+Coordinates live in `termihub_harness` as constants: `SSH_PASSWORD_PORT` (2201),
+`SSH_KEYS_PORT` (2203), `SSH_USERNAME` / `SSH_PASSWORD`, and `SSH_KEY_PATH`. To
+run the SSH suite live:
+
+```sh
+# Docker:
+docker compose -f tests/docker/docker-compose.yml up -d ssh-password ssh-keys
+# …or Podman (e.g. on Windows where Docker is unavailable):
+podman compose -f tests/docker/docker-compose.yml up -d ssh-password ssh-keys
+
+pnpm tauri build            # the app must include the bridge verbs the test uses
+cd tests/system && ./pytest.sh -m integration -k ssh -v -s   # or pytest.cmd on Windows
+# (the harness can also bring the containers up itself; CONTAINER_CMD=podman forces Podman)
+```
+
+> The SSH connection-failure case needs **no** server, so it is not gated on
+> `ssh_fixtures` and runs even without a container runtime (it still needs the
+> built app).
+
 ### Watch-along mode (`--delay4user`)
 
 Sprinkle `self.delay4user(seconds, reason="…")` wherever following along by eye
@@ -226,8 +298,9 @@ Tips:
 
 ## Driver verbs
 
-`click`, `type`, `terminal_input`, `exists`, `get_text`, `get_attribute`,
-`read_terminal`, `get_state` — the same vocabulary as the TypeScript `Driver`.
+`click`, `type`, `select`, `terminal_input`, `exists`, `get_text`,
+`get_attribute`, `read_terminal`, `get_state` — the same vocabulary as the
+TypeScript `Driver`.
 
 ## Orchestration
 

@@ -18,7 +18,11 @@ import type { Scenario } from "./scenario";
 class FakeDriver implements Driver {
   clicks: string[] = [];
   typed: Array<{ testId: string; text: string }> = [];
+  selected: Array<{ testId: string; value: string }> = [];
   drags: Array<{ testId: string; dx: number; dy?: number }> = [];
+  rightClicks: string[] = [];
+  keys: Array<{ key: string; modifiers: KeyModifiers }> = [];
+  dragTos: Array<{ from: string; to: string }> = [];
   terminalInputs: Array<{ text: string; tabId?: string }> = [];
   elements = new Map<string, { text?: string }>();
   /** Keyed by `testId ?? ""`, then property name → computed value. */
@@ -40,13 +44,8 @@ class FakeDriver implements Driver {
     this.typed.push({ testId, text });
   }
 
-  selected: Array<{ testId: string; value: string }> = [];
-  rightClicks: string[] = [];
-  keys: Array<{ key: string; modifiers: KeyModifiers }> = [];
-  dragTos: Array<{ from: string; to: string }> = [];
-
-  async selectOption(testId: string, value: string): Promise<void> {
-    if (!this.elements.has(testId)) throw new BridgeError("selectOption", `no element "${testId}"`);
+  async select(testId: string, value: string): Promise<void> {
+    if (!this.elements.has(testId)) throw new BridgeError("select", `no element "${testId}"`);
     this.selected.push({ testId, value });
   }
 
@@ -146,6 +145,22 @@ describe("runScenario", () => {
     expect(result.terminalSnapshot).toBeUndefined();
   });
 
+  it("runs a select step against the driver", async () => {
+    const driver = new FakeDriver();
+    driver.elements.set("connection-editor-type-select", {});
+
+    const scenario: Scenario = {
+      name: "choose a type",
+      steps: [{ action: "select", testId: "connection-editor-type-select", value: "ssh" }],
+      checks: [],
+    };
+
+    const result = await runScenario(scenario, driver, instant());
+
+    expect(result.passed).toBe(true);
+    expect(driver.selected).toEqual([{ testId: "connection-editor-type-select", value: "ssh" }]);
+  });
+
   it("runs a terminalInput step and then asserts on the resulting output", async () => {
     const driver = new FakeDriver();
     driver.terminalText = "user@host:~$ whoami\nroot\n";
@@ -189,7 +204,7 @@ describe("runScenario", () => {
     expect(result.checks[0].passed).toBe(true);
   });
 
-  it("runs selectOption, rightClick, key, and dragTo steps", async () => {
+  it("runs select, rightClick, key, and dragTo steps", async () => {
     const driver = new FakeDriver();
     driver.elements.set("theme-select", {});
     driver.elements.set("tab-1", {});
@@ -198,7 +213,7 @@ describe("runScenario", () => {
     const scenario: Scenario = {
       name: "extended interactions",
       steps: [
-        { action: "selectOption", testId: "theme-select", value: "light" },
+        { action: "select", testId: "theme-select", value: "light" },
         { action: "rightClick", testId: "tab-1" },
         { action: "key", key: "Escape" },
         { action: "key", key: ",", ctrl: true },

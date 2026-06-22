@@ -52,6 +52,29 @@ tests:
 
   # --- macOS key repeat fix (PR #48) ---
 
+  # --- Enter key submits commands / line-ending default (PR #827) ---
+
+  - id: MT-LOCAL-09
+    name: "Enter key submits commands (default CR line ending)"
+    pr: 827
+    platforms: [all]
+    prerequisites:
+      - app: true
+    setup:
+      - create_connection:
+          name: "Enter Submit Test"
+          type: local
+      - connect: "Enter Submit Test"
+    instructions:
+      - "Ensure Settings → Terminal → Line Ending is at its default (CR) — do not change it"
+      - "Switch to the 'Enter Submit Test' tab"
+      - "Type 'echo hello' and press Enter"
+    expected:
+      - "The command runs and 'hello' is printed on the next line"
+      - "Enter does NOT merely move to a new line without executing"
+      - "Verified on both macOS and Windows (regression #827 was visible on both)"
+    verification: manual
+
   - id: MT-LOCAL-08
     name: "macOS key repeat works"
     pr: 48

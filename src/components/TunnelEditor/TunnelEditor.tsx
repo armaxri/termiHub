@@ -248,6 +248,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
                   type="number"
                   value={tunnelType.config.localPort}
                   onChange={(e) => updateConfig("localPort", parseInt(e.target.value) || 0)}
+                  data-testid="tunnel-editor-local-port"
                 />
               </div>
             </div>
@@ -260,6 +261,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
                   type="text"
                   value={tunnelType.config.remoteHost}
                   onChange={(e) => updateConfig("remoteHost", e.target.value)}
+                  data-testid="tunnel-editor-remote-host"
                 />
               </div>
               <div className="tunnel-editor__field tunnel-editor__port-field">
@@ -269,6 +271,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
                   type="number"
                   value={tunnelType.config.remotePort}
                   onChange={(e) => updateConfig("remotePort", parseInt(e.target.value) || 0)}
+                  data-testid="tunnel-editor-remote-port"
                 />
               </div>
             </div>

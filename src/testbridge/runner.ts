@@ -112,8 +112,8 @@ async function runStep(
     case "type":
       await driver.type(step.testId, step.text);
       return;
-    case "selectOption":
-      await driver.selectOption(step.testId, step.value);
+    case "select":
+      await driver.select(step.testId, step.value);
       return;
     case "rightClick":
       await driver.rightClick(step.testId);

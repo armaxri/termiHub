@@ -100,9 +100,9 @@ def dispatcher_like(
         if action == "click":
             recorded["clicks"].append(command["testId"])
             return {"ok": True, "action": "click"}
-        if action == "selectOption":
+        if action == "select":
             recorded["selects"].append({"testId": command["testId"], "value": command["value"]})
-            return {"ok": True, "action": "selectOption"}
+            return {"ok": True, "action": "select"}
         if action == "rightClick":
             recorded["rightClicks"].append(command["testId"])
             return {"ok": True, "action": "rightClick"}
