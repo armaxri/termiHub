@@ -37,20 +37,21 @@ class TestConnectionCrud(ConnectionsUi, SystemTest):
 
     @pytest.fixture(autouse=True)
     def _connection_suite(self):
-        """Per-test: ensure the sidebar is up; afterwards close stray menus/editor."""
+        """Per-test: clean tab slate + sidebar up; mirrors the old suite's afterEach.
+
+        Editor tabs each render a ``connection-editor-name-input`` with the *same*
+        testid, so a leftover editor tab from an earlier test would make the
+        bridge drive the wrong editor. Closing all tabs first (like the
+        WebdriverIO ``closeAllTabs``) keeps every test isolated.
+        """
+        self.dismiss_menu()
+        self.close_all_tabs()
         self.switch_to_connections_sidebar()
         self.wait(
             lambda: self.driver.exists("connection-list-new-connection"),
             what="the connections sidebar",
         )
         yield
-        try:
-            self.dismiss_menu()
-            if self.editor_open():
-                self.driver.click(self.EDITOR_CANCEL)
-                self.wait(lambda: not self.editor_open(), what="the editor to close")
-        except Exception:  # noqa: BLE001 - cleanup is best-effort
-            pass
 
     # ── CONN-01: create ────────────────────────────────────────────────────────
     def test_create_local_connection(self):

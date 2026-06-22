@@ -131,17 +131,27 @@ class ConnectionsUi:
 
     # -- context menu ------------------------------------------------------------
     def open_connection_menu(self, name: str) -> None:
-        """Right-click a connection by name and wait for its menu to mount."""
-        conn = self.require_connection(name)
-        item = connection_item_testid(conn["id"])
+        """Right-click a connection by name and wait for its menu to mount.
 
-        def right_click_and_check() -> bool:
-            # Re-dispatch each poll: a single right-click can race the item's
-            # mount/handler, so retrying the gesture is what makes it reliable.
+        A save makes the store update *before* the sidebar settles: it reloads
+        connections from disk a few times, and a connection's **id can change**
+        across that reload. So the connection id is re-resolved by name on every
+        poll (never cached) and the right-click is dispatched only once the
+        *current* item is in the DOM — otherwise the gesture races a reload that
+        replaced or unmounted the element.
+        """
+
+        def menu_open() -> bool:
+            conn = self.find_connection(name)
+            if conn is None:
+                return False
+            item = connection_item_testid(conn["id"])
+            if not self.driver.exists(item):
+                return False
             self.driver.context_menu(item)
             return self.driver.exists(self.CTX_EDIT)
 
-        self.wait(right_click_and_check, what="the connection context menu")
+        self.wait(menu_open, what=f"the {name!r} connection context menu")
 
     def connection_context_action(self, name: str, action_test_id: str) -> None:
         """Right-click a connection by name and click a context-menu action."""
