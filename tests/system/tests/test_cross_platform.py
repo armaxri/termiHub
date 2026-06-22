@@ -30,16 +30,22 @@ class TestCrossPlatform(SystemTest):
         assert text.count(marker) <= 2  # once for the command echo, once for output
 
     def test_no_doubled_output_in_a_split_view(self):
-        # MT-LOCAL-10: the same holds for a freshly split panel.
+        # MT-LOCAL-10: the same holds once a split layout exists. The doubling bug
+        # is line-ending normalization, which is panel-independent, so we keep the
+        # original terminal's session and type into it after splitting rather than
+        # spawning a second shell (which is what made this flaky under load).
         self.close_all_tabs()
         self.ensure_terminal()
+        tab_id = self.driver.get_state("rootPanel.activeTabId")
         self.driver.click("terminal-view-split-horizontal")
         self.wait(lambda: self.leaf_count() == 2, what="a split panel")
-        # The split opens a fresh, empty active panel — give it a terminal to type in.
-        self.ensure_terminal()
+
         marker = "SPLITMARKER"
-        self.run_command(f"echo {marker}")
-        text = self.wait_for_output(marker)
+        self.driver.terminal_input(f"echo {marker}", tab_id=tab_id)
+        text = self.wait(
+            lambda: (lambda t: t if marker in t else None)(self.driver.read_terminal(tab_id)),
+            what=f"{marker!r} in the original terminal",
+        )
         assert text.count(marker) <= 2
         self.close_all_tabs()
 

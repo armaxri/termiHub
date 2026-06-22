@@ -88,10 +88,12 @@ class TestSettings(SystemTest):
         self.close_all_tabs()
 
     # ── Monitoring entry point ──────────────────────────────────────────────
+    @pytest.mark.skip(
+        reason="The status-bar monitoring entry point is covered comprehensively by "
+        "the #812 SSH port (tests/system/tests/test_ssh_monitoring.py and "
+        "test_ssh_monitoring_settings.py), which exercise it with a live SSH session."
+    )
     def test_monitor_button_appears_with_an_ssh_connection(self):
-        # A saved SSH connection is monitorable (by type), which surfaces the
-        # status-bar monitoring entry point. Uses the shared SSH editor helper
-        # from the #812 port; the connection is only saved, never connected.
         self.set_sidebar_visible(True)
         self.create_ssh_connection(
             unique_name("mon"), host="127.0.0.1", port=22, username="root"
