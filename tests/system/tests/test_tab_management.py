@@ -37,7 +37,7 @@ class TestTabManagement(SystemTest):
         self.driver.click(NEW)
         self.wait(lambda: len(self.tab_ids()) >= 2, what="a second tab")
         target = self.tab_ids()[-1]
-        self.driver.click(f"tab-close-{target}")
+        self.close_tab(target)
         self.wait(lambda: target not in self.tab_ids(), what="the tab to close")
 
     def test_right_click_opens_the_tab_context_menu(self):

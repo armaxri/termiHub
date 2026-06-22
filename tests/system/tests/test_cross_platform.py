@@ -42,10 +42,7 @@ class TestCrossPlatform(SystemTest):
 
         marker = "SPLITMARKER"
         self.driver.terminal_input(f"echo {marker}", tab_id=tab_id)
-        text = self.wait(
-            lambda: (lambda t: t if marker in t else None)(self.driver.read_terminal(tab_id)),
-            what=f"{marker!r} in the original terminal",
-        )
+        text = self.wait_for_output(marker, tab_id=tab_id)
         assert text.count(marker) <= 2
         self.close_all_tabs()
 

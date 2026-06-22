@@ -52,7 +52,7 @@ class TestSettings(SystemTest):
         self.open_settings_tab()
         tab = self.find_tab("Settings")
         assert tab is not None
-        self.driver.click(f"tab-close-{tab['id']}")
+        self.close_tab(tab["id"])
         self.wait(lambda: self.find_tab("Settings") is None, what="the settings tab to close")
 
     # ── Tab coloring via the connection editor ──────────────────────────────

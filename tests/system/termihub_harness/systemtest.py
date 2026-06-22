@@ -158,10 +158,15 @@ class SystemTest:
         self.driver.terminal_input(command)
         return True
 
-    def wait_for_output(self, needle: str, *, timeout: float = DEFAULT_WAIT_TIMEOUT) -> str:
-        """Poll the terminal until it contains ``needle``; return the full text."""
+    def wait_for_output(
+        self, needle: str, *, tab_id: Optional[str] = None, timeout: float = DEFAULT_WAIT_TIMEOUT
+    ) -> str:
+        """Poll a terminal until it contains ``needle``; return the full text.
+
+        Reads the active terminal unless ``tab_id`` names a specific one.
+        """
         return self.wait(
-            lambda: (lambda t: t if needle in t else None)(self.driver.read_terminal()),
+            lambda: (lambda t: t if needle in t else None)(self.driver.read_terminal(tab_id)),
             timeout=timeout,
             what=f"{needle!r} in terminal output",
         )
