@@ -14,10 +14,13 @@ use crate::utils::errors::TerminalError;
 
 /// Connect to an SSH server and authenticate, returning the session.
 ///
-/// Internally runs the async [`core_connect`] on the current Tokio runtime
-/// via [`tokio::task::block_in_place`], so it is safe to call from both
-/// Tokio worker threads (sync commands) and `spawn_blocking` threads
-/// (monitoring, SFTP commands).
+/// Internally runs the async [`core_connect`] on the current Tokio runtime via
+/// [`tokio::task::block_in_place`] + [`tokio::runtime::Handle::current`]. **Both
+/// require a multi-threaded Tokio runtime worker context on the calling thread**
+/// — call this only from inside `spawn_blocking` or an async task (as the
+/// monitoring/SFTP commands do). Calling it from a synchronous `#[tauri::command]`
+/// (which Tauri runs on the main thread) or a raw `std::thread` aborts the whole
+/// process (#828).
 pub fn connect_and_authenticate(config: &SshConfig) -> Result<SshSession, TerminalError> {
     tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(core_connect(config)))
         .map(|(session, _registry)| session)
@@ -28,6 +31,10 @@ pub fn connect_and_authenticate(config: &SshConfig) -> Result<SshSession, Termin
 ///
 /// Used by the tunnel session pool so the remote-forward tunnel can receive
 /// incoming server-initiated channels.
+///
+/// Same runtime-context requirement as [`connect_and_authenticate`]: call only
+/// from inside `spawn_blocking` or an async task, never from a synchronous
+/// command thread or a raw `std::thread` (#828).
 pub fn connect_with_registry(
     config: &SshConfig,
 ) -> Result<(SshSession, ForwardedChannelRegistry), TerminalError> {

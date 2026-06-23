@@ -282,7 +282,10 @@ pub async fn vscode_open_remote(
         let remote_path = remote_path.clone();
         let temp_path_str = temp_path_str.clone();
         tokio::task::spawn_blocking(move || {
-            session.lock().unwrap().read_file(&remote_path, &temp_path_str)
+            session
+                .lock()
+                .unwrap()
+                .read_file(&remote_path, &temp_path_str)
         })
         .await
         .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))??;
@@ -291,7 +294,6 @@ pub async fn vscode_open_remote(
     // Wait for VS Code to close, then re-upload — on a blocking-pool thread so
     // the SFTP write's `block_in_place` has a runtime context (a raw
     // `std::thread` would have none and abort the process).
-    let remote_path_clone = remote_path.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let result = vscode::open_in_vscode_wait(&temp_path_str);
 
@@ -300,23 +302,23 @@ pub async fn vscode_open_remote(
                 // Re-upload the edited file
                 let upload_result = {
                     let session = session_arc.lock().unwrap();
-                    session.write_file(&temp_path_str, &remote_path_clone)
+                    session.write_file(&temp_path_str, &remote_path)
                 };
                 match upload_result {
                     Ok(_) => VscodeEditCompleteEvent {
-                        remote_path: remote_path_clone,
+                        remote_path,
                         success: true,
                         error: None,
                     },
                     Err(e) => VscodeEditCompleteEvent {
-                        remote_path: remote_path_clone,
+                        remote_path,
                         success: false,
                         error: Some(format!("Upload failed: {}", e)),
                     },
                 }
             }
             Err(e) => VscodeEditCompleteEvent {
-                remote_path: remote_path_clone,
+                remote_path,
                 success: false,
                 error: Some(format!("VS Code error: {}", e)),
             },
