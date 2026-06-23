@@ -229,18 +229,21 @@ pub fn run() {
                 Ok(manager) => {
                     recovery_warnings.extend(manager.take_recovery_warnings());
 
-                    // Auto-start tunnels in a background thread
+                    // Auto-start tunnels on a blocking-pool thread. The SSH
+                    // handshake uses `block_in_place` internally, which needs a
+                    // Tokio runtime context — a raw `std::thread` has none and
+                    // would abort the process (#828).
                     let handle = app.handle().clone();
-                    std::thread::spawn(move || {
+                    tauri::async_runtime::spawn_blocking(move || {
                         std::thread::sleep(std::time::Duration::from_millis(500));
                         if let Some(mgr) =
-                            handle.try_state::<tunnel::tunnel_manager::TunnelManager>()
+                            handle.try_state::<Arc<tunnel::tunnel_manager::TunnelManager>>()
                         {
                             mgr.start_auto_tunnels();
                         }
                     });
 
-                    app.manage(manager);
+                    app.manage(Arc::new(manager));
                 }
                 Err(e) => {
                     tracing::error!("Failed to initialize tunnel manager: {e}");
@@ -574,7 +577,7 @@ pub fn run() {
                 let handle = app_handle.clone();
                 tauri::async_runtime::spawn(async move {
                     if let Some(mgr) =
-                        handle.try_state::<tunnel::tunnel_manager::TunnelManager>()
+                        handle.try_state::<Arc<tunnel::tunnel_manager::TunnelManager>>()
                     {
                         mgr.stop_all();
                     }
