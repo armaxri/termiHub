@@ -203,6 +203,34 @@ await driver.getComputedStyle("--bg-primary"); // active theme background
 It fails (`ok: false`) when there is no active terminal, or when the target tab
 has no backend session bound (e.g. the shell has exited).
 
+### Element-to-element drag (`dragTo`) and @dnd-kit
+
+`drag` moves by a blind pixel delta (resize handles); `dragTo` drags one element
+onto another and is the verb for **@dnd-kit** reordering (tabs use
+`useSortable` + a `PointerSensor`). Driving @dnd-kit with synthetic events has
+two requirements that a naive "fire pointerdown → moves → pointerup in one go"
+does not meet, so `dragTo` handles both:
+
+- **Activation distance** — the `PointerSensor` ignores a press until a
+  `pointermove` travels past its activation distance (5px for tabs). `dragTo`
+  begins with a short **wake move** that clears it before stepping to the target.
+- **Measurement timing** — on activation, `DndContext` measures droppable rects
+  in a React render/effect cycle, and the drop target (`over`) is recomputed from
+  those rects. If every pointer event fires in one synchronous task, that cycle
+  never runs: collision detection sees no rects, `over` stays `null`, and the
+  drop reorders nothing. `dragTo` therefore **yields a frame** after the wake
+  move and **between each step**, so dnd-kit activates, measures, and resolves
+  the target before `pointerup`.
+
+```ts
+const [first, , last] = (await driver.getState("rootPanel")).tabs.map((t) => t.id);
+await driver.dragTo(`tab-${last}`, `tab-${first}`); // reorder: last → first slot
+```
+
+Because `dragTo` awaits real frames, it is async like every command; assert the
+result from state (e.g. `rootPanel` tab order) rather than scraping the DOM. It
+still injects **synthetic** events — it exercises dnd-kit's app logic, not the
+native OS drag pipeline (see [Not covered](#not-covered)).
 ### Reading form values (`getValue` vs `getAttribute`)
 
 A React-**controlled** `<input>`/`<select>` updates the DOM _property_ `.value`,

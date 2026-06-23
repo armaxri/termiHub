@@ -78,12 +78,10 @@ class TestTabManagement(SystemTest):
         assert "border-left" in (self.driver.get_attribute(f"tab-{tab}", "style") or "")
         self.delay4user(2, reason="tab colored")
 
-    @pytest.mark.skip(
-        reason="@dnd-kit tab reordering needs a real pointer gesture (activation "
-        "distance/timing) that synthetic dragTo events do not reliably trigger; "
-        "tracked in #832, covered by manual testing (see docs/testing.md)."
-    )
     def test_reorder_tabs_by_dragging(self):
+        # @dnd-kit reorder: ``drag_to`` wakes the PointerSensor past its activation
+        # distance and yields frames so dnd-kit measures droppables and resolves a
+        # drop target (#832). Order is asserted from ``rootPanel`` state.
         self._reset()
         self.driver.click(NEW)
         self.driver.click(NEW)

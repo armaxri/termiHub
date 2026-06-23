@@ -230,6 +230,25 @@ describe("dispatchCommand", () => {
       expect(seq.filter((s) => s === "move").length).toBeGreaterThan(0);
     });
 
+    it("yields to the event loop between press and release so @dnd-kit can measure", async () => {
+      // Regression for #832: @dnd-kit measures droppable rects in a render/effect
+      // cycle after activation, so the drag must yield a task between pointerdown
+      // and pointerup. A timer scheduled on pointerdown must therefore fire
+      // *before* pointerup — proving the gesture is not one synchronous burst.
+      const { deps, container } = setup(`<div data-testid="a"></div><div data-testid="b"></div>`);
+      const a = container.querySelectorAll("div")[0];
+      const seq: string[] = [];
+      a.addEventListener("pointerdown", () => {
+        seq.push("down");
+        setTimeout(() => seq.push("tick"), 0);
+      });
+      document.addEventListener("pointerup", () => seq.push("up"));
+
+      await dispatchCommand({ action: "dragTo", fromTestId: "a", toTestId: "b" }, deps);
+      expect(seq.indexOf("tick")).toBeGreaterThan(-1);
+      expect(seq.indexOf("tick")).toBeLessThan(seq.indexOf("up"));
+    });
+
     it("fails when an endpoint is absent", async () => {
       const { deps } = setup(`<div data-testid="a"></div>`);
       const res = await dispatchCommand({ action: "dragTo", fromTestId: "a", toTestId: "z" }, deps);

@@ -51,8 +51,11 @@ export interface SelectCommand {
  * Drag one element onto another via synthetic pointer events.
  *
  * For pointer-based drag-and-drop (e.g. @dnd-kit tab reordering): dispatches
- * `pointerdown` on `fromTestId`, a series of `pointermove`s crossing the sensor's
- * activation distance toward `toTestId`'s center, then `pointerup`. Unlike
+ * `pointerdown` on `fromTestId`, a short "wake" `pointermove` past the sensor's
+ * activation distance, then a series of `pointermove`s toward `toTestId`'s
+ * center, then `pointerup`. A frame is yielded after activation and between
+ * moves so @dnd-kit can measure droppable rects and recompute the drop target
+ * (`over`) — without those yields the drop reorders nothing. Unlike
  * {@link DragCommand} (a blind pixel delta), this targets a destination element.
  */
 export interface DragToCommand {
