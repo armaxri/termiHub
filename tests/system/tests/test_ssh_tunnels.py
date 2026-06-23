@@ -45,13 +45,16 @@ class TestSshTunnels(SystemTest):
         tid = self._create_tunnel("tunnel-startstop", local_port=18081)["id"]
         self.driver.click(f"tunnel-start-{tid}")  # key auth → no prompt
         self._assert_running(tid)
-        # The stop control is offered for a running tunnel and clicking it is
-        # handled without crashing. (A local forward sits in "connecting" until
-        # traffic flows, so the status does not flip on its own — the original
-        # test likewise only checked the control, not a post-stop status.)
+        # Stop must take effect: the status returns to "disconnected" and the
+        # start control comes back. Previously a Stop click while the tunnel was
+        # still in "connecting" was silently lost (#829).
         self.wait(lambda: self.driver.exists(f"tunnel-stop-{tid}"), what="the stop control")
         self.driver.click(f"tunnel-stop-{tid}")
-        assert isinstance(self.driver.get_state(), dict)
+        self._assert_disconnected(tid)
+        self.wait(
+            lambda: self.driver.exists(f"tunnel-start-{tid}"),
+            what="the start control to return",
+        )
 
     def test_tunnel_runs_alongside_an_ssh_session(self):
         tunnel = self._create_tunnel("tunnel-traffic", local_port=18084, start=True)
@@ -137,4 +140,10 @@ class TestSshTunnels(SystemTest):
         assert self.wait(
             lambda: self._tunnel_status(tunnel_id) in RUNNING,
             what="the tunnel to start",
+        )
+
+    def _assert_disconnected(self, tunnel_id: str) -> None:
+        assert self.wait(
+            lambda: self._tunnel_status(tunnel_id) == "disconnected",
+            what="the tunnel to stop",
         )
