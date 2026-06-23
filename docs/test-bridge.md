@@ -231,6 +231,7 @@ Because `dragTo` awaits real frames, it is async like every command; assert the
 result from state (e.g. `rootPanel` tab order) rather than scraping the DOM. It
 still injects **synthetic** events — it exercises dnd-kit's app logic, not the
 native OS drag pipeline (see [Not covered](#not-covered)).
+
 ### Reading form values (`getValue` vs `getAttribute`)
 
 A React-**controlled** `<input>`/`<select>` updates the DOM _property_ `.value`,
