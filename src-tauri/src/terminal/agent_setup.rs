@@ -209,8 +209,8 @@ pub fn setup_remote_agent(
 /// context.
 ///
 /// The background phase calls SSH/SFTP helpers (`connect_and_authenticate`,
-/// `upload_via_sftp`) that run async russh code via `tokio::task::block_in_place`
-/// + `Handle::current().block_on(..)` internally. Both require a Tokio runtime
+/// `upload_via_sftp`) that run async russh code via `block_in_place` plus
+/// `Handle::current().block_on(..)` internally. Both require a Tokio runtime
 /// context on the calling thread. A raw `std::thread` carries none, so invoking
 /// the helpers there aborts the whole process — the same crash fixed for the
 /// sync commands in #828. `tauri::async_runtime::spawn_blocking` runs on the
@@ -219,7 +219,7 @@ fn spawn_setup_background<F>(task: F)
 where
     F: FnOnce() + Send + 'static,
 {
-    std::thread::spawn(task);
+    tauri::async_runtime::spawn_blocking(task);
 }
 
 /// Background thread: resolve binary, upload it + script, execute script.
