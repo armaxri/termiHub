@@ -83,6 +83,15 @@ describe("InAppBridgeDriver", () => {
     expect(sent).toEqual([{ action: "select", testId: "type", value: "ssh" }]);
   });
 
+  it("maps getValue to a getValue command and unwraps the value", async () => {
+    const { transport, sent } = scriptedTransport({
+      getValue: { ok: true, action: "getValue", value: "22" },
+    });
+    const value = await new InAppBridgeDriver(transport).getValue("field-port");
+    expect(value).toBe("22");
+    expect(sent).toEqual([{ action: "getValue", testId: "field-port" }]);
+  });
+
   it("maps pressKey to a pressKey command, defaulting testId to undefined", async () => {
     const { transport, sent } = scriptedTransport({});
     await new InAppBridgeDriver(transport).pressKey("Escape");

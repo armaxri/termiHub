@@ -62,6 +62,13 @@ def test_extended_interaction_verbs_round_trip(bridge):
         assert handler.recorded["dragTos"] == [{"from": "tab-1", "to": "tab-2"}]
 
 
+def test_get_value_round_trip(bridge):
+    handler = dispatcher_like(values={"field-port": "22"})
+    with FakeApp(bridge.port, handler):
+        driver = bridge.wait_for_app(timeout=5)
+        assert driver.get_value("field-port") == "22"
+
+
 def test_ok_false_raises_bridge_error(bridge):
     with FakeApp(bridge.port, dispatcher_like(state={})):
         driver = bridge.wait_for_app(timeout=5)
