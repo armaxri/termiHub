@@ -202,33 +202,31 @@ export async function dispatchCommand(
       const doc = ownerDocument(deps.root);
       const dx = end.x - start.x;
       const dy = end.y - start.y;
-      // @dnd-kit's PointerSensor only *activates* once a move crosses its
-      // activation distance, and DndContext then measures droppable rects in a
-      // React render/effect cycle. Firing every event in one synchronous task
-      // gives that cycle no chance to run, so collision detection sees no rects,
-      // `over` stays null, and the drop reorders nothing. So: press, nudge past
-      // the activation distance, yield a frame to let dnd-kit activate + measure,
-      // then step to the target — yielding after each move so the new position
-      // commits and `over` is recomputed — and release only once the final
-      // position over the target has settled. See docs/test-bridge.md.
-      dispatchPointer(from, "pointerdown", start.x, start.y);
-
-      // Wake move: a short nudge that clears dnd-kit's activation distance (5px
-      // for the tab sensor) without yet reaching the target.
-      const dist = Math.hypot(dx, dy) || 1;
-      const WAKE = 12;
-      dispatchPointer(
-        doc,
-        "pointermove",
-        start.x + (dx / dist) * WAKE,
-        start.y + (dy / dist) * WAKE
-      );
-      await nextFrame();
-
-      const steps = 6;
-      for (let i = 1; i <= steps; i++) {
-        dispatchPointer(doc, "pointermove", start.x + (dx * i) / steps, start.y + (dy * i) / steps);
+      // A nudge that comfortably clears the tab PointerSensor's activation
+      // distance (`distance: 5` in SplitView.tsx) without reaching the target.
+      const WAKE_DISTANCE = 12;
+      // Intermediate moves toward the target; one frame is yielded after each so
+      // dnd-kit re-measures and recomputes `over` as the pointer advances.
+      const STEPS = 6;
+      // Move toward (x, y) and yield a frame. @dnd-kit's PointerSensor only
+      // *activates* once a move crosses its activation distance, and DndContext
+      // then measures droppable rects in a React render/effect cycle from which
+      // the drop target (`over`) is computed. Firing every event in one
+      // synchronous task gives that cycle no chance to run, so collision
+      // detection sees no rects, `over` stays null, and the drop reorders
+      // nothing — hence the yield after every move. See docs/test-bridge.md.
+      const moveTo = async (x: number, y: number): Promise<void> => {
+        dispatchPointer(doc, "pointermove", x, y);
         await nextFrame();
+      };
+
+      // Press, wake the sensor past its activation distance, step to the target,
+      // then release once the final position over the target has settled.
+      dispatchPointer(from, "pointerdown", start.x, start.y);
+      const dist = Math.hypot(dx, dy) || 1;
+      await moveTo(start.x + (dx / dist) * WAKE_DISTANCE, start.y + (dy / dist) * WAKE_DISTANCE);
+      for (let i = 1; i <= STEPS; i++) {
+        await moveTo(start.x + (dx * i) / STEPS, start.y + (dy * i) / STEPS);
       }
       dispatchPointer(doc, "pointerup", end.x, end.y);
       return ok("dragTo");
