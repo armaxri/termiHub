@@ -75,6 +75,46 @@ describe("dispatchCommand", () => {
     });
   });
 
+  describe("getValue", () => {
+    it("returns the live value of a controlled input, not the attribute", async () => {
+      const { deps, container } = setup(`<input data-testid="port" value="22" />`);
+      // Simulate a React-controlled input: the DOM *property* diverges from the
+      // markup attribute, which is exactly what `getAttribute` cannot observe.
+      (container.querySelector("input") as HTMLInputElement).value = "2222";
+      const res = await dispatchCommand({ action: "getValue", testId: "port" }, deps);
+      expect(res).toEqual({ ok: true, action: "getValue", value: "2222" });
+    });
+
+    it("returns a select's current value", async () => {
+      const { deps } = setup(`<select data-testid="lock">
+        <option value="never">Never</option>
+        <option value="5m" selected>5 minutes</option>
+      </select>`);
+      const res = await dispatchCommand({ action: "getValue", testId: "lock" }, deps);
+      expect(res).toEqual({ ok: true, action: "getValue", value: "5m" });
+    });
+
+    it("returns a textarea's value", async () => {
+      const { deps } = setup(`<textarea data-testid="notes">hello</textarea>`);
+      const res = await dispatchCommand({ action: "getValue", testId: "notes" }, deps);
+      expect(res).toEqual({ ok: true, action: "getValue", value: "hello" });
+    });
+
+    it("fails on a non-value element", async () => {
+      const { deps } = setup(`<div data-testid="status">x</div>`);
+      const res = await dispatchCommand({ action: "getValue", testId: "status" }, deps);
+      expect(res.ok).toBe(false);
+      expect(res.error).toMatch(/value/i);
+    });
+
+    it("fails when the element is absent", async () => {
+      const { deps } = setup(`<div></div>`);
+      const res = await dispatchCommand({ action: "getValue", testId: "ghost" }, deps);
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain("ghost");
+    });
+  });
+
   describe("getComputedStyle", () => {
     it("reads a computed property of an element by testId", async () => {
       const { deps, container } = setup(`<div data-testid="handle"></div>`);
