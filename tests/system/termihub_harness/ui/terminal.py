@@ -10,9 +10,8 @@ from __future__ import annotations
 from typing import Optional
 
 from ..bridge import BridgeError
+from ..systemtest import DEFAULT_WAIT_TIMEOUT
 from .base import HarnessMixin
-
-DEFAULT_WAIT_TIMEOUT = 20.0
 
 
 class TerminalUi(HarnessMixin):

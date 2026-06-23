@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+from ..systemtest import DEFAULT_WAIT_TIMEOUT
 from .base import HarnessMixin
 
 
@@ -37,7 +38,7 @@ class MonitoringUi(HarnessMixin):
             "disk": self.driver.get_text("monitoring-disk"),
         }
 
-    def wait_for_monitoring_stats(self, *, timeout: float = 20.0) -> dict[str, str]:
+    def wait_for_monitoring_stats(self, *, timeout: float = DEFAULT_WAIT_TIMEOUT) -> dict[str, str]:
         """Poll until monitoring has connected and shows stats; return them."""
         return self.wait(
             self.monitoring_stats, timeout=timeout, what="monitoring stats to appear"
