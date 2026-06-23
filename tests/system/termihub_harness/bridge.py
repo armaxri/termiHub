@@ -167,6 +167,16 @@ class Driver:
             {"action": "getAttribute", "testId": test_id, "attribute": attribute}
         )
 
+    def get_value(self, test_id: str) -> str:
+        """Read the live ``value`` of an ``<input>``/``<textarea>``/``<select>``.
+
+        Returns the DOM *property* a React-controlled field updates — unlike
+        :meth:`get_attribute`, which only sees the stale markup attribute. Use
+        this to assert the value a user/code set (e.g. the port field shows
+        ``"22"`` or the auto-lock select is ``"never"``).
+        """
+        return self._call({"action": "getValue", "testId": test_id})
+
     def get_computed_style(self, property: str, test_id: Optional[str] = None) -> str:
         """Read a *computed* CSS property (including custom properties).
 

@@ -97,6 +97,20 @@ export interface GetAttributeCommand {
 }
 
 /**
+ * Read the live *value* of an `<input>`, `<textarea>`, or `<select>`.
+ *
+ * Counterpart to {@link GetAttributeCommand}: a React-**controlled** field
+ * updates the DOM *property* `.value`, not the markup `value` attribute, so
+ * `getAttribute` reads the stale initial value. This returns `el.value` — what
+ * the user/code actually set. Fails for elements without a value property or a
+ * missing testid.
+ */
+export interface GetValueCommand {
+  action: "getValue";
+  testId: string;
+}
+
+/**
  * Read a *computed* CSS property of an element — including custom properties.
  *
  * `getAttribute` only sees inline/markup attributes, so it cannot observe the
@@ -193,6 +207,7 @@ export type BridgeCommand =
   | ExistsCommand
   | GetTextCommand
   | GetAttributeCommand
+  | GetValueCommand
   | GetComputedStyleCommand
   | DragCommand
   | DragToCommand

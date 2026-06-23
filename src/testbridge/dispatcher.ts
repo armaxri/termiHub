@@ -127,6 +127,22 @@ export async function dispatchCommand(
       return ok("getAttribute", el.getAttribute(command.attribute));
     }
 
+    case "getValue": {
+      const el = findByTestId(deps.root, command.testId);
+      if (!el) return fail("getValue", `no element with data-testid="${command.testId}"`);
+      if (
+        !(el instanceof HTMLInputElement) &&
+        !(el instanceof HTMLTextAreaElement) &&
+        !(el instanceof HTMLSelectElement)
+      ) {
+        return fail(
+          "getValue",
+          `element data-testid="${command.testId}" has no value (not an input/textarea/select)`
+        );
+      }
+      return ok("getValue", el.value);
+    }
+
     case "getComputedStyle": {
       const doc = ownerDocument(deps.root);
       let el: Element | null;
