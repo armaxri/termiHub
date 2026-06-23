@@ -1,8 +1,11 @@
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use tauri::{AppHandle, Emitter, Manager};
+use termihub_core::backends::ssh::handler::SshSession;
+
+use crate::terminal::backend::SshConfig;
 
 use super::config::{
     TunnelConfig, TunnelState, TunnelStats, TunnelStatus, TunnelStore, TunnelType,
@@ -220,7 +223,7 @@ impl TunnelManager {
             Ok(f) => f,
             Err(e) => {
                 match self.connecting.finish(tunnel_id) {
-                    FinishOutcome::Cancelled | FinishOutcome::Gone => {
+                    FinishOutcome::Cancel => {
                         self.emit_status(tunnel_id, TunnelStatus::Disconnected, None);
                     }
                     FinishOutcome::Commit => {
@@ -271,25 +274,15 @@ impl TunnelManager {
     fn build_forwarder(&self, config: &TunnelConfig) -> Result<ActiveForwarder, TerminalError> {
         let ssh_config = self.resolve_ssh_config(&config.ssh_connection_id)?;
 
+        let conn_id = &config.ssh_connection_id;
         match &config.tunnel_type {
             TunnelType::Local(local_config) => {
-                let (session, _registry) = {
-                    let mut pool = self
-                        .session_pool
-                        .lock()
-                        .map_err(|e| TerminalError::TunnelError(format!("Lock error: {}", e)))?;
-                    pool.get_or_create(&config.ssh_connection_id, &ssh_config)?
-                };
-                match LocalForwarder::start(local_config, session) {
-                    Ok(f) => Ok(ActiveForwarder::Local(f)),
-                    Err(e) => {
-                        self.release_session(&config.ssh_connection_id);
-                        Err(TerminalError::TunnelError(format!(
-                            "Failed to start local forwarder: {}",
-                            e
-                        )))
-                    }
-                }
+                let session = self.pooled_session(conn_id, &ssh_config)?;
+                self.finish_pooled(
+                    conn_id,
+                    "local",
+                    LocalForwarder::start(local_config, session).map(ActiveForwarder::Local),
+                )
             }
             TunnelType::Remote(remote_config) => {
                 // Remote forwarding needs tcpip_forward (&mut SshSession), so it always gets
@@ -303,25 +296,42 @@ impl TunnelManager {
                 Ok(ActiveForwarder::Remote(f))
             }
             TunnelType::Dynamic(dynamic_config) => {
-                let (session, _registry) = {
-                    let mut pool = self
-                        .session_pool
-                        .lock()
-                        .map_err(|e| TerminalError::TunnelError(format!("Lock error: {}", e)))?;
-                    pool.get_or_create(&config.ssh_connection_id, &ssh_config)?
-                };
-                match DynamicForwarder::start(dynamic_config, session) {
-                    Ok(f) => Ok(ActiveForwarder::Dynamic(f)),
-                    Err(e) => {
-                        self.release_session(&config.ssh_connection_id);
-                        Err(TerminalError::TunnelError(format!(
-                            "Failed to start dynamic forwarder: {}",
-                            e
-                        )))
-                    }
-                }
+                let session = self.pooled_session(conn_id, &ssh_config)?;
+                self.finish_pooled(
+                    conn_id,
+                    "dynamic",
+                    DynamicForwarder::start(dynamic_config, session).map(ActiveForwarder::Dynamic),
+                )
             }
         }
+    }
+
+    /// Take a reference-counted SSH session from the pool, shared by local and
+    /// dynamic forwarders on the same connection.
+    fn pooled_session(
+        &self,
+        ssh_connection_id: &str,
+        ssh_config: &SshConfig,
+    ) -> Result<Arc<SshSession>, TerminalError> {
+        let mut pool = self
+            .session_pool
+            .lock()
+            .map_err(|e| TerminalError::TunnelError(format!("Lock error: {}", e)))?;
+        Ok(pool.get_or_create(ssh_connection_id, ssh_config)?.0)
+    }
+
+    /// Map the result of starting a pooled (local/dynamic) forwarder: on failure
+    /// release the pooled session reference so the pool ref count does not leak.
+    fn finish_pooled(
+        &self,
+        ssh_connection_id: &str,
+        label: &str,
+        result: Result<ActiveForwarder, std::io::Error>,
+    ) -> Result<ActiveForwarder, TerminalError> {
+        result.map_err(|e| {
+            self.release_session(ssh_connection_id);
+            TerminalError::TunnelError(format!("Failed to start {} forwarder: {}", label, e))
+        })
     }
 
     /// Stop a forwarder and release its pooled SSH session reference.

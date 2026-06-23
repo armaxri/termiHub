@@ -7,10 +7,9 @@ use std::sync::{Arc, Mutex};
 pub enum FinishOutcome {
     /// No Stop was requested — the started forwarder should become active.
     Commit,
-    /// Stop was requested while connecting — tear the started forwarder down.
-    Cancelled,
-    /// The tunnel was no longer tracked as connecting. Treated like `Cancelled`.
-    Gone,
+    /// The start should not commit: Stop was requested while connecting, or the
+    /// tunnel was no longer tracked. Either way, tear the started forwarder down.
+    Cancel,
 }
 
 /// Tracks tunnels that are mid-connect so a Stop request issued during the
@@ -71,9 +70,8 @@ impl ConnectingTracker {
     /// whether a Stop was requested in the meantime.
     pub fn finish(&self, tunnel_id: &str) -> FinishOutcome {
         match self.lock().remove(tunnel_id) {
-            Some(flag) if flag.load(Ordering::SeqCst) => FinishOutcome::Cancelled,
-            Some(_) => FinishOutcome::Commit,
-            None => FinishOutcome::Gone,
+            Some(flag) if !flag.load(Ordering::SeqCst) => FinishOutcome::Commit,
+            _ => FinishOutcome::Cancel,
         }
     }
 }
@@ -110,7 +108,7 @@ mod tests {
         let tracker = ConnectingTracker::new();
         tracker.begin("t1");
         assert!(tracker.request_cancel("t1"));
-        assert_eq!(tracker.finish("t1"), FinishOutcome::Cancelled);
+        assert_eq!(tracker.finish("t1"), FinishOutcome::Cancel);
     }
 
     #[test]
@@ -120,9 +118,9 @@ mod tests {
     }
 
     #[test]
-    fn finish_unknown_reports_gone() {
+    fn finish_unknown_reports_cancel() {
         let tracker = ConnectingTracker::new();
-        assert_eq!(tracker.finish("missing"), FinishOutcome::Gone);
+        assert_eq!(tracker.finish("missing"), FinishOutcome::Cancel);
     }
 
     #[test]
@@ -142,7 +140,7 @@ mod tests {
         tracker.begin("t1");
         tracker.begin("t2");
         tracker.request_cancel("t1");
-        assert_eq!(tracker.finish("t1"), FinishOutcome::Cancelled);
+        assert_eq!(tracker.finish("t1"), FinishOutcome::Cancel);
         assert_eq!(tracker.finish("t2"), FinishOutcome::Commit);
     }
 }
