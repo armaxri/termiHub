@@ -245,14 +245,20 @@ pub fn vscode_open_local(path: String) -> Result<(), TerminalError> {
 }
 
 /// Open a remote file in VS Code: download, open with --wait, re-upload on close.
+///
+/// `async` + `spawn_blocking`: the SFTP read/write use `block_in_place`
+/// internally, which aborts the process on the synchronous Tauri command thread
+/// (and on a raw `std::thread`, which has no runtime context). Both the initial
+/// download and the background wait/re-upload therefore run on `spawn_blocking`
+/// threads, which carry a Tokio runtime context. Mirrors `monitoring_open`. See #828.
 #[tauri::command]
-pub fn vscode_open_remote(
+pub async fn vscode_open_remote(
     session_id: String,
     remote_path: String,
     manager: State<'_, SftpManager>,
     app_handle: tauri::AppHandle,
 ) -> Result<(), TerminalError> {
-    // Get a clone of the session Arc before spawning the background thread
+    // Get a clone of the session Arc before spawning the background task
     let session_arc = manager.get_session(&session_id)?;
 
     // Extract the filename from the remote path
@@ -269,15 +275,26 @@ pub fn vscode_open_remote(
     let temp_path = temp_dir.join(format!("{}-{}", uuid::Uuid::new_v4(), filename));
     let temp_path_str = temp_path.to_string_lossy().to_string();
 
-    // Download the remote file to temp
+    // Download the remote file to temp on a blocking-pool thread (the SFTP read
+    // uses `block_in_place`, which is invalid on the command thread).
     {
-        let session = session_arc.lock().unwrap();
-        session.read_file(&remote_path, &temp_path_str)?;
+        let session = session_arc.clone();
+        let remote_path = remote_path.clone();
+        let temp_path_str = temp_path_str.clone();
+        tokio::task::spawn_blocking(move || {
+            session
+                .lock()
+                .unwrap()
+                .read_file(&remote_path, &temp_path_str)
+        })
+        .await
+        .map_err(|e| TerminalError::SshError(format!("Task join error: {e}")))??;
     }
 
-    // Spawn a background thread to wait for VS Code to close
-    let remote_path_clone = remote_path.clone();
-    std::thread::spawn(move || {
+    // Wait for VS Code to close, then re-upload — on a blocking-pool thread so
+    // the SFTP write's `block_in_place` has a runtime context (a raw
+    // `std::thread` would have none and abort the process).
+    tauri::async_runtime::spawn_blocking(move || {
         let result = vscode::open_in_vscode_wait(&temp_path_str);
 
         let event = match result {
@@ -285,23 +302,23 @@ pub fn vscode_open_remote(
                 // Re-upload the edited file
                 let upload_result = {
                     let session = session_arc.lock().unwrap();
-                    session.write_file(&temp_path_str, &remote_path_clone)
+                    session.write_file(&temp_path_str, &remote_path)
                 };
                 match upload_result {
                     Ok(_) => VscodeEditCompleteEvent {
-                        remote_path: remote_path_clone,
+                        remote_path,
                         success: true,
                         error: None,
                     },
                     Err(e) => VscodeEditCompleteEvent {
-                        remote_path: remote_path_clone,
+                        remote_path,
                         success: false,
                         error: Some(format!("Upload failed: {}", e)),
                     },
                 }
             }
             Err(e) => VscodeEditCompleteEvent {
-                remote_path: remote_path_clone,
+                remote_path,
                 success: false,
                 error: Some(format!("VS Code error: {}", e)),
             },

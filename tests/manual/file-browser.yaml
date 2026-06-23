@@ -101,6 +101,7 @@ tests:
   - id: MT-FB-15
     name: "Open in VS Code — SFTP edit and re-upload"
     pr: 51
+    regression_pr: 828
     platforms: [all]
     prerequisites:
       - app: true
@@ -110,7 +111,9 @@ tests:
       - "Click 'Open in VS Code'"
       - "Edit the file in VS Code and close the tab"
     expected:
+      - "App stays running when the file is downloaded (no crash; regression #828)"
       - "File re-uploaded (verify content changed on remote)"
+      - "App stays running through the background re-upload (no crash; regression #828)"
     verification: manual
 
   - id: MT-FB-16
