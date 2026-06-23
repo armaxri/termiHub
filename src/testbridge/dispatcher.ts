@@ -44,15 +44,9 @@ function ownerDocument(root: ParentNode): Document {
 }
 
 /** Dispatch a bubbling, cancelable mouse event carrying viewport coordinates. */
-function dispatchMouse(
-  target: EventTarget,
-  type: string,
-  clientX: number,
-  clientY: number,
-  button = 0
-): void {
+function dispatchMouse(target: EventTarget, type: string, clientX: number, clientY: number): void {
   target.dispatchEvent(
-    new MouseEvent(type, { bubbles: true, cancelable: true, button, clientX, clientY })
+    new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX, clientY })
   );
 }
 
