@@ -39,6 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Terminal: added a small horizontal inset (8 px) inside the terminal viewport so the first and last characters of each line are no longer flush against the container edge or the vertical scrollbar. This makes it easier to drag-select characters at the line edges. xterm's FitAddon reads the padding so column counts remain accurate; horizontal-scroll mode keeps zero padding to avoid clipping the imperatively sized canvas.
 
+### Fixed
+
+- Backend: fixed latent process aborts when triggering SSH/SFTP work from synchronous code paths. **"Open in VS Code" on a remote (SFTP) file** and **starting an SSH tunnel** (including auto-start tunnels at launch) could abort the whole app, because they drove the blocking SSH/SFTP connect (which uses `tokio::task::block_in_place` internally) from the synchronous Tauri command thread or a raw `std::thread` — neither of which carries the Tokio runtime context that `block_in_place` requires. These paths now run on `spawn_blocking` threads (mirroring monitoring/SFTP file-browser), so the connect happens off the command thread with a valid runtime context. (Closes #828)
+
 ### Added
 
 - Remote agent (Windows): `#[cfg(windows)]` integration tests for the ConPTY-backed local-shell path. The agent's Windows shell flow goes through `NativeLocalShellSpawner` → `portable_pty::native_pty_system()` → ConPTY, which behaves differently from Unix PTYs around resize and teardown. The new tests pin the shell to `powershell` and `cmd` and exercise spawn, I/O round-trip, back-to-back resizes, and clean teardown so regressions in ConPTY shell defaults fail fast on the Windows CI matrix. `NativeLocalShellSpawner` also gained a doc-comment block describing the ConPTY-specific behavior (`ResizePseudoConsole` firing `WINDOW_BUFFER_SIZE_EVENT`, `ClosePseudoConsole` on drop). Two manual tests (MT-AGENT-21 / MT-AGENT-22) cover the same flow end-to-end through the agent. Part of #771 (Closes #765).
