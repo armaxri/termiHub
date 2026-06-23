@@ -131,6 +131,14 @@ class Driver:
         """Choose ``value`` on the native ``<select>`` with ``test_id``."""
         self._call({"action": "select", "testId": test_id, "value": value})
 
+    def context_menu(self, test_id: str) -> None:
+        """Open the right-click context menu of the element with ``test_id``."""
+        self._call({"action": "contextMenu", "testId": test_id})
+
+    def press_key(self, key: str, test_id: Optional[str] = None) -> None:
+        """Press ``key`` on ``test_id`` (or the focused element), e.g. ``"Escape"``."""
+        self._call({"action": "pressKey", "key": key, "testId": test_id})
+
     def terminal_input(self, text: str, tab_id: Optional[str] = None) -> None:
         self._call({"action": "terminalInput", "text": text, "tabId": tab_id})
 

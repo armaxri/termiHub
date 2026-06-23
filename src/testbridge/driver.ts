@@ -67,6 +67,10 @@ export interface Driver {
   getText(testId: string): Promise<string>;
   /** Read an attribute of the element with the given `data-testid`. */
   getAttribute(testId: string, attribute: string): Promise<string | null>;
+  /** Open the right-click context menu of the element with the given `data-testid`. */
+  contextMenu(testId: string): Promise<void>;
+  /** Press a key on `testId` (or the focused element when omitted), e.g. `"Escape"`. */
+  pressKey(key: string, testId?: string): Promise<void>;
   /** Read the reconstructed text of a terminal (active tab unless specified). */
   readTerminal(options?: ReadTerminalOptions): Promise<string>;
   /** Read a slice of app state, optionally by dot-path. */
@@ -134,6 +138,14 @@ export class InAppBridgeDriver implements Driver {
 
   async getAttribute(testId: string, attribute: string): Promise<string | null> {
     return this.send<string | null>({ action: "getAttribute", testId, attribute });
+  }
+
+  async contextMenu(testId: string): Promise<void> {
+    await this.send({ action: "contextMenu", testId });
+  }
+
+  async pressKey(key: string, testId?: string): Promise<void> {
+    await this.send({ action: "pressKey", key, testId });
   }
 
   async readTerminal(options: ReadTerminalOptions = {}): Promise<string> {

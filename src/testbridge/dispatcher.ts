@@ -132,6 +132,45 @@ export async function dispatchCommand(
       return ok("type");
     }
 
+    case "contextMenu": {
+      const el = findByTestId(deps.root, command.testId);
+      if (!el) return fail("contextMenu", `no element with data-testid="${command.testId}"`);
+      // Aim the event at the element's center so menu libraries that position at
+      // the pointer (Radix `ContextMenu`) anchor sensibly. `getBoundingClientRect`
+      // is absent in some jsdom paths, so fall back to the origin.
+      const rect = (el as HTMLElement).getBoundingClientRect?.();
+      const clientX = rect ? Math.round(rect.left + rect.width / 2) : 0;
+      const clientY = rect ? Math.round(rect.top + rect.height / 2) : 0;
+      el.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          button: 2,
+          clientX,
+          clientY,
+        })
+      );
+      return ok("contextMenu");
+    }
+
+    case "pressKey": {
+      let target: EventTarget | null;
+      if (command.testId) {
+        target = findByTestId(deps.root, command.testId);
+        if (!target) return fail("pressKey", `no element with data-testid="${command.testId}"`);
+      } else {
+        // No explicit target: aim at the focused element so a bare Escape/Enter
+        // reaches document-level handlers (e.g. Radix's dismiss layer) by bubbling.
+        const doc = deps.root instanceof Document ? deps.root : (deps.root.ownerDocument ?? null);
+        target = doc?.activeElement ?? doc ?? null;
+      }
+      if (!target) return fail("pressKey", "no focused element to press a key on");
+      const init: KeyboardEventInit = { key: command.key, bubbles: true, cancelable: true };
+      target.dispatchEvent(new KeyboardEvent("keydown", init));
+      target.dispatchEvent(new KeyboardEvent("keyup", init));
+      return ok("pressKey");
+    }
+
     case "select": {
       const el = findByTestId(deps.root, command.testId);
       if (!el) return fail("select", `no element with data-testid="${command.testId}"`);

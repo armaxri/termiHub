@@ -37,6 +37,30 @@ describe("InAppBridgeDriver", () => {
     expect(sent).toEqual([{ action: "terminalInput", text: "whoami", tabId: "tab-9" }]);
   });
 
+  it("maps contextMenu to a contextMenu command", async () => {
+    const { transport, sent } = scriptedTransport({});
+    await new InAppBridgeDriver(transport).contextMenu("connection-item-1");
+    expect(sent).toEqual([{ action: "contextMenu", testId: "connection-item-1" }]);
+  });
+
+  it("maps select to a select command", async () => {
+    const { transport, sent } = scriptedTransport({});
+    await new InAppBridgeDriver(transport).select("type", "ssh");
+    expect(sent).toEqual([{ action: "select", testId: "type", value: "ssh" }]);
+  });
+
+  it("maps pressKey to a pressKey command, defaulting testId to undefined", async () => {
+    const { transport, sent } = scriptedTransport({});
+    await new InAppBridgeDriver(transport).pressKey("Escape");
+    expect(sent).toEqual([{ action: "pressKey", key: "Escape", testId: undefined }]);
+  });
+
+  it("maps pressKey with an explicit testId through", async () => {
+    const { transport, sent } = scriptedTransport({});
+    await new InAppBridgeDriver(transport).pressKey("Enter", "field");
+    expect(sent).toEqual([{ action: "pressKey", key: "Enter", testId: "field" }]);
+  });
+
   it("unwraps the value of a query command", async () => {
     const { transport } = scriptedTransport({
       getText: { ok: true, action: "getText", value: "Connected" },

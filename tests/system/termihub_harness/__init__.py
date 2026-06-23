@@ -26,6 +26,15 @@ from .fixtures import (
 )
 from .orchestrator import AgentInstance, AppInstance, agent_binary_path, app_binary_path
 from .systemtest import SystemTest, unique_name
+from .ui import (
+    ConnectionsUi,
+    connection_item_testid,
+    connections,
+    find_connection,
+    find_folder,
+    folder_toggle_testid,
+    folders,
+)
 
 __all__ = [
     "Bridge",
@@ -36,6 +45,13 @@ __all__ = [
     "app_binary_path",
     "agent_binary_path",
     "SystemTest",
+    "ConnectionsUi",
+    "connections",
+    "find_connection",
+    "folders",
+    "find_folder",
+    "connection_item_testid",
+    "folder_toggle_testid",
     "unique_name",
     "ComposeFixture",
     "ContainerRuntimeUnavailable",
