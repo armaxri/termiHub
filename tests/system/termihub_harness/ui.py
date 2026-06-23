@@ -30,7 +30,9 @@ def _state_list(driver: Driver, path: str) -> list[dict[str, Any]]:
         value = driver.get_state(path)
     except BridgeError:
         return []
-    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
 
 
 def connections(driver: Driver) -> list[dict[str, Any]]:
