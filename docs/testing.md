@@ -699,7 +699,7 @@ Manual test procedures for verifying user-facing features before releases and af
 
 Manual tests that can be automated have been moved to WebdriverIO E2E tests. The YAML files now contain only items that truly require manual verification. See the [E2E Coverage Map](#e2e-coverage-map) below for the mapping from manual test IDs to E2E test files.
 
-**101 manual test items remain** across 14 YAML files. These cannot be automated due to:
+**100 manual test items remain** across 14 YAML files. These cannot be automated due to:
 
 | Reason                                | Items | Examples                                                          |
 | ------------------------------------- | ----- | ----------------------------------------------------------------- |
@@ -707,7 +707,7 @@ Manual tests that can be automated have been moved to WebdriverIO E2E tests. The
 | Keyboard shortcuts                    | ~8    | Chord bindings, rebinding, shortcut conflicts                     |
 | OS-level behavior                     | ~10   | macOS key repeat, accent picker, custom app icon, app updater     |
 | Native OS dialogs (file picker, save) | ~6    | Import/export connections, SSH key browse, save terminal to file  |
-| Drag-and-drop                         | ~8    | Tab reorder, split view drag, connection folder drag              |
+| Drag-and-drop                         | ~7    | Split view drag, cross-group tab drag, connection folder drag     |
 | External app integration              | ~7    | Open in VS Code (local + SFTP), VS Code not installed             |
 | Right-click behavior                  | ~5    | Quick copy/paste, context menu, setting persistence               |
 | Credential store (master password)    | ~3    | Setup, unlock, auto-lock, wrong password, change password         |
@@ -780,7 +780,7 @@ Mapping of manual test IDs that have been automated to their E2E test files:
 | MT-SSH-04–06, 10–12, 20–33, 35 | `infrastructure/ssh*.test.js`                                   |
 | MT-SSH-08, 19                  | `ssh-agent-warning.test.js`                                     |
 | MT-SSH-13, 17, 34              | `infrastructure/ssh-extended.test.js`                           |
-| MT-TAB-01–04, 15, 18           | `tests/system/tests/test_tab_management.py`                     |
+| MT-TAB-01–05, 15, 18           | `tests/system/tests/test_tab_management.py`                     |
 | MT-TAB-08–14, 19–21            | `tests/system/tests/test_tab_horizontal_scroll.py`              |
 | MT-CONN-02–07, 25–30           | `connection-crud.test.js`, `connection-forms.test.js`           |
 | MT-CONN-10–12, 14–16           | `encrypted-export-import.test.js`                               |

@@ -2,19 +2,11 @@ category: tab-management
 display_name: "Tab Management"
 
 tests:
-  # --- Drag reorder (stays manual — WebDriver drag-and-drop is unreliable) ---
-
-  - id: MT-TAB-05
-    name: "Drag tab to new position"
-    platforms: [all]
-    prerequisites:
-      - app: true
-    instructions:
-      - "Open multiple terminal tabs"
-      - "Drag a tab to a new position in the tab bar"
-    expected:
-      - "Tab moves to new position, order persists"
-    verification: manual
+  # --- Drag-and-drop ---
+  # Reorder within the tab bar (MT-TAB-05) is now automated via the in-app test
+  # bridge (dragTo → @dnd-kit), see tests/system/tests/test_tab_management.py
+  # (#832). Edge-split and cross-group drops stay manual: they hit drop targets
+  # outside the DndContext that the bridge does not yet drive.
 
   - id: MT-TAB-06
     name: "Drag tab to edge creates new split"
