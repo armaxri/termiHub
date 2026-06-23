@@ -167,6 +167,10 @@ async function runCheck(
         const actual = await driver.getText(check.testId);
         return { check, passed: actual === check.value, expected: check.value, actual };
       }
+      case "valueEquals": {
+        const actual = await driver.getValue(check.testId);
+        return { check, passed: actual === check.value, expected: check.value, actual };
+      }
       case "exists": {
         const expected = check.present ?? true;
         const actual = await driver.exists(check.testId);

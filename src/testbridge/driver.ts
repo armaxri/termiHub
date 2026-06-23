@@ -80,6 +80,11 @@ export interface Driver {
   /** Read an attribute of the element with the given `data-testid`. */
   getAttribute(testId: string, attribute: string): Promise<string | null>;
   /**
+   * Read the live `value` of an `<input>`/`<textarea>`/`<select>` — the DOM
+   * property a controlled field updates, which {@link getAttribute} cannot see.
+   */
+  getValue(testId: string): Promise<string>;
+  /**
    * Read a computed CSS property (including custom properties). Pass `testId` to
    * read an element; omit it to read the document root, where theme CSS variables
    * like `--bg-primary` live.
@@ -166,6 +171,10 @@ export class InAppBridgeDriver implements Driver {
 
   async getAttribute(testId: string, attribute: string): Promise<string | null> {
     return this.send<string | null>({ action: "getAttribute", testId, attribute });
+  }
+
+  async getValue(testId: string): Promise<string> {
+    return this.send<string>({ action: "getValue", testId });
   }
 
   async getComputedStyle(property: string, options: GetComputedStyleOptions = {}): Promise<string> {

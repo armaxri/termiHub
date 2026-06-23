@@ -23,7 +23,7 @@ class FakeDriver implements Driver {
   pressedKeys: Array<{ key: string; testId?: string }> = [];
   dragTos: Array<{ from: string; to: string }> = [];
   terminalInputs: Array<{ text: string; tabId?: string }> = [];
-  elements = new Map<string, { text?: string }>();
+  elements = new Map<string, { text?: string; value?: string }>();
   /** Keyed by `testId ?? ""`, then property name → computed value. */
   computedStyles = new Map<string, Record<string, string>>();
   terminalText = "";
@@ -80,6 +80,12 @@ class FakeDriver implements Driver {
 
   async getAttribute(): Promise<string | null> {
     return null;
+  }
+
+  async getValue(testId: string): Promise<string> {
+    const el = this.elements.get(testId);
+    if (!el) throw new BridgeError("getValue", `no element "${testId}"`);
+    return el.value ?? "";
   }
 
   async drag(testId: string, dx: number, dy?: number): Promise<void> {
@@ -368,6 +374,37 @@ describe("runScenario", () => {
         instant()
       );
       expect(result.passed).toBe(true);
+    });
+
+    it("valueEquals compares a control's live value", async () => {
+      const driver = new FakeDriver();
+      driver.elements.set("field-port", { value: "22" });
+      const result = await runScenario(
+        {
+          name: "value",
+          steps: [],
+          checks: [{ assert: "valueEquals", testId: "field-port", value: "22" }],
+        },
+        driver,
+        instant()
+      );
+      expect(result.passed).toBe(true);
+    });
+
+    it("valueEquals reports the actual value on mismatch", async () => {
+      const driver = new FakeDriver();
+      driver.elements.set("field-port", { value: "2222" });
+      const result = await runScenario(
+        {
+          name: "value-mismatch",
+          steps: [],
+          checks: [{ assert: "valueEquals", testId: "field-port", value: "22" }],
+        },
+        driver,
+        instant()
+      );
+      expect(result.passed).toBe(false);
+      expect(result.checks[0].actual).toBe("2222");
     });
 
     it("exists honors the present flag", async () => {

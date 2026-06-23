@@ -77,14 +77,17 @@ def dispatcher_like(
     terminal_text: str = "",
     state: dict | None = None,
     computed_styles: dict | None = None,
+    values: dict | None = None,
 ) -> Handler:
     """A handler that mimics the real dispatcher for the common command set.
 
     ``computed_styles`` is keyed by ``(testId or "")`` → ``{property: value}`` so
     ``getComputedStyle`` (with or without a ``testId``) can be answered.
+    ``values`` is keyed by ``testId`` → live control value for ``getValue``.
     """
     state = state or {}
     computed_styles = computed_styles or {}
+    values = values or {}
     recorded: dict[str, list] = {
         "clicks": [],
         "input": [],
@@ -137,6 +140,8 @@ def dispatcher_like(
             if path is not None and path not in state:
                 return {"ok": False, "action": "getState", "error": f"no path {path}"}
             return {"ok": True, "action": "getState", "value": value}
+        if action == "getValue":
+            return {"ok": True, "action": "getValue", "value": values.get(command["testId"], "")}
         if action == "exists":
             return {"ok": True, "action": "exists", "value": True}
         return {"ok": False, "action": action or "?", "error": f"unhandled {action}"}

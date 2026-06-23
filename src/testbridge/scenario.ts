@@ -38,6 +38,11 @@ export type ScenarioCheck =
   | { assert: "terminalMatches"; pattern: string; flags?: string; tabId?: string }
   /** The element's visible text equals `value`. */
   | { assert: "textEquals"; testId: string; value: string }
+  /**
+   * The control's live `value` equals `value` — reads the DOM property a
+   * controlled `<input>`/`<select>` updates, which `textEquals` cannot.
+   */
+  | { assert: "valueEquals"; testId: string; value: string }
   /** The element is present (or absent when `present` is false). */
   | { assert: "exists"; testId: string; present?: boolean }
   /**

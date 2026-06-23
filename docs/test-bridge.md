@@ -145,7 +145,8 @@ unmount.
 | `dragTo`           | Drag one element onto another (pointer-based, e.g. @dnd-kit)   |
 | `exists`           | Whether an element is present                                  |
 | `getText`          | Read an element's visible text                                 |
-| `getAttribute`     | Read an element's attribute                                    |
+| `getAttribute`     | Read an element's markup attribute                             |
+| `getValue`         | Read the live `value` of an `<input>`/`<textarea>`/`<select>`  |
 | `getComputedStyle` | Read a _computed_ CSS property — incl. theme custom properties |
 | `readTerminal`     | Read a terminal's reconstructed logical-line text              |
 | `getState`         | Read app store state, optionally by dot-path                   |
@@ -201,6 +202,24 @@ await driver.getComputedStyle("--bg-primary"); // active theme background
 
 It fails (`ok: false`) when there is no active terminal, or when the target tab
 has no backend session bound (e.g. the shell has exited).
+
+### Reading form values (`getValue` vs `getAttribute`)
+
+A React-**controlled** `<input>`/`<select>` updates the DOM _property_ `.value`,
+not the markup `value` _attribute_. So `getAttribute("field-port", "value")`
+reads the stale initial value (or `null`), while `getValue` reads what the
+user/code actually set — the assertion you almost always want for form fields:
+
+- `{ action: "getValue", testId }` returns `el.value` for `<input>`,
+  `<textarea>`, and `<select>`. It fails (`ok: false`) for any other element or
+  a missing testid.
+
+```ts
+await driver.getValue("field-port"); // "22" — the live, controlled value
+```
+
+The scenario runner exposes this as the `valueEquals` check
+(`{ assert: "valueEquals", testId, value }`), alongside `textEquals`.
 
 ## Programmatic use
 
