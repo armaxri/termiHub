@@ -70,7 +70,9 @@ export function ExportDialog() {
       <Dialog.Portal>
         <Dialog.Overlay className="export-dialog__overlay" />
         <Dialog.Content className="export-dialog__content">
-          <Dialog.Title className="export-dialog__title">Export Connections</Dialog.Title>
+          <Dialog.Title className="export-dialog__title" data-testid="export-dialog-title">
+            Export Connections
+          </Dialog.Title>
 
           <fieldset className="export-dialog__fieldset">
             <label className="export-dialog__radio-label">

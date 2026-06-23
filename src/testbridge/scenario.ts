@@ -15,10 +15,10 @@ export type ScenarioStep =
   | { action: "type"; testId: string; text: string }
   /** Choose a native `<select>` option by value. */
   | { action: "select"; testId: string; value: string }
-  /** Open an element's context menu via a synthetic right-click. */
-  | { action: "rightClick"; testId: string }
-  /** Press a key (with optional modifiers). */
-  | { action: "key"; key: string; ctrl?: boolean; meta?: boolean; shift?: boolean; alt?: boolean }
+  /** Open an element's right-click context menu. */
+  | { action: "contextMenu"; testId: string }
+  /** Press a key on `testId` (or the focused element when omitted). */
+  | { action: "pressKey"; key: string; testId?: string }
   /** Drag an element by a pixel delta (e.g. a resize handle); `dy` defaults to 0. */
   | { action: "drag"; testId: string; dx: number; dy?: number }
   /** Drag one element onto another (pointer-based, e.g. @dnd-kit reordering). */

@@ -43,21 +43,10 @@ describe("InAppBridgeDriver", () => {
     expect(sent).toEqual([{ action: "drag", testId: "sidebar-resize-handle", dx: 100, dy: 5 }]);
   });
 
-  it("maps select, rightClick, key, and dragTo to commands", async () => {
+  it("maps dragTo to a dragTo command", async () => {
     const { transport, sent } = scriptedTransport({});
-    const driver = new InAppBridgeDriver(transport);
-    await driver.select("theme-select", "light");
-    await driver.rightClick("tab-1");
-    await driver.key("Escape");
-    await driver.key(",", { ctrl: true });
-    await driver.dragTo("tab-1", "tab-2");
-    expect(sent).toEqual([
-      { action: "select", testId: "theme-select", value: "light" },
-      { action: "rightClick", testId: "tab-1" },
-      { action: "key", key: "Escape" },
-      { action: "key", key: ",", ctrl: true },
-      { action: "dragTo", fromTestId: "tab-1", toTestId: "tab-2" },
-    ]);
+    await new InAppBridgeDriver(transport).dragTo("tab-1", "tab-2");
+    expect(sent).toEqual([{ action: "dragTo", fromTestId: "tab-1", toTestId: "tab-2" }]);
   });
 
   it("maps getComputedStyle to a command and unwraps the value", async () => {
@@ -80,6 +69,30 @@ describe("InAppBridgeDriver", () => {
       testId: undefined,
       property: "--bg-primary",
     });
+  });
+
+  it("maps contextMenu to a contextMenu command", async () => {
+    const { transport, sent } = scriptedTransport({});
+    await new InAppBridgeDriver(transport).contextMenu("connection-item-1");
+    expect(sent).toEqual([{ action: "contextMenu", testId: "connection-item-1" }]);
+  });
+
+  it("maps select to a select command", async () => {
+    const { transport, sent } = scriptedTransport({});
+    await new InAppBridgeDriver(transport).select("type", "ssh");
+    expect(sent).toEqual([{ action: "select", testId: "type", value: "ssh" }]);
+  });
+
+  it("maps pressKey to a pressKey command, defaulting testId to undefined", async () => {
+    const { transport, sent } = scriptedTransport({});
+    await new InAppBridgeDriver(transport).pressKey("Escape");
+    expect(sent).toEqual([{ action: "pressKey", key: "Escape", testId: undefined }]);
+  });
+
+  it("maps pressKey with an explicit testId through", async () => {
+    const { transport, sent } = scriptedTransport({});
+    await new InAppBridgeDriver(transport).pressKey("Enter", "field");
+    expect(sent).toEqual([{ action: "pressKey", key: "Enter", testId: "field" }]);
   });
 
   it("unwraps the value of a query command", async () => {

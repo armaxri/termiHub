@@ -1,9 +1,9 @@
 """Tab create / activate / close / rename / color / reorder.
 
 Ported from ``tests/e2e/tab-management.test.js`` onto the Python bridge harness
-(#808). Uses the new ``rightClick`` (Radix context menus), ``key`` (dismiss), and
-``dragTo`` (@dnd-kit reorder) verbs; tab identity/order/color are asserted from
-``rootPanel`` and ``tabColors`` state rather than DOM scraping.
+(#808). Uses the ``contextMenu`` (Radix context menus), ``pressKey`` (dismiss),
+and ``dragTo`` (@dnd-kit reorder) verbs; tab identity/order/color are asserted
+from ``rootPanel`` and ``tabColors`` state rather than DOM scraping.
 
 Not ported (kept as manual tests in docs/testing.md): the context-menu item
 Y-coordinate ordering checks, which assert pixel geometry.
@@ -43,16 +43,16 @@ class TestTabManagement(SystemTest):
     def test_right_click_opens_the_tab_context_menu(self):
         self._reset()
         tab = self.tab_ids()[0]
-        self.driver.right_click(f"tab-{tab}")
+        self.driver.context_menu(f"tab-{tab}")
         self.wait(lambda: self.driver.exists("tab-context-rename"), what="the tab context menu")
         assert self.driver.exists("tab-context-save")
         assert self.driver.exists("tab-context-set-color")
-        self.driver.key("Escape")
+        self.driver.press_key("Escape")
 
     def test_rename_tab_via_context_menu(self):
         self._reset()
         tab = self.tab_ids()[0]
-        self.driver.right_click(f"tab-{tab}")
+        self.driver.context_menu(f"tab-{tab}")
         self.wait(lambda: self.driver.exists("tab-context-rename"), what="the rename item")
         self.driver.click("tab-context-rename")
         self.wait(lambda: self.driver.exists("rename-dialog-input"), what="the rename dialog")
@@ -63,7 +63,7 @@ class TestTabManagement(SystemTest):
     def test_set_tab_color_via_context_menu(self):
         self._reset()
         tab = self.tab_ids()[0]
-        self.driver.right_click(f"tab-{tab}")
+        self.driver.context_menu(f"tab-{tab}")
         self.wait(lambda: self.driver.exists("tab-context-set-color"), what="the set-color item")
         self.driver.click("tab-context-set-color")
         self.wait(lambda: self.driver.exists("color-picker-apply"), what="the color picker")

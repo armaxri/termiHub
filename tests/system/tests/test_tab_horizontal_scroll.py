@@ -32,13 +32,13 @@ class TestTabHorizontalScroll(SystemTest):
         tab = self.tab_ids()[0]
         assert not self._hscroll(tab)
 
-        self.driver.right_click(f"tab-{tab}")
+        self.driver.context_menu(f"tab-{tab}")
         self.wait(lambda: self.driver.exists(CTX_HSCROLL), what="the tab context menu")
         self.driver.click(CTX_HSCROLL)
         self.wait(lambda: self._hscroll(tab) is True, what="horizontal scrolling on")
         self.delay4user(2, reason="horizontal scrolling enabled")
 
-        self.driver.right_click(f"tab-{tab}")
+        self.driver.context_menu(f"tab-{tab}")
         self.wait(lambda: self.driver.exists(CTX_HSCROLL), what="the tab context menu again")
         self.driver.click(CTX_HSCROLL)
         self.wait(lambda: not self._hscroll(tab), what="horizontal scrolling off")

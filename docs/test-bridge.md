@@ -135,11 +135,11 @@ unmount.
 
 | Action             | Purpose                                                        |
 | ------------------ | -------------------------------------------------------------- |
-| `click`            | Press the element with the given `data-testid`                 |
+| `click`            | Press the element (full pointer sequence, so Radix menus open) |
 | `type`             | Set an input/textarea value (native setter + `input` event)    |
 | `select`           | Choose a native `<select>` option (native setter + `change`)   |
-| `rightClick`       | Open an element's context menu (synthetic `contextmenu`)       |
-| `key`              | Press a key (with modifiers) as a `keydown`/`keyup` pair       |
+| `contextMenu`      | Open an element's right-click menu (`contextmenu` event)       |
+| `pressKey`         | Dispatch a key (`keydown`+`keyup`), e.g. `Escape`, `Enter`     |
 | `terminalInput`    | Send a command into a terminal **session** (see below)         |
 | `drag`             | Drag an element by a pixel delta (resize handles)              |
 | `dragTo`           | Drag one element onto another (pointer-based, e.g. @dnd-kit)   |
@@ -269,8 +269,8 @@ if (!result.passed) {
 | `{ action: "click", testId }`                            | Press the control                                 |
 | `{ action: "type", testId, text }`                       | Set an input/textarea value                       |
 | `{ action: "select", testId, value }`                    | Choose a native `<select>` option                 |
-| `{ action: "rightClick", testId }`                       | Open the element's context menu                   |
-| `{ action: "key", key, ctrl?, meta?, shift?, alt? }`     | Press a key with optional modifiers               |
+| `{ action: "contextMenu", testId }`                      | Open the element's right-click context menu       |
+| `{ action: "pressKey", key, testId? }`                   | Dispatch a key (`keydown`+`keyup`)                |
 | `{ action: "drag", testId, dx, dy? }`                    | Drag an element by a pixel delta                  |
 | `{ action: "dragTo", fromTestId, toTestId }`             | Drag one element onto another                     |
 | `{ action: "terminalInput", text, tabId? }`              | Send a command into a terminal session            |

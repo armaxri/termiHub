@@ -203,36 +203,6 @@ export async function dispatchCommand(
       return ok("dragTo");
     }
 
-    case "rightClick": {
-      const el = findByTestId(deps.root, command.testId);
-      if (!el) return fail("rightClick", `no element with data-testid="${command.testId}"`);
-      const { x, y } = centerOf(el);
-      // Radix's ContextMenu.Trigger opens on the native `contextmenu` event; the
-      // secondary-button pointer/mouse pair mirrors a real right-click around it.
-      dispatchMouse(el, "pointerdown", x, y, 2);
-      dispatchMouse(el, "mousedown", x, y, 2);
-      dispatchMouse(el, "contextmenu", x, y, 2);
-      dispatchMouse(el, "mouseup", x, y, 2);
-      return ok("rightClick");
-    }
-
-    case "key": {
-      const doc = ownerDocument(deps.root);
-      const target: EventTarget = doc.activeElement ?? doc.body ?? doc;
-      const init: KeyboardEventInit = {
-        key: command.key,
-        bubbles: true,
-        cancelable: true,
-        ctrlKey: command.ctrl ?? false,
-        metaKey: command.meta ?? false,
-        shiftKey: command.shift ?? false,
-        altKey: command.alt ?? false,
-      };
-      target.dispatchEvent(new KeyboardEvent("keydown", init));
-      target.dispatchEvent(new KeyboardEvent("keyup", init));
-      return ok("key");
-    }
-
     case "type": {
       const el = findByTestId(deps.root, command.testId);
       if (!el) return fail("type", `no element with data-testid="${command.testId}"`);
@@ -250,6 +220,45 @@ export async function dispatchCommand(
       setter?.call(el, command.text);
       el.dispatchEvent(new Event("input", { bubbles: true }));
       return ok("type");
+    }
+
+    case "contextMenu": {
+      const el = findByTestId(deps.root, command.testId);
+      if (!el) return fail("contextMenu", `no element with data-testid="${command.testId}"`);
+      // Aim the event at the element's center so menu libraries that position at
+      // the pointer (Radix `ContextMenu`) anchor sensibly. `getBoundingClientRect`
+      // is absent in some jsdom paths, so fall back to the origin.
+      const rect = (el as HTMLElement).getBoundingClientRect?.();
+      const clientX = rect ? Math.round(rect.left + rect.width / 2) : 0;
+      const clientY = rect ? Math.round(rect.top + rect.height / 2) : 0;
+      el.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          button: 2,
+          clientX,
+          clientY,
+        })
+      );
+      return ok("contextMenu");
+    }
+
+    case "pressKey": {
+      let target: EventTarget | null;
+      if (command.testId) {
+        target = findByTestId(deps.root, command.testId);
+        if (!target) return fail("pressKey", `no element with data-testid="${command.testId}"`);
+      } else {
+        // No explicit target: aim at the focused element so a bare Escape/Enter
+        // reaches document-level handlers (e.g. Radix's dismiss layer) by bubbling.
+        const doc = deps.root instanceof Document ? deps.root : (deps.root.ownerDocument ?? null);
+        target = doc?.activeElement ?? doc ?? null;
+      }
+      if (!target) return fail("pressKey", "no focused element to press a key on");
+      const init: KeyboardEventInit = { key: command.key, bubbles: true, cancelable: true };
+      target.dispatchEvent(new KeyboardEvent("keydown", init));
+      target.dispatchEvent(new KeyboardEvent("keyup", init));
+      return ok("pressKey");
     }
 
     case "select": {

@@ -131,23 +131,13 @@ class Driver:
         """Choose ``value`` on the native ``<select>`` with ``test_id``."""
         self._call({"action": "select", "testId": test_id, "value": value})
 
-    def right_click(self, test_id: str) -> None:
-        """Open an element's context menu via a synthetic right-click."""
-        self._call({"action": "rightClick", "testId": test_id})
+    def context_menu(self, test_id: str) -> None:
+        """Open the right-click context menu of the element with ``test_id``."""
+        self._call({"action": "contextMenu", "testId": test_id})
 
-    def key(
-        self,
-        key: str,
-        *,
-        ctrl: bool = False,
-        meta: bool = False,
-        shift: bool = False,
-        alt: bool = False,
-    ) -> None:
-        """Press a key (with optional modifiers) as a ``keydown``/``keyup`` pair."""
-        self._call(
-            {"action": "key", "key": key, "ctrl": ctrl, "meta": meta, "shift": shift, "alt": alt}
-        )
+    def press_key(self, key: str, test_id: Optional[str] = None) -> None:
+        """Press ``key`` on ``test_id`` (or the focused element), e.g. ``"Escape"``."""
+        self._call({"action": "pressKey", "key": key, "testId": test_id})
 
     def drag_to(self, from_test_id: str, to_test_id: str) -> None:
         """Drag one element onto another (pointer-based, e.g. @dnd-kit reorder)."""

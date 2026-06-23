@@ -46,14 +46,6 @@ export interface GetComputedStyleOptions {
   testId?: string;
 }
 
-/** Modifier keys for {@link Driver.key}. */
-export interface KeyModifiers {
-  ctrl?: boolean;
-  meta?: boolean;
-  shift?: boolean;
-  alt?: boolean;
-}
-
 /**
  * The abstraction test authors and coding agents program against.
  *
@@ -70,10 +62,10 @@ export interface Driver {
   type(testId: string, text: string): Promise<void>;
   /** Choose `value` on the native `<select>` carrying the given `data-testid`. */
   select(testId: string, value: string): Promise<void>;
-  /** Open an element's context menu via a synthetic right-click. */
-  rightClick(testId: string): Promise<void>;
-  /** Press a key (with optional modifiers) as a `keydown`/`keyup` pair. */
-  key(key: string, modifiers?: KeyModifiers): Promise<void>;
+  /** Open the right-click context menu of the element with the given `data-testid`. */
+  contextMenu(testId: string): Promise<void>;
+  /** Press a key on `testId` (or the focused element when omitted), e.g. `"Escape"`. */
+  pressKey(key: string, testId?: string): Promise<void>;
   /** Drag one element onto another (pointer-based, e.g. @dnd-kit reordering). */
   dragTo(fromTestId: string, toTestId: string): Promise<void>;
   /**
@@ -148,12 +140,12 @@ export class InAppBridgeDriver implements Driver {
     await this.send({ action: "select", testId, value });
   }
 
-  async rightClick(testId: string): Promise<void> {
-    await this.send({ action: "rightClick", testId });
+  async contextMenu(testId: string): Promise<void> {
+    await this.send({ action: "contextMenu", testId });
   }
 
-  async key(key: string, modifiers: KeyModifiers = {}): Promise<void> {
-    await this.send({ action: "key", key, ...modifiers });
+  async pressKey(key: string, testId?: string): Promise<void> {
+    await this.send({ action: "pressKey", key, testId });
   }
 
   async dragTo(fromTestId: string, toTestId: string): Promise<void> {

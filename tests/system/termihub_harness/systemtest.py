@@ -171,7 +171,7 @@ class SystemTest:
             what=f"{needle!r} in terminal output",
         )
 
-    # ── Panels, splits & local connections (UI-port helpers, #808) ─────────────
+    # ── Panels, splits & sidebar (UI-port helpers, #808) ───────────────────────
     def leaf_count(self, node: Any = None) -> int:
         """Count the leaf panels in the active group (1 = unsplit, >1 = split)."""
         if node is None:
@@ -201,32 +201,6 @@ class SystemTest:
                 lambda: self.driver.exists("sidebar") == visible,
                 what=f"sidebar visible={visible}",
             )
-
-    def connection_id(self, name: str) -> Optional[str]:
-        """The id of the saved connection named ``name`` (exact match), or ``None``."""
-        for conn in self.driver.get_state("connections") or []:
-            if conn.get("name") == name:
-                return conn.get("id")
-        return None
-
-    def create_local_connection(self, name: str) -> str:
-        """Create a local-shell connection via the editor and return its id.
-
-        The type defaults to local, so just set the name and save, then wait for
-        the connection to land in the store.
-        """
-        self.open_new_connection_editor()
-        self.driver.type("connection-editor-name-input", name)
-        self.driver.click("connection-editor-save")
-        return self.wait(lambda: self.connection_id(name), what=f"connection {name!r}")
-
-    def connect_to(self, name: str) -> None:
-        """Open a saved connection through its right-click → Connect action."""
-        conn_id = self.connection_id(name)
-        assert conn_id is not None, f"no saved connection named {name!r}"
-        self.driver.right_click(f"connection-item-{conn_id}")
-        self.driver.click("context-connection-connect")
-        self.wait(lambda: self.find_tab(name) is not None, what=f"a tab for {name!r}")
 
     # ── Connection editor ──────────────────────────────────────────────────────
     def _try_select(self, test_id: str, value: str) -> bool:

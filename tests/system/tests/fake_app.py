@@ -90,8 +90,8 @@ def dispatcher_like(
         "input": [],
         "drags": [],
         "selects": [],
-        "rightClicks": [],
-        "keys": [],
+        "contextMenus": [],
+        "pressedKeys": [],
         "dragTos": [],
     }
 
@@ -103,12 +103,12 @@ def dispatcher_like(
         if action == "select":
             recorded["selects"].append({"testId": command["testId"], "value": command["value"]})
             return {"ok": True, "action": "select"}
-        if action == "rightClick":
-            recorded["rightClicks"].append(command["testId"])
-            return {"ok": True, "action": "rightClick"}
-        if action == "key":
-            recorded["keys"].append(command["key"])
-            return {"ok": True, "action": "key"}
+        if action == "contextMenu":
+            recorded["contextMenus"].append(command["testId"])
+            return {"ok": True, "action": "contextMenu"}
+        if action == "pressKey":
+            recorded["pressedKeys"].append(command["key"])
+            return {"ok": True, "action": "pressKey"}
         if action == "dragTo":
             recorded["dragTos"].append(
                 {"from": command["fromTestId"], "to": command["toTestId"]}

@@ -52,14 +52,13 @@ def test_extended_interaction_verbs_round_trip(bridge):
         driver = bridge.wait_for_app(timeout=5)
 
         driver.select("theme-select", "light")
-        driver.right_click("tab-1")
-        driver.key("Escape")
-        driver.key(",", ctrl=True)
+        driver.context_menu("tab-1")
+        driver.press_key("Escape")
         driver.drag_to("tab-1", "tab-2")
 
         assert handler.recorded["selects"] == [{"testId": "theme-select", "value": "light"}]
-        assert handler.recorded["rightClicks"] == ["tab-1"]
-        assert handler.recorded["keys"] == ["Escape", ","]
+        assert handler.recorded["contextMenus"] == ["tab-1"]
+        assert handler.recorded["pressedKeys"] == ["Escape"]
         assert handler.recorded["dragTos"] == [{"from": "tab-1", "to": "tab-2"}]
 
 

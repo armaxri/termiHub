@@ -198,49 +198,6 @@ describe("dispatchCommand", () => {
     });
   });
 
-  describe("rightClick", () => {
-    it("dispatches a contextmenu event the trigger observes", async () => {
-      const { deps, container } = setup(`<div data-testid="tab">Tab</div>`);
-      const handler = vi.fn();
-      container.querySelector("div")!.addEventListener("contextmenu", handler);
-      const res = await dispatchCommand({ action: "rightClick", testId: "tab" }, deps);
-      expect(res).toEqual({ ok: true, action: "rightClick" });
-      expect(handler).toHaveBeenCalledOnce();
-    });
-
-    it("fails when the element is absent", async () => {
-      const { deps } = setup(`<div></div>`);
-      const res = await dispatchCommand({ action: "rightClick", testId: "ghost" }, deps);
-      expect(res.ok).toBe(false);
-    });
-  });
-
-  describe("key", () => {
-    it("dispatches keydown and keyup with modifiers, bubbling to the document", async () => {
-      const { deps } = setup(`<div></div>`);
-      const events: Array<{ type: string; key: string; ctrl: boolean }> = [];
-      const record = (e: Event) =>
-        events.push({
-          type: e.type,
-          key: (e as KeyboardEvent).key,
-          ctrl: (e as KeyboardEvent).ctrlKey,
-        });
-      document.addEventListener("keydown", record);
-      document.addEventListener("keyup", record);
-      try {
-        const res = await dispatchCommand({ action: "key", key: ",", ctrl: true }, deps);
-        expect(res).toEqual({ ok: true, action: "key" });
-        expect(events).toEqual([
-          { type: "keydown", key: ",", ctrl: true },
-          { type: "keyup", key: ",", ctrl: true },
-        ]);
-      } finally {
-        document.removeEventListener("keydown", record);
-        document.removeEventListener("keyup", record);
-      }
-    });
-  });
-
   describe("type", () => {
     it("sets the value via the native setter and fires an input event", async () => {
       const { deps, container } = setup(`<input data-testid="name" />`);
@@ -258,6 +215,28 @@ describe("dispatchCommand", () => {
       const { deps } = setup(`<div data-testid="name"></div>`);
       const res = await dispatchCommand({ action: "type", testId: "name", text: "x" }, deps);
       expect(res.ok).toBe(false);
+    });
+  });
+
+  describe("contextMenu", () => {
+    it("dispatches a bubbling contextmenu event the element observes", async () => {
+      const { deps, container } = setup(`<button data-testid="conn">A</button>`);
+      const handler = vi.fn();
+      container.querySelector("button")!.addEventListener("contextmenu", handler);
+
+      const res = await dispatchCommand({ action: "contextMenu", testId: "conn" }, deps);
+      expect(res).toEqual({ ok: true, action: "contextMenu" });
+      expect(handler).toHaveBeenCalledOnce();
+      const event = handler.mock.calls[0][0] as MouseEvent;
+      expect(event.bubbles).toBe(true);
+      expect(event.button).toBe(2);
+    });
+
+    it("fails when the target is absent", async () => {
+      const { deps } = setup(`<div></div>`);
+      const res = await dispatchCommand({ action: "contextMenu", testId: "conn" }, deps);
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain("conn");
     });
   });
 
@@ -301,6 +280,45 @@ describe("dispatchCommand", () => {
       const { deps } = setup(`<div></div>`);
       const res = await dispatchCommand({ action: "select", testId: "type", value: "ssh" }, deps);
       expect(res.ok).toBe(false);
+    });
+  });
+
+  describe("pressKey", () => {
+    it("dispatches keydown + keyup with the given key on the target element", async () => {
+      const { deps, container } = setup(`<input data-testid="field" />`);
+      const input = container.querySelector("input")!;
+      const keys: string[] = [];
+      input.addEventListener("keydown", (e) => keys.push(`down:${(e as KeyboardEvent).key}`));
+      input.addEventListener("keyup", (e) => keys.push(`up:${(e as KeyboardEvent).key}`));
+
+      const res = await dispatchCommand(
+        { action: "pressKey", key: "Enter", testId: "field" },
+        deps
+      );
+      expect(res).toEqual({ ok: true, action: "pressKey" });
+      expect(keys).toEqual(["down:Enter", "up:Enter"]);
+    });
+
+    it("dispatches on the focused element when no testId is given", async () => {
+      const { deps, container } = setup(`<input data-testid="field" />`);
+      const input = container.querySelector("input")!;
+      input.focus();
+      const keys: string[] = [];
+      input.addEventListener("keydown", (e) => keys.push((e as KeyboardEvent).key));
+
+      const res = await dispatchCommand({ action: "pressKey", key: "Escape" }, deps);
+      expect(res).toEqual({ ok: true, action: "pressKey" });
+      expect(keys).toEqual(["Escape"]);
+    });
+
+    it("fails when an explicit testId target is absent", async () => {
+      const { deps } = setup(`<div></div>`);
+      const res = await dispatchCommand(
+        { action: "pressKey", key: "Enter", testId: "ghost" },
+        deps
+      );
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain("ghost");
     });
   });
 

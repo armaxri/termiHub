@@ -48,37 +48,6 @@ export interface SelectCommand {
 }
 
 /**
- * Open an element's context menu via a synthetic right-click.
- *
- * `click` left-clicks; context menus (Radix `ContextMenu.Trigger`) open on the
- * native `contextmenu` event. This dispatches `pointerdown`/`mousedown` with the
- * secondary button, then `contextmenu`, so the menu opens exactly as a real
- * right-click would.
- */
-export interface RightClickCommand {
-  action: "rightClick";
-  testId: string;
-}
-
-/**
- * Press a key (with optional modifiers) as a `keydown` + `keyup` pair.
- *
- * Drives keyboard-only affordances the pointer verbs cannot: dismissing a menu
- * with `Escape`, or triggering an app shortcut. The event is dispatched on the
- * active element (falling back to the document body) and bubbles, so global
- * shortcut handlers on `window`/`document` observe it. `key` is the
- * `KeyboardEvent.key` value (e.g. `"Escape"`, `"a"`, `"Enter"`).
- */
-export interface KeyCommand {
-  action: "key";
-  key: string;
-  ctrl?: boolean;
-  meta?: boolean;
-  shift?: boolean;
-  alt?: boolean;
-}
-
-/**
  * Drag one element onto another via synthetic pointer events.
  *
  * For pointer-based drag-and-drop (e.g. @dnd-kit tab reordering): dispatches
@@ -165,6 +134,33 @@ export interface DragCommand {
 }
 
 /**
+ * Open the context menu of the element carrying the given `data-testid`.
+ *
+ * A left {@link ClickCommand} cannot reach right-click menus, so this dispatches a
+ * bubbling `contextmenu` mouse event at the element's center — the same gesture a
+ * real right-click produces. Radix's `ContextMenu` (and the native handler) opens
+ * the menu, whose items carry their own stable `data-testid`s to click next.
+ */
+export interface ContextMenuCommand {
+  action: "contextMenu";
+  testId: string;
+}
+
+/**
+ * Dispatch a keyboard key press (`keydown` + `keyup`).
+ *
+ * Targets the element with `testId` when given, else the focused element — so a
+ * bare `pressKey("Escape")` dismisses an open menu/dialog via the document-level
+ * key handlers (e.g. Radix's dismiss layer). `key` is a DOM key value such as
+ * `"Escape"`, `"Enter"`, `"Tab"`, `"ArrowDown"`.
+ */
+export interface PressKeyCommand {
+  action: "pressKey";
+  key: string;
+  testId?: string;
+}
+
+/**
  * Read the reconstructed text of a terminal's scrollback + viewport.
  *
  * When `tabId` is omitted the active tab's terminal is used. `joinFullWidthRows`
@@ -191,8 +187,8 @@ export type BridgeCommand =
   | ClickCommand
   | TypeCommand
   | SelectCommand
-  | RightClickCommand
-  | KeyCommand
+  | ContextMenuCommand
+  | PressKeyCommand
   | TerminalInputCommand
   | ExistsCommand
   | GetTextCommand
