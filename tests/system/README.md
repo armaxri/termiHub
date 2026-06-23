@@ -159,21 +159,24 @@ the full `pytest` after a `tauri build` when you want the real-app lifecycle che
 
 ## Writing a new test
 
-Integration suites subclass **`SystemTest`** (from `termihub_harness`). The base
-class handles the per-suite lifecycle and provides the polling/terminal helpers,
-so a test method is just the steps you care about. Add the file under `tests/`
-and mark it `integration` — pytest discovers `test_*.py` automatically.
+Integration suites subclass **`SystemTest`** (from `termihub_harness`), a thin
+base that owns the per-suite lifecycle, the `wait` polling primitive, and the
+`delay4user` watch-along hook. Everything that _drives the UI_ lives in focused,
+composable **`*Ui` mixins** (issue #831); a suite lists exactly the ones it needs
+ahead of `SystemTest` in its bases, so each file declares what it touches and
+stays within the size guideline. Add the file under `tests/` and mark it
+`integration` — pytest discovers `test_*.py` automatically.
 
 ```python
 # tests/test_my_feature.py
 import pytest
 
-from termihub_harness import SystemTest
+from termihub_harness import SystemTest, TerminalUi
 
 pytestmark = pytest.mark.integration  # auto-skips when the app is not built
 
 
-class TestMyFeature(SystemTest):
+class TestMyFeature(TerminalUi, SystemTest):
     def test_echo_runs_in_a_shell(self):
         self.ensure_terminal()                      # open a terminal, wait for the prompt
         self.run_command("echo hello-world")        # type a command (newline appended)
@@ -204,24 +207,37 @@ Each **suite (class)** gets a clean app set up once and shared by its tests; the
 next suite gets its own fresh app. Use a **new class** to force a clean app/state;
 use a **new method in the same class** to keep running in the existing instance.
 
-### What `SystemTest` gives you
+### What `SystemTest` (the base) gives you
 
-| Member                                     | Purpose                                             |
-| ------------------------------------------ | --------------------------------------------------- |
-| `self.driver` / `self.app` / `self.bridge` | the suite's live `Driver` / app / bridge            |
-| `self.wait(predicate, *, timeout, what)`   | poll until truthy (retries on `BridgeError`)        |
-| `self.has_terminal()`                      | whether a readable terminal exists                  |
-| `self.ensure_terminal()`                   | open a terminal (if needed) and wait for its prompt |
-| `self.run_command(cmd)`                    | type a command into the active terminal             |
-| `self.wait_for_output(text)`               | poll the terminal until it contains `text`          |
-| `self.restart_app()`                       | kill + relaunch, re-acquiring `self.driver`         |
-| `self.delay4user(seconds, reason)`         | watch-along sleep — only runs under `--delay4user`  |
+| Member                                     | Purpose                                            |
+| ------------------------------------------ | -------------------------------------------------- |
+| `self.driver` / `self.app` / `self.bridge` | the suite's live `Driver` / app / bridge           |
+| `self.wait(predicate, *, timeout, what)`   | poll until truthy (retries on `BridgeError`)       |
+| `self.restart_app()`                       | kill + relaunch, re-acquiring `self.driver`        |
+| `self.delay4user(seconds, reason)`         | watch-along sleep — only runs under `--delay4user` |
 
-SSH-focused suites also get connection/tab helpers:
-`create_ssh_connection(...)` (drives the editor; `connect=True` uses **Save &
-Connect**), `handle_password_prompt()` / `cancel_password_prompt()`,
-`tab_count()` / `find_tab(title)` / `active_tab()` / `switch_to_tab(id)`, and
-`monitoring_visible()`.
+### UI-helper mixins (opt in per suite)
+
+List the mixins a suite drives ahead of `SystemTest`, e.g.
+`class TestX(ConnectionsUi, TabsUi, SystemTest):`. Some mixins call into others
+at runtime (noted below), so include the dependencies too — they compose freely
+because each only borrows `self.driver` / `self.wait` from the base.
+
+| Mixin              | Drives                                                                  | Also needs              |
+| ------------------ | ----------------------------------------------------------------------- | ----------------------- |
+| `TerminalUi`       | `ensure_terminal` / `run_command` / `wait_for_output` / `has_terminal`  | —                       |
+| `TabsUi`           | `tab_count` / `find_tab` / `active_tab` / `switch_to_tab` / `close_tab` | —                       |
+| `LayoutUi`         | `leaf_count` (splits) / `set_sidebar_visible`                           | `TerminalUi`            |
+| `SidebarUi`        | `switch_to_files_sidebar` / `switch_to_connections_sidebar`             | —                       |
+| `ConnectionsUi`    | connection editor + connection-list flows (`create_ssh_connection`, …)  | —                       |
+| `PasswordPromptUi` | `handle_password_prompt` / `cancel_password_prompt`                     | —                       |
+| `SshUi`            | `connect_ssh_password` (one-call connect)                               | Connections/Prompt/Term |
+| `MonitoringUi`     | `monitoring_visible` / `wait_for_monitoring_stats` / refresh / dropdown | —                       |
+| `SftpUi`           | `connect_sftp_browser` / `file_browser_path`                            | `SidebarUi`/`Prompt`    |
+| `SettingsUi`       | `open_settings_tab` / `open_settings_category` / experimental toggle    | `SidebarUi`             |
+
+The plain name→element lookups (`find_connection` / `find_folder`) stay free
+functions in `termihub_harness.ui` so they remain unit-testable without an app.
 
 ### Tests that need container fixtures (SSH/serial/telnet)
 
@@ -305,7 +321,7 @@ vocabulary as the TypeScript `Driver`.
 UI elements with UUID `data-testid`s (connections, folders) are resolved by
 **name** through `getState` via the `termihub_harness.ui` helpers (`find_connection`,
 `find_folder`) and the `ConnectionsUi` suite mixin — the bridge-native analog of
-the old WebdriverIO find-by-title lookups. Tab lookups use `SystemTest`'s
+the old WebdriverIO find-by-title lookups. Tab lookups use the `TabsUi` mixin's
 `find_tab` / `tab_count`.
 
 ## Orchestration
