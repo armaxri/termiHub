@@ -76,6 +76,22 @@ function dispatchPointer(
   );
 }
 
+/**
+ * Yield to the event loop so React can flush a render + effects between
+ * synthetic pointer events. @dnd-kit's `DndContext` measures droppable rects in
+ * a post-activation render/effect cycle; without a yield, every pointer event
+ * fires in one task and collision detection never sees those rects (so a drag
+ * ends with `over: null` and reorders nothing). Two frames clears the commit and
+ * its follow-up effects; falls back to `setTimeout` where rAF is unavailable.
+ */
+function nextFrame(): Promise<void> {
+  const raf: (cb: FrameRequestCallback) => unknown =
+    typeof requestAnimationFrame === "function"
+      ? requestAnimationFrame
+      : (cb) => setTimeout(() => cb(0), 0);
+  return new Promise((resolve) => raf(() => raf(() => resolve())));
+}
+
 /** Walk a dot-path into a plain object, returning a sentinel when unresolvable. */
 const MISSING = Symbol("missing");
 function resolvePath(state: Record<string, unknown>, path: string): unknown {
@@ -184,14 +200,35 @@ export async function dispatchCommand(
       const start = centerOf(from);
       const end = centerOf(to);
       const doc = ownerDocument(deps.root);
-      // Press on the source, nudge past the sensor's activation distance, then
-      // step to the target center before releasing — what @dnd-kit listens for.
+      const dx = end.x - start.x;
+      const dy = end.y - start.y;
+      // @dnd-kit's PointerSensor only *activates* once a move crosses its
+      // activation distance, and DndContext then measures droppable rects in a
+      // React render/effect cycle. Firing every event in one synchronous task
+      // gives that cycle no chance to run, so collision detection sees no rects,
+      // `over` stays null, and the drop reorders nothing. So: press, nudge past
+      // the activation distance, yield a frame to let dnd-kit activate + measure,
+      // then step to the target — yielding after each move so the new position
+      // commits and `over` is recomputed — and release only once the final
+      // position over the target has settled. See docs/test-bridge.md.
       dispatchPointer(from, "pointerdown", start.x, start.y);
-      const steps = 4;
+
+      // Wake move: a short nudge that clears dnd-kit's activation distance (5px
+      // for the tab sensor) without yet reaching the target.
+      const dist = Math.hypot(dx, dy) || 1;
+      const WAKE = 12;
+      dispatchPointer(
+        doc,
+        "pointermove",
+        start.x + (dx / dist) * WAKE,
+        start.y + (dy / dist) * WAKE
+      );
+      await nextFrame();
+
+      const steps = 6;
       for (let i = 1; i <= steps; i++) {
-        const x = start.x + ((end.x - start.x) * i) / steps;
-        const y = start.y + ((end.y - start.y) * i) / steps;
-        dispatchPointer(doc, "pointermove", x, y);
+        dispatchPointer(doc, "pointermove", start.x + (dx * i) / steps, start.y + (dy * i) / steps);
+        await nextFrame();
       }
       dispatchPointer(doc, "pointerup", end.x, end.y);
       return ok("dragTo");
