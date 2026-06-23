@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Testing: fixed three failing/flaky SSH-auth integration tests (`core/tests/ssh_auth.rs`). The **ECDSA-384 and ECDSA-521 passphrase** key fixtures were stored in legacy encrypted PEM/SEC1 (`-----BEGIN EC PRIVATE KEY-----`) format — a leftover from the libssh2 era that the current russh-based loader cannot decrypt (it misparses it as PKCS#1); they are now stored in OpenSSH format (same keypair, so `authorized_keys` is unchanged) like every other fixture. The **ECDSA-256 key** test was intermittently failing with `SSH handshake failed: Disconnected` because the ~12 key-auth tests open connections to the single `ssh-keys` container concurrently and exceeded OpenSSH's default `MaxStartups` (10:30:100); the container now sets `MaxStartups 100:30:200`.
 - Backend: fixed latent process aborts when triggering SSH/SFTP work from synchronous code paths. **"Open in VS Code" on a remote (SFTP) file** and **starting an SSH tunnel** (including auto-start tunnels at launch) could abort the whole app, because they drove the blocking SSH/SFTP connect (which uses `tokio::task::block_in_place` internally) from the synchronous Tauri command thread or a raw `std::thread` — neither of which carries the Tokio runtime context that `block_in_place` requires. These paths now run on `spawn_blocking` threads (mirroring monitoring/SFTP file-browser), so the connect happens off the command thread with a valid runtime context. (Closes #828)
 
 ### Added
