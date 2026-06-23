@@ -458,93 +458,29 @@ mod tests {
     // — or breaks the SFTP upload itself — fails here.
     //
     // Lives in-crate (rather than `core/tests/`) because these helpers are in the
-    // desktop crate's private `utils` module. Self-skips when no SSH target is up,
-    // mirroring the `require_docker!` convention in `core/tests/common`.
+    // desktop crate's private `utils` module. Self-skips when the container is not
+    // up, mirroring the `require_docker!` convention in `core/tests/common`.
+    // Bring the container up with:
+    //   docker compose -f tests/docker/docker-compose.yml up -d ssh-password
     //
-    // The SSH target is resolved by `ssh_test_targets()`, which lets the 3 parallel
-    // dev checkouts each test against their own isolated server (see the precedence
-    // doc on that function). Every upload targets a UUID-suffixed remote path so
-    // concurrent tests never collide on the remote `/tmp` file.
+    // The test is pinned to **password auth** against the `ssh-password` container.
+    // The port is read from `TERMIHUB_TEST_SSH_PASSWORD_PORT` (default 2201) so a
+    // sharded / parallel run can point at a separate container instance, and every
+    // upload targets a UUID-suffixed remote path so concurrent tests never collide
+    // on the remote `/tmp` file. (The per-checkout `dev_agent_port` sshd from
+    // `dev.local.json` is key-auth only — `PasswordAuthentication no` — so it is
+    // deliberately not a target here.)
 
     /// Default host port of the shared `ssh-password` container (`tests/docker`).
     const DEFAULT_SSH_PASSWORD_PORT: u16 = 2201;
 
-    /// An SSH server the integration test can target.
-    struct SshTarget {
-        /// Short label used in the skip message.
-        label: String,
-        config: crate::terminal::backend::SshConfig,
-    }
-
-    /// Read `dev_agent_port` from this checkout's `dev.local.json`, if present.
-    ///
-    /// `dev.sh` starts a per-checkout `sshd` on `127.0.0.1:<dev_agent_port>` with
-    /// key auth (`.dev-agent/client_key`, user `$USER`), so each of the parallel
-    /// dev instances has its own isolated SSH server. The file is gitignored and
-    /// lives at the repo root (the parent of this crate's manifest dir).
-    fn dev_agent_target() -> Option<SshTarget> {
-        let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent()?;
-        let raw = std::fs::read_to_string(repo_root.join("dev.local.json")).ok()?;
-        let port = serde_json::from_str::<serde_json::Value>(&raw)
-            .ok()?
-            .get("dev_agent_port")?
-            .as_u64()? as u16;
-
-        // The dev sshd only accepts the key it generated, as the current user.
-        let key_path = repo_root.join(".dev-agent").join("client_key");
-        let username = std::env::var("USER").ok()?;
-        if !key_path.is_file() {
-            return None;
-        }
-
-        Some(SshTarget {
-            label: format!("dev-agent sshd (dev.local.json dev_agent_port {port})"),
-            config: crate::terminal::backend::SshConfig {
-                host: "127.0.0.1".to_string(),
-                port,
-                username,
-                auth_method: "key".to_string(),
-                key_path: Some(key_path.to_string_lossy().into_owned()),
-                ..Default::default()
-            },
-        })
-    }
-
-    /// Build a target for the shared `ssh-password` Docker container.
-    fn docker_password_target(port: u16) -> SshTarget {
-        SshTarget {
-            label: format!("docker ssh-password container (port {port})"),
-            config: crate::terminal::backend::SshConfig {
-                host: "127.0.0.1".to_string(),
-                port,
-                username: "testuser".to_string(),
-                auth_method: "password".to_string(),
-                password: Some("testpass".to_string()),
-                ..Default::default()
-            },
-        }
-    }
-
-    /// Candidate SSH targets, in priority order (first reachable one is used):
-    ///
-    /// 1. `TERMIHUB_TEST_SSH_PASSWORD_PORT` — explicit override (Docker password
-    ///    container at that port), so a run can force a specific server.
-    /// 2. This checkout's `dev_agent_port` dev sshd — per-instance isolation for
-    ///    the 3 parallel dev workspaces (key auth), used when `dev.sh` is running.
-    /// 3. The shared `ssh-password:2201` container — the default.
-    fn ssh_test_targets() -> Vec<SshTarget> {
-        let mut targets = Vec::new();
-        if let Some(port) = std::env::var("TERMIHUB_TEST_SSH_PASSWORD_PORT")
+    /// Resolve the `ssh-password` container port, allowing an env override so
+    /// parallel runs can target distinct container instances.
+    fn ssh_password_port() -> u16 {
+        std::env::var("TERMIHUB_TEST_SSH_PASSWORD_PORT")
             .ok()
-            .and_then(|v| v.parse::<u16>().ok())
-        {
-            targets.push(docker_password_target(port));
-        }
-        if let Some(dev) = dev_agent_target() {
-            targets.push(dev);
-        }
-        targets.push(docker_password_target(DEFAULT_SSH_PASSWORD_PORT));
-        targets
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(DEFAULT_SSH_PASSWORD_PORT)
     }
 
     /// Returns `true` if a TCP connection to the SSH server succeeds quickly.
@@ -560,18 +496,14 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn agent_deploy_sftp_upload_round_trips_over_real_ssh() {
-        let Some(target) = ssh_test_targets()
-            .into_iter()
-            .find(|t| ssh_port_reachable(t.config.port))
-        else {
+        let port = ssh_password_port();
+        if !ssh_port_reachable(port) {
             eprintln!(
-                "SKIPPED: no SSH target reachable. Start one of:\n  \
-                 - this checkout's dev agent: ./scripts/dev.sh (with dev_agent_port set in dev.local.json)\n  \
-                 - the shared container: docker compose -f tests/docker/docker-compose.yml up -d ssh-password"
+                "SKIPPED: ssh-password container not reachable on port {port} \
+                 (start with: docker compose -f tests/docker/docker-compose.yml up -d ssh-password)"
             );
             return;
-        };
-        eprintln!("agent-deploy SFTP test target: {}", target.label);
+        }
 
         // Run the whole deploy SFTP path on a `spawn_blocking` thread, exactly as
         // the agent-setup background phase now does (#837). This is the context
@@ -579,7 +511,17 @@ mod tests {
         let result = tokio::task::spawn_blocking(move || {
             use crate::utils::ssh_auth::connect_and_authenticate;
 
-            let session = connect_and_authenticate(&target.config)?;
+            // Pinned to password auth against the `ssh-password` container.
+            let config = crate::terminal::backend::SshConfig {
+                host: "127.0.0.1".to_string(),
+                port,
+                username: "testuser".to_string(),
+                auth_method: "password".to_string(),
+                password: Some("testpass".to_string()),
+                ..Default::default()
+            };
+
+            let session = connect_and_authenticate(&config)?;
 
             // Upload a payload to a unique remote path, then read it back to
             // confirm the bytes landed intact — the same SFTP code path the agent
