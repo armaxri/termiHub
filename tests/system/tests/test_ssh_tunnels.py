@@ -14,7 +14,18 @@ from __future__ import annotations
 
 import pytest
 
-from termihub_harness import SSH_KEY_PATH, SSH_TUNNEL_PORT, SSH_USERNAME, SystemTest, unique_name
+from termihub_harness import (
+    ConnectionsUi,
+    SSH_KEY_PATH,
+    SSH_TUNNEL_PORT,
+    SSH_USERNAME,
+    SettingsUi,
+    SidebarUi,
+    SystemTest,
+    TabsUi,
+    TerminalUi,
+    unique_name,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -23,7 +34,7 @@ RUNNING = {"connecting", "connected", "reconnecting"}
 
 
 @pytest.mark.usefixtures("ssh_tunnel_fixtures")
-class TestSshTunnels(SystemTest):
+class TestSshTunnels(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, SettingsUi, SystemTest):
     @pytest.fixture(autouse=True)
     def _cleanup_between_tests(self):
         yield

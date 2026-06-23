@@ -7,12 +7,12 @@ A different suite gets its own clean app.
 
 import pytest
 
-from termihub_harness import SystemTest
+from termihub_harness import SystemTest, TerminalUi
 
 pytestmark = pytest.mark.integration
 
 
-class TestTerminalBasics(SystemTest):
+class TestTerminalBasics(TerminalUi, SystemTest):
     def test_echo_runs(self):
         self.ensure_terminal()
         self.delay4user(1, reason="terminal opened")  # no-op unless --delay4user

@@ -9,7 +9,13 @@ from __future__ import annotations
 
 import pytest
 
-from termihub_harness import SSH_PASSWORD_PORT, SystemTest, unique_name
+from termihub_harness import (
+    ConnectionsUi,
+    PasswordPromptUi,
+    SSH_PASSWORD_PORT,
+    SystemTest,
+    unique_name,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -17,7 +23,7 @@ HOST = "127.0.0.1"
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
-class TestSshEnvVars(SystemTest):
+class TestSshEnvVars(ConnectionsUi, PasswordPromptUi, SystemTest):
     def test_resolves_env_user_in_username(self):
         self._run("ssh-env-user", "${env:USER}")
 
