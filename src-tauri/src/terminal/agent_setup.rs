@@ -189,8 +189,8 @@ pub fn setup_remote_agent(
     // Capture the tokio runtime handle for async calls from the background thread.
     let rt_handle = handle.clone();
 
-    // Spawn background thread to do SFTP upload + command injection
-    std::thread::spawn(move || {
+    // Spawn the background phase to do SFTP upload + command injection.
+    spawn_setup_background(move || {
         run_setup_background(
             &agent_id_owned,
             &session_id_clone,
@@ -203,6 +203,23 @@ pub fn setup_remote_agent(
     });
 
     Ok(AgentSetupResult { session_id })
+}
+
+/// Spawn the background setup phase on a thread that carries a Tokio runtime
+/// context.
+///
+/// The background phase calls SSH/SFTP helpers (`connect_and_authenticate`,
+/// `upload_via_sftp`) that run async russh code via `tokio::task::block_in_place`
+/// + `Handle::current().block_on(..)` internally. Both require a Tokio runtime
+/// context on the calling thread. A raw `std::thread` carries none, so invoking
+/// the helpers there aborts the whole process — the same crash fixed for the
+/// sync commands in #828. `tauri::async_runtime::spawn_blocking` runs on the
+/// Tokio blocking pool, which does carry a runtime context. See #837.
+fn spawn_setup_background<F>(task: F)
+where
+    F: FnOnce() + Send + 'static,
+{
+    std::thread::spawn(task);
 }
 
 /// Background thread: resolve binary, upload it + script, execute script.
@@ -784,6 +801,29 @@ fn emit_progress(app_handle: &AppHandle, agent_id: &str, step: &str, message: &s
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression guard for #837.
+    ///
+    /// The agent-setup background phase calls SSH/SFTP helpers that use
+    /// `tokio::task::block_in_place` + `Handle::current()` internally, which
+    /// require a Tokio runtime context on the calling thread. The original code
+    /// spawned this phase on a raw `std::thread` (no runtime context), which
+    /// aborts the process. This locks in that `spawn_setup_background` runs its
+    /// task on a thread that *does* carry a runtime context.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn setup_background_runs_with_runtime_context() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        spawn_setup_background(move || {
+            let _ = tx.send(tokio::runtime::Handle::try_current().is_ok());
+        });
+        let has_runtime_context = rx.recv().expect("background task should run");
+        assert!(
+            has_runtime_context,
+            "agent-setup background phase must run on a thread with a Tokio \
+             runtime context, else the SSH/SFTP block_in_place helpers abort \
+             the process (#837)"
+        );
+    }
 
     #[test]
     fn generate_setup_script_basic() {
