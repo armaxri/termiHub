@@ -38,6 +38,44 @@ function findByTestId(root: ParentNode, testId: string): Element | null {
   return root.querySelector(`[data-testid="${escaped}"]`);
 }
 
+/** The owning document of a bridge root (which may itself be a `Document`). */
+function ownerDocument(root: ParentNode): Document {
+  return root instanceof Document ? root : ((root as Element).ownerDocument ?? document);
+}
+
+/** Dispatch a bubbling, cancelable mouse event carrying viewport coordinates. */
+function dispatchMouse(target: EventTarget, type: string, clientX: number, clientY: number): void {
+  target.dispatchEvent(
+    new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX, clientY })
+  );
+}
+
+/** The viewport-center of an element, used as the anchor for pointer gestures. */
+function centerOf(el: Element): { x: number; y: number } {
+  const rect = (el as HTMLElement).getBoundingClientRect();
+  return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+}
+
+/** Dispatch a bubbling pointer event (falls back to MouseEvent where unavailable). */
+function dispatchPointer(
+  target: EventTarget,
+  type: string,
+  clientX: number,
+  clientY: number
+): void {
+  const Ctor = typeof PointerEvent === "function" ? PointerEvent : MouseEvent;
+  target.dispatchEvent(
+    new Ctor(type, {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      clientX,
+      clientY,
+      ...(Ctor === PointerEvent ? { pointerId: 1, isPrimary: true } : {}),
+    } as PointerEventInit)
+  );
+}
+
 /** Walk a dot-path into a plain object, returning a sentinel when unresolvable. */
 const MISSING = Symbol("missing");
 function resolvePath(state: Record<string, unknown>, path: string): unknown {
@@ -89,28 +127,74 @@ export async function dispatchCommand(
       return ok("getAttribute", el.getAttribute(command.attribute));
     }
 
+    case "getComputedStyle": {
+      const doc = ownerDocument(deps.root);
+      let el: Element | null;
+      if (command.testId == null) {
+        el = doc.documentElement;
+      } else {
+        el = findByTestId(deps.root, command.testId);
+        if (!el) {
+          return fail("getComputedStyle", `no element with data-testid="${command.testId}"`);
+        }
+      }
+      const view = doc.defaultView ?? window;
+      const value = view.getComputedStyle(el).getPropertyValue(command.property).trim();
+      return ok("getComputedStyle", value);
+    }
+
     case "click": {
       const el = findByTestId(deps.root, command.testId);
       if (!el) return fail("click", `no element with data-testid="${command.testId}"`);
-      const target = el as HTMLElement;
-      // Dispatch a realistic pointer+mouse sequence before the native click.
-      // A bare element.click() only fires a `click` event, which libraries that
-      // open on `pointerdown` (e.g. Radix dropdown/menu triggers used across the
-      // app) ignore — so menus never opened. This mirrors what a real mouse
-      // click produces, so both those triggers and plain onClick handlers fire.
-      const init: MouseEventInit = { bubbles: true, cancelable: true, button: 0 };
-      if (typeof PointerEvent === "function") {
-        const pointerInit = { ...init, pointerType: "mouse", isPrimary: true };
-        target.dispatchEvent(new PointerEvent("pointerdown", pointerInit));
-        target.dispatchEvent(new MouseEvent("mousedown", init));
-        target.dispatchEvent(new PointerEvent("pointerup", pointerInit));
-        target.dispatchEvent(new MouseEvent("mouseup", init));
-      } else {
-        target.dispatchEvent(new MouseEvent("mousedown", init));
-        target.dispatchEvent(new MouseEvent("mouseup", init));
-      }
-      target.click();
+      const { x, y } = centerOf(el);
+      // Fire the realistic pointer→mouse sequence a real click produces, then the
+      // native click(). A bare element.click() only fires a `click` event, which
+      // libraries that open on pointerdown (Radix dropdown/menu triggers used
+      // across the app) ignore — so menus never opened. Radix dedups the trailing
+      // click on a pointerdown-opened trigger, so plain onClick handlers and menu
+      // triggers both behave correctly.
+      dispatchPointer(el, "pointerdown", x, y);
+      dispatchMouse(el, "mousedown", x, y);
+      dispatchPointer(el, "pointerup", x, y);
+      dispatchMouse(el, "mouseup", x, y);
+      (el as HTMLElement).click();
       return ok("click");
+    }
+
+    case "drag": {
+      const el = findByTestId(deps.root, command.testId);
+      if (!el) return fail("drag", `no element with data-testid="${command.testId}"`);
+      const { x: startX, y: startY } = centerOf(el);
+      const endX = startX + command.dx;
+      const endY = startY + (command.dy ?? 0);
+      // Press on the handle, then move/release on the document — drag handlers
+      // (e.g. useSidebarResize) attach mousemove/mouseup there and read clientX.
+      const doc = ownerDocument(deps.root);
+      dispatchMouse(el, "mousedown", startX, startY);
+      dispatchMouse(doc, "mousemove", endX, endY);
+      dispatchMouse(doc, "mouseup", endX, endY);
+      return ok("drag");
+    }
+
+    case "dragTo": {
+      const from = findByTestId(deps.root, command.fromTestId);
+      if (!from) return fail("dragTo", `no element with data-testid="${command.fromTestId}"`);
+      const to = findByTestId(deps.root, command.toTestId);
+      if (!to) return fail("dragTo", `no element with data-testid="${command.toTestId}"`);
+      const start = centerOf(from);
+      const end = centerOf(to);
+      const doc = ownerDocument(deps.root);
+      // Press on the source, nudge past the sensor's activation distance, then
+      // step to the target center before releasing — what @dnd-kit listens for.
+      dispatchPointer(from, "pointerdown", start.x, start.y);
+      const steps = 4;
+      for (let i = 1; i <= steps; i++) {
+        const x = start.x + ((end.x - start.x) * i) / steps;
+        const y = start.y + ((end.y - start.y) * i) / steps;
+        dispatchPointer(doc, "pointermove", x, y);
+      }
+      dispatchPointer(doc, "pointerup", end.x, end.y);
+      return ok("dragTo");
     }
 
     case "type": {

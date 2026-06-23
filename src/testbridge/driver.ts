@@ -40,6 +40,12 @@ export interface ReadTerminalOptions {
   joinFullWidthRows?: boolean;
 }
 
+/** Options for {@link Driver.getComputedStyle}. */
+export interface GetComputedStyleOptions {
+  /** Read this element instead of the document root (theme CSS variables). */
+  testId?: string;
+}
+
 /**
  * The abstraction test authors and coding agents program against.
  *
@@ -56,6 +62,12 @@ export interface Driver {
   type(testId: string, text: string): Promise<void>;
   /** Choose `value` on the native `<select>` carrying the given `data-testid`. */
   select(testId: string, value: string): Promise<void>;
+  /** Open the right-click context menu of the element with the given `data-testid`. */
+  contextMenu(testId: string): Promise<void>;
+  /** Press a key on `testId` (or the focused element when omitted), e.g. `"Escape"`. */
+  pressKey(key: string, testId?: string): Promise<void>;
+  /** Drag one element onto another (pointer-based, e.g. @dnd-kit reordering). */
+  dragTo(fromTestId: string, toTestId: string): Promise<void>;
   /**
    * Send input into a terminal session (active tab unless `tabId` is given). A
    * trailing newline is appended, so `terminalInput("ls")` runs `ls`.
@@ -67,10 +79,14 @@ export interface Driver {
   getText(testId: string): Promise<string>;
   /** Read an attribute of the element with the given `data-testid`. */
   getAttribute(testId: string, attribute: string): Promise<string | null>;
-  /** Open the right-click context menu of the element with the given `data-testid`. */
-  contextMenu(testId: string): Promise<void>;
-  /** Press a key on `testId` (or the focused element when omitted), e.g. `"Escape"`. */
-  pressKey(key: string, testId?: string): Promise<void>;
+  /**
+   * Read a computed CSS property (including custom properties). Pass `testId` to
+   * read an element; omit it to read the document root, where theme CSS variables
+   * like `--bg-primary` live.
+   */
+  getComputedStyle(property: string, options?: GetComputedStyleOptions): Promise<string>;
+  /** Drag an element by a pixel delta (e.g. a resize handle). */
+  drag(testId: string, dx: number, dy?: number): Promise<void>;
   /** Read the reconstructed text of a terminal (active tab unless specified). */
   readTerminal(options?: ReadTerminalOptions): Promise<string>;
   /** Read a slice of app state, optionally by dot-path. */
@@ -124,6 +140,18 @@ export class InAppBridgeDriver implements Driver {
     await this.send({ action: "select", testId, value });
   }
 
+  async contextMenu(testId: string): Promise<void> {
+    await this.send({ action: "contextMenu", testId });
+  }
+
+  async pressKey(key: string, testId?: string): Promise<void> {
+    await this.send({ action: "pressKey", key, testId });
+  }
+
+  async dragTo(fromTestId: string, toTestId: string): Promise<void> {
+    await this.send({ action: "dragTo", fromTestId, toTestId });
+  }
+
   async terminalInput(text: string, options: TerminalInputOptions = {}): Promise<void> {
     await this.send({ action: "terminalInput", text, tabId: options.tabId });
   }
@@ -140,12 +168,12 @@ export class InAppBridgeDriver implements Driver {
     return this.send<string | null>({ action: "getAttribute", testId, attribute });
   }
 
-  async contextMenu(testId: string): Promise<void> {
-    await this.send({ action: "contextMenu", testId });
+  async getComputedStyle(property: string, options: GetComputedStyleOptions = {}): Promise<string> {
+    return this.send<string>({ action: "getComputedStyle", testId: options.testId, property });
   }
 
-  async pressKey(key: string, testId?: string): Promise<void> {
-    await this.send({ action: "pressKey", key, testId });
+  async drag(testId: string, dx: number, dy?: number): Promise<void> {
+    await this.send({ action: "drag", testId, dx, dy });
   }
 
   async readTerminal(options: ReadTerminalOptions = {}): Promise<string> {

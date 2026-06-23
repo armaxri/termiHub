@@ -48,20 +48,15 @@ export const config = {
       // connection-crud.test.js was ported to the Python bridge harness
       // (tests/system/tests/test_connection_crud.py) and removed — see #807.
       "./tests/e2e/connection-editor-extended.test.js",
-      "./tests/e2e/tab-management.test.js",
-      "./tests/e2e/tab-horizontal-scroll.test.js",
-      "./tests/e2e/split-views.test.js",
-      "./tests/e2e/settings.test.js",
-      "./tests/e2e/sidebar-toggle.test.js",
-      "./tests/e2e/sidebar-sections.test.js",
-      "./tests/e2e/theme-layout.test.js",
-      "./tests/e2e/ui-state.test.js",
+      // The UI suite below was ported to the Python harness (tests/system) in #808:
+      //   tab-management, tab-horizontal-scroll, split-views, sidebar-toggle,
+      //   sidebar-resize, settings, sidebar-sections, theme-layout, ui-state,
+      //   cross-platform.
       "./tests/e2e/ssh-tunnels.test.js",
       "./tests/e2e/ssh-agent-warning.test.js",
       "./tests/e2e/credential-store.test.js",
       "./tests/e2e/encrypted-export-import.test.js",
       "./tests/e2e/external-files.test.js",
-      "./tests/e2e/cross-platform.test.js",
       "./tests/e2e/embedded-services.test.js",
     ],
     local: [

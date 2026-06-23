@@ -19,6 +19,7 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
         <label className="settings-form__field">
           <span className="settings-form__label">Theme</span>
           <select
+            data-testid="appearance-theme-select"
             value={settings.theme ?? "dark"}
             onChange={(e) =>
               onChange({

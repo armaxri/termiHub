@@ -37,7 +37,7 @@ export interface TypeCommand {
  * Choose an option of a `<select>` carrying the given `data-testid`.
  *
  * A counterpart to {@link TypeCommand} for native dropdowns (connection type,
- * SSH auth method, …): sets `value` via the native setter and dispatches a
+ * SSH auth method, theme, …): sets `value` via the native setter and dispatches a
  * `change` event so React's controlled `<select>` observes it. Fails if the
  * element is not a `<select>` or `value` is not one of its options.
  */
@@ -45,6 +45,20 @@ export interface SelectCommand {
   action: "select";
   testId: string;
   value: string;
+}
+
+/**
+ * Drag one element onto another via synthetic pointer events.
+ *
+ * For pointer-based drag-and-drop (e.g. @dnd-kit tab reordering): dispatches
+ * `pointerdown` on `fromTestId`, a series of `pointermove`s crossing the sensor's
+ * activation distance toward `toTestId`'s center, then `pointerup`. Unlike
+ * {@link DragCommand} (a blind pixel delta), this targets a destination element.
+ */
+export interface DragToCommand {
+  action: "dragTo";
+  fromTestId: string;
+  toTestId: string;
 }
 
 /**
@@ -80,6 +94,43 @@ export interface GetAttributeCommand {
   action: "getAttribute";
   testId: string;
   attribute: string;
+}
+
+/**
+ * Read a *computed* CSS property of an element — including custom properties.
+ *
+ * `getAttribute` only sees inline/markup attributes, so it cannot observe the
+ * effective `cursor`, a theme color, or a CSS variable resolved from a
+ * stylesheet. This command runs `getComputedStyle(el).getPropertyValue(property)`
+ * and returns the trimmed value. When `testId` is omitted the document root
+ * (`:root` / `documentElement`) is read — the place theme custom properties like
+ * `--bg-primary` are defined.
+ */
+export interface GetComputedStyleCommand {
+  action: "getComputedStyle";
+  /** Element to read; omit to read the document root (theme CSS variables). */
+  testId?: string;
+  /** CSS property name, e.g. `"cursor"` or a custom property `"--bg-primary"`. */
+  property: string;
+}
+
+/**
+ * Drag an element by a pixel delta via synthetic mouse events.
+ *
+ * `click` cannot drive drag-to-resize handles or pointer-based reordering. This
+ * command dispatches a `mousedown` on the element followed by `mousemove` and
+ * `mouseup` on the document, offset by `(dx, dy)` from the element's center —
+ * the exact sequence handlers like `useSidebarResize` listen for (they read
+ * `event.clientX`). Only the delta matters, so the caller need not know absolute
+ * coordinates.
+ */
+export interface DragCommand {
+  action: "drag";
+  testId: string;
+  /** Horizontal drag distance in pixels (positive = right). */
+  dx: number;
+  /** Vertical drag distance in pixels (positive = down); defaults to 0. */
+  dy?: number;
 }
 
 /**
@@ -136,12 +187,15 @@ export type BridgeCommand =
   | ClickCommand
   | TypeCommand
   | SelectCommand
+  | ContextMenuCommand
+  | PressKeyCommand
   | TerminalInputCommand
   | ExistsCommand
   | GetTextCommand
   | GetAttributeCommand
-  | ContextMenuCommand
-  | PressKeyCommand
+  | GetComputedStyleCommand
+  | DragCommand
+  | DragToCommand
   | ReadTerminalCommand
   | GetStateCommand;
 

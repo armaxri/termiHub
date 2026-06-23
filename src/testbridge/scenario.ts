@@ -15,6 +15,14 @@ export type ScenarioStep =
   | { action: "type"; testId: string; text: string }
   /** Choose a native `<select>` option by value. */
   | { action: "select"; testId: string; value: string }
+  /** Open an element's right-click context menu. */
+  | { action: "contextMenu"; testId: string }
+  /** Press a key on `testId` (or the focused element when omitted). */
+  | { action: "pressKey"; key: string; testId?: string }
+  /** Drag an element by a pixel delta (e.g. a resize handle); `dy` defaults to 0. */
+  | { action: "drag"; testId: string; dx: number; dy?: number }
+  /** Drag one element onto another (pointer-based, e.g. @dnd-kit reordering). */
+  | { action: "dragTo"; fromTestId: string; toTestId: string }
   /** Send a command into a terminal session (active tab unless `tabId` is set). */
   | { action: "terminalInput"; text: string; tabId?: string }
   /** Poll until an element with `testId` exists, or fail after `timeoutMs`. */
@@ -32,6 +40,11 @@ export type ScenarioCheck =
   | { assert: "textEquals"; testId: string; value: string }
   /** The element is present (or absent when `present` is false). */
   | { assert: "exists"; testId: string; present?: boolean }
+  /**
+   * A computed CSS property equals `value`. Reads `testId` when given, else the
+   * document root (theme CSS variables like `--bg-primary`).
+   */
+  | { assert: "computedStyleEquals"; property: string; value: string; testId?: string }
   /** The app-state value at `path` deep-equals `value`. */
   | { assert: "stateEquals"; path: string; value: unknown };
 

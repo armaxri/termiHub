@@ -772,29 +772,31 @@ When adding new manual tests, add the YAML definition to the appropriate file in
 
 Mapping of manual test IDs that have been automated to their E2E test files:
 
-| Manual Test IDs                | E2E Test File                                                |
-| ------------------------------ | ------------------------------------------------------------ |
-| MT-LOCAL-01, 07                | `local-shell.test.js`                                        |
-| MT-LOCAL-09, 10                | `cross-platform.test.js`                                     |
-| MT-LOCAL-02, 04, 06, 11–20     | `infrastructure/windows-shells.test.js`                      |
-| MT-SSH-04–06, 10–12, 20–33, 35 | `infrastructure/ssh*.test.js`                                |
-| MT-SSH-08, 19                  | `ssh-agent-warning.test.js`                                  |
-| MT-SSH-13, 17, 34              | `infrastructure/ssh-extended.test.js`                        |
-| MT-TAB-01–04, 15, 18           | `tab-management.test.js`                                     |
-| MT-TAB-08–14, 19–21            | `tab-horizontal-scroll.test.js`                              |
-| MT-CONN-02–07, 25–30           | `connection-crud.test.js`, `connection-forms.test.js`        |
-| MT-CONN-10–12, 14–16           | `encrypted-export-import.test.js`                            |
-| MT-CONN-20–22, 31              | `external-files.test.js`                                     |
-| MT-FB-01, 02                   | `file-browser-local.test.js`                                 |
-| MT-FB-03, 06, 13, 17, 19       | `infrastructure/sftp-extended.test.js`                       |
-| MT-FB-05, 11, 18               | `file-browser-local.test.js`                                 |
-| MT-UI-06–08, 17, 18, 20        | `ui-state.test.js`                                           |
-| MT-UI-21–25                    | `sidebar-sections.test.js`                                   |
-| MT-AGENT-01–03, 05, 06, 08     | `infrastructure/remote-agent.test.js`                        |
-| MT-CRED-04–08                  | `credential-store.test.js`, `credential-store-infra.test.js` |
-| MT-RECOVERY-01–12              | `infrastructure/config-recovery.test.js`                     |
-| MT-XPLAT-01, 02                | `cross-platform.test.js`                                     |
-| MT-SVC-01, 02, 03              | `embedded-services.test.js`                                  |
-| MT-SVC-04, 05 (transfer)       | `embedded-services.test.js` (SVC-12, SVC-13 via curl)        |
-| MT-NET-01–09                   | `network-tools.test.js`                                      |
-| MT-NET-10, 12, 13, 14, 17, 18  | `network-tools-live.test.js` (requires `network` profile)    |
+| Manual Test IDs                | E2E Test File                                                   |
+| ------------------------------ | --------------------------------------------------------------- |
+| MT-LOCAL-01, 07                | `local-shell.test.js`                                           |
+| MT-LOCAL-09, 10                | `tests/system/tests/test_cross_platform.py`                     |
+| MT-LOCAL-02, 04, 06, 11–20     | `infrastructure/windows-shells.test.js`                         |
+| MT-SSH-04–06, 10–12, 20–33, 35 | `infrastructure/ssh*.test.js`                                   |
+| MT-SSH-08, 19                  | `ssh-agent-warning.test.js`                                     |
+| MT-SSH-13, 17, 34              | `infrastructure/ssh-extended.test.js`                           |
+| MT-TAB-01–04, 15, 18           | `tests/system/tests/test_tab_management.py`                     |
+| MT-TAB-08–14, 19–21            | `tests/system/tests/test_tab_horizontal_scroll.py`              |
+| MT-CONN-02–07, 25–30           | `connection-crud.test.js`, `connection-forms.test.js`           |
+| MT-CONN-10–12, 14–16           | `encrypted-export-import.test.js`                               |
+| MT-CONN-20–22, 31              | `external-files.test.js`                                        |
+| MT-FB-01, 02                   | `file-browser-local.test.js`                                    |
+| MT-FB-03, 06, 13, 17, 19       | `infrastructure/sftp-extended.test.js`                          |
+| MT-FB-05, 11, 18               | `file-browser-local.test.js`                                    |
+| MT-UI-06–08                    | `tests/system/tests/test_ui_state.py`                           |
+| MT-UI-17, 18, 20               | _manual_ (OS window resize / dev favicon — not bridge-drivable) |
+| MT-UI-21                       | `tests/system/tests/test_sidebar_sections.py`                   |
+| MT-UI-22–25                    | _manual_ (separator size/cursor, overflow scroll — visual)      |
+| MT-AGENT-01–03, 05, 06, 08     | `infrastructure/remote-agent.test.js`                           |
+| MT-CRED-04–08                  | `credential-store.test.js`, `credential-store-infra.test.js`    |
+| MT-RECOVERY-01–12              | `infrastructure/config-recovery.test.js`                        |
+| MT-XPLAT-01, 02                | `tests/system/tests/test_cross_platform.py`                     |
+| MT-SVC-01, 02, 03              | `embedded-services.test.js`                                     |
+| MT-SVC-04, 05 (transfer)       | `embedded-services.test.js` (SVC-12, SVC-13 via curl)           |
+| MT-NET-01–09                   | `network-tools.test.js`                                         |
+| MT-NET-10, 12, 13, 14, 17, 18  | `network-tools-live.test.js` (requires `network` profile)       |

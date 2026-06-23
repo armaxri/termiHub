@@ -133,19 +133,22 @@ unmount.
 
 ## Command vocabulary
 
-| Action          | Purpose                                                        |
-| --------------- | -------------------------------------------------------------- |
-| `click`         | Press the element (full pointer sequence, so Radix menus open) |
-| `type`          | Set an input/textarea value (native setter + `input` event)    |
-| `select`        | Choose a native `<select>` option (native setter + `change`)   |
-| `contextMenu`   | Open an element's right-click menu (`contextmenu` event)       |
-| `pressKey`      | Dispatch a key (`keydown`+`keyup`), e.g. `Escape`, `Enter`     |
-| `terminalInput` | Send a command into a terminal **session** (see below)         |
-| `exists`        | Whether an element is present                                  |
-| `getText`       | Read an element's visible text                                 |
-| `getAttribute`  | Read an element's attribute                                    |
-| `readTerminal`  | Read a terminal's reconstructed logical-line text              |
-| `getState`      | Read app store state, optionally by dot-path                   |
+| Action             | Purpose                                                        |
+| ------------------ | -------------------------------------------------------------- |
+| `click`            | Press the element (full pointer sequence, so Radix menus open) |
+| `type`             | Set an input/textarea value (native setter + `input` event)    |
+| `select`           | Choose a native `<select>` option (native setter + `change`)   |
+| `contextMenu`      | Open an element's right-click menu (`contextmenu` event)       |
+| `pressKey`         | Dispatch a key (`keydown`+`keyup`), e.g. `Escape`, `Enter`     |
+| `terminalInput`    | Send a command into a terminal **session** (see below)         |
+| `drag`             | Drag an element by a pixel delta (resize handles)              |
+| `dragTo`           | Drag one element onto another (pointer-based, e.g. @dnd-kit)   |
+| `exists`           | Whether an element is present                                  |
+| `getText`          | Read an element's visible text                                 |
+| `getAttribute`     | Read an element's attribute                                    |
+| `getComputedStyle` | Read a _computed_ CSS property — incl. theme custom properties |
+| `readTerminal`     | Read a terminal's reconstructed logical-line text              |
+| `getState`         | Read app store state, optionally by dot-path                   |
 
 Every command returns a structured `BridgeResponse` (`{ ok, action, value?,
 error? }`). Nothing throws across the bridge — failures are `ok: false` with an
@@ -170,6 +173,30 @@ pass the command, not the newline.
 await driver.terminalInput("echo HELLO_MARKER"); // runs in the active terminal
 const output = await driver.readTerminal();
 output.includes("HELLO_MARKER"); // assert on the result
+```
+
+### Dragging (`drag`) and computed styles (`getComputedStyle`)
+
+`click` cannot drive drag-to-resize handles or pointer reordering, and
+`getAttribute` only sees markup attributes — not the _effective_ `cursor`, a
+theme color, or a CSS variable resolved from a stylesheet. Two verbs close those
+gaps:
+
+- `{ action: "drag", testId, dx, dy? }` dispatches `mousedown` on the element,
+  then `mousemove`/`mouseup` on the document offset by `(dx, dy)` from the
+  element's center — the sequence handlers like `useSidebarResize` listen for
+  (they read `event.clientX`). Only the delta matters, so absolute coordinates
+  need not be known.
+- `{ action: "getComputedStyle", testId?, property }` returns
+  `getComputedStyle(el).getPropertyValue(property).trim()`. Omit `testId` to read
+  the document root (`:root`), where theme custom properties like `--bg-primary`
+  are defined.
+
+```ts
+// Widen the sidebar and confirm the handle advertises a resize cursor.
+await driver.drag("sidebar-resize-handle", 100);
+await driver.getComputedStyle("cursor", { testId: "sidebar-resize-handle" }); // "col-resize"
+await driver.getComputedStyle("--bg-primary"); // active theme background
 ```
 
 It fails (`ok: false`) when there is no active terminal, or when the target tab
@@ -241,6 +268,11 @@ if (!result.passed) {
 | -------------------------------------------------------- | ------------------------------------------------- |
 | `{ action: "click", testId }`                            | Press the control                                 |
 | `{ action: "type", testId, text }`                       | Set an input/textarea value                       |
+| `{ action: "select", testId, value }`                    | Choose a native `<select>` option                 |
+| `{ action: "contextMenu", testId }`                      | Open the element's right-click context menu       |
+| `{ action: "pressKey", key, testId? }`                   | Dispatch a key (`keydown`+`keyup`)                |
+| `{ action: "drag", testId, dx, dy? }`                    | Drag an element by a pixel delta                  |
+| `{ action: "dragTo", fromTestId, toTestId }`             | Drag one element onto another                     |
 | `{ action: "terminalInput", text, tabId? }`              | Send a command into a terminal session            |
 | `{ action: "waitFor", testId, timeoutMs?, intervalMs? }` | Poll until the element exists, or fail on timeout |
 | `{ action: "pause", ms }`                                | Wait a fixed duration for output to settle        |
@@ -250,13 +282,14 @@ the checks are skipped.
 
 ### Checker catalog
 
-| Check                                                    | Passes when                                            |
-| -------------------------------------------------------- | ------------------------------------------------------ |
-| `{ assert: "terminalContains", value, tabId? }`          | The terminal text contains `value`                     |
-| `{ assert: "terminalMatches", pattern, flags?, tabId? }` | The terminal text matches the regex                    |
-| `{ assert: "textEquals", testId, value }`                | The element's visible text equals `value`              |
-| `{ assert: "exists", testId, present? }`                 | The element is present (or absent if `present: false`) |
-| `{ assert: "stateEquals", path, value }`                 | The app-state value at dot-`path` deep-equals `value`  |
+| Check                                                         | Passes when                                                  |
+| ------------------------------------------------------------- | ------------------------------------------------------------ |
+| `{ assert: "terminalContains", value, tabId? }`               | The terminal text contains `value`                           |
+| `{ assert: "terminalMatches", pattern, flags?, tabId? }`      | The terminal text matches the regex                          |
+| `{ assert: "textEquals", testId, value }`                     | The element's visible text equals `value`                    |
+| `{ assert: "exists", testId, present? }`                      | The element is present (or absent if `present: false`)       |
+| `{ assert: "computedStyleEquals", property, value, testId? }` | A computed CSS property equals `value` (root if no `testId`) |
+| `{ assert: "stateEquals", path, value }`                      | The app-state value at dot-`path` deep-equals `value`        |
 
 When all steps succeed, **every** check is evaluated (even after one fails) so a
 single run reports all assertions at once. A check that cannot be evaluated (e.g.

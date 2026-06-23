@@ -763,6 +763,7 @@ export function ConnectionList() {
           }}
           className={`connection-list__group${!localCollapsed ? " connection-list__group--expanded" : ""}`}
           style={outerConnIdx >= 0 ? { flex: outerFlexValues[outerConnIdx] } : undefined}
+          data-testid="connection-list-group-connections"
         >
           <div
             className="connection-list__group-header"

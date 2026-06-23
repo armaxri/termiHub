@@ -1,6 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
 import { runScenario, type RunOptions } from "./runner";
-import type { Driver, ReadTerminalOptions, TerminalInputOptions } from "./driver";
+import type {
+  Driver,
+  GetComputedStyleOptions,
+  ReadTerminalOptions,
+  TerminalInputOptions,
+} from "./driver";
 import { BridgeError } from "./driver";
 import type { Scenario } from "./scenario";
 
@@ -13,8 +18,14 @@ class FakeDriver implements Driver {
   clicks: string[] = [];
   typed: Array<{ testId: string; text: string }> = [];
   selected: Array<{ testId: string; value: string }> = [];
+  drags: Array<{ testId: string; dx: number; dy?: number }> = [];
+  contextMenus: string[] = [];
+  pressedKeys: Array<{ key: string; testId?: string }> = [];
+  dragTos: Array<{ from: string; to: string }> = [];
   terminalInputs: Array<{ text: string; tabId?: string }> = [];
   elements = new Map<string, { text?: string }>();
+  /** Keyed by `testId ?? ""`, then property name → computed value. */
+  computedStyles = new Map<string, Record<string, string>>();
   terminalText = "";
   hasTerminal = true;
   readTerminalCalls = 0;
@@ -37,6 +48,21 @@ class FakeDriver implements Driver {
     this.selected.push({ testId, value });
   }
 
+  async contextMenu(testId: string): Promise<void> {
+    if (!this.elements.has(testId)) throw new BridgeError("contextMenu", `no element "${testId}"`);
+    this.contextMenus.push(testId);
+  }
+
+  async pressKey(key: string, testId?: string): Promise<void> {
+    this.pressedKeys.push({ key, testId });
+  }
+
+  async dragTo(from: string, to: string): Promise<void> {
+    if (!this.elements.has(from)) throw new BridgeError("dragTo", `no element "${from}"`);
+    if (!this.elements.has(to)) throw new BridgeError("dragTo", `no element "${to}"`);
+    this.dragTos.push({ from, to });
+  }
+
   async terminalInput(text: string, options: TerminalInputOptions = {}): Promise<void> {
     if (!this.hasTerminal) throw new BridgeError("terminalInput", "no active terminal");
     this.terminalInputs.push({ text, tabId: options.tabId });
@@ -56,9 +82,14 @@ class FakeDriver implements Driver {
     return null;
   }
 
-  async contextMenu(_testId: string): Promise<void> {}
+  async drag(testId: string, dx: number, dy?: number): Promise<void> {
+    if (!this.elements.has(testId)) throw new BridgeError("drag", `no element "${testId}"`);
+    this.drags.push({ testId, dx, dy });
+  }
 
-  async pressKey(_key: string, _testId?: string): Promise<void> {}
+  async getComputedStyle(property: string, options: GetComputedStyleOptions = {}): Promise<string> {
+    return this.computedStyles.get(options.testId ?? "")?.[property] ?? "";
+  }
 
   async readTerminal(_options?: ReadTerminalOptions): Promise<string> {
     this.readTerminalCalls++;
@@ -144,6 +175,76 @@ describe("runScenario", () => {
 
     expect(result.passed).toBe(true);
     expect(driver.terminalInputs).toEqual([{ text: "whoami", tabId: "tab-1" }]);
+  });
+
+  it("runs a drag step and checks a computed style", async () => {
+    const driver = new FakeDriver();
+    driver.elements.set("sidebar-resize-handle", {});
+    driver.computedStyles.set("sidebar-resize-handle", { cursor: "col-resize" });
+
+    const scenario: Scenario = {
+      name: "resize the sidebar",
+      requirement: "the resize handle shows a col-resize cursor and accepts a drag",
+      steps: [{ action: "drag", testId: "sidebar-resize-handle", dx: 100 }],
+      checks: [
+        {
+          assert: "computedStyleEquals",
+          testId: "sidebar-resize-handle",
+          property: "cursor",
+          value: "col-resize",
+        },
+      ],
+    };
+
+    const result = await runScenario(scenario, driver, instant());
+
+    expect(result.passed).toBe(true);
+    expect(driver.drags).toEqual([{ testId: "sidebar-resize-handle", dx: 100, dy: undefined }]);
+    expect(result.checks[0].passed).toBe(true);
+  });
+
+  it("runs select, contextMenu, pressKey, and dragTo steps", async () => {
+    const driver = new FakeDriver();
+    driver.elements.set("theme-select", {});
+    driver.elements.set("tab-1", {});
+    driver.elements.set("tab-2", {});
+
+    const scenario: Scenario = {
+      name: "extended interactions",
+      steps: [
+        { action: "select", testId: "theme-select", value: "light" },
+        { action: "contextMenu", testId: "tab-1" },
+        { action: "pressKey", key: "Escape" },
+        { action: "pressKey", key: "Enter", testId: "tab-1" },
+        { action: "dragTo", fromTestId: "tab-1", toTestId: "tab-2" },
+      ],
+      checks: [],
+    };
+
+    const result = await runScenario(scenario, driver, instant());
+
+    expect(result.passed).toBe(true);
+    expect(driver.selected).toEqual([{ testId: "theme-select", value: "light" }]);
+    expect(driver.contextMenus).toEqual(["tab-1"]);
+    expect(driver.pressedKeys).toEqual([
+      { key: "Escape", testId: undefined },
+      { key: "Enter", testId: "tab-1" },
+    ]);
+    expect(driver.dragTos).toEqual([{ from: "tab-1", to: "tab-2" }]);
+  });
+
+  it("reads a root-level computed style (theme variable) when testId is omitted", async () => {
+    const driver = new FakeDriver();
+    driver.computedStyles.set("", { "--bg-primary": "#1e1e1e" });
+
+    const scenario: Scenario = {
+      name: "theme variable",
+      steps: [],
+      checks: [{ assert: "computedStyleEquals", property: "--bg-primary", value: "#1e1e1e" }],
+    };
+
+    const result = await runScenario(scenario, driver, instant());
+    expect(result.passed).toBe(true);
   });
 
   it("reports a failing check with expected and actual, and captures a snapshot", async () => {

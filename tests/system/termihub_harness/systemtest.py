@@ -158,13 +158,49 @@ class SystemTest:
         self.driver.terminal_input(command)
         return True
 
-    def wait_for_output(self, needle: str, *, timeout: float = DEFAULT_WAIT_TIMEOUT) -> str:
-        """Poll the terminal until it contains ``needle``; return the full text."""
+    def wait_for_output(
+        self, needle: str, *, tab_id: Optional[str] = None, timeout: float = DEFAULT_WAIT_TIMEOUT
+    ) -> str:
+        """Poll a terminal until it contains ``needle``; return the full text.
+
+        Reads the active terminal unless ``tab_id`` names a specific one.
+        """
         return self.wait(
-            lambda: (lambda t: t if needle in t else None)(self.driver.read_terminal()),
+            lambda: (lambda t: t if needle in t else None)(self.driver.read_terminal(tab_id)),
             timeout=timeout,
             what=f"{needle!r} in terminal output",
         )
+
+    # ── Panels, splits & sidebar (UI-port helpers, #808) ───────────────────────
+    def leaf_count(self, node: Any = None) -> int:
+        """Count the leaf panels in the active group (1 = unsplit, >1 = split)."""
+        if node is None:
+            node = self.driver.get_state("rootPanel")
+        if not isinstance(node, dict):
+            return 0
+        if node.get("type") == "leaf":
+            return 1
+        return sum(self.leaf_count(child) for child in node.get("children", []))
+
+    def tab_ids(self) -> list[str]:
+        """All tab ids across every panel, in tree order."""
+        return [tab["id"] for tab in self._all_tabs() if "id" in tab]
+
+    def set_sidebar_visible(self, visible: bool) -> None:
+        """Bring the sidebar to the wanted visibility via the toolbar toggle.
+
+        The ``Sidebar`` renders ``null`` while collapsed, so ``exists("sidebar")``
+        is the visibility signal. The toggle lives in the terminal-view toolbar,
+        so a terminal is ensured first. (Distinct from ``switch_to_*_sidebar``,
+        which change the *view*, not whether the sidebar is shown.)
+        """
+        self.ensure_terminal()
+        if self.driver.exists("sidebar") != visible:
+            self.driver.click("terminal-view-toggle-sidebar")
+            self.wait(
+                lambda: self.driver.exists("sidebar") == visible,
+                what=f"sidebar visible={visible}",
+            )
 
     # ── Connection editor ──────────────────────────────────────────────────────
     def _try_select(self, test_id: str, value: str) -> bool:
@@ -317,11 +353,18 @@ class SystemTest:
         self.driver.click(f"tab-{tab_id}")
 
     def close_tab(self, tab_id: str) -> None:
-        """Close the tab with the given id, confirming any close dialog."""
+        """Close the tab with the given id, confirming any close dialog.
+
+        Two dialogs can intercept a close: the keyboard-shortcut confirm
+        (``confirm-close-tab-confirm``) and the unsaved-changes dialog a dirty
+        editor/connection/settings tab raises (``unsaved-changes-just-close``).
+        """
         self.driver.click(f"tab-close-{tab_id}")
         time.sleep(0.3)
         if self.driver.exists("confirm-close-tab-confirm"):
             self.driver.click("confirm-close-tab-confirm")
+        if self.driver.exists("unsaved-changes-just-close"):
+            self.driver.click("unsaved-changes-just-close")
 
     def close_all_tabs(self) -> None:
         """Close every open tab (e.g. between reconnect checks)."""
