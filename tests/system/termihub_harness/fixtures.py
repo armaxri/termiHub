@@ -49,6 +49,9 @@ SSH_USERNAME = "testuser"
 SSH_PASSWORD = "testpass"
 #: Private key accepted by the ``ssh-keys`` container (key auth only).
 SSH_KEY_PATH = REPO_ROOT / "tests" / "fixtures" / "ssh-keys" / "ed25519"
+#: Passphrase-protected private key (same container) + its passphrase.
+SSH_KEY_PASSPHRASE_PATH = REPO_ROOT / "tests" / "fixtures" / "ssh-keys" / "ed25519_passphrase"
+SSH_KEY_PASSPHRASE = "testpass123"
 
 
 class ContainerRuntimeUnavailable(RuntimeError):

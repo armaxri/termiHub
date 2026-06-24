@@ -74,9 +74,18 @@ class TestSshBaseline(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, SshUi
         assert isinstance(self.driver.get_state(), dict)
         assert not self.password_prompt_open()
 
-# Window resize (SSH-BASELINE-RESIZE) is not portable to the bridge: the harness
-# has no window-resize verb, and the original only re-checked that the terminal
-# still rendered afterward. Tracked as a follow-up if a resize verb is added.
-@pytest.mark.skip(reason="no window-resize verb in the test bridge (SSH-BASELINE-RESIZE)")
-def test_terminal_survives_window_resize():
-    ...
+    def test_terminal_survives_window_resize(self):
+        # SSH-BASELINE-RESIZE: resizing the window re-fits xterm and re-sizes the
+        # PTY; the session must survive and stay interactive. Connect, resize the
+        # window to two sizes (driving the fit → PTY-resize path), then confirm the
+        # terminal still echoes a freshly typed command.
+        name = unique_name("ssh-resize")
+        self.connect_ssh_password(name)
+        self.run_command("echo BEFORE_RESIZE")
+        assert "BEFORE_RESIZE" in self.wait_for_output("BEFORE_RESIZE")
+
+        self.driver.resize_window(800, 600)
+        self.driver.resize_window(1024, 768)
+
+        self.run_command("echo AFTER_RESIZE")
+        assert "AFTER_RESIZE" in self.wait_for_output("AFTER_RESIZE")
