@@ -16,6 +16,7 @@ function setup(
     getActiveTabId: () => undefined,
     getState: () => ({}),
     sendTerminalInput: async () => false,
+    resizeWindow: async () => {},
     ...overrides,
   };
   return { deps, container };
