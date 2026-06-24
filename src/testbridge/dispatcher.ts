@@ -215,15 +215,7 @@ export async function dispatchCommand(
       // the only path that raises the SSH key-passphrase prompt).
       clickSequence(el, x, y);
       clickSequence(el, x, y);
-      el.dispatchEvent(
-        new MouseEvent("dblclick", {
-          bubbles: true,
-          cancelable: true,
-          button: 0,
-          clientX: x,
-          clientY: y,
-        })
-      );
+      dispatchMouse(el, "dblclick", x, y);
       return ok("doubleClick");
     }
 

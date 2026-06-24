@@ -10,8 +10,6 @@ from .fixtures import (
     SSH_BANNER_PORT,
     SSH_BANNER_SERVICE,
     SSH_HOST,
-    SSH_KEY_PASSPHRASE,
-    SSH_KEY_PASSPHRASE_PATH,
     SSH_KEY_PATH,
     SSH_KEYS_PORT,
     SSH_KEYS_SERVICE,
@@ -89,6 +87,4 @@ __all__ = [
     "SSH_USERNAME",
     "SSH_PASSWORD",
     "SSH_KEY_PATH",
-    "SSH_KEY_PASSPHRASE",
-    "SSH_KEY_PASSPHRASE_PATH",
 ]

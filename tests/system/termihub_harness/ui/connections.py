@@ -33,7 +33,6 @@ class ConnectionsUi(HarnessMixin):
     EDITOR_NAME_ERROR = "connection-editor-name-error"
 
     # Connection context-menu item testids.
-    CTX_CONNECT = "context-connection-connect"
     CTX_EDIT = "context-connection-edit"
     CTX_DUPLICATE = "context-connection-duplicate"
     CTX_DELETE = "context-connection-delete"
@@ -90,7 +89,6 @@ class ConnectionsUi(HarnessMixin):
         username: str,
         auth_method: str = "password",
         key_path: Optional[str] = None,
-        save_password: bool = False,
         connect: bool = False,
     ) -> None:
         """Fill the editor for an SSH connection and save (or Save & Connect).
@@ -99,8 +97,6 @@ class ConnectionsUi(HarnessMixin):
         opens the session — raising the password prompt for password auth — so a
         test never needs a sidebar double-click. ``auth_method`` selects the
         native ``field-authMethod`` dropdown; pass ``key_path`` for key auth.
-        ``save_password=True`` toggles the "Save credentials" switch — required to
-        raise the key-passphrase prompt on the sidebar-connect path.
         """
         self.open_new_connection_editor()
         self.driver.type("connection-editor-name-input", name)
@@ -128,10 +124,6 @@ class ConnectionsUi(HarnessMixin):
                 lambda: self.driver.exists(key_input), what="the SSH key-path field"
             )
             self.driver.type(key_input, str(key_path))
-        if save_password:
-            # The "Save credentials" toggle is a checkbox; a click flips it on so
-            # key auth prompts for (and would store) the key passphrase.
-            self.driver.click("field-savePassword")
         self.driver.click(
             "connection-editor-save-connect" if connect else "connection-editor-save"
         )
