@@ -1,6 +1,7 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
+
+use tokio_util::sync::CancellationToken;
 
 /// Outcome of finishing a connecting tunnel (see [`ConnectingTracker::finish`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,12 +21,13 @@ pub enum FinishOutcome {
 /// registered as active. During that window `stop_tunnel` has nothing to
 /// remove, so without this tracker a Stop click is silently lost and the tunnel
 /// later flips to `connected` (issue #829). The tracker records each connecting
-/// tunnel with a cancel flag: `stop` sets the flag, and `start` honours it when
-/// the handshake completes — tearing the just-built forwarder down instead of
-/// committing it.
+/// tunnel with a [`CancellationToken`]: `stop` cancels the token — which both
+/// aborts the in-flight SSH connect promptly (#841) and flags the start — and
+/// `start` honours it when the handshake completes, tearing the just-built
+/// forwarder down instead of committing it.
 #[derive(Default)]
 pub struct ConnectingTracker {
-    inner: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    inner: Mutex<HashMap<String, CancellationToken>>,
 }
 
 impl ConnectingTracker {
@@ -33,20 +35,22 @@ impl ConnectingTracker {
         Self::default()
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Arc<AtomicBool>>> {
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, CancellationToken>> {
         // A poisoned lock only means a previous holder panicked; the map itself
         // stays consistent, so recover rather than propagate the panic.
         self.inner.lock().unwrap_or_else(|p| p.into_inner())
     }
 
-    /// Mark a tunnel as connecting. Returns `false` if it is already connecting.
-    pub fn begin(&self, tunnel_id: &str) -> bool {
+    /// Mark a tunnel as connecting, returning a [`CancellationToken`] wired to
+    /// its in-flight connect. Returns `None` if it is already connecting.
+    pub fn begin(&self, tunnel_id: &str) -> Option<CancellationToken> {
         let mut inner = self.lock();
         if inner.contains_key(tunnel_id) {
-            return false;
+            return None;
         }
-        inner.insert(tunnel_id.to_string(), Arc::new(AtomicBool::new(false)));
-        true
+        let token = CancellationToken::new();
+        inner.insert(tunnel_id.to_string(), token.clone());
+        Some(token)
     }
 
     /// Whether the given tunnel is currently in the connecting phase.
@@ -54,12 +58,13 @@ impl ConnectingTracker {
         self.lock().contains_key(tunnel_id)
     }
 
-    /// Request cancellation of a connecting tunnel. Returns `true` if the tunnel
-    /// was connecting (and is now flagged to cancel when its start completes).
+    /// Request cancellation of a connecting tunnel: cancels its token so the
+    /// in-flight SSH connect aborts promptly (#841) and the start does not
+    /// commit. Returns `true` if the tunnel was connecting.
     pub fn request_cancel(&self, tunnel_id: &str) -> bool {
         match self.lock().get(tunnel_id) {
-            Some(flag) => {
-                flag.store(true, Ordering::SeqCst);
+            Some(token) => {
+                token.cancel();
                 true
             }
             None => false,
@@ -70,7 +75,7 @@ impl ConnectingTracker {
     /// whether a Stop was requested in the meantime.
     pub fn finish(&self, tunnel_id: &str) -> FinishOutcome {
         match self.lock().remove(tunnel_id) {
-            Some(flag) if !flag.load(Ordering::SeqCst) => FinishOutcome::Commit,
+            Some(token) if !token.is_cancelled() => FinishOutcome::Commit,
             _ => FinishOutcome::Cancel,
         }
     }
@@ -84,15 +89,30 @@ mod tests {
     fn begin_marks_tunnel_connecting() {
         let tracker = ConnectingTracker::new();
         assert!(!tracker.is_connecting("t1"));
-        assert!(tracker.begin("t1"));
+        assert!(tracker.begin("t1").is_some());
         assert!(tracker.is_connecting("t1"));
     }
 
     #[test]
     fn begin_rejects_duplicate() {
         let tracker = ConnectingTracker::new();
-        assert!(tracker.begin("t1"));
-        assert!(!tracker.begin("t1"), "second begin must be rejected");
+        assert!(tracker.begin("t1").is_some());
+        assert!(
+            tracker.begin("t1").is_none(),
+            "second begin must be rejected"
+        );
+    }
+
+    #[test]
+    fn request_cancel_cancels_the_begin_token() {
+        let tracker = ConnectingTracker::new();
+        let token = tracker.begin("t1").expect("first begin");
+        assert!(!token.is_cancelled());
+        assert!(tracker.request_cancel("t1"));
+        assert!(
+            token.is_cancelled(),
+            "cancelling must fire the token handed to the connect path"
+        );
     }
 
     #[test]
@@ -129,7 +149,7 @@ mod tests {
         tracker.begin("t1");
         tracker.finish("t1");
         assert!(
-            tracker.begin("t1"),
+            tracker.begin("t1").is_some(),
             "a tunnel can connect again after a previous attempt finishes"
         );
     }
