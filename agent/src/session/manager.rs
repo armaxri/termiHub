@@ -880,8 +880,7 @@ mod tests {
     #[tokio::test]
     async fn connect_or_daemon_exit_returns_connect_success() {
         // A successful connect is returned even though the daemon never exits.
-        let result: Result<i32, _> =
-            connect_or_daemon_exit("s1", async { Ok(42) }, || None).await;
+        let result: Result<i32, _> = connect_or_daemon_exit("s1", async { Ok(42) }, || None).await;
         assert_eq!(result.unwrap(), 42);
     }
 
@@ -913,7 +912,10 @@ mod tests {
         )
         .await;
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("connect failed: handshake timeout"), "got: {err}");
+        assert!(
+            err.contains("connect failed: handshake timeout"),
+            "got: {err}"
+        );
         assert!(!err.contains("exited before"), "got: {err}");
     }
 
