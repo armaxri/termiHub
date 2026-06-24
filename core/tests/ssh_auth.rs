@@ -215,14 +215,14 @@ async fn ssh_auth_10_ecdsa_256_passphrase() {
     );
 }
 
-// ── SSH-AUTH-13: ECDSA-384 with passphrase (PEM format) ──────────────
+// ── SSH-AUTH-13: ECDSA-384 with passphrase ───────────────────────────
 
-/// Passphrase-protected ECDSA-384 key in PEM/SEC1 format.
+/// Passphrase-protected ECDSA-384 key in OpenSSH format.
 ///
-/// This key is stored as `-----BEGIN EC PRIVATE KEY-----` (PEM/SEC1) rather
-/// than OpenSSH format. That format bypasses termiHub's OpenSSH-to-PKCS8
-/// conversion (which currently supports RSA and Ed25519 only) and lets
-/// libssh2 handle the passphrase decryption directly.
+/// The fixture is stored as `-----BEGIN OPENSSH PRIVATE KEY-----`, which
+/// russh's `load_secret_key` decrypts directly. (An earlier libssh2-era
+/// fixture used encrypted PEM/SEC1 `-----BEGIN EC PRIVATE KEY-----`, which the
+/// current russh-based loader cannot decrypt — it misparses it as PKCS#1.)
 #[tokio::test]
 async fn ssh_auth_13_ecdsa_384_passphrase() {
     require_docker!(PORT_SSH_KEYS);
@@ -241,11 +241,11 @@ async fn ssh_auth_13_ecdsa_384_passphrase() {
     );
 }
 
-// ── SSH-AUTH-14: ECDSA-521 with passphrase (PEM format) ──────────────
+// ── SSH-AUTH-14: ECDSA-521 with passphrase ───────────────────────────
 
-/// Passphrase-protected ECDSA-521 key in PEM/SEC1 format.
+/// Passphrase-protected ECDSA-521 key in OpenSSH format.
 ///
-/// See the note on SSH-AUTH-13 regarding PEM format and libssh2.
+/// See the note on SSH-AUTH-13 regarding the key format.
 #[tokio::test]
 async fn ssh_auth_14_ecdsa_521_passphrase() {
     require_docker!(PORT_SSH_KEYS);

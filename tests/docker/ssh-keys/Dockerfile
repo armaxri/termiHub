@@ -12,11 +12,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN useradd -m -s /bin/bash testuser
 
 # Configure SSH: key auth only, no password
+# MaxStartups is raised because the SSH-AUTH integration suite opens ~12 key
+# auth connections to this single container concurrently; the OpenSSH default
+# (10:30:100) probabilistically drops handshakes past 10 unauthenticated
+# connections, surfacing as flaky "SSH handshake failed: Disconnected".
 RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config \
     && sed -i 's/PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config \
     && sed -i 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config \
     && sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin no/' /etc/ssh/sshd_config \
-    && echo "UseDNS no" >> /etc/ssh/sshd_config
+    && echo "UseDNS no" >> /etc/ssh/sshd_config \
+    && echo "MaxStartups 100:30:200" >> /etc/ssh/sshd_config
 
 # Install all test public keys
 RUN mkdir -p /home/testuser/.ssh && chmod 700 /home/testuser/.ssh
