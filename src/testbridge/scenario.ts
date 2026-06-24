@@ -12,6 +12,10 @@
 /** A single UI action performed in sequence before the checks run. */
 export type ScenarioStep =
   | { action: "click"; testId: string }
+  /** Double-click an element (e.g. connect a saved connection from the sidebar). */
+  | { action: "doubleClick"; testId: string }
+  /** Resize the app window to `width` × `height` logical pixels (Tauri). */
+  | { action: "resizeWindow"; width: number; height: number }
   | { action: "type"; testId: string; text: string }
   /** Choose a native `<select>` option by value. */
   | { action: "select"; testId: string; value: string }

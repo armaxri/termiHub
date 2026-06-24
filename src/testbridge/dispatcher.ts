@@ -27,6 +27,12 @@ export interface BridgeDeps {
    * point so line-ending normalization applies, exactly like interactive typing.
    */
   sendTerminalInput: (tabId: string, text: string) => Promise<boolean>;
+  /**
+   * Resize the application window to `width` × `height` logical pixels, rejecting
+   * if the platform window is unavailable. The live {@link TestBridge} wires this
+   * to Tauri's `getCurrentWindow().setSize(...)`; unit tests supply a stub.
+   */
+  resizeWindow: (width: number, height: number) => Promise<void>;
 }
 
 /** Resolve an element by its `data-testid`, escaping the value for the selector. */
@@ -74,6 +80,23 @@ function dispatchPointer(
       ...(Ctor === PointerEvent ? { pointerId: 1, isPrimary: true } : {}),
     } as PointerEventInit)
   );
+}
+
+/**
+ * Fire the realistic pointer→mouse→click sequence a real click produces.
+ *
+ * A bare `element.click()` only fires a `click` event, which libraries that open
+ * on pointerdown (Radix dropdown/menu triggers used across the app) ignore — so
+ * menus never open. Radix dedups the trailing click on a pointerdown-opened
+ * trigger, so plain onClick handlers and menu triggers both behave correctly.
+ * Shared by the `click` and `doubleClick` verbs.
+ */
+function clickSequence(el: Element, x: number, y: number): void {
+  dispatchPointer(el, "pointerdown", x, y);
+  dispatchMouse(el, "mousedown", x, y);
+  dispatchPointer(el, "pointerup", x, y);
+  dispatchMouse(el, "mouseup", x, y);
+  (el as HTMLElement).click();
 }
 
 /**
@@ -179,18 +202,38 @@ export async function dispatchCommand(
       const el = findByTestId(deps.root, command.testId);
       if (!el) return fail("click", `no element with data-testid="${command.testId}"`);
       const { x, y } = centerOf(el);
-      // Fire the realistic pointer→mouse sequence a real click produces, then the
-      // native click(). A bare element.click() only fires a `click` event, which
-      // libraries that open on pointerdown (Radix dropdown/menu triggers used
-      // across the app) ignore — so menus never opened. Radix dedups the trailing
-      // click on a pointerdown-opened trigger, so plain onClick handlers and menu
-      // triggers both behave correctly.
-      dispatchPointer(el, "pointerdown", x, y);
-      dispatchMouse(el, "mousedown", x, y);
-      dispatchPointer(el, "pointerup", x, y);
-      dispatchMouse(el, "mouseup", x, y);
-      (el as HTMLElement).click();
+      clickSequence(el, x, y);
       return ok("click");
+    }
+
+    case "doubleClick": {
+      const el = findByTestId(deps.root, command.testId);
+      if (!el) return fail("doubleClick", `no element with data-testid="${command.testId}"`);
+      const { x, y } = centerOf(el);
+      // A real double-click fires two full click rounds, then a `dblclick` — the
+      // event React's `onDoubleClick` listens for (e.g. sidebar connect, which is
+      // the only path that raises the SSH key-passphrase prompt).
+      clickSequence(el, x, y);
+      clickSequence(el, x, y);
+      el.dispatchEvent(
+        new MouseEvent("dblclick", {
+          bubbles: true,
+          cancelable: true,
+          button: 0,
+          clientX: x,
+          clientY: y,
+        })
+      );
+      return ok("doubleClick");
+    }
+
+    case "resizeWindow": {
+      try {
+        await deps.resizeWindow(command.width, command.height);
+        return ok("resizeWindow");
+      } catch (error) {
+        return fail("resizeWindow", error instanceof Error ? error.message : String(error));
+      }
     }
 
     case "drag": {
