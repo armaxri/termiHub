@@ -35,8 +35,15 @@ pub type BoxedWriter = Box<dyn AsyncWrite + Send + Unpin>;
 // as dead code in the plain binary build until then.
 
 /// How long [`connect`] waits for the daemon endpoint to appear before failing.
+///
+/// Generous on purpose: a freshly spawned daemon only binds its endpoint after
+/// cold-starting a detached process and spawning its PTY/shell, which can take
+/// several seconds on a loaded CI runner (Windows ConPTY especially). The
+/// launcher races this connect against the daemon process exiting (see
+/// `session::manager`), so a daemon that dies before binding fails fast — this
+/// long window only applies while the daemon is still alive but slow to bind.
 #[allow(dead_code)]
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 /// How often [`connect`] retries while the endpoint is not yet available.
 #[allow(dead_code)]
 const CONNECT_POLL_INTERVAL: Duration = Duration::from_millis(50);

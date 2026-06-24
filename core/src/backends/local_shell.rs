@@ -336,9 +336,9 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
             // Persistent so the agent spawns this backend inside the daemon
             // subprocess, giving each local-shell session a ring buffer that
             // survives tab detach/reattach (scrollback replay) and agent
-            // restart. Matches SSH/Docker/Serial/WSL. On Windows the daemon
-            // path is `#[cfg(unix)]`-gated, so SessionManager::create_backend
-            // falls back to the in-process backend transparently.
+            // restart. Matches SSH/Docker/Serial/WSL. The daemon path runs on
+            // every platform (Unix domain socket on unix, named pipe on
+            // windows — see `agent::daemon::transport`).
             persistent: true,
         }
     }

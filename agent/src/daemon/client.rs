@@ -19,7 +19,10 @@ use crate::io::transport::NotificationSender;
 use crate::protocol::messages::JsonRpcNotification;
 
 /// How long to wait for the Ready frame after connecting.
-const READY_TIMEOUT: Duration = Duration::from_secs(5);
+///
+/// Like the connect timeout, this is generous so a daemon that is slow to
+/// finish startup and send `MSG_READY` under CI load is not dropped prematurely.
+const READY_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Cloneable handle to the daemon's write half.
 ///

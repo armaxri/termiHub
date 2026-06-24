@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use chrono::Utc;
 use tokio::sync::Mutex;
@@ -179,17 +180,72 @@ impl DaemonLauncher for SystemDaemonLauncher {
             command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
         }
 
-        let _child = command
+        let mut child = command
             .spawn()
             .map_err(|e| anyhow::anyhow!("Failed to spawn daemon: {e}"))?;
 
-        // The transport retries while the daemon binds its endpoint during
-        // slow startup work, so no separate "wait for endpoint" step is needed.
-        let client =
-            DaemonClient::connect(session_id.to_string(), endpoint, notification_tx).await?;
+        // The transport retries while the daemon binds its endpoint during slow
+        // startup work. Race that connect against the daemon process exiting so
+        // a daemon that dies before binding (e.g. its shell failed to spawn)
+        // fails fast with its real exit status instead of retrying a phantom
+        // "endpoint not found" for the whole connect timeout (#847).
+        let connect = DaemonClient::connect(session_id.to_string(), endpoint, notification_tx);
+        let client = match connect_or_daemon_exit(session_id, connect, || match child.try_wait() {
+            Ok(Some(status)) => Some(status.to_string()),
+            _ => None,
+        })
+        .await
+        {
+            Ok(client) => client,
+            Err(e) => {
+                // Don't leave a half-started daemon orphaned when connect fails.
+                let _ = child.kill();
+                return Err(e);
+            }
+        };
 
         info!("Daemon spawned for session {session_id} (type={type_id})");
         Ok(SessionBackend::Daemon(client))
+    }
+}
+
+/// How often [`connect_or_daemon_exit`] checks whether a freshly spawned daemon
+/// has exited while waiting for its endpoint to come up.
+const DAEMON_EXIT_POLL_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Await the daemon `connect` future, but bail out early if `daemon_exited`
+/// reports the daemon process has exited.
+///
+/// A daemon that dies before binding its endpoint would otherwise leave the
+/// transport retrying a phantom "endpoint not found" until the full connect
+/// timeout, surfacing a misleading low-level OS error (on Windows, "The system
+/// cannot find the file specified. (os error 2)"). Polling the child lets us
+/// fail fast with the daemon's real exit status instead (issue #847).
+///
+/// `daemon_exited` returns `Some(status_description)` once the daemon has
+/// exited, or `None` while it is still running.
+async fn connect_or_daemon_exit<T, F>(
+    session_id: &str,
+    connect: F,
+    mut daemon_exited: impl FnMut() -> Option<String>,
+) -> Result<T, anyhow::Error>
+where
+    F: std::future::Future<Output = Result<T, anyhow::Error>>,
+{
+    tokio::pin!(connect);
+    loop {
+        tokio::select! {
+            // Prefer a completed connect over the poll tick on the same wake-up.
+            biased;
+            result = &mut connect => return result,
+            _ = tokio::time::sleep(DAEMON_EXIT_POLL_INTERVAL) => {
+                if let Some(status) = daemon_exited() {
+                    return Err(anyhow::anyhow!(
+                        "Daemon for session {session_id} exited before its endpoint was ready ({status})"
+                    ));
+                }
+            }
+        }
     }
 }
 
@@ -817,6 +873,50 @@ mod tests {
 
     fn test_registry() -> Arc<ConnectionTypeRegistry> {
         Arc::new(crate::registry::build_registry())
+    }
+
+    // ── connect_or_daemon_exit (issue #847) ──────────────────────────
+
+    #[tokio::test]
+    async fn connect_or_daemon_exit_returns_connect_success() {
+        // A successful connect is returned even though the daemon never exits.
+        let result: Result<i32, _> = connect_or_daemon_exit("s1", async { Ok(42) }, || None).await;
+        assert_eq!(result.unwrap(), 42);
+    }
+
+    #[tokio::test]
+    async fn connect_or_daemon_exit_fails_fast_when_daemon_dies() {
+        // Connect never completes (endpoint never appears), but the daemon has
+        // exited — we must surface that, not hang until the connect timeout.
+        let result: Result<i32, _> = connect_or_daemon_exit(
+            "s2",
+            std::future::pending::<Result<i32, anyhow::Error>>(),
+            || Some("exit status: 1".to_string()),
+        )
+        .await;
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("exited before its endpoint was ready") && err.contains("exit status: 1"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn connect_or_daemon_exit_propagates_connect_error() {
+        // When the connect itself fails while the daemon is still alive, the
+        // original connect error is returned (not the "daemon exited" error).
+        let result: Result<i32, _> = connect_or_daemon_exit(
+            "s3",
+            async { Err(anyhow::anyhow!("connect failed: handshake timeout")) },
+            || None,
+        )
+        .await;
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("connect failed: handshake timeout"),
+            "got: {err}"
+        );
+        assert!(!err.contains("exited before"), "got: {err}");
     }
 
     // ── Stub session helper (for dispatcher tests) ───────────────────
