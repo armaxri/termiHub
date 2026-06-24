@@ -21,19 +21,20 @@ and should never be used outside of the test Docker containers.
 
 Passphrase for all: `testpass123`
 
-| File                   | Type    | Bits | Format   | Comment                           |
-| ---------------------- | ------- | ---- | -------- | --------------------------------- |
-| `rsa_2048_passphrase`  | RSA     | 2048 | OpenSSH  | test-rsa-2048-pass@termihub-test  |
-| `ed25519_passphrase`   | Ed25519 | 256  | OpenSSH  | test-ed25519-pass@termihub-test   |
-| `ecdsa_256_passphrase` | ECDSA   | 256  | OpenSSH  | test-ecdsa-256-pass@termihub-test |
-| `ecdsa_384_passphrase` | ECDSA   | 384  | PEM/SEC1 | test-ecdsa-384-pass@termihub-test |
-| `ecdsa_521_passphrase` | ECDSA   | 521  | PEM/SEC1 | test-ecdsa-521-pass@termihub-test |
+| File                   | Type    | Bits | Format  | Comment                           |
+| ---------------------- | ------- | ---- | ------- | --------------------------------- |
+| `rsa_2048_passphrase`  | RSA     | 2048 | OpenSSH | test-rsa-2048-pass@termihub-test  |
+| `ed25519_passphrase`   | Ed25519 | 256  | OpenSSH | test-ed25519-pass@termihub-test   |
+| `ecdsa_256_passphrase` | ECDSA   | 256  | OpenSSH | test-ecdsa-256-pass@termihub-test |
+| `ecdsa_384_passphrase` | ECDSA   | 384  | OpenSSH | test-ecdsa-384-pass@termihub-test |
+| `ecdsa_521_passphrase` | ECDSA   | 521  | OpenSSH | test-ecdsa-521-pass@termihub-test |
 
-> **Note:** `ecdsa_384_passphrase` and `ecdsa_521_passphrase` are stored in PEM/SEC1
-> format (`-----BEGIN EC PRIVATE KEY-----`) rather than OpenSSH format. This is
-> intentional: termiHub's OpenSSH-to-PKCS8 conversion currently supports only
-> RSA and Ed25519 key types. PEM-format ECDSA keys bypass that path and are
-> handled directly by libssh2 via `userauth_pubkey_file`.
+> **Note:** every fixture is in OpenSSH format, which russh's `load_secret_key`
+> decrypts directly. Support for the legacy **encrypted PEM/SEC1** form
+> (`-----BEGIN EC PRIVATE KEY-----` with `Proc-Type/DEK-Info`), which russh
+> misparses as PKCS#1, lives in `core/src/backends/ssh/legacy_pem.rs` and is
+> covered by that module's own unit tests (with inline keys) rather than by these
+> fixtures.
 
 ## Usage
 
