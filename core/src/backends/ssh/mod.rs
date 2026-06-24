@@ -8,6 +8,7 @@ pub mod auth;
 pub mod connector;
 mod file_browser;
 pub mod handler;
+mod legacy_pem;
 mod monitoring;
 pub mod x11;
 

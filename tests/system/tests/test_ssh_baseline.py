@@ -9,10 +9,15 @@ from __future__ import annotations
 import pytest
 
 from termihub_harness import (
-    SSH_KEY_PATH,
+    ConnectionsUi,
+    PasswordPromptUi,
     SSH_KEYS_PORT,
+    SSH_KEY_PATH,
     SSH_USERNAME,
+    SshUi,
     SystemTest,
+    TabsUi,
+    TerminalUi,
     unique_name,
 )
 
@@ -22,7 +27,7 @@ HOST = "127.0.0.1"
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
-class TestSshBaseline(SystemTest):
+class TestSshBaseline(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, SshUi, SystemTest):
     def test_key_auth_connects_without_password_prompt(self):
         name = unique_name("ssh-key-baseline")
         self.create_ssh_connection(

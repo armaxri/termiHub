@@ -220,9 +220,10 @@ async fn ssh_auth_10_ecdsa_256_passphrase() {
 /// Passphrase-protected ECDSA-384 key in OpenSSH format.
 ///
 /// The fixture is stored as `-----BEGIN OPENSSH PRIVATE KEY-----`, which
-/// russh's `load_secret_key` decrypts directly. (An earlier libssh2-era
-/// fixture used encrypted PEM/SEC1 `-----BEGIN EC PRIVATE KEY-----`, which the
-/// current russh-based loader cannot decrypt — it misparses it as PKCS#1.)
+/// russh's `load_secret_key` decrypts directly. Encrypted PEM/SEC1
+/// (`-----BEGIN EC PRIVATE KEY-----`) keys, which russh's PKCS#5 path misparses
+/// as PKCS#1, are instead handled by termiHub's `backends::ssh::legacy_pem`
+/// fallback — covered by that module's own unit tests (#845).
 #[tokio::test]
 async fn ssh_auth_13_ecdsa_384_passphrase() {
     require_docker!(PORT_SSH_KEYS);
@@ -245,7 +246,8 @@ async fn ssh_auth_13_ecdsa_384_passphrase() {
 
 /// Passphrase-protected ECDSA-521 key in OpenSSH format.
 ///
-/// See the note on SSH-AUTH-13 regarding the key format.
+/// See the note on SSH-AUTH-13 regarding the key format and the `legacy_pem`
+/// fallback for encrypted PEM/SEC1 keys.
 #[tokio::test]
 async fn ssh_auth_14_ecdsa_521_passphrase() {
     require_docker!(PORT_SSH_KEYS);

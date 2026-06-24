@@ -9,7 +9,7 @@ tree via ``leaf_count()`` for a stronger structural check.
 
 import pytest
 
-from termihub_harness import SystemTest
+from termihub_harness import LayoutUi, SystemTest, TabsUi, TerminalUi
 
 pytestmark = pytest.mark.integration
 
@@ -18,7 +18,7 @@ NEW_TERMINAL = "terminal-view-new-terminal"
 CLOSE_PANEL = "terminal-view-close-panel"
 
 
-class TestSplitViews(SystemTest):
+class TestSplitViews(TerminalUi, TabsUi, LayoutUi, SystemTest):
     def _reset_to_single_terminal(self) -> None:
         """Collapse any splits and leave exactly one terminal panel open."""
         self.close_all_tabs()

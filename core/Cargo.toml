@@ -23,6 +23,17 @@ portable-pty = { version = "0.8", optional = true }
 tracing = { version = "0.1", optional = true }
 russh = { workspace = true, optional = true }
 russh-sftp = { workspace = true, optional = true }
+# Loading legacy PKCS#5-encrypted PEM EC keys that russh 0.61 can't parse
+# (see backends/ssh/legacy_pem.rs). Versions mirror russh's own crypto stack.
+aes = { version = "0.9", optional = true }
+cbc = { version = "0.2", optional = true }
+md5 = { version = "0.7", optional = true }
+sec1 = { version = "0.8", features = ["der"], optional = true }
+hex = { version = "0.4", optional = true }
+data-encoding = { version = "2", optional = true }
+p256 = { version = "=0.14.0-rc.9", optional = true }
+p384 = { version = "=0.14.0-rc.9", optional = true }
+p521 = { version = "=0.14.0-rc.9", optional = true }
 bollard = { workspace = true, optional = true }
 futures-util = { version = "0.3", optional = true }
 ringbuf = "0.5.0"
@@ -41,6 +52,19 @@ default = []
 serial = ["dep:serial2", "dep:serial2-tokio", "dep:tracing"]
 local-shell = ["dep:portable-pty", "dep:tracing"]
 telnet = ["dep:tracing"]
-ssh = ["dep:russh", "dep:russh-sftp", "dep:tracing"]
+ssh = [
+    "dep:russh",
+    "dep:russh-sftp",
+    "dep:tracing",
+    "dep:aes",
+    "dep:cbc",
+    "dep:md5",
+    "dep:sec1",
+    "dep:hex",
+    "dep:data-encoding",
+    "dep:p256",
+    "dep:p384",
+    "dep:p521",
+]
 docker = ["dep:bollard", "dep:futures-util", "dep:tracing"]
 wsl = ["dep:portable-pty", "dep:tracing"]

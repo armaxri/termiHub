@@ -8,7 +8,17 @@ from __future__ import annotations
 
 import pytest
 
-from termihub_harness import SSH_PASSWORD, SSH_PASSWORD_PORT, SSH_USERNAME, SystemTest, unique_name
+from termihub_harness import (
+    ConnectionsUi,
+    PasswordPromptUi,
+    SSH_PASSWORD,
+    SSH_PASSWORD_PORT,
+    SSH_USERNAME,
+    SystemTest,
+    TabsUi,
+    TerminalUi,
+    unique_name,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -16,7 +26,7 @@ HOST = "127.0.0.1"
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
-class TestSshExtended(SystemTest):
+class TestSshExtended(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, SystemTest):
     def test_connects_without_x11(self):
         name = unique_name("ssh-no-x11")
         self.create_ssh_connection(

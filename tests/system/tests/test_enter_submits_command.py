@@ -22,12 +22,12 @@ PLATFORM CAVEAT — read before trusting a green run:
 
 import pytest
 
-from termihub_harness import SystemTest
+from termihub_harness import SystemTest, TerminalUi
 
 pytestmark = pytest.mark.integration
 
 
-class TestEnterSubmitsCommand(SystemTest):
+class TestEnterSubmitsCommand(TerminalUi, SystemTest):
     def test_enter_submits_command_default_line_ending(self):
         self.ensure_terminal()
         self.delay4user(1, reason="terminal opened")  # no-op unless --delay4user

@@ -16,6 +16,7 @@ use crate::config::SshConfig;
 use crate::errors::SessionError;
 
 use super::handler::{ForwardedChannelRegistry, SshSession, TermiHubHandler};
+use super::legacy_pem;
 
 /// Connect to an SSH server, perform handshake, and authenticate.
 ///
@@ -133,8 +134,12 @@ async fn authenticate(session: &mut SshSession, config: &SshConfig) -> Result<()
             let key_path = PathBuf::from(&expanded);
             let passphrase = config.password.as_deref();
 
-            let key_pair = russh::keys::load_secret_key(&key_path, passphrase)
-                .map_err(|e| SessionError::SpawnFailed(format!("Failed to load key: {e}")))?;
+            let key_pair = match russh::keys::load_secret_key(&key_path, passphrase) {
+                Ok(key) => key,
+                // russh 0.61 can't load passphrase-protected legacy-PEM EC keys
+                // (its PKCS#5 path assumes RSA); fall back to our own loader.
+                Err(orig) => load_legacy_pem_ec_key(&key_path, passphrase, orig)?,
+            };
 
             // For RSA keys, negotiate the strongest hash the server accepts
             // (rsa-sha2-512/256); the choice is ignored for ed25519/ecdsa keys.
@@ -172,6 +177,30 @@ async fn authenticate(session: &mut SshSession, config: &SshConfig) -> Result<()
     }
 
     Ok(())
+}
+
+/// Fallback loader for passphrase-protected **legacy-PEM** EC keys.
+///
+/// russh 0.61's PKCS#5 path decrypts such keys but parses the plaintext only as
+/// RSA, so `load_secret_key` fails on a `-----BEGIN EC PRIVATE KEY-----` key.
+/// When the file is one of those we decrypt and parse it ourselves; otherwise we
+/// surface russh's `original_error` unchanged so unrelated failures keep their
+/// message. See [`legacy_pem`].
+fn load_legacy_pem_ec_key(
+    key_path: &std::path::Path,
+    passphrase: Option<&str>,
+    original_error: russh::keys::Error,
+) -> Result<russh::keys::PrivateKey, SessionError> {
+    let fail = || SessionError::SpawnFailed(format!("Failed to load key: {original_error}"));
+    let contents = std::fs::read_to_string(key_path).map_err(|_| fail())?;
+    if !legacy_pem::is_encrypted_ec_pem(&contents) {
+        return Err(fail());
+    }
+    let passphrase = passphrase.ok_or_else(|| {
+        SessionError::SpawnFailed("Encrypted key requires a passphrase".to_string())
+    })?;
+    legacy_pem::load(&contents, passphrase)
+        .map_err(|e| SessionError::SpawnFailed(format!("Failed to load key: {e}")))
 }
 
 /// Try each identity offered by the SSH agent until one succeeds (Unix).

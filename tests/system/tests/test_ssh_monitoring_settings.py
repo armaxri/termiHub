@@ -14,7 +14,19 @@ from __future__ import annotations
 
 import pytest
 
-from termihub_harness import SystemTest, unique_name
+from termihub_harness import (
+    ConnectionsUi,
+    MonitoringUi,
+    PasswordPromptUi,
+    SettingsUi,
+    SftpUi,
+    SidebarUi,
+    SshUi,
+    SystemTest,
+    TabsUi,
+    TerminalUi,
+    unique_name,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -23,7 +35,7 @@ FILES = ("toggle-file-browser", "settings.fileBrowserEnabled")
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
-class TestSshMonitoringSettings(SystemTest):
+class TestSshMonitoringSettings(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, PasswordPromptUi, SshUi, MonitoringUi, SftpUi, SettingsUi, SystemTest):
     @pytest.fixture(autouse=True)
     def _restore_settings(self):
         yield
