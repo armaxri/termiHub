@@ -445,4 +445,122 @@ mod tests {
             "unknown (e_machine=0x00ff)"
         );
     }
+
+    // ── Docker-backed integration test ───────────────────────────────────
+    //
+    // Exercises the real agent-deploy SFTP path (`connect_and_authenticate` +
+    // `upload_via_sftp` + `run_remote_command`) against a live SSH server. These
+    // helpers are the exact #828/#837 crash surface: they bridge async russh to
+    // sync callers via `block_in_place` + `Handle::current()`, which require a
+    // multi-threaded Tokio runtime worker context. The test runs them from
+    // `spawn_blocking` (the context the #837 fix establishes for the agent-setup
+    // background phase), so a regression that reintroduces the bad thread context
+    // — or breaks the SFTP upload itself — fails here.
+    //
+    // Lives in-crate (rather than `core/tests/`) because these helpers are in the
+    // desktop crate's private `utils` module. Self-skips when the container is not
+    // up, mirroring the `require_docker!` convention in `core/tests/common`.
+    // Bring the container up with:
+    //   docker compose -f tests/docker/docker-compose.yml up -d ssh-password
+    //
+    // The test is pinned to **password auth** against the `ssh-password` container.
+    // The port is read from `TERMIHUB_TEST_SSH_PASSWORD_PORT` (default 2201) so a
+    // sharded / parallel run can point at a separate container instance, and every
+    // upload targets a UUID-suffixed remote path so concurrent tests never collide
+    // on the remote `/tmp` file. (The per-checkout `dev_agent_port` sshd from
+    // `dev.local.json` is key-auth only — `PasswordAuthentication no` — so it is
+    // deliberately not a target here.)
+
+    /// Default host port of the shared `ssh-password` container (`tests/docker`).
+    const DEFAULT_SSH_PASSWORD_PORT: u16 = 2201;
+
+    /// Resolve the `ssh-password` container port, allowing an env override so
+    /// parallel runs can target distinct container instances.
+    fn ssh_password_port() -> u16 {
+        std::env::var("TERMIHUB_TEST_SSH_PASSWORD_PORT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(DEFAULT_SSH_PASSWORD_PORT)
+    }
+
+    /// Returns `true` if a TCP connection to the SSH server succeeds quickly.
+    fn ssh_port_reachable(port: u16) -> bool {
+        use std::net::TcpStream;
+        use std::time::Duration;
+        format!("127.0.0.1:{port}")
+            .parse()
+            .ok()
+            .and_then(|addr| TcpStream::connect_timeout(&addr, Duration::from_secs(2)).ok())
+            .is_some()
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn agent_deploy_sftp_upload_round_trips_over_real_ssh() {
+        let port = ssh_password_port();
+        if !ssh_port_reachable(port) {
+            eprintln!(
+                "SKIPPED: ssh-password container not reachable on port {port} \
+                 (start with: docker compose -f tests/docker/docker-compose.yml up -d ssh-password)"
+            );
+            return;
+        }
+
+        // Run the whole deploy SFTP path on a `spawn_blocking` thread, exactly as
+        // the agent-setup background phase now does (#837). This is the context
+        // `block_in_place` requires; a raw `std::thread` would abort the process.
+        let result = tokio::task::spawn_blocking(move || {
+            use crate::utils::ssh_auth::connect_and_authenticate;
+
+            // Pinned to password auth against the `ssh-password` container.
+            let config = crate::terminal::backend::SshConfig {
+                host: "127.0.0.1".to_string(),
+                port,
+                username: "testuser".to_string(),
+                auth_method: "password".to_string(),
+                password: Some("testpass".to_string()),
+                ..Default::default()
+            };
+
+            let session = connect_and_authenticate(&config)?;
+
+            // Upload a payload to a unique remote path, then read it back to
+            // confirm the bytes landed intact — the same SFTP code path the agent
+            // binary upload uses. The UUID suffix keeps concurrent tests (and
+            // parallel runs sharing a container) from colliding on the remote file.
+            let payload = b"termihub-agent-deploy-integration-payload\n";
+            let dir = tempfile::tempdir()
+                .map_err(|e| TerminalError::SpawnFailed(format!("tempdir: {e}")))?;
+            let local_path = dir.path().join("agent-deploy-payload");
+            std::fs::write(&local_path, payload)
+                .map_err(|e| TerminalError::SpawnFailed(format!("write local: {e}")))?;
+
+            let remote_path = format!("/tmp/termihub-agent-deploy-test-{}", uuid::Uuid::new_v4());
+
+            let uploaded = upload_via_sftp(
+                &session,
+                local_path.to_str().expect("utf-8 temp path"),
+                &remote_path,
+            )?;
+
+            let read_back = run_remote_command(&session, &format!("cat {remote_path}"));
+            // Best-effort cleanup before surfacing any read error.
+            let _ = run_remote_command(&session, &format!("rm -f {remote_path}"));
+
+            Ok::<_, TerminalError>((uploaded, read_back?))
+        })
+        .await
+        .expect("spawn_blocking join");
+
+        let (uploaded, read_back) = result.expect("agent-deploy SFTP round trip should succeed");
+        assert_eq!(
+            uploaded as usize,
+            "termihub-agent-deploy-integration-payload\n".len(),
+            "uploaded byte count should match the payload size"
+        );
+        assert_eq!(
+            read_back.trim(),
+            "termihub-agent-deploy-integration-payload",
+            "remote file contents should match the uploaded payload"
+        );
+    }
 }
