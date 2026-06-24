@@ -9,12 +9,12 @@ point, which are covered by sibling suites (see the note at the end of the class
 
 import pytest
 
-from termihub_harness import SystemTest
+from termihub_harness import LayoutUi, SettingsUi, SystemTest, TabsUi, TerminalUi
 
 pytestmark = pytest.mark.integration
 
 
-class TestSettings(SystemTest):
+class TestSettings(TerminalUi, TabsUi, LayoutUi, SettingsUi, SystemTest):
     # ── Settings tab + gear menu ────────────────────────────────────────────
     def test_opens_a_settings_tab(self):
         self.close_all_tabs()

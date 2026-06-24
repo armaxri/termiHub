@@ -8,12 +8,12 @@ launched once for the suite and the polling/terminal helpers are inherited.
 
 import pytest
 
-from termihub_harness import SystemTest
+from termihub_harness import SystemTest, TerminalUi
 
 pytestmark = pytest.mark.integration
 
 
-class TestAppLifecycle(SystemTest):
+class TestAppLifecycle(TerminalUi, SystemTest):
     def test_terminal_input_and_read(self):
         self.ensure_terminal()
         marker = "HELLO_FROM_BRIDGE_4242"

@@ -11,12 +11,12 @@ import sys
 
 import pytest
 
-from termihub_harness import SystemTest
+from termihub_harness import ConnectionsUi, LayoutUi, SystemTest, TabsUi, TerminalUi
 
 pytestmark = pytest.mark.integration
 
 
-class TestCrossPlatform(SystemTest):
+class TestCrossPlatform(TerminalUi, TabsUi, LayoutUi, ConnectionsUi, SystemTest):
     def _open_new_connection_editor(self) -> None:
         self.set_sidebar_visible(True)
         self.open_new_connection_editor()

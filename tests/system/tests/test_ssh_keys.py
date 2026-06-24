@@ -9,10 +9,14 @@ from __future__ import annotations
 import pytest
 
 from termihub_harness import (
-    SSH_KEY_PATH,
+    ConnectionsUi,
+    PasswordPromptUi,
     SSH_KEYS_PORT,
+    SSH_KEY_PATH,
     SSH_USERNAME,
     SystemTest,
+    TabsUi,
+    TerminalUi,
     unique_name,
 )
 
@@ -23,7 +27,7 @@ KEYS_DIR = SSH_KEY_PATH.parent
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
-class TestSshKeyAuthUi(SystemTest):
+class TestSshKeyAuthUi(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, SystemTest):
     def test_editor_saves_a_key_auth_connection(self):
         # The "key auth via UI" smoke check: the editor builds + persists a
         # key-auth SSH connection (the original WebdriverIO test only verified

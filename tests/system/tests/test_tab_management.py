@@ -11,14 +11,14 @@ Y-coordinate ordering checks, which assert pixel geometry.
 
 import pytest
 
-from termihub_harness import SystemTest
+from termihub_harness import SystemTest, TabsUi, TerminalUi
 
 pytestmark = pytest.mark.integration
 
 NEW = "terminal-view-new-terminal"
 
 
-class TestTabManagement(SystemTest):
+class TestTabManagement(TerminalUi, TabsUi, SystemTest):
     def _reset(self) -> None:
         self.close_all_tabs()
         self.ensure_terminal()

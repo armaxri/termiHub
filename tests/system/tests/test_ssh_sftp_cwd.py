@@ -10,13 +10,24 @@ import time
 
 import pytest
 
-from termihub_harness import SSH_USERNAME, SystemTest, unique_name
+from termihub_harness import (
+    ConnectionsUi,
+    PasswordPromptUi,
+    SSH_USERNAME,
+    SftpUi,
+    SidebarUi,
+    SshUi,
+    SystemTest,
+    TabsUi,
+    TerminalUi,
+    unique_name,
+)
 
 pytestmark = pytest.mark.integration
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
-class TestSshSftpCwd(SystemTest):
+class TestSshSftpCwd(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, PasswordPromptUi, SshUi, SftpUi, SystemTest):
     @pytest.fixture(autouse=True)
     def _close_tabs_between_tests(self):
         # The file browser tracks the *active* tab's CWD, so leftover SSH tabs

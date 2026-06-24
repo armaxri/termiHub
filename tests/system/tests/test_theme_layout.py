@@ -14,14 +14,14 @@ current dialog.
 
 import pytest
 
-from termihub_harness import SystemTest
+from termihub_harness import SettingsUi, SystemTest, TabsUi
 
 pytestmark = pytest.mark.integration
 
 THEME_SELECT = "appearance-theme-select"
 
 
-class TestThemeLayout(SystemTest):
+class TestThemeLayout(TabsUi, SettingsUi, SystemTest):
     def _open_customize_layout(self) -> None:
         self.driver.click("activity-bar-settings")
         self.wait(lambda: self.driver.exists("settings-menu-customize-layout"), what="the gear menu")

@@ -27,12 +27,12 @@ from __future__ import annotations
 
 import pytest
 
-from termihub_harness import ConnectionsUi, SystemTest, unique_name
+from termihub_harness import ConnectionsUi, SidebarUi, SystemTest, TabsUi, unique_name
 
 pytestmark = pytest.mark.integration
 
 
-class TestConnectionCrud(ConnectionsUi, SystemTest):
+class TestConnectionCrud(TabsUi, SidebarUi, ConnectionsUi, SystemTest):
     """One app for the whole suite; methods run in order and share its state."""
 
     @pytest.fixture(autouse=True)

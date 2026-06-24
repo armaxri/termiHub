@@ -16,11 +16,16 @@ import time
 import pytest
 
 from termihub_harness import (
-    SSH_KEY_PATH,
+    ConnectionsUi,
+    MonitoringUi,
+    PasswordPromptUi,
     SSH_KEYS_PORT,
+    SSH_KEY_PATH,
     SSH_PASSWORD_PORT,
     SSH_USERNAME,
     SystemTest,
+    TabsUi,
+    TerminalUi,
     unique_name,
 )
 
@@ -30,7 +35,7 @@ HOST = "127.0.0.1"
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
-class TestSshPasswordAuth(SystemTest):
+class TestSshPasswordAuth(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, SystemTest):
     """SSH-01: password authentication opens a working terminal tab."""
 
     def test_connects_with_password_and_opens_a_tab(self):
@@ -67,7 +72,7 @@ class TestSshPasswordAuth(SystemTest):
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
-class TestSshPasswordPromptFlow(SystemTest):
+class TestSshPasswordPromptFlow(TabsUi, ConnectionsUi, PasswordPromptUi, SystemTest):
     """SSH-PASSWORD: the password-prompt modal gates the connection."""
 
     def test_prompt_appears_on_connect(self):
@@ -119,7 +124,7 @@ class TestSshPasswordPromptFlow(SystemTest):
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
-class TestSshKeyAuth(SystemTest):
+class TestSshKeyAuth(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, SystemTest):
     """SSH-02: key-based authentication connects without a password prompt."""
 
     def test_connects_with_key_and_opens_a_tab(self):
@@ -142,7 +147,7 @@ class TestSshKeyAuth(SystemTest):
         self.wait(self.has_terminal, what="the SSH terminal session")
 
 
-class TestSshConnectionFailure(SystemTest):
+class TestSshConnectionFailure(ConnectionsUi, PasswordPromptUi, SystemTest):
     """SSH-03: an unreachable host fails gracefully (no Docker needed)."""
 
     def test_unreachable_host_is_handled_gracefully(self):
@@ -167,7 +172,7 @@ class TestSshConnectionFailure(SystemTest):
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
-class TestSshSessionOutput(SystemTest):
+class TestSshSessionOutput(TerminalUi, ConnectionsUi, PasswordPromptUi, SystemTest):
     """SSH-05: the SSH terminal is interactive and streams command output."""
 
     def test_terminal_echoes_command_output(self):
@@ -188,7 +193,7 @@ class TestSshSessionOutput(SystemTest):
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
-class TestSshMonitoring(SystemTest):
+class TestSshMonitoring(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, MonitoringUi, SystemTest):
     """SSH-08: monitoring shows on an SSH tab and hides on a local tab."""
 
     def test_monitoring_tracks_the_active_tab(self):

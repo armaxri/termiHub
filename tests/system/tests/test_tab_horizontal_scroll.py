@@ -11,14 +11,14 @@ the xterm GPU canvas / OS window, which the in-webview bridge cannot drive.
 
 import pytest
 
-from termihub_harness import SystemTest
+from termihub_harness import SystemTest, TabsUi, TerminalUi
 
 pytestmark = pytest.mark.integration
 
 CTX_HSCROLL = "tab-context-horizontal-scroll"
 
 
-class TestTabHorizontalScroll(SystemTest):
+class TestTabHorizontalScroll(TerminalUi, TabsUi, SystemTest):
     def _hscroll(self, tab_id: str):
         return (self.driver.get_state("tabHorizontalScrolling") or {}).get(tab_id)
 

@@ -13,7 +13,7 @@ that are visual properties without a meaningful state equivalent.
 
 import pytest
 
-from termihub_harness import SystemTest
+from termihub_harness import LayoutUi, SystemTest, TerminalUi
 
 pytestmark = pytest.mark.integration
 
@@ -22,7 +22,7 @@ TOGGLE = "connection-list-group-toggle"
 EXPANDED_CLASS = "connection-list__group--expanded"
 
 
-class TestSidebarSections(SystemTest):
+class TestSidebarSections(TerminalUi, LayoutUi, SystemTest):
     def _expanded(self) -> bool:
         return EXPANDED_CLASS in (self.driver.get_attribute(GROUP, "class") or "")
 
