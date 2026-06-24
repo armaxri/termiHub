@@ -239,22 +239,60 @@ mod tests {
     // Shared passphrase for every committed test key (see tests/fixtures README).
     const PASSPHRASE: &str = "testpass123";
 
-    // The two AES-128-CBC SEC1 fixtures the SSH integration tests use (#812).
-    const P384_AES128: &str =
-        include_str!("../../../../tests/fixtures/ssh-keys/ecdsa_384_passphrase");
-    const P521_AES128: &str =
-        include_str!("../../../../tests/fixtures/ssh-keys/ecdsa_521_passphrase");
+    // Self-contained AES-128-CBC PEM/SEC1 keys (passphrase `testpass123`) for the
+    // two curves the fallback exists for. Kept inline rather than read from
+    // `tests/fixtures/ssh-keys/` because those fixtures are OpenSSH-format (russh
+    // loads them directly) — these exercise the legacy-PEM path specifically.
+    const P384_AES128: &str = r"-----BEGIN EC PRIVATE KEY-----
+Proc-Type: 4,ENCRYPTED
+DEK-Info: AES-128-CBC,DF8026B0D98D1566B0EA00199159ECBA
+
+ZOEf5fijOFqQauMOyoAmGXbUm7S+5pu1h3U1QqskD6USelPeSW+x33eqAqk3Mi/G
+zC+TsarXwqsUxLitzhrM2zY+es7BYzdbxZC5/LZ1XA0SPGZgju9NdHpd+ULNUzWP
+dbmKfM3UlNPlEhx1N1ushVfv8IEbr5pVJJEE30+rK5SZyI0gY6c8QRIvIyPwL7gG
+TkTWkNXIa0HlE/VfB3j+KuOCo7KZZaC4BXVTWpWjK889Bq4wCVcnCrjVQbATvufq
+ksaP40EcyqMVdvZWhs2E9hj70wGxH+v2ZK1IANHtQe72ufLYO52VEUXtC0rJl/W/
+7sqZYiXqwQAenVj5a12mzYZhMxK9g9hDKqjUslaOuXdA61CaU2AZ1YWqk6lAdzSO
+lquZZgzlQTAfBTe2Ok2Huh8bHO1rkZPDYjNH7GNDIswzm/bxvySuhwvqQH0kgnCM
+TmdUInm/2jrvxSbtxAN7GMyVJZnrd7O16dQssNCj4Z+ruvPXpWHpBhl4ekly09vw
+V2hcIbkT8oFeIBqRsyUrybDb7QiNXV0FpwQOb1Zly5dT7ZGmMYdtUjWd/YaWdiVZ
++jqQxPBc8uFStboVtxDK/VUUPkYUhyXb4T1eOgSD+zXfXxJMoo+/fSB4rnEeqe+P
+EUAgh3LmxvBt5C97gNqSVdEUZ1ACgaKjqTMy8H8o4KU=
+-----END EC PRIVATE KEY-----
+";
+    const P521_AES128: &str = r"-----BEGIN EC PRIVATE KEY-----
+Proc-Type: 4,ENCRYPTED
+DEK-Info: AES-128-CBC,5112809B7663F8488D9F9960A5AB873F
+
+CiHxXonHhl8A3YZPTs7EjQweI+fgcoitaMkuXUA/GyY0h6AB2y3C3KOpXoyDUTU9
+2h46yGRn7dgxEeLB8tetju6jdHwbCJCBw2mWRLueUfTvTVlPbMb5GgB5CE15UUYe
+UcDOoicEy2ySVjdNrPF5q27UAQ4BRDfBSD0y1WkuvxtKQK3V3hbam6/p/HKd7auk
+eGiT+vhIHj5WCaI8zueI276fp3Ke1wrU1ZP6d/T9hnxporxTlt28sfDEPytVcraR
+1dk9eeuGttg1SLHxmcFYG17+s3oUxc1G8p/xtEKqSOW71Y6wlGSTV/Iufw0tNsHK
+OUZ97sXsIJp5cfYQmGFB4PIHE/WGBK5P4whrsSQYd0HKfjjy6EwRMS6fAzXrBQc7
+wkL3XFzNw4ToNMQQRIKzLp2+sSBU2HI1cQp/6Lpa6A4dVqr+keU8juQN+fD5N0DU
+4HQGettNRNdrvBRoL/DOld9H8rfhRvAUkm+4F23JZbAAd8Bc9iQ15X8R0b34xo1D
+PFdzwh980wnov/x8gYTRN9eu6HTT2N5224XNXzjRlkz8KCHICworhwBkRElbMFWm
+5cqrTjKg3EgMzdUvMkyo0Psbvg4GPDhZ67zvB9ArkwzZGFPjHIOH9QUf7Anq2SQn
+ih2CS0J3p5UazXA3H1fs26RaWklc+V3IZvas5QOx74d2A5Mpm6DpxgCyx0dRJJu1
+5DoVzUcQylRz57F/eFi2FOA9YeOZd+WSM0jFDbCIsCZycdwKPFpkHg3odB/j8xjQ
+bJ+XQ/RF62PlSyZ057SemRW/MNMtkcRp6ddO9ebkrr2oxS3UBY8O3AM1bOJUPEaY
+cGfAeYvu2iAN7+RkoA3/oDs9ExD/53STLUv6OCE13ZNIIAaNpTtlENp/fTeNikRv
+kBwBMkhEcEfw3SxxgMVxdg==
+-----END EC PRIVATE KEY-----
+";
 
     // An AES-256-CBC P-256 key (modern OpenSSL default cipher) — exercises the
     // multi-round EVP_BytesToKey path the AES-128 fixtures don't.
-    const P256_AES256: &str = "-----BEGIN EC PRIVATE KEY-----\n\
-Proc-Type: 4,ENCRYPTED\n\
-DEK-Info: AES-256-CBC,EC90B1B3EF50AEA84EF535A718DD556A\n\
-\n\
-Vt26zjYsGYHqY3U2H1J3zWdFiNJCCEuA52f3TnxHcb39SpXo1wS2jmv99uZL1fKp\n\
-pVFHdRvCSO+eesCC5pFGL0dsId55F99Owsv9x6uLDCIRfDHxnotCNJKweTRrw/Cq\n\
-YzFrVtZtPSv2X+vDFPgp/l77tqnSOAb8Zvt4un8hgp0=\n\
------END EC PRIVATE KEY-----\n";
+    const P256_AES256: &str = r"-----BEGIN EC PRIVATE KEY-----
+Proc-Type: 4,ENCRYPTED
+DEK-Info: AES-256-CBC,EC90B1B3EF50AEA84EF535A718DD556A
+
+Vt26zjYsGYHqY3U2H1J3zWdFiNJCCEuA52f3TnxHcb39SpXo1wS2jmv99uZL1fKp
+pVFHdRvCSO+eesCC5pFGL0dsId55F99Owsv9x6uLDCIRfDHxnotCNJKweTRrw/Cq
+YzFrVtZtPSv2X+vDFPgp/l77tqnSOAb8Zvt4un8hgp0=
+-----END EC PRIVATE KEY-----
+";
 
     fn curve_of(pem: &str) -> EcdsaCurve {
         match load(pem, PASSPHRASE).expect("key should load").algorithm() {
