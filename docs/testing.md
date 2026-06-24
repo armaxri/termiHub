@@ -598,24 +598,55 @@ docker compose -f tests/docker/docker-compose.yml --profile all down
 
 ### Test Suites
 
-| Suite                | File                                              | Tests | Docker Containers                          | Description                                                                                                                    |
-| -------------------- | ------------------------------------------------- | ----- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
-| SSH Auth             | `core/tests/ssh_auth.rs`                          | 15    | ssh-password:2201, ssh-keys:2203           | Password, 6 key types, 5 passphrase keys, wrong credentials, wrong passphrase                                                  |
-| SSH Compat           | `core/tests/ssh_compat.rs`                        | 2     | ssh-legacy:2202                            | Legacy OpenSSH 7.x compatibility                                                                                               |
-| SSH Advanced         | `core/tests/ssh_advanced.rs`                      | 5     | bastion:2204, restricted:2205, tunnel:2207 | Jump host, restricted shell, TCP tunneling                                                                                     |
-| SSH Banner           | `core/tests/ssh_banner.rs`                        | 3     | ssh-banner:2206, ssh-password:2201         | Pre-auth banner text, no-banner on standard server, banner on failed auth                                                      |
-| Telnet               | `core/tests/telnet.rs`                            | 3     | telnet:2301                                | Connect, output subscribe, login flow                                                                                          |
-| SFTP Stress          | `core/tests/sftp_stress.rs`                       | 16    | sftp-stress:2210                           | Large files, deep trees, symlinks, special filenames, permissions                                                              |
-| Network Resilience   | `core/tests/network_resilience.rs`                | 10    | network-fault:2209                         | Latency, packet loss, throttle, disconnect, jitter, corruption                                                                 |
-| Monitoring           | `core/tests/monitoring.rs`                        | 4     | ssh-password:2201                          | CPU, memory, disk stats, stats under load                                                                                      |
-| SSH Banner (E2E)     | `tests/e2e/infrastructure/ssh-banner.test.js`     | 2     | ssh-banner:2206                            | Pre-auth banner UI display, MOTD display                                                                                       |
-| SSH Keys (E2E)       | `tests/e2e/infrastructure/ssh-keys.test.js`       | 1     | ssh-keys:2203                              | Key auth UI flow                                                                                                               |
-| SSH Infra (system)   | `tests/system/tests/test_ssh.py`                  | 9     | ssh-password:2201, ssh-keys:2203           | Password/key auth, password-prompt modal, connection failure, session output, monitoring show/hide (ported from `ssh.test.js`) |
-| Windows Shells (E2E) | `tests/e2e/infrastructure/windows-shells.test.js` | 5     | none                                       | PowerShell, cmd.exe, WSL (Windows-only)                                                                                        |
+| Suite                | File                                              | Tests | Docker Containers                          | Description                                                                                                                                                                                                                                                                                                                                                           |
+| -------------------- | ------------------------------------------------- | ----- | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SSH Auth             | `core/tests/ssh_auth.rs`                          | 15    | ssh-password:2201, ssh-keys:2203           | Password, 6 key types, 5 passphrase keys, wrong credentials, wrong passphrase                                                                                                                                                                                                                                                                                         |
+| SSH Compat           | `core/tests/ssh_compat.rs`                        | 2     | ssh-legacy:2202                            | Legacy OpenSSH 7.x compatibility                                                                                                                                                                                                                                                                                                                                      |
+| SSH Advanced         | `core/tests/ssh_advanced.rs`                      | 5     | bastion:2204, restricted:2205, tunnel:2207 | Jump host, restricted shell, TCP tunneling                                                                                                                                                                                                                                                                                                                            |
+| SSH Banner           | `core/tests/ssh_banner.rs`                        | 3     | ssh-banner:2206, ssh-password:2201         | Pre-auth banner text, no-banner on standard server, banner on failed auth                                                                                                                                                                                                                                                                                             |
+| Telnet               | `core/tests/telnet.rs`                            | 3     | telnet:2301                                | Connect, output subscribe, login flow                                                                                                                                                                                                                                                                                                                                 |
+| SFTP Stress          | `core/tests/sftp_stress.rs`                       | 16    | sftp-stress:2210                           | Large files, deep trees, symlinks, special filenames, permissions                                                                                                                                                                                                                                                                                                     |
+| Network Resilience   | `core/tests/network_resilience.rs`                | 10    | network-fault:2209                         | Latency, packet loss, throttle, disconnect, jitter, corruption                                                                                                                                                                                                                                                                                                        |
+| Monitoring           | `core/tests/monitoring.rs`                        | 4     | ssh-password:2201                          | CPU, memory, disk stats, stats under load                                                                                                                                                                                                                                                                                                                             |
+| Agent Deploy SFTP    | `src-tauri/src/utils/remote_exec.rs`              | 1     | ssh-password:2201                          | Uploads a file over SFTP and reads it back, exercising the agent auto-deploy `block_in_place` path from `spawn_blocking` (#828/#837). In the desktop crate: `cargo test -p termihub --lib agent_deploy`. Pinned to password auth; port via `TERMIHUB_TEST_SSH_PASSWORD_PORT` (default 2201) — see [Parallel dev instances](#parallel-dev-instances-agent-deploy-test) |
+| SSH Banner (E2E)     | `tests/e2e/infrastructure/ssh-banner.test.js`     | 2     | ssh-banner:2206                            | Pre-auth banner UI display, MOTD display                                                                                                                                                                                                                                                                                                                              |
+| SSH Keys (E2E)       | `tests/e2e/infrastructure/ssh-keys.test.js`       | 1     | ssh-keys:2203                              | Key auth UI flow                                                                                                                                                                                                                                                                                                                                                      |
+| SSH Infra (system)   | `tests/system/tests/test_ssh.py`                  | 9     | ssh-password:2201, ssh-keys:2203           | Password/key auth, password-prompt modal, connection failure, session output, monitoring show/hide (ported from `ssh.test.js`)                                                                                                                                                                                                                                        |
+| Windows Shells (E2E) | `tests/e2e/infrastructure/windows-shells.test.js` | 5     | none                                       | PowerShell, cmd.exe, WSL (Windows-only)                                                                                                                                                                                                                                                                                                                               |
 
 ### Skip Behavior
 
 All Rust integration tests use the `require_docker!` macro which checks TCP port connectivity at runtime. If the required Docker container is not running, the test prints a message and returns early (no failure). This means you can run `cargo test` without Docker and only the tests requiring containers will be skipped.
+
+### Parallel Dev Instances (agent-deploy test)
+
+Several checkouts of termiHub can run side by side, each with its own gitignored
+`dev.local.json` (`dev_port`, `dev_agent_port`, `dev_name`). The **Agent Deploy
+SFTP** test (`agent_deploy_sftp_upload_round_trips_over_real_ssh`) is pinned to
+**password auth** against the `ssh-password` container, and reads its port from
+`TERMIHUB_TEST_SSH_PASSWORD_PORT` (default `2201`):
+
+```bash
+# default — shared container on 2201
+cargo test -p termihub --lib agent_deploy
+
+# point an instance at its own ssh-password container on a distinct port
+TERMIHUB_TEST_SSH_PASSWORD_PORT=2231 cargo test -p termihub --lib agent_deploy
+```
+
+The test self-skips when the chosen port is unreachable, and every upload uses a
+UUID-suffixed remote path, so concurrent runs against the **same** container never
+collide on the remote `/tmp` file.
+
+**Recommended usage for parallel checkouts:** the single shared `ssh-password:2201`
+container is safe to share across all instances as-is (UUID remote paths prevent
+collisions), so by default just run the test in each checkout. For fully isolated
+servers, give each checkout its own password container on a distinct host port and
+set `TERMIHUB_TEST_SSH_PASSWORD_PORT` to match in that checkout's environment.
+
+> The per-checkout `dev_agent_port` `sshd` that `./scripts/dev.sh` starts is **not**
+> used by this test: it is key-auth only (`PasswordAuthentication no`), so it is
+> incompatible with the password-auth path the test pins to.
 
 ### Per-Machine Test Scripts
 
