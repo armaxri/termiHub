@@ -90,6 +90,8 @@ def dispatcher_like(
     values = values or {}
     recorded: dict[str, list] = {
         "clicks": [],
+        "doubleClicks": [],
+        "resizes": [],
         "input": [],
         "drags": [],
         "selects": [],
@@ -103,6 +105,14 @@ def dispatcher_like(
         if action == "click":
             recorded["clicks"].append(command["testId"])
             return {"ok": True, "action": "click"}
+        if action == "doubleClick":
+            recorded["doubleClicks"].append(command["testId"])
+            return {"ok": True, "action": "doubleClick"}
+        if action == "resizeWindow":
+            recorded["resizes"].append(
+                {"width": command["width"], "height": command["height"]}
+            )
+            return {"ok": True, "action": "resizeWindow"}
         if action == "select":
             recorded["selects"].append({"testId": command["testId"], "value": command["value"]})
             return {"ok": True, "action": "select"}
