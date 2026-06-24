@@ -123,6 +123,12 @@ pub fn parse_ssh_settings(settings: &serde_json::Value) -> SshConfig {
             .unwrap_or(default)
     };
     let opt_bool = |key: &str| -> Option<bool> { settings.get(key).and_then(|v| v.as_bool()) };
+    let opt_u64 = |key: &str| -> Option<u64> {
+        settings.get(key).and_then(|v| {
+            v.as_u64()
+                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        })
+    };
 
     let port: u16 = settings
         .get("port")
@@ -162,6 +168,7 @@ pub fn parse_ssh_settings(settings: &serde_json::Value) -> SshConfig {
         enable_monitoring: opt_bool("enableMonitoring"),
         enable_file_browser: opt_bool("enableFileBrowser"),
         save_password: opt_bool("savePassword"),
+        connect_timeout_secs: opt_u64("connectTimeoutSecs"),
     }
 }
 
@@ -344,6 +351,29 @@ impl ConnectionType for Ssh {
                             required: false,
                             default: Some(serde_json::json!(true)),
                             placeholder: None,
+                            supports_env_expansion: false,
+                            supports_tilde_expansion: false,
+                            visible_when: None,
+                        },
+                        SettingsField {
+                            key: "connectTimeoutSecs".to_string(),
+                            label: "Connect Timeout (s)".to_string(),
+                            description: Some(
+                                "Seconds to wait for the connection and SSH handshake before giving up"
+                                    .to_string(),
+                            ),
+                            help_text: Some(
+                                "Bounds how long a connection to an unreachable host blocks before \
+                                 failing. Leave empty to use the default (20 s)."
+                                    .to_string(),
+                            ),
+                            field_type: FieldType::Number {
+                                min: Some(1.0),
+                                max: Some(300.0),
+                            },
+                            required: false,
+                            default: None,
+                            placeholder: Some("20".to_string()),
                             supports_env_expansion: false,
                             supports_tilde_expansion: false,
                             visible_when: None,
@@ -750,8 +780,37 @@ mod tests {
         let keys: Vec<&str> = group.fields.iter().map(|f| f.key.as_str()).collect();
         assert_eq!(
             keys,
-            vec!["shell", "enableX11Forwarding", "env", "shellIntegration"]
+            vec![
+                "shell",
+                "enableX11Forwarding",
+                "connectTimeoutSecs",
+                "env",
+                "shellIntegration"
+            ]
         );
+    }
+
+    #[test]
+    fn parse_ssh_settings_reads_connect_timeout() {
+        let settings = serde_json::json!({
+            "host": "h",
+            "username": "u",
+            "authMethod": "password",
+            "connectTimeoutSecs": 5,
+        });
+        let config = parse_ssh_settings(&settings);
+        assert_eq!(config.connect_timeout_secs, Some(5));
+    }
+
+    #[test]
+    fn parse_ssh_settings_connect_timeout_defaults_to_none() {
+        let settings = serde_json::json!({
+            "host": "h",
+            "username": "u",
+            "authMethod": "password",
+        });
+        let config = parse_ssh_settings(&settings);
+        assert_eq!(config.connect_timeout_secs, None);
     }
 
     #[test]

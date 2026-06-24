@@ -1,6 +1,12 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::time::Duration;
+
+/// Default SSH connect/handshake timeout (seconds) when a connection does not
+/// configure its own `connectTimeoutSecs`. Bounds how long a connect to an
+/// unreachable host may block before failing (#841).
+pub const DEFAULT_SSH_CONNECT_TIMEOUT_SECS: u64 = 20;
 
 /// Return the user's home directory.
 ///
@@ -244,6 +250,20 @@ pub struct SshConfig {
     pub enable_file_browser: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub save_password: Option<bool>,
+    /// Maximum time (seconds) to wait for the TCP connect + SSH handshake before
+    /// failing. `None` falls back to [`DEFAULT_SSH_CONNECT_TIMEOUT_SECS`] (#841).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connect_timeout_secs: Option<u64>,
+}
+
+impl SshConfig {
+    /// Connect/handshake timeout, falling back to the default when unset.
+    pub fn connect_timeout(&self) -> Duration {
+        Duration::from_secs(
+            self.connect_timeout_secs
+                .unwrap_or(DEFAULT_SSH_CONNECT_TIMEOUT_SECS),
+        )
+    }
 }
 
 impl Default for SshConfig {
@@ -263,6 +283,7 @@ impl Default for SshConfig {
             enable_monitoring: None,
             enable_file_browser: None,
             save_password: None,
+            connect_timeout_secs: None,
         }
     }
 }
@@ -876,6 +897,7 @@ mod tests {
             enable_monitoring: Some(true),
             enable_file_browser: Some(false),
             save_password: None,
+            connect_timeout_secs: Some(15),
         };
         let json = serde_json::to_string(&cfg).unwrap();
         let back: SshConfig = serde_json::from_str(&json).unwrap();
@@ -892,6 +914,7 @@ mod tests {
         assert_eq!(back.enable_monitoring, Some(true));
         assert_eq!(back.enable_file_browser, Some(false));
         assert!(back.save_password.is_none());
+        assert_eq!(back.connect_timeout_secs, Some(15));
     }
 
     // --- camelCase field name tests ---
@@ -1272,5 +1295,24 @@ mod tests {
             let expanded = cfg.expand();
             assert_eq!(expanded.image, "alpine:3");
         });
+    }
+
+    #[test]
+    fn ssh_connect_timeout_defaults_when_unset() {
+        let cfg = SshConfig::default();
+        assert_eq!(cfg.connect_timeout_secs, None);
+        assert_eq!(
+            cfg.connect_timeout(),
+            Duration::from_secs(DEFAULT_SSH_CONNECT_TIMEOUT_SECS)
+        );
+    }
+
+    #[test]
+    fn ssh_connect_timeout_honours_override() {
+        let cfg = SshConfig {
+            connect_timeout_secs: Some(5),
+            ..SshConfig::default()
+        };
+        assert_eq!(cfg.connect_timeout(), Duration::from_secs(5));
     }
 }

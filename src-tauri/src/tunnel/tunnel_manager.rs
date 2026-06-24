@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Context, Result};
 use tauri::{AppHandle, Emitter, Manager};
 use termihub_core::backends::ssh::handler::SshSession;
+use tokio_util::sync::CancellationToken;
 
 use crate::terminal::backend::SshConfig;
 
@@ -19,7 +20,7 @@ use super::storage::TunnelStorage;
 use crate::connection::manager::ConnectionManager;
 use crate::connection::recovery::RecoveryWarning;
 use crate::utils::errors::TerminalError;
-use crate::utils::ssh_auth::connect_with_registry;
+use crate::utils::ssh_auth::connect_with_registry_cancellable;
 
 /// An active tunnel with its forwarder.
 enum ActiveForwarder {
@@ -203,14 +204,13 @@ impl TunnelManager {
             }
         }
 
-        // Mark as connecting so a Stop click during the (blocking) handshake can
-        // cancel this start before it is registered as active (#829).
-        if !self.connecting.begin(tunnel_id) {
-            return Err(TerminalError::TunnelError(format!(
-                "Tunnel {} is already connecting",
-                tunnel_id
-            )));
-        }
+        // Mark as connecting so a Stop click during the handshake can cancel
+        // this start before it is registered as active (#829). The returned
+        // token is threaded into the SSH connect so a Stop aborts an in-flight
+        // handshake promptly rather than waiting it out (#841).
+        let cancel = self.connecting.begin(tunnel_id).ok_or_else(|| {
+            TerminalError::TunnelError(format!("Tunnel {} is already connecting", tunnel_id))
+        })?;
 
         // Emit connecting status
         self.emit_status(tunnel_id, TunnelStatus::Connecting, None);
@@ -219,7 +219,7 @@ impl TunnelManager {
         // handshake). On failure, surface it as `error` status instead of
         // leaving the tunnel stuck in `connecting` (#829) — unless a Stop was
         // requested mid-connect, in which case it has already gone disconnected.
-        let forwarder = match self.build_forwarder(&config) {
+        let forwarder = match self.build_forwarder(&config, cancel) {
             Ok(f) => f,
             Err(e) => {
                 match self.connecting.finish(tunnel_id) {
@@ -271,13 +271,17 @@ impl TunnelManager {
     /// For local/dynamic tunnels a pooled session reference is taken; if the
     /// forwarder then fails to start, the reference is released so the pool's
     /// ref count does not leak.
-    fn build_forwarder(&self, config: &TunnelConfig) -> Result<ActiveForwarder, TerminalError> {
+    fn build_forwarder(
+        &self,
+        config: &TunnelConfig,
+        cancel: CancellationToken,
+    ) -> Result<ActiveForwarder, TerminalError> {
         let ssh_config = self.resolve_ssh_config(&config.ssh_connection_id)?;
 
         let conn_id = &config.ssh_connection_id;
         match &config.tunnel_type {
             TunnelType::Local(local_config) => {
-                let session = self.pooled_session(conn_id, &ssh_config)?;
+                let session = self.pooled_session(conn_id, &ssh_config, cancel)?;
                 self.finish_pooled(
                     conn_id,
                     "local",
@@ -287,16 +291,17 @@ impl TunnelManager {
             TunnelType::Remote(remote_config) => {
                 // Remote forwarding needs tcpip_forward (&mut SshSession), so it always gets
                 // a dedicated connection rather than a pooled shared Arc<SshSession>.
-                let (session, registry) = connect_with_registry(&ssh_config).map_err(|e| {
-                    TerminalError::TunnelError(format!("SSH connect failed: {}", e))
-                })?;
+                let (session, registry) = connect_with_registry_cancellable(&ssh_config, cancel)
+                    .map_err(|e| {
+                        TerminalError::TunnelError(format!("SSH connect failed: {}", e))
+                    })?;
                 let f = RemoteForwarder::start(remote_config, session, registry).map_err(|e| {
                     TerminalError::TunnelError(format!("Failed to start remote forwarder: {}", e))
                 })?;
                 Ok(ActiveForwarder::Remote(f))
             }
             TunnelType::Dynamic(dynamic_config) => {
-                let session = self.pooled_session(conn_id, &ssh_config)?;
+                let session = self.pooled_session(conn_id, &ssh_config, cancel)?;
                 self.finish_pooled(
                     conn_id,
                     "dynamic",
@@ -312,12 +317,13 @@ impl TunnelManager {
         &self,
         ssh_connection_id: &str,
         ssh_config: &SshConfig,
+        cancel: CancellationToken,
     ) -> Result<Arc<SshSession>, TerminalError> {
         let mut pool = self
             .session_pool
             .lock()
             .map_err(|e| TerminalError::TunnelError(format!("Lock error: {}", e)))?;
-        Ok(pool.get_or_create(ssh_connection_id, ssh_config)?.0)
+        Ok(pool.get_or_create(ssh_connection_id, ssh_config, cancel)?.0)
     }
 
     /// Map the result of starting a pooled (local/dynamic) forwarder: on failure

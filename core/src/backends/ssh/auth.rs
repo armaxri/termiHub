@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use socket2::TcpKeepalive;
+use tokio_util::sync::CancellationToken;
 
 use crate::config::expand_config_value;
 use crate::config::SshConfig;
@@ -22,17 +23,70 @@ use super::legacy_pem;
 /// Returns an authenticated session handle and a channel registry for
 /// remote-port-forward notifications. Most callers only need the handle;
 /// the registry is used by [`RemoteForwarder`] and the X11 event loop.
+///
+/// The connect is bounded by [`SshConfig::connect_timeout`] so an unreachable
+/// host fails fast rather than blocking until the OS TCP timeout (#841).
 pub async fn connect_and_authenticate(
+    config: &SshConfig,
+) -> Result<(SshSession, ForwardedChannelRegistry), SessionError> {
+    connect_and_authenticate_cancellable(config, None).await
+}
+
+/// Like [`connect_and_authenticate`], but additionally abortable via a
+/// [`CancellationToken`].
+///
+/// Cancelling the token (e.g. when a tunnel is stopped mid-connect) aborts the
+/// in-flight TCP connect / SSH handshake promptly instead of waiting out the
+/// connect timeout or the OS TCP timeout (#841). The whole connect is also
+/// bounded by [`SshConfig::connect_timeout`].
+pub async fn connect_and_authenticate_cancellable(
+    config: &SshConfig,
+    cancel: Option<CancellationToken>,
+) -> Result<(SshSession, ForwardedChannelRegistry), SessionError> {
+    let timeout = config.connect_timeout();
+    let connect = async {
+        tokio::time::timeout(timeout, do_connect_and_authenticate(config))
+            .await
+            .map_err(|_| {
+                SessionError::SpawnFailed(format!(
+                    "Connection timed out after {}s",
+                    timeout.as_secs()
+                ))
+            })?
+    };
+
+    match cancel {
+        Some(token) => {
+            tokio::select! {
+                biased;
+                _ = token.cancelled() => {
+                    Err(SessionError::SpawnFailed("Connection cancelled".to_string()))
+                }
+                res = connect => res,
+            }
+        }
+        None => connect.await,
+    }
+}
+
+/// Establish the TCP connection, run the SSH handshake, and authenticate.
+///
+/// Kept separate so [`connect_and_authenticate_cancellable`] can wrap it in a
+/// timeout and an optional cancellation `select!`.
+async fn do_connect_and_authenticate(
     config: &SshConfig,
 ) -> Result<(SshSession, ForwardedChannelRegistry), SessionError> {
     let addr = format!("{}:{}", config.host, config.port);
 
-    // Connect a plain TCP stream so we can configure keepalives before handing
-    // it to russh. This mirrors the libssh2 setup: probe after 2 s idle, retry
-    // every 2 s, give up after 1 failed probe.
-    let std_tcp = std::net::TcpStream::connect(&addr)
+    // Async connect so the surrounding connect timeout / cancellation token can
+    // interrupt a hung connect; a blocking std connect would ignore them (#841).
+    let tokio_tcp = tokio::net::TcpStream::connect(&addr)
+        .await
         .map_err(|e| SessionError::SpawnFailed(format!("Connection failed: {e}")))?;
 
+    // Configure TCP keepalives on the connected socket before the SSH handshake.
+    // This mirrors the libssh2 setup: probe after 2 s idle, retry every 2 s,
+    // give up after 1 failed probe.
     {
         let ka = {
             let base = TcpKeepalive::new()
@@ -42,17 +96,10 @@ pub async fn connect_and_authenticate(
             let base = base.with_retries(1);
             base
         };
-        if let Err(e) = socket2::SockRef::from(&std_tcp).set_tcp_keepalive(&ka) {
+        if let Err(e) = socket2::SockRef::from(&tokio_tcp).set_tcp_keepalive(&ka) {
             tracing::warn!("TCP keepalive setup failed: {e}");
         }
     }
-
-    std_tcp
-        .set_nonblocking(true)
-        .map_err(|e| SessionError::SpawnFailed(format!("Failed to set non-blocking: {e}")))?;
-
-    let tokio_tcp = tokio::net::TcpStream::from_std(std_tcp)
-        .map_err(|e| SessionError::SpawnFailed(format!("TcpStream conversion failed: {e}")))?;
 
     let russh_config = Arc::new(russh::client::Config {
         // SSH-level keepalives: send every 30 s, abort after 3 unanswered.
@@ -273,6 +320,92 @@ pub fn check_ssh_agent_status() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
+
+    /// Spawn a TCP listener that accepts one connection but never speaks SSH,
+    /// so the handshake hangs. Returns the bound port.
+    async fn spawn_silent_ssh_server() -> u16 {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let port = listener.local_addr().expect("local_addr").port();
+        tokio::spawn(async move {
+            // Accept and hold the connection open without sending a banner.
+            if let Ok((stream, _)) = listener.accept().await {
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                drop(stream);
+            }
+        });
+        port
+    }
+
+    fn silent_config(port: u16, connect_timeout_secs: u64) -> SshConfig {
+        SshConfig {
+            host: "127.0.0.1".to_string(),
+            port,
+            username: "tester".to_string(),
+            auth_method: "password".to_string(),
+            connect_timeout_secs: Some(connect_timeout_secs),
+            ..SshConfig::default()
+        }
+    }
+
+    /// The handshake against a server that never sends a banner must fail within
+    /// the configured connect timeout rather than hanging (#841).
+    #[tokio::test]
+    async fn connect_times_out_on_silent_server() {
+        let port = spawn_silent_ssh_server().await;
+        let config = silent_config(port, 1);
+
+        let start = Instant::now();
+        let result = connect_and_authenticate(&config).await;
+        let elapsed = start.elapsed();
+
+        let err = match result {
+            Ok(_) => panic!("connect should time out"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("timed out"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "timeout took too long: {elapsed:?}"
+        );
+    }
+
+    /// Cancelling the token mid-handshake aborts the connect promptly, well
+    /// before the (long) connect timeout would fire (#841).
+    #[tokio::test]
+    async fn connect_aborts_when_token_cancelled() {
+        let port = spawn_silent_ssh_server().await;
+        let config = silent_config(port, 30);
+
+        let token = CancellationToken::new();
+        let cancel_handle = token.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            cancel_handle.cancel();
+        });
+
+        let start = Instant::now();
+        let result = connect_and_authenticate_cancellable(&config, Some(token)).await;
+        let elapsed = start.elapsed();
+
+        let err = match result {
+            Ok(_) => panic!("connect should be cancelled"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("cancelled"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "cancellation took too long: {elapsed:?}"
+        );
+    }
 
     #[test]
     fn check_ssh_agent_status_returns_valid_value() {
