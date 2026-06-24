@@ -208,15 +208,9 @@ impl TunnelManager {
         // this start before it is registered as active (#829). The returned
         // token is threaded into the SSH connect so a Stop aborts an in-flight
         // handshake promptly rather than waiting it out (#841).
-        let cancel = match self.connecting.begin(tunnel_id) {
-            Some(token) => token,
-            None => {
-                return Err(TerminalError::TunnelError(format!(
-                    "Tunnel {} is already connecting",
-                    tunnel_id
-                )));
-            }
-        };
+        let cancel = self.connecting.begin(tunnel_id).ok_or_else(|| {
+            TerminalError::TunnelError(format!("Tunnel {} is already connecting", tunnel_id))
+        })?;
 
         // Emit connecting status
         self.emit_status(tunnel_id, TunnelStatus::Connecting, None);
