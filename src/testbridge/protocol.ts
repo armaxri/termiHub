@@ -21,6 +21,21 @@ export interface ClickCommand {
 }
 
 /**
+ * Double-click the element carrying the given `data-testid`.
+ *
+ * Some interactions are only reachable via a real double-click — e.g. connecting
+ * a saved connection from the sidebar (`ConnectionList`'s `onDoubleClick`), which
+ * is the *only* path that raises the SSH key-passphrase prompt. A single
+ * {@link ClickCommand} never triggers them, so this dispatches the full sequence a
+ * real double-click produces: two pointer→mouse→click rounds followed by a
+ * `dblclick` event (which React's `onDoubleClick` listens for).
+ */
+export interface DoubleClickCommand {
+  action: "doubleClick";
+  testId: string;
+}
+
+/**
  * Set the value of an `<input>`/`<textarea>` carrying the given `data-testid`.
  *
  * Uses the native value setter + an `input` event so React's controlled inputs
@@ -164,6 +179,24 @@ export interface ContextMenuCommand {
 }
 
 /**
+ * Resize the application window to `width` × `height` logical pixels.
+ *
+ * The bridge runs inside the webview, so it drives the real Tauri window via
+ * `getCurrentWindow().setSize(...)` — the only way to exercise resize-driven
+ * behavior (xterm's fit addon re-fits the terminal and re-sizes the PTY when its
+ * container resizes). Unlike the DOM-only verbs, this resolves against an
+ * injected `resizeWindow` dep, so the live {@link TestBridge} wires the Tauri
+ * call while unit tests supply a stub.
+ */
+export interface ResizeWindowCommand {
+  action: "resizeWindow";
+  /** Target inner width in logical pixels. */
+  width: number;
+  /** Target inner height in logical pixels. */
+  height: number;
+}
+
+/**
  * Dispatch a keyboard key press (`keydown` + `keyup`).
  *
  * Targets the element with `testId` when given, else the focused element — so a
@@ -202,6 +235,8 @@ export interface GetStateCommand {
 /** The full set of commands the bridge understands. */
 export type BridgeCommand =
   | ClickCommand
+  | DoubleClickCommand
+  | ResizeWindowCommand
   | TypeCommand
   | SelectCommand
   | ContextMenuCommand
