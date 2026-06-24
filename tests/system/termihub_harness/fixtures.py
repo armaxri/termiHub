@@ -50,6 +50,13 @@ SSH_PASSWORD = "testpass"
 #: Private key accepted by the ``ssh-keys`` container (key auth only).
 SSH_KEY_PATH = REPO_ROOT / "tests" / "fixtures" / "ssh-keys" / "ed25519"
 
+# ── Telnet fixture coordinates (mirror tests/docker/docker-compose.yml) ───────
+#: Host the published container ports are reachable on (shared with SSH).
+TELNET_HOST = "127.0.0.1"
+#: Service + host port for the telnet container (in.telnetd via xinetd on :23).
+TELNET_SERVICE = "telnet-server"
+TELNET_PORT = 2301
+
 
 class ContainerRuntimeUnavailable(RuntimeError):
     """Raised when no container runtime is reachable, or a service fails to come

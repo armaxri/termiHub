@@ -12,6 +12,9 @@ from termihub_harness import (
     SSH_PASSWORD_SERVICE,
     SSH_TUNNEL_PORT,
     SSH_TUNNEL_SERVICE,
+    TELNET_HOST,
+    TELNET_PORT,
+    TELNET_SERVICE,
     AgentInstance,
     AppInstance,
     Bridge,
@@ -70,22 +73,34 @@ def agent():
         yield started
 
 
-def _ensure_ssh_services(services_and_ports):
-    """Bring up the given SSH services or skip the suite when no runtime exists.
+def _ensure_services(host_services_and_ports, *, label):
+    """Bring up the given compose services or skip the suite when no runtime exists.
 
     Session-scoped callers share the (slow, image-building) bring-up. Requesting
     such a fixture before the per-class app fixture means the suite **skips before
     even launching the app** when no container runtime is available. Containers
     are left running afterward (shared fixtures, like ``scripts/test-system.sh``).
+
+    ``host_services_and_ports`` is an iterable of ``(host, service, port)`` so a
+    fixture can target whichever host its ports are published on; ``label`` only
+    shapes the skip message.
     """
     fixture = ComposeFixture()
-    services = [s for s, _ in services_and_ports]
-    ports = [(SSH_HOST, port) for _, port in services_and_ports]
+    services = [service for _, service, _ in host_services_and_ports]
+    ports = [(host, port) for host, _, port in host_services_and_ports]
     try:
         fixture.ensure(*services, ports=ports)
     except ContainerRuntimeUnavailable as exc:
-        pytest.skip(f"SSH container fixtures unavailable: {exc}")
+        pytest.skip(f"{label} container fixtures unavailable: {exc}")
     return fixture
+
+
+def _ensure_ssh_services(services_and_ports):
+    """Bring up SSH services on :data:`SSH_HOST`, skipping when no runtime exists."""
+    return _ensure_services(
+        [(SSH_HOST, service, port) for service, port in services_and_ports],
+        label="SSH",
+    )
 
 
 @pytest.fixture(scope="session")
@@ -106,3 +121,11 @@ def ssh_banner_fixtures():
 def ssh_tunnel_fixtures():
     """Tunnel-target SSH container with internal HTTP (port 2207)."""
     return _ensure_ssh_services([(SSH_TUNNEL_SERVICE, SSH_TUNNEL_PORT)])
+
+
+@pytest.fixture(scope="session")
+def telnet_fixtures():
+    """Telnet container (in.telnetd via xinetd, published on port 2301)."""
+    return _ensure_services(
+        [(TELNET_HOST, TELNET_SERVICE, TELNET_PORT)], label="telnet"
+    )

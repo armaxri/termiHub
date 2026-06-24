@@ -19,6 +19,9 @@ from .fixtures import (
     SSH_TUNNEL_PORT,
     SSH_TUNNEL_SERVICE,
     SSH_USERNAME,
+    TELNET_HOST,
+    TELNET_PORT,
+    TELNET_SERVICE,
     ComposeFixture,
     ContainerRuntimeUnavailable,
     container_runtime,
@@ -87,4 +90,7 @@ __all__ = [
     "SSH_USERNAME",
     "SSH_PASSWORD",
     "SSH_KEY_PATH",
+    "TELNET_HOST",
+    "TELNET_SERVICE",
+    "TELNET_PORT",
 ]
