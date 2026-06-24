@@ -30,10 +30,12 @@ Passphrase for all: `testpass123`
 | `ecdsa_521_passphrase` | ECDSA   | 521  | PEM/SEC1 | test-ecdsa-521-pass@termihub-test |
 
 > **Note:** `ecdsa_384_passphrase` and `ecdsa_521_passphrase` are stored in PEM/SEC1
-> format (`-----BEGIN EC PRIVATE KEY-----`) rather than OpenSSH format. This is
-> intentional: termiHub's OpenSSH-to-PKCS8 conversion currently supports only
-> RSA and Ed25519 key types. PEM-format ECDSA keys bypass that path and are
-> handled directly by libssh2 via `userauth_pubkey_file`.
+> format (`-----BEGIN EC PRIVATE KEY-----`, encrypted with `DEK-Info: AES-128-CBC`)
+> rather than OpenSSH format. This is intentional: russh 0.61 cannot load such keys
+> (its PKCS#5 path parses the decrypted bytes only as RSA), so they exercise
+> termiHub's native fallback in `core/src/backends/ssh/legacy_pem.rs`. The keys also
+> use OpenSSL's _explicit_ curve parameters, which the elliptic-curve crates'
+> `from_sec1_der` rejects — another case the fallback handles.
 
 ## Usage
 
