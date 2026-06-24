@@ -14,7 +14,7 @@ a measured DOM rectangle — the value the handler actually drives.
 
 import pytest
 
-from termihub_harness import SystemTest
+from termihub_harness import LayoutUi, SystemTest, TabsUi, TerminalUi
 
 pytestmark = pytest.mark.integration
 
@@ -24,7 +24,7 @@ MIN_WIDTH = 170
 MAX_WIDTH = 600
 
 
-class TestSidebarResize(SystemTest):
+class TestSidebarResize(TerminalUi, TabsUi, LayoutUi, SystemTest):
     def _width(self) -> float:
         return self.driver.get_state("sidebarWidth")
 

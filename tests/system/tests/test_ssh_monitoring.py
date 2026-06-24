@@ -12,10 +12,18 @@ import time
 import pytest
 
 from termihub_harness import (
-    SSH_KEY_PATH,
+    ConnectionsUi,
+    MonitoringUi,
+    PasswordPromptUi,
     SSH_KEYS_PORT,
+    SSH_KEY_PATH,
     SSH_USERNAME,
+    SettingsUi,
+    SidebarUi,
+    SshUi,
     SystemTest,
+    TabsUi,
+    TerminalUi,
     unique_name,
 )
 
@@ -25,7 +33,7 @@ HOST = "127.0.0.1"
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
-class TestSshMonitoring(SystemTest):
+class TestSshMonitoring(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, PasswordPromptUi, SshUi, MonitoringUi, SettingsUi, SystemTest):
     # ── Auto-connect ──────────────────────────────────────────────────────────
     def test_auto_shows_stats_on_ssh_tab(self):
         self.connect_ssh_password(unique_name("ssh-mon-auto"))

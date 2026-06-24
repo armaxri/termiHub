@@ -9,7 +9,7 @@ check, and the button's ``--active`` class mirrors "sidebar currently shown".
 
 import pytest
 
-from termihub_harness import SystemTest
+from termihub_harness import LayoutUi, SystemTest, TabsUi, TerminalUi
 
 pytestmark = pytest.mark.integration
 
@@ -17,7 +17,7 @@ TOGGLE = "terminal-view-toggle-sidebar"
 ACTIVE_CLASS = "terminal-view__toolbar-btn--active"
 
 
-class TestSidebarToggle(SystemTest):
+class TestSidebarToggle(TerminalUi, TabsUi, LayoutUi, SystemTest):
     """One app for the suite; each test normalizes the sidebar it depends on."""
 
     def _toggle_active(self) -> bool:

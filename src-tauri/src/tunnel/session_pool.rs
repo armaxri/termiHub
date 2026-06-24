@@ -2,10 +2,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use termihub_core::backends::ssh::handler::{ForwardedChannelRegistry, SshSession};
+use tokio_util::sync::CancellationToken;
 
 use crate::terminal::backend::SshConfig;
 use crate::utils::errors::TerminalError;
-use crate::utils::ssh_auth::connect_with_registry;
+use crate::utils::ssh_auth::connect_with_registry_cancellable;
 
 /// A pooled SSH session with a reference count.
 struct PooledSession {
@@ -33,18 +34,21 @@ impl SshSessionPool {
     ///
     /// If a session already exists for this connection ID, the reference count
     /// is incremented and the `Arc` is cloned. Otherwise, a new SSH connection
-    /// is established and wrapped in `Arc`.
+    /// is established and wrapped in `Arc`. The `cancel` token aborts that
+    /// connect if the tunnel is stopped mid-handshake (#841); it has no effect
+    /// when an existing pooled session is reused.
     pub fn get_or_create(
         &mut self,
         connection_id: &str,
         config: &SshConfig,
+        cancel: CancellationToken,
     ) -> Result<(Arc<SshSession>, ForwardedChannelRegistry), TerminalError> {
         if let Some(pooled) = self.sessions.get_mut(connection_id) {
             pooled.ref_count += 1;
             return Ok((Arc::clone(&pooled.session), pooled.registry.clone()));
         }
 
-        let (session, registry) = connect_with_registry(config)?;
+        let (session, registry) = connect_with_registry_cancellable(config, cancel)?;
         let arc_session = Arc::new(session);
 
         self.sessions.insert(

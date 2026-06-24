@@ -6,8 +6,10 @@
 /// returned separately only when remote forwarding is needed (tunnel module).
 use termihub_core::backends::ssh::auth::{
     check_ssh_agent_status as core_check_agent, connect_and_authenticate as core_connect,
+    connect_and_authenticate_cancellable as core_connect_cancellable,
 };
 pub use termihub_core::backends::ssh::handler::{ForwardedChannelRegistry, SshSession};
+use tokio_util::sync::CancellationToken;
 
 use crate::terminal::backend::SshConfig;
 use crate::utils::errors::TerminalError;
@@ -27,19 +29,24 @@ pub fn connect_and_authenticate(config: &SshConfig) -> Result<SshSession, Termin
         .map_err(|e| TerminalError::SshError(e.to_string()))
 }
 
-/// Connect and return both the session and the forwarded-channel registry.
+/// Connect and return both the session and the forwarded-channel registry,
+/// abortable via a [`CancellationToken`].
 ///
-/// Used by the tunnel session pool so the remote-forward tunnel can receive
-/// incoming server-initiated channels.
+/// Cancelling the token aborts an in-flight TCP connect / SSH handshake
+/// promptly. Used by the tunnel module so a Stop click during the connecting
+/// phase interrupts a hung connect instead of waiting out the connect timeout
+/// or the OS TCP timeout (#841).
 ///
 /// Same runtime-context requirement as [`connect_and_authenticate`]: call only
-/// from inside `spawn_blocking` or an async task, never from a synchronous
-/// command thread or a raw `std::thread` (#828).
-pub fn connect_with_registry(
+/// from inside `spawn_blocking` or an async task (#828).
+pub fn connect_with_registry_cancellable(
     config: &SshConfig,
+    cancel: CancellationToken,
 ) -> Result<(SshSession, ForwardedChannelRegistry), TerminalError> {
-    tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(core_connect(config)))
-        .map_err(|e| TerminalError::SshError(e.to_string()))
+    tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current().block_on(core_connect_cancellable(config, Some(cancel)))
+    })
+    .map_err(|e| TerminalError::SshError(e.to_string()))
 }
 
 /// Check whether the SSH agent is running or stopped.
@@ -75,7 +82,7 @@ mod tests {
 
     /// Regression guard for #828.
     ///
-    /// [`connect_and_authenticate`]/[`connect_with_registry`] run the async
+    /// [`connect_and_authenticate`]/[`connect_with_registry_cancellable`] run the async
     /// russh connect via `tokio::task::block_in_place` +
     /// `Handle::current().block_on(..)`. Both require a Tokio runtime context on
     /// the calling thread. A `spawn_blocking` thread carries that context; a

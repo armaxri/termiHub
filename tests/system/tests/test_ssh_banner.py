@@ -8,13 +8,22 @@ from __future__ import annotations
 
 import pytest
 
-from termihub_harness import SSH_BANNER_PORT, SystemTest, unique_name
+from termihub_harness import (
+    ConnectionsUi,
+    PasswordPromptUi,
+    SSH_BANNER_PORT,
+    SshUi,
+    SystemTest,
+    TabsUi,
+    TerminalUi,
+    unique_name,
+)
 
 pytestmark = pytest.mark.integration
 
 
 @pytest.mark.usefixtures("ssh_banner_fixtures")
-class TestSshBanner(SystemTest):
+class TestSshBanner(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, SshUi, SystemTest):
     def test_pre_auth_banner_renders_terminal_content(self):
         name = unique_name("ssh-banner")
         self.connect_ssh_password(name, port=SSH_BANNER_PORT)

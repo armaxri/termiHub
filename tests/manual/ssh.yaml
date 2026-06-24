@@ -283,3 +283,21 @@ tests:
       - "The per-connection override takes precedence over the global default while it is set"
       - "Selecting 'Use global default' makes the connection follow the global Line Ending again"
     verification: manual
+
+  - id: MT-SSH-40
+    name: "Unreachable SSH host fails fast and tunnel Stop is prompt while connecting"
+    pr: 841
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "Create an SSH connection to an unreachable but routable host (e.g. host 10.255.255.1, a blackholed address) and set Connection → Advanced → Connect Timeout (s) to 5"
+      - "Create a Local-forward tunnel using that SSH connection and click Start"
+      - "Observe the tunnel status and how long it takes to leave 'connecting'"
+      - "Repeat: click Start, then click Stop while the tunnel is still 'connecting'"
+    expected:
+      - "On Start, the tunnel shows 'connecting' then flips to 'error' within ~5 s (the configured timeout), not after the much longer OS TCP timeout"
+      - "Clicking Stop while connecting returns the tunnel to 'disconnected' promptly (within ~1 s), without waiting out the connect timeout or the OS TCP timeout"
+      - "The Connect Timeout (s) field is visible and editable under Connection → Advanced"
+    verification: manual
+    tags: [tunnel]

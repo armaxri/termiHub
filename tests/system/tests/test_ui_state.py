@@ -11,12 +11,12 @@ a dev-server favicon link — neither is observable through the bridge contract.
 
 import pytest
 
-from termihub_harness import SystemTest
+from termihub_harness import SystemTest, TabsUi
 
 pytestmark = pytest.mark.integration
 
 
-class TestUiState(SystemTest):
+class TestUiState(TabsUi, SystemTest):
     def test_new_terminal_is_tracked_as_an_active_tab(self):
         # MT-UI-06: a new terminal is a live, active tab in the panel state.
         self.close_all_tabs()
