@@ -119,27 +119,23 @@ describe("SecuritySettings", () => {
 
     expect(query("master-password-setup")).not.toBeNull();
 
-    // Fill in matching passwords
-    const inputs = container.querySelectorAll("input");
+    // Fill in matching passwords via the stable testids the test harness drives.
+    const setValue = (testId: string, value: string) => {
+      const input = query(testId) as HTMLInputElement;
+      input.focus();
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(
+        input,
+        value
+      );
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    };
     await act(async () => {
-      inputs[0].focus();
-      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(
-        inputs[0],
-        "strongpass1"
-      );
-      inputs[0].dispatchEvent(new Event("input", { bubbles: true }));
-      inputs[1].focus();
-      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(
-        inputs[1],
-        "strongpass1"
-      );
-      inputs[1].dispatchEvent(new Event("input", { bubbles: true }));
+      setValue("master-password-input", "strongpass1");
+      setValue("master-password-confirm-input", "strongpass1");
     });
 
     // Click Confirm
-    const confirmBtn = Array.from(container.querySelectorAll("button")).find(
-      (b) => b.textContent === "Confirm"
-    ) as HTMLElement;
+    const confirmBtn = query("master-password-confirm-btn") as HTMLElement;
     await act(async () => {
       confirmBtn.click();
     });

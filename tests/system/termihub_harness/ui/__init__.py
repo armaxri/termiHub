@@ -14,6 +14,7 @@ Mixin → concern:
 - :class:`LayoutUi`          — split-leaf count + sidebar visibility toggle
 - :class:`SidebarUi`         — switch the activity-bar sidebar *view*
 - :class:`ConnectionsUi`     — connection editor + connection-list flows
+- :class:`CredentialStoreUi` — switch/unlock the master-password credential store
 - :class:`PasswordPromptUi`  — the SSH password-prompt modal
 - :class:`SshUi`             — the one-call password-SSH connect flow
 - :class:`MonitoringUi`      — remote system-monitoring status bar
@@ -27,6 +28,7 @@ testid helpers) stay functions so they remain unit-testable without an app.
 from __future__ import annotations
 
 from .connections import ConnectionsUi
+from .credential_store import CredentialStoreUi
 from .layout import LayoutUi
 from .lookups import (
     connection_item_testid,
@@ -47,6 +49,7 @@ from .terminal import TerminalUi
 
 __all__ = [
     "ConnectionsUi",
+    "CredentialStoreUi",
     "TerminalUi",
     "TabsUi",
     "LayoutUi",
