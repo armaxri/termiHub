@@ -12,7 +12,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN useradd -m -s /bin/bash testuser \
     && echo "testuser:testpass" | chpasswd
 
-# Configure telnet via xinetd
+# Configure telnet via xinetd.
+# On Ubuntu 24.04 the `telnetd` package is a transitional shim for
+# `inetutils-telnetd`, which installs the daemon at /usr/sbin/telnetd (there is
+# no /usr/sbin/in.telnetd). `-h` (--no-hostinfo) suppresses host-specific info
+# before login but still shows /etc/issue.net and the `login:` prompt; the
+# default login program (/bin/login) is used.
 RUN printf '%s\n' \
     'service telnet' \
     '{' \
@@ -20,7 +25,8 @@ RUN printf '%s\n' \
     '    socket_type     = stream' \
     '    wait            = no' \
     '    user            = root' \
-    '    server          = /usr/sbin/in.telnetd' \
+    '    server          = /usr/sbin/telnetd' \
+    '    server_args     = -h' \
     '    log_on_failure  += USERID' \
     '    disable         = no' \
     '}' \
