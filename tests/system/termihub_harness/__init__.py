@@ -28,6 +28,8 @@ from .orchestrator import AgentInstance, AppInstance, agent_binary_path, app_bin
 from .systemtest import SystemTest, unique_name
 from .ui import (
     ConnectionsUi,
+    EditorUi,
+    FilesUi,
     LayoutUi,
     MonitoringUi,
     PasswordPromptUi,
@@ -39,6 +41,7 @@ from .ui import (
     TerminalUi,
     connection_item_testid,
     connections,
+    file_row_testid,
     find_connection,
     find_folder,
     folder_toggle_testid,
@@ -63,6 +66,8 @@ __all__ = [
     "SshUi",
     "MonitoringUi",
     "SftpUi",
+    "FilesUi",
+    "EditorUi",
     "SettingsUi",
     "connections",
     "find_connection",
@@ -70,6 +75,7 @@ __all__ = [
     "find_folder",
     "connection_item_testid",
     "folder_toggle_testid",
+    "file_row_testid",
     "unique_name",
     "ComposeFixture",
     "ContainerRuntimeUnavailable",

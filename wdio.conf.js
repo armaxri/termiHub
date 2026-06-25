@@ -56,16 +56,16 @@ export const config = {
       "./tests/e2e/ssh-agent-warning.test.js",
       "./tests/e2e/credential-store.test.js",
       "./tests/e2e/encrypted-export-import.test.js",
-      "./tests/e2e/external-files.test.js",
+      // external-files.test.js was ported to the Python harness
+      // (tests/system/tests/test_external_files.py) and removed — see #809.
       "./tests/e2e/embedded-services.test.js",
     ],
-    local: [
-      "./tests/e2e/local-shell.test.js",
-      "./tests/e2e/local-shell-extended.test.js",
-      "./tests/e2e/file-browser-local.test.js",
-      "./tests/e2e/file-browser-extended.test.js",
-      "./tests/e2e/editor.test.js",
-    ],
+    // The local UI suite (local-shell, local-shell-extended, file-browser-local,
+    // file-browser-extended, editor, terminal-auto-scroll) was ported to the
+    // Python harness (tests/system/tests/test_local_shell.py,
+    // test_file_browser_local.py, test_editor.py, test_terminal_auto_scroll.py)
+    // and removed — see #809.
+    local: [],
     infra: ["./tests/e2e/infrastructure/*.test.js", "./tests/e2e/network-tools-live.test.js"],
     perf: ["./tests/e2e/performance.test.js"],
   },

@@ -805,7 +805,7 @@ Mapping of manual test IDs that have been automated to their E2E test files:
 
 | Manual Test IDs                | E2E Test File                                                   |
 | ------------------------------ | --------------------------------------------------------------- |
-| MT-LOCAL-01, 07                | `local-shell.test.js`                                           |
+| MT-LOCAL-01, 07                | `tests/system/tests/test_local_shell.py`                        |
 | MT-LOCAL-09, 10                | `tests/system/tests/test_cross_platform.py`                     |
 | MT-LOCAL-02, 04, 06, 11–20     | `infrastructure/windows-shells.test.js`                         |
 | MT-SSH-04–06, 10–12, 20–33, 35 | `infrastructure/ssh*.test.js`                                   |
@@ -815,10 +815,12 @@ Mapping of manual test IDs that have been automated to their E2E test files:
 | MT-TAB-08–14, 19–21            | `tests/system/tests/test_tab_horizontal_scroll.py`              |
 | MT-CONN-02–07, 25–30           | `connection-crud.test.js`, `connection-forms.test.js`           |
 | MT-CONN-10–12, 14–16           | `encrypted-export-import.test.js`                               |
-| MT-CONN-20–22, 31              | `external-files.test.js`                                        |
-| MT-FB-01, 02                   | `file-browser-local.test.js`                                    |
+| MT-CONN-20–22, 31              | `tests/system/tests/test_external_files.py`                     |
+| MT-FB-01, 02                   | `tests/system/tests/test_file_browser_local.py`                 |
 | MT-FB-03, 06, 13, 17, 19       | `infrastructure/sftp-extended.test.js`                          |
-| MT-FB-05, 11, 18               | `file-browser-local.test.js`                                    |
+| MT-FB-05, 11, 18               | `tests/system/tests/test_file_browser_local.py`                 |
+| EDITOR-01/STATUS/INDENT/LANG   | `tests/system/tests/test_editor.py`                             |
+| #504 (terminal auto-scroll)    | `tests/system/tests/test_terminal_auto_scroll.py`               |
 | MT-UI-06–08                    | `tests/system/tests/test_ui_state.py`                           |
 | MT-UI-17, 18, 20               | _manual_ (OS window resize / dev favicon — not bridge-drivable) |
 | MT-UI-21                       | `tests/system/tests/test_sidebar_sections.py`                   |

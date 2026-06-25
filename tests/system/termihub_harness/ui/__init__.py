@@ -18,6 +18,8 @@ Mixin → concern:
 - :class:`SshUi`             — the one-call password-SSH connect flow
 - :class:`MonitoringUi`      — remote system-monitoring status bar
 - :class:`SftpUi`            — the SFTP file browser
+- :class:`FilesUi`           — the local file browser (path, rows, create, navigate)
+- :class:`EditorUi`          — the Monaco file editor + status-bar controls
 - :class:`SettingsUi`        — the Settings editor
 
 The plain name->element store lookups (``find_connection`` / ``find_folder`` /
@@ -27,6 +29,8 @@ testid helpers) stay functions so they remain unit-testable without an app.
 from __future__ import annotations
 
 from .connections import ConnectionsUi
+from .editor import EditorUi
+from .files import FilesUi, file_row_testid
 from .layout import LayoutUi
 from .lookups import (
     connection_item_testid,
@@ -55,6 +59,8 @@ __all__ = [
     "SshUi",
     "MonitoringUi",
     "SftpUi",
+    "FilesUi",
+    "EditorUi",
     "SettingsUi",
     "connections",
     "find_connection",
@@ -62,4 +68,5 @@ __all__ = [
     "find_folder",
     "connection_item_testid",
     "folder_toggle_testid",
+    "file_row_testid",
 ]
