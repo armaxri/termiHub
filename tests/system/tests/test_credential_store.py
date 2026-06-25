@@ -126,3 +126,67 @@ class TestCredentialStore(
         self.handle_password_prompt()
         self.wait(lambda: self.find_tab(name), what="the unlocked SSH tab")
         self.wait(self.has_terminal, what="the SSH terminal session after unlock")
+
+    def test_stale_stored_credential_is_recovered(self):
+        # A saved-but-wrong password is detected on the next connect (auth fails),
+        # cleared, and the user is re-prompted; the corrected password then connects.
+        self.setup_master_password_store(MASTER_PASSWORD)
+        name = unique_name("cred-stale")
+        self.create_ssh_connection(
+            name,
+            host=SSH_HOST,
+            port=SSH_PASSWORD_PORT,
+            username=SSH_USERNAME,
+            connect=False,
+        )
+        self.require_stable_connection(name)
+
+        # First connect stores a wrong password (the save box defaults on); the
+        # session fails to authenticate, leaving a (disconnected/error) tab.
+        self.connect_connection(name)
+        self.handle_password_prompt("definitely-the-wrong-password")
+        bad = self.wait(lambda: self.find_tab(name), what="the failed SSH tab")
+        self.close_tab(bad["id"])
+        self.wait(lambda: self.find_tab(name) is None, what="the failed tab to close")
+
+        # Reconnect: the stale credential is tried, auth fails, it is cleared, and
+        # the password prompt is raised again — answer it correctly this time.
+        self.connect_connection(name)
+        self.handle_password_prompt()
+        self.wait(lambda: self.find_tab(name), what="the recovered SSH tab")
+        self.wait(self.has_terminal, what="the SSH terminal session after recovery")
+
+    def test_auto_lock_timeout_setting_persists(self):
+        # The auto-lock options start at 5 minutes, so the lock firing cannot be
+        # awaited in a system test (covered by a manual test). This verifies the
+        # selected timeout round-trips into the store, then resets it to Never.
+        self.setup_master_password_store(MASTER_PASSWORD)
+        self.set_auto_lock_timeout(5)
+        assert self.driver.get_state("settings.credentialAutoLockMinutes") == 5
+        self.set_auto_lock_timeout(0)
+
+    def test_change_master_password(self):
+        # Changing the master password re-encrypts the vault; the new password must
+        # then open it. Lock and unlock with the new password to prove it took, then
+        # restore the baseline so later tests are unaffected.
+        self.setup_master_password_store(MASTER_PASSWORD)
+        new_password = MASTER_PASSWORD + "-changed"
+        self.change_master_password(MASTER_PASSWORD, new_password)
+        assert self.credential_store_unlocked_master_password()
+
+        self.lock_credential_store()
+        self.unlock_credential_store(new_password)
+        assert self.credential_store_unlocked_master_password()
+
+        self.change_master_password(new_password, MASTER_PASSWORD)
+
+    def test_migrate_master_password_store_to_none(self):
+        # Switching back to no-storage migrates the credentials to the null backend
+        # and reports a migration result. Runs last because it leaves the store in
+        # "none" mode. (setup_master_password_store no-ops while already unlocked.)
+        self.setup_master_password_store(MASTER_PASSWORD)
+        self.migrate_to_no_store()
+        status = self.wait(
+            lambda: self.credential_store_status(), what="the credential status"
+        )
+        assert status["mode"] == "none"
