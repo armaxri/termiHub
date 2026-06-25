@@ -109,6 +109,9 @@ async function runStep(
     case "click":
       await driver.click(step.testId);
       return;
+    case "doubleClick":
+      await driver.doubleClick(step.testId);
+      return;
     case "type":
       await driver.type(step.testId, step.text);
       return;
@@ -129,6 +132,13 @@ async function runStep(
       return;
     case "terminalInput":
       await driver.terminalInput(step.text, { tabId: step.tabId });
+      return;
+    case "scrollTerminal":
+      await driver.scrollTerminal({
+        lines: step.lines,
+        toBottom: step.toBottom,
+        tabId: step.tabId,
+      });
       return;
     case "pause":
       await sleep(step.ms);
@@ -179,6 +189,18 @@ async function runCheck(
       case "computedStyleEquals": {
         const actual = await driver.getComputedStyle(check.property, { testId: check.testId });
         return { check, passed: actual === check.value, expected: check.value, actual };
+      }
+      case "terminalAtBottom": {
+        const wantAtBottom = check.atBottom ?? true;
+        const tolerance = check.tolerance ?? 2;
+        const viewport = await driver.getTerminalViewport({ tabId: check.tabId });
+        const atBottom = viewport.viewportY >= viewport.baseY - tolerance;
+        return {
+          check,
+          passed: atBottom === wantAtBottom,
+          expected: wantAtBottom ? "viewport at bottom" : "viewport scrolled up",
+          actual: viewport,
+        };
       }
       case "stateEquals": {
         const actual = await driver.getState(check.path);

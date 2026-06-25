@@ -28,6 +28,8 @@ function deps(): BridgeDeps {
   return {
     root: document.body, // Radix renders its content in a portal under <body>
     readTerminal: () => undefined,
+    scrollTerminal: () => false,
+    getTerminalViewport: () => undefined,
     getActiveTabId: () => undefined,
     getState: () => ({}),
     sendTerminalInput: async () => false,

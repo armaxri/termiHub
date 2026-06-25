@@ -21,6 +21,20 @@ export interface ClickCommand {
 }
 
 /**
+ * Double-click the element carrying the given `data-testid`.
+ *
+ * A single {@link ClickCommand} cannot reach `onDoubleClick` handlers, which the
+ * app uses for "activate" gestures: opening a connection's session, entering a
+ * directory in the file browser, and opening a file in the editor. This fires two
+ * full click sequences followed by a `dblclick` event — what a real double-click
+ * produces — so React's `onDoubleClick` fires.
+ */
+export interface DoubleClickCommand {
+  action: "doubleClick";
+  testId: string;
+}
+
+/**
  * Set the value of an `<input>`/`<textarea>` carrying the given `data-testid`.
  *
  * Uses the native value setter + an `input` event so React's controlled inputs
@@ -190,6 +204,41 @@ export interface ReadTerminalCommand {
 }
 
 /**
+ * Scroll a terminal's viewport by a number of logical lines (or to the bottom).
+ *
+ * An xterm terminal renders to a canvas with no scrollable DOM box, so neither
+ * `click` nor a synthetic wheel event reliably moves its viewport. This routes
+ * through xterm's own `scrollLines`/`scrollToBottom`, firing the same `onScroll`
+ * event a mouse wheel would — which is what the terminal's auto-scroll guard
+ * (#504) keys off to decide whether new output sticks to the bottom. `lines` is
+ * signed: negative scrolls up (into scrollback), positive scrolls down. When
+ * `toBottom` is true `lines` is ignored and the viewport jumps to the bottom.
+ * When `tabId` is omitted the active tab's terminal is used.
+ */
+export interface ScrollTerminalCommand {
+  action: "scrollTerminal";
+  /** Signed line delta (negative = up into scrollback); ignored when `toBottom`. */
+  lines?: number;
+  /** Jump straight to the bottom (resumes auto-scroll), ignoring `lines`. */
+  toBottom?: boolean;
+  tabId?: string;
+}
+
+/**
+ * Read a terminal's viewport scroll position: `{ viewportY, baseY }`.
+ *
+ * `viewportY` is the buffer line at the top of the visible area; `baseY` is the
+ * top line when scrolled fully to the bottom. `viewportY < baseY` means the user
+ * has scrolled up into the scrollback (auto-scroll suppressed); `viewportY ===
+ * baseY` means pinned to the bottom. Lets a test assert auto-scroll behavior
+ * without scraping the GPU canvas. When `tabId` is omitted the active tab is used.
+ */
+export interface GetTerminalViewportCommand {
+  action: "getTerminalViewport";
+  tabId?: string;
+}
+
+/**
  * Read a slice of the app store. `path` is an optional dot-path into the state
  * (e.g. `"activePanelId"` or `"rootPanel.activeTabId"`). When omitted, a curated
  * snapshot of serializable state is returned.
@@ -199,9 +248,18 @@ export interface GetStateCommand {
   path?: string;
 }
 
+/** A terminal viewport scroll position, returned by `getTerminalViewport`. */
+export interface TerminalViewport {
+  /** Buffer line shown at the top of the visible area. */
+  viewportY: number;
+  /** Buffer line shown at the top when scrolled fully to the bottom. */
+  baseY: number;
+}
+
 /** The full set of commands the bridge understands. */
 export type BridgeCommand =
   | ClickCommand
+  | DoubleClickCommand
   | TypeCommand
   | SelectCommand
   | ContextMenuCommand
@@ -215,6 +273,8 @@ export type BridgeCommand =
   | DragCommand
   | DragToCommand
   | ReadTerminalCommand
+  | ScrollTerminalCommand
+  | GetTerminalViewportCommand
   | GetStateCommand;
 
 /** The discriminator literal of any {@link BridgeCommand}. */

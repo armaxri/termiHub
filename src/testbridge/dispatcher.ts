@@ -16,6 +16,16 @@ export interface BridgeDeps {
    * terminal is registered for `tabId`.
    */
   readTerminal: (tabId: string, joinFullWidthRows: boolean) => string | undefined;
+  /**
+   * Scroll a terminal's viewport by `lines` (negative = up) or to the bottom,
+   * resolving to `true` when a terminal exists for `tabId`, `false` otherwise.
+   */
+  scrollTerminal: (tabId: string, lines: number, toBottom: boolean) => boolean;
+  /**
+   * Read a terminal's `{ viewportY, baseY }` scroll position, or `undefined`
+   * when no terminal is registered for `tabId`.
+   */
+  getTerminalViewport: (tabId: string) => { viewportY: number; baseY: number } | undefined;
   /** The currently active terminal tab id, or `undefined` when none is focused. */
   getActiveTabId: () => string | undefined;
   /** A snapshot of the app store state for introspection. */
@@ -193,6 +203,34 @@ export async function dispatchCommand(
       return ok("click");
     }
 
+    case "doubleClick": {
+      const el = findByTestId(deps.root, command.testId);
+      if (!el) return fail("doubleClick", `no element with data-testid="${command.testId}"`);
+      const { x, y } = centerOf(el);
+      // A real double-click fires two complete click sequences followed by a
+      // `dblclick`. React's `onDoubleClick` listens for the native `dblclick`
+      // event, so it must be dispatched explicitly — element.click() never emits
+      // one. The leading click pairs keep components that also track single
+      // clicks (selection state) consistent.
+      for (let i = 0; i < 2; i++) {
+        dispatchPointer(el, "pointerdown", x, y);
+        dispatchMouse(el, "mousedown", x, y);
+        dispatchPointer(el, "pointerup", x, y);
+        dispatchMouse(el, "mouseup", x, y);
+        (el as HTMLElement).click();
+      }
+      el.dispatchEvent(
+        new MouseEvent("dblclick", {
+          bubbles: true,
+          cancelable: true,
+          button: 0,
+          clientX: x,
+          clientY: y,
+        })
+      );
+      return ok("doubleClick");
+    }
+
     case "drag": {
       const el = findByTestId(deps.root, command.testId);
       if (!el) return fail("drag", `no element with data-testid="${command.testId}"`);
@@ -348,6 +386,25 @@ export async function dispatchCommand(
         return fail("readTerminal", `no terminal registered for tab "${tabId}"`);
       }
       return ok("readTerminal", content);
+    }
+
+    case "scrollTerminal": {
+      const tabId = command.tabId ?? deps.getActiveTabId();
+      if (!tabId) return fail("scrollTerminal", "no active terminal to scroll");
+      const scrolled = deps.scrollTerminal(tabId, command.lines ?? 0, command.toBottom ?? false);
+      return scrolled
+        ? ok("scrollTerminal")
+        : fail("scrollTerminal", `no terminal registered for tab "${tabId}"`);
+    }
+
+    case "getTerminalViewport": {
+      const tabId = command.tabId ?? deps.getActiveTabId();
+      if (!tabId) return fail("getTerminalViewport", "no active terminal to read");
+      const viewport = deps.getTerminalViewport(tabId);
+      if (viewport === undefined) {
+        return fail("getTerminalViewport", `no terminal registered for tab "${tabId}"`);
+      }
+      return ok("getTerminalViewport", viewport);
     }
 
     case "getState": {

@@ -133,23 +133,26 @@ unmount.
 
 ## Command vocabulary
 
-| Action             | Purpose                                                        |
-| ------------------ | -------------------------------------------------------------- |
-| `click`            | Press the element (full pointer sequence, so Radix menus open) |
-| `type`             | Set an input/textarea value (native setter + `input` event)    |
-| `select`           | Choose a native `<select>` option (native setter + `change`)   |
-| `contextMenu`      | Open an element's right-click menu (`contextmenu` event)       |
-| `pressKey`         | Dispatch a key (`keydown`+`keyup`), e.g. `Escape`, `Enter`     |
-| `terminalInput`    | Send a command into a terminal **session** (see below)         |
-| `drag`             | Drag an element by a pixel delta (resize handles)              |
-| `dragTo`           | Drag one element onto another (pointer-based, e.g. @dnd-kit)   |
-| `exists`           | Whether an element is present                                  |
-| `getText`          | Read an element's visible text                                 |
-| `getAttribute`     | Read an element's markup attribute                             |
-| `getValue`         | Read the live `value` of an `<input>`/`<textarea>`/`<select>`  |
-| `getComputedStyle` | Read a _computed_ CSS property — incl. theme custom properties |
-| `readTerminal`     | Read a terminal's reconstructed logical-line text              |
-| `getState`         | Read app store state, optionally by dot-path                   |
+| Action                | Purpose                                                        |
+| --------------------- | -------------------------------------------------------------- |
+| `click`               | Press the element (full pointer sequence, so Radix menus open) |
+| `doubleClick`         | Double-click to "activate" (open connection / dir / file)      |
+| `type`                | Set an input/textarea value (native setter + `input` event)    |
+| `select`              | Choose a native `<select>` option (native setter + `change`)   |
+| `contextMenu`         | Open an element's right-click menu (`contextmenu` event)       |
+| `pressKey`            | Dispatch a key (`keydown`+`keyup`), e.g. `Escape`, `Enter`     |
+| `terminalInput`       | Send a command into a terminal **session** (see below)         |
+| `scrollTerminal`      | Scroll a terminal's viewport by lines / to the bottom          |
+| `drag`                | Drag an element by a pixel delta (resize handles)              |
+| `dragTo`              | Drag one element onto another (pointer-based, e.g. @dnd-kit)   |
+| `exists`              | Whether an element is present                                  |
+| `getText`             | Read an element's visible text                                 |
+| `getAttribute`        | Read an element's markup attribute                             |
+| `getValue`            | Read the live `value` of an `<input>`/`<textarea>`/`<select>`  |
+| `getComputedStyle`    | Read a _computed_ CSS property — incl. theme custom properties |
+| `readTerminal`        | Read a terminal's reconstructed logical-line text              |
+| `getTerminalViewport` | Read a terminal's `{ viewportY, baseY }` scroll position       |
+| `getState`            | Read app store state, optionally by dot-path                   |
 
 Every command returns a structured `BridgeResponse` (`{ ok, action, value?,
 error? }`). Nothing throws across the bridge — failures are `ok: false` with an
@@ -175,6 +178,52 @@ await driver.terminalInput("echo HELLO_MARKER"); // runs in the active terminal
 const output = await driver.readTerminal();
 output.includes("HELLO_MARKER"); // assert on the result
 ```
+
+### Double-clicking (`doubleClick`)
+
+`click` fires a single click, but several "activate" gestures are bound to
+`onDoubleClick`: opening a connection's session from the sidebar, entering a
+directory in the file browser, and opening a file in the editor. `{ action:
+"doubleClick", testId }` fires **two full click sequences followed by a
+`dblclick`** event — what a real double-click produces — so React's
+`onDoubleClick` handler runs (a bare `element.click()` never emits a `dblclick`).
+
+```ts
+await driver.doubleClick("connection-item-<id>"); // open the connection's session
+await driver.doubleClick("file-row-src"); // enter the src/ directory
+```
+
+### Terminal scrolling (`scrollTerminal`, `getTerminalViewport`)
+
+An xterm terminal renders to a **canvas** with no scrollable DOM box, so neither
+`click` nor a synthetic wheel event reliably moves its viewport — and its scroll
+position is not in the DOM to read back. These two verbs drive and observe scroll
+through xterm's own API so a test can assert the **auto-scroll** behavior (#504:
+new output must not yank a user who has scrolled up back to the bottom):
+
+- `{ action: "scrollTerminal", lines?, toBottom?, tabId? }` calls
+  `xterm.scrollLines(lines)` (signed — negative scrolls up into the scrollback) or
+  `xterm.scrollToBottom()` when `toBottom` is set. Either way it fires the **same
+  `onScroll` event a mouse wheel would**, which is exactly what the terminal's
+  auto-scroll guard keys off — so the gesture exercises production code, not a
+  test-only path.
+- `{ action: "getTerminalViewport", tabId? }` returns `{ viewportY, baseY }` from
+  `xterm.buffer.active`. `viewportY < baseY` means scrolled up into the scrollback
+  (auto-scroll suppressed); `viewportY === baseY` means pinned to the bottom.
+
+Both default to the active terminal tab and fail (`ok: false`) when no terminal
+is registered for the tab.
+
+```ts
+await driver.scrollTerminal({ lines: -100 }); // scroll up 100 lines
+const before = await driver.getTerminalViewport(); // { viewportY < baseY }
+await driver.terminalInput("seq 1 100"); // more output arrives…
+const after = await driver.getTerminalViewport(); // …viewportY stays put
+await driver.scrollTerminal({ toBottom: true }); // re-arm auto-scroll
+```
+
+The scenario runner (#800) exposes these as the `scrollTerminal` step and the
+`terminalAtBottom` check (`{ assert: "terminalAtBottom", atBottom?, tolerance? }`).
 
 ### Dragging (`drag`) and computed styles (`getComputedStyle`)
 
@@ -312,32 +361,35 @@ if (!result.passed) {
 
 ### Steps
 
-| Step                                                     | Effect                                            |
-| -------------------------------------------------------- | ------------------------------------------------- |
-| `{ action: "click", testId }`                            | Press the control                                 |
-| `{ action: "type", testId, text }`                       | Set an input/textarea value                       |
-| `{ action: "select", testId, value }`                    | Choose a native `<select>` option                 |
-| `{ action: "contextMenu", testId }`                      | Open the element's right-click context menu       |
-| `{ action: "pressKey", key, testId? }`                   | Dispatch a key (`keydown`+`keyup`)                |
-| `{ action: "drag", testId, dx, dy? }`                    | Drag an element by a pixel delta                  |
-| `{ action: "dragTo", fromTestId, toTestId }`             | Drag one element onto another                     |
-| `{ action: "terminalInput", text, tabId? }`              | Send a command into a terminal session            |
-| `{ action: "waitFor", testId, timeoutMs?, intervalMs? }` | Poll until the element exists, or fail on timeout |
-| `{ action: "pause", ms }`                                | Wait a fixed duration for output to settle        |
+| Step                                                      | Effect                                            |
+| --------------------------------------------------------- | ------------------------------------------------- |
+| `{ action: "click", testId }`                             | Press the control                                 |
+| `{ action: "doubleClick", testId }`                       | Double-click to activate (open conn / dir / file) |
+| `{ action: "type", testId, text }`                        | Set an input/textarea value                       |
+| `{ action: "select", testId, value }`                     | Choose a native `<select>` option                 |
+| `{ action: "contextMenu", testId }`                       | Open the element's right-click context menu       |
+| `{ action: "pressKey", key, testId? }`                    | Dispatch a key (`keydown`+`keyup`)                |
+| `{ action: "drag", testId, dx, dy? }`                     | Drag an element by a pixel delta                  |
+| `{ action: "dragTo", fromTestId, toTestId }`              | Drag one element onto another                     |
+| `{ action: "terminalInput", text, tabId? }`               | Send a command into a terminal session            |
+| `{ action: "scrollTerminal", lines?, toBottom?, tabId? }` | Scroll a terminal's viewport (lines / to bottom)  |
+| `{ action: "waitFor", testId, timeoutMs?, intervalMs? }`  | Poll until the element exists, or fail on timeout |
+| `{ action: "pause", ms }`                                 | Wait a fixed duration for output to settle        |
 
 The first failing step aborts the rest (steps are sequential preconditions) and
 the checks are skipped.
 
 ### Checker catalog
 
-| Check                                                         | Passes when                                                  |
-| ------------------------------------------------------------- | ------------------------------------------------------------ |
-| `{ assert: "terminalContains", value, tabId? }`               | The terminal text contains `value`                           |
-| `{ assert: "terminalMatches", pattern, flags?, tabId? }`      | The terminal text matches the regex                          |
-| `{ assert: "textEquals", testId, value }`                     | The element's visible text equals `value`                    |
-| `{ assert: "exists", testId, present? }`                      | The element is present (or absent if `present: false`)       |
-| `{ assert: "computedStyleEquals", property, value, testId? }` | A computed CSS property equals `value` (root if no `testId`) |
-| `{ assert: "stateEquals", path, value }`                      | The app-state value at dot-`path` deep-equals `value`        |
+| Check                                                           | Passes when                                                  |
+| --------------------------------------------------------------- | ------------------------------------------------------------ |
+| `{ assert: "terminalContains", value, tabId? }`                 | The terminal text contains `value`                           |
+| `{ assert: "terminalMatches", pattern, flags?, tabId? }`        | The terminal text matches the regex                          |
+| `{ assert: "textEquals", testId, value }`                       | The element's visible text equals `value`                    |
+| `{ assert: "exists", testId, present? }`                        | The element is present (or absent if `present: false`)       |
+| `{ assert: "computedStyleEquals", property, value, testId? }`   | A computed CSS property equals `value` (root if no `testId`) |
+| `{ assert: "terminalAtBottom", atBottom?, tolerance?, tabId? }` | The terminal is pinned to the bottom (auto-scroll active)    |
+| `{ assert: "stateEquals", path, value }`                        | The app-state value at dot-`path` deep-equals `value`        |
 
 When all steps succeed, **every** check is evaluated (even after one fails) so a
 single run reports all assertions at once. A check that cannot be evaluated (e.g.

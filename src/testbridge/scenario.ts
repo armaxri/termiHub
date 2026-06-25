@@ -12,6 +12,8 @@
 /** A single UI action performed in sequence before the checks run. */
 export type ScenarioStep =
   | { action: "click"; testId: string }
+  /** Double-click to "activate" (open connection / enter directory / open file). */
+  | { action: "doubleClick"; testId: string }
   | { action: "type"; testId: string; text: string }
   /** Choose a native `<select>` option by value. */
   | { action: "select"; testId: string; value: string }
@@ -25,6 +27,12 @@ export type ScenarioStep =
   | { action: "dragTo"; fromTestId: string; toTestId: string }
   /** Send a command into a terminal session (active tab unless `tabId` is set). */
   | { action: "terminalInput"; text: string; tabId?: string }
+  /**
+   * Scroll a terminal's viewport by `lines` logical lines (negative = up into
+   * scrollback), or to the bottom when `toBottom` is set. Active tab unless
+   * `tabId` is given. Fires the same `onScroll` the auto-scroll guard keys off.
+   */
+  | { action: "scrollTerminal"; lines?: number; toBottom?: boolean; tabId?: string }
   /** Poll until an element with `testId` exists, or fail after `timeoutMs`. */
   | { action: "waitFor"; testId: string; timeoutMs?: number; intervalMs?: number }
   /** Wait a fixed duration (e.g. to let terminal output settle). */
@@ -50,6 +58,13 @@ export type ScenarioCheck =
    * document root (theme CSS variables like `--bg-primary`).
    */
   | { assert: "computedStyleEquals"; property: string; value: string; testId?: string }
+  /**
+   * Whether a terminal is pinned to the bottom (auto-scroll active). True when
+   * `viewportY >= baseY - tolerance` (default `tolerance` 2, absorbing the
+   * fractional row xterm leaves when the last line is partially visible). Set
+   * `atBottom: false` to assert the user is scrolled up into the scrollback.
+   */
+  | { assert: "terminalAtBottom"; atBottom?: boolean; tolerance?: number; tabId?: string }
   /** The app-state value at `path` deep-equals `value`. */
   | { assert: "stateEquals"; path: string; value: unknown };
 

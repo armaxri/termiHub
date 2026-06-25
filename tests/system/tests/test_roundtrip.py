@@ -55,11 +55,29 @@ def test_extended_interaction_verbs_round_trip(bridge):
         driver.context_menu("tab-1")
         driver.press_key("Escape")
         driver.drag_to("tab-1", "tab-2")
+        driver.double_click("file-row-notes.txt")
 
         assert handler.recorded["selects"] == [{"testId": "theme-select", "value": "light"}]
         assert handler.recorded["contextMenus"] == ["tab-1"]
         assert handler.recorded["pressedKeys"] == ["Escape"]
         assert handler.recorded["dragTos"] == [{"from": "tab-1", "to": "tab-2"}]
+        assert handler.recorded["doubleClicks"] == ["file-row-notes.txt"]
+
+
+def test_terminal_scroll_round_trip(bridge):
+    handler = dispatcher_like(viewport={"viewportY": 5, "baseY": 42})
+    with FakeApp(bridge.port, handler):
+        driver = bridge.wait_for_app(timeout=5)
+
+        driver.scroll_terminal(-2000)
+        driver.scroll_terminal(to_bottom=True, tab_id="tab-9")
+
+        assert handler.recorded["scrolls"] == [
+            {"lines": -2000, "toBottom": False, "tabId": None},
+            {"lines": 0, "toBottom": True, "tabId": "tab-9"},
+        ]
+        # `viewportY < baseY` here means the user is scrolled up into scrollback.
+        assert driver.terminal_viewport() == {"viewportY": 5, "baseY": 42}
 
 
 def test_get_value_round_trip(bridge):

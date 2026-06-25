@@ -78,24 +78,29 @@ def dispatcher_like(
     state: dict | None = None,
     computed_styles: dict | None = None,
     values: dict | None = None,
+    viewport: dict | None = None,
 ) -> Handler:
     """A handler that mimics the real dispatcher for the common command set.
 
     ``computed_styles`` is keyed by ``(testId or "")`` → ``{property: value}`` so
     ``getComputedStyle`` (with or without a ``testId``) can be answered.
     ``values`` is keyed by ``testId`` → live control value for ``getValue``.
+    ``viewport`` is the ``{viewportY, baseY}`` returned by ``getTerminalViewport``.
     """
     state = state or {}
     computed_styles = computed_styles or {}
     values = values or {}
+    viewport = viewport or {"viewportY": 0, "baseY": 0}
     recorded: dict[str, list] = {
         "clicks": [],
+        "doubleClicks": [],
         "input": [],
         "drags": [],
         "selects": [],
         "contextMenus": [],
         "pressedKeys": [],
         "dragTos": [],
+        "scrolls": [],
     }
 
     def handle(command: dict[str, Any]) -> dict[str, Any]:
@@ -103,6 +108,9 @@ def dispatcher_like(
         if action == "click":
             recorded["clicks"].append(command["testId"])
             return {"ok": True, "action": "click"}
+        if action == "doubleClick":
+            recorded["doubleClicks"].append(command["testId"])
+            return {"ok": True, "action": "doubleClick"}
         if action == "select":
             recorded["selects"].append({"testId": command["testId"], "value": command["value"]})
             return {"ok": True, "action": "select"}
@@ -132,6 +140,17 @@ def dispatcher_like(
         if action == "terminalInput":
             recorded["input"].append(command["text"])
             return {"ok": True, "action": "terminalInput"}
+        if action == "scrollTerminal":
+            recorded["scrolls"].append(
+                {
+                    "lines": command.get("lines"),
+                    "toBottom": command.get("toBottom"),
+                    "tabId": command.get("tabId"),
+                }
+            )
+            return {"ok": True, "action": "scrollTerminal"}
+        if action == "getTerminalViewport":
+            return {"ok": True, "action": "getTerminalViewport", "value": viewport}
         if action == "readTerminal":
             return {"ok": True, "action": "readTerminal", "value": terminal_text}
         if action == "getState":

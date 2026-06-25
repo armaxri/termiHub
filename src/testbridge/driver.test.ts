@@ -19,6 +19,12 @@ describe("InAppBridgeDriver", () => {
     expect(sent).toEqual([{ action: "click", testId: "save" }]);
   });
 
+  it("maps doubleClick to a doubleClick command", async () => {
+    const { transport, sent } = scriptedTransport({});
+    await new InAppBridgeDriver(transport).doubleClick("file-row-notes.txt");
+    expect(sent).toEqual([{ action: "doubleClick", testId: "file-row-notes.txt" }]);
+  });
+
   it("maps type to a type command", async () => {
     const { transport, sent } = scriptedTransport({});
     await new InAppBridgeDriver(transport).type("host", "example.com");
@@ -126,6 +132,35 @@ describe("InAppBridgeDriver", () => {
       tabId: "tab-3",
       joinFullWidthRows: true,
     });
+  });
+
+  it("maps scrollTerminal options through, defaulting to the active tab", async () => {
+    const { transport, sent } = scriptedTransport({});
+    await new InAppBridgeDriver(transport).scrollTerminal({ lines: -2000 });
+    expect(sent).toEqual([
+      { action: "scrollTerminal", tabId: undefined, lines: -2000, toBottom: undefined },
+    ]);
+  });
+
+  it("maps scrollTerminal toBottom + tabId through", async () => {
+    const { transport, sent } = scriptedTransport({});
+    await new InAppBridgeDriver(transport).scrollTerminal({ toBottom: true, tabId: "tab-9" });
+    expect(sent).toEqual([
+      { action: "scrollTerminal", tabId: "tab-9", lines: undefined, toBottom: true },
+    ]);
+  });
+
+  it("maps getTerminalViewport to a command and unwraps the position", async () => {
+    const { transport, sent } = scriptedTransport({
+      getTerminalViewport: {
+        ok: true,
+        action: "getTerminalViewport",
+        value: { viewportY: 5, baseY: 42 },
+      },
+    });
+    const viewport = await new InAppBridgeDriver(transport).getTerminalViewport({ tabId: "tab-3" });
+    expect(viewport).toEqual({ viewportY: 5, baseY: 42 });
+    expect(sent[0]).toEqual({ action: "getTerminalViewport", tabId: "tab-3" });
   });
 
   it("rejects with a BridgeError carrying the message on failure", async () => {
