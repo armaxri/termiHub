@@ -92,6 +92,19 @@ class ConnectionsUi(HarnessMixin):
         self.driver.select(test_id, value)
         return True
 
+    def select_connection_type(self, type_id: str) -> None:
+        """Choose a connection type in an open editor, waiting for its options.
+
+        The type ``<select>``'s options come from the async-loaded
+        ``connectionTypes`` store, so they can lag the editor render — retry the
+        select until the requested option exists (``self.wait`` swallows the
+        ``BridgeError`` and retries).
+        """
+        self.wait(
+            lambda: self._try_select("connection-editor-type-select", type_id),
+            what=f"the {type_id!r} connection-type option to load",
+        )
+
     def create_local_connection(self, name: str) -> str:
         """Create and save a local-shell connection (the default editor type)."""
         self.open_new_connection_editor()
@@ -125,13 +138,7 @@ class ConnectionsUi(HarnessMixin):
         """
         self.open_new_connection_editor()
         self.driver.type("connection-editor-name-input", name)
-        # The type <select>'s options come from the async-loaded `connectionTypes`
-        # store, so they can lag the editor render — retry the select until the
-        # "ssh" option exists (self.wait swallows the BridgeError and retries).
-        self.wait(
-            lambda: self._try_select("connection-editor-type-select", "ssh"),
-            what="the connection-type options to load",
-        )
+        self.select_connection_type("ssh")
         self.wait(
             lambda: self.driver.exists("field-host"), what="the SSH connection fields"
         )
@@ -159,6 +166,48 @@ class ConnectionsUi(HarnessMixin):
             self.driver.click("field-savePassword")
         self.driver.click(
             "connection-editor-save-connect" if connect else "connection-editor-save"
+        )
+
+    def create_telnet_connection(
+        self,
+        name: str,
+        *,
+        host: str,
+        port: int,
+        connect: bool = False,
+    ) -> None:
+        """Fill the editor for a Telnet connection and save (or Save & Connect).
+
+        Telnet has no auth step in termiHub — login happens inside the session —
+        so ``connect=True`` opens a live terminal directly with no password
+        prompt. ``field-host`` / ``field-port`` are plain text inputs.
+        """
+        self.open_new_connection_editor()
+        self.driver.type("connection-editor-name-input", name)
+        self.select_connection_type("telnet")
+        self.wait(
+            lambda: self.driver.exists("field-host"),
+            what="the Telnet connection fields",
+        )
+        self.driver.type("field-host", str(host))
+        self.driver.type("field-port", str(port))
+        self.driver.click(
+            "connection-editor-save-connect" if connect else "connection-editor-save"
+        )
+
+    def open_serial_editor(self) -> None:
+        """Open the editor and switch it to the Serial type, awaiting its fields.
+
+        The serial port itself is a *detection-only* ``<select>`` (it lists ports
+        the OS enumerates), so a virtual/socat PTY can't be chosen through it —
+        see ``tests/system/tests/test_serial.py`` for why the live-I/O scenarios
+        are manual. This helper covers the drivable editor-UI checks.
+        """
+        self.open_new_connection_editor()
+        self.select_connection_type("serial")
+        self.wait(
+            lambda: self.driver.exists("field-port"),
+            what="the Serial connection fields",
         )
 
     # -- connecting --------------------------------------------------------------

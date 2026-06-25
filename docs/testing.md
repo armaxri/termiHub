@@ -746,7 +746,7 @@ Manual tests that can be automated have been moved to WebdriverIO E2E tests. The
 | Cross-platform (external window)      | ~1    | X11 forwarding displays remote window                             |
 | Embedded network services             | ~6    | HTTP/FTP/TFTP server start/stop, file transfer, auto-start (#526) |
 
-E2E test coverage: **45 test files** (28 UI suite + 17 infrastructure suite)
+E2E test coverage: **25 WebdriverIO files** (18 UI suite + 7 infrastructure suite), shrinking as suites port to the cross-platform Python bridge harness in `tests/system/` (epic #799).
 
 ### Test Environment Setup
 
@@ -783,7 +783,7 @@ See [scripts/README.md](../scripts/README.md) for all options. Reports are saved
 | --------------------- | -------------------------------------------------------------------------- | ---------- | ------- |
 | Local Shell           | [`local-shell.yaml`](../tests/manual/local-shell.yaml)                     | `MT-LOCAL` | 4       |
 | SSH                   | [`ssh.yaml`](../tests/manual/ssh.yaml)                                     | `MT-SSH`   | 15      |
-| Serial                | [`serial.yaml`](../tests/manual/serial.yaml)                               | `MT-SER`   | 8       |
+| Serial                | [`serial.yaml`](../tests/manual/serial.yaml)                               | `MT-SER`   | 9       |
 | Tab Management        | [`tab-management.yaml`](../tests/manual/tab-management.yaml)               | `MT-TAB`   | 14      |
 | Connection Management | [`connection-management.yaml`](../tests/manual/connection-management.yaml) | `MT-CONN`  | 12      |
 | File Browser + Editor | [`file-browser.yaml`](../tests/manual/file-browser.yaml)                   | `MT-FB`    | 10      |
@@ -795,7 +795,7 @@ See [scripts/README.md](../scripts/README.md) for all options. Reports are saved
 | Portable Mode         | [`portable-mode.yaml`](../tests/manual/portable-mode.yaml)                 | `MT-PORT`  | 4       |
 | Embedded Services     | [`embedded-services.yaml`](../tests/manual/embedded-services.yaml)         | `MT-SVC`   | 3       |
 | Network Tools         | [`network-tools.yaml`](../tests/manual/network-tools.yaml)                 | `MT-NET`   | 13      |
-| **Total**             |                                                                            |            | **149** |
+| **Total**             |                                                                            |            | **150** |
 
 When adding new manual tests, add the YAML definition to the appropriate file in `tests/manual/` — the YAML files are the **source of truth** for guided testing.
 
@@ -811,6 +811,9 @@ Mapping of manual test IDs that have been automated to their E2E test files:
 | MT-SSH-04–06, 10–12, 20–33, 35 | `infrastructure/ssh*.test.js`                                   |
 | MT-SSH-08, 19                  | `ssh-agent-warning.test.js`                                     |
 | MT-SSH-13, 17, 34              | `infrastructure/ssh-extended.test.js`                           |
+| SERIAL-01, 05 (editor UI)      | `tests/system/tests/test_serial.py`                             |
+| MT-SER-09 (live serial I/O)    | _manual_ (virtual port not bridge-selectable)                   |
+| TELNET-01–03                   | `tests/system/tests/test_telnet.py`                             |
 | MT-TAB-01–05, 15, 18           | `tests/system/tests/test_tab_management.py`                     |
 | MT-TAB-08–14, 19–21            | `tests/system/tests/test_tab_horizontal_scroll.py`              |
 | MT-CONN-02–07, 25–30           | `connection-crud.test.js`, `connection-forms.test.js`           |
