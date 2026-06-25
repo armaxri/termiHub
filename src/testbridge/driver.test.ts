@@ -19,6 +19,18 @@ describe("InAppBridgeDriver", () => {
     expect(sent).toEqual([{ action: "click", testId: "save" }]);
   });
 
+  it("maps doubleClick to a doubleClick command", async () => {
+    const { transport, sent } = scriptedTransport({});
+    await new InAppBridgeDriver(transport).doubleClick("connection-item-1");
+    expect(sent).toEqual([{ action: "doubleClick", testId: "connection-item-1" }]);
+  });
+
+  it("maps resizeWindow to a resizeWindow command", async () => {
+    const { transport, sent } = scriptedTransport({});
+    await new InAppBridgeDriver(transport).resizeWindow(800, 600);
+    expect(sent).toEqual([{ action: "resizeWindow", width: 800, height: 600 }]);
+  });
+
   it("maps type to a type command", async () => {
     const { transport, sent } = scriptedTransport({});
     await new InAppBridgeDriver(transport).type("host", "example.com");

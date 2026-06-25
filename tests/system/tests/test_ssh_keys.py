@@ -53,11 +53,15 @@ class TestSshKeyAuthUi(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, Syst
     def test_pem_rsa_connects_without_prompt(self):
         self._connect_with_key("ssh-pem-rsa", KEYS_DIR / "rsa_2048")
 
-    # A passphrase-protected key is only unlocked via the sidebar-connect path
-    # (ConnectionList.requestPassword); the editor's Save & Connect — the only
-    # connect path the bridge can drive (no sidebar double-click verb) — does not
-    # prompt for a key passphrase, so this scenario is not reachable here.
-    @pytest.mark.skip(reason="passphrase prompt needs the sidebar-connect path (no double-click verb)")
+    # The sidebar double-click connect path (which raises the key-passphrase prompt)
+    # is now reachable via the bridge's `doubleClick` verb (#830) — see
+    # `TestSshBaseline.test_sidebar_double_click_connects_password`. But the
+    # key-passphrase prompt only fires when the "Save credentials" (`savePassword`)
+    # field is enabled, and that field is filtered out of the editor whenever the
+    # credential store mode is "none" (schemaDefaults.filterCredentialFields). The
+    # system-test app launches with mode "none" and no master password, so this
+    # scenario needs credential-store setup the harness does not yet drive.
+    @pytest.mark.skip(reason="key-passphrase prompt needs a non-'none' credential store (savePassword field)")
     def test_passphrase_protected_key_prompts_then_connects(self):
         ...
 

@@ -16,6 +16,8 @@ import type { Scenario } from "./scenario";
  */
 class FakeDriver implements Driver {
   clicks: string[] = [];
+  doubleClicks: string[] = [];
+  resizes: Array<{ width: number; height: number }> = [];
   typed: Array<{ testId: string; text: string }> = [];
   selected: Array<{ testId: string; value: string }> = [];
   drags: Array<{ testId: string; dx: number; dy?: number }> = [];
@@ -36,6 +38,15 @@ class FakeDriver implements Driver {
   async click(testId: string): Promise<void> {
     if (!this.elements.has(testId)) throw new BridgeError("click", `no element "${testId}"`);
     this.clicks.push(testId);
+  }
+
+  async doubleClick(testId: string): Promise<void> {
+    if (!this.elements.has(testId)) throw new BridgeError("doubleClick", `no element "${testId}"`);
+    this.doubleClicks.push(testId);
+  }
+
+  async resizeWindow(width: number, height: number): Promise<void> {
+    this.resizes.push({ width, height });
   }
 
   async type(testId: string, text: string): Promise<void> {
@@ -237,6 +248,26 @@ describe("runScenario", () => {
       { key: "Enter", testId: "tab-1" },
     ]);
     expect(driver.dragTos).toEqual([{ from: "tab-1", to: "tab-2" }]);
+  });
+
+  it("runs doubleClick and resizeWindow steps", async () => {
+    const driver = new FakeDriver();
+    driver.elements.set("connection-item-1", {});
+
+    const scenario: Scenario = {
+      name: "pointer + window verbs",
+      steps: [
+        { action: "doubleClick", testId: "connection-item-1" },
+        { action: "resizeWindow", width: 640, height: 480 },
+      ],
+      checks: [],
+    };
+
+    const result = await runScenario(scenario, driver, instant());
+
+    expect(result.passed).toBe(true);
+    expect(driver.doubleClicks).toEqual(["connection-item-1"]);
+    expect(driver.resizes).toEqual([{ width: 640, height: 480 }]);
   });
 
   it("reads a root-level computed style (theme variable) when testId is omitted", async () => {
