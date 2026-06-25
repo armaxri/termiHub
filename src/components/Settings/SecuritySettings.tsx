@@ -222,6 +222,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
                 autoFocus
+                data-testid="master-password-input"
               />
               <PasswordInput
                 className="settings-panel__inline-dialog-input"
@@ -231,6 +232,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                 onKeyDown={(e) => {
                   if (e.key === "Enter") handleConfirmSwitch();
                 }}
+                data-testid="master-password-confirm-input"
               />
               {passwordError && (
                 <p className="settings-panel__inline-dialog-error">{passwordError}</p>
@@ -240,6 +242,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                   className="settings-panel__btn settings-panel__btn--primary"
                   onClick={handleConfirmSwitch}
                   disabled={switching}
+                  data-testid="master-password-confirm-btn"
                 >
                   {switching ? "Switching…" : "Confirm"}
                 </button>
