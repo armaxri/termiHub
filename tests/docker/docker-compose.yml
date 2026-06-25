@@ -201,7 +201,10 @@ services:
     networks:
       - test-net
     healthcheck:
-      test: ["CMD", "bash", "-c", "echo | nc -w1 localhost 23"]
+      # netcat isn't installed in the image; use bash's /dev/tcp to probe the
+      # telnet port without an extra package (the old `nc` probe always failed,
+      # so the container reported "unhealthy" even when serving).
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/23"]
       interval: 5s
       timeout: 3s
       retries: 5
