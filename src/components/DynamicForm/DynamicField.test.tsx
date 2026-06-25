@@ -345,48 +345,82 @@ describe("DynamicField", () => {
       required: true,
     };
 
-    it("renders a select with detected ports", async () => {
+    /** Set an input's value the React-controlled way (native setter + input event). */
+    function typeInto(input: HTMLInputElement, value: string) {
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        "value"
+      )?.set;
+      act(() => {
+        setter?.call(input, value);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    }
+
+    /** The datalist the port input is wired to via its `list` attribute. */
+    function datalistFor(input: HTMLInputElement): HTMLDataListElement {
+      const listId = input.getAttribute("list");
+      expect(listId).toBeTruthy();
+      return container.querySelector(`#${listId}`) as HTMLDataListElement;
+    }
+
+    it("renders an editable text input (not a select)", async () => {
       await act(async () => {
         renderField(serialPortField, "/dev/ttyUSB0", vi.fn());
       });
-      const select = query("field-port") as HTMLSelectElement;
-      expect(select.tagName).toBe("SELECT");
-      expect(select.value).toBe("/dev/ttyUSB0");
-      const optionValues = Array.from(select.options).map((o) => o.value);
+      const input = query("field-port") as HTMLInputElement;
+      expect(input.tagName).toBe("INPUT");
+      expect(input.value).toBe("/dev/ttyUSB0");
+    });
+
+    it("offers detected ports as datalist suggestions", async () => {
+      await act(async () => {
+        renderField(serialPortField, "", vi.fn());
+      });
+      const datalist = datalistFor(query("field-port") as HTMLInputElement);
+      const optionValues = Array.from(datalist.options).map((o) => o.value);
       expect(optionValues).toContain("/dev/ttyUSB0");
       expect(optionValues).toContain("/dev/ttyS0");
     });
 
-    it("shows disconnected option when current value is not in detected ports", async () => {
+    it("accepts a typed device path that is not a detected port", async () => {
+      const onChange = vi.fn();
+      await act(async () => {
+        renderField(serialPortField, "", onChange);
+      });
+      typeInto(query("field-port") as HTMLInputElement, "/tmp/termihub-serial-a");
+      expect(onChange).toHaveBeenCalledWith("/tmp/termihub-serial-a");
+    });
+
+    it("clears to undefined when the input is emptied", async () => {
+      const onChange = vi.fn();
+      await act(async () => {
+        renderField(serialPortField, "/dev/ttyUSB0", onChange);
+      });
+      typeInto(query("field-port") as HTMLInputElement, "");
+      expect(onChange).toHaveBeenCalledWith(undefined);
+    });
+
+    it("shows a not-connected hint when the value is not a detected port", async () => {
       await act(async () => {
         renderField(serialPortField, "/dev/ttyUSB1", vi.fn());
       });
-      const disconnected = query("field-port-disconnected") as HTMLOptionElement;
-      expect(disconnected).toBeTruthy();
-      expect(disconnected.value).toBe("/dev/ttyUSB1");
-      expect(disconnected.text).toContain("not connected");
-      const select = query("field-port") as HTMLSelectElement;
-      expect(select.value).toBe("/dev/ttyUSB1");
+      const hint = query("field-port-disconnected");
+      expect(hint).toBeTruthy();
+      expect(hint?.textContent).toContain("not connected");
     });
 
-    it("does not show disconnected option when current value is in detected ports", async () => {
+    it("does not show the hint when the value is a detected port", async () => {
       await act(async () => {
         renderField(serialPortField, "/dev/ttyUSB0", vi.fn());
       });
       expect(query("field-port-disconnected")).toBeNull();
     });
 
-    it("shows available ports and placeholder when value is empty", async () => {
+    it("does not show the hint when the value is empty", async () => {
       await act(async () => {
         renderField(serialPortField, "", vi.fn());
       });
-      const select = query("field-port") as HTMLSelectElement;
-      const optionValues = Array.from(select.options).map((o) => o.value);
-      expect(optionValues).toContain("/dev/ttyUSB0");
-      expect(optionValues).toContain("/dev/ttyS0");
-      // Placeholder option present with empty value
-      expect(optionValues).toContain("");
-      // No disconnected option since value is empty
       expect(query("field-port-disconnected")).toBeNull();
     });
 
@@ -397,19 +431,6 @@ describe("DynamicField", () => {
       expect(listSerialPorts).toHaveBeenCalled();
     });
 
-    it("calls onChange with port value on selection", async () => {
-      const onChange = vi.fn();
-      await act(async () => {
-        renderField(serialPortField, "/dev/ttyUSB0", onChange);
-      });
-      const select = query("field-port") as HTMLSelectElement;
-      await act(async () => {
-        select.value = "/dev/ttyS0";
-        select.dispatchEvent(new Event("change", { bubbles: true }));
-      });
-      expect(onChange).toHaveBeenCalledWith("/dev/ttyS0");
-    });
-
     it("uses provided availablePorts instead of calling listSerialPorts", async () => {
       const callCountBefore = (listSerialPorts as ReturnType<typeof vi.fn>).mock.calls.length;
       await act(async () => {
@@ -418,23 +439,22 @@ describe("DynamicField", () => {
         });
       });
       expect((listSerialPorts as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callCountBefore);
-      const select = query("field-port") as HTMLSelectElement;
-      const optionValues = Array.from(select.options).map((o) => o.value);
+      const datalist = datalistFor(query("field-port") as HTMLInputElement);
+      const optionValues = Array.from(datalist.options).map((o) => o.value);
       expect(optionValues).toContain("/dev/ttyAMA0");
       expect(optionValues).toContain("/dev/ttyAMA1");
       expect(optionValues).not.toContain("/dev/ttyUSB0");
     });
 
-    it("shows disconnected option from availablePorts when value is not in supplied list", async () => {
+    it("shows the not-connected hint from availablePorts when value is not in the supplied list", async () => {
       await act(async () => {
         renderField(serialPortField, "/dev/ttyAMA2", vi.fn(), {
           availablePorts: ["/dev/ttyAMA0"],
         });
       });
-      const disconnected = query("field-port-disconnected") as HTMLOptionElement;
-      expect(disconnected).toBeTruthy();
-      expect(disconnected.value).toBe("/dev/ttyAMA2");
-      expect(disconnected.text).toContain("not connected");
+      const hint = query("field-port-disconnected");
+      expect(hint).toBeTruthy();
+      expect(hint?.textContent).toContain("not connected");
     });
   });
 

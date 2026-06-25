@@ -811,8 +811,8 @@ Mapping of manual test IDs that have been automated to their E2E test files:
 | MT-SSH-04–06, 10–12, 20–33, 35 | `infrastructure/ssh*.test.js`                                   |
 | MT-SSH-08, 19                  | `ssh-agent-warning.test.js`                                     |
 | MT-SSH-13, 17, 34              | `infrastructure/ssh-extended.test.js`                           |
-| SERIAL-01, 05 (editor UI)      | `tests/system/tests/test_serial.py`                             |
-| MT-SER-09 (live serial I/O)    | _manual_ (virtual port not bridge-selectable)                   |
+| SERIAL-01, 05 + custom path    | `tests/system/tests/test_serial.py`                             |
+| MT-SER-09 (live serial I/O)    | _manual_ (no host socat echo fixture in harness yet, #859)      |
 | TELNET-01–03                   | `tests/system/tests/test_telnet.py`                             |
 | MT-TAB-01–05, 15, 18           | `tests/system/tests/test_tab_management.py`                     |
 | MT-TAB-08–14, 19–21            | `tests/system/tests/test_tab_horizontal_scroll.py`              |

@@ -303,35 +303,35 @@ function SerialPortField({
 
   const availablePorts = propPorts ?? detectedPorts;
   const isDisconnected = currentValue !== "" && !availablePorts.includes(currentValue);
+  // An editable combobox (input + datalist) rather than a plain <select>: the
+  // detected ports are offered as suggestions, but the user can still type any
+  // device path the OS doesn't enumerate (a virtual/socat PTY, an uncommon
+  // /dev path) — matching the field's "or type a device path directly" intent.
+  const listId = `field-${field.key}-list`;
 
   return (
     <>
       <span className="settings-form__label">{field.label}</span>
-      <select
+      <input
+        type="text"
         value={currentValue}
         onChange={(e) => onChange(e.target.value || undefined)}
+        placeholder={field.placeholder}
+        list={listId}
+        autoComplete="off"
+        spellCheck={false}
         data-testid={`field-${field.key}`}
-      >
-        {currentValue === "" && (
-          <option value="" disabled>
-            {availablePorts.length === 0 ? "No ports detected" : "Select a port…"}
-          </option>
-        )}
-        {isDisconnected && (
-          <option
-            value={currentValue}
-            style={{ color: "var(--text-disabled)" }}
-            data-testid={`field-${field.key}-disconnected`}
-          >
-            {currentValue} (not connected)
-          </option>
-        )}
+      />
+      <datalist id={listId}>
         {availablePorts.map((port) => (
-          <option key={port} value={port}>
-            {port}
-          </option>
+          <option key={port} value={port} />
         ))}
-      </select>
+      </datalist>
+      {isDisconnected && (
+        <p className="settings-form__hint" data-testid={`field-${field.key}-disconnected`}>
+          {currentValue} (not connected)
+        </p>
+      )}
     </>
   );
 }
