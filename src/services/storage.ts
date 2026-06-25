@@ -37,9 +37,15 @@ export async function loadConnections(): Promise<{
   return await loadConnectionsAndFolders();
 }
 
-/** Persist a connection (add or update) */
-export async function persistConnection(connection: SavedConnection): Promise<void> {
-  await saveConnection(connection);
+/**
+ * Persist a connection (add or update), returning its **persisted** id.
+ *
+ * The backend recomputes the id from folder + name, so it can differ from the
+ * editor's optimistic `conn-<timestamp>` id. Callers reconcile their in-memory
+ * copy with the returned id so a credential is never stored under the stale id.
+ */
+export async function persistConnection(connection: SavedConnection): Promise<string> {
+  return await saveConnection(connection);
 }
 
 /** Delete a connection from persistent storage */

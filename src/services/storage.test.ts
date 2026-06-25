@@ -55,8 +55,8 @@ describe("storage service", () => {
   });
 
   describe("persistConnection", () => {
-    it("delegates to saveConnection with connection object", async () => {
-      mockApi.saveConnection.mockResolvedValue(undefined);
+    it("delegates to saveConnection and returns the persisted id", async () => {
+      mockApi.saveConnection.mockResolvedValue("Test");
       const conn = {
         id: "conn-1",
         name: "Test",
@@ -64,9 +64,10 @@ describe("storage service", () => {
         folderId: null,
       };
 
-      await persistConnection(conn);
+      const persistedId = await persistConnection(conn);
 
       expect(mockApi.saveConnection).toHaveBeenCalledWith(conn);
+      expect(persistedId).toBe("Test");
     });
   });
 
