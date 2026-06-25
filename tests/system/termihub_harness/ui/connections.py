@@ -49,6 +49,26 @@ class ConnectionsUi(HarnessMixin):
         """Wait until a connection named ``name`` exists in the store, returning it."""
         return self.wait(lambda: self.find_connection(name), what=f"connection {name!r}")
 
+    def require_stable_connection(self, name: str) -> dict[str, Any]:
+        """Wait until a connection exists with its *settled* (persisted) id.
+
+        The editor assigns an optimistic ``conn-<timestamp>`` id when it saves; the
+        backend then reloads from disk and replaces it with the path-based persisted
+        id (``compute_connection_id`` → the name for a top-level connection). A flow
+        that keys something on the id — e.g. a saved credential, for a
+        reuse-on-reconnect test — must wait for that swap, or it stores under the
+        soon-to-be-replaced optimistic id and orphans it. Returns the connection
+        once its id is no longer the ``conn-`` optimistic placeholder.
+        """
+
+        def settled() -> Optional[dict[str, Any]]:
+            conn = self.find_connection(name)
+            if conn is None or str(conn["id"]).startswith("conn-"):
+                return None
+            return conn
+
+        return self.wait(settled, what=f"connection {name!r} id to settle")
+
     # -- editor ------------------------------------------------------------------
     def editor_open(self) -> bool:
         """Whether the connection editor name field is currently present."""
