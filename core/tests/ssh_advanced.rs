@@ -19,6 +19,7 @@ use termihub_core::backends::ssh::auth::connect_and_authenticate;
 // ── SSH-JUMP-01: 2-hop ProxyJump chain ───────────────────────────────
 
 #[tokio::test]
+#[ignore = "fixture gap: jumphost bastion→target marker not returned (#864)"]
 async fn ssh_jump_01_two_hop_proxy_jump() {
     require_docker!(PORT_SSH_BASTION);
 
