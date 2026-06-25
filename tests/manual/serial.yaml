@@ -131,11 +131,10 @@ tests:
     verification: manual
 
   # --- Live virtual-serial happy path (ported from E2E SERIAL-02/03/04, PR #813) ---
-  # The serial port field is a detection-only <select>: a virtual socat PTY is not
-  # enumerated by the OS, so it cannot be chosen through the bridge. The connect /
-  # echo / disconnect happy path therefore stays manual. The editor-UI parts
-  # (field presence + config selectors) are automated in
-  # tests/system/tests/test_serial.py.
+  # Since #854 the port field is an editable combobox, so a virtual socat PTY path
+  # can be typed (and is now driven by the bridge in test_serial.py). The connect /
+  # echo / disconnect happy path still runs manually because the harness has no
+  # host-side socat echo fixture yet (#859) — not because the path can't be set.
 
   - id: MT-SER-09
     name: "Connect to a virtual serial port, echo data, and handle disconnect"

@@ -1,31 +1,27 @@
 """Serial infrastructure system tests (ported from tests/e2e/infrastructure/serial*.test.js).
 
 Drives the real app over the test bridge to exercise the Serial connection
-editor. No container fixture is needed: these cover the *editor UI* (the port
-field and the config selectors), which is what the WebdriverIO SERIAL-01 /
-SERIAL-05 cases actually asserted.
+editor. No container fixture is needed: these cover the *editor UI* — the port
+field and the config selectors (the WebdriverIO SERIAL-01 / SERIAL-05 cases) —
+plus, since #854, that an **arbitrary device path** can be typed into the port
+field and persisted.
 
 **Why the live-I/O cases (SERIAL-02 connect / SERIAL-03 echo / SERIAL-04
-disconnect) are not ported as bridge tests.** The serial port field is a
-*detection-only* ``<select>`` (``SerialPortField``): it offers only the ports the
-OS enumerates via ``serial2::available_ports()`` plus a Linux ``/dev`` prefix
-scan. A virtual socat PTY (``/tmp/termihub-serial-a``, symlinked to
-``/dev/pts/N``) is **not** enumerated as a serial device, so it never appears as
-an option and the bridge ``select`` verb cannot target it — there is no longer a
-free-text port input to type a path into. Driving a live serial session against
-a virtual port therefore can't go through the real editor UI over the bridge.
-This is a genuine OS/library constraint (the epic only changes the *driver*, not
-the production UI), so those scenarios stay as **manual tests** — see
-``docs/testing.md`` (Infrastructure → Serial). The old WebdriverIO connect tests
-only ever asserted "a tab appeared", which they did even when the port stayed
-unset; the bridge port keeps the genuinely drivable coverage instead.
+disconnect) still run as manual tests.** The port field is now an editable
+combobox, so the bridge *can* set a virtual socat PTY path (#854) — that is no
+longer the blocker. What's still missing is a **host-side socat echo fixture**
+wired into the harness: the app runs host-native, the `serial-echo` container's
+PTYs live in an isolated Docker volume it can't reach (#859), and the host
+virtual-serial setup currently lives only in `scripts/test-system.sh`. Until
+that fixture is part of the harness, live send/receive stays manual — see
+`docs/testing.md` → Infrastructure → Serial (`MT-SER-09`).
 """
 
 from __future__ import annotations
 
 import pytest
 
-from termihub_harness import ConnectionsUi, SystemTest
+from termihub_harness import ConnectionsUi, SystemTest, unique_name
 
 pytestmark = pytest.mark.integration
 
@@ -48,14 +44,17 @@ SERIAL_NON_DEFAULTS = [
     ("field-flowControl", "hardware"),
 ]
 
+# A path the OS does not enumerate as a serial device — the case the old
+# detection-only <select> could not target.
+VIRTUAL_PORT = "/tmp/termihub-serial-a"
+
 
 class TestSerialEditorFields(ConnectionsUi, SystemTest):
     """SERIAL-01: the editor shows the port field and all serial config fields."""
 
     def test_port_field_is_shown(self):
         self.open_serial_editor()
-        # The current UI renders the port as a single detection ``<select>``
-        # (``field-port``) — the old select-or-input branch collapsed to one.
+        # The port field is an editable combobox input (#854), not a <select>.
         assert self.driver.exists("field-port")
 
     def test_all_config_fields_are_shown(self):
@@ -76,11 +75,21 @@ class TestSerialConfigSelectors(ConnectionsUi, SystemTest):
             )
 
 
-# SERIAL-02 (connect at a baud rate), SERIAL-03 (send/receive echo) and SERIAL-04
-# (device disconnect) require selecting a *live* serial port. A virtual socat PTY
-# is not enumerated by the detection-only port select, so these run as manual
-# tests (docs/testing.md → Infrastructure → Serial) rather than through the
-# bridge. Kept as skips so the coverage gap is explicit, mirroring SSH-06/07.
-@pytest.mark.skip(reason="live serial port not selectable via detection-only UI (SERIAL-02/03/04); manual")
-def test_serial_live_session_is_manual():
-    ...
+class TestSerialCustomPort(ConnectionsUi, SystemTest):
+    """#854: a non-detected device path can be typed into the port field and saved."""
+
+    def test_typed_path_is_accepted_and_persists(self):
+        name = unique_name("serial-path")
+        self.open_serial_editor()
+        self.driver.type("connection-editor-name-input", name)
+        # The old detection-only <select> could not hold a path the OS doesn't
+        # enumerate; the editable combobox accepts it and the bridge can type it.
+        self.driver.type("field-port", VIRTUAL_PORT)
+        assert self.driver.get_value("field-port") == VIRTUAL_PORT
+
+        # …and the typed path persists to the saved connection's config.
+        self.driver.click("connection-editor-save")
+        conn = self.require_connection(name)
+        config = conn.get("config") or {}
+        assert config.get("type") == "serial"
+        assert (config.get("config") or {}).get("port") == VIRTUAL_PORT

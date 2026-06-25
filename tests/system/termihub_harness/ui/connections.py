@@ -165,16 +165,35 @@ class ConnectionsUi(HarnessMixin):
     def open_serial_editor(self) -> None:
         """Open the editor and switch it to the Serial type, awaiting its fields.
 
-        The serial port itself is a *detection-only* ``<select>`` (it lists ports
-        the OS enumerates), so a virtual/socat PTY can't be chosen through it —
-        see ``tests/system/tests/test_serial.py`` for why the live-I/O scenarios
-        are manual. This helper covers the drivable editor-UI checks.
+        The serial port field is an **editable combobox** (an ``<input>`` wired to
+        a ``<datalist>`` of detected ports), so an arbitrary device path can be
+        typed into ``field-port`` — see :meth:`create_serial_connection`.
         """
         self.open_new_connection_editor()
         self.select_connection_type("serial")
         self.wait(
             lambda: self.driver.exists("field-port"),
             what="the Serial connection fields",
+        )
+
+    def create_serial_connection(
+        self,
+        name: str,
+        *,
+        port: str,
+        connect: bool = False,
+    ) -> None:
+        """Fill the editor for a Serial connection and save (or Save & Connect).
+
+        ``port`` is typed directly into the ``field-port`` combobox, so a path the
+        OS does not enumerate (a virtual/socat PTY) works — the field is no longer
+        a detection-only ``<select>`` (#854).
+        """
+        self.open_serial_editor()
+        self.driver.type("connection-editor-name-input", name)
+        self.driver.type("field-port", port)
+        self.driver.click(
+            "connection-editor-save-connect" if connect else "connection-editor-save"
         )
 
     # -- connecting --------------------------------------------------------------
