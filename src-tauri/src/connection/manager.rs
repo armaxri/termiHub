@@ -281,7 +281,12 @@ impl ConnectionManager {
     /// current `folder_id` + `name`, then runs deduplication to ensure unique
     /// names within the folder. If the ID changes (due to move or dedup rename),
     /// credentials are migrated to the new path-based ID.
-    pub fn save_connection(&self, connection: SavedConnection) -> Result<()> {
+    /// Save a connection and return its **persisted** id. The id is recomputed
+    /// from the connection's folder + name (and may differ from the optimistic
+    /// `conn-<timestamp>` id the editor assigns), so the caller can reconcile its
+    /// in-memory copy immediately instead of waiting for a disk reload — closing
+    /// the window in which a credential could be stored under the stale id.
+    pub fn save_connection(&self, connection: SavedConnection) -> Result<String> {
         let connection = prepare_for_storage(connection, &*self.credential_store)?;
         let old_id = connection.id.clone();
         let mut store = self.store.lock().unwrap();
@@ -328,9 +333,11 @@ impl ConnectionManager {
             let _ = migrate_credential(&old_id, new_id, &*self.credential_store);
         }
 
+        let persisted_id = connections[save_idx].id.clone();
         self.storage
             .save_flat(&store)
-            .context("Failed to persist connection")
+            .context("Failed to persist connection")?;
+        Ok(persisted_id)
     }
 
     /// Delete a connection by ID.
@@ -596,14 +603,18 @@ impl ConnectionManager {
     /// Save a connection to its appropriate file based on `source_file`.
     /// If `source_file` is `None`, saves to main connections.json.
     /// If `source_file` is `Some(path)`, saves to that external file.
-    pub fn save_connection_routed(&self, connection: SavedConnection) -> Result<()> {
+    pub fn save_connection_routed(&self, connection: SavedConnection) -> Result<String> {
         match &connection.source_file {
             None => self.save_connection(connection),
             Some(file_path) => {
                 let file_path = file_path.clone();
+                // External-file connections keep their incoming id (best-effort);
+                // the frontend reload still reconciles if it changed on disk.
+                let conn_id = connection.id.clone();
                 let mut conn = prepare_for_storage(connection, &*self.credential_store)?;
                 conn.source_file = None; // Strip before writing to disk
-                save_or_update_in_external_file(&file_path, conn)
+                save_or_update_in_external_file(&file_path, conn)?;
+                Ok(conn_id)
             }
         }
     }
@@ -1476,6 +1487,27 @@ mod tests {
             store.get_call_count(),
             2,
             "migrate_credential must call get() — callers must guard it for non-SSH types"
+        );
+    }
+
+    // Regression (#863): save_connection returns the *persisted* id (recomputed
+    // from the name), not the optimistic `conn-<ts>` id the editor sends. The
+    // frontend relies on this to reconcile its in-memory copy so a credential
+    // stored during a connect is not orphaned under the stale optimistic id.
+    #[test]
+    fn save_connection_returns_recomputed_persisted_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let cred_store = Arc::new(MockStore::new());
+        let mgr = ConnectionManager::new_for_test(dir.path(), cred_store).unwrap();
+
+        // make_local_conn names the connection "Local"; the persisted id is
+        // compute_connection_id(None, "Local") == "Local".
+        let persisted = mgr
+            .save_connection(make_local_conn("conn-1234567890"))
+            .unwrap();
+        assert_eq!(
+            persisted, "Local",
+            "save_connection must return the recomputed id, not the optimistic input id"
         );
     }
 
