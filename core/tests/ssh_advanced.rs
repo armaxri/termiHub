@@ -19,7 +19,6 @@ use termihub_core::backends::ssh::auth::connect_and_authenticate;
 // ── SSH-JUMP-01: 2-hop ProxyJump chain ───────────────────────────────
 
 #[tokio::test]
-#[ignore = "fixture gap: jumphost bastion→target marker not returned (#864)"]
 async fn ssh_jump_01_two_hop_proxy_jump() {
     require_docker!(PORT_SSH_BASTION);
 
@@ -29,12 +28,13 @@ async fn ssh_jump_01_two_hop_proxy_jump() {
         .await
         .expect("SSH-JUMP-01: Bastion connection should succeed");
 
-    // Step 2: Verify the bastion can reach the internal target.
-    // The ssh2 crate's `set_tcp_stream` requires `AsRawFd`, which
-    // `ssh2::Channel` does not implement. Instead, we verify jump host
-    // connectivity by executing an SSH command through the bastion to
-    // the target — this exercises the same network path that termiHub's
-    // ProxyJump implementation would use.
+    // Step 2: Verify the bastion can reach the internal target by executing an
+    // SSH command through the bastion to the target — exercising the same
+    // network path a ProxyJump connection would use. This is a fixture-level
+    // reachability check, not a test of a termiHub jump-host feature: the SSH
+    // backend has no first-class ProxyJump config yet (tracked separately); the
+    // raw `channel_open_direct_tcpip` primitive it would build on is checked in
+    // step 3.
     let output = ssh_exec(
         &bastion_session,
         "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
