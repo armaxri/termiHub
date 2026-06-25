@@ -105,13 +105,53 @@ class ConnectionsUi(HarnessMixin):
             what=f"the {type_id!r} connection-type option to load",
         )
 
-    def create_local_connection(self, name: str) -> str:
-        """Create and save a local-shell connection (the default editor type)."""
+    def create_local_connection(
+        self,
+        name: str,
+        *,
+        starting_directory: Optional[str] = None,
+        connect: bool = False,
+    ) -> str:
+        """Create a local-shell connection (the default editor type).
+
+        ``starting_directory`` fills the optional ``field-startingDirectory`` so
+        the shell opens there (supports ``/tmp``, ``~/...`` and ``${env:VAR}``,
+        which the backend expands). ``connect=True`` clicks **Save & Connect**,
+        which saves then immediately opens the terminal — so the caller never
+        needs a sidebar double-click.
+        """
         self.open_new_connection_editor()
         self.driver.type(self.EDITOR_NAME, name)
-        self.driver.click(self.EDITOR_SAVE)
+        if starting_directory is not None:
+            self.wait(
+                lambda: self.driver.exists("field-startingDirectory"),
+                what="the starting-directory field",
+            )
+            self.driver.type("field-startingDirectory", starting_directory)
+        self.driver.click(self.EDITOR_SAVE_CONNECT if connect else self.EDITOR_SAVE)
         self.require_connection(name)
         return name
+
+    def connect_connection(self, name: str) -> None:
+        """Open a session for an existing connection by double-clicking its item.
+
+        The connection list opens a session on *double*-click (single-click only
+        selects/edits), so this resolves the connection's id by name on every
+        poll — a save can reload connections from disk and reassign ids — and
+        double-clicks the current item once it is in the DOM.
+        """
+
+        def opened() -> bool:
+            conn = self.find_connection(name)
+            if conn is None:
+                return False
+            item = connection_item_testid(conn["id"])
+            if not self.driver.exists(item):
+                return False
+            self.driver.double_click(item)
+            return True
+
+        self.wait(opened, what=f"the {name!r} connection to open")
 
     def create_ssh_connection(
         self,
