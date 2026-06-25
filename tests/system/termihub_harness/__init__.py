@@ -10,6 +10,8 @@ from .fixtures import (
     SSH_BANNER_PORT,
     SSH_BANNER_SERVICE,
     SSH_HOST,
+    SSH_KEY_PASSPHRASE,
+    SSH_KEY_PASSPHRASE_PATH,
     SSH_KEY_PATH,
     SSH_KEYS_PORT,
     SSH_KEYS_SERVICE,
@@ -31,6 +33,7 @@ from .orchestrator import AgentInstance, AppInstance, agent_binary_path, app_bin
 from .systemtest import SystemTest, unique_name
 from .ui import (
     ConnectionsUi,
+    CredentialStoreUi,
     LayoutUi,
     MonitoringUi,
     PasswordPromptUi,
@@ -58,6 +61,7 @@ __all__ = [
     "agent_binary_path",
     "SystemTest",
     "ConnectionsUi",
+    "CredentialStoreUi",
     "TerminalUi",
     "TabsUi",
     "LayoutUi",
@@ -93,4 +97,6 @@ __all__ = [
     "TELNET_HOST",
     "TELNET_SERVICE",
     "TELNET_PORT",
+    "SSH_KEY_PASSPHRASE",
+    "SSH_KEY_PASSPHRASE_PATH",
 ]
