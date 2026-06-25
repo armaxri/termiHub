@@ -1,0 +1,78 @@
+name: Integration (Docker fixtures)
+
+# Exercises the tests/docker fixtures end-to-end. The regular "Run Tests" job
+# runs `cargo test --workspace --all-features` with NO containers up, so every
+# `require_docker!`-gated integration test in core/tests skips — which is how a
+# broken fixture (e.g. the telnet daemon serving nothing, or a perpetually
+# "unhealthy" container) can rot unnoticed (#858). This lane brings the fixtures
+# up and runs that suite against them, so a broken fixture fails CI.
+#
+# Not on every PR (it builds container images and runs network tests, so it is
+# slower and Docker-bound): nightly + manual instead. Trigger by hand from the
+# Actions tab ("Run workflow") when touching tests/docker or core/tests.
+
+on:
+  schedule:
+    # 03:17 UTC daily (off the top of the hour to dodge scheduler congestion).
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+  # Also run when the fixtures or the integration tests themselves change, so a
+  # PR that touches them gets feedback without waiting for the nightly run.
+  pull_request:
+    paths:
+      - "tests/docker/**"
+      - "core/tests/**"
+      - ".github/workflows/integration-fixtures.yml"
+
+# A fixture run is self-contained; cancel an in-flight run when a newer commit
+# lands on the same ref.
+concurrency:
+  group: integration-fixtures-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core-integration:
+    name: core/tests against live fixtures
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Bring up the Docker fixtures
+        # `--wait` blocks until every container is healthy — viable because the
+        # healthchecks were fixed to probe via bash /dev/tcp instead of an
+        # uninstalled `nc` (#852). The stress/fault/network profiles cover the
+        # sftp-stress, network-fault and tunnel-target ports the suite uses; the
+        # agent profile is omitted (no core/tests test targets it).
+        run: |
+          docker compose -f tests/docker/docker-compose.yml \
+            --profile stress --profile fault --profile network \
+            up -d --build --wait
+
+      - name: Run core integration suite against the fixtures
+        # `--all-features` enables the `docker` feature the integration tests
+        # compile against; with the fixtures up, the `require_docker!` guards run
+        # the tests instead of skipping them.
+        #
+        # `--test-threads=1` is required: the suites share single-instance
+        # containers, and running them concurrently makes them stomp on shared
+        # state (e.g. the network-fault-proxy's `tc` qdisc → "Exclusivity flag
+        # on, cannot modify"). A handful of tests are `#[ignore]`d for pre-existing
+        # fixture-content gaps tracked in #864; they will be re-enabled there.
+        run: cargo test -p termihub-core --all-features -- --test-threads=1
+
+      - name: Dump container logs on failure
+        if: failure()
+        run: docker compose -f tests/docker/docker-compose.yml --profile all logs --tail=200
+
+      - name: Tear down the fixtures
+        if: always()
+        run: docker compose -f tests/docker/docker-compose.yml --profile all down -v

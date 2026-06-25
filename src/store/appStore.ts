@@ -2477,7 +2477,24 @@ export const useAppStore = create<AppState>((set, get) => {
       set((state) => ({ connections: [...state.connections, connection] }));
       frontendLog("connection_sync", `addConnection: persisting ${connection.id}`);
       persistConnection(stripPassword(connection))
-        .then(() => applyConnectionReload())
+        .then((persistedId) => {
+          // The backend recomputes the id from folder + name, so it can differ
+          // from the optimistic `conn-<ts>` id. Reconcile the in-memory entry
+          // immediately so a connect that fires before the reload stores its
+          // credential under the persisted id rather than orphaning it (#863).
+          if (persistedId && persistedId !== connection.id) {
+            frontendLog(
+              "connection_sync",
+              `addConnection: reconciling ${connection.id} → ${persistedId}`
+            );
+            set((state) => ({
+              connections: state.connections.map((c) =>
+                c.id === connection.id ? { ...c, id: persistedId } : c
+              ),
+            }));
+          }
+          return applyConnectionReload();
+        })
         .catch((err) => console.error("Failed to persist new connection:", err));
     },
 
