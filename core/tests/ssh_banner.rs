@@ -1,3 +1,4 @@
+#![cfg(feature = "ssh")]
 //! SSH Banner Integration Tests (SSH-BANNER-01 through SSH-BANNER-03).
 //!
 //! Tests that termiHub correctly handles SSH pre-authentication banners

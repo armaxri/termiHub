@@ -1,3 +1,4 @@
+#![cfg(all(feature = "ssh", feature = "telnet"))]
 //! Telnet Integration Tests (TEL-01 through TEL-03).
 //!
 //! Tests termiHub's telnet backend against the Docker telnet container.

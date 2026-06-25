@@ -1,3 +1,4 @@
+#![cfg(feature = "ssh")]
 //! SSH Advanced Integration Tests.
 //!
 //! Tests termiHub's SSH backend for advanced scenarios:
