@@ -120,3 +120,76 @@ class CredentialStoreUi(HarnessMixin):
         """Open the unlock dialog via the indicator and unlock with ``password``."""
         self._click_indicator()
         self.handle_unlock_dialog(password)
+
+    # -- change password / auto-lock / migration ---------------------------------
+    def change_master_password(self, current: str, new: str) -> None:
+        """Change the master password from ``current`` to ``new`` via Settings.
+
+        The store must be in unlocked master-password mode. Drives the Security
+        panel's change-password dialog and returns to the connection sidebar; the
+        store stays unlocked afterward (only the on-disk vault is re-encrypted).
+        """
+        self.open_settings_category("security")
+        self.wait(
+            lambda: self.driver.exists("change-master-password-btn"),
+            what="the change-master-password button",
+        )
+        self.driver.click("change-master-password-btn")
+        self.wait(
+            lambda: self.driver.exists("change-master-password-current"),
+            what="the change-password dialog",
+        )
+        self.driver.type("change-master-password-current", current)
+        self.driver.type("change-master-password-new", new)
+        self.driver.type("change-master-password-confirm", new)
+        self.driver.click("change-master-password-confirm-btn")
+        self.wait(
+            lambda: not self.driver.exists("change-password-dialog"),
+            what="the change-password dialog to close",
+        )
+        self.switch_to_connections_sidebar()
+
+    def set_auto_lock_timeout(self, minutes: int) -> None:
+        """Select an auto-lock timeout (minutes) in the Security panel.
+
+        Verifies the setting round-trips into the store. The timeout options start
+        at 5 minutes, so a test cannot wait for the lock to actually fire — that is
+        covered by a manual test; this asserts the wiring, not the timer.
+        """
+        self.open_settings_category("security")
+        self.wait(
+            lambda: self.driver.exists("auto-lock-timeout"), what="the auto-lock select"
+        )
+        self.driver.select("auto-lock-timeout", str(minutes))
+        self.wait(
+            lambda: self.driver.get_state("settings.credentialAutoLockMinutes") == minutes,
+            what=f"the auto-lock timeout to persist as {minutes}",
+        )
+        self.switch_to_connections_sidebar()
+
+    def migrate_to_no_store(self) -> None:
+        """Switch a master-password store back to ``"none"`` (migrating credentials).
+
+        Drives the Security panel's no-storage radio + confirm dialog and waits for
+        the migration result and the mode flip. Ends on the connection sidebar.
+        """
+        self.open_settings_category("security")
+        self.wait(
+            lambda: self.driver.exists("storage-mode-none"),
+            what="the credential storage-mode options",
+        )
+        self.driver.click("storage-mode-none")
+        self.wait(
+            lambda: self.driver.exists("confirm-switch-confirm-btn"),
+            what="the switch-to-no-storage confirm dialog",
+        )
+        self.driver.click("confirm-switch-confirm-btn")
+        # The panel reports a migration result, and the store mode flips to none.
+        self.wait(
+            lambda: self.driver.exists("migration-result"), what="the migration result"
+        )
+        self.wait(
+            lambda: (self.credential_store_status() or {}).get("mode") == "none",
+            what="the credential store to switch to none",
+        )
+        self.switch_to_connections_sidebar()
