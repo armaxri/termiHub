@@ -158,8 +158,8 @@ class TestCredentialStore(
 
     def test_auto_lock_timeout_setting_persists(self):
         # The auto-lock options start at 5 minutes, so the lock firing cannot be
-        # awaited in a system test (covered by a manual test). This verifies the
-        # selected timeout round-trips into the store, then resets it to Never.
+        # awaited in a system test (covered by manual test MT-CRED-04). This verifies
+        # the selected timeout round-trips into the store, then resets it to Never.
         self.setup_master_password_store(MASTER_PASSWORD)
         self.set_auto_lock_timeout(5)
         assert self.driver.get_state("settings.credentialAutoLockMinutes") == 5
