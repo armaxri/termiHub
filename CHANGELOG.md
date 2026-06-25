@@ -44,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Serial: the **serial port field is now an editable combobox** instead of a detection-only dropdown. Detected ports are still offered as one-click suggestions (via a native `<datalist>`), but you can now **type any device path** — a path the OS does not enumerate (an uncommon `/dev` node, a virtual/socat PTY), or a port on a machine where detection comes up empty — matching the field's "select a detected serial port, or type a device path directly" intent. A "not connected" hint still flags a value that is not a currently-detected port. (Closes #854)
 - Terminal: added a small horizontal inset (8 px) inside the terminal viewport so the first and last characters of each line are no longer flush against the container edge or the vertical scrollbar. This makes it easier to drag-select characters at the line edges. xterm's FitAddon reads the padding so column counts remain accurate; horizontal-scroll mode keeps zero padding to avoid clipping the imperatively sized canvas.
 
 ### Fixed
