@@ -13,6 +13,7 @@ from termihub_harness import (
     PasswordPromptUi,
     SSH_KEYS_PORT,
     SSH_KEY_PATH,
+    SSH_PASSWORD_PORT,
     SSH_USERNAME,
     SshUi,
     SystemTest,
@@ -74,9 +75,38 @@ class TestSshBaseline(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, SshUi
         assert isinstance(self.driver.get_state(), dict)
         assert not self.password_prompt_open()
 
-# Window resize (SSH-BASELINE-RESIZE) is not portable to the bridge: the harness
-# has no window-resize verb, and the original only re-checked that the terminal
-# still rendered afterward. Tracked as a follow-up if a resize verb is added.
-@pytest.mark.skip(reason="no window-resize verb in the test bridge (SSH-BASELINE-RESIZE)")
-def test_terminal_survives_window_resize():
-    ...
+    def test_sidebar_double_click_connects_password(self):
+        # Exercises the bridge's doubleClick verb on the real sidebar-connect path
+        # (ConnectionList.onDoubleClick → handleConnect), distinct from the editor's
+        # Save & Connect: save a password connection, double-click it in the sidebar
+        # to connect, answer the prompt it raises, and land in a terminal.
+        name = unique_name("ssh-dblclick")
+        self.create_ssh_connection(
+            name,
+            host=HOST,
+            port=SSH_PASSWORD_PORT,
+            username=SSH_USERNAME,
+            connect=False,
+        )
+        self.require_connection(name)
+        self.connect_connection(name)
+        self.handle_password_prompt()
+        tab = self.wait(lambda: self.find_tab(name), what="the double-click SSH tab")
+        assert tab is not None
+        self.wait(self.has_terminal, what="the SSH terminal session")
+
+    def test_terminal_survives_window_resize(self):
+        # SSH-BASELINE-RESIZE: resizing the window re-fits xterm and re-sizes the
+        # PTY; the session must survive and stay interactive. Connect, resize the
+        # window to two sizes (driving the fit → PTY-resize path), then confirm the
+        # terminal still echoes a freshly typed command.
+        name = unique_name("ssh-resize")
+        self.connect_ssh_password(name)
+        self.run_command("echo BEFORE_RESIZE")
+        assert "BEFORE_RESIZE" in self.wait_for_output("BEFORE_RESIZE")
+
+        self.driver.resize_window(800, 600)
+        self.driver.resize_window(1024, 768)
+
+        self.run_command("echo AFTER_RESIZE")
+        assert "AFTER_RESIZE" in self.wait_for_output("AFTER_RESIZE")

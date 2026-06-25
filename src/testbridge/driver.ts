@@ -79,6 +79,8 @@ export interface Driver {
    * gesture for opening a connection, entering a directory, or opening a file.
    */
   doubleClick(testId: string): Promise<void>;
+  /** Resize the application window to `width` × `height` logical pixels (Tauri). */
+  resizeWindow(width: number, height: number): Promise<void>;
   /** Set the value of the input/textarea carrying the given `data-testid`. */
   type(testId: string, text: string): Promise<void>;
   /** Choose `value` on the native `<select>` carrying the given `data-testid`. */
@@ -173,6 +175,10 @@ export class InAppBridgeDriver implements Driver {
 
   async doubleClick(testId: string): Promise<void> {
     await this.send({ action: "doubleClick", testId });
+  }
+
+  async resizeWindow(width: number, height: number): Promise<void> {
+    await this.send({ action: "resizeWindow", width, height });
   }
 
   async type(testId: string, text: string): Promise<void> {

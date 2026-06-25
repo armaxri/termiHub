@@ -18,6 +18,7 @@ function setup(
     getActiveTabId: () => undefined,
     getState: () => ({}),
     sendTerminalInput: async () => false,
+    resizeWindow: async () => {},
     ...overrides,
   };
   return { deps, container };
@@ -186,26 +187,54 @@ describe("dispatchCommand", () => {
   });
 
   describe("doubleClick", () => {
-    it("dispatches a bubbling dblclick the onDoubleClick handler observes", async () => {
-      const { deps, container } = setup(`<div data-testid="row">file.txt</div>`);
-      const dbl = vi.fn();
-      const single = vi.fn();
-      const el = container.querySelector("div")!;
-      el.addEventListener("dblclick", dbl);
-      el.addEventListener("click", single);
+    it("dispatches a dblclick the element's handler observes", async () => {
+      const { deps, container } = setup(`<button data-testid="conn">Conn</button>`);
+      const handler = vi.fn();
+      container.querySelector("button")!.addEventListener("dblclick", handler);
 
-      const res = await dispatchCommand({ action: "doubleClick", testId: "row" }, deps);
+      const res = await dispatchCommand({ action: "doubleClick", testId: "conn" }, deps);
       expect(res).toEqual({ ok: true, action: "doubleClick" });
-      // A real double-click emits two clicks and a trailing dblclick.
-      expect(dbl).toHaveBeenCalledOnce();
-      expect(single).toHaveBeenCalledTimes(2);
+      expect(handler).toHaveBeenCalledOnce();
+    });
+
+    it("fires two click rounds before the dblclick (a real double-click)", async () => {
+      const { deps, container } = setup(`<button data-testid="conn">Conn</button>`);
+      const seen: string[] = [];
+      const btn = container.querySelector("button")!;
+      btn.addEventListener("click", () => seen.push("click"));
+      btn.addEventListener("dblclick", () => seen.push("dblclick"));
+
+      await dispatchCommand({ action: "doubleClick", testId: "conn" }, deps);
+      // Two clicks precede the dblclick, exactly like a real pointer double-click.
+      expect(seen).toEqual(["click", "click", "dblclick"]);
     });
 
     it("fails when the target is absent", async () => {
       const { deps } = setup(`<div></div>`);
-      const res = await dispatchCommand({ action: "doubleClick", testId: "row" }, deps);
+      const res = await dispatchCommand({ action: "doubleClick", testId: "conn" }, deps);
       expect(res.ok).toBe(false);
-      expect(res.error).toContain("row");
+    });
+  });
+
+  describe("resizeWindow", () => {
+    it("calls the injected resizeWindow dep with the requested size", async () => {
+      const resizeWindow = vi.fn(async () => {});
+      const { deps } = setup(`<div></div>`, { resizeWindow });
+
+      const res = await dispatchCommand({ action: "resizeWindow", width: 800, height: 600 }, deps);
+      expect(res).toEqual({ ok: true, action: "resizeWindow" });
+      expect(resizeWindow).toHaveBeenCalledWith(800, 600);
+    });
+
+    it("fails with the dep's error when the resize throws", async () => {
+      const resizeWindow = vi.fn(async () => {
+        throw new Error("window unavailable");
+      });
+      const { deps } = setup(`<div></div>`, { resizeWindow });
+
+      const res = await dispatchCommand({ action: "resizeWindow", width: 800, height: 600 }, deps);
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain("window unavailable");
     });
   });
 

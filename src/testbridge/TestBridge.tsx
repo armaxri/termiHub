@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { useTerminalRegistry } from "@/components/Terminal/TerminalRegistry";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import { frontendLog } from "@/utils/frontendLog";
@@ -34,6 +35,9 @@ export function TestBridge() {
       getActiveTabId: () => getActiveTab(useAppStore.getState())?.id ?? undefined,
       getState: () => useAppStore.getState() as unknown as Record<string, unknown>,
       sendTerminalInput: (tabId, text) => sendInputToTerminal(tabId, text),
+      // Drive the real Tauri window so resize-triggered behavior (xterm fit →
+      // PTY resize) runs exactly as it does for an interactive window drag.
+      resizeWindow: (width, height) => getCurrentWindow().setSize(new LogicalSize(width, height)),
     };
 
     const dispatch = (command: Parameters<typeof dispatchCommand>[0]) =>

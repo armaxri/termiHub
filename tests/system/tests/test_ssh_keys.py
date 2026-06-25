@@ -10,8 +10,13 @@ import pytest
 
 from termihub_harness import (
     ConnectionsUi,
+    CredentialStoreUi,
     PasswordPromptUi,
+    SettingsUi,
+    SidebarUi,
     SSH_KEYS_PORT,
+    SSH_KEY_PASSPHRASE,
+    SSH_KEY_PASSPHRASE_PATH,
     SSH_KEY_PATH,
     SSH_USERNAME,
     SystemTest,
@@ -24,10 +29,20 @@ pytestmark = pytest.mark.integration
 
 HOST = "127.0.0.1"
 KEYS_DIR = SSH_KEY_PATH.parent
+MASTER_PASSWORD = "system-test-master-pw"
 
 
 @pytest.mark.usefixtures("ssh_fixtures")
-class TestSshKeyAuthUi(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, SystemTest):
+class TestSshKeyAuthUi(
+    TerminalUi,
+    TabsUi,
+    ConnectionsUi,
+    PasswordPromptUi,
+    CredentialStoreUi,
+    SettingsUi,
+    SidebarUi,
+    SystemTest,
+):
     def test_editor_saves_a_key_auth_connection(self):
         # The "key auth via UI" smoke check: the editor builds + persists a
         # key-auth SSH connection (the original WebdriverIO test only verified
@@ -53,13 +68,34 @@ class TestSshKeyAuthUi(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, Syst
     def test_pem_rsa_connects_without_prompt(self):
         self._connect_with_key("ssh-pem-rsa", KEYS_DIR / "rsa_2048")
 
-    # A passphrase-protected key is only unlocked via the sidebar-connect path
-    # (ConnectionList.requestPassword); the editor's Save & Connect — the only
-    # connect path the bridge can drive (no sidebar double-click verb) — does not
-    # prompt for a key passphrase, so this scenario is not reachable here.
-    @pytest.mark.skip(reason="passphrase prompt needs the sidebar-connect path (no double-click verb)")
     def test_passphrase_protected_key_prompts_then_connects(self):
-        ...
+        # The key-passphrase prompt is only raised on the sidebar-connect path
+        # (ConnectionList.requestPassword), reachable via the bridge's doubleClick
+        # verb (#830), and only when the "Save credentials" (savePassword) field is
+        # on — which requires a non-"none" credential store (#851). So: set up a
+        # master-password store, save a key-auth connection with save_password=True,
+        # double-click to connect, answer the passphrase prompt, and land in a shell.
+        key_path = SSH_KEY_PASSPHRASE_PATH
+        if not key_path.exists():
+            pytest.skip(f"SSH key fixture missing: {key_path}")
+        self.setup_master_password_store(MASTER_PASSWORD)
+        name = unique_name("ssh-passphrase")
+        self.create_ssh_connection(
+            name,
+            host=HOST,
+            port=SSH_KEYS_PORT,
+            username=SSH_USERNAME,
+            auth_method="key",
+            key_path=str(key_path),
+            save_password=True,
+            connect=False,
+        )
+        self.require_connection(name)
+        self.connect_connection(name)
+        self.handle_password_prompt(SSH_KEY_PASSPHRASE)
+        tab = self.wait(lambda: self.find_tab(name), what="the SSH passphrase-key tab")
+        assert tab is not None
+        self.wait(self.has_terminal, what="the SSH terminal session")
 
     def _connect_with_key(self, prefix: str, key_path) -> None:
         if not key_path.exists():

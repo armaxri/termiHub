@@ -130,6 +130,31 @@ tests:
       - "A 'Retry' button and a 'Cancel' button are shown"
     verification: manual
 
+  # --- Live virtual-serial happy path (ported from E2E SERIAL-02/03/04, PR #813) ---
+  # Since #854 the port field is an editable combobox, so a virtual socat PTY path
+  # can be typed (and is now driven by the bridge in test_serial.py). The connect /
+  # echo / disconnect happy path still runs manually because the harness has no
+  # host-side socat echo fixture yet (#859) — not because the path can't be set.
+
+  - id: MT-SER-09
+    name: "Connect to a virtual serial port, echo data, and handle disconnect"
+    pr: 813
+    platforms: [linux, macos]
+    prerequisites:
+      - app: true
+      - hardware: "socat-backed virtual serial pair + echo server: run ./scripts/test-system.sh (or examples/scripts/setup-virtual-serial.sh + examples/serial/serial-echo-server.py)"
+    instructions:
+      - "Create a Serial connection; in the Port field type/select /tmp/termihub-serial-a, leave baud at 9600"
+      - "Open the connection and confirm a terminal tab appears and renders"
+      - "Type 'SERIAL_ECHO_TEST' and press Enter"
+      - "Stop the socat process (or unplug the device) to simulate a disconnect"
+    expected:
+      - "A terminal tab opens titled with the connection name and an xterm renders"
+      - "The echo server echoes the typed text back into the terminal"
+      - "On disconnect the app stays stable (no crash); the tab shows a connection-closed/error state"
+    verification: manual
+    tags: [serial]
+
   # --- Configurable line endings (PR #791) ---
 
   - id: MT-SER-06

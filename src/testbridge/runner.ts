@@ -112,6 +112,9 @@ async function runStep(
     case "doubleClick":
       await driver.doubleClick(step.testId);
       return;
+    case "resizeWindow":
+      await driver.resizeWindow(step.width, step.height);
+      return;
     case "type":
       await driver.type(step.testId, step.text);
       return;

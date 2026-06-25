@@ -151,6 +151,7 @@ describe("ConnectionSettingsForm", () => {
       getActiveTabId: () => undefined,
       getState: () => ({}),
       sendTerminalInput: async () => false,
+      resizeWindow: async () => {},
     };
     await act(async () => {
       await dispatchCommand({ action: "select", testId: "field-authMethod", value: "key" }, deps);

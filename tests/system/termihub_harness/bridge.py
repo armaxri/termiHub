@@ -125,13 +125,25 @@ class Driver:
         self._call({"action": "click", "testId": test_id})
 
     def double_click(self, test_id: str) -> None:
-        """Double-click ``test_id`` — the "activate" gesture.
+        """Double-click the element with ``test_id`` — the "activate" gesture.
 
-        Opens a connection's session, enters a directory in the file browser, or
-        opens a file in the editor. A single :meth:`click` cannot reach
-        ``onDoubleClick`` handlers; this fires the full double-click sequence.
+        Opens a connection's session from the sidebar (``ConnectionList``'s
+        ``onDoubleClick`` — the only path that raises the SSH key-passphrase
+        prompt), enters a directory in the file browser, or opens a file in the
+        editor. A single :meth:`click` cannot reach ``onDoubleClick`` handlers;
+        this dispatches the full sequence a real double-click produces (two click
+        rounds + ``dblclick``).
         """
         self._call({"action": "doubleClick", "testId": test_id})
+
+    def resize_window(self, width: float, height: float) -> None:
+        """Resize the app window to ``width`` × ``height`` logical pixels.
+
+        Drives the real Tauri window via ``getCurrentWindow().setSize(...)`` so
+        resize-triggered behavior runs as it does interactively: xterm's fit addon
+        re-fits the terminal and re-sizes the PTY when its container changes size.
+        """
+        self._call({"action": "resizeWindow", "width": width, "height": height})
 
     def type(self, test_id: str, text: str) -> None:
         self._call({"action": "type", "testId": test_id, "text": text})

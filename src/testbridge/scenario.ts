@@ -14,6 +14,8 @@ export type ScenarioStep =
   | { action: "click"; testId: string }
   /** Double-click to "activate" (open connection / enter directory / open file). */
   | { action: "doubleClick"; testId: string }
+  /** Resize the app window to `width` × `height` logical pixels (Tauri). */
+  | { action: "resizeWindow"; width: number; height: number }
   | { action: "type"; testId: string; text: string }
   /** Choose a native `<select>` option by value. */
   | { action: "select"; testId: string; value: string }

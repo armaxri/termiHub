@@ -33,6 +33,7 @@ function deps(): BridgeDeps {
     getActiveTabId: () => undefined,
     getState: () => ({}),
     sendTerminalInput: async () => false,
+    resizeWindow: async () => {},
   };
 }
 

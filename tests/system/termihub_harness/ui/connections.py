@@ -49,6 +49,26 @@ class ConnectionsUi(HarnessMixin):
         """Wait until a connection named ``name`` exists in the store, returning it."""
         return self.wait(lambda: self.find_connection(name), what=f"connection {name!r}")
 
+    def require_stable_connection(self, name: str) -> dict[str, Any]:
+        """Wait until a connection exists with its *settled* (persisted) id.
+
+        The editor assigns an optimistic ``conn-<timestamp>`` id when it saves; the
+        backend then reloads from disk and replaces it with the path-based persisted
+        id (``compute_connection_id`` → the name for a top-level connection). A flow
+        that keys something on the id — e.g. a saved credential, for a
+        reuse-on-reconnect test — must wait for that swap, or it stores under the
+        soon-to-be-replaced optimistic id and orphans it. Returns the connection
+        once its id is no longer the ``conn-`` optimistic placeholder.
+        """
+
+        def settled() -> Optional[dict[str, Any]]:
+            conn = self.find_connection(name)
+            if conn is None or str(conn["id"]).startswith("conn-"):
+                return None
+            return conn
+
+        return self.wait(settled, what=f"connection {name!r} id to settle")
+
     # -- editor ------------------------------------------------------------------
     def editor_open(self) -> bool:
         """Whether the connection editor name field is currently present."""
@@ -71,6 +91,19 @@ class ConnectionsUi(HarnessMixin):
         """
         self.driver.select(test_id, value)
         return True
+
+    def select_connection_type(self, type_id: str) -> None:
+        """Choose a connection type in an open editor, waiting for its options.
+
+        The type ``<select>``'s options come from the async-loaded
+        ``connectionTypes`` store, so they can lag the editor render — retry the
+        select until the requested option exists (``self.wait`` swallows the
+        ``BridgeError`` and retries).
+        """
+        self.wait(
+            lambda: self._try_select("connection-editor-type-select", type_id),
+            what=f"the {type_id!r} connection-type option to load",
+        )
 
     def create_local_connection(
         self,
@@ -129,6 +162,7 @@ class ConnectionsUi(HarnessMixin):
         username: str,
         auth_method: str = "password",
         key_path: Optional[str] = None,
+        save_password: bool = False,
         connect: bool = False,
     ) -> None:
         """Fill the editor for an SSH connection and save (or Save & Connect).
@@ -137,16 +171,14 @@ class ConnectionsUi(HarnessMixin):
         opens the session — raising the password prompt for password auth — so a
         test never needs a sidebar double-click. ``auth_method`` selects the
         native ``field-authMethod`` dropdown; pass ``key_path`` for key auth.
+        ``save_password=True`` toggles the "Save credentials" switch — required to
+        raise the key-passphrase prompt on the sidebar-connect path. That field is
+        only present when the credential store is not in ``"none"`` mode (see
+        :class:`~termihub_harness.ui.CredentialStoreUi`).
         """
         self.open_new_connection_editor()
         self.driver.type("connection-editor-name-input", name)
-        # The type <select>'s options come from the async-loaded `connectionTypes`
-        # store, so they can lag the editor render — retry the select until the
-        # "ssh" option exists (self.wait swallows the BridgeError and retries).
-        self.wait(
-            lambda: self._try_select("connection-editor-type-select", "ssh"),
-            what="the connection-type options to load",
-        )
+        self.select_connection_type("ssh")
         self.wait(
             lambda: self.driver.exists("field-host"), what="the SSH connection fields"
         )
@@ -164,9 +196,102 @@ class ConnectionsUi(HarnessMixin):
                 lambda: self.driver.exists(key_input), what="the SSH key-path field"
             )
             self.driver.type(key_input, str(key_path))
+        if save_password:
+            # The "Save credentials" toggle is a checkbox; a click flips it on so
+            # key auth prompts for (and would store) the key passphrase.
+            self.wait(
+                lambda: self.driver.exists("field-savePassword"),
+                what="the Save credentials toggle",
+            )
+            self.driver.click("field-savePassword")
         self.driver.click(
             "connection-editor-save-connect" if connect else "connection-editor-save"
         )
+
+    def create_telnet_connection(
+        self,
+        name: str,
+        *,
+        host: str,
+        port: int,
+        connect: bool = False,
+    ) -> None:
+        """Fill the editor for a Telnet connection and save (or Save & Connect).
+
+        Telnet has no auth step in termiHub — login happens inside the session —
+        so ``connect=True`` opens a live terminal directly with no password
+        prompt. ``field-host`` / ``field-port`` are plain text inputs.
+        """
+        self.open_new_connection_editor()
+        self.driver.type("connection-editor-name-input", name)
+        self.select_connection_type("telnet")
+        self.wait(
+            lambda: self.driver.exists("field-host"),
+            what="the Telnet connection fields",
+        )
+        self.driver.type("field-host", str(host))
+        self.driver.type("field-port", str(port))
+        self.driver.click(
+            "connection-editor-save-connect" if connect else "connection-editor-save"
+        )
+
+    def open_serial_editor(self) -> None:
+        """Open the editor and switch it to the Serial type, awaiting its fields.
+
+        The serial port field is an **editable combobox** (an ``<input>`` wired to
+        a ``<datalist>`` of detected ports), so an arbitrary device path can be
+        typed into ``field-port`` — see :meth:`create_serial_connection`.
+        """
+        self.open_new_connection_editor()
+        self.select_connection_type("serial")
+        self.wait(
+            lambda: self.driver.exists("field-port"),
+            what="the Serial connection fields",
+        )
+
+    def create_serial_connection(
+        self,
+        name: str,
+        *,
+        port: str,
+        connect: bool = False,
+    ) -> None:
+        """Fill the editor for a Serial connection and save (or Save & Connect).
+
+        ``port`` is typed directly into the ``field-port`` combobox, so a path the
+        OS does not enumerate (a virtual/socat PTY) works — the field is no longer
+        a detection-only ``<select>`` (#854).
+        """
+        self.open_serial_editor()
+        self.driver.type("connection-editor-name-input", name)
+        self.driver.type("field-port", port)
+        self.driver.click(
+            "connection-editor-save-connect" if connect else "connection-editor-save"
+        )
+
+    # -- connecting --------------------------------------------------------------
+    def connect_connection(self, name: str) -> None:
+        """Connect a saved connection via a sidebar double-click.
+
+        This is the only connect path that raises the SSH key-passphrase prompt
+        (``ConnectionList``'s ``onDoubleClick`` → ``requestPassword``), unlike the
+        editor's Save & Connect. Mirrors :meth:`open_connection_menu`'s resilience:
+        a save reloads connections from disk a few times and a connection's id can
+        change across that reload, so the id is re-resolved by name on every poll
+        and the double-click is dispatched only once the current item is mounted.
+        """
+
+        def double_clicked() -> bool:
+            conn = self.find_connection(name)
+            if conn is None:
+                return False
+            item = connection_item_testid(conn["id"])
+            if not self.driver.exists(item):
+                return False
+            self.driver.double_click(item)
+            return True
+
+        self.wait(double_clicked, what=f"the {name!r} connection to connect")
 
     # -- context menu ------------------------------------------------------------
     def open_connection_menu(self, name: str) -> None:

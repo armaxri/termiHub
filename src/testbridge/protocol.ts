@@ -23,11 +23,13 @@ export interface ClickCommand {
 /**
  * Double-click the element carrying the given `data-testid`.
  *
- * A single {@link ClickCommand} cannot reach `onDoubleClick` handlers, which the
- * app uses for "activate" gestures: opening a connection's session, entering a
- * directory in the file browser, and opening a file in the editor. This fires two
- * full click sequences followed by a `dblclick` event — what a real double-click
- * produces — so React's `onDoubleClick` fires.
+ * Many "activate" gestures are only reachable via a real double-click and a
+ * single {@link ClickCommand} never triggers them: connecting a saved connection
+ * from the sidebar (`ConnectionList`'s `onDoubleClick` — the only path that
+ * raises the SSH key-passphrase prompt), entering a directory in the file
+ * browser, and opening a file in the editor. This dispatches the full sequence a
+ * real double-click produces: two pointer→mouse→click rounds followed by a
+ * `dblclick` event (which React's `onDoubleClick` listens for).
  */
 export interface DoubleClickCommand {
   action: "doubleClick";
@@ -178,6 +180,24 @@ export interface ContextMenuCommand {
 }
 
 /**
+ * Resize the application window to `width` × `height` logical pixels.
+ *
+ * The bridge runs inside the webview, so it drives the real Tauri window via
+ * `getCurrentWindow().setSize(...)` — the only way to exercise resize-driven
+ * behavior (xterm's fit addon re-fits the terminal and re-sizes the PTY when its
+ * container resizes). Unlike the DOM-only verbs, this resolves against an
+ * injected `resizeWindow` dep, so the live {@link TestBridge} wires the Tauri
+ * call while unit tests supply a stub.
+ */
+export interface ResizeWindowCommand {
+  action: "resizeWindow";
+  /** Target inner width in logical pixels. */
+  width: number;
+  /** Target inner height in logical pixels. */
+  height: number;
+}
+
+/**
  * Dispatch a keyboard key press (`keydown` + `keyup`).
  *
  * Targets the element with `testId` when given, else the focused element — so a
@@ -260,6 +280,7 @@ export interface TerminalViewport {
 export type BridgeCommand =
   | ClickCommand
   | DoubleClickCommand
+  | ResizeWindowCommand
   | TypeCommand
   | SelectCommand
   | ContextMenuCommand
