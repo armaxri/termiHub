@@ -184,6 +184,10 @@ class CredentialStoreUi(HarnessMixin):
             what="the switch-to-no-storage confirm dialog",
         )
         self.driver.click("confirm-switch-confirm-btn")
+        # The panel reports a migration result, and the store mode flips to none.
+        self.wait(
+            lambda: self.driver.exists("migration-result"), what="the migration result"
+        )
         self.wait(
             lambda: (self.credential_store_status() or {}).get("mode") == "none",
             what="the credential store to switch to none",
