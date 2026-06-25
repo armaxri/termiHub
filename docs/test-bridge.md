@@ -136,9 +136,11 @@ unmount.
 | Action             | Purpose                                                        |
 | ------------------ | -------------------------------------------------------------- |
 | `click`            | Press the element (full pointer sequence, so Radix menus open) |
+| `doubleClick`      | Double-click the element (two click rounds + `dblclick` event) |
 | `type`             | Set an input/textarea value (native setter + `input` event)    |
 | `select`           | Choose a native `<select>` option (native setter + `change`)   |
 | `contextMenu`      | Open an element's right-click menu (`contextmenu` event)       |
+| `resizeWindow`     | Resize the app window (Tauri `setSize` → xterm fit → PTY size) |
 | `pressKey`         | Dispatch a key (`keydown`+`keyup`), e.g. `Escape`, `Enter`     |
 | `terminalInput`    | Send a command into a terminal **session** (see below)         |
 | `drag`             | Drag an element by a pixel delta (resize handles)              |
@@ -315,6 +317,8 @@ if (!result.passed) {
 | Step                                                     | Effect                                            |
 | -------------------------------------------------------- | ------------------------------------------------- |
 | `{ action: "click", testId }`                            | Press the control                                 |
+| `{ action: "doubleClick", testId }`                      | Double-click the control (e.g. sidebar connect)   |
+| `{ action: "resizeWindow", width, height }`              | Resize the app window (logical px) via Tauri      |
 | `{ action: "type", testId, text }`                       | Set an input/textarea value                       |
 | `{ action: "select", testId, value }`                    | Choose a native `<select>` option                 |
 | `{ action: "contextMenu", testId }`                      | Open the element's right-click context menu       |

@@ -128,6 +128,30 @@ class ConnectionsUi(HarnessMixin):
             "connection-editor-save-connect" if connect else "connection-editor-save"
         )
 
+    # -- connecting --------------------------------------------------------------
+    def connect_connection(self, name: str) -> None:
+        """Connect a saved connection via a sidebar double-click.
+
+        This is the only connect path that raises the SSH key-passphrase prompt
+        (``ConnectionList``'s ``onDoubleClick`` → ``requestPassword``), unlike the
+        editor's Save & Connect. Mirrors :meth:`open_connection_menu`'s resilience:
+        a save reloads connections from disk a few times and a connection's id can
+        change across that reload, so the id is re-resolved by name on every poll
+        and the double-click is dispatched only once the current item is mounted.
+        """
+
+        def double_clicked() -> bool:
+            conn = self.find_connection(name)
+            if conn is None:
+                return False
+            item = connection_item_testid(conn["id"])
+            if not self.driver.exists(item):
+                return False
+            self.driver.double_click(item)
+            return True
+
+        self.wait(double_clicked, what=f"the {name!r} connection to connect")
+
     # -- context menu ------------------------------------------------------------
     def open_connection_menu(self, name: str) -> None:
         """Right-click a connection by name and wait for its menu to mount.

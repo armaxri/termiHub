@@ -62,6 +62,18 @@ def test_extended_interaction_verbs_round_trip(bridge):
         assert handler.recorded["dragTos"] == [{"from": "tab-1", "to": "tab-2"}]
 
 
+def test_pointer_and_window_verbs_round_trip(bridge):
+    handler = dispatcher_like()
+    with FakeApp(bridge.port, handler):
+        driver = bridge.wait_for_app(timeout=5)
+
+        driver.double_click("connection-item-abc")
+        driver.resize_window(640, 480)
+
+        assert handler.recorded["doubleClicks"] == ["connection-item-abc"]
+        assert handler.recorded["resizes"] == [{"width": 640, "height": 480}]
+
+
 def test_get_value_round_trip(bridge):
     handler = dispatcher_like(values={"field-port": "22"})
     with FakeApp(bridge.port, handler):
