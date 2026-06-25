@@ -66,28 +66,22 @@ class TestLocalShell(
         self.driver.click(self.EDITOR_CANCEL)
 
     # ── Configurable starting directory (PR #148) ───────────────────────────
-    def test_starting_directory_absolute(self):
+    @pytest.mark.parametrize(
+        "purpose, start_dir, pwd_check",
+        [
+            # /tmp is a symlink to /private/tmp on macOS, so accept either.
+            ("dir-tmp", "/tmp", '[ "$(pwd)" = /tmp ] || [ "$(pwd)" = /private/tmp ]'),
+            # ~ and ${env:HOME} are expanded by the backend before launch.
+            ("dir-tilde", "~", '[ "$(pwd)" = "$HOME" ]'),
+            ("dir-env", "${env:HOME}", '[ "$(pwd)" = "$HOME" ]'),
+        ],
+    )
+    def test_starting_directory_is_applied(self, purpose, start_dir, pwd_check):
         self.close_all_tabs()
-        name = unique_name("dir-tmp")
-        self.create_local_connection(name, starting_directory="/tmp", connect=True)
-        # /tmp is a symlink to /private/tmp on macOS, so accept either.
-        self.run_command('[ "$(pwd)" = /tmp ] || [ "$(pwd)" = /private/tmp ] && echo DIR_TMP_OK')
-        assert "DIR_TMP_OK" in self.wait_for_output("DIR_TMP_OK")
-
-    def test_starting_directory_expands_tilde(self):
-        self.close_all_tabs()
-        name = unique_name("dir-tilde")
-        self.create_local_connection(name, starting_directory="~", connect=True)
-        # The backend expands ~ before launch; assert the shell landed in $HOME.
-        self.run_command('[ "$(pwd)" = "$HOME" ] && echo DIR_TILDE_OK')
-        assert "DIR_TILDE_OK" in self.wait_for_output("DIR_TILDE_OK")
-
-    def test_starting_directory_expands_env_var(self):
-        self.close_all_tabs()
-        name = unique_name("dir-env")
-        self.create_local_connection(name, starting_directory="${env:HOME}", connect=True)
-        self.run_command('[ "$(pwd)" = "$HOME" ] && echo DIR_ENV_OK')
-        assert "DIR_ENV_OK" in self.wait_for_output("DIR_ENV_OK")
+        name = unique_name(purpose)
+        self.create_local_connection(name, starting_directory=start_dir, connect=True)
+        self.run_command(f"{pwd_check} && echo START_DIR_OK")
+        assert "START_DIR_OK" in self.wait_for_output("START_DIR_OK")
 
     def test_starting_directory_applied_when_editing_a_connection(self):
         self.close_all_tabs()

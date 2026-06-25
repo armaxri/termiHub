@@ -59,13 +59,10 @@ class TestEditor(TerminalUi, TabsUi, SidebarUi, FilesUi, EditorUi, SystemTest):
         return name
 
     # ── EDITOR-01: open / dirty / save (PR #54) ─────────────────────────────
-    def test_opens_a_file_via_right_click_edit(self):
-        name = self._open_editor()
-        assert self.find_tab(name) is not None
-        assert self.editor_status() is not None
-
-    def test_opens_a_file_via_double_click(self):
-        name = self._open_editor(via="double")
+    @pytest.mark.parametrize("via", ["menu", "double"])
+    def test_opens_a_file_in_the_editor(self, via):
+        # "menu" = right-click → Edit; "double" = double-click the row (PR #61).
+        name = self._open_editor(via=via)
         assert self.find_tab(name) is not None
         assert self.editor_status() is not None
 

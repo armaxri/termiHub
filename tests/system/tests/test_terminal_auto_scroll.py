@@ -69,8 +69,7 @@ class TestTerminalAutoScroll(TerminalUi, SystemTest):
         # Scroll up, then jump back to the bottom (re-arming auto-scroll).
         self.driver.scroll_terminal(-100)
         self.wait(
-            lambda: self.driver.terminal_viewport()["viewportY"]
-            < self.driver.terminal_viewport()["baseY"],
+            lambda: (lambda v: v["viewportY"] < v["baseY"])(self.driver.terminal_viewport()),
             what="the viewport to scroll up",
         )
         self.driver.scroll_terminal(0, to_bottom=True)

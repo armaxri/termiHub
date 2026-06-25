@@ -98,7 +98,7 @@ class FilesUi(HarnessMixin):
                 next_refresh = now + refresh_every
             if self.file_row_exists(name):
                 return
-            time.sleep(0.25)
+            time.sleep(0.5)  # the directory only changes on a refresh, so poll gently
         raise AssertionError(f"timed out waiting for file row {name!r}")
 
     def refresh_file_browser(self) -> None:
