@@ -185,8 +185,7 @@ class CredentialStoreUi(HarnessMixin):
         )
         self.driver.click("confirm-switch-confirm-btn")
         self.wait(
-            lambda: self.credential_store_status() is not None
-            and self.credential_store_status().get("mode") == "none",
+            lambda: (self.credential_store_status() or {}).get("mode") == "none",
             what="the credential store to switch to none",
         )
         self.switch_to_connections_sidebar()
