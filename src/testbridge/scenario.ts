@@ -22,7 +22,15 @@ export type ScenarioStep =
   /** Open an element's right-click context menu. */
   | { action: "contextMenu"; testId: string }
   /** Press a key on `testId` (or the focused element when omitted). */
-  | { action: "pressKey"; key: string; testId?: string }
+  | {
+      action: "pressKey";
+      key: string;
+      testId?: string;
+      ctrl?: boolean;
+      meta?: boolean;
+      shift?: boolean;
+      alt?: boolean;
+    }
   /** Drag an element by a pixel delta (e.g. a resize handle); `dy` defaults to 0. */
   | { action: "drag"; testId: string; dx: number; dy?: number }
   /** Drag one element onto another (pointer-based, e.g. @dnd-kit reordering). */

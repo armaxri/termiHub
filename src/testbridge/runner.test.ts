@@ -4,6 +4,7 @@ import type {
   Driver,
   GetComputedStyleOptions,
   GetTerminalViewportOptions,
+  KeyModifiers,
   ReadTerminalOptions,
   ScrollTerminalOptions,
   TerminalInputOptions,
@@ -25,7 +26,7 @@ class FakeDriver implements Driver {
   selected: Array<{ testId: string; value: string }> = [];
   drags: Array<{ testId: string; dx: number; dy?: number }> = [];
   contextMenus: string[] = [];
-  pressedKeys: Array<{ key: string; testId?: string }> = [];
+  pressedKeys: Array<{ key: string; testId?: string; modifiers?: KeyModifiers }> = [];
   dragTos: Array<{ from: string; to: string }> = [];
   terminalInputs: Array<{ text: string; tabId?: string }> = [];
   elements = new Map<string, { text?: string; value?: string }>();
@@ -70,8 +71,11 @@ class FakeDriver implements Driver {
     this.contextMenus.push(testId);
   }
 
-  async pressKey(key: string, testId?: string): Promise<void> {
-    this.pressedKeys.push({ key, testId });
+  async pressKey(key: string, testId?: string, modifiers?: KeyModifiers): Promise<void> {
+    // Only record modifiers when at least one is set, so plain presses still
+    // compare equal to `{ key, testId }` (toEqual ignores undefined).
+    const mods = modifiers && Object.values(modifiers).some(Boolean) ? modifiers : undefined;
+    this.pressedKeys.push({ key, testId, modifiers: mods });
   }
 
   async dragTo(from: string, to: string): Promise<void> {

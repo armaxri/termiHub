@@ -230,6 +230,14 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
     (editor: monaco.editor.IStandaloneCodeEditor) => {
       editorRef.current = editor;
 
+      // Tag Monaco's hidden input so the test bridge can target it with pressKey
+      // (Ctrl+S, Ctrl+End, …). Monaco renders to a canvas with no addressable
+      // input otherwise; this gives the keybinding/cursor path a stable testid.
+      editor
+        .getDomNode()
+        ?.querySelector("textarea.inputarea")
+        ?.setAttribute("data-testid", "editor-input");
+
       editor.addAction({
         id: "termihub-save",
         label: "Save File",

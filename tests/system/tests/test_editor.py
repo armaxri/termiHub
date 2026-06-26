@@ -1,18 +1,19 @@
 """Built-in (Monaco) file editor: open, dirty/save, status bar, indent, language.
 
-Ported from ``tests/e2e/editor.test.js`` onto the Python bridge harness (#809).
+Ported from ``tests/e2e/editor.test.js`` onto the Python bridge harness (#809),
+with the cursor-move and Ctrl+S keybinding checks restored in #866.
 
-Monaco renders to a canvas with no test-addressable text input, so assertions map
-to **store state** — ``editorStatus`` (Ln/Col, indent, EOL, encoding, language)
-and ``editorDirtyTabs`` (the tab dirty dot) — instead of scraping the editor. An
-"edit" is made through a genuine model-mutating gesture (toggling the EOL via the
-status bar), which dirties the buffer exactly like typing.
+Monaco renders to a canvas, so most assertions map to **store state** —
+``editorStatus`` (Ln/Col, indent, EOL, encoding, language) and ``editorDirtyTabs``
+(the tab dirty dot). An "edit" is made through a genuine model-mutating gesture
+(toggling the EOL via the status bar), which dirties the buffer like typing.
+Keyboard-driven checks (cursor movement, the Save keybinding) reach Monaco through
+its hidden input — tagged ``editor-input`` — via the bridge's ``pressKey`` verb,
+whose synthetic events carry a real legacy ``keyCode`` so Monaco resolves them
+(#866).
 
-Not ported (kept as manual tests in docs/testing.md): the Ctrl+S keybinding and
-cursor-move Ln/Col updates (both need keystrokes routed *into* Monaco's canvas,
-which the bridge cannot address by ``data-testid`` — the Save button and the
-indent/EOL/language store assertions cover the same behavior); the binary/non-UTF
--8 graceful-error path (needs a non-UTF-8 file the bridge cannot author).
+Not ported (kept as a manual test in docs/testing.md): the binary/non-UTF-8
+graceful-error path (needs a non-UTF-8 file the bridge cannot author).
 """
 
 import pytest
@@ -78,6 +79,20 @@ class TestEditor(TerminalUi, TabsUi, SidebarUi, FilesUi, EditorUi, SystemTest):
             what="the dirty flag to clear after save",
         )
 
+    def test_save_keybinding_clears_dirty(self):
+        # The toolbar Save button is covered above; this exercises the Monaco
+        # Save *keybinding* (Cmd+S / Ctrl+S) — a real chord through the bridge.
+        name = self._open_editor()
+        tab = self.find_tab(name)
+        self.dirty_editor()
+        self.wait(lambda: self.editor_tab_dirty(tab["id"]), what="the tab to become dirty")
+        self.focus_editor()
+        self.save_via_keybinding()
+        self.wait(
+            lambda: not self.editor_tab_dirty(tab["id"]),
+            what="the dirty flag to clear after the save keybinding",
+        )
+
     def test_closing_a_dirty_tab_prompts_to_confirm(self):
         name = self._open_editor()
         tab = self.find_tab(name)
@@ -118,6 +133,22 @@ class TestEditor(TerminalUi, TabsUi, SidebarUi, FilesUi, EditorUi, SystemTest):
         assert status["eol"] == "LF"
         assert status["language"] == "typescript"
         assert isinstance(status["tabSize"], int)
+
+    def test_cursor_movement_updates_line_and_column(self):
+        # The file has three lines; moving the caret must update editorStatus.line.
+        self._open_editor()
+        assert self.editor_status()["line"] == 1
+        self.focus_editor()
+        self.move_cursor("ArrowDown", times=2)
+        self.wait(
+            lambda: (self.editor_status() or {}).get("line") == 3,
+            what="the cursor to reach line 3",
+        )
+        self.move_cursor("ArrowUp")
+        self.wait(
+            lambda: (self.editor_status() or {}).get("line") == 2,
+            what="the cursor to return to line 2",
+        )
 
     def test_status_bar_items_hide_on_a_terminal_tab(self):
         self._open_editor()

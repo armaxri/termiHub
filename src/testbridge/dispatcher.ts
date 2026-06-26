@@ -109,6 +109,60 @@ function clickSequence(el: Element, x: number, y: number): void {
   (el as HTMLElement).click();
 }
 
+/** Named DOM keys whose `code` / legacy `keyCode` aren't derivable from the char. */
+const NAMED_KEYS: Record<string, { code: string; keyCode: number }> = {
+  Enter: { code: "Enter", keyCode: 13 },
+  Tab: { code: "Tab", keyCode: 9 },
+  Escape: { code: "Escape", keyCode: 27 },
+  Backspace: { code: "Backspace", keyCode: 8 },
+  Delete: { code: "Delete", keyCode: 46 },
+  " ": { code: "Space", keyCode: 32 },
+  ArrowUp: { code: "ArrowUp", keyCode: 38 },
+  ArrowDown: { code: "ArrowDown", keyCode: 40 },
+  ArrowLeft: { code: "ArrowLeft", keyCode: 37 },
+  ArrowRight: { code: "ArrowRight", keyCode: 39 },
+  Home: { code: "Home", keyCode: 36 },
+  End: { code: "End", keyCode: 35 },
+  PageUp: { code: "PageUp", keyCode: 33 },
+  PageDown: { code: "PageDown", keyCode: 34 },
+};
+
+/** The `KeyboardEvent.code` for a DOM key value (e.g. `"s"` → `"KeyS"`). */
+function domCodeFor(key: string): string | undefined {
+  if (NAMED_KEYS[key]) return NAMED_KEYS[key].code;
+  if (/^[a-zA-Z]$/.test(key)) return `Key${key.toUpperCase()}`;
+  if (/^[0-9]$/.test(key)) return `Digit${key}`;
+  return undefined;
+}
+
+/** The legacy numeric `keyCode` for a DOM key value, or 0 when unknown. */
+function legacyKeyCodeFor(key: string): number {
+  if (NAMED_KEYS[key]) return NAMED_KEYS[key].keyCode;
+  if (/^[a-zA-Z]$/.test(key)) return key.toUpperCase().charCodeAt(0);
+  if (/^[0-9]$/.test(key)) return key.charCodeAt(0);
+  return 0;
+}
+
+/**
+ * Build a `KeyboardEvent` with a working legacy `keyCode`.
+ *
+ * The `keyCode` property is read-only and absent from `KeyboardEventInit`, but
+ * Monaco's `StandardKeyboardEvent` still reads `e.keyCode` (the deprecated
+ * numeric) to resolve keybindings — a synthetic event leaves it `0`, so
+ * `Ctrl+S` / `Ctrl+End` would resolve to `Unknown` and do nothing. Defining the
+ * property after construction is the portable way to give the event a real
+ * `keyCode` so keybinding-driven editors respond as they do to real input.
+ */
+function keyboardEvent(type: string, init: KeyboardEventInit, key: string): KeyboardEvent {
+  const event = new KeyboardEvent(type, init);
+  const keyCode = legacyKeyCodeFor(key);
+  if (keyCode) {
+    Object.defineProperty(event, "keyCode", { get: () => keyCode });
+    Object.defineProperty(event, "which", { get: () => keyCode });
+  }
+  return event;
+}
+
 /**
  * Yield to the event loop so React can flush a render + effects between
  * synthetic pointer events. @dnd-kit's `DndContext` measures droppable rects in
@@ -345,9 +399,18 @@ export async function dispatchCommand(
         target = doc?.activeElement ?? doc ?? null;
       }
       if (!target) return fail("pressKey", "no focused element to press a key on");
-      const init: KeyboardEventInit = { key: command.key, bubbles: true, cancelable: true };
-      target.dispatchEvent(new KeyboardEvent("keydown", init));
-      target.dispatchEvent(new KeyboardEvent("keyup", init));
+      const init: KeyboardEventInit = {
+        key: command.key,
+        code: domCodeFor(command.key),
+        ctrlKey: command.ctrl ?? false,
+        metaKey: command.meta ?? false,
+        shiftKey: command.shift ?? false,
+        altKey: command.alt ?? false,
+        bubbles: true,
+        cancelable: true,
+      };
+      target.dispatchEvent(keyboardEvent("keydown", init, command.key));
+      target.dispatchEvent(keyboardEvent("keyup", init, command.key));
       return ok("pressKey");
     }
 
