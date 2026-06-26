@@ -41,6 +41,20 @@ jobs:
       - name: Run Clippy (linter)
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+      # Guards #868: the Docker-dependent integration tests in core/tests/ are
+      # feature-gated (#![cfg(feature = "ssh")], etc.) so a plain
+      # `cargo test -p termihub-core` compiles to a no-op instead of erroring.
+      # Every other Rust job runs --all-features, where cargo feature unification
+      # would hide a newly-added un-gated test file — this check would not. The
+      # ssh / telnet partial builds also verify the gates resolve correctly
+      # (telnet.rs needs both ssh and telnet). Compile-only (--no-run): the tests
+      # themselves need Docker fixtures and run in the integration lane.
+      - name: Core compiles without --all-features (guards #868)
+        run: |
+          cargo test -p termihub-core --no-run
+          cargo test -p termihub-core --no-run --features ssh
+          cargo test -p termihub-core --no-run --features telnet
+
       - name: Check for security vulnerabilities
         run: |
           cargo install cargo-audit
