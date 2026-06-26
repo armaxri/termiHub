@@ -25,6 +25,7 @@ import { ConnectionSettingsForm, AGENT_SCHEMA } from "@/components/DynamicForm";
 import {
   buildDefaults,
   findPasswordPromptInfo,
+  findKeyPassphrasePromptInfo,
   filterRuntimeOptions,
   filterCredentialFields,
 } from "@/utils/schemaDefaults";
@@ -696,10 +697,17 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
 
     let config: ConnectionConfig = saved.config;
 
-    // Use schema to detect if a password prompt is needed
+    // Use schema to detect if a password/passphrase prompt is needed.
+    // findPasswordPromptInfo only matches a visible password field (password
+    // auth); for key auth the password field is hidden, so a separate check
+    // covers passphrase-protected keys (#879).
     const schema = isAgentTransportMode ? AGENT_SCHEMA : currentTypeInfo?.schema;
     if (schema) {
-      const promptInfo = findPasswordPromptInfo(schema, connSettings);
+      const keyPrompt = findKeyPassphrasePromptInfo(schema, connSettings);
+      const promptInfo = findPasswordPromptInfo(schema, connSettings) ?? keyPrompt;
+      const credentialType: "password" | "key_passphrase" = keyPrompt
+        ? "key_passphrase"
+        : "password";
       if (promptInfo) {
         const host = (connSettings[promptInfo.hostKey] as string) ?? "";
         const username = (connSettings[promptInfo.usernameKey] as string) ?? "";
@@ -724,22 +732,26 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         if (!resolvedPassword) {
           resolvedPassword = await requestPassword(host, username);
           if (resolvedPassword === null) return;
-          // Persist the freshly-entered password when the prompt's Save box is
+          // Persist the freshly-entered secret when the prompt's Save box is
           // checked. The sidebar connect path did this but Save & Connect did not,
-          // so "Save password" was silently ignored here (#874). findPasswordPromptInfo
-          // only matches a visible password field, so this path is always password
-          // auth (credential type "password"). Store under the connection's persisted
-          // id — a new connection's optimistic conn-<ts> id has been reconciled by now
-          // (#863), and the editor enforces unique names per folder, so name + folderId
-          // identifies the stored entry.
+          // so "Save password" was silently ignored here (#874, #879). The
+          // credential type follows the auth method — "password" for password
+          // auth, "key_passphrase" for a passphrase-protected key. Store under the
+          // connection's persisted id — a new connection's optimistic conn-<ts> id
+          // has been reconciled by now (#863), and the editor enforces unique names
+          // per folder, so name + folderId identifies the stored entry.
           if (useAppStore.getState().passwordPromptShouldSave) {
             const storeConn = useAppStore
               .getState()
               .connections.find(
                 (c) => c.name === saved.name && (c.folderId ?? null) === (saved.folderId ?? null)
               );
-            await storeCredential(storeConn?.id ?? saved.id, "password", resolvedPassword).catch(
-              (err) => frontendLog("connection_editor", `Failed to store credential: ${err}`)
+            await storeCredential(
+              storeConn?.id ?? saved.id,
+              credentialType,
+              resolvedPassword
+            ).catch((err) =>
+              frontendLog("connection_editor", `Failed to store credential: ${err}`)
             );
           }
         }

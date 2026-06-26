@@ -103,6 +103,36 @@ export function findPasswordPromptInfo(
 }
 
 /**
+ * Check whether an SSH **key-auth** connection needs a passphrase prompt at
+ * connect time.
+ *
+ * `findPasswordPromptInfo` only matches a *visible* password field, but the
+ * password field is hidden for key auth (`visible_when: authMethod == "password"`),
+ * so it never prompts for a key passphrase. This sibling check covers key auth.
+ *
+ * Returns prompt info when `authMethod === "key"` and the user opted to save the
+ * passphrase (`savePassword`), mirroring the sidebar connect path
+ * (`ConnectionList.handleConnect`). Returns `null` otherwise — unencrypted keys
+ * (no `savePassword`) connect directly without an unnecessary prompt.
+ *
+ * The resolved passphrase is passed to the backend via the same `password`
+ * config field the SSH backend reads to unlock the key.
+ */
+export function findKeyPassphrasePromptInfo(
+  schema: SettingsSchema,
+  settings: Record<string, unknown>
+): PasswordPromptInfo | null {
+  if (settings.authMethod !== "key") return null;
+  if (settings.savePassword !== true) return null;
+
+  return {
+    hostKey: findFieldKey(schema, "host") ?? "host",
+    usernameKey: findFieldKey(schema, "username") ?? "username",
+    passwordKey: findFieldKey(schema, "password") ?? "password",
+  };
+}
+
+/**
  * Find a field key in the schema by key name.
  */
 function findFieldKey(schema: SettingsSchema, key: string): string | null {
