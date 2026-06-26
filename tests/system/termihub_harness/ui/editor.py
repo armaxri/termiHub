@@ -35,6 +35,8 @@ class EditorUi(HarnessMixin):
 
     CTX_FILE_EDIT = "context-file-edit"
     SAVE = "file-editor-save"
+    #: The graceful-error panel FileEditor renders for an unreadable file.
+    ERROR = "file-editor-error"
     STATUS_TAB_SIZE = "status-bar-tab-size"
     STATUS_EOL = "status-bar-eol"
     STATUS_LANGUAGE = "status-bar-language"
@@ -63,6 +65,27 @@ class EditorUi(HarnessMixin):
             self.wait(lambda: self.driver.exists(self.CTX_FILE_EDIT), what="the file Edit menu")
             self.driver.click(self.CTX_FILE_EDIT)
         self.wait_for_editor_status()
+
+    def open_file_expecting_error(self, name: str, *, via: str = "menu") -> None:
+        """Open file ``name`` and wait for the editor's graceful-error panel.
+
+        An undecodable file (binary / non-UTF-8) fails to load, so the editor
+        never mounts a Monaco model and ``editorStatus`` stays empty — instead
+        ``FileEditor`` renders its ``file-editor__error`` panel (tagged
+        ``file-editor-error``). This opens the row exactly like
+        :meth:`open_file_in_editor` but waits for that error panel rather than the
+        status bar, asserting the app surfaces the failure gracefully instead of
+        crashing.
+        """
+        self.wait_for_file_row(name)
+        row = file_row_testid(name)
+        if via == "double":
+            self.driver.double_click(row)
+        else:
+            self.driver.context_menu(row)
+            self.wait(lambda: self.driver.exists(self.CTX_FILE_EDIT), what="the file Edit menu")
+            self.driver.click(self.CTX_FILE_EDIT)
+        self.wait(lambda: self.driver.exists(self.ERROR), what="the editor error panel")
 
     # -- status ------------------------------------------------------------------
     def editor_status(self) -> Optional[dict[str, Any]]:
