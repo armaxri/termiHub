@@ -389,18 +389,27 @@ describe("ConnectionEditor — Save & Connect credential handling", () => {
     expect(useAppStore.getState().passwordPromptOpen).toBe(false);
   });
 
-  /** Click Save & Connect, then answer the password prompt with the given save flag. */
-  async function saveConnectThenAnswerPrompt(connId: string, save: boolean): Promise<void> {
+  /**
+   * Click Save & Connect, then answer the credential prompt with the given save
+   * flag. Parameterized over the connection (password vs key auth), the id the
+   * save backend returns, and the secret typed into the prompt.
+   */
+  async function saveConnectThenAnswerPrompt(opts: {
+    connId: string;
+    persistedId: string;
+    secret: string;
+    save: boolean;
+  }): Promise<void> {
     mockedInvoke.mockImplementation((cmd) => {
       if (cmd === "resolve_credential") return Promise.resolve(null);
-      if (cmd === "save_connection") return Promise.resolve("ssh-pw-conn");
+      if (cmd === "save_connection") return Promise.resolve(opts.persistedId);
       if (cmd === "store_credential") return Promise.resolve(null);
       if (cmd === "load_connections_and_folders")
         return Promise.resolve({ connections: [SSH_CONN_PASSWORD, SSH_CONN_KEY], folders: [] });
       return Promise.resolve(null);
     });
 
-    renderFor(connId);
+    renderFor(opts.connId);
     await act(async () => {
       await Promise.resolve();
     });
@@ -416,7 +425,7 @@ describe("ConnectionEditor — Save & Connect credential handling", () => {
 
     expect(useAppStore.getState().passwordPromptOpen).toBe(true);
     await act(async () => {
-      useAppStore.getState().submitPassword("typed-secret", save);
+      useAppStore.getState().submitPassword(opts.secret, opts.save);
     });
     await act(async () => {
       await Promise.resolve();
@@ -424,7 +433,12 @@ describe("ConnectionEditor — Save & Connect credential handling", () => {
   }
 
   it("stores the entered password when the prompt's Save box is checked (#874)", async () => {
-    await saveConnectThenAnswerPrompt(SSH_CONN_PASSWORD.id, true);
+    await saveConnectThenAnswerPrompt({
+      connId: SSH_CONN_PASSWORD.id,
+      persistedId: "ssh-pw-conn",
+      secret: "typed-secret",
+      save: true,
+    });
 
     const storeCalls = mockedInvoke.mock.calls.filter((c) => c[0] === "store_credential");
     expect(storeCalls).toHaveLength(1);
@@ -436,48 +450,24 @@ describe("ConnectionEditor — Save & Connect credential handling", () => {
   });
 
   it("does not store the password when the prompt's Save box is unchecked (#874)", async () => {
-    await saveConnectThenAnswerPrompt(SSH_CONN_PASSWORD.id, false);
+    await saveConnectThenAnswerPrompt({
+      connId: SSH_CONN_PASSWORD.id,
+      persistedId: "ssh-pw-conn",
+      secret: "typed-secret",
+      save: false,
+    });
 
     const storeCalls = mockedInvoke.mock.calls.filter((c) => c[0] === "store_credential");
     expect(storeCalls).toHaveLength(0);
   });
 
-  /** Click Save & Connect on a key-auth connection, then answer the passphrase prompt. */
-  async function saveConnectKeyThenAnswerPrompt(save: boolean): Promise<void> {
-    mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "resolve_credential") return Promise.resolve(null);
-      if (cmd === "save_connection") return Promise.resolve("ssh-key-conn");
-      if (cmd === "store_credential") return Promise.resolve(null);
-      if (cmd === "load_connections_and_folders")
-        return Promise.resolve({ connections: [SSH_CONN_PASSWORD, SSH_CONN_KEY], folders: [] });
-      return Promise.resolve(null);
-    });
-
-    renderFor(SSH_CONN_KEY.id);
-    await act(async () => {
-      await Promise.resolve();
-    });
-    const btn = container.querySelector(
-      '[data-testid="connection-editor-save-connect"]'
-    ) as HTMLButtonElement;
-    await act(async () => {
-      btn.click();
-    });
-    await act(async () => {
-      await Promise.resolve();
-    });
-
-    expect(useAppStore.getState().passwordPromptOpen).toBe(true);
-    await act(async () => {
-      useAppStore.getState().submitPassword("typed-passphrase", save);
-    });
-    await act(async () => {
-      await Promise.resolve();
-    });
-  }
-
   it("stores the entered passphrase as key_passphrase when Save is checked (#879)", async () => {
-    await saveConnectKeyThenAnswerPrompt(true);
+    await saveConnectThenAnswerPrompt({
+      connId: SSH_CONN_KEY.id,
+      persistedId: "ssh-key-conn",
+      secret: "typed-passphrase",
+      save: true,
+    });
 
     const storeCalls = mockedInvoke.mock.calls.filter((c) => c[0] === "store_credential");
     expect(storeCalls).toHaveLength(1);
@@ -489,7 +479,12 @@ describe("ConnectionEditor — Save & Connect credential handling", () => {
   });
 
   it("does not store the passphrase when Save is unchecked (#879)", async () => {
-    await saveConnectKeyThenAnswerPrompt(false);
+    await saveConnectThenAnswerPrompt({
+      connId: SSH_CONN_KEY.id,
+      persistedId: "ssh-key-conn",
+      secret: "typed-passphrase",
+      save: false,
+    });
 
     const storeCalls = mockedInvoke.mock.calls.filter((c) => c[0] === "store_credential");
     expect(storeCalls).toHaveLength(0);
