@@ -10,7 +10,8 @@ import {
   TerminalOptions,
   ConnectionEditorMeta,
 } from "@/types/terminal";
-import { listAvailableShells, resolveCredential } from "@/services/api";
+import { listAvailableShells, resolveCredential, storeCredential } from "@/services/api";
+import { frontendLog } from "@/utils/frontendLog";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import type { ConnectionTypeInfo } from "@/services/api";
 import {
@@ -723,6 +724,24 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         if (!resolvedPassword) {
           resolvedPassword = await requestPassword(host, username);
           if (resolvedPassword === null) return;
+          // Persist the freshly-entered password when the prompt's Save box is
+          // checked. The sidebar connect path did this but Save & Connect did not,
+          // so "Save password" was silently ignored here (#874). findPasswordPromptInfo
+          // only matches a visible password field, so this path is always password
+          // auth (credential type "password"). Store under the connection's persisted
+          // id — a new connection's optimistic conn-<ts> id has been reconciled by now
+          // (#863), and the editor enforces unique names per folder, so name + folderId
+          // identifies the stored entry.
+          if (useAppStore.getState().passwordPromptShouldSave) {
+            const storeConn = useAppStore
+              .getState()
+              .connections.find(
+                (c) => c.name === saved.name && (c.folderId ?? null) === (saved.folderId ?? null)
+              );
+            await storeCredential(storeConn?.id ?? saved.id, "password", resolvedPassword).catch(
+              (err) => frontendLog("connection_editor", `Failed to store credential: ${err}`)
+            );
+          }
         }
 
         config = {
